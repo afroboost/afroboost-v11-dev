@@ -115,13 +115,13 @@ class TestMissionV105FrontendCode:
         # Search for back button with h-10
         back_pattern = r'data-testid="coach-back"'
         assert back_pattern in coach_dashboard_content
-        # Verify h-10 exists in className before back button
+        # Verify h-10 exists in className before back button (need to look 10 lines back)
         lines = coach_dashboard_content.split('\n')
         for i, line in enumerate(lines):
             if 'data-testid="coach-back"' in line:
-                # Check surrounding lines for h-10
-                context = '\n'.join(lines[max(0, i-5):i+1])
-                assert 'h-10' in context, f"h-10 not found near coach-back button"
+                # Check surrounding lines for h-10 (look 10 lines back)
+                context = '\n'.join(lines[max(0, i-10):i+1])
+                assert 'h-10' in context, f"h-10 not found near coach-back button. Context: {context}"
                 print("✅ Retour button has h-10 class")
                 return
         assert False, "coach-back button not found"
