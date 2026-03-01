@@ -1,41 +1,38 @@
 <analysis>**original_problem_statement:**
-The user wants to transform the existing Afroboost application into a multi-partner SaaS platform. The application owner, Bassi, acts as the Super Admin (, ).
+The user wants to transform the existing Afroboost application into a multi-partner SaaS platform. The application owner, Bassi, acts as the Super Admin (, ). The core of the application is a mobile-first, Instagram Reels style vertical video feed.
 
-**PRODUCT REQUIREMENTS:**
-1.  **Refactor & Optimize:** Clean up the monolithic  and .
-2.  **Hierarchy & Access Control:** Implement a Super Admin role with full access and a Partner role with isolated data access.
-3.  **SaaS Monetization & White-Labeling:**
-    *   Partners must purchase credit packs. Partner actions (e.g., creating promos, chatting) consume credits.
-    *   Implement Stripe Connect for direct partner payouts.
-    *   The partner's public page () must be a visual mirror of .
-4.  **UI/UX & Features (Missions):**
-    *   **v9.5.6:** Fix Super Admin login loop, repair page scroll to make footer content accessible, and improve mobile UI compactness.
-    *   **v9.5.7:** Implement a Quick Control maintenance mode lock and fix the  of the logout button.
-    *   **v9.5.8:** Remove duplicate logout buttons, mask the Campaigns feature for partners, implement credit deduction logic for partner actions, and ensure strict data isolation between partners.
-    *   **v9.5.9:** Add a visual credit gauge (progress bar) to the partner dashboard and audit all recent fixes.
-    *   **v9.6.0:** Fix the post-login flash issue by forcing a page reload, and add a My Dashboard button to the chat widget.
-    *   **v9.6.1:** A final validation mission to confirm all recent UI and logic fixes.
-    *   **v9.6.4:** Eliminate black space around the video feed for a more immersive mobile experience and reorganize the login modal to prioritize existing partners.
-    *   **v9.6.6:** Fix video duplication in the Reels feed and align overlapping header icons (Search, Translate, Sound).
-    *   **v9.6.7:** Final audit mission to validate the fixes from v9.6.6.
+**PRODUCT REQUIREMENTS (Summary of Missions):**
+The development has been driven by a series of missions, each with specific UI/UX and logic goals. The key themes are:
+1.  **UI/UX Perfection:** Achieve a zero black space, immersive, Reels-style interface. This includes specific icon placements, component styling (violet glow #D91CD2), and responsive behavior on mobile (Samsung Ultra 24).
+2.  **Robust Navigation & Logic:** Implement a unique showcase logic where clicking a partner's own video doesn't redirect. Ensure a one-click, flash-free login experience for existing partners ().
+3.  **Account Uniqueness:** Enforce a one-account-per-email policy, preventing duplicate accounts.
+4.  **Feature Implementation & Fixes:**
+    *   Fix partner login redirection loops.
+    *   Eliminate duplicate videos in the feed.
+    *   Implement chat message persistence using .
+    *   Add a Glow Violet effect to the Like button and display the like count.
+    *   Create a Premium reservation summary card in the chat.
+    *   Refactor the partner dashboard from large buttons to a minimalist grid of icon-based cards.
+    *   Fix mobile scrolling issues in the dashboard.
+5.  **Security/Infra Audits:** The user requested read-only audits to identify the backend hosting platform and check for security vulnerabilities (hardcoded secrets). The audits concluded the backend runs only in a temporary preview environment and is not deployed for production, posing a high risk.
 
 **User's preferred language**: français
 
 **what currently exists?**
-The application's core is a full-screen, mobile-first, Reels-style vertical video feed. The UI is highly minimalist and compact, with almost no black space around the video content.
+The application is a full-stack platform with a React frontend and FastAPI backend. The UI has been extensively refactored to mimic the Instagram Reels interface, featuring a full-screen vertical video feed with overlaid controls.
 
-Key functionalities implemented and stabilized in this session:
--   **Super Admin Access:** The Super Admin role now correctly recognizes both  and , granting access to the full dashboard.
--   **Optimized Login Flow:** The login process is streamlined. Existing partners are redirected instantly to their dashboard with a single click (), resolving previous state-related flash issues.
--   **Robust UI:** The main feed is now a true full-page experience, but users can still scroll down to access other sections like Sessions and the footer. Header icons (Search, Language, Sound) are properly spaced and no longer overlap.
--   **Unique Video Feed:** Duplicate videos in the Reels feed have been eliminated through deduplication logic on both the backend and frontend.
--   **Partner Credit System:** The backend and frontend infrastructure for a credit system is in place. A credit deduction endpoint () exists, and it is successfully used when a partner creates a promo code. A visual progress bar for credits is displayed in the partner dashboard.
+Key functionalities stabilized:
+-   **Reels-style UI:** The main feed and partner showcase pages use a full-screen video player with  to handle different aspect ratios. UI elements (profile, like/share buttons, description) are overlaid on the video.
+-   **Login & Auth:** A streamlined login flow correctly identifies Super Admins and existing partners, redirecting them immediately to their dashboard to prevent UI flashes or incorrect page loads.
+-   **Dashboard UI:** The partner dashboard has been refactored from a list of large buttons to a responsive, scrollable grid of minimalist, icon-based cards.
+-   **Chat Persistence:** The chat widget now uses  to remember user details (name, WhatsApp) between sessions. Fallback logic has been added to prevent empty message bubbles.
+-   **Backend Logic:** Video de-duplication is implemented on the backend. APIs for partner status checks are in place.
 
 **Last working item**:
-    - Last item agent was working: **Mission v9.6.7: Validation Finale UI et Flux Unique**. This was a final audit to confirm that all recent fixes were working as intended, specifically: no black space, correctly aligned icons, no video duplicates, and a flawless login flow. The agent performed a manual code audit and API tests, which were all successful.
+    - Last item agent was working: **Mission v10.9: Cleaning up the UI and targeting the 'Réserver' button.** The goal was to declutter the video overlay on the partner showcase page () by removing an extra contact icon and a central logo. The Réserver button was to be redesigned as a frameless, text-and-icon element positioned at the bottom-right of the video. The agent implemented the changes, but the testing agent found a CSS bug causing the button to be misplaced. The agent applied a fix for this bug.
     - Status: IN PROGRESS
     - Agent Testing Done: N
-    - Which testing method agent to use? . The agent has already invoked the testing agent, but the results have not been received yet. The next agent should analyze the test report and address any failures.
+    - Which testing method agent to use?  to run a full regression test, validating the CSS fix for the Réserver button position and ensuring no new issues were introduced.
     - User Testing Done: N
 
 **All Pending/In progress Issue list**:
@@ -48,35 +45,42 @@ Key functionalities implemented and stabilized in this session:
      - **Next debug checklist**:
        - Connect the Connecter mon Stripe button in  to a new backend API.
        - Use the  agent to get the correct Stripe Connect implementation plan.
-       - Create a backend API using the Stripe SDK to initiate a Stripe Connect onboarding session ().
+       - Create backend APIs using the Stripe SDK to handle the Stripe Connect onboarding flow (Account Links API).
        - Implement the redirect flow to and from Stripe's onboarding page.
-       - Modify the Stripe webhook handler in  to correctly route events from connected accounts.
-     - **Why fix this issue and what will be achieved with the fix?**: This is a core requirement for the SaaS model, enabling the platform to function as a marketplace where partners manage their own revenue.
+       - Modify Stripe webhooks in  to handle events from connected accounts.
+     - **Why fix this issue and what will be achieved with the fix?**: This is a core requirement for the SaaS model, enabling partners to manage their own revenue.
      - **Status**:  NOT STARTED
      - **Is recurring issue?** N
      - **Should Test frontend/backend/both after fix?** Both
      - **Blocked on other issue**: None
 
 **In progress Task List**:
-  - Task 1:  (P1) Continue modularizing .
+  - Task 1:  (P0) Validate Mission v10.9 Fix
   - Task 2:  (P1) Continue modularizing .
-  - Task 3: (P1) Complete implementation of the partner credit system.
+  - Task 3:  (P1) Continue modularizing .
+  - Task 4:  (P1) Complete implementation of the partner credit system.
 
  Task Detail:
   - Task 1: 
-     - **Where to resume**:  is still a large monolith containing multiple concerns (auth, partners, settings, etc.). The next step is to extract route groups (e.g., Stripe, AI, Campaigns) into their own files under a structured  directory.
+     - **Where to resume**: The agent has just applied a fix to  to correct the position of the Réserver button. The next step is to run the  to confirm the fix and ensure no regressions occurred.
+     - **What will be achieved with this?**: Complete and validate Mission v10.9.
+     - **Status**:  IN PROGRESS
+     - **Should Test frontend/backend/both after fix?** Frontend
+     - **Blocked on something**: None
+  - Task 2: 
+     - **Where to resume**:  remains a large monolith. The next step is to extract route groups (e.g., Stripe, AI, Campaigns) into their own files under a  directory.
      - **What will be achieved with this?**: Improving code organization, maintainability, and stability.
      - **Status**:  IN PROGRESS
      - **Should Test frontend/backend/both after fix?** Backend
      - **Blocked on something**: None
-  - Task 2: 
-     - **Where to resume**:  remains extremely large. The next step is to break down other major sections like Réservations, Profil, or Offres into their own components within a  directory.
-     - **What will be achieved with this?**: Reducing the complexity of the main dashboard component, making it easier and safer to modify.
+  - Task 3: 
+     - **Where to resume**: While significantly improved,  is still large. The tabs Réservations, Profil, and Offres can be extracted into their own components under a  directory.
+     - **What will be achieved with this?**: Reducing the complexity of the main dashboard component.
      - **Status**:  IN PROGRESS
      - **Should Test frontend/backend/both after fix?** Frontend
      - **Blocked on something**: None
-  - Task 3: 
-     - **Where to resume**: Mission v9.5.8 requested credit deduction for Chat and Création Promo. The agent implemented the  endpoint and wired it to promo code creation but did not implement it for Chat actions. The next step is to integrate the  hook with the chat functionalities.
+  - Task 4: 
+     - **Where to resume**: Mission v9.5.8 requested credit deduction for Chat and Création Promo. The agent implemented it for promo codes but not for Chat actions. The  hook needs to be integrated with the chat functionalities.
      - **What will be achieved with this?**: Completes the initial scope of the credit consumption feature.
      - **Status**:  IN PROGRESS
      - **Should Test frontend/backend/both after fix?** Both
@@ -84,24 +88,30 @@ Key functionalities implemented and stabilized in this session:
 
 **Upcoming and Future Tasks**
     Upcoming Tasks:
-    - **(P0)** Implement Stripe Connect (see Issue #1 above).
-    - **(P1)** Complete Partner Credit System (see Task #3 above).
+    - **(P0)** Deploy the backend to a permanent production host (e.g., Railway, Render). The audit revealed it only runs in a temporary preview environment.
+    - **(P0)** Implement Stripe Connect (see Issue #1).
+    - **(P1)** Complete Partner Credit System (see Task #4).
     
     Future Tasks:
     - Continue progressive refactoring of  and .
+    - Document all environment variables required for production deployment.
 
 **Completed work in this session**
-- **v9.6.6:** Fixed video duplication in the Reels feed and aligned overlapping header icons.
-- **v9.6.4:** Eliminated black space for a more immersive mobile UI and reorganized the login modal.
-- **v9.6.1:** Final validation mission confirming UI purity and login flow.
-- **v9.6.0:** Fixed flash login using  and added a My Dashboard button in the chat.
-- **v9.5.9:** Added a visual credit gauge/progress bar to the partner dashboard.
-- **v9.5.8:** Implemented partner credit deduction for creating promo codes and removed duplicate UI elements.
-- **v9.5.7:** Implemented a maintenance mode lock (Quick Control) and fixed logout button positioning.
-- **v9.5.6:** Fixed Super Admin access loop and repaired main page scrolling.
+- **Security & Hosting Audits**: Performed read-only audits that identified the backend is not deployed for production and confirmed no secrets are hardcoded in the repository.
+- **v10.9 (partial):** Implemented UI cleanup on the partner showcase page by removing redundant elements and redesigning the Réserver button.
+- **v10.7:** Refactored dashboard action buttons into compact, square, icon-based cards (e.g., ✉️ for Chat, 📅 for Reservations).
+- **v10.6:** Overhauled the partner dashboard layout to a minimalist 2-column grid of cards and fixed major mobile scrolling issues.
+- **v10.5:** Harmonized the style and size of all buttons in the partner dashboard and fixed the mobile layout of the Maintenance toggle.
+- **v10.4:** Fixed chat message persistence to eliminate empty bubbles on reload and began harmonizing dashboard button styles.
+- **v10.3:** Implemented a Glow Violet effect on the Like button, added chat memory using , and created a reservation summary card.
+- **v10.2:** Fixed video rendering for 16:9 formats using  to ensure an immersive, full-screen experience.
+- **v10.0:** Major UI overhaul of  to an Instagram Reels style with overlaid controls.
+- **v9.7.2:** Implemented unique showcase logic (no redirection on self-click) and removed a duplicate Sound icon.
+- **v9.6.9:** Finalized video de-duplication logic and confirmed UI stability.
+- **v9.6.8:** Fixed partner login redirection and aligned header icons.
 
 **Earlier issues found/mentioned but not fixed**
-   - **Issue 1**: The initial handoff mentioned a potential issue with the color customization  hook in the partner dashboard. A manual save button was added in a previous session, but the root cause was never investigated. This was not addressed in the current session.
+   - **Issue 1**: A potential issue with the  hook in the partner dashboard's color customization feature was mentioned in an early handoff but has not been investigated or addressed.
 
 **Known issue recurrence from previous fork**
   - None.
@@ -110,11 +120,11 @@ Key functionalities implemented and stabilized in this session:
 
 
 **Key Technical Concepts**
-- **Forced Page Reload on Login:** Using  to programmatically force a full page reload and navigate to the dashboard. This was critical for solving post-login state inconsistencies.
-- **Backend Route Conflict Resolution:** Identified and fixed a bug where two routers mounted in  defined the same endpoint (). The fix involved consolidating the Super Admin check logic.
-- **Data De-duplication:** Implemented logic on both the backend (filtering the MongoDB query result) and frontend () to prevent duplicate videos from appearing in the Reels feed.
-- **Conditional UI Rendering:** Heavy use of  and  props to dynamically show/hide/disable UI elements (e.g., Campaigns tab, maintenance mode locks, credit display).
-- **CSS  and :** Used to fix UI layout issues, specifically separating overlapping icons in the header and ensuring buttons were always clickable.
+- **Reels UI Implementation:** Heavy use of absolute positioning, CSS transforms (), , and flexbox to create an Instagram Reels-like video overlay UI in .
+- **UI Harmonization:** Extensive work to create a consistent design language using a minimalist grid layout, icon-based cards, and a specific color palette (violet glow #D91CD2 on a black background).
+- **Conditional Logic:** The UI relies heavily on conditional rendering based on user role () and context (e.g.,  to prevent self-redirection).
+- **State Persistence:** Using  in  to remember user information across sessions.
+- **CSS  & /:** Used extensively to create clean, responsive, and aligned layouts in the dashboard and headers.
 
 **key DB schema**
   - **coaches**: 
@@ -124,63 +134,60 @@ Key functionalities implemented and stabilized in this session:
   - No changes.
 
 **All files of reference**
-- ****: Heavily modified to fix Super Admin logic, add deduplication, and create the  endpoint.
-- ****: Modified extensively to manage the Reels feed display, handle the flash login redirection, and pass down state.
-- ****: Updated to remove duplicate buttons, add the credit progress bar, and hide tabs for partners.
-- ****: UI refined to eliminate black space, align header icons, and implement frontend deduplication.
-- ****: UI reorganized to prioritize the login flow for existing partners.
-- ****: Fixed a conflicting  endpoint that was overriding the correct Super Admin check.
-- ****: Updated with the correct list of Super Admin emails.
+- ****: Heavily refactored to create the Instagram Reels UI.
+- ****: Heavily refactored from a list of buttons to a minimalist grid of cards, and scroll behavior was fixed.
+- ****: Modified in the last step to clean up the UI and redesign the Réserver button. Contains the CSS bug that was just fixed.
+- ****: Modified to add  persistence and the reservation summary card.
+- ****: Modified to adjust main layout padding and pass props for the Reels UI.
+- ****: Modified to add the glow effect and other global styles.
+- ****: Minor modifications for de-duplication logic. Still needs major refactoring.
 
 **Areas that need refactoring**:
-- ****: **CRITICAL**. Still a large monolith that is difficult to maintain.
-- ****: **CRITICAL**. An extremely large component that needs to be broken down.
+- ****: **CRITICAL**. Still a large monolith. Extracting routes is a high-priority task for maintainability.
+- ****: **HIGH**. While the layout has been improved, the component itself is still very large and manages a lot of state and logic that could be broken down.
 
 **key api endpoints**
-- ****: (New) Deducts one credit from the authenticated partner's balance.
-- ****: (Modified) Now includes backend logic to de-duplicate partners before sending the list to the frontend.
-- ****: (Fixed) A route conflict was resolved to ensure this endpoint correctly identifies Super Admins.
-- ****: Used for intelligent routing post-login.
+- No new critical endpoints were added. The focus has been on frontend implementation and bug fixing. Existing endpoints like  and  are stable.
 
 **Critical Info for New Agent**
-- **Super Admin Logic:** The Super Admin check is now based on a list of emails . This logic was duplicated across several backend files and has been mostly centralized, but be cautious of any remaining hardcoded checks.
-- **Login is Sensitive:** The login flow now relies on  to force a clean state. Avoid using hash-based routing or simple state updates for post-login redirection.
-- **UI is Compact:** All UI changes must adhere to the zero black space principle. The main feed is designed to be immersive on mobile.
-- **Testing Agent:** The last action was to call the testing agent. Your first step should be to analyze its report from  and fix any issues found.
+- **Production Environment Risk:** The backend is **NOT** deployed for production. It runs exclusively in a temporary Emergent preview environment. This is a critical risk for a site with active users. The user is aware of this.
+- **UI is King:** The user has extremely specific requirements for the UI, focusing on a minimalist, premium, Reels-style aesthetic. Pay close attention to screenshots and explicit instructions regarding spacing, colors (violet glow), and component design.
+- **Start by Validating:** Your immediate first task is to run the testing agent to confirm the CSS fix for Mission v10.9 on . Do not proceed until this is validated.
+- **Distinguish  from :** The user makes requests for both the main Reels feed and the individual partner showcase page.  is for the main feed, while  is the partner's dedicated page. The last set of changes was for .
 
 **documents and test reports created in this job**
   -  (updated after each mission)
-  - Test reports for missions v9.5.6 through v9.6.6 are available in . The report for v9.6.7 should be the next one generated.
+  - Multiple test reports in . The last successful one was for v10.7. The run for v10.9 failed, was fixed, and now needs re-testing.
 
 **Last 10 User Messages and any pending HUMAN messages** 
-- **v9.6.7 (Last Request):** Final validation mission to confirm all recent fixes: zero black space, aligned icons, no video duplicates, and a flawless login flow. (IN PROGRESS)
-- **v9.6.6:** Fix video duplicates in the feed and align overlapping header icons. (Completed)
-- **v9.6.4:** Eliminate black space around the video and reorganize the login modal. (Completed)
-- **v9.6.1:** A final validation mission to confirm UI purity and the fixed login flow. (Completed)
-- **v9.6.0:** Fix the flash login issue and add a My Dashboard button to the chat. (Completed)
-- **v9.5.9:** Add a visual credit gauge to the partner dashboard and audit recent fixes. (Completed)
-- **v9.5.8:** Remove duplicate UI elements, implement credit deduction, and ensure data isolation. (Completed)
-- **v9.5.7:** Implement a maintenance mode lock and fix button positioning. (Completed)
-- **v9.5.6:** Fix Super Admin access and repair main page scrolling. (Completed)
+- **v10.9 (In Progress):** Clean up the partner showcase UI, remove extra icons, and redesign the Réserver button to be frameless and positioned at the bottom-right.
+- **v10.7 (Completed):** Replaced large dashboard buttons with compact, icon-based cards (Envelope for chat, Calendar for reservations).
+- **v10.6 (Completed):** Refactored the dashboard to a minimalist grid of cards and fixed critical mobile scrolling issues.
+- **v10.5 (Completed):** Harmonized all dashboard buttons to be the same size/style and fixed the mobile layout for the maintenance toggle.
+- **v10.4 (Completed):** Fixed chat persistence to eliminate empty message bubbles on reload.
+- **v10.3 (Completed):** Added a Glow Violet effect to the Like button, implemented chat memory via .
+- **v10.2 (Completed):** Fixed 16:9 videos to be full-screen ().
+- **Audit Request (Completed):** Requested a read-only audit to identify the backend hosting environment.
+- **Audit Request (Completed):** Requested a read-only security audit to check for hardcoded secrets.
+- **v9.6.9 (Completed):** Final validation mission for de-duplication and UI stability.
 
 **Project Health Check:**
-- **Brittle:** The application is functionally advanced, but its reliance on two large monolithic files (, ) remains a significant architectural risk. The high pace of UI changes has been stabilized, but the underlying tech debt is still present.
+- **Brittle/Mocked:** The backend is effectively mocked as it runs only in a non-persistent preview environment. This is a **CRITICAL** risk. The frontend is functionally advanced but has significant tech debt in large components () and a highly specific UI that can be brittle.
 
 **3rd Party Integrations**
-- **Stripe:** Used for payment processing. Stripe Connect is a major upcoming task.
-- **Resend:** Used for transactional and campaign emails.
-- **Google Auth:** Used for user login via Emergent's managed auth.
+- **Stripe:** Integrated for payments, but Stripe Connect for partner payouts is a major pending task.
+- **Resend:** Used for emails.
+- **Emergent-managed Google Auth:** Used for user login.
 
 **Testing status**
   - Testing agent used after significant changes: YES
   - Troubleshoot agent used after agent stuck in loop: NO
   - Test files created: None.
-  - Known regressions: None from this session.
+  - Known regressions: A CSS bug was introduced and fixed in the last step but needs verification.
 
 **Credentials to test flow:**
 - **Super Admin Emails:** , 
-- **Partner Test Account:** Onboard a new partner using any Google account and the free test pack.
-- **Access Method:** Use Google Login. For Super Admin, triple-click the © Afroboost 2026 footer text to open the login modal.
+- **Access Method:** Use Google Login. The Super Admin login modal can be accessed by triple-clicking the © Afroboost 2026 footer text.
 
 **What agent forgot to execute**
-- In mission v9.5.8, the user requested that credit deduction be implemented for **Chat** and **Promo Code** actions. The agent successfully implemented it for promo codes but did not add the logic for chat actions. This is captured in the In progress Task List.</analysis>
+- **Credit Deduction for Chat:** The original request in v9.5.8 to deduct credits for chat actions was never implemented. It was done for promo codes, but not for chat. This remains a pending task.</analysis>

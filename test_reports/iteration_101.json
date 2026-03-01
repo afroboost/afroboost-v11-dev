@@ -33,7 +33,7 @@
     "frontend": "100% - Visual verification confirmed violet colors and chat bubble icon"
   },
   "test_credentials": {
-    "api_url": "https://multi-coach-saas.preview.emergentagent.com"
+    "api_url": "https://video-feed-platform.preview.emergentagent.com"
   },
   "seed_data_creation": "None - tested existing functionality",
   "retest_needed": false,

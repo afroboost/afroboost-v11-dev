@@ -17,7 +17,7 @@ import uuid
 # Get BASE_URL from environment
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 if not BASE_URL:
-    BASE_URL = "https://multi-coach-saas.preview.emergentagent.com"
+    BASE_URL = "https://video-feed-platform.preview.emergentagent.com"
 
 # Test data
 TEST_PARTICIPANT_ID = "fc7f7b7e-5629-4e44-a8d6-bc1e1230754b"

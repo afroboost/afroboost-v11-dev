@@ -55,7 +55,7 @@
     "frontend": "Not tested (requires Google OAuth authentication)"
   },
   "test_credentials": {
-    "API_URL": "https://multi-coach-saas.preview.emergentagent.com"
+    "API_URL": "https://video-feed-platform.preview.emergentagent.com"
   },
   "seed_data_creation": "Test campaign created and deleted during tests. No persistent test data.",
   "retest_needed": false,

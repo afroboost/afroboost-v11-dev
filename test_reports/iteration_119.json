@@ -32,7 +32,7 @@
     "frontend": "100% - All v9.6.4 UI features verified via Playwright"
   },
   "test_credentials": {
-    "api_url": "https://multi-coach-saas.preview.emergentagent.com",
+    "api_url": "https://video-feed-platform.preview.emergentagent.com",
     "super_admin_email": "afroboost.bassi@gmail.com"
   },
   "seed_data_creation": "None - used existing data",

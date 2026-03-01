@@ -79,7 +79,7 @@
   "test_credentials": {
     "promo_code": "basxx",
     "required_email": "bassicustomshoes@gmail.com",
-    "api_base": "https://multi-coach-saas.preview.emergentagent.com/api"
+    "api_base": "https://video-feed-platform.preview.emergentagent.com/api"
   },
   "seed_data_creation": "Test users created during Playwright testing",
   "retest_needed": false,

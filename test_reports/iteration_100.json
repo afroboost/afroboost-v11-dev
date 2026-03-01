@@ -31,7 +31,7 @@
     "frontend": "Code review verified - all data-testid attributes present"
   },
   "test_credentials": {
-    "api_url": "https://multi-coach-saas.preview.emergentagent.com"
+    "api_url": "https://video-feed-platform.preview.emergentagent.com"
   },
   "seed_data_creation": "TEST_Campaign_v941 created and deleted during testing",
   "retest_needed": false,

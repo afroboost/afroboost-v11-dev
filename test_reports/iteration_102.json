@@ -32,7 +32,7 @@
     "frontend": "100% - All visual verifications passed, no JS errors"
   },
   "test_credentials": {
-    "api_url": "https://multi-coach-saas.preview.emergentagent.com"
+    "api_url": "https://video-feed-platform.preview.emergentagent.com"
   },
   "seed_data_creation": "None - tested existing functionality",
   "retest_needed": false,

@@ -39,7 +39,7 @@
   },
   "test_credentials": {
     "super_admin_email": "contact.artboost@gmail.com",
-    "api_url": "https://multi-coach-saas.preview.emergentagent.com"
+    "api_url": "https://video-feed-platform.preview.emergentagent.com"
   },
   "seed_data_creation": "Test data created via pytest for ai-config prompts verification",
   "retest_needed": false,

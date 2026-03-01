@@ -10,7 +10,7 @@ import uuid
 # Get BASE_URL from environment
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 if not BASE_URL:
-    BASE_URL = "https://multi-coach-saas.preview.emergentagent.com"
+    BASE_URL = "https://video-feed-platform.preview.emergentagent.com"
 
 class TestChatSmartEntry:
     """Tests for /api/chat/smart-entry - intelligent entry point with user recognition"""

@@ -34,7 +34,7 @@
     "frontend": "100% - All v9.4.9 features verified"
   },
   "test_credentials": {
-    "api_url": "https://multi-coach-saas.preview.emergentagent.com",
+    "api_url": "https://video-feed-platform.preview.emergentagent.com",
     "test_partner_vitrine": "/coach/bassi"
   },
   "seed_data_creation": "None - used existing partners data",

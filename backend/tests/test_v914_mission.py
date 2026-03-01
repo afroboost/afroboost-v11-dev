@@ -13,7 +13,7 @@ import requests
 import os
 
 # Base URL from environment - PUBLIC URL
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://multi-coach-saas.preview.emergentagent.com')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://video-feed-platform.preview.emergentagent.com')
 
 # Super Admin credentials
 SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"

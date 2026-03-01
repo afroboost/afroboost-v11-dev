@@ -7,7 +7,7 @@ import requests
 import json
 import uuid
 
-BACKEND_URL = "https://multi-coach-saas.preview.emergentagent.com"
+BACKEND_URL = "https://video-feed-platform.preview.emergentagent.com"
 BASE_API_URL = f"{BACKEND_URL}/api"
 
 def test_delete_participant_corrected():

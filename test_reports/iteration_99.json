@@ -34,7 +34,7 @@
     "frontend": "100% (code review + Playwright verification)"
   },
   "test_credentials": {
-    "api_url": "https://multi-coach-saas.preview.emergentagent.com"
+    "api_url": "https://video-feed-platform.preview.emergentagent.com"
   },
   "seed_data_creation": "TestUser940, TestMsgUser - created during pytest for chat session verification",
   "retest_needed": false,

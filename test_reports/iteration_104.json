@@ -31,7 +31,7 @@
     "frontend": "100% - All v9.4.5 features verified"
   },
   "test_credentials": {
-    "api_url": "https://multi-coach-saas.preview.emergentagent.com",
+    "api_url": "https://video-feed-platform.preview.emergentagent.com",
     "test_coach_vitrine": "/coach/3f36bd1b-0069-4174-8eef-bd4cefc30298"
   },
   "seed_data_creation": "None - used existing coach data (Henri BASSI)",

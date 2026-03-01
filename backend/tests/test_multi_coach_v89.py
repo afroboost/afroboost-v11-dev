@@ -12,7 +12,7 @@ import os
 import uuid
 
 # API Base URL from environment
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://multi-coach-saas.preview.emergentagent.com').rstrip('/')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://video-feed-platform.preview.emergentagent.com').rstrip('/')
 
 # Super Admin Email for testing
 SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"

@@ -72,7 +72,7 @@
     "frontend": "100% (all UI tests passed)"
   },
   "test_credentials": {
-    "API_URL": "https://multi-coach-saas.preview.emergentagent.com",
+    "API_URL": "https://video-feed-platform.preview.emergentagent.com",
     "Coach_Auth": "Google OAuth (contact.artboost@gmail.com) - not testable automatically"
   },
   "seed_data_creation": "Test participants and sessions created during testing",

@@ -57,7 +57,7 @@
     "frontend": "N/A (backend only testing requested)"
   },
   "test_credentials": {
-    "API_URL": "https://multi-coach-saas.preview.emergentagent.com",
+    "API_URL": "https://video-feed-platform.preview.emergentagent.com",
     "test_participant_id": "fc7f7b7e-5629-4e44-a8d6-bc1e1230754b",
     "test_session_id": "6a8a7220-0436-409b-a000-6ccf7bb2b38c"
   },

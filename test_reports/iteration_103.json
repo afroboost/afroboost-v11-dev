@@ -36,7 +36,7 @@
     "frontend": "100% - CSS variables verified, chat button violet confirmed"
   },
   "test_credentials": {
-    "api_url": "https://multi-coach-saas.preview.emergentagent.com"
+    "api_url": "https://video-feed-platform.preview.emergentagent.com"
   },
   "seed_data_creation": "None - tested existing functionality",
   "retest_needed": false,
