@@ -199,38 +199,62 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
       {/* v10.0: STYLE INSTAGRAM REELS - ZÉRO VIDE - Vidéo plein écran */}
       <div 
         className="absolute inset-0"
-        style={{ paddingTop: '5px' }}
+        style={{ paddingTop: '0px' }}
       >
-        {/* === VIDÉO PLEIN ÉCRAN avec object-fit: cover === */}
+        {/* === v10.2: VIDÉO PLEIN ÉCRAN - ZÉRO VIDE - object-fit: cover === */}
         <div 
           className="absolute inset-0 overflow-hidden cursor-pointer"
-          style={{ borderRadius: '0px', marginTop: '5px' }}
+          style={{ borderRadius: '0px' }}
           onClick={handleVideoClick}
         >
           {shouldLoadVideo ? (
             <>
               {activeMedia.youtubeId ? (
-                <iframe
-                  className="absolute inset-0 w-full h-full"
-                  src={`https://www.youtube.com/embed/${activeMedia.youtubeId}?autoplay=${isPaused ? 0 : 1}&mute=${isMuted ? 1 : 0}&loop=1&playlist=${activeMedia.youtubeId}&controls=0&showinfo=0&rel=0&modestbranding=1&playsinline=1`}
-                  title={displayName}
-                  frameBorder="0"
-                  allow="autoplay; encrypted-media"
-                  style={{ pointerEvents: 'none', transform: 'scale(1.5)', transformOrigin: 'center center' }}
-                  onError={() => setHasError(true)}
-                  loading="lazy"
-                />
+                <div className="absolute inset-0 overflow-hidden">
+                  <iframe
+                    className="absolute"
+                    src={`https://www.youtube.com/embed/${activeMedia.youtubeId}?autoplay=${isPaused ? 0 : 1}&mute=${isMuted ? 1 : 0}&loop=1&playlist=${activeMedia.youtubeId}&controls=0&showinfo=0&rel=0&modestbranding=1&playsinline=1`}
+                    title={displayName}
+                    frameBorder="0"
+                    allow="autoplay; encrypted-media"
+                    style={{ 
+                      pointerEvents: 'none',
+                      position: 'absolute',
+                      top: '50%',
+                      left: '50%',
+                      width: '177.78vh', /* 16:9 aspect ratio: 100vh * 16/9 */
+                      height: '100vh',
+                      minWidth: '100%',
+                      minHeight: '56.25vw', /* 9:16 inverse */
+                      transform: 'translate(-50%, -50%)'
+                    }}
+                    onError={() => setHasError(true)}
+                    loading="lazy"
+                  />
+                </div>
               ) : activeMedia.vimeoId ? (
-                <iframe
-                  className="absolute inset-0 w-full h-full"
-                  src={`https://player.vimeo.com/video/${activeMedia.vimeoId}?autoplay=${isPaused ? 0 : 1}&muted=${isMuted ? 1 : 0}&loop=1&background=1`}
-                  title={displayName}
-                  frameBorder="0"
-                  allow="autoplay"
-                  style={{ pointerEvents: 'none', transform: 'scale(1.5)', transformOrigin: 'center center' }}
-                  onError={() => setHasError(true)}
-                  loading="lazy"
-                />
+                <div className="absolute inset-0 overflow-hidden">
+                  <iframe
+                    className="absolute"
+                    src={`https://player.vimeo.com/video/${activeMedia.vimeoId}?autoplay=${isPaused ? 0 : 1}&muted=${isMuted ? 1 : 0}&loop=1&background=1`}
+                    title={displayName}
+                    frameBorder="0"
+                    allow="autoplay"
+                    style={{ 
+                      pointerEvents: 'none',
+                      position: 'absolute',
+                      top: '50%',
+                      left: '50%',
+                      width: '177.78vh',
+                      height: '100vh',
+                      minWidth: '100%',
+                      minHeight: '56.25vw',
+                      transform: 'translate(-50%, -50%)'
+                    }}
+                    onError={() => setHasError(true)}
+                    loading="lazy"
+                  />
+                </div>
               ) : activeMedia.isDirectVideo ? (
                 <video
                   ref={videoRef}
