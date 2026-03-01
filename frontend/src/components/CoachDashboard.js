@@ -4016,12 +4016,34 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       >
         🚪 Déconnexion
       </button>
+      
+      {/* v10.6: BOUTON RETOUR - Icône flèche en haut à gauche */}
+      <button 
+        onClick={onBack}
+        className="flex items-center justify-center w-10 h-10 rounded-full transition-all hover:scale-110"
+        style={{ 
+          position: 'fixed',
+          top: '12px',
+          left: '12px',
+          zIndex: 9999,
+          background: 'rgba(139, 92, 246, 0.3)', 
+          border: '1px solid rgba(217, 28, 210, 0.4)',
+          backdropFilter: 'blur(8px)',
+          boxShadow: '0 0 10px rgba(217, 28, 210, 0.2)'
+        }}
+        data-testid="coach-back"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+          <path d="M19 12H5M12 19l-7-7 7-7"/>
+        </svg>
+      </button>
 
-      <div className="max-w-6xl mx-auto">
-        <div className="flex justify-between items-center mb-8 flex-wrap gap-4">
-          <div>
+      {/* v10.6: Container principal avec scroll */}
+      <div className="max-w-6xl mx-auto px-4" style={{ paddingTop: '60px', paddingBottom: '100px', overflowY: 'auto', minHeight: '100vh' }}>
+        <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
+          <div className="flex-1 min-w-0">
             {/* v9.1.3: Marque blanche - Affiche platform_name ou "Mon Espace Afroboost" */}
-            <h1 className="font-bold text-white" style={{ fontSize: '28px' }} data-testid="dashboard-title">
+            <h1 className="font-bold text-white text-2xl" data-testid="dashboard-title">
               {dashboardTitle}
             </h1>
             {/* Affichage de l'utilisateur connecté via Google OAuth */}
