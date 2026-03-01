@@ -3754,12 +3754,12 @@ function App() {
         />
       )}
 
-      {/* v9.6.4: Flux Reels - IMMERSIF 90vh sur mobile */}
+      {/* v9.7.2: Flux Reels - IMMERSIF 85vh pour Samsung Ultra 24 */}
       <div 
         className="relative w-full" 
         style={{ 
-          height: '90vh',  // v9.6.4: Augmenté pour effet plein écran
-          maxHeight: '90vh',
+          height: '85vh',  // v9.7.2: 85vh pour Samsung Ultra 24
+          maxHeight: '85vh',
           background: '#000000' 
         }}
       >
@@ -3773,6 +3773,7 @@ function App() {
           isSuperAdmin={isSuperAdminEmail(coachUser?.email)}
           lang={lang}
           onLangChange={setLang}
+          currentVitrineEmail={null}
         />
       </div>
       
