@@ -189,215 +189,234 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
 
   return (
     <div 
-      className="snap-start snap-always w-full flex-shrink-0 flex items-center justify-center"
+      className="snap-start snap-always w-full flex-shrink-0 relative"
       style={{ 
         height: '100%',
         background: '#000000'
       }}
       data-testid={`partner-card-${partner.id || partner.email}`}
     >
-      {/* v9.6.4: ZÉRO VIDE NOIR - padding réduit à 5px */}
+      {/* v10.0: STYLE INSTAGRAM REELS - ZÉRO VIDE - Vidéo plein écran */}
       <div 
-        className="relative w-full h-full flex items-start justify-center"
-        style={{ paddingTop: '5px', paddingLeft: '2px', paddingRight: '2px', paddingBottom: '0' }}
+        className="absolute inset-0"
+        style={{ paddingTop: '5px' }}
       >
+        {/* === VIDÉO PLEIN ÉCRAN avec object-fit: cover === */}
         <div 
-          className="relative w-full"
-          style={{
-            aspectRatio: '9/16',
-            maxHeight: '98%',  // v9.5.7: Maximisé à 98%
-            maxWidth: '100%'
-          }}
+          className="absolute inset-0 overflow-hidden cursor-pointer"
+          style={{ borderRadius: '0px', marginTop: '5px' }}
+          onClick={handleVideoClick}
         >
-          {/* === VIDÉO/IMAGE - Format 9:16 avec LAZY LOADING === */}
-          <div 
-            className="absolute inset-0 overflow-hidden cursor-pointer"
-            style={{ borderRadius: '12px' }}  // v9.5.7: Rayon réduit
-            onClick={handleVideoClick}
-          >
-            {shouldLoadVideo ? (
-              <>
-                {activeMedia.youtubeId ? (
-                  <iframe
-                    className="absolute inset-0 w-full h-full"
-                    src={`https://www.youtube.com/embed/${activeMedia.youtubeId}?autoplay=${isPaused ? 0 : 1}&mute=${isMuted ? 1 : 0}&loop=1&playlist=${activeMedia.youtubeId}&controls=0&showinfo=0&rel=0&modestbranding=1&playsinline=1`}
-                    title={displayName}
-                    frameBorder="0"
-                    allow="autoplay; encrypted-media"
-                    style={{ pointerEvents: 'none' }}
-                    onError={() => setHasError(true)}
-                    loading="lazy"
-                  />
-                ) : activeMedia.vimeoId ? (
-                  <iframe
-                    className="absolute inset-0 w-full h-full"
-                    src={`https://player.vimeo.com/video/${activeMedia.vimeoId}?autoplay=${isPaused ? 0 : 1}&muted=${isMuted ? 1 : 0}&loop=1&background=1`}
-                    title={displayName}
-                    frameBorder="0"
-                    allow="autoplay"
-                    style={{ pointerEvents: 'none' }}
-                    onError={() => setHasError(true)}
-                    loading="lazy"
-                  />
-                ) : activeMedia.isDirectVideo ? (
-                  <video
-                    ref={videoRef}
-                    autoPlay={!isPaused}
-                    loop
-                    muted={isMuted}
-                    playsInline
-                    className="absolute inset-0 w-full h-full object-cover"
-                    onError={() => setHasError(true)}
-                    preload="metadata"
-                  >
-                    <source src={activeMedia.url} type="video/mp4" />
-                  </video>
-                ) : (
+          {shouldLoadVideo ? (
+            <>
+              {activeMedia.youtubeId ? (
+                <iframe
+                  className="absolute inset-0 w-full h-full"
+                  src={`https://www.youtube.com/embed/${activeMedia.youtubeId}?autoplay=${isPaused ? 0 : 1}&mute=${isMuted ? 1 : 0}&loop=1&playlist=${activeMedia.youtubeId}&controls=0&showinfo=0&rel=0&modestbranding=1&playsinline=1`}
+                  title={displayName}
+                  frameBorder="0"
+                  allow="autoplay; encrypted-media"
+                  style={{ pointerEvents: 'none', transform: 'scale(1.5)', transformOrigin: 'center center' }}
+                  onError={() => setHasError(true)}
+                  loading="lazy"
+                />
+              ) : activeMedia.vimeoId ? (
+                <iframe
+                  className="absolute inset-0 w-full h-full"
+                  src={`https://player.vimeo.com/video/${activeMedia.vimeoId}?autoplay=${isPaused ? 0 : 1}&muted=${isMuted ? 1 : 0}&loop=1&background=1`}
+                  title={displayName}
+                  frameBorder="0"
+                  allow="autoplay"
+                  style={{ pointerEvents: 'none', transform: 'scale(1.5)', transformOrigin: 'center center' }}
+                  onError={() => setHasError(true)}
+                  loading="lazy"
+                />
+              ) : activeMedia.isDirectVideo ? (
+                <video
+                  ref={videoRef}
+                  autoPlay={!isPaused}
+                  loop
+                  muted={isMuted}
+                  playsInline
+                  className="absolute inset-0 w-full h-full object-cover"
+                  onError={() => setHasError(true)}
+                  preload="metadata"
+                >
+                  <source src={activeMedia.url} type="video/mp4" />
+                </video>
+              ) : (
+                <div 
+                  className="absolute inset-0"
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.5) 0%, rgba(217, 28, 210, 0.4) 100%)'
+                  }}
+                >
                   <div 
-                    className="absolute inset-0"
+                    className="absolute inset-0 flex items-center justify-center"
                     style={{
-                      background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.5) 0%, rgba(217, 28, 210, 0.4) 100%)'
+                      background: 'radial-gradient(circle at 50% 50%, rgba(217, 28, 210, 0.3) 0%, transparent 70%)'
                     }}
                   >
-                    <div 
-                      className="absolute inset-0 flex items-center justify-center"
-                      style={{
-                        background: 'radial-gradient(circle at 50% 50%, rgba(217, 28, 210, 0.3) 0%, transparent 70%)'
-                      }}
-                    >
-                      <span className="text-5xl opacity-70">🎬</span>
-                    </div>
+                    <span className="text-5xl opacity-70">🎬</span>
                   </div>
-                )}
-              </>
-            ) : (
-              /* Placeholder pendant que non visible (lazy loading) */
-              <div 
-                className="absolute inset-0 flex items-center justify-center"
-                style={{ background: 'rgba(20, 10, 30, 0.8)' }}
-              >
-                <div className="animate-pulse w-16 h-16 rounded-full" style={{ background: 'rgba(217, 28, 210, 0.3)' }}></div>
-              </div>
-            )}
-            
-            {/* Indicateur Pause au centre */}
-            {isPaused && shouldLoadVideo && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/30 transition-opacity">
-                <div 
-                  className="w-16 h-16 rounded-full flex items-center justify-center"
-                  style={{ background: 'rgba(255,255,255,0.2)', backdropFilter: 'blur(8px)' }}
-                >
-                  <svg width="32" height="32" viewBox="0 0 24 24" fill="white">
-                    <polygon points="5 3 19 12 5 21 5 3" />
-                  </svg>
                 </div>
+              )}
+            </>
+          ) : (
+            /* Placeholder pendant que non visible (lazy loading) */
+            <div 
+              className="absolute inset-0 flex items-center justify-center"
+              style={{ background: 'rgba(20, 10, 30, 0.8)' }}
+            >
+              <div className="animate-pulse w-16 h-16 rounded-full" style={{ background: 'rgba(217, 28, 210, 0.3)' }}></div>
+            </div>
+          )}
+          
+          {/* Indicateur Pause au centre */}
+          {isPaused && shouldLoadVideo && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/30 transition-opacity">
+              <div 
+                className="w-16 h-16 rounded-full flex items-center justify-center"
+                style={{ background: 'rgba(255,255,255,0.2)', backdropFilter: 'blur(8px)' }}
+              >
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="white">
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
               </div>
-            )}
-          </div>
-          
-          {/* Overlay gradient discret en bas */}
-          <div 
-            className="absolute inset-0 pointer-events-none"
-            style={{
-              borderRadius: '16px',
-              background: 'linear-gradient(0deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.15) 40%, transparent 60%)'
+            </div>
+          )}
+        </div>
+        
+        {/* v10.0: Gradient overlay bas pour lisibilité */}
+        <div 
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background: 'linear-gradient(0deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.3) 25%, transparent 50%)'
+          }}
+        />
+        
+        {/* === v10.0: BARRE D'ACTIONS STYLE INSTAGRAM - DROITE === */}
+        <div 
+          className="absolute right-3 bottom-28 flex flex-col items-center gap-5"
+          data-testid="reels-action-bar"
+        >
+          {/* Bouton Like */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!isBlocked) onLike();
             }}
-          />
+            className="flex flex-col items-center transition-all hover:scale-110 active:scale-95"
+            data-testid={`like-btn-${partner.id || partner.email}`}
+          >
+            <div 
+              className="w-11 h-11 rounded-full flex items-center justify-center"
+              style={{
+                background: 'rgba(0,0,0,0.4)',
+                backdropFilter: 'blur(4px)'
+              }}
+            >
+              <HeartIcon filled={isLiked} />
+            </div>
+            <span className="text-white text-xs mt-1" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}>
+              {isLiked ? '1' : '0'}
+            </span>
+          </button>
           
-          {/* === UI OVERLAY v9.7.2 === */}
-          
-          {/* v9.7.2: Bouton Son SUPPRIMÉ ICI - Un seul bouton Son global dans le header */}
-          
-          {/* Bouton Réserver COMPACT - Bas droite - v9.5.7: Masqué en maintenance */}
+          {/* Bouton Réserver */}
           {!isBlocked && (
             <button
               onClick={handleReserve}
-              className="absolute bottom-3 right-3 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all hover:scale-105"
-              style={{
-                background: 'var(--primary-color, #D91CD2)',
-                color: 'white',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
-              }}
+              className="flex flex-col items-center transition-all hover:scale-110"
               data-testid={`reserve-btn-${partner.id || partner.email}`}
             >
-              <CalendarIcon />
-              <span>Réserver</span>
+              <div 
+                className="w-11 h-11 rounded-full flex items-center justify-center"
+                style={{
+                  background: 'var(--primary-color, #D91CD2)',
+                  boxShadow: '0 0 12px rgba(217, 28, 210, 0.5)'
+                }}
+              >
+                <CalendarIcon />
+              </div>
+              <span className="text-white text-xs mt-1" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}>
+                Réserver
+              </span>
             </button>
           )}
-          
-          {/* === BLOC BAS GAUCHE: Photo + Like + Nom + Bio === */}
-          <div 
-            className="absolute bottom-3 left-3 right-24"
-            data-testid={`profile-overlay-${partner.id || partner.email}`}
-          >
-            <div className="flex items-center gap-2 mb-0.5">
-              <div 
-                className="cursor-pointer flex-shrink-0"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onNavigate(partner);
-                }}
-              >
-                {partner.photo_url || partner.logo_url ? (
-                  <img 
-                    src={partner.photo_url || partner.logo_url} 
-                    alt={displayName}
-                    className="w-9 h-9 rounded-full object-cover"
-                    style={{ 
-                      border: '2px solid var(--primary-color, #D91CD2)',
-                      boxShadow: '0 0 8px var(--glow-color, rgba(217, 28, 210, 0.4))'
-                    }}
-                    loading="lazy"
-                  />
-                ) : (
-                  <div 
-                    className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold"
-                    style={{ 
-                      background: 'linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, var(--secondary-color, #8b5cf6) 100%)',
-                      color: 'white',
-                      boxShadow: '0 0 8px var(--glow-color, rgba(217, 28, 210, 0.4))'
-                    }}
-                  >
-                    {initial}
-                  </div>
-                )}
-              </div>
-              
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onLike();
-                }}
-                className="p-0.5 transition-all hover:scale-125 active:scale-95 flex-shrink-0"
-                style={{
-                  color: isLiked ? 'var(--primary-color, #D91CD2)' : 'white',
-                  filter: isLiked ? 'drop-shadow(0 0 6px var(--primary-color, #D91CD2))' : 'none'
-                }}
-                data-testid={`like-btn-${partner.id || partner.email}`}
-              >
-                <HeartIcon filled={isLiked} />
-              </button>
-              
-              <span 
-                className="text-white text-sm font-semibold truncate cursor-pointer"
-                style={{ textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onNavigate(partner);
-                }}
-              >
-                {displayName}
-              </span>
+        </div>
+        
+        {/* === v10.0: BLOC BAS GAUCHE - Photo + Nom + Légende (Style Instagram) === */}
+        <div 
+          className="absolute bottom-6 left-3 right-20"
+          data-testid={`profile-overlay-${partner.id || partner.email}`}
+        >
+          {/* Photo + Nom */}
+          <div className="flex items-center gap-2.5 mb-2">
+            <div 
+              className="cursor-pointer flex-shrink-0"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!isBlocked) onNavigate(partner);
+              }}
+            >
+              {partner.photo_url || partner.logo_url ? (
+                <img 
+                  src={partner.photo_url || partner.logo_url} 
+                  alt={displayName}
+                  className="w-10 h-10 rounded-full object-cover"
+                  style={{ 
+                    border: '2px solid white',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+                  }}
+                  loading="lazy"
+                />
+              ) : (
+                <div 
+                  className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold"
+                  style={{ 
+                    background: 'linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, var(--secondary-color, #8b5cf6) 100%)',
+                    color: 'white',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+                  }}
+                >
+                  {initial}
+                </div>
+              )}
             </div>
             
-            {bio && (
-              <p 
-                className="text-white/60 text-xs leading-tight pl-11"
-                style={{ 
-                  textShadow: '0 1px 2px rgba(0,0,0,0.8)',
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
+            <span 
+              className="text-white text-sm font-bold cursor-pointer hover:underline"
+              style={{ textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!isBlocked) onNavigate(partner);
+              }}
+            >
+              {displayName}
+            </span>
+          </div>
+          
+          {/* Légende / Bio */}
+          {bio && (
+            <p 
+              className="text-white/90 text-sm leading-snug"
+              style={{ 
+                textShadow: '0 1px 2px rgba(0,0,0,0.8)',
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden'
+              }}
+            >
+              {bio}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
                   overflow: 'hidden'
                 }}
               >
