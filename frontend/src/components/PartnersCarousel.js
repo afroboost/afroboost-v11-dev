@@ -417,18 +417,6 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
     </div>
   );
 };
-                  overflow: 'hidden'
-                }}
-              >
-                {bio}
-              </p>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 // Icône Globe pour sélecteur de langue
 const GlobeIcon = () => (
