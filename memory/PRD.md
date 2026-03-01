@@ -1,5 +1,56 @@
 # Afroboost - Document de Référence Produit (PRD)
 
+## v10.4 - CHAT PERSISTANT ET DASHBOARD HARMONISÉ VALIDÉS ✅ (01 Mars 2026)
+
+### STATUT: MISSION v10.4 COMPLÈTE
+
+| Objectif | Statut |
+|----------|--------|
+| Fix bulles vides (fallback robuste) | ✅ |
+| Bouton Retour harmonisé | ✅ |
+| Croix fermeture récapitulatif | ✅ |
+| Mémoire localStorage | ✅ |
+
+### 1. FALLBACK ROBUSTE POUR MESSAGES
+
+**ChatWidget.js L329:**
+```javascript
+const messageText = msg.content || msg.text || msg.body || '';
+```
+
+Appliqué à tous les mappings de messages (L1964, L2022, L2086).
+
+### 2. BOUTON RETOUR HARMONISÉ
+
+**CoachDashboard.js L4298-4312:**
+```jsx
+<button 
+  style={{ 
+    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.6), rgba(217, 28, 210, 0.4))',
+    border: '1px solid rgba(217, 28, 210, 0.3)',
+    boxShadow: '0 0 10px rgba(217, 28, 210, 0.2)'
+  }}
+>
+  <svg>←</svg> Retour
+</button>
+```
+
+### 3. CROIX DE FERMETURE RÉCAPITULATIF
+
+**ChatWidget.js L335, L407-437:**
+- État `isMinimized` pour basculer entre vue complète et minimisée
+- Bouton × en haut à droite de la carte
+- Version minimisée: "✨ Réservation confirmée - Voir détails"
+
+### Tests v10.4 - Iteration 128
+
+| Catégorie | Tests | Résultat |
+|-----------|-------|----------|
+| Backend | 13/13 | ✅ 100% |
+| Frontend | All | ✅ 100% |
+
+---
+
 ## v10.3 - GLOW VIOLET ET MÉMOIRE CHAT VALIDÉS ✅ (01 Mars 2026)
 
 ### STATUT: MISSION v10.3 COMPLÈTE
