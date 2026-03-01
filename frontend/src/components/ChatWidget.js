@@ -331,14 +331,58 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
   const isOtherUser = isCommunity && msg.type === 'user' && msg.senderId && msg.senderId !== currentUserId;
   
   // v10.3: RÉCAPITULATIF DE RÉSERVATION PREMIUM
+  // v10.4: État local pour fermer/minimiser la carte
+  const [isMinimized, setIsMinimized] = React.useState(false);
+  
   if (msg.isReservationSummary && msg.reservationDetails) {
     const details = msg.reservationDetails;
+    
+    // v10.4: Version minimisée après fermeture
+    if (isMinimized) {
+      return (
+        <div
+          style={{
+            alignSelf: 'flex-start',
+            maxWidth: '320px'
+          }}
+        >
+          <div style={{
+            fontSize: '10px',
+            fontWeight: '600',
+            marginBottom: '3px',
+            marginLeft: '4px',
+            color: '#A78BFA'
+          }}>
+            Coach Bassi
+          </div>
+          <button
+            onClick={() => setIsMinimized(false)}
+            style={{
+              background: 'rgba(217, 28, 210, 0.2)',
+              border: '1px solid rgba(217, 28, 210, 0.4)',
+              borderRadius: '12px',
+              padding: '10px 16px',
+              color: '#D91CD2',
+              fontSize: '12px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            ✨ Réservation confirmée - Voir détails
+          </button>
+        </div>
+      );
+    }
+    
     return (
       <div
         style={{
           alignSelf: 'flex-start',
           maxWidth: '320px',
-          width: '100%'
+          width: '100%',
+          position: 'relative'
         }}
       >
         <div style={{
@@ -356,9 +400,43 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             border: '2px solid #D91CD2',
             borderRadius: '16px',
             padding: '16px',
-            boxShadow: '0 0 20px rgba(217, 28, 210, 0.3), 0 0 40px rgba(217, 28, 210, 0.1)'
+            boxShadow: '0 0 20px rgba(217, 28, 210, 0.3), 0 0 40px rgba(217, 28, 210, 0.1)',
+            position: 'relative'
           }}
         >
+          {/* v10.4: Bouton fermeture (X) */}
+          <button
+            onClick={() => setIsMinimized(true)}
+            style={{
+              position: 'absolute',
+              top: '8px',
+              right: '8px',
+              width: '24px',
+              height: '24px',
+              borderRadius: '50%',
+              background: 'rgba(255,255,255,0.1)',
+              border: '1px solid rgba(255,255,255,0.2)',
+              color: 'rgba(255,255,255,0.6)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '14px',
+              transition: 'all 0.2s'
+            }}
+            onMouseOver={(e) => {
+              e.target.style.background = 'rgba(217, 28, 210, 0.3)';
+              e.target.style.color = 'white';
+            }}
+            onMouseOut={(e) => {
+              e.target.style.background = 'rgba(255,255,255,0.1)';
+              e.target.style.color = 'rgba(255,255,255,0.6)';
+            }}
+            data-testid="close-reservation-summary"
+          >
+            ×
+          </button>
+          
           <div style={{ textAlign: 'center', marginBottom: '12px' }}>
             <span style={{ fontSize: '24px' }}>✨</span>
             <h4 style={{ 
