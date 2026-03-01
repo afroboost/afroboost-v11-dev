@@ -420,8 +420,8 @@ const GlobeIcon = () => (
   </svg>
 );
 
-// === COMPOSANT PRINCIPAL v9.6.8 - Support mode maintenance + Langue + Son global ===
-const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, isSuperAdmin = false, lang = 'fr', onLangChange }) => {
+// === COMPOSANT PRINCIPAL v9.7.2 - Vitrine Unique + Son global unique ===
+const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, isSuperAdmin = false, lang = 'fr', onLangChange, currentVitrineEmail = null }) => {
   // v9.6.8: État pour sélecteur de langue
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [globalMuted, setGlobalMuted] = useState(true); // Son global muté par défaut
