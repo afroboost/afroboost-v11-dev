@@ -1959,7 +1959,8 @@ export const ChatWidget = () => {
                 const restoredMessages = historyRes.data.map(msg => ({
                   id: msg.id,
                   type: msg.sender_type === 'user' ? 'user' : msg.sender_type === 'coach' ? 'coach' : 'ai',
-                  text: msg.content,
+                  // v10.4: Fallback robuste pour texte (content, text, body)
+                  text: msg.content || msg.text || msg.body || '',
                   sender: msg.sender_name
                 }));
                 setMessages(restoredMessages);
