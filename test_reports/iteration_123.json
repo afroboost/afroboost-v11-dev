@@ -1,0 +1,118 @@
+{
+  "summary": "Mission v9.6.9 - Stabilisation Finale et Anti-Doublons - ALL TESTS PASSED. Verified: (1) API /api/partners/active returns 5 unique partners with no duplicates, (2) Each partner has unique ID (bassi_main, uuid format), (3) 3 icons aligned in header (Langue/Loupe/Son) with gap 16px, (4) paddingTop 5px on video cards, (5) Chat button violet visible and functional, (6) 'Devenir Partenaire' button visible for non-partners in chat, (7) API /check-partner returns is_partner=true for super admins with is_super_admin=true",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v969_mission.py",
+    "/app/test_reports/pytest/pytest_v969_mission.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "✅ PartnersCarousel.js L687: Container icônes avec gap-4 (16px) - VERIFIED via Playwright",
+    "✅ PartnersCarousel.js L202: paddingTop: '5px' on video cards - VERIFIED",
+    "✅ coach_routes.py L305-352: Déduplication backend avec seen_emails Set() - VERIFIED",
+    "✅ PartnersCarousel.js L499-520: Déduplication frontend avec Set() - VERIFIED",
+    "✅ ChatWidget.js L3704-3727: Bouton Mon Dashboard présent (data-testid=goto-dashboard-btn)",
+    "✅ ChatWidget.js L4034-4063: Bouton Devenir Partenaire visible pour non-partenaires"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v969_mission.py"
+  ],
+  "success_rate": {
+    "backend": "100% - 13/13 pytest tests passed",
+    "frontend": "100% - All visual and functional tests passed via Playwright"
+  },
+  "test_credentials": {
+    "api_url": "https://multi-coach-saas.preview.emergentagent.com",
+    "super_admin_emails": ["afroboost.bassi@gmail.com", "contact.artboost@gmail.com"]
+  },
+  "seed_data_creation": "None - used existing data",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Mission v9.6.9 validated: (1) Header icons Langue/Loupe/Son with gap-4 (16px), (2) paddingTop 5px for minimal black space, (3) No duplicate partners in /api/partners/active (verified 5 unique), (4) Partner redirection logic verified (is_partner=true → dashboard), (5) Chat widget functional with Devenir Partenaire button for visitors.",
+  "verified_features_v969": {
+    "DEDUPLICATION_BACKEND": {
+      "status": "PASS",
+      "endpoint": "/api/partners/active",
+      "total_partners": 5,
+      "unique_partners": 5,
+      "duplicates_found": 0,
+      "bassi_main_id": "present"
+    },
+    "DEDUPLICATION_FRONTEND": {
+      "status": "PASS",
+      "console_log": "[FLUX-REELS] 5 partenaires reçus, 5 uniques",
+      "console_log_2": "[FLUX-REELS] ✅ Aucun doublon détecté"
+    },
+    "HEADER_ICONS_ALIGNMENT": {
+      "status": "PASS",
+      "lang_selector_btn": "X=1772, visible, clickable",
+      "search_btn": "X=1816, visible, clickable",
+      "global_sound_btn": "X=1860, visible, clickable",
+      "gap_lang_to_search": "16px",
+      "gap_search_to_sound": "16px"
+    },
+    "VIDEO_CARD_PADDING": {
+      "status": "PASS",
+      "paddingTop": "5px",
+      "paddingLeft": "2px",
+      "paddingRight": "2px"
+    },
+    "CHAT_WIDGET": {
+      "status": "PASS",
+      "button_visible": true,
+      "devenir_partenaire_btn": "visible for non-partners (data-testid=become-partner-chat-btn)",
+      "mon_dashboard_btn": "present in user menu (data-testid=goto-dashboard-btn)"
+    },
+    "CHECK_PARTNER_API": {
+      "status": "PASS",
+      "endpoint": "/api/check-partner/{email}",
+      "super_admin_response": {
+        "is_partner": true,
+        "is_super_admin": true,
+        "unlimited": true,
+        "credits": -1
+      },
+      "non_partner_response": {
+        "is_partner": false
+      }
+    }
+  },
+  "pytest_results": {
+    "total": 13,
+    "passed": 13,
+    "failed": 0,
+    "tests": [
+      "test_partners_active_returns_list - PASS",
+      "test_partners_are_unique_by_email - PASS",
+      "test_partners_have_unique_ids - PASS",
+      "test_partners_have_required_fields - PASS",
+      "test_super_admin_returns_partner_true - PASS",
+      "test_second_super_admin_returns_partner_true - PASS",
+      "test_non_partner_returns_false - PASS",
+      "test_email_case_insensitivity - PASS",
+      "test_health_endpoint - PASS",
+      "test_credits_check_with_super_admin - PASS",
+      "test_credits_check_without_email - PASS",
+      "test_partner_check_returns_required_fields - PASS",
+      "test_partner_data_consistency - PASS"
+    ]
+  },
+  "playwright_visual_tests": {
+    "screenshot_path": ".screenshots/v969_header_icons.png",
+    "tests_run": [
+      "Header icons alignment verification",
+      "Gap calculation (16px verified)",
+      "paddingTop 5px verification",
+      "Chat widget button test",
+      "Devenir Partenaire button visibility"
+    ]
+  }
+}
