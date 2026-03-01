@@ -1,5 +1,64 @@
 # Afroboost - Document de Référence Produit (PRD)
 
+## v9.7.2 - VITRINE UNIQUE ET LOGIQUE DE COMPTE SÉCURISÉE ✅ (01 Mars 2026)
+
+### STATUT: MISSION v9.7.2 COMPLÈTE
+
+| Objectif | Statut |
+|----------|--------|
+| Logique Vitrine Unique | ✅ |
+| Suppression bouton Son doublon | ✅ |
+| 3 icônes alignées (gap 16px) | ✅ |
+| Hauteur 85vh Samsung Ultra | ✅ |
+| Bouton Réserver bas droite | ✅ |
+| paddingTop 5px | ✅ |
+
+### 1. LOGIQUE VITRINE UNIQUE
+
+**PartnersCarousel.js L574-602:**
+```javascript
+// v9.7.2: VITRINE UNIQUE - Pas de redirection si même partenaire
+const partnerEmail = (partner.email || '').toLowerCase().trim();
+const currentVitrine = (currentVitrineEmail || '').toLowerCase().trim();
+
+if (currentVitrine && partnerEmail === currentVitrine) {
+  console.log('[VITRINE-UNIQUE] Clic sur sa propre vidéo - Aucune redirection');
+  return; // Ne rien faire
+}
+```
+
+### 2. BOUTON SON UNIQUE (Doublon supprimé)
+
+**Avant v9.7.2:**
+- 1 bouton Son dans le header (global)
+- 1 bouton Son sur chaque carte vidéo (doublon)
+
+**Après v9.7.2 (L306-310):**
+```jsx
+{/* v9.7.2: Bouton Son SUPPRIMÉ ICI - Un seul bouton Son global dans le header */}
+```
+
+### 3. HAUTEUR 85vh (Samsung Ultra 24)
+
+**App.js L3757-3762:**
+```jsx
+style={{ 
+  height: '85vh',  // v9.7.2: 85vh pour Samsung Ultra 24
+  maxHeight: '85vh'
+}}
+```
+
+### Tests v9.7.2 - Iteration 124
+
+| Catégorie | Tests | Résultat |
+|-----------|-------|----------|
+| Backend | 9/9 | ✅ 100% |
+| Frontend | All | ✅ 100% |
+| Gap icônes | 16px | ✅ |
+| Hauteur | 778px (85vh) | ✅ |
+
+---
+
 ## v9.6.9 - STABILITÉ ET FLUX UNIQUE VALIDÉS ✅ (01 Mars 2026)
 
 ### STATUT: MISSION v9.6.9 COMPLÈTE - "STABILISATION FINALE ET ANTI-DOUBLONS"
