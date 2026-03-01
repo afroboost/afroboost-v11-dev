@@ -765,7 +765,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             />
             
             {/* v10.9: Contenu ÉPURÉ - Seul le bouton Réserver en bas à droite */}
-            <div className="relative z-10 h-full">
+            <div className="absolute inset-0 z-10">
               {/* v10.9: Bouton Réserver ÉPURÉ - En bas à droite, SANS CADRE */}
               <button
                 onClick={() => {
