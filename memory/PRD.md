@@ -1,5 +1,68 @@
 # Afroboost - Document de Référence Produit (PRD)
 
+## v10.6 - DASHBOARD MINIMALISTE ET SCROLL RÉPARÉ VALIDÉS ✅ (01 Mars 2026)
+
+### STATUT: MISSION v10.6 COMPLÈTE
+
+| Objectif | Statut |
+|----------|--------|
+| Grille cartes 2 colonnes | ✅ |
+| Bouton Retour icône fixe | ✅ |
+| Quick Control centré mobile | ✅ |
+| Scroll padding 100px | ✅ |
+| Toggle Maintenance glow | ✅ |
+
+### 1. BOUTON RETOUR - ICÔNE FIXE
+
+**CoachDashboard.js L4021-4039:**
+```jsx
+<button 
+  onClick={onBack}
+  className="w-10 h-10 rounded-full"
+  style={{ 
+    position: 'fixed',
+    top: '12px',
+    left: '12px',
+    zIndex: 9999,
+    background: 'rgba(139, 92, 246, 0.3)'
+  }}
+  data-testid="coach-back"
+>
+  <svg>←</svg>
+</button>
+```
+
+### 2. GRILLE D'ACTIONS 2 COLONNES
+
+**L4138:** `className="grid grid-cols-2 sm:grid-cols-4 gap-3"`
+
+| Carte | Taille | Style |
+|-------|--------|-------|
+| Quick | h-20 rounded-2xl | 3 points verticaux |
+| Admin | h-20 rounded-2xl | Étoile gradient violet |
+| Stripe | h-20 rounded-2xl | 💳 ou ✅ |
+| Partager | h-20 rounded-2xl | Icône partage |
+
+### 3. QUICK CONTROL CENTRÉ MOBILE
+
+**L4166:** `className="absolute left-1/2 transform -translate-x-1/2"`
+
+Plus de débordement sur mobile Samsung Ultra 24.
+
+### 4. SCROLL CONTAINER
+
+**L4042:** `style={{ paddingTop: '60px', paddingBottom: '100px', overflowY: 'auto' }}`
+
+### Tests v10.6 - Iteration 130
+
+| Catégorie | Tests | Résultat |
+|-----------|-------|----------|
+| Backend | 5/5 | ✅ 100% |
+| Frontend | 12/12 | ✅ 100% |
+| Total | 17/17 | ✅ 100% |
+
+---
+
 ## v10.5 - BOUTON MAINTENANCE ET DASHBOARD HARMONISÉS VALIDÉS ✅ (01 Mars 2026)
 
 ### STATUT: MISSION v10.5 COMPLÈTE
