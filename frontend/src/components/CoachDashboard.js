@@ -4280,11 +4280,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             <button 
               onClick={handleCoachShareLink}
               title={linkCopied ? "Lien copié !" : "Partager le site"}
-              className="px-3 py-2 rounded-lg glass text-white text-sm flex items-center gap-2"
+              className="h-10 px-4 rounded-lg text-white text-sm font-medium flex items-center gap-2 transition-all hover:scale-105"
               style={{ 
-                background: linkCopied ? 'rgba(34, 197, 94, 0.3)' : undefined,
-                borderColor: linkCopied ? 'rgba(34, 197, 94, 0.5)' : undefined,
-                transition: 'all 0.2s ease'
+                background: linkCopied 
+                  ? 'rgba(34, 197, 94, 0.4)' 
+                  : 'rgba(255,255,255,0.1)',
+                border: linkCopied 
+                  ? '1px solid rgba(34, 197, 94, 0.5)' 
+                  : '1px solid rgba(255,255,255,0.2)',
+                boxShadow: linkCopied ? '0 0 10px rgba(34, 197, 94, 0.3)' : 'none'
               }}
               data-testid="coach-share"
             >
