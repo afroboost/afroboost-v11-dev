@@ -570,12 +570,21 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
     }, 50);
   }, [activeIndex, filteredPartners.length]);
   
-  // Navigation vers vitrine - v9.5.7: Bloquer en mode maintenance
+  // Navigation vers vitrine - v9.7.2: VITRINE UNIQUE - Pas de redirection si même partenaire
   const handleNavigate = useCallback((partner) => {
     // v9.5.7: QUICK CONTROL - Bloquer navigation si maintenance ON (sauf Super Admin)
     if (maintenanceMode && !isSuperAdmin) {
       console.log('[MAINTENANCE] Navigation bloquée - mode maintenance actif');
       return; // Ne rien faire
+    }
+    
+    // v9.7.2: VITRINE UNIQUE - Si on est déjà sur la vitrine de ce partenaire, ne rien faire
+    const partnerEmail = (partner.email || '').toLowerCase().trim();
+    const currentVitrine = (currentVitrineEmail || '').toLowerCase().trim();
+    
+    if (currentVitrine && partnerEmail === currentVitrine) {
+      console.log('[VITRINE-UNIQUE] Clic sur sa propre vidéo - Aucune redirection');
+      return; // Ne rien faire - on est déjà sur cette vitrine
     }
     
     sessionStorage.setItem('afroboost_flux_index', activeIndex.toString());
@@ -590,7 +599,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
         window.location.href = targetPath;
       }
     }
-  }, [activeIndex, onPartnerClick, maintenanceMode, isSuperAdmin]);
+  }, [activeIndex, onPartnerClick, maintenanceMode, isSuperAdmin, currentVitrineEmail]);
   
   if (loading) {
     return (
