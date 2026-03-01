@@ -4112,14 +4112,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               </div>
             )}
           </div>
-          <div className="flex gap-3 items-center">
+          {/* v10.5: Conteneur boutons harmonisé - Flexbox avec gap uniforme */}
+          <div className="flex flex-wrap gap-3 items-center justify-center sm:justify-end">
             {/* === v9.2.7: QUICK CONTROL - Icône minimaliste Super Admin === */}
             {isSuperAdmin && (
               <div className="relative" ref={quickControlRef}>
                 <button 
                   onClick={() => setShowQuickControl(!showQuickControl)}
                   title="Quick Control"
-                  className="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200"
+                  className="w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200"
                   style={{ 
                     background: showQuickControl 
                       ? 'linear-gradient(135deg, rgba(217,28,210,0.4), rgba(139,92,246,0.4))' 
