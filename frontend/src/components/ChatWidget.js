@@ -1557,11 +1557,20 @@ export const ChatWidget = () => {
         setSelectedCourse(null);
         setReservationError('');
         
-        // Message de confirmation dans le chat
+        // v10.3: Message de confirmation PREMIUM avec récapitulatif
         const confirmMsg = {
           type: 'ai',
-          text: `Réservation confirmée !\n${selectedCourse.name}\n${selectedCourse.time}\nCode: ${afroboostProfile?.code || 'N/A'}\n${reservationData.userName}`,
-          sender: 'Coach Bassi'
+          text: `✨ RÉSERVATION CONFIRMÉE ✨`,
+          sender: 'Coach Bassi',
+          isReservationSummary: true,
+          reservationDetails: {
+            courseName: selectedCourse.name,
+            courseTime: selectedCourse.time,
+            clientName: reservationData.userName,
+            promoCode: afroboostProfile?.code || 'N/A',
+            remaining: reservationEligibility?.remaining || 'N/A',
+            expiry: reservationEligibility?.expiry_date || 'Non définie'
+          }
         };
         setMessages(prev => [...prev, confirmMsg]);
       }
