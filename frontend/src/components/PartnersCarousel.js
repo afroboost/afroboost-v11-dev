@@ -304,24 +304,9 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
             }}
           />
           
-          {/* === UI OVERLAY v9.5.2 === */}
+          {/* === UI OVERLAY v9.7.2 === */}
           
-          {/* Bouton Son - Haut droite */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleMute();
-            }}
-            className="absolute top-3 right-3 p-2 rounded-full transition-all hover:scale-110"
-            style={{
-              background: 'rgba(0,0,0,0.4)',
-              backdropFilter: 'blur(4px)',
-              color: 'white'
-            }}
-            data-testid={`mute-btn-${partner.id || partner.email}`}
-          >
-            <SoundIcon muted={isMuted} />
-          </button>
+          {/* v9.7.2: Bouton Son SUPPRIMÉ ICI - Un seul bouton Son global dans le header */}
           
           {/* Bouton Réserver COMPACT - Bas droite - v9.5.7: Masqué en maintenance */}
           {!isBlocked && (
