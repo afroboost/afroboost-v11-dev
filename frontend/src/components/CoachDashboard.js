@@ -4541,7 +4541,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             offers={offers}
             addCode={addCode}
             deleteCode={deleteCode}
-            toggleCodeActive={toggleCodeActive}
+            toggleCodeActive={toggleCode}
             addManualContact={addManualContact}
             handleImportCSV={handleImportCSV}
             exportPromoCodesCSV={exportPromoCodesCSV}

@@ -271,7 +271,12 @@ const LinkItem = memo(({ link, copiedLinkId, copyLinkToClipboard, deleteChatLink
         <p className="text-white/40 text-xs mt-1 truncate">{fullUrl}</p>
         <div className="flex items-center gap-3 mt-2 text-xs text-white/60">
           <span>📊 {link.usageCount || 0} utilisations</span>
-          <span>📅 {new Date(link.createdAt).toLocaleDateString('fr-FR')}</span>
+          <span>📅 {(() => {
+            try {
+              const d = new Date(link.createdAt);
+              return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('fr-FR');
+            } catch { return '—'; }
+          })()}</span>
         </div>
       </div>
       <div className="flex items-center gap-2 ml-4">
@@ -380,7 +385,14 @@ const ConversationItem = memo(({
             {session.lastMessage || 'Nouvelle conversation'}
           </p>
           <div className="flex items-center gap-3 mt-2 text-xs text-white/40">
-            <span>📅 {new Date(session.lastActivity || session.createdAt).toLocaleDateString('fr-FR')}</span>
+            <span>📅 {(() => {
+              try {
+                const dateVal = session.lastActivity || session.createdAt;
+                if (!dateVal) return '—';
+                const d = new Date(dateVal);
+                return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('fr-FR');
+              } catch { return '—'; }
+            })()}</span>
             <span>💬 {session.messageCount || 0} messages</span>
           </div>
         </div>
@@ -620,9 +632,18 @@ const CRMSection = ({
                             : 'bg-white/10 text-white/80'
                         }`}
                       >
-                        <p className="text-sm">{msg.content}</p>
+                        {/* v13.7: Fallback pour éviter les bulles vides */}
+                        <p className="text-sm">{msg.content || msg.text || msg.message || '[Message vide]'}</p>
                         <p className="text-xs text-white/40 mt-1">
-                          {new Date(msg.timestamp || msg.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                          {/* v13.7: Sécurité date avec fallback */}
+                          {(() => {
+                            const dateVal = msg.timestamp || msg.createdAt || msg.created_at;
+                            if (!dateVal) return '—';
+                            try {
+                              const d = new Date(dateVal);
+                              return isNaN(d.getTime()) ? '—' : d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+                            } catch { return '—'; }
+                          })()}
                           {msg.role === 'coach' && ' • 👤 Vous'}
                           {msg.role === 'assistant' && ' • 🤖 Bot'}
                         </p>

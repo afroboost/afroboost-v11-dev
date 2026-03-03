@@ -273,7 +273,7 @@ const PromoCodesTab = ({
         ) : discountCodes).map(code => (
           <div 
             key={code.id} 
-            className={`glass rounded-lg p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 ${!code.isActive ? 'opacity-50' : ''}`}
+            className={`glass rounded-lg p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 ${!code.active ? 'opacity-50' : ''}`}
             data-testid={`promo-code-${code.id}`}
           >
             <div className="flex-1">
@@ -300,10 +300,10 @@ const PromoCodesTab = ({
             <div className="flex items-center gap-2">
               <button
                 onClick={() => toggleCodeActive(code)}
-                className={`px-3 py-1.5 rounded text-xs font-medium ${code.isActive ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}
+                className={`px-3 py-1.5 rounded text-xs font-medium ${code.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}
                 data-testid={`toggle-code-${code.id}`}
               >
-                {code.isActive ? '✓ Actif' : '✗ Inactif'}
+                {code.active ? '✓ Actif' : '✗ Inactif'}
               </button>
               <button
                 onClick={() => deleteCode(code.id)}
