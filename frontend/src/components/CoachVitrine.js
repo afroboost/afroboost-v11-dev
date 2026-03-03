@@ -767,9 +767,17 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             {/* v10.9: Contenu ÉPURÉ - Seul le bouton Réserver en bas à droite */}
             <div className="absolute inset-0 z-10">
               {/* v10.9: Bouton Réserver ÉPURÉ - En bas à droite, SANS CADRE */}
+              {/* v11.8: Log ajouté pour debug + scroll garanti */}
               <button
                 onClick={() => {
-                  document.getElementById('vitrine-courses-section')?.scrollIntoView({ behavior: 'smooth' });
+                  console.log('[SCROLL-RESERVE] Clic sur Réserver - Scroll vers offres');
+                  const target = document.getElementById('vitrine-courses-section');
+                  if (target) {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    console.log('[SCROLL-RESERVE] ✅ scrollIntoView déclenché');
+                  } else {
+                    console.log('[SCROLL-RESERVE] ❌ Section vitrine-courses-section non trouvée');
+                  }
                 }}
                 className="absolute bottom-8 right-4 flex items-center gap-2 transition-all hover:scale-105"
                 style={{

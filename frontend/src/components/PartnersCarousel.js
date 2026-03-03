@@ -187,12 +187,33 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   }, [onNavigate, onTogglePause, partner, isSuperAdminVideo, isBlocked]);
 
   // v9.5.7: handleReserve avec blocage maintenance
+  // v11.8: Pour SA, scroll vers offres au lieu de naviguer
   const handleReserve = (e) => {
     e.stopPropagation();
     if (isBlocked) {
       console.log('[MAINTENANCE] Réservation bloquée');
       return;
     }
+    
+    // v11.8: Si vidéo Super Admin, scroll vers les offres de la page actuelle
+    if (isSuperAdminVideo) {
+      console.log('[SUPER-ADMIN] Scroll vers section offres (pas de navigation)');
+      // Chercher les sections offres/sessions dans la page actuelle
+      const offersSection = document.getElementById('sessions-section') || 
+                           document.getElementById('offers-section') ||
+                           document.getElementById('courses-section');
+      if (offersSection) {
+        offersSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        console.log('[SUPER-ADMIN] ✅ Scroll effectué vers', offersSection.id);
+      } else {
+        console.log('[SUPER-ADMIN] ❌ Aucune section offres trouvée');
+        // Fallback: appeler onNavigate qui ne fera rien pour SA (grâce au check v11.7)
+        onNavigate(partner);
+      }
+      return;
+    }
+    
+    // Pour les autres partenaires, navigation normale vers leur vitrine
     onNavigate(partner);
   };
 
