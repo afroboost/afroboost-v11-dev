@@ -5,105 +5,101 @@ Multi-partner SaaS platform for fitness coaching with a mobile-first, "Instagram
 
 ## Core Features Implemented
 
-### Mission v14.0 (March 2026) - COMPLETED - IDENTITÉ VISITEURS & BOUTONS PROMO
-**Restauration de l'identité des visiteurs dans le CRM et bouton Copier**
+### Mission v14.3 (March 2026) - COMPLETED - LIAISON CLIENT-LIEN & CHAT PRO
+**Interface chat professionnelle avec couleurs différenciées et assistant rédaction**
 
 #### Corrections effectuées:
-1. **Activation IA** - `ai_config.enabled` mis à `true` via PUT `/api/ai-config`
-2. **Enrichissement sessions** - Endpoints `/chat/sessions` et `/chat/conversations` enrichis avec:
-   - `participantName` (nom du premier participant ou fallback sur `title`)
-   - `participantEmail`
-   - `lastMessage`, `messageCount`
-3. **Bouton Copier** - Ajouté dans `PromoCodesTab.js`:
-   - `CopyIcon` et `CheckIcon` composants SVG
-   - `copyCodeToClipboard()` avec `navigator.clipboard.writeText()` + fallback
-   - `data-testid="copy-code-{code.id}"` pour tests
-4. **Nom du lien dans Chat** - `ChatWidget.js` affiche `sessionData.title` dans le header
+1. **Bulles Chat Côté Coach** (CRMSection.js):
+   - Messages CLIENT: Gris foncé (`bg-gray-700/80`), aligné à GAUCHE (`justify-start`)
+   - Messages COACH/IA: Violet Afroboost (`#D91CD2`), aligné à DROITE (`justify-end`)
+   - Nom de l'expéditeur affiché dans chaque bulle
 
-#### Tests validés (100%):
-- Backend: 10/10 tests passés
-- Frontend: Aucune erreur console
+2. **Source du Lien** (CRMSection.js):
+   - Affichage "🔗 Source : [Nom du Lien]" dans l'en-tête de conversation
+   - Affichage dans la liste des conversations
 
-### Mission v13.8 (March 2026) - COMPLETED
-- Restauration `editCode` et `duplicateCode` fonctions
-- Props complètes passées à `PromoCodesTab`
-- Fonctionnalités: Édition, Duplication, Date expiration, Max uses, Sélection contacts
+3. **ChatWidget Header** (ChatWidget.js):
+   - Affiche "🤖 Assistant Afroboost : **[Nom du Lien]**" quand un lien est actif
+   - Ouverture automatique du chat si `linkToken` présent dans l'URL
 
-### Missions v13.0-v13.7 - COMPLETED
-- Design "Zéro Cadre", Stripe integration, Credit system, Refactoring
+4. **Assistant Rédaction Prompt** (CRMSection.js + server.py):
+   - Bouton ✨ pour améliorer le prompt avec l'IA
+   - Endpoint POST `/api/chat/enhance-prompt`
+   - Fallback intelligent si IA désactivée
 
-## Data Status (Anti-Régression Audit v14.0)
-- 2 réservations
-- 8 contacts
-- 2 codes promos
-- 6 chat links
-- AI Config: enabled=true
+5. **Fix "Visiteur"** → "Client" partout
+
+6. **Format Date**: `fr-CH` (ex: "04.03.2026, 18:30")
+
+### Mission v14.0 (March 2026) - COMPLETED
+- Activation IA (`ai_config.enabled = true`)
+- Enrichissement sessions avec `participantName`
+- Bouton "Copier" codes promo
+
+### Missions v13.x - COMPLETED
+- Restauration codes promos et chat
+- Design "Zéro Cadre"
+- Stripe credits integration
+
+## Data Status (Anti-Régression v14.3)
+- 2 réservations ✅
+- 8 contacts ✅
+- 2 codes promos ✅
+- 8+ chat links ✅
 
 ## Testing Status
-- Mission v14.0: **100%** (10/10 tests)
-- Report: `/app/test_reports/iteration_148.json`
+- Mission v14.3: **100% backend** (11/11), **90% frontend**
+- Report: `/app/test_reports/iteration_149.json`
 
 ## Pending Tasks
 
 ### P0 (Critical)
-- Déploiement backend en production (risque: environnement preview)
+- Déploiement backend en production
 
 ### P1 (High Priority)
 - Intégration Stripe Connect pour paiements partenaires
-- Continuer modularisation CoachDashboard.js (4853 lignes -> objectif <3000)
-- Continuer modularisation server.py
+- Ajouter titre par défaut aux liens créés sans titre
+- Continuer modularisation CoachDashboard.js
 
 ### P2 (Medium Priority)
 - Déduction crédits pour actions Chat
-- Investigation hook useDebounce pour personnalisation couleurs
+- Investigation hook useDebounce
 
 ## Super Admin Access
 - Emails: `contact.artboost@gmail.com`, `afroboost.bassi@gmail.com`
-- Triple-click sur "© Afroboost 2026" pour login admin
+- Triple-click "© Afroboost 2026" pour login admin
 
 ## Architecture
 
 ### Frontend Components
 ```
 /app/frontend/src/components/
-├── CoachDashboard.js         # Main dashboard (~4853 lines)
-├── ChatWidget.js             # Chat widget (~5311 lines)
+├── CoachDashboard.js         # Main dashboard (~4867 lines)
+├── ChatWidget.js             # Chat widget (~5320 lines)
 ├── dashboard/
-│   ├── index.js              # Exports
-│   ├── PromoCodesTab.js      # v14.0: Bouton Copier ajouté
-│   ├── CreditsGate.js
-│   ├── CreditBoutique.js
-│   ├── StripeConnectTab.js
-│   ├── CoursesManager.js
-│   ├── OffersManager.js
-│   ├── ConceptEditor.js
-│   ├── PageVenteTab.js
-│   └── DashboardHeader.js
+│   └── PromoCodesTab.js      # v14.0: Bouton Copier
 └── coach/
-    └── CRMSection.js         # v14.0: participantName enrichi
+    └── CRMSection.js         # v14.3: Bulles colorées, Source lien, Assistant IA
 ```
 
 ### Backend Routes
 ```
-/app/backend/
-├── server.py                 # Main server (~7036 lines)
-│   ├── GET /api/chat/sessions   # v14.0: enrichi participantName
-│   ├── GET /api/conversations   # v14.0: enrichi participantName
-│   └── PUT /api/ai-config       # v14.0: enabled=true
-└── routes/
-    ├── promo_routes.py
-    ├── reservation_routes.py
-    ├── stripe_routes.py
-    ├── auth_routes.py
-    ├── coach_routes.py
-    └── campaign_routes.py
+/app/backend/server.py
+├── GET /api/chat/sessions       # Sessions enrichies
+├── GET /api/conversations       # Conversations enrichies  
+├── POST /api/chat/enhance-prompt # v14.3: Assistant IA rédaction
+├── PUT /api/ai-config           # Activer/désactiver IA
+└── routes/...
 ```
 
-### Key API Endpoints v14.0
-- `GET /api/chat/sessions` - Sessions enrichies avec participantName
-- `GET /api/conversations` - Conversations enrichies avec participantName
-- `PUT /api/ai-config` - Activer/désactiver l'IA
-- `GET /api/ai-config` - Vérifier le statut de l'IA
+### Key CSS v14.3
+```css
+/* Client bubble */
+bg-gray-700/80 text-white justify-start
+
+/* Coach/IA bubble */
+backgroundColor: #D91CD2 text-white justify-end
+```
 
 ---
-Last Updated: March 2026 - Mission v14.0 VALIDATED
+Last Updated: March 2026 - Mission v14.3 VALIDATED
