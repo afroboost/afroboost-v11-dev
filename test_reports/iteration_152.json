@@ -1,0 +1,103 @@
+{
+  "summary": "Mission v14.7 Testing Complete - Recherche et étanchéité contacts. 19/19 backend tests passed. Frontend UI verified: CoachVitrine search (case-insensitive + reset), CRM chat colors (Violet DROITE/Gris GAUCHE), dates fr-CH.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v147_mission.py",
+    "/app/test_reports/pytest/pytest_v147_mission.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "✅ CoachVitrine.js Lines 864-869: toLowerCase() used for case-insensitive search (nameMatch, descMatch, keywordsMatch)",
+    "✅ CoachVitrine.js Lines 844-851: Reset button (✕) clears offerSearch state",
+    "✅ Backend server.py Lines 4344-4356: GET /chat/sessions filters by coach_id (Super Admin sees all)",
+    "✅ Backend server.py Lines 4410-4441: GET /conversations filters by coach_id (Super Admin sees all)",
+    "✅ Backend server.py Lines 5168-5198: POST /chat/generate-link adds coach_id to session",
+    "✅ Backend server.py Lines 3959-3970: GET /chat/participants filters by coach_id",
+    "✅ scheduler_engine.py Lines 363-365: Campaigns persisted in MongoDB (status scheduled)",
+    "✅ CRMSection.js Lines 670-685: Bulles colorées (Client=bg-gray-700 GAUCHE, Coach/IA=#D91CD2 DROITE)",
+    "✅ CRMSection.js Lines 703: Dates format fr-CH (toLocaleString('fr-CH', ...))"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v147_mission.py"
+  ],
+  "success_rate": {
+    "backend": "100% (19/19 tests passed)",
+    "frontend": "100% (code review verified + UI testing)"
+  },
+  "seed_data_creation": "TEST_ prefixed campaigns created and deleted during testing",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Mission v14.7 fully verified. Key features: 1) CoachVitrine case-insensitive search with toLowerCase(), 2) Reset button (✕) clears search field, 3) Backend coach_id filtering on /chat/sessions, /conversations, /chat/participants, and /chat/generate-link, 4) Super Admin (contact.artboost@gmail.com) sees all data, partners see only their data, 5) Scheduler persists scheduled campaigns in MongoDB, 6) CRM chat colors (Client=Gris GAUCHE, Coach/IA=Violet DROITE), 7) Dates format fr-CH. Anti-regression: 8 contacts, 3 offers, reservations endpoint working.",
+  "tests_executed": {
+    "backend_api": [
+      "Health check (200 OK)",
+      "GET /chat/sessions with Super Admin header (sees all sessions)",
+      "GET /chat/sessions with Partner header (filtered by coach_id)",
+      "GET /conversations with Super Admin header (sees all conversations)",
+      "GET /conversations with Partner header (filtered by coach_id)",
+      "GET /chat/participants with Super Admin header (sees all)",
+      "GET /chat/participants with Partner header (filtered by coach_id)",
+      "POST /chat/generate-link with Super Admin (assigns DEFAULT_COACH_ID)",
+      "POST /chat/generate-link with Partner (assigns partner email as coach_id)",
+      "POST /campaigns with scheduledAt (status=scheduled, mediaUrl persisted)",
+      "GET /campaigns (list endpoint)",
+      "GET /users (8 contacts minimum - PASSED)",
+      "GET /reservations (paginated endpoint working)",
+      "GET /offers (3 offers minimum - PASSED)",
+      "GET /courses (working)",
+      "GET /discount-codes (working)",
+      "GET /coach/vitrine/bassi (working)",
+      "Offers support keywords field (verified)",
+      "Campaign mediaUrl and mediaFormat persisted (verified)"
+    ],
+    "frontend_ui": [
+      "Homepage loads (PASSED)",
+      "CoachVitrine page loads (PASSED)",
+      "Search input visible with data-testid='offer-search-input' (PASSED)",
+      "Case-insensitive search works ('COURS' finds 3 offers) (PASSED)",
+      "Reset button (✕) clears search field (PASSED)",
+      "3 offers visible with object-fit:cover images (Cours à l'unité, Carte 10 cours, Abonnement 1 mois)"
+    ],
+    "code_review": [
+      "CoachVitrine.js: toLowerCase() for search (lines 864-869)",
+      "CoachVitrine.js: Reset button clears offerSearch (line 849)",
+      "server.py: coach_id filtering in GET /chat/sessions (lines 4344-4356)",
+      "server.py: coach_id filtering in GET /conversations (lines 4410-4441)",
+      "server.py: coach_id added in POST /chat/generate-link (lines 5168-5198)",
+      "server.py: coach_id filtering in GET /chat/participants (lines 3959-3970)",
+      "scheduler_engine.py: Campaigns persisted with scheduled status (lines 363-365)",
+      "CRMSection.js: Chat bubble colors (lines 670-685)",
+      "CRMSection.js: Date format fr-CH (lines 703)"
+    ]
+  },
+  "anti_regression_status": {
+    "contacts_count": "8 (PASS - expected ≥8)",
+    "offers_count": "3 (PASS - expected ≥3)",
+    "reservations_endpoint": "200 OK (paginated)",
+    "courses_endpoint": "200 OK",
+    "campaigns_status": "scheduled campaigns created and tracked correctly"
+  },
+  "verified_v14_7_features": {
+    "coach_vitrine_search_case_insensitive": "✅ toLowerCase() used in search filtering",
+    "coach_vitrine_reset_button": "✅ ✕ button clears offerSearch state",
+    "chat_sessions_coach_id_filter": "✅ Super Admin sees all, Partners filtered",
+    "conversations_coach_id_filter": "✅ Super Admin sees all, Partners filtered",
+    "generate_link_coach_id": "✅ coach_id added to session data",
+    "chat_participants_coach_id_filter": "✅ Super Admin sees all, Partners filtered",
+    "scheduler_persistence": "✅ Campaigns persisted in MongoDB with status=scheduled",
+    "crm_chat_colors": "✅ Client=Gris GAUCHE, Coach/IA=Violet DROITE",
+    "dates_fr_ch": "✅ toLocaleString('fr-CH', ...) used"
+  },
+  "test_credentials": {
+    "super_admin": "contact.artboost@gmail.com",
+    "access_method": "Triple-click footer '© Afroboost'"
+  }
+}

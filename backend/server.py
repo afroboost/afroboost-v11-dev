@@ -4338,11 +4338,23 @@ async def join_group_automatically(request: GroupJoinRequest):
 
 # --- Chat Sessions ---
 @api_router.get("/chat/sessions")
-async def get_chat_sessions(include_deleted: bool = False):
+async def get_chat_sessions(include_deleted: bool = False, request: Request = None):
     """Récupère toutes les sessions de chat (exclut les supprimées par défaut)
     v14.0: Enrichit avec participantName et participantEmail pour l'affichage CRM
+    v14.7: Filtrage par coach_id pour l'étanchéité (Super Admin voit tout)
     """
+    # v14.7: Récupérer l'email du caller pour le filtrage
+    caller_email = ""
+    if request:
+        caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    
+    # Base query
     query = {} if include_deleted else {"is_deleted": {"$ne": True}}
+    
+    # v14.7: Super Admin voit tout, Coach voit uniquement ses sessions
+    if caller_email and not is_super_admin(caller_email):
+        query["coach_id"] = caller_email
+    
     sessions = await db.chat_sessions.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
     
     # v14.0: Enrichir chaque session avec les infos du premier participant
@@ -4389,6 +4401,7 @@ async def get_chat_sessions(include_deleted: bool = False):
 # === CRM AVANCÉ - HISTORIQUE CONVERSATIONS ===
 @api_router.get("/conversations")
 async def get_conversations_advanced(
+    request: Request,
     page: int = 1,
     limit: int = 20,
     query: str = "",
@@ -4396,6 +4409,7 @@ async def get_conversations_advanced(
 ):
     """
     Endpoint CRM avancé pour les conversations avec pagination et recherche.
+    v14.7: Filtrage par coach_id pour l'étanchéité (Super Admin voit tout)
     
     Paramètres:
     - page: Numéro de page (commence à 1)
@@ -4412,12 +4426,19 @@ async def get_conversations_advanced(
     """
     import re
     
+    # v14.7: Récupérer l'email du caller pour le filtrage
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    
     # Limiter à 100 max
     limit = min(limit, 100)
     skip = (page - 1) * limit
     
     # Query de base pour les sessions
     base_query = {} if include_deleted else {"is_deleted": {"$ne": True}}
+    
+    # v14.7: Super Admin voit tout, Coach voit uniquement ses sessions
+    if caller_email and not is_super_admin(caller_email):
+        base_query["coach_id"] = caller_email
     
     # Si recherche, d'abord trouver les participants correspondants
     matching_participant_ids = []
@@ -5144,6 +5165,7 @@ async def generate_shareable_link(request: Request):
     """
     Génère un lien partageable unique pour le chat IA.
     Ce lien peut être partagé sur les réseaux sociaux.
+    v14.7: Ajoute coach_id pour l'étanchéité des données
     
     Body optionnel:
     {
@@ -5157,6 +5179,9 @@ async def generate_shareable_link(request: Request):
     if custom_prompt and isinstance(custom_prompt, str):
         custom_prompt = custom_prompt.strip() if custom_prompt.strip() else None
     
+    # v14.7: Récupérer le coach_id pour l'étanchéité
+    coach_email = request.headers.get("X-User-Email", "").lower().strip()
+    
     # Créer une nouvelle session avec un token unique
     session = ChatSession(
         mode="ai",
@@ -5164,7 +5189,15 @@ async def generate_shareable_link(request: Request):
         title=title,
         custom_prompt=custom_prompt
     )
-    await db.chat_sessions.insert_one(session.model_dump())
+    
+    # v14.7: Ajouter coach_id pour l'étanchéité (Super Admin = DEFAULT_COACH_ID)
+    session_data = session.model_dump()
+    if coach_email and not is_super_admin(coach_email):
+        session_data["coach_id"] = coach_email
+    else:
+        session_data["coach_id"] = DEFAULT_COACH_ID
+    
+    await db.chat_sessions.insert_one(session_data)
     
     # Construire l'URL de partage
     # Note: L'URL de base sera configurée côté frontend
