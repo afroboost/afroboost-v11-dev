@@ -401,6 +401,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [loadingPacks, setLoadingPacks] = useState(false);
   const [purchasingPack, setPurchasingPack] = useState(null);
   
+  // === v13.1: PRIX DES SERVICES (configurés par Super Admin) ===
+  const [servicePrices, setServicePrices] = useState({
+    campaign: 1,
+    ai_conversation: 1,
+    promo_code: 1
+  });
+  
   // === CRÉDITS COACH v8.9.7 ===
   // v9.2.3: Initialiser selon le rôle immédiatement pour éviter page blanche
   const [coachCredits, setCoachCredits] = useState(isSuperAdmin ? -1 : 0); // -1=illimité (Super Admin), 0=défaut
@@ -414,6 +421,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // === v9.1.3: MARQUE BLANCHE - platform_name ===
   const [coachPlatformName, setCoachPlatformName] = useState(null);
   const dashboardTitle = coachPlatformName || (isSuperAdmin ? 'Afroboost' : 'Mon Espace Partenaire');
+  
+  // v13.1: Helper - vérifier si assez de crédits pour un service
+  const hasCreditsFor = (serviceType) => {
+    if (isSuperAdmin) return true; // Super Admin = accès illimité
+    if (coachCredits === -1) return true; // Crédits illimités
+    const requiredCredits = servicePrices[serviceType] || 1;
+    return coachCredits >= requiredCredits;
+  };
   
   // Helper: crédits insuffisants (pour info, mais plus de grisage v9.1.3)
   const hasInsufficientCredits = !isSuperAdmin && coachCredits !== null && coachCredits !== -1 && coachCredits <= 0;
@@ -570,6 +585,24 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       setPurchasingPack(null);
     }
   };
+
+  // === v13.1: Charger les prix des services depuis platform-settings ===
+  useEffect(() => {
+    const loadServicePrices = async () => {
+      try {
+        const res = await axios.get(`${API}/platform-settings`, {
+          headers: { 'X-User-Email': coachUser?.email || '' }
+        });
+        if (res.data?.service_prices) {
+          setServicePrices(res.data.service_prices);
+          console.log('[SERVICE-PRICES] Chargés:', res.data.service_prices);
+        }
+      } catch (err) {
+        console.log('[SERVICE-PRICES] Erreur (utilisation prix par défaut):', err.message);
+      }
+    };
+    loadServicePrices();
+  }, [coachUser?.email]);
   
   // === PERSISTANCE ONGLET : Restaurer l'onglet depuis localStorage ===
   const [tab, setTab] = useState(() => {
@@ -5725,6 +5758,31 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         {/* Promo Codes Tab with Beneficiary Dropdown */}
         {tab === "codes" && (
           <div className="card-gradient rounded-xl p-4 sm:p-6">
+            {/* v13.1: Écran de blocage si crédits insuffisants */}
+            {!hasCreditsFor('promo_code') ? (
+              <div className="text-center py-16" data-testid="credits-lock-codes">
+                <div className="text-6xl mb-6">🔒</div>
+                <h2 className="text-2xl font-bold text-white mb-4">Crédits insuffisants</h2>
+                <p className="text-white/50 mb-2">
+                  Ce service premium nécessite <span style={{ color: '#D91CD2', fontWeight: 'bold' }}>{servicePrices.promo_code} crédit(s)</span>
+                </p>
+                <p className="text-white/30 text-sm mb-8">
+                  Votre solde actuel: <span className="text-red-400 font-bold">{coachCredits}</span> crédits
+                </p>
+                <button
+                  onClick={() => setTab('boutique')}
+                  className="px-8 py-3 text-white font-medium transition-all hover:opacity-80"
+                  style={{ 
+                    background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                    borderRadius: '8px'
+                  }}
+                  data-testid="go-to-boutique-codes"
+                >
+                  💎 Recharger mes crédits
+                </button>
+              </div>
+            ) : (
+            <>
             {/* En-tête avec recherche */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
               <h2 className="font-semibold text-white text-lg sm:text-xl">{t('promoCodes')}</h2>
@@ -6242,12 +6300,39 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               ) : discountCodes).length === 0 && <p className="text-center py-8 text-white opacity-50">{codesSearch ? 'Aucun code trouvé' : t('noPromoCode')}</p>}
               </div>
             </div>
+            </>
+            )}
           </div>
         )}
 
         {/* === CAMPAIGNS TAB === */}
         {/* [CAMPAGNE_START] - Section extraite vers CampaignManager.js */}
-        {tab === "campaigns" && (
+        {/* v13.1: Verrouillage crédits pour campagnes (déjà masqué pour partenaires, mais sécurité supplémentaire) */}
+        {tab === "campaigns" && !hasCreditsFor('campaign') ? (
+          <div className="card-gradient rounded-xl p-4 sm:p-6">
+            <div className="text-center py-16" data-testid="credits-lock-campaigns">
+              <div className="text-6xl mb-6">🔒</div>
+              <h2 className="text-2xl font-bold text-white mb-4">Crédits insuffisants</h2>
+              <p className="text-white/50 mb-2">
+                Ce service premium nécessite <span style={{ color: '#D91CD2', fontWeight: 'bold' }}>{servicePrices.campaign} crédit(s)</span>
+              </p>
+              <p className="text-white/30 text-sm mb-8">
+                Votre solde actuel: <span className="text-red-400 font-bold">{coachCredits}</span> crédits
+              </p>
+              <button
+                onClick={() => setTab('boutique')}
+                className="px-8 py-3 text-white font-medium transition-all hover:opacity-80"
+                style={{ 
+                  background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                  borderRadius: '8px'
+                }}
+                data-testid="go-to-boutique-campaigns"
+              >
+                💎 Recharger mes crédits
+              </button>
+            </div>
+          </div>
+        ) : tab === "campaigns" && (
           <CampaignManager
             // === ÉTATS PRINCIPAUX ===
             campaigns={campaigns}
@@ -6380,7 +6465,32 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
 
         {/* ========== ONGLET CONVERSATIONS v9.2.0 - Extrait vers CRMSection.js ========== */}
-        {tab === "conversations" && (
+        {/* v13.1: Verrouillage crédits pour conversations IA */}
+        {tab === "conversations" && !hasCreditsFor('ai_conversation') ? (
+          <div className="card-gradient rounded-xl p-4 sm:p-6">
+            <div className="text-center py-16" data-testid="credits-lock-conversations">
+              <div className="text-6xl mb-6">🔒</div>
+              <h2 className="text-2xl font-bold text-white mb-4">Crédits insuffisants</h2>
+              <p className="text-white/50 mb-2">
+                Ce service premium nécessite <span style={{ color: '#D91CD2', fontWeight: 'bold' }}>{servicePrices.ai_conversation} crédit(s)</span>
+              </p>
+              <p className="text-white/30 text-sm mb-8">
+                Votre solde actuel: <span className="text-red-400 font-bold">{coachCredits}</span> crédits
+              </p>
+              <button
+                onClick={() => setTab('boutique')}
+                className="px-8 py-3 text-white font-medium transition-all hover:opacity-80"
+                style={{ 
+                  background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                  borderRadius: '8px'
+                }}
+                data-testid="go-to-boutique-conversations"
+              >
+                💎 Recharger mes crédits
+              </button>
+            </div>
+          </div>
+        ) : tab === "conversations" && (
           <SectionErrorBoundary sectionName="Conversations">
             <CRMSection
               // Notification state
