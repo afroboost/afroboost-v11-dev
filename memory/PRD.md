@@ -5,84 +5,116 @@ Multi-partner SaaS platform for fitness coaching with a mobile-first, "Instagram
 
 ## Core Features Implemented
 
+### ✅ Mission v13.2 (March 2026) - COMPLETED
+**Validation Sécurité & Nettoyage du Code (Refactoring)**
+1. **Verrouillage Crédits Validé** - Partenaires avec 0 crédits voient écran "Crédits insuffisants"
+2. **Super Admin Bypass** - Bassi peut tout ouvrir sans restriction
+3. **Refactoring CoachDashboard.js** - Réduit de 6759 → 6537 lignes (-222 lignes)
+4. **Composants Extraits** :
+   - `CreditsGate.js` - Écran de blocage réutilisable
+   - `CreditBoutique.js` - Section achat de packs
+   - `StripeConnectTab.js` - Section Stripe & personnalisation
+5. **Anti-régression** - 22 réservations intactes, vidéo full-width confirmée
+
+**Nouveaux fichiers v13.2:**
+- `/app/frontend/src/components/dashboard/CreditsGate.js` (45 lignes)
+- `/app/frontend/src/components/dashboard/CreditBoutique.js` (112 lignes)
+- `/app/frontend/src/components/dashboard/StripeConnectTab.js` (128 lignes)
+- `/app/frontend/src/components/dashboard/index.js`
+
+### ✅ Mission v13.1 (March 2026) - COMPLETED
+**Verrouillage Services & Sécurité Crédits**
+- Blocage accès services si crédits insuffisants
+- Redirection vers Boutique pour recharger
+
 ### ✅ Mission v13.0 (March 2026) - COMPLETED
 **Stripe Connect & Vente de Packs Crédits**
-1. **Paiement par Carte** - Endpoint `/api/stripe/create-credit-checkout`
-2. **Crédits Automatiques** - Webhook Stripe ajoute crédits instantanément
-3. **Boutique Premium** - Onglet "💎 Boutique" dans dashboard partenaire
-4. **Transaction Logs** - Collection `credit_transactions` pour historique
-5. **Notifications** - Email au coach + notification à Bassi
+- Paiement par carte via Stripe
+- Crédits automatiques via webhook
+- Boutique premium dans dashboard partenaire
 
-**Endpoints v13.0:**
-- `GET /api/credit-packs` - Liste des packs visibles
-- `POST /api/stripe/create-credit-checkout` - Crée session Stripe
-- `POST /api/webhook/stripe` - Gère `credit_purchase`
-- `GET /api/credit-transactions` - Historique transactions
-
-### ✅ Mission v12.1 (March 2026) - COMPLETED
-**Contrôle Admin & Design Premium**
-- Prix services dynamiques
-- Design sans cadre
-
-### ✅ Mission v11.9 (March 2026) - COMPLETED
-**Vidéo Full-Width**
-- Bordures supprimées, width=100%
-
-### ✅ Missions v11.2-v11.8 - COMPLETED
-- Système codes & crédits, Scroll réserver, PWA
+### ✅ Missions v11.2-v12.1 - COMPLETED
+- Prix services dynamiques (Super Admin)
+- Design sans cadre "Zéro Frame"
+- Vidéo Full-Width sans bordures
+- Système codes & crédits
+- PWA installable
 
 ## Architecture
 
 ```
 /app/
 ├── backend/
-│   ├── server.py              # v13.0: Stripe credit checkout + webhook
+│   ├── server.py              # Backend principal (~7000 lignes - à continuer refactoring)
 │   └── routes/
+│       ├── auth_routes.py
+│       ├── campaign_routes.py
+│       ├── coach_routes.py
 │       ├── promo_routes.py
 │       └── reservation_routes.py
 ├── frontend/
 │   ├── src/
 │   │   ├── App.js
 │   │   └── components/
-│   │       ├── CoachDashboard.js  # v13.0: Boutique tab
-│   │       └── SuperAdminPanel.js # v12.1: Tarifs services
+│   │       ├── CoachDashboard.js  # v13.2: Optimisé (6537 lignes)
+│   │       ├── dashboard/         # v13.2: NOUVEAU - Composants extraits
+│   │       │   ├── CreditsGate.js
+│   │       │   ├── CreditBoutique.js
+│   │       │   ├── StripeConnectTab.js
+│   │       │   └── index.js
+│   │       ├── coach/
+│   │       │   ├── CampaignManager.js
+│   │       │   ├── CRMSection.js
+│   │       │   └── ReservationTab.js
+│   │       └── SuperAdminPanel.js
 │   └── public/
 │       ├── manifest.json
 │       └── sw.js
 └── memory/PRD.md
 ```
 
-## Key Flow - Credit Purchase (v13.0)
+## Service Prices (Configurable by Super Admin)
+- Campagnes: **2 crédits**
+- Conversation IA: **1 crédit**
+- Code Promo: **3 crédits**
+
+## Key Flow - Credit Lock v13.1/v13.2
 
 ```
-1. Coach clique "Acheter" dans Boutique
-2. Frontend: POST /api/stripe/create-credit-checkout
-3. Backend: Crée session Stripe avec metadata
-4. Coach redirigé vers page Stripe
-5. Après paiement: Webhook /api/webhook/stripe
-6. Backend: Ajoute crédits + log transaction + emails
-7. Coach voit nouveau solde
+1. Partenaire accède à un onglet (Codes/Campagnes/Conversations)
+2. Frontend: hasCreditsFor(serviceType) vérifie:
+   - isSuperAdmin → true (bypass)
+   - credits === -1 → true (illimité)
+   - credits >= servicePrices[serviceType] → true
+3. Si false: Affiche CreditsGate avec:
+   - Message "Crédits insuffisants"
+   - Prix requis en violet
+   - Solde actuel en rouge
+   - Bouton "Recharger mes crédits" → Boutique
 ```
 
 ## Data Status
 - ✅ 22 réservations
-- ✅ 14 contacts
-- ✅ BOSS: 41/47 séances
+- ✅ 7 contacts
 - ✅ 4 packs crédits (Starter 49 CHF, Pro 99 CHF...)
 - ✅ Video: full-width
+- ✅ Service prices: campaign=2, ai_conversation=1, promo_code=3
 
 ## Pending Tasks (P0/P1)
-1. **P1**: Production deployment
-2. **P1**: Add more credit packs (500, 1000 credits)
-3. **P2**: Dashboard stats for credit consumption
+1. **P0**: Implémenter Stripe Connect pour paiements partenaires
+2. **P1**: Continuer refactoring server.py (extraire routes restantes)
+3. **P1**: Continuer refactoring CoachDashboard.js (encore ~6500 lignes)
+4. **P1**: Production deployment (backend actuellement preview seulement)
+5. **P2**: Déduction crédits pour Chat actions (v9.5.8 incomplet)
 
 ## Super Admin Access
 - Emails: `contact.artboost@gmail.com`, `afroboost.bassi@gmail.com`
-- Stripe: Clés LIVE configurées
+- Crédits: -1 (illimité)
+- Triple-click sur "© Afroboost 2026" pour login admin
 
 ## Testing Status
-- Mission v13.0: 100% (20/20 backend tests)
-- Report: `/app/test_reports/iteration_140.json`
+- Mission v13.2: 100% (12/12 backend tests, frontend validé)
+- Report: `/app/test_reports/iteration_142.json`
 
 ---
-Last Updated: March 2026 - Mission v13.0 VALIDATED
+Last Updated: March 2026 - Mission v13.2 VALIDATED
