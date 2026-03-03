@@ -5,45 +5,44 @@ Multi-partner SaaS platform for fitness coaching with a mobile-first, "Instagram
 
 ## Core Features Implemented
 
-### Mission v14.6 (March 2026) - COMPLETED - RECHERCHE & MOTS-CLÉS
-**Recherche par mots-clés côté client et stabilité campagnes**
+### Mission v14.7 (March 2026) - COMPLETED - ÉTANCHÉITÉ CONTACTS
+**Étanchéité des données multi-partenaires + validation recherche**
 
 #### Nouvelles fonctionnalités:
-1. **Recherche Offres Côté Client** (CoachVitrine.js):
-   - Champ de recherche avec loupe (🔍) visible si > 1 offre
-   - Filtrage instantané par nom, description ou keywords
-   - Message "Aucune offre ne correspond" si pas de résultat
-   - Bouton ✕ pour effacer la recherche
+1. **Filtrage coach_id sur tous les endpoints** (server.py):
+   - GET /chat/sessions : Filtré par coach_id (ligne 4350)
+   - GET /conversations : Filtré par coach_id (ligne 4440)
+   - GET /chat/participants : Filtré par coach_id (ligne 3968)
+   - POST /chat/generate-link : coach_id tatoué sur la session (ligne 5190)
 
-2. **Mots-clés Offres** (OffersManager.js):
-   - Champ "Mots-clés (pour la recherche)" dans le formulaire
-   - Séparés par virgules: "fitness, musculation, perte de poids"
+2. **Règles d'étanchéité**:
+   - Super Admin (`is_super_admin`) : Voit TOUT
+   - Partenaires : Voient uniquement leurs données (`coach_id == email`)
 
-3. **Campagnes Multimédia Vérifiées**:
-   - mediaUrl stocké et traité pour envois directs ET programmés
-   - scheduler_engine.py lignes 406, 431, 480
+3. **Recherche validée** (CoachVitrine.js):
+   - Case-insensitive avec `toLowerCase()` (lignes 864-869)
+   - Bouton ✕ réinitialise la liste
 
-### Mission v14.5 (March 2026) - COMPLETED
-- Document title dynamique, badge Session Active
-- Dates fr-CH uniformisées
+4. **Campagnes multimédia**:
+   - Scheduler persiste en MongoDB (`status: scheduled`)
+   - `object-fit: cover` pour images Samsung
 
-### Mission v14.3 (March 2026) - COMPLETED
-- Bulles Chat: Client=Gris GAUCHE, Coach/IA=Violet DROITE
-- Source du lien, Assistant rédaction prompt
+### Mission v14.6 (March 2026) - COMPLETED
+- Recherche offres par mots-clés côté client
 
-### Missions v14.0-v13.x - COMPLETED
-- Activation IA, bouton Copier, design Zéro Cadre, Stripe credits
+### Missions v14.0-14.5 - COMPLETED
+- Activation IA, bouton Copier, document.title, badge Session Active
+- Bulles colorées, dates fr-CH, Source du lien
 
-## Data Status (Anti-Régression v14.6)
+## Data Status (Anti-Régression v14.7)
 - 2 réservations ✅
 - 8 contacts ✅
 - 3 offres ✅
-- 2 codes promos ✅
 - 8+ chat links ✅
 
 ## Testing Status
-- Mission v14.6: **100% backend** (16/16), **100% frontend**
-- Report: `/app/test_reports/iteration_151.json`
+- Mission v14.7: **100% backend** (19/19), **100% frontend**
+- Report: `/app/test_reports/iteration_152.json`
 
 ## Pending Tasks
 
@@ -65,39 +64,34 @@ Multi-partner SaaS platform for fitness coaching with a mobile-first, "Instagram
 
 ## Architecture
 
+### Étanchéité Multi-Partenaires (v14.7)
+```python
+# server.py - Règle d'étanchéité
+if is_super_admin(caller_email):
+    # Super Admin voit TOUT
+    query = {}
+else:
+    # Partenaire voit uniquement ses données
+    query["coach_id"] = caller_email
+```
+
+### Endpoints avec coach_id
+| Endpoint | Méthode | Filtrage |
+|----------|---------|----------|
+| /chat/sessions | GET | ✅ coach_id |
+| /conversations | GET | ✅ coach_id |
+| /chat/participants | GET | ✅ coach_id |
+| /chat/generate-link | POST | ✅ coach_id ajouté |
+
 ### Key Frontend Files
 ```
 /app/frontend/src/components/
-├── CoachVitrine.js           # v14.6: Recherche offres par keywords
-├── ChatWidget.js             # v14.5: document.title, badge Session Active
+├── CoachVitrine.js           # v14.6-14.7: Recherche case-insensitive
+├── ChatWidget.js             # v14.5: document.title, badge
 ├── CoachDashboard.js         # Main dashboard
-├── dashboard/
-│   ├── OffersManager.js      # v14.6: Champ keywords
-│   └── PromoCodesTab.js      # v14.0: Bouton Copier
 └── coach/
-    └── CRMSection.js         # v14.3-14.5: Bulles colorées, dates fr-CH
-```
-
-### Key Backend Files
-```
-/app/backend/
-├── server.py                 # Offer model keywords ligne 430
-├── scheduler_engine.py       # mediaUrl lignes 406, 431, 480
-└── routes/...
-```
-
-### v14.6 Search Feature
-```javascript
-// CoachVitrine.js
-const filteredOffers = searchTerm 
-  ? offers.filter(offer => {
-      const nameMatch = offer.name?.toLowerCase().includes(searchTerm);
-      const descMatch = offer.description?.toLowerCase().includes(searchTerm);
-      const keywordsMatch = offer.keywords?.toLowerCase().includes(searchTerm);
-      return nameMatch || descMatch || keywordsMatch;
-    })
-  : offers;
+    └── CRMSection.js         # v14.3: Bulles colorées, dates fr-CH
 ```
 
 ---
-Last Updated: March 2026 - Mission v14.6 VALIDATED
+Last Updated: March 2026 - Mission v14.7 VALIDATED
