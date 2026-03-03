@@ -105,9 +105,10 @@ async def delete_discount_code(code_id: str):
 
 @promo_router.post("/validate")
 async def validate_discount_code(data: dict):
-    """Valide un code promo pour une réservation"""
+    """Valide un code promo et crée/met à jour l'abonnement v11.4"""
     code_str = data.get("code", "").strip().upper()  # Normalize: trim + uppercase
-    user_email = data.get("email", "").strip()
+    user_email = data.get("email", "").strip().lower()
+    user_name = data.get("name", "").strip()
     course_id = data.get("courseId", "").strip() if data.get("courseId") else ""
     
     # Case-insensitive search using regex
@@ -120,6 +121,7 @@ async def validate_discount_code(data: dict):
         return {"valid": False, "message": "Code inconnu ou invalide"}
     
     # Check expiration date
+    expiry_date = None
     if code.get("expiresAt"):
         try:
             expiry = code["expiresAt"]
@@ -136,12 +138,11 @@ async def validate_discount_code(data: dict):
         except Exception as e:
             logger.debug(f"Date parsing: {e}")
     
-    # Check max uses
+    # Check max uses (global)
     if code.get("maxUses") and code.get("used", 0) >= code["maxUses"]:
         return {"valid": False, "message": "Code promo épuisé (nombre max d'utilisations atteint)"}
     
     # Check if course is allowed - SKIP if no courseId provided (identification flow)
-    # IMPORTANT: empty list = all courses allowed
     allowed_courses = code.get("courses", [])
     if course_id and allowed_courses and len(allowed_courses) > 0:
         if course_id not in allowed_courses:
@@ -155,15 +156,50 @@ async def validate_discount_code(data: dict):
             if assigned.lower() != user_email.lower():
                 return {"valid": False, "message": "Code réservé à un autre compte"}
     
-    # v8.7: Sync CRM si email fourni
+    # === v11.4: CRÉER/METTRE À JOUR L'ABONNEMENT ===
     if user_email:
+        # Calculer le nombre de séances (maxUses ou valeur par défaut)
+        total_sessions = code.get("maxUses") or code.get("sessions") or 10
+        offer_name = code.get("name") or code.get("code") or "Abonnement"
+        
+        # Vérifier si l'abonné a déjà un abonnement actif avec CE code
+        existing_sub = await _db.subscriptions.find_one({
+            "email": user_email,
+            "code": code_str,
+            "status": "active"
+        }, {"_id": 0})
+        
+        if not existing_sub:
+            # Créer un nouvel abonnement
+            subscription_data = {
+                "id": str(uuid.uuid4()),
+                "email": user_email,
+                "name": user_name or user_email.split("@")[0],
+                "code": code_str,
+                "offer_name": offer_name,
+                "total_sessions": total_sessions,
+                "used_sessions": 0,
+                "remaining_sessions": total_sessions,
+                "expires_at": expiry_date.isoformat() if expiry_date else None,
+                "status": "active",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            await _db.subscriptions.insert_one(subscription_data)
+            logger.info(f"[SUBSCRIPTION] Créé: {user_email} - {offer_name} ({total_sessions} séances)")
+        else:
+            logger.info(f"[SUBSCRIPTION] Existant: {user_email} - {existing_sub.get('remaining_sessions')} séances restantes")
+        
+        # Sync CRM
         await _db.chat_participants.update_one(
             {"email": user_email},
             {
                 "$set": {
                     "email": user_email,
-                    "name": data.get("name", user_email.split("@")[0]),
+                    "name": user_name or user_email.split("@")[0],
                     "source": "chat_login",
+                    "isSubscriber": True,
+                    "subscriptionCode": code_str,
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 },
                 "$setOnInsert": {
@@ -174,10 +210,116 @@ async def validate_discount_code(data: dict):
             upsert=True
         )
     
-    return {"valid": True, "code": code}
+    # Enrichir la réponse avec les infos d'abonnement
+    subscription_info = None
+    if user_email:
+        sub = await _db.subscriptions.find_one({"email": user_email, "code": code_str, "status": "active"}, {"_id": 0})
+        if sub:
+            subscription_info = {
+                "offer_name": sub.get("offer_name"),
+                "total_sessions": sub.get("total_sessions"),
+                "used_sessions": sub.get("used_sessions", 0),
+                "remaining_sessions": sub.get("remaining_sessions"),
+                "expires_at": sub.get("expires_at")
+            }
+    
+    return {"valid": True, "code": code, "subscription": subscription_info}
 
 
 @promo_router.post("/{code_id}/use")
 async def use_discount_code(code_id: str):
     """Marque un code promo comme utilisé (décompte géré par create_reservation)"""
     return {"success": True, "note": "Decompte gere par create_reservation"}
+
+
+# === v11.4: ENDPOINTS SUBSCRIPTIONS (ABONNEMENTS) ===
+@promo_router.get("/subscriptions/status")
+async def get_subscription_status(email: str = "", code: str = ""):
+    """Récupère le statut d'abonnement d'un utilisateur v11.4"""
+    if not email and not code:
+        return {"success": False, "message": "Email ou code requis"}
+    
+    query = {"status": "active"}
+    if email:
+        query["email"] = email.lower().strip()
+    if code:
+        query["code"] = code.upper().strip()
+    
+    subscription = await _db.subscriptions.find_one(query, {"_id": 0})
+    
+    if not subscription:
+        return {
+            "success": False,
+            "hasSubscription": False,
+            "message": "Aucun abonnement actif"
+        }
+    
+    return {
+        "success": True,
+        "hasSubscription": True,
+        "subscription": {
+            "id": subscription.get("id"),
+            "email": subscription.get("email"),
+            "name": subscription.get("name"),
+            "code": subscription.get("code"),
+            "offer_name": subscription.get("offer_name"),
+            "total_sessions": subscription.get("total_sessions"),
+            "used_sessions": subscription.get("used_sessions", 0),
+            "remaining_sessions": subscription.get("remaining_sessions"),
+            "expires_at": subscription.get("expires_at"),
+            "status": subscription.get("status")
+        }
+    }
+
+
+@promo_router.post("/subscriptions/deduct")
+async def deduct_session(data: dict):
+    """Déduit une séance de l'abonnement v11.4"""
+    email = data.get("email", "").lower().strip()
+    code = data.get("code", "").upper().strip()
+    
+    if not email:
+        return {"success": False, "message": "Email requis"}
+    
+    # Chercher l'abonnement actif
+    query = {"email": email, "status": "active"}
+    if code:
+        query["code"] = code
+    
+    subscription = await _db.subscriptions.find_one(query, {"_id": 0})
+    
+    if not subscription:
+        return {"success": False, "message": "Aucun abonnement actif", "remaining": 0}
+    
+    remaining = subscription.get("remaining_sessions", 0)
+    if remaining <= 0:
+        return {"success": False, "message": "Plus de séances disponibles", "remaining": 0}
+    
+    # Déduire 1 séance
+    new_remaining = remaining - 1
+    new_used = subscription.get("used_sessions", 0) + 1
+    
+    update_data = {
+        "remaining_sessions": new_remaining,
+        "used_sessions": new_used,
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    # Si plus de séances, marquer comme complété
+    if new_remaining <= 0:
+        update_data["status"] = "completed"
+    
+    await _db.subscriptions.update_one(
+        {"id": subscription.get("id")},
+        {"$set": update_data}
+    )
+    
+    logger.info(f"[SUBSCRIPTION] Déduction: {email} - {new_used}/{subscription.get('total_sessions')} séances utilisées")
+    
+    return {
+        "success": True,
+        "message": f"Séance déduite ({new_remaining} restantes)",
+        "remaining": new_remaining,
+        "used": new_used,
+        "total": subscription.get("total_sessions")
+    }

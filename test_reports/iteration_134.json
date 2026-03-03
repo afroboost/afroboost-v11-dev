@@ -1,0 +1,112 @@
+{
+  "summary": "Mission v11.4 - VALIDATED. Backend APIs for subscription system all pass (13/13 tests). Frontend chat widget correctly displays subscription info block with offre, solde, validité after code validation. Fixed minor bug: COACH_EMAIL undefined -> COACH_EMAILS.includes().",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v114_mission.py",
+    "/app/test_reports/pytest/pytest_v114_mission.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "✅ promo_routes.py L106-226: validate endpoint creates subscription with correct sessions count",
+    "✅ promo_routes.py L236-272: subscriptions/status returns hasSubscription and remaining_sessions",
+    "✅ promo_routes.py L275-325: subscriptions/deduct correctly decrements remaining_sessions",
+    "✅ reservation_routes.py L97-156: POST /reservations auto-deducts 1 session from subscription",
+    "✅ ChatWidget.js L1595-1622: useEffect refreshes subscription status from server on mount",
+    "FIXED: ChatWidget.js L2941: COACH_EMAIL -> COACH_EMAILS.includes() (ReferenceError)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v114_mission.py",
+    "/app/frontend/src/components/ChatWidget.js"
+  ],
+  "success_rate": {
+    "backend": "100% - 13/13 pytest tests passed",
+    "frontend": "100% - Subscription info block verified"
+  },
+  "test_credentials": {
+    "api_url": "https://video-feed-platform.preview.emergentagent.com",
+    "test_email": "test-subscriber@test.com",
+    "test_code": "BOSS",
+    "super_admin_emails": ["afroboost.bassi@gmail.com", "contact.artboost@gmail.com"]
+  },
+  "seed_data_creation": "Used existing test-subscriber@test.com subscription",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Mission v11.4 validated. Subscription system works: validate code -> creates subscription -> status returns remaining_sessions -> reservations auto-deduct sessions. UI displays subscription info block with code, expiry date, and séances restantes (41/47).",
+  "mission_v114_validation": {
+    "1_validation_code_promo": {
+      "status": "PASS",
+      "api": "/api/discount-codes/validate",
+      "feature": "Creates subscription with total_sessions = maxUses (47)",
+      "test_result": "Code BOSS validated, subscription created with 47 séances"
+    },
+    "2_affichage_solde_abonne": {
+      "status": "PASS",
+      "api": "/api/discount-codes/subscriptions/status",
+      "feature": "Returns hasSubscription, remaining_sessions, total_sessions",
+      "ui_result": "Chat displays '41/47 séances' in subscription info block"
+    },
+    "3_logique_multi_reservation": {
+      "status": "PASS",
+      "api": "/api/reservations POST",
+      "feature": "Creates reservation with promoCode, auto-deducts from subscription"
+    },
+    "4_deduction_automatique": {
+      "status": "PASS",
+      "api": "/api/discount-codes/subscriptions/deduct",
+      "feature": "Deducts 1 session, updates remaining_sessions correctly"
+    }
+  },
+  "ui_verification": {
+    "chat_widget": {
+      "subscriber_form": "4 inputs: nom, whatsapp, email, code promo",
+      "validation_button": "Valider mon abonnement",
+      "subscription_info_block": {
+        "header": "Abonné - Test Subscriber v114",
+        "code": "BOSS",
+        "expiry": "23/04/2027",
+        "sessions": "41/47 séances"
+      },
+      "tabs": ["Privé avec Coach", "Groupe Afroboost"]
+    }
+  },
+  "pytest_results": {
+    "total": 13,
+    "passed": 13,
+    "failed": 0,
+    "tests": [
+      "test_health_endpoint - PASS",
+      "test_reservations_not_deleted - PASS (18 réservations)",
+      "test_contacts_not_deleted - PASS (14 contacts)",
+      "test_validate_discount_code_creates_subscription - PASS",
+      "test_validate_invalid_code - PASS",
+      "test_get_subscription_status - PASS",
+      "test_get_subscription_status_no_subscription - PASS",
+      "test_get_subscription_status_missing_params - PASS",
+      "test_deduct_session - PASS",
+      "test_deduct_session_missing_email - PASS",
+      "test_reservation_with_promo_code - PASS",
+      "test_reservation_deducts_session - PASS",
+      "test_get_discount_codes - PASS"
+    ]
+  },
+  "anti_casse_verification": {
+    "bassi_reservations": "18 réservations (>= 7 required) - INTACT",
+    "bassi_contacts": "14 contacts (>= 8 required) - INTACT",
+    "subscription_test": "41/47 sessions remaining after tests"
+  },
+  "bug_fixed": {
+    "file": "/app/frontend/src/components/ChatWidget.js",
+    "line": 2941,
+    "issue": "COACH_EMAIL is not defined (ReferenceError)",
+    "fix": "Changed COACH_EMAIL to COACH_EMAILS.includes()",
+    "severity": "minor"
+  }
+}

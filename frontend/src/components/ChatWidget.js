@@ -1593,6 +1593,34 @@ export const ChatWidget = () => {
     }
   }, [afroboostProfile?.code, afroboostProfile?.email, checkReservationEligibility]);
 
+  // === v11.4: Rafraîchir le statut d'abonnement depuis le serveur ===
+  useEffect(() => {
+    const refreshSubscriptionStatus = async () => {
+      if (!afroboostProfile?.email || !afroboostProfile?.code) return;
+      
+      try {
+        const res = await axios.get(`${API}/discount-codes/subscriptions/status`, {
+          params: { email: afroboostProfile.email, code: afroboostProfile.code }
+        });
+        
+        if (res.data?.success && res.data?.subscription) {
+          // Mettre à jour le profil avec les dernières données du serveur
+          const updatedProfile = {
+            ...afroboostProfile,
+            subscription: res.data.subscription
+          };
+          localStorage.setItem(AFROBOOST_PROFILE_KEY, JSON.stringify(updatedProfile));
+          setAfroboostProfile(updatedProfile);
+          console.log('[SUBSCRIPTION v11.4] Statut chargé:', res.data.subscription.remaining_sessions, 'séances restantes');
+        }
+      } catch (err) {
+        console.log('[SUBSCRIPTION v11.4] Erreur chargement statut:', err.message);
+      }
+    };
+    
+    refreshSubscriptionStatus();
+  }, []); // Exécuté une seule fois au montage
+
   // === v8.9.9: Vérifier si l'utilisateur est un coach inscrit ===
   // v9.1.5: Amélioré pour détecter aussi les coachs via localStorage
   useEffect(() => {
@@ -1735,6 +1763,27 @@ export const ChatWidget = () => {
         setSelectedCourse(null);
         setReservationError('');
         
+        // v11.4: Rafraîchir le solde d'abonnement après réservation
+        if (afroboostProfile?.email && afroboostProfile?.code) {
+          try {
+            const statusRes = await axios.get(`${API}/discount-codes/subscriptions/status`, {
+              params: { email: afroboostProfile.email, code: afroboostProfile.code }
+            });
+            if (statusRes.data?.success && statusRes.data?.subscription) {
+              // Mettre à jour le profil local avec le nouveau solde
+              const updatedProfile = {
+                ...afroboostProfile,
+                subscription: statusRes.data.subscription
+              };
+              localStorage.setItem(AFROBOOST_PROFILE_KEY, JSON.stringify(updatedProfile));
+              setAfroboostProfile(updatedProfile);
+              console.log('[SUBSCRIPTION] Solde mis à jour:', statusRes.data.subscription.remaining_sessions, 'séances restantes');
+            }
+          } catch (subErr) {
+            console.log('[SUBSCRIPTION] Erreur rafraîchissement solde:', subErr.message);
+          }
+        }
+        
         // v10.3: Message de confirmation PREMIUM avec récapitulatif
         const confirmMsg = {
           type: 'ai',
@@ -1802,13 +1851,15 @@ export const ChatWidget = () => {
         return;
       }
       
-      // Code valide ! Sauvegarder le profil abonné
+      // Code valide ! Sauvegarder le profil abonné avec infos d'abonnement v11.4
+      const subscriptionInfo = res.data.subscription || {};
       const profile = {
         name: name.trim(),
         whatsapp: whatsapp.trim(),
         email: email.trim(),
         code: code.trim().toUpperCase(),
         codeDetails: res.data.code, // Détails du code (type, valeur, etc.)
+        subscription: subscriptionInfo, // v11.4: Infos d'abonnement
         savedAt: new Date().toISOString()
       };
       
@@ -2887,7 +2938,7 @@ export const ChatWidget = () => {
       setIsCommunityMode(session.mode === 'community');
       
       // === MISE À JOUR DU MODE COACH APRÈS CONNEXION ===
-      const isCoach = clientData.email?.toLowerCase() === COACH_EMAIL;
+      const isCoach = COACH_EMAILS.includes(clientData.email?.toLowerCase());
       setIsCoachMode(isCoach);
       console.log(`[AUTH] Email: ${clientData.email}, isCoach: ${isCoach}`);
 
@@ -4653,6 +4704,53 @@ export const ChatWidget = () => {
                         fontSize: '12px', fontWeight: '600', cursor: 'pointer'
                       }}
                     >Groupe Afroboost</button>
+                  </div>
+                )}
+                
+                {/* === v11.4: BLOC INFO ABONNEMENT (Offre + Solde + Validité) === */}
+                {afroboostProfile?.subscription && (
+                  <div 
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 16px',
+                      background: 'linear-gradient(135deg, rgba(147, 51, 234, 0.2), rgba(217, 28, 210, 0.15))',
+                      borderBottom: '1px solid rgba(217, 28, 210, 0.3)'
+                    }}
+                    data-testid="subscription-info-bar"
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '16px' }}>🎫</span>
+                      <div>
+                        <div style={{ fontSize: '12px', fontWeight: '600', color: '#D91CD2' }}>
+                          {afroboostProfile.subscription.offer_name || 'Abonnement'}
+                        </div>
+                        <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)' }}>
+                          {afroboostProfile.subscription.expires_at 
+                            ? `Expire: ${new Date(afroboostProfile.subscription.expires_at).toLocaleDateString('fr-FR')}`
+                            : 'Validité: Illimitée'}
+                        </div>
+                      </div>
+                    </div>
+                    <div 
+                      style={{ 
+                        background: 'rgba(217, 28, 210, 0.3)', 
+                        padding: '6px 12px', 
+                        borderRadius: '20px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                      data-testid="sessions-counter"
+                    >
+                      <span style={{ fontSize: '14px', fontWeight: '700', color: '#fff' }}>
+                        {afroboostProfile.subscription.remaining_sessions ?? '∞'}
+                      </span>
+                      <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)' }}>
+                        /{afroboostProfile.subscription.total_sessions ?? '∞'} séances
+                      </span>
+                    </div>
                   </div>
                 )}
                 

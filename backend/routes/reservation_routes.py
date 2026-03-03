@@ -96,13 +96,49 @@ async def get_reservations(request: Request, page: int = 1, limit: int = 20, all
 
 @reservation_router.post("/reservations", response_model=Reservation)
 async def create_reservation(reservation: ReservationCreate, request: Request):
-    """Créer une réservation - Vérifie la validité du code si fourni"""
+    """Créer une réservation - Vérifie la validité du code et déduit 1 séance v11.4"""
     promo_code = reservation.promoCode or reservation.discountCode
-    user_email = reservation.userEmail
+    user_email = reservation.userEmail.lower().strip() if reservation.userEmail else ""
+    
+    # === v11.4: VÉRIFIER ET DÉDUIRE UNE SÉANCE ===
+    if user_email:
+        # Chercher l'abonnement actif
+        query = {"email": user_email, "status": "active"}
+        if promo_code:
+            query["code"] = promo_code.upper().strip()
+        
+        subscription = await db.subscriptions.find_one(query, {"_id": 0})
+        
+        if subscription:
+            remaining = subscription.get("remaining_sessions", 0)
+            if remaining <= 0:
+                logger.warning(f"[RESERVATION] {user_email} - Plus de séances disponibles")
+                raise HTTPException(status_code=400, detail="Plus de séances disponibles dans votre abonnement")
+            
+            # Déduire 1 séance
+            new_remaining = remaining - 1
+            new_used = subscription.get("used_sessions", 0) + 1
+            
+            update_data = {
+                "remaining_sessions": new_remaining,
+                "used_sessions": new_used,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            if new_remaining <= 0:
+                update_data["status"] = "completed"
+            
+            await db.subscriptions.update_one(
+                {"id": subscription.get("id")},
+                {"$set": update_data}
+            )
+            logger.info(f"[RESERVATION] Séance déduite: {user_email} - {new_remaining} restantes")
+    
     if promo_code:
         discount = await db.discount_codes.find_one({"code": {"$regex": f"^{promo_code}$", "$options": "i"}, "active": True}, {"_id": 0})
         if not discount:
             logger.info(f"[RESERVATION] Code promo invalide: {promo_code}")
+    
     # Créer la réservation avec coach_id par défaut
     caller_email = request.headers.get("X-User-Email", "").lower().strip() if request else None
     reservation_data = Reservation(
