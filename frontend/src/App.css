@@ -159,6 +159,20 @@ html, body {
   box-shadow: 0 0 15px var(--glow-color), inset 0 0 30px rgba(0, 0, 0, 0.3);
 }
 
+/* v13.5: Container sans glow pour grands conteneurs */
+.container-no-glow {
+  background: #000000;
+  border: none;
+  box-shadow: none;
+}
+
+/* v13.5: Card avec fond noir profond sans glow */
+.card-dark {
+  background: #000000;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: none;
+}
+
 /* Section Gradient Background */
 .section-gradient {
   background: linear-gradient(180deg, #000000 0%, rgba(30, 5, 25, 0.4) 50%, #000000 100%);
