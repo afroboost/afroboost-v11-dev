@@ -5,78 +5,106 @@ Multi-partner SaaS platform for fitness coaching with a mobile-first, "Instagram
 
 ## Core Features Implemented
 
-### ✅ Mission v13.7 (March 2026) - COMPLETED - BUG FIXES URGENTS
-**Réparations d'urgence - Codes Promos & Conversations**
-1. **Fix toggleCodeActive** : Renommé en `toggleCode` dans prop passing (ligne 4544)
-2. **Fix code.isActive** : Changé en `code.active` pour correspondre au backend
-3. **Fix messages vides** : Fallback `msg.content || msg.text || msg.message`
-4. **Fix Invalid Date** : try/catch avec fallback `'—'` pour dates invalides
-5. **Anti-régression** : 22 réservations, 7 contacts intacts
-6. **Tests** : 100% (8/8 backend tests)
+### Mission v13.8 (March 2026) - COMPLETED - RESTAURATION CHIRURGICALE
+**Restauration complète des fonctionnalités Codes Promos et Conversations**
 
-**Fichiers modifiés :**
-- `/app/frontend/src/components/CoachDashboard.js` (ligne 4544)
-- `/app/frontend/src/components/dashboard/PromoCodesTab.js` (lignes 276, 303, 306)
-- `/app/frontend/src/components/coach/CRMSection.js` (lignes 277, 393, 636, 644)
+#### Corrections effectuées:
+1. **editCode function** (CoachDashboard.js lignes 1194-1211): Permet d'éditer un code promo existant en chargeant ses données dans le formulaire
+2. **duplicateCode function** (CoachDashboard.js lignes 1214-1231): Permet de dupliquer un code avec suffixe "_COPY"
+3. **Props PromoCodesTab** (lignes 4565-4607): Toutes les props manquantes ajoutées:
+   - `toggleCode`, `editCode`, `duplicateCode`
+   - `uniqueCustomers`, `selectedBeneficiaries`, `toggleBeneficiarySelection`
+   - `courses`, `toggleCourseSelection`, `removeAllowedArticle`
+   - `batchLoading`
 
-### ✅ Mission v13.6 (March 2026) - COMPLETED
-- Design "Zéro Cadre" appliqué (fond transparent)
-- DashboardHeader.js créé (230 lignes)
+#### Fonctionnalités restaurées dans PromoCodesTab:
+- Boutons "Éditer" et "Dupliquer" visibles sur chaque code
+- Champ "Date d'expiration" (expiresAt)
+- Champ "Nombre max utilisations" (maxUses)
+- Sélection multiple de bénéficiaires
+- Toggle Actif/Inactif fonctionnel
 
-### ✅ Missions v13.0-v13.5 - COMPLETED
-- Stripe, verrouillage crédits, refactoring composants
+#### Corrections Chat (CRMSection.js):
+- Fallback message: `msg.content || msg.text || msg.message || '[Message vide]'`
+- Validation date: `isNaN(d.getTime()) ? '—' : d.toLocaleDateString('fr-FR')`
 
-## Bug Fixes v13.7 Details
+### Mission v13.7 (March 2026) - COMPLETED
+- Fix toggleCodeActive renamed to toggleCode
+- Fix code.isActive changed to code.active
+- Fix empty message bubbles with fallback
+- Fix Invalid Date with try/catch
 
-### Bug 1: toggleCodeActive not defined
-```javascript
-// CoachDashboard.js ligne 4544
-// AVANT: toggleCodeActive={toggleCodeActive}  // ERREUR
-// APRÈS: toggleCodeActive={toggleCode}        // CORRIGÉ
-```
+### Mission v13.6 (March 2026) - COMPLETED
+- Design "Zéro Cadre" appliqué
+- DashboardHeader.js créé
 
-### Bug 2: code.isActive vs code.active
-```javascript
-// PromoCodesTab.js
-// AVANT: code.isActive (undefined)
-// APRÈS: code.active (correspond au backend)
-```
+### Missions v13.0-v13.5 - COMPLETED
+- Stripe integration for credits
+- Credit locking system
+- Component refactoring
 
-### Bug 3: Messages vides
-```javascript
-// CRMSection.js ligne 636
-<p>{msg.content || msg.text || msg.message || '[Message vide]'}</p>
-```
+## Data Status (Anti-Régression Audit)
+- 2 réservations
+- 8 contacts
+- 2 codes promos
+- Video: Full-Width
+- Design: "Zéro Cadre"
 
-### Bug 4: Invalid Date
-```javascript
-// CRMSection.js avec try/catch
-try {
-  const d = new Date(dateVal);
-  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('fr-FR');
-} catch { return '—'; }
-```
+## Testing Status
+- Mission v13.8: **100%** (11/11 tests)
+- Report: `/app/test_reports/iteration_147.json`
 
-## Data Status (Anti-Régression)
-- ✅ **22 réservations** intactes
-- ✅ **7 contacts** intactes
-- ✅ Video: Full-Width
-- ✅ Design: "Zéro Cadre"
+## Pending Tasks
 
-## Pending Tasks (P0/P1)
-1. **P0**: Intégrer DashboardHeader.js dans CoachDashboard.js
-2. **P0**: Continuer refactoring (4795 → objectif <3000 lignes)
-3. **P0**: Cliquer sur "Deploy" Emergent pour URL production
-4. **P1**: Implémenter Stripe Connect complet
-5. **P2**: Nettoyer UI Chat (paramètres anormaux mentionnés par Bassi)
+### P0 (Critical)
+- Déploiement backend en production
+
+### P1 (High Priority)
+- Intégration Stripe Connect pour paiements partenaires
+- Continuer modularisation CoachDashboard.js (4835 lignes -> objectif <3000)
+- Continuer modularisation server.py
+
+### P2 (Medium Priority)
+- Déduction crédits pour actions Chat
+- Investigation hook useDebounce pour personnalisation couleurs
 
 ## Super Admin Access
 - Emails: `contact.artboost@gmail.com`, `afroboost.bassi@gmail.com`
 - Triple-click sur "© Afroboost 2026" pour login admin
 
-## Testing Status
-- Mission v13.7: **100%** (8/8 tests)
-- Report: `/app/test_reports/iteration_146.json`
+## Architecture
+
+### Frontend Components
+```
+/app/frontend/src/components/
+├── CoachDashboard.js         # Main dashboard (~4835 lines)
+├── dashboard/
+│   ├── index.js              # Exports
+│   ├── PromoCodesTab.js      # v13.8: RESTORED
+│   ├── CreditsGate.js
+│   ├── CreditBoutique.js
+│   ├── StripeConnectTab.js
+│   ├── CoursesManager.js
+│   ├── OffersManager.js
+│   ├── ConceptEditor.js
+│   ├── PageVenteTab.js
+│   └── DashboardHeader.js
+└── coach/
+    └── CRMSection.js         # v13.8: Fixed dates/messages
+```
+
+### Backend Routes
+```
+/app/backend/
+├── server.py                 # Main server (~3000 lines)
+└── routes/
+    ├── promo_routes.py
+    ├── reservation_routes.py
+    ├── stripe_routes.py
+    ├── auth_routes.py
+    ├── coach_routes.py
+    └── campaign_routes.py
+```
 
 ---
-Last Updated: March 2026 - Mission v13.7 BUG FIXES VALIDATED
+Last Updated: March 2026 - Mission v13.8 RESTAURATION VALIDATED
