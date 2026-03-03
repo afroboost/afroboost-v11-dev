@@ -11,7 +11,7 @@ import pytest
 import requests
 import os
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://violet-marketplace-1.preview.emergentagent.com')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://promo-credits-lab.preview.emergentagent.com')
 
 SUPER_ADMIN_EMAIL = "afroboost.bassi@gmail.com"
 TEST_PARTNER_EMAIL = "test.partner.isolation@example.com"

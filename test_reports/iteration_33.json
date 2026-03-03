@@ -57,7 +57,7 @@
     "frontend": "100% (all UI elements verified)"
   },
   "test_credentials": {
-    "API_URL": "https://violet-marketplace-1.preview.emergentagent.com",
+    "API_URL": "https://promo-credits-lab.preview.emergentagent.com",
     "test_media_slug": "session-finale"
   },
   "seed_data_creation": "session-finale media link exists with title 'Session Afrobeat - Réservation', description, cta_text='RÉSERVER MA PLACE', cta_link='https://afroboosteur.com'",

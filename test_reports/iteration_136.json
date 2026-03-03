@@ -32,7 +32,7 @@
     "frontend": "100% - All UI features working"
   },
   "test_credentials": {
-    "api_url": "https://violet-marketplace-1.preview.emergentagent.com",
+    "api_url": "https://promo-credits-lab.preview.emergentagent.com",
     "super_admin_emails": ["contact.artboost@gmail.com", "afroboost.bassi@gmail.com"],
     "test_codes": ["BOSS", "BOOST"]
   },

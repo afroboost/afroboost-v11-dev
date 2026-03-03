@@ -13,7 +13,7 @@ import uuid
 class V71Tester:
     def __init__(self):
         # Use environment variable URL from frontend/.env
-        self.base_url = "https://violet-marketplace-1.preview.emergentagent.com"
+        self.base_url = "https://promo-credits-lab.preview.emergentagent.com"
         self.api_url = f"{self.base_url}/api"
         self.tests_run = 0
         self.tests_passed = 0

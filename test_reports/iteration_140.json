@@ -35,7 +35,7 @@
   },
   "test_credentials": {
     "super_admin": "contact.artboost@gmail.com",
-    "api_url": "https://violet-marketplace-1.preview.emergentagent.com"
+    "api_url": "https://promo-credits-lab.preview.emergentagent.com"
   },
   "seed_data_creation": "None - used existing credit packs",
   "retest_needed": false,

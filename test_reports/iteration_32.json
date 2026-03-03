@@ -74,7 +74,7 @@
     "frontend": "100% (all UI elements verified)"
   },
   "test_credentials": {
-    "API_URL": "https://violet-marketplace-1.preview.emergentagent.com",
+    "API_URL": "https://promo-credits-lab.preview.emergentagent.com",
     "test_media_slug": "test-video-1"
   },
   "seed_data_creation": "test-video-1 media link exists with title 'Session Afrobeat Janvier 2025'",

@@ -43,7 +43,7 @@
     "frontend": "N/A (backend-only testing)"
   },
   "test_credentials": {
-    "api_base": "https://violet-marketplace-1.preview.emergentagent.com/api"
+    "api_base": "https://promo-credits-lab.preview.emergentagent.com/api"
   },
   "seed_data_creation": "Test courses and reservations created and cleaned up during testing. Test photos remain in /app/backend/uploads/profiles/ with prefix 'test_'",
   "retest_needed": false,

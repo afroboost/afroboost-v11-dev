@@ -56,7 +56,7 @@
     "super_admin_email": "contact.artboost@gmail.com",
     "test_pack_starter": {"name": "Pack Starter", "price": 49, "credits": 50},
     "test_pack_pro": {"name": "Pack Pro", "price": 99, "credits": 150},
-    "api_base": "https://violet-marketplace-1.preview.emergentagent.com/api"
+    "api_base": "https://promo-credits-lab.preview.emergentagent.com/api"
   },
   "seed_data_creation": "No test data needed - used existing packs in database. Test pack creation/deletion cycle in tests cleans up after itself.",
   "retest_needed": false,

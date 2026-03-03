@@ -31,7 +31,7 @@
     "frontend": "Code review verified - all data-testid attributes present"
   },
   "test_credentials": {
-    "api_url": "https://violet-marketplace-1.preview.emergentagent.com"
+    "api_url": "https://promo-credits-lab.preview.emergentagent.com"
   },
   "seed_data_creation": "TEST_Campaign_v941 created and deleted during testing",
   "retest_needed": false,

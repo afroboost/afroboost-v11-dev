@@ -54,7 +54,7 @@
   "test_credentials": {
     "promo_code": "PROMO20SECRET",
     "test_email": "testmedia@test.com",
-    "api_base": "https://violet-marketplace-1.preview.emergentagent.com/api"
+    "api_base": "https://promo-credits-lab.preview.emergentagent.com/api"
   },
   "seed_data_creation": "Test messages with YouTube, Drive, and CTA inserted into session 5b49c35b-4a6f-4b75-9891-4e12d2e9a33e for /api/messages/sync endpoint testing",
   "retest_needed": false,

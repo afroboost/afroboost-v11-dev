@@ -34,7 +34,7 @@
     "frontend": "100% (code review + Playwright verification)"
   },
   "test_credentials": {
-    "api_url": "https://violet-marketplace-1.preview.emergentagent.com"
+    "api_url": "https://promo-credits-lab.preview.emergentagent.com"
   },
   "seed_data_creation": "TestUser940, TestMsgUser - created during pytest for chat session verification",
   "retest_needed": false,

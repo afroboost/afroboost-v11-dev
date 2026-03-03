@@ -26,7 +26,7 @@
     "frontend": "100% - All v11.8 features validated"
   },
   "test_credentials": {
-    "api_url": "https://violet-marketplace-1.preview.emergentagent.com",
+    "api_url": "https://promo-credits-lab.preview.emergentagent.com",
     "super_admin_emails": ["contact.artboost@gmail.com", "afroboost.bassi@gmail.com"]
   },
   "seed_data_creation": "None",
@@ -46,8 +46,8 @@
     },
     "2_url_unchanged_after_reserve": {
       "status": "PASS",
-      "initial_url": "https://violet-marketplace-1.preview.emergentagent.com/",
-      "url_after_click": "https://violet-marketplace-1.preview.emergentagent.com/",
+      "initial_url": "https://promo-credits-lab.preview.emergentagent.com/",
+      "url_after_click": "https://promo-credits-lab.preview.emergentagent.com/",
       "verified": true
     },
     "3_session_section_visible": {

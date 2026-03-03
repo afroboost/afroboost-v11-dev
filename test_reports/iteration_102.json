@@ -32,7 +32,7 @@
     "frontend": "100% - All visual verifications passed, no JS errors"
   },
   "test_credentials": {
-    "api_url": "https://violet-marketplace-1.preview.emergentagent.com"
+    "api_url": "https://promo-credits-lab.preview.emergentagent.com"
   },
   "seed_data_creation": "None - tested existing functionality",
   "retest_needed": false,

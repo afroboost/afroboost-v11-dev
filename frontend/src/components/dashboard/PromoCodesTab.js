@@ -1,7 +1,7 @@
 /**
- * PromoCodesTab Component v13.5
- * Section Codes Promo - Extrait de CoachDashboard.js
- * ATTENTION: Ce composant est complexe avec beaucoup de logique
+ * PromoCodesTab Component v13.8
+ * Section Codes Promo - VERSION COMPLÈTE RESTAURÉE
+ * Inclut: Edition, Duplication, Durée validité, Max uses, Sélection contacts
  */
 import React, { useRef } from 'react';
 import { CreditsGate } from './index';
@@ -29,17 +29,27 @@ const PromoCodesTab = ({
   // Batch mode
   isBatchMode,
   setIsBatchMode,
+  batchLoading,
   // Manual contact
   showManualContactForm,
   setShowManualContactForm,
   manualContact,
   setManualContact,
-  // Offers
+  // Beneficiaries selection
+  uniqueCustomers,
+  selectedBeneficiaries,
+  toggleBeneficiarySelection,
+  // Articles/Courses selection
+  courses,
   offers,
+  toggleCourseSelection,
+  removeAllowedArticle,
   // Actions
   addCode,
   deleteCode,
-  toggleCodeActive,
+  toggleCode,
+  duplicateCode,
+  editCode,
   addManualContact,
   handleImportCSV,
   exportPromoCodesCSV,
@@ -48,6 +58,15 @@ const PromoCodesTab = ({
   t
 }) => {
   const fileInputRef = useRef(null);
+
+  // Helper pour formater les dates
+  const formatDate = (dateVal) => {
+    if (!dateVal) return '—';
+    try {
+      const d = new Date(dateVal);
+      return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('fr-CH');
+    } catch { return '—'; }
+  };
 
   return (
     <div className="card-gradient rounded-xl p-4 sm:p-6" data-testid="promo-codes-tab">
@@ -150,7 +169,7 @@ const PromoCodesTab = ({
         </form>
       )}
       
-      {/* Formulaire de création de code */}
+      {/* Formulaire de création de code - COMPLET */}
       <form onSubmit={addCode} className="mb-6 p-4 rounded-lg glass">
         {/* Toggle Mode Série */}
         <div className="flex items-center justify-between mb-4">
@@ -242,30 +261,150 @@ const PromoCodesTab = ({
           </div>
         )}
         
-        {/* Offre liée */}
+        {/* ============ SÉLECTION MULTIPLE DES BÉNÉFICIAIRES ============ */}
         <div className="mb-4">
-          <label className="block text-white text-xs mb-2 opacity-70">🎁 Offre liée (optionnel)</label>
-          <select 
-            value={newCode.linkedOffer} 
-            onChange={e => setNewCode({ ...newCode, linkedOffer: e.target.value })}
-            className="w-full px-3 py-2 rounded-lg neon-input text-sm"
-            data-testid="linked-offer-select"
-          >
-            <option value="">Aucune offre liée</option>
-            {offers.map(offer => (
-              <option key={offer.id} value={offer.id}>
-                {offer.name} - {offer.price} CHF
-              </option>
-            ))}
-          </select>
+          <label className="block text-white text-xs mb-2 opacity-70">
+            👥 Sélectionner les bénéficiaires ({selectedBeneficiaries?.length || 0} sélectionné{(selectedBeneficiaries?.length || 0) > 1 ? 's' : ''})
+          </label>
+          <div className="border border-purple-500/30 rounded-lg p-3 bg-purple-900/10" style={{ maxHeight: '120px', overflowY: 'auto' }}>
+            <div className="flex flex-wrap gap-2">
+              {uniqueCustomers && uniqueCustomers.length > 0 ? uniqueCustomers.map((c, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => toggleBeneficiarySelection && toggleBeneficiarySelection(c.email)}
+                  className={`px-2 py-1 rounded text-xs transition-all flex items-center gap-1 ${
+                    selectedBeneficiaries?.includes(c.email) 
+                      ? 'bg-pink-600 text-white' 
+                      : 'bg-gray-700 text-white hover:bg-gray-600'
+                  }`}
+                  data-testid={`beneficiary-${i}`}
+                >
+                  {selectedBeneficiaries?.includes(c.email) && <span>✓</span>}
+                  {c.name ? c.name.split(' ')[0] : 'Contact'}
+                </button>
+              )) : (
+                <span className="text-white text-xs opacity-50">Aucun contact disponible</span>
+              )}
+            </div>
+          </div>
+          {/* Affichage des bénéficiaires sélectionnés */}
+          {selectedBeneficiaries && selectedBeneficiaries.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {selectedBeneficiaries.map((email, i) => {
+                const customer = uniqueCustomers?.find(c => c.email === email);
+                return (
+                  <span key={i} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-pink-600/30 text-pink-300">
+                    {customer?.name || email}
+                    <button
+                      type="button"
+                      onClick={() => toggleBeneficiarySelection && toggleBeneficiarySelection(email)}
+                      className="hover:text-white ml-1"
+                    >×</button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
         
-        <button type="submit" className="btn-primary px-4 py-2 rounded-lg text-sm" data-testid="submit-promo-code">
-          {isBatchMode ? `🔢 Générer ${newCode.batchCount || 1} codes` : t('add')}
+        {/* ============ PARAMÈTRES AVANCÉS ============ */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          {/* Nombre max d'utilisations */}
+          <div>
+            <label className="block text-white text-xs mb-1 opacity-70">{t('maxUses')} (limite)</label>
+            <input 
+              type="number" 
+              placeholder="∞ = illimité" 
+              value={newCode.maxUses || ''} 
+              onChange={e => setNewCode({ ...newCode, maxUses: e.target.value })}
+              className="w-full px-3 py-2 rounded-lg neon-input text-sm" 
+              data-testid="max-uses-input"
+            />
+          </div>
+          
+          {/* Date d'expiration */}
+          <div>
+            <label className="block text-white text-xs mb-1 opacity-70">📅 Date d'expiration</label>
+            <input 
+              type="date" 
+              value={newCode.expiresAt || ''} 
+              onChange={e => setNewCode({ ...newCode, expiresAt: e.target.value })}
+              className="w-full px-3 py-2 rounded-lg neon-input text-sm" 
+              data-testid="expires-at-input"
+            />
+          </div>
+          
+          {/* Articles autorisés */}
+          <div>
+            <label className="block text-white text-xs mb-1 opacity-70">📦 Articles autorisés</label>
+            <div className="courses-scroll-container" style={{ maxHeight: '120px', overflowY: 'auto', padding: '4px' }} data-testid="articles-scroll-container">
+              {/* Section Cours */}
+              {courses && courses.length > 0 && (
+                <div className="mb-2">
+                  <p className="text-white text-xs opacity-40 mb-1">📅 Cours</p>
+                  <div className="flex flex-wrap gap-1">
+                    {courses.map(c => (
+                      <button key={c.id} type="button" onClick={() => toggleCourseSelection && toggleCourseSelection(c.id)}
+                        className={`px-2 py-1 rounded text-xs transition-all ${newCode.courses?.includes(c.id) ? 'bg-purple-600' : 'bg-gray-700 hover:bg-gray-600'}`}
+                        style={{ color: 'white' }} data-testid={`course-select-${c.id}`}>{c.name ? c.name.split(' – ')[0] : 'Cours'}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Section Offres */}
+              {offers && offers.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-white text-xs opacity-40 mb-1">🎫 Offres</p>
+                  <div className="flex flex-wrap gap-1">
+                    {offers.map(o => (
+                      <button key={o.id} type="button" onClick={() => toggleCourseSelection && toggleCourseSelection(o.id)}
+                        className={`px-2 py-1 rounded text-xs transition-all ${newCode.courses?.includes(o.id) ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}
+                        style={{ color: 'white' }} data-testid={`offer-select-${o.id}`}>{o.name}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {(!courses || courses.length === 0) && (!offers || offers.length === 0) && (
+                <span className="text-white text-xs opacity-50">Tous les articles</span>
+              )}
+            </div>
+            {/* Articles sélectionnés */}
+            {newCode.courses && newCode.courses.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {newCode.courses.map(articleId => {
+                  const course = courses?.find(c => c.id === articleId);
+                  const offer = offers?.find(o => o.id === articleId);
+                  const name = course?.name?.split(' – ')[0] || offer?.name || articleId;
+                  return (
+                    <span key={articleId} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-purple-600/30 text-purple-300">
+                      {name}
+                      <button type="button" onClick={() => removeAllowedArticle && removeAllowedArticle(articleId)} className="hover:text-white ml-1">×</button>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+        
+        <button 
+          type="submit" 
+          className="btn-primary px-6 py-2 rounded-lg text-sm flex items-center gap-2" 
+          data-testid={isBatchMode ? "generate-batch" : "add-code"}
+          disabled={batchLoading}
+        >
+          {batchLoading ? (
+            <><span className="animate-spin">⏳</span> Création en cours...</>
+          ) : isBatchMode ? (
+            <>{t('generateBatch')} ({newCode.batchCount || 1} codes)</>
+          ) : (
+            t('add')
+          )}
         </button>
       </form>
       
-      {/* Liste des codes */}
+      {/* ============ LISTE DES CODES ============ */}
       <div className="space-y-3" style={{ maxHeight: '400px', overflowY: 'auto' }}>
         {(codesSearch ? discountCodes.filter(c => 
           c.code?.toLowerCase().includes(codesSearch.toLowerCase()) ||
@@ -273,45 +412,77 @@ const PromoCodesTab = ({
         ) : discountCodes).map(code => (
           <div 
             key={code.id} 
-            className={`glass rounded-lg p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 ${!code.active ? 'opacity-50' : ''}`}
+            className={`glass rounded-lg p-4 ${!code.active ? 'opacity-50' : ''}`}
             data-testid={`promo-code-${code.id}`}
           >
-            <div className="flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-white font-bold text-lg">{code.code}</span>
-                <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(217, 28, 210, 0.3)', color: '#D91CD2' }}>
-                  {code.type === '100%' ? 'GRATUIT' : `${code.value}${code.type}`}
-                </span>
-                {code.linkedOfferName && (
-                  <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(139, 92, 246, 0.3)', color: '#a78bfa' }}>
-                    🎁 {code.linkedOfferName}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-white font-bold text-lg">{code.code}</span>
+                  <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(217, 28, 210, 0.3)', color: '#D91CD2' }}>
+                    {code.type === '100%' ? 'GRATUIT' : `${code.value}${code.type}`}
                   </span>
+                  {code.linkedOfferName && (
+                    <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(139, 92, 246, 0.3)', color: '#a78bfa' }}>
+                      🎁 {code.linkedOfferName}
+                    </span>
+                  )}
+                </div>
+                {/* Bénéficiaires */}
+                {code.assignedEmails?.length > 0 && (
+                  <p className="text-white/50 text-xs mt-1">
+                    👤 {code.assignedEmails.slice(0, 3).join(', ')}{code.assignedEmails.length > 3 ? ` +${code.assignedEmails.length - 3}` : ''}
+                  </p>
                 )}
-              </div>
-              {code.assignedEmails?.length > 0 && (
-                <p className="text-white/50 text-xs mt-1">
-                  👤 {code.assignedEmails.slice(0, 3).join(', ')}{code.assignedEmails.length > 3 ? ` +${code.assignedEmails.length - 3}` : ''}
+                {/* Stats utilisation */}
+                <p className="text-white/30 text-xs mt-1">
+                  Utilisé: {code.usedCount || code.used || 0}/{code.maxUses || '∞'}
+                  {code.expiresAt && ` • Expire: ${formatDate(code.expiresAt)}`}
                 </p>
-              )}
-              <p className="text-white/30 text-xs mt-1">
-                Utilisé: {code.usedCount || 0}/{code.maxUses || '∞'}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => toggleCodeActive(code)}
-                className={`px-3 py-1.5 rounded text-xs font-medium ${code.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}
-                data-testid={`toggle-code-${code.id}`}
-              >
-                {code.active ? '✓ Actif' : '✗ Inactif'}
-              </button>
-              <button
-                onClick={() => deleteCode(code.id)}
-                className="px-3 py-1.5 rounded text-xs bg-red-500/20 text-red-400 hover:bg-red-500/40"
-                data-testid={`delete-code-${code.id}`}
-              >
-                🗑️
-              </button>
+              </div>
+              
+              {/* BOUTONS D'ACTION */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Toggle Actif/Inactif */}
+                <button
+                  onClick={() => toggleCode && toggleCode(code)}
+                  className={`px-3 py-1.5 rounded text-xs font-medium ${code.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}
+                  data-testid={`toggle-code-${code.id}`}
+                >
+                  {code.active ? '✓ Actif' : '✗ Inactif'}
+                </button>
+                
+                {/* Bouton Éditer */}
+                {editCode && (
+                  <button
+                    onClick={() => editCode(code)}
+                    className="px-3 py-1.5 rounded text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/40"
+                    data-testid={`edit-code-${code.id}`}
+                  >
+                    ✏️ Éditer
+                  </button>
+                )}
+                
+                {/* Bouton Dupliquer */}
+                {duplicateCode && (
+                  <button
+                    onClick={() => duplicateCode(code)}
+                    className="px-3 py-1.5 rounded text-xs bg-purple-500/20 text-purple-400 hover:bg-purple-500/40"
+                    data-testid={`duplicate-code-${code.id}`}
+                  >
+                    📋 Dupliquer
+                  </button>
+                )}
+                
+                {/* Bouton Supprimer */}
+                <button
+                  onClick={() => deleteCode && deleteCode(code.id)}
+                  className="px-3 py-1.5 rounded text-xs bg-red-500/20 text-red-400 hover:bg-red-500/40"
+                  data-testid={`delete-code-${code.id}`}
+                >
+                  🗑️
+                </button>
+              </div>
             </div>
           </div>
         ))}

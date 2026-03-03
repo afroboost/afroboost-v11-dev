@@ -1190,6 +1190,46 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     setDiscountCodes(discountCodes.map(c => c.id === code.id ? { ...c, active: !c.active } : c));
   };
 
+  // v13.8: Éditer un code promo existant - Charge les données dans le formulaire
+  const editCode = (code) => {
+    setNewCode({
+      code: code.code || "",
+      type: code.type || "",
+      value: code.value || "",
+      assignedEmails: code.assignedEmails || [],
+      courses: code.courses || [],
+      maxUses: code.maxUses || "",
+      expiresAt: code.expiresAt || "",
+      batchCount: 1,
+      prefix: ""
+    });
+    setSelectedBeneficiaries(code.assignedEmails || []);
+    setEditingCode(code.id); // Marque le code en cours d'édition
+    setIsBatchMode(false); // Désactive le mode série pour l'édition
+    // Scroll vers le formulaire
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // v13.8: Dupliquer un code promo - Copie les données avec un nouveau nom
+  const duplicateCode = (code) => {
+    setNewCode({
+      code: `${code.code}_COPY`,
+      type: code.type || "",
+      value: code.value || "",
+      assignedEmails: [],
+      courses: code.courses || [],
+      maxUses: code.maxUses || "",
+      expiresAt: code.expiresAt || "",
+      batchCount: 1,
+      prefix: ""
+    });
+    setSelectedBeneficiaries([]);
+    setEditingCode(null); // Nouveau code, pas d'édition
+    setIsBatchMode(false);
+    // Scroll vers le formulaire
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   // Delete discount code - SUPPRESSION DÉFINITIVE EN BASE + VÉRIFICATION
   const deleteCode = async (codeId) => {
     if (window.confirm("⚠️ SUPPRESSION DÉFINITIVE\n\nCe code promo sera supprimé de la base de données.\nCette action est irréversible.\n\nConfirmer la suppression ?")) {
@@ -4520,32 +4560,50 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           />
         )}
 
-        {/* v13.5: Promo Codes Tab - Composant extrait */}
+        {/* v13.8: Promo Codes Tab - RESTAURATION COMPLÈTE */}
         {tab === "codes" && (
           <PromoCodesTab
+            // === Credits Gate ===
             hasCreditsFor={hasCreditsFor}
             servicePrices={servicePrices}
             coachCredits={coachCredits}
             setTab={setTab}
+            // === Search ===
             codesSearch={codesSearch}
             setCodesSearch={setCodesSearch}
+            // === Promo codes data ===
             discountCodes={discountCodes}
             newCode={newCode}
             setNewCode={setNewCode}
+            // === Batch mode ===
             isBatchMode={isBatchMode}
             setIsBatchMode={setIsBatchMode}
+            batchLoading={batchLoading}
+            // === Manual contact ===
             showManualContactForm={showManualContactForm}
             setShowManualContactForm={setShowManualContactForm}
             manualContact={manualContact}
             setManualContact={setManualContact}
+            // === Beneficiaries selection (v13.8: RESTAURÉ) ===
+            uniqueCustomers={uniqueCustomers}
+            selectedBeneficiaries={selectedBeneficiaries}
+            toggleBeneficiarySelection={toggleBeneficiarySelection}
+            // === Articles/Courses selection ===
+            courses={courses}
             offers={offers}
+            toggleCourseSelection={toggleCourseSelection}
+            removeAllowedArticle={removeAllowedArticle}
+            // === Actions ===
             addCode={addCode}
             deleteCode={deleteCode}
-            toggleCodeActive={toggleCode}
+            toggleCode={toggleCode}
+            duplicateCode={duplicateCode}
+            editCode={editCode}
             addManualContact={addManualContact}
             handleImportCSV={handleImportCSV}
             exportPromoCodesCSV={exportPromoCodesCSV}
             manualSanitize={manualSanitize}
+            // === Translations ===
             t={t}
           />
         )}

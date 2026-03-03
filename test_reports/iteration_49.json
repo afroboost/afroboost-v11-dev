@@ -59,7 +59,7 @@
   "test_credentials": {
     "promo_code": "basxx",
     "required_email": "bassicustomshoes@gmail.com",
-    "api_base": "https://violet-marketplace-1.preview.emergentagent.com/api"
+    "api_base": "https://promo-credits-lab.preview.emergentagent.com/api"
   },
   "seed_data_creation": "Test users and conversations created during testing",
   "retest_needed": false,

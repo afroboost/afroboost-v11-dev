@@ -62,7 +62,7 @@
     "frontend": "100% (all UI tests passed)"
   },
   "test_credentials": {
-    "API_URL": "https://violet-marketplace-1.preview.emergentagent.com",
+    "API_URL": "https://promo-credits-lab.preview.emergentagent.com",
     "Coach_Auth": "Google OAuth (contact.artboost@gmail.com) - not testable automatically"
   },
   "seed_data_creation": "Test sessions and participants created during testing",

@@ -26,7 +26,7 @@
     "frontend": "100% - All v11.9 features validated"
   },
   "test_credentials": {
-    "api_url": "https://violet-marketplace-1.preview.emergentagent.com",
+    "api_url": "https://promo-credits-lab.preview.emergentagent.com",
     "viewport": "412x915 (Samsung Ultra 24)"
   },
   "seed_data_creation": "None",

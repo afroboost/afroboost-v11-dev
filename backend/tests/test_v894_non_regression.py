@@ -8,7 +8,7 @@ import os
 import uuid
 
 # Use the external URL for testing
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://violet-marketplace-1.preview.emergentagent.com').rstrip('/')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://promo-credits-lab.preview.emergentagent.com').rstrip('/')
 
 
 class TestNonRegressionAPIs:

@@ -30,7 +30,7 @@
   },
   "test_credentials": {
     "super_admin_email": "contact.artboost@gmail.com",
-    "api_url": "https://violet-marketplace-1.preview.emergentagent.com"
+    "api_url": "https://promo-credits-lab.preview.emergentagent.com"
   },
   "seed_data_creation": "TestUser937 - test registration for calendar icon verification",
   "retest_needed": false,

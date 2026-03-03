@@ -32,7 +32,7 @@
     "frontend": "100% - All v9.6.4 UI features verified via Playwright"
   },
   "test_credentials": {
-    "api_url": "https://violet-marketplace-1.preview.emergentagent.com",
+    "api_url": "https://promo-credits-lab.preview.emergentagent.com",
     "super_admin_email": "afroboost.bassi@gmail.com"
   },
   "seed_data_creation": "None - used existing data",

@@ -63,7 +63,7 @@
   },
   "test_credentials": {
     "super_admin_email": "contact.artboost@gmail.com",
-    "api_base": "https://violet-marketplace-1.preview.emergentagent.com/api"
+    "api_base": "https://promo-credits-lab.preview.emergentagent.com/api"
   },
   "seed_data_creation": "No new data created - used existing packs",
   "retest_needed": false,

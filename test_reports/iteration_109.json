@@ -31,7 +31,7 @@
     "frontend": "100% - All v9.5.1 features verified"
   },
   "test_credentials": {
-    "api_url": "https://violet-marketplace-1.preview.emergentagent.com",
+    "api_url": "https://promo-credits-lab.preview.emergentagent.com",
     "test_partner_vitrine": "/coach/contact.artboost@gmail.com"
   },
   "seed_data_creation": "None - used existing data",

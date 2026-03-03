@@ -39,7 +39,7 @@
     "frontend": "100% - All features work, date format fixed"
   },
   "test_credentials": {
-    "api_url": "https://violet-marketplace-1.preview.emergentagent.com",
+    "api_url": "https://promo-credits-lab.preview.emergentagent.com",
     "test_email": "test-subscriber@test.com",
     "test_code": "BOSS"
   },
