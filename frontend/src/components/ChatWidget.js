@@ -2845,6 +2845,21 @@ export const ChatWidget = () => {
       setIsOpen(true);
     }
   }, []);
+
+  // v14.5: Mettre à jour le titre de la page quand une session avec titre est active
+  useEffect(() => {
+    if (sessionData?.title) {
+      document.title = `Afroboost | Chat ${sessionData.title}`;
+    } else if (isOpen) {
+      document.title = 'Afroboost | Chat';
+    }
+    // Cleanup: remettre le titre original à la fermeture
+    return () => {
+      if (!isOpen) {
+        document.title = 'Afroboost';
+      }
+    };
+  }, [sessionData?.title, isOpen]);
   
   // === FERMER LE MENU UTILISATEUR AU CLIC EXTÉRIEUR ===
   useEffect(() => {
@@ -3671,13 +3686,17 @@ export const ChatWidget = () => {
                       Synchronisation...
                     </span>
                   ) : (
-                    /* v14.3: Afficher "Assistant Afroboost : [Nom du Lien]" si disponible */
+                    /* v14.5: Afficher badge "Session Active : [Nom du Lien]" si disponible */
                     sessionData?.title ? (
-                      <span className="flex items-center gap-1">
-                        <span style={{ fontSize: '10px' }}>🤖</span>
-                        <span>Assistant Afroboost : </span>
-                        <span className="font-bold" style={{ color: '#D91CD2' }}>{sessionData.title}</span>
-                      </span>
+                      <div className="flex flex-col">
+                        <span className="flex items-center gap-1">
+                          <span style={{ fontSize: '12px' }}>🤖</span>
+                          <span className="font-bold" style={{ color: '#D91CD2' }}>{sessionData.title}</span>
+                        </span>
+                        <span className="text-xs opacity-70" style={{ fontSize: '9px' }}>
+                          ✓ Session Active
+                        </span>
+                      </div>
                     ) :
                     /* Afficher le statut abonné si profil validé + cours restants */
                     afroboostProfile?.code && step === 'chat'

@@ -307,7 +307,7 @@ const LinkItem = memo(({ link, copiedLinkId, copyLinkToClipboard, deleteChatLink
           <span>📅 {(() => {
             try {
               const d = new Date(link.createdAt);
-              return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('fr-FR');
+              return isNaN(d.getTime()) ? '—' : new Intl.DateTimeFormat('fr-CH', { dateStyle: 'short' }).format(d);
             } catch { return '—'; }
           })()}</span>
         </div>
