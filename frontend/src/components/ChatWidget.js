@@ -457,9 +457,21 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
               <div>
                 <div style={{ color: '#A78BFA', fontSize: '10px', fontWeight: '600' }}>SÉANCE</div>
                 <div style={{ color: 'white', fontSize: '13px', fontWeight: '500' }}>{details.courseName}</div>
-                <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: '11px' }}>{details.courseTime}</div>
               </div>
             </div>
+            
+            {/* v11.5: Date et Heure de la réservation */}
+            {details.reservationDate && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ color: '#D91CD2', fontSize: '14px' }}>🗓️</span>
+                <div>
+                  <div style={{ color: '#A78BFA', fontSize: '10px', fontWeight: '600' }}>DATE & HEURE</div>
+                  <div style={{ color: 'white', fontSize: '13px', fontWeight: '700' }}>
+                    {details.reservationDate}
+                  </div>
+                </div>
+              </div>
+            )}
             
             {/* Solde restant */}
             {details.remaining && details.remaining !== 'N/A' && (
@@ -1785,6 +1797,32 @@ export const ChatWidget = () => {
         }
         
         // v10.3: Message de confirmation PREMIUM avec récapitulatif
+        // v11.5: Ajout de la date et heure précises
+        const formatReservationDate = (time, weekday) => {
+          const today = new Date();
+          const currentDay = today.getDay();
+          let daysUntilCourse = weekday - currentDay;
+          if (daysUntilCourse <= 0) daysUntilCourse += 7;
+          const courseDate = new Date(today);
+          courseDate.setDate(today.getDate() + daysUntilCourse);
+          if (time) {
+            const [hours, minutes] = time.split(':');
+            courseDate.setHours(parseInt(hours) || 18, parseInt(minutes) || 30, 0, 0);
+          }
+          return courseDate;
+        };
+        
+        const reservationDate = formatReservationDate(selectedCourse.time, selectedCourse.weekday);
+        const formattedDateTime = new Intl.DateTimeFormat('fr-FR', {
+          weekday: 'long',
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          timeZone: 'Europe/Paris'
+        }).format(reservationDate);
+        
         const confirmMsg = {
           type: 'ai',
           text: `✨ RÉSERVATION CONFIRMÉE ✨`,
@@ -1793,6 +1831,7 @@ export const ChatWidget = () => {
           reservationDetails: {
             courseName: selectedCourse.name,
             courseTime: selectedCourse.time,
+            reservationDate: formattedDateTime.charAt(0).toUpperCase() + formattedDateTime.slice(1), // v11.5
             clientName: reservationData.userName,
             promoCode: afroboostProfile?.code || 'N/A',
             remaining: reservationEligibility?.remaining || 'N/A',

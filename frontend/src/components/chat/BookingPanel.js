@@ -29,11 +29,12 @@ const formatCourseDate = (time, weekday) => {
     courseDate.setHours(parseInt(hours) || 18, parseInt(minutes) || 30, 0, 0);
   }
   
-  // Formater en français avec fuseau Europe/Paris
+  // Formater en français avec fuseau Europe/Paris (v11.5: ajout année)
   const formatter = new Intl.DateTimeFormat('fr-FR', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
+    year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
     timeZone: 'Europe/Paris'
