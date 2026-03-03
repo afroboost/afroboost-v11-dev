@@ -5,63 +5,52 @@ Multi-partner SaaS platform for fitness coaching with a mobile-first, "Instagram
 
 ## Core Features Implemented
 
-### Mission v13.8 (March 2026) - COMPLETED - RESTAURATION CHIRURGICALE
-**Restauration complète des fonctionnalités Codes Promos et Conversations**
+### Mission v14.0 (March 2026) - COMPLETED - IDENTITÉ VISITEURS & BOUTONS PROMO
+**Restauration de l'identité des visiteurs dans le CRM et bouton Copier**
 
 #### Corrections effectuées:
-1. **editCode function** (CoachDashboard.js lignes 1194-1211): Permet d'éditer un code promo existant en chargeant ses données dans le formulaire
-2. **duplicateCode function** (CoachDashboard.js lignes 1214-1231): Permet de dupliquer un code avec suffixe "_COPY"
-3. **Props PromoCodesTab** (lignes 4565-4607): Toutes les props manquantes ajoutées:
-   - `toggleCode`, `editCode`, `duplicateCode`
-   - `uniqueCustomers`, `selectedBeneficiaries`, `toggleBeneficiarySelection`
-   - `courses`, `toggleCourseSelection`, `removeAllowedArticle`
-   - `batchLoading`
+1. **Activation IA** - `ai_config.enabled` mis à `true` via PUT `/api/ai-config`
+2. **Enrichissement sessions** - Endpoints `/chat/sessions` et `/chat/conversations` enrichis avec:
+   - `participantName` (nom du premier participant ou fallback sur `title`)
+   - `participantEmail`
+   - `lastMessage`, `messageCount`
+3. **Bouton Copier** - Ajouté dans `PromoCodesTab.js`:
+   - `CopyIcon` et `CheckIcon` composants SVG
+   - `copyCodeToClipboard()` avec `navigator.clipboard.writeText()` + fallback
+   - `data-testid="copy-code-{code.id}"` pour tests
+4. **Nom du lien dans Chat** - `ChatWidget.js` affiche `sessionData.title` dans le header
 
-#### Fonctionnalités restaurées dans PromoCodesTab:
-- Boutons "Éditer" et "Dupliquer" visibles sur chaque code
-- Champ "Date d'expiration" (expiresAt)
-- Champ "Nombre max utilisations" (maxUses)
-- Sélection multiple de bénéficiaires
-- Toggle Actif/Inactif fonctionnel
+#### Tests validés (100%):
+- Backend: 10/10 tests passés
+- Frontend: Aucune erreur console
 
-#### Corrections Chat (CRMSection.js):
-- Fallback message: `msg.content || msg.text || msg.message || '[Message vide]'`
-- Validation date: `isNaN(d.getTime()) ? '—' : d.toLocaleDateString('fr-FR')`
+### Mission v13.8 (March 2026) - COMPLETED
+- Restauration `editCode` et `duplicateCode` fonctions
+- Props complètes passées à `PromoCodesTab`
+- Fonctionnalités: Édition, Duplication, Date expiration, Max uses, Sélection contacts
 
-### Mission v13.7 (March 2026) - COMPLETED
-- Fix toggleCodeActive renamed to toggleCode
-- Fix code.isActive changed to code.active
-- Fix empty message bubbles with fallback
-- Fix Invalid Date with try/catch
+### Missions v13.0-v13.7 - COMPLETED
+- Design "Zéro Cadre", Stripe integration, Credit system, Refactoring
 
-### Mission v13.6 (March 2026) - COMPLETED
-- Design "Zéro Cadre" appliqué
-- DashboardHeader.js créé
-
-### Missions v13.0-v13.5 - COMPLETED
-- Stripe integration for credits
-- Credit locking system
-- Component refactoring
-
-## Data Status (Anti-Régression Audit)
+## Data Status (Anti-Régression Audit v14.0)
 - 2 réservations
 - 8 contacts
 - 2 codes promos
-- Video: Full-Width
-- Design: "Zéro Cadre"
+- 6 chat links
+- AI Config: enabled=true
 
 ## Testing Status
-- Mission v13.8: **100%** (11/11 tests)
-- Report: `/app/test_reports/iteration_147.json`
+- Mission v14.0: **100%** (10/10 tests)
+- Report: `/app/test_reports/iteration_148.json`
 
 ## Pending Tasks
 
 ### P0 (Critical)
-- Déploiement backend en production
+- Déploiement backend en production (risque: environnement preview)
 
 ### P1 (High Priority)
 - Intégration Stripe Connect pour paiements partenaires
-- Continuer modularisation CoachDashboard.js (4835 lignes -> objectif <3000)
+- Continuer modularisation CoachDashboard.js (4853 lignes -> objectif <3000)
 - Continuer modularisation server.py
 
 ### P2 (Medium Priority)
@@ -77,10 +66,11 @@ Multi-partner SaaS platform for fitness coaching with a mobile-first, "Instagram
 ### Frontend Components
 ```
 /app/frontend/src/components/
-├── CoachDashboard.js         # Main dashboard (~4835 lines)
+├── CoachDashboard.js         # Main dashboard (~4853 lines)
+├── ChatWidget.js             # Chat widget (~5311 lines)
 ├── dashboard/
 │   ├── index.js              # Exports
-│   ├── PromoCodesTab.js      # v13.8: RESTORED
+│   ├── PromoCodesTab.js      # v14.0: Bouton Copier ajouté
 │   ├── CreditsGate.js
 │   ├── CreditBoutique.js
 │   ├── StripeConnectTab.js
@@ -90,13 +80,16 @@ Multi-partner SaaS platform for fitness coaching with a mobile-first, "Instagram
 │   ├── PageVenteTab.js
 │   └── DashboardHeader.js
 └── coach/
-    └── CRMSection.js         # v13.8: Fixed dates/messages
+    └── CRMSection.js         # v14.0: participantName enrichi
 ```
 
 ### Backend Routes
 ```
 /app/backend/
-├── server.py                 # Main server (~3000 lines)
+├── server.py                 # Main server (~7036 lines)
+│   ├── GET /api/chat/sessions   # v14.0: enrichi participantName
+│   ├── GET /api/conversations   # v14.0: enrichi participantName
+│   └── PUT /api/ai-config       # v14.0: enabled=true
 └── routes/
     ├── promo_routes.py
     ├── reservation_routes.py
@@ -106,5 +99,11 @@ Multi-partner SaaS platform for fitness coaching with a mobile-first, "Instagram
     └── campaign_routes.py
 ```
 
+### Key API Endpoints v14.0
+- `GET /api/chat/sessions` - Sessions enrichies avec participantName
+- `GET /api/conversations` - Conversations enrichies avec participantName
+- `PUT /api/ai-config` - Activer/désactiver l'IA
+- `GET /api/ai-config` - Vérifier le statut de l'IA
+
 ---
-Last Updated: March 2026 - Mission v13.8 RESTAURATION VALIDATED
+Last Updated: March 2026 - Mission v14.0 VALIDATED
