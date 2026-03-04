@@ -1,0 +1,64 @@
+{
+  "summary": "Mission v15.1 VALIDATION Complete - All 18 backend tests passed. All frontend code features verified. Pont lien-chat avec custom_prompt STRICT mode, campagnes, calendrier fix < 0, couleurs CRM, bouton Copier, recherche mots-clés, Super Admin bypass - TOUT FONCTIONNE.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "CoachVitrine Hero", "issues": ["Video hero shows 'Video unavailable' - YouTube link issue, not code bug"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v151_mission.py",
+    "/app/test_reports/pytest/pytest_v151_mission.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "✅ server.py lines 3596-3616: custom_prompt STRICT mode - link_token loads custom_prompt, use_strict_mode=True activates ISOLATION TOTALE",
+    "✅ server.py lines 1717-1727: Campaign messages inserted in chat_messages with sender_type='coach', sender_name='Coach Bassi'",
+    "✅ CRMSection.js lines 420-423, 649-652: 'Source : [session.title]' displayed correctly",
+    "✅ CRMSection.js lines 680-685: Colors verified - Client=bg-gray-700/80 LEFT (isClientMessage), Coach=#D91CD2 RIGHT (!isClientMessage)",
+    "✅ ChatWidget.js line 1807: Calendar fix daysUntilCourse < 0 (not <= 0) - Same-day booking works",
+    "✅ BookingPanel.js line 23: Calendar fix daysUntilCourse < 0 (not <= 0) - Same-day booking works",
+    "✅ PromoCodesTab.js lines 79-96: copyCodeToClipboard function with navigator.clipboard and fallback execCommand('copy')",
+    "✅ CoachVitrine.js lines 864-869: Keyword search filtering by name, description, AND keywords fields",
+    "✅ server.py lines 290-298: Super Admin bypass - is_super_admin() returns {}, partners get {coach_id: email}"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v151_mission.py"
+  ],
+  "success_rate": {
+    "backend": "100% (18/18 tests passed)",
+    "frontend": "100% (all code features verified via grep and UI tests)"
+  },
+  "seed_data_creation": "TEST_V151_ prefixed links and sessions created during testing",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Mission v15.1 VALIDATION is complete. All systems verified: (1) Pont lien->chat with custom_prompt STRICT mode works - when link_token provided and session has custom_prompt, use_strict_mode=True activates ISOLATION TOTALE context, (2) Campaigns insert messages in chat_messages collection with proper fields, (3) CRMSection displays 'Source: [Nom du Lien]' via session.title, (4) Calendar fix < 0 verified in both ChatWidget.js and BookingPanel.js allowing same-day booking, (5) CRMSection colors: Client=gray-700 LEFT, Coach=#D91CD2 RIGHT, (6) PromoCodesTab copy button with clipboard API and fallback, (7) CoachVitrine keyword search filters by name, description, AND keywords, (8) Super Admin bypass verified - contact.artboost@gmail.com sees all data. Anti-regression: 8+ contacts, 20+ reservations PASS.",
+  "verified_v151_features": {
+    "pont_lien_chat_custom_prompt": "✅ link_token -> custom_prompt -> use_strict_mode -> ISOLATION TOTALE",
+    "campaign_messages_chat": "✅ db.chat_messages.insert_one() with sender_type='coach'",
+    "source_display_crm": "✅ '🔗 Source : {session.title}' at lines 423 and 652",
+    "calendar_fix_same_day": "✅ daysUntilCourse < 0 (not <= 0) in ChatWidget and BookingPanel",
+    "crm_colors": "✅ Client=bg-gray-700/80 LEFT, Coach=#D91CD2 RIGHT",
+    "copy_button_promo": "✅ copyCodeToClipboard with navigator.clipboard + fallback",
+    "keyword_search_vitrine": "✅ filteredOffers by name, description, keywords",
+    "super_admin_bypass": "✅ is_super_admin() -> get_coach_filter() returns {}"
+  },
+  "anti_regression_status": {
+    "contacts_count": "8+ (PASS)",
+    "reservations_count": "20+ (PASS)",
+    "courses_endpoint": "200 OK",
+    "offers_endpoint": "200 OK",
+    "health_endpoint": "200 OK healthy",
+    "chat_sessions_endpoint": "200 OK",
+    "platform_settings_endpoint": "200 OK",
+    "coach_vitrine_endpoint": "200 OK"
+  },
+  "test_credentials": {
+    "super_admin": "contact.artboost@gmail.com"
+  }
+}
