@@ -5,50 +5,58 @@ Multi-partner SaaS platform for fitness coaching with a mobile-first, "Instagram
 
 ## Core Features Implemented
 
-### Mission v15.0 (March 2026) - COMPLETED - SYSTÈME CONNECTÉ
-**Connexion chat, campagnes et liens dédiés - Vérification complète**
+### Mission v15.1 (March 2026) - COMPLETED - VALIDATION COMPLÈTE
+**Pont lien-chat et campagnes omnicanal - VALIDATION 100%**
 
-#### Fonctionnalités vérifiées:
-1. **Le Pont Lien → Chat** (server.py lignes 5311-5460):
-   - `POST /chat/smart-entry` met à jour `participantName` et `participantEmail` dans la session
-   - `link_token` passé → session du lien utilisée
-   - Nouveau: lignes 5433-5443 mettent à jour participantName pour l'affichage CRM
+#### Validations effectuées:
+1. **Pont Lien → Chat** (server.py lignes 3596-3616):
+   - `link_token` charge le `custom_prompt` spécifique
+   - Mode STRICT activé → ISOLATION TOTALE du contexte
+   - Aucune donnée de vente si custom_prompt présent
 
-2. **Synchronisation Campagnes → Chat**:
-   - Messages de campagne insérés dans `chat_messages` (lignes 1717-1727)
-   - Scheduler insère messages via `poser_message_en_base` (ligne 103)
-   - Socket.IO émet signal en temps réel
+2. **Campagnes → Chat** (server.py lignes 1717-1727):
+   - Messages insérés dans `chat_messages`
+   - `sender_type='coach'`, `sender_name='Coach Bassi'`
+   - Client voit le message dans son chat
 
-3. **Calendrier** (fix v14.8):
-   - `daysUntilCourse < 0` (pas `<= 0`) vérifié
+3. **Source Affichée** (CRMSection.js lignes 420-423, 649-652):
+   - "🔗 Source : [Nom du Lien]" visible dans Dashboard Coach
+   - Via `session.title`
+
+4. **Calendrier** (fix v14.8):
+   - `daysUntilCourse < 0` (pas `<= 0`)
    - ChatWidget.js ligne 1807 ✅
    - BookingPanel.js ligne 23 ✅
 
-4. **Couleurs Chat** (v14.3):
+5. **Couleurs Chat** (CRMSection.js lignes 680-685):
    - Client: `bg-gray-700/80` GAUCHE ✅
    - Coach/IA: `#D91CD2` DROITE ✅
 
-5. **Étanchéité** (v14.7):
-   - Super Admin voit TOUT
-   - Partenaires filtrés par `coach_id` ✅
+6. **Bouton Copier** (PromoCodesTab.js ligne 79):
+   - `navigator.clipboard.writeText()` + fallback `execCommand('copy')`
 
-### Missions v14.x - COMPLETED
+7. **Recherche Mots-clés** (CoachVitrine.js lignes 864-869):
+   - Filtrage par nom, description, ET keywords
+
+8. **Super Admin** (server.py lignes 290-298):
+   - `is_super_admin()` → Pas de filtre `coach_id`
+
+### Missions précédentes - COMPLETED
+- v15.0: Système connecté, participantName mis à jour
 - v14.8: Calendrier réaligné
 - v14.7: Étanchéité contacts
 - v14.6: Recherche mots-clés
-- v14.5: Document.title, badge Session Active
-- v14.3: Bulles colorées, Source lien
-- v14.0: Bouton Copier, participantName enrichi
+- v14.3-14.5: Bulles colorées, Source lien, document.title
 
-## Data Status (Anti-Régression v15.0)
-- 20 réservations ✅
-- 8 contacts ✅
-- 17 sessions chat ✅
-- 12 chat links ✅
+## Data Status (Anti-Régression v15.1)
+- 20+ réservations ✅
+- 8+ contacts ✅
+- 17+ sessions chat ✅
+- 17+ chat links ✅
 
 ## Testing Status
-- Mission v15.0: **100% backend** (18/18), **100% frontend**
-- Report: `/app/test_reports/iteration_154.json`
+- Mission v15.1: **100% backend** (18/18), **100% frontend**
+- Report: `/app/test_reports/iteration_155.json`
 
 ## Pending Tasks
 
@@ -66,32 +74,32 @@ Multi-partner SaaS platform for fitness coaching with a mobile-first, "Instagram
 - Emails: `contact.artboost@gmail.com`, `afroboost.bassi@gmail.com`
 - Triple-click "© Afroboost 2026" pour login admin
 
-## Architecture
+## Architecture - Pont Lien → Chat
 
-### Flux Lien → Chat (v15.0)
+### Flux complet
 ```
-1. Client clique sur lien: /chat/bavard
-2. ChatWidget.js détecte linkToken via getLinkTokenFromUrl()
-3. Client saisit Nom/Email
-4. POST /chat/smart-entry avec link_token
-5. Backend:
-   - Trouve/crée participant
-   - Trouve session du lien
-   - Met à jour participantName et participantEmail
-   - Retourne session enrichie
-6. Dashboard Coach voit "Source: bavard"
-```
-
-### Flux Campagne → Chat
-```
-1. Coach lance campagne via POST /campaigns/{id}/launch
-2. Pour chaque destinataire:
-   - Trouve/crée session
-   - INSERT message dans chat_messages (lignes 1717-1727)
-   - Socket.IO signal si client connecté
-3. Client voit message dans son chat
-4. Client peut répondre
+CLIENT                          BACKEND                         DASHBOARD
+   |                               |                               |
+   | Clique ?link=bavard           |                               |
+   |------------------------------>|                               |
+   |                               | Récupère session bavard       |
+   |                               | avec custom_prompt            |
+   |                               |                               |
+   | Saisit Nom/Email              |                               |
+   |------------------------------>|                               |
+   |                               | POST /chat/smart-entry        |
+   |                               | Met à jour participantName    |
+   |                               |                               |
+   | Envoie message                |                               |
+   |------------------------------>|                               |
+   |                               | Mode STRICT activé            |
+   |                               | ISOLATION TOTALE              |
+   |                               | Répond avec custom_prompt     |
+   |<------------------------------|                               |
+   |                               |                               |
+   |                               |            Source: bavard     |
+   |                               |------------------------------>|
 ```
 
 ---
-Last Updated: March 2026 - Mission v15.0 SYSTÈME CONNECTÉ
+Last Updated: March 2026 - Mission v15.1 VALIDATION COMPLÈTE
