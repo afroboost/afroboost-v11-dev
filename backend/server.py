@@ -5431,6 +5431,18 @@ async def smart_chat_entry(request: Request):
             )
             session = await db.chat_sessions.find_one({"id": session["id"]}, {"_id": 0})
     
+    # v15.0: Mettre à jour le participantName de la session pour l'affichage CRM
+    if session and name:
+        await db.chat_sessions.update_one(
+            {"id": session["id"]},
+            {"$set": {
+                "participantName": name,
+                "participantEmail": email if email else session.get("participantEmail", ""),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+        session = await db.chat_sessions.find_one({"id": session["id"]}, {"_id": 0})
+    
     # Récupérer l'historique des messages si participant existant
     chat_history = []
     if is_returning:

@@ -1,0 +1,65 @@
+{
+  "summary": "Mission v15.0 Testing Complete - Connexion chat, campagnes et liens dédiés. All 18 backend tests passed. Key features verified: POST /chat/smart-entry now updates participantName and participantEmail in session (lines 5433-5443), link_token support works, chat sessions return enriched participantName, calendar fix < 0 verified, colors (Client=gray LEFT, Coach=#D91CD2 RIGHT) verified in CRMSection.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "WebSocket", "issue": "Socket.IO connection timeout observed in console logs, but chat functionality still works via REST API fallback", "affected_selectors": []}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v150_mission.py",
+    "/app/test_reports/pytest/pytest_v150_mission.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "✅ server.py lines 5433-5443: POST /chat/smart-entry now updates participantName and participantEmail in session - VERIFIED",
+    "✅ server.py lines 5393-5398: link_token support - session of the link is used when link_token is passed",
+    "✅ server.py lines 1717-1727: Campaign messages inserted in chat_messages with proper fields",
+    "✅ scheduler_engine.py lines 102-103: Messages inserted in chat_messages collection via poser_message_en_base",
+    "✅ ChatWidget.js line 1806-1807: Calendar fix daysUntilCourse < 0 (not <= 0) - Same-day booking works",
+    "✅ BookingPanel.js line 22-23: Calendar fix daysUntilCourse < 0 (not <= 0) - Same-day booking works",
+    "✅ CRMSection.js lines 680-685: Colors verified - Client=bg-gray-700/80 LEFT, Coach=#D91CD2 RIGHT",
+    "✅ PromoCodesTab.js lines 79-96: copyCodeToClipboard function properly implemented with fallback"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v150_mission.py"
+  ],
+  "success_rate": {
+    "backend": "100% (18/18 tests passed)",
+    "frontend": "100% (all features verified)"
+  },
+  "seed_data_creation": "TEST_ prefixed participants and sessions created during testing",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Mission v15.0 fully verified. Key v15.0 features: 1) POST /chat/smart-entry updates participantName and participantEmail in session for CRM display (lines 5433-5443), 2) link_token passed -> session of link used, 3) GET /chat/sessions returns sessions with participantName enriched (17 sessions with names), 4) Campaigns insert messages in chat_messages (lines 1717-1727), 5) Scheduler inserts messages via poser_message_en_base (line 103), 6) Calendar < 0 fix verified in both ChatWidget.js and BookingPanel.js, 7) Colors: Client=gray-700 LEFT, Coach=#D91CD2 RIGHT in CRMSection, 8) Copy button in PromoCodesTab works with fallback. Anti-regression: 8 contacts (PASS), 20 reservations (PASS).",
+  "verified_v150_features": {
+    "smart_entry_participant_name": "✅ participantName updated in session (lines 5433-5443)",
+    "smart_entry_participant_email": "✅ participantEmail updated in session",
+    "smart_entry_link_token": "✅ link_token passed -> session of link used",
+    "chat_sessions_enriched": "✅ GET /chat/sessions returns 17 sessions with participantName",
+    "campaign_messages_insertion": "✅ Messages inserted in chat_messages (lines 1717-1727)",
+    "scheduler_messages_insertion": "✅ poser_message_en_base inserts in chat_messages (line 103)",
+    "calendar_fix": "✅ daysUntilCourse < 0 (not <= 0) in both ChatWidget.js and BookingPanel.js",
+    "crm_colors": "✅ Client=bg-gray-700/80 LEFT, Coach=#D91CD2 RIGHT",
+    "copy_button": "✅ copyCodeToClipboard works with fallback",
+    "etancheite_coach_id": "✅ Super Admin sees all, Partners filtered by coach_id"
+  },
+  "anti_regression_status": {
+    "contacts_count": "8 (PASS - expected ≥8)",
+    "reservations_count": "20 (PASS - expected ≥2)",
+    "courses_endpoint": "200 OK",
+    "offers_endpoint": "200 OK",
+    "discount_codes_endpoint": "200 OK",
+    "chat_sessions_endpoint": "200 OK (17 sessions with participantName)",
+    "platform_settings_endpoint": "200 OK",
+    "coach_vitrine_endpoint": "200 OK"
+  },
+  "test_credentials": {
+    "super_admin": "contact.artboost@gmail.com"
+  }
+}
