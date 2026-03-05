@@ -5,6 +5,7 @@
  */
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { copyToClipboard } from '../utils/clipboard'; // Fallback mobile robuste
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -208,10 +209,11 @@ const MediaViewer = ({ slug }) => {
         {/* Partage */}
         <div style={styles.shareSection}>
           <button
-            onClick={() => {
+            onClick={async () => {
               const shareUrl = `https://afroboosteur.com/#/v/${media.slug}`;
-              navigator.clipboard.writeText(shareUrl);
-              alert('Lien copié !');
+              const result = await copyToClipboard(shareUrl);
+              if (result.success) alert('Lien copié !');
+              else alert('Impossible de copier le lien. Copiez-le manuellement : ' + shareUrl);
             }}
             style={styles.shareButton}
             data-testid="copy-link-btn"

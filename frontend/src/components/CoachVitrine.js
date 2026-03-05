@@ -6,6 +6,7 @@
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
+import { copyToClipboard } from "../utils/clipboard"; // Fallback mobile robuste
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -509,9 +510,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         console.log('Partage annulé');
       }
     } else {
-      // Fallback: copier le lien
-      navigator.clipboard.writeText(vitrineUrl);
-      alert('Lien copié!');
+      // Fallback: copier le lien avec support mobile robuste
+      const result = await copyToClipboard(vitrineUrl);
+      alert(result.success ? 'Lien copié!' : 'Impossible de copier. URL: ' + vitrineUrl);
     }
   };
 

@@ -28,6 +28,7 @@ import { parseMediaUrl, getMediaThumbnail } from "../services/MediaParser"; // M
 import SuperAdminPanel from "./SuperAdminPanel"; // v8.9 Super Admin Panel
 // v13.5: Composants extraits pour alléger CoachDashboard
 import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab } from "./dashboard";
+import { copyToClipboard } from "../utils/clipboard"; // Utilitaire copier avec fallback mobile
 
 // v9.2.1: ErrorBoundary pour isoler les erreurs de composants
 class SectionErrorBoundary extends Component {
@@ -844,22 +845,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // === FONCTION PARTAGE COACH ===
   // v8.9.9: Partager le lien de la vitrine coach
   const handleCoachShareLink = async () => {
-    try {
-      const shareUrl = coachVitrineUrl || window.location.origin;
-      await navigator.clipboard.writeText(shareUrl);
+    const shareUrl = coachVitrineUrl || window.location.origin;
+    const result = await copyToClipboard(shareUrl);
+    if (result.success) {
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
-      console.log('[COACH] ✅ Lien vitrine copié:', shareUrl);
-    } catch (err) {
-      // Fallback
-      const textArea = document.createElement('textarea');
-      textArea.value = coachVitrineUrl || window.location.origin;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 2000);
+      console.log('[COACH] Lien vitrine copié:', shareUrl);
     }
   };
   
@@ -2198,20 +2189,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const copyLinkToClipboard = async (linkToken) => {
     const baseUrl = window.location.origin;
     const fullUrl = `${baseUrl}/chat/${linkToken}`;
-    try {
-      await navigator.clipboard.writeText(fullUrl);
+    // Utiliser l'utilitaire avec fallback mobile robuste (clipboard → textarea → feedback)
+    const result = await copyToClipboard(fullUrl);
+    if (result.success) {
       setCopiedLinkId(linkToken);
       setTimeout(() => setCopiedLinkId(null), 2000);
-    } catch (err) {
-      // Fallback pour mobile
-      const textarea = document.createElement('textarea');
-      textarea.value = fullUrl;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      setCopiedLinkId(linkToken);
-      setTimeout(() => setCopiedLinkId(null), 2000);
+    } else {
+      console.warn('[COPY] Échec copie lien:', linkToken);
     }
   };
 
@@ -3337,24 +3321,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  // Copier le message pour Instagram
+  // Copier le message pour Instagram (avec fallback mobile robuste)
   const copyMessageForInstagram = async () => {
-    const message = newCampaign.mediaUrl 
-      ? `${newCampaign.message}\n\n🔗 ${newCampaign.mediaUrl}`
+    const message = newCampaign.mediaUrl
+      ? `${newCampaign.message}\n\n${newCampaign.mediaUrl}`
       : newCampaign.message;
-    
-    try {
-      await navigator.clipboard.writeText(message);
-      setMessageCopied(true);
-      setTimeout(() => setMessageCopied(false), 3000);
-    } catch (err) {
-      // Fallback pour navigateurs plus anciens
-      const textarea = document.createElement('textarea');
-      textarea.value = message;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
+
+    const result = await copyToClipboard(message);
+    if (result.success) {
       setMessageCopied(true);
       setTimeout(() => setMessageCopied(false), 3000);
     }
