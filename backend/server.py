@@ -1684,6 +1684,66 @@ async def create_campaign(campaign: CampaignCreate):
     campaign_data.pop("_id", None)
     return campaign_data
 
+
+# ── HELPER OMNICANALITÉ : écrire les messages campagne dans chat_messages ──
+async def _save_campaign_chat_message(
+    contact_id: str,
+    content: str,
+    media_url: str = None,
+    channel: str = "email",
+    campaign_id: str = None,
+    campaign_name: str = None
+):
+    """
+    Écrit le message de campagne dans la collection chat_messages
+    pour qu'il apparaisse dans l'UI client (omnicanalité).
+    Crée la session si elle n'existe pas encore pour ce contact.
+    Fallback silencieux : ne lève jamais d'exception bloquante.
+    """
+    # Chercher ou créer la session chat du contact
+    session = await db.chat_sessions.find_one(
+        {"participant_ids": contact_id},
+        {"_id": 0, "id": 1}
+    )
+    if session:
+        session_id = session["id"]
+    else:
+        session_id = str(uuid.uuid4())
+        await db.chat_sessions.insert_one({
+            "id": session_id,
+            "mode": "user",
+            "participant_ids": [contact_id],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        })
+        logger.info(f"[CAMPAIGN-CHAT] Session créée pour contact {contact_id}: {session_id}")
+
+    msg_id = str(uuid.uuid4())
+    msg_timestamp = datetime.now(timezone.utc).isoformat()
+
+    await db.chat_messages.insert_one({
+        "id": msg_id,
+        "session_id": session_id,
+        "content": content,
+        "media_url": media_url or None,
+        "sender_type": "coach",
+        "sender_name": "Coach Bassi",
+        "sender_id": f"coach-campaign-{channel}",
+        "channel": channel,
+        "campaign_id": campaign_id,
+        "campaign_name": campaign_name,
+        "timestamp": msg_timestamp,
+        "created_at": msg_timestamp
+    })
+
+    # Mettre à jour le timestamp de la session
+    await db.chat_sessions.update_one(
+        {"id": session_id},
+        {"$set": {"last_message_at": msg_timestamp, "updated_at": msg_timestamp}}
+    )
+    logger.info(f"[CAMPAIGN-CHAT] Message {channel} enregistré dans chat_messages pour {contact_id}")
+
+
 @api_router.post("/campaigns/{campaign_id}/launch")
 async def launch_campaign(campaign_id: str):
     """
@@ -1824,6 +1884,18 @@ async def launch_campaign(campaign_id: str):
                     whatsapp_result["sid"] = wa_response.get("sid")
                     success_count += 1
                     logger.info(f"[CAMPAIGN-LAUNCH] ✅ WhatsApp envoyé à {contact_name} ({contact_phone})")
+                    # Omnicanalité : écrire le message dans chat_messages pour l'UI client
+                    try:
+                        await _save_campaign_chat_message(
+                            contact_id=contact_id,
+                            content=message_content,
+                            media_url=media_url,
+                            channel="whatsapp",
+                            campaign_id=campaign_id,
+                            campaign_name=campaign_name
+                        )
+                    except Exception as chat_err:
+                        logger.warning(f"[CAMPAIGN-CHAT] Écriture chat_messages échouée (WhatsApp, {contact_id}): {chat_err}")
                 elif wa_response.get("status") == "simulated":
                     whatsapp_result["status"] = "simulated"
                     whatsapp_result["sentAt"] = datetime.now(timezone.utc).isoformat()
@@ -1892,6 +1964,18 @@ async def launch_campaign(campaign_id: str):
                     email_result["email_id"] = email_response.get("id")
                     success_count += 1
                     logger.info(f"[CAMPAIGN-LAUNCH] ✅ Email envoyé à {contact_name} ({contact_email})")
+                    # Omnicanalité : écrire le message dans chat_messages pour l'UI client
+                    try:
+                        await _save_campaign_chat_message(
+                            contact_id=contact_id,
+                            content=message_content,
+                            media_url=media_url,
+                            channel="email",
+                            campaign_id=campaign_id,
+                            campaign_name=campaign_name
+                        )
+                    except Exception as chat_err:
+                        logger.warning(f"[CAMPAIGN-CHAT] Écriture chat_messages échouée (email, {contact_id}): {chat_err}")
                 else:
                     email_result["status"] = "simulated"
                     email_result["sentAt"] = datetime.now(timezone.utc).isoformat()
