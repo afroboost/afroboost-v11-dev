@@ -2788,6 +2788,33 @@ function App() {
     fetchData();
   }, [fetchData]);
 
+  // Vérification de session coach au démarrage : éviter redirect/logout cassant
+  // Si le coach est désactivé ou supprimé côté backend, on le déconnecte proprement
+  useEffect(() => {
+    if (!coachMode || !coachUser?.email) return;
+    const validateCoachSession = async () => {
+      try {
+        const res = await axios.get(`${API}/auth/role`, {
+          headers: { 'X-User-Email': coachUser.email }
+        });
+        const role = res.data?.role;
+        setUserRole(role);
+        // Si l'utilisateur n'est plus coach ni super_admin → déconnexion propre
+        if (role === 'user' || (!res.data?.is_coach && !res.data?.is_super_admin)) {
+          console.log('[APP] Session coach invalide, déconnexion propre');
+          localStorage.removeItem('afroboost_coach_mode');
+          localStorage.removeItem('afroboost_coach_user');
+          setCoachMode(false);
+          setCoachUser(null);
+        }
+      } catch (err) {
+        // En cas d'erreur réseau, on garde la session pour éviter un logout intempestif
+        console.warn('[APP] Vérification session coach échouée (réseau?):', err.message);
+      }
+    };
+    validateCoachSession();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Recharger les données quand on sort du Mode Coach (avec force refresh)
   useEffect(() => {
     if (!coachMode) {

@@ -900,11 +900,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     const loadData = async () => {
       try {
         // v8.9.5: Charger les réservations avec isolation coach_id
-        const resPromise = axios.get(`${API}/reservations?page=1&limit=20`, getCoachHeaders());
+        // Toutes les requêtes passent le header X-User-Email pour filtrage par coach_id
+        const headers = getCoachHeaders();
+        const resPromise = axios.get(`${API}/reservations?page=1&limit=20`, headers);
         const [res, crs, off, usr, lnk, cpt, cds] = await Promise.all([
-          resPromise, axios.get(`${API}/courses`), axios.get(`${API}/offers`),
-          axios.get(`${API}/users`), axios.get(`${API}/payment-links`), axios.get(`${API}/concept`), 
-          axios.get(`${API}/discount-codes`)
+          resPromise, axios.get(`${API}/courses`, headers), axios.get(`${API}/offers`, headers),
+          axios.get(`${API}/users`, headers), axios.get(`${API}/payment-links`, headers),
+          axios.get(`${API}/concept`, headers), axios.get(`${API}/discount-codes`, headers)
         ]);
         // Réservations avec pagination
         setReservations(res.data.data);

@@ -1186,8 +1186,17 @@ async def create_category(category: dict):
 
 # --- Users ---
 @api_router.get("/users", response_model=List[User])
-async def get_users():
-    users = await db.users.find({}, {"_id": 0}).to_list(1000)
+async def get_users(request: Request):
+    # Filtrage par coach_id si un coach est connecté (super_admin voit tout)
+    coach_email = request.headers.get("X-User-Email", "").lower().strip()
+    query = {}
+    if coach_email and not is_super_admin(coach_email):
+        # Un coach ne voit que ses propres utilisateurs (inscrits via son lien)
+        query = {"$or": [
+            {"coach_id": coach_email},
+            {"coach_id": {"$exists": False}}  # Utilisateurs sans coach assigné (legacy)
+        ]}
+    users = await db.users.find(query, {"_id": 0}).to_list(1000)
     for user in users:
         if isinstance(user.get('createdAt'), str):
             user['createdAt'] = datetime.fromisoformat(user['createdAt'].replace('Z', '+00:00'))
