@@ -1,37 +1,46 @@
 /**
  * BookingPanel.js - Panneau de réservation pour les abonnés
- * 
+ *
  * Extrait de ChatWidget.js pour alléger le fichier principal.
  * Affiche la liste des cours disponibles et permet de réserver un créneau.
- * 
+ *
  * === SYNCHRONISATION HORAIRE ===
- * - Dates formatées en français avec Intl.DateTimeFormat
- * - Fuseau horaire Europe/Paris (Genève)
+ * - Dates formatées en français suisse avec Intl.DateTimeFormat('fr-CH')
+ * - Fuseau horaire Europe/Zurich (Suisse)
  * - Fallback de localisation: course.location || "Lieu à confirmer"
  */
 
 import React, { memo, useMemo } from 'react';
 
-// === FORMATTER DE DATE FRANÇAIS (Europe/Paris) ===
-// v14.8: FIX - Correction décalage +7 jours (permettre cours le jour même)
+// === FORMATTER DE DATE FRANÇAIS SUISSE (Europe/Zurich) ===
+// v14.9: FIX - Calcul du jour basé sur la date réelle en timezone Suisse
+// Évite le décalage UTC qui peut donner un mauvais jour de semaine
 const formatCourseDate = (time, weekday) => {
-  // Créer une date pour le prochain jour de la semaine correspondant
-  const today = new Date();
-  const currentDay = today.getDay();
+  // Obtenir la date/heure actuelle en Suisse via Intl (évite décalage UTC)
+  const nowStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Zurich',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  }).format(new Date());
+  // Parser la date Suisse (format YYYY-MM-DD)
+  const [datePart] = nowStr.split(',');
+  const todayInZurich = new Date(datePart + 'T12:00:00');
+  const currentDay = todayInZurich.getDay();
+
   let daysUntilCourse = weekday - currentDay;
-  // v14.8: < 0 (pas <= 0) pour permettre cours le jour même
+  // Permettre cours le jour même (< 0, pas <= 0)
   if (daysUntilCourse < 0) daysUntilCourse += 7;
-  
-  const courseDate = new Date(today);
-  courseDate.setDate(today.getDate() + daysUntilCourse);
-  
-  // Parser l'heure (format "18:30")
+
+  const courseDate = new Date(todayInZurich);
+  courseDate.setDate(todayInZurich.getDate() + daysUntilCourse);
+
+  // Parser l'heure du cours (format "18:30")
   if (time) {
     const [hours, minutes] = time.split(':');
     courseDate.setHours(parseInt(hours) || 18, parseInt(minutes) || 30, 0, 0);
   }
-  
-  // v14.8: Formater en Suisse (fr-CH) avec fuseau Europe/Zurich (Neuchâtel)
+
+  // Formater en Suisse (fr-CH) avec fuseau Europe/Zurich
   const formatter = new Intl.DateTimeFormat('fr-CH', {
     weekday: 'long',
     day: 'numeric',
@@ -41,7 +50,7 @@ const formatCourseDate = (time, weekday) => {
     minute: '2-digit',
     timeZone: 'Europe/Zurich'
   });
-  
+
   const formatted = formatter.format(courseDate);
   // Capitaliser la première lettre
   return formatted.charAt(0).toUpperCase() + formatted.slice(1);
@@ -166,7 +175,7 @@ const BookingPanel = ({
               <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
                 {course.name}
               </div>
-              {/* Date formatée en français (Europe/Paris) */}
+              {/* Date formatée en français suisse (Europe/Zurich) */}
               <div style={{ fontSize: '13px', marginBottom: '4px', color: '#a78bfa' }}>
                 📅 {course.formattedDate}
               </div>
@@ -211,7 +220,7 @@ const BookingPanel = ({
               <h4 style={{ color: '#fff', margin: '0 0 4px 0', fontSize: '14px' }}>
                 {selectedCourse.name}
               </h4>
-              {/* Date formatée en français (Europe/Paris) */}
+              {/* Date formatée en français suisse (Europe/Zurich) */}
               <p style={{ color: '#a78bfa', margin: '0 0 4px 0', fontSize: '13px', fontWeight: '500' }}>
                 📅 {selectedCourse.formattedDate || formatCourseDate(selectedCourse.time, selectedCourse.weekday)}
               </p>
