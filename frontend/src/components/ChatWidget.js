@@ -3177,10 +3177,13 @@ export const ChatWidget = () => {
     try {
       // Si on a une session active, utiliser l'API améliorée
       if (sessionData && participantId) {
+        // Transmettre le link_token de l'URL pour initialiser le bon contexte IA
+        const currentLinkToken = getLinkTokenFromUrl();
         const response = await axios.post(`${API}/chat/ai-response`, {
           session_id: sessionData.id,
           participant_id: participantId,
-          message: userMessage
+          message: userMessage,
+          link_token: currentLinkToken || undefined
         });
         
         if (response.data.response) {

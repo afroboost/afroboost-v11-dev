@@ -5667,15 +5667,38 @@ async def get_ai_response_with_session(request: Request):
     
     # =====================================================================
     # DÉTECTION MODE STRICT (AVANT construction du contexte)
+    # Mapper link_token → custom_prompt pour initialiser le bon "caractère IA"
     use_strict_mode = False
     CUSTOM_PROMPT = ""
-    
-    # Vérifier si la session a un custom_prompt
+
+    # 1. Vérifier si la session a un custom_prompt directement
     session_custom_prompt = session.get("custom_prompt") if session else None
     if session_custom_prompt and isinstance(session_custom_prompt, str) and session_custom_prompt.strip():
         CUSTOM_PROMPT = session_custom_prompt.strip()
         use_strict_mode = True
-        logger.info(f"[CHAT-AI-RESPONSE] 🔒 Mode STRICT détecté")
+        logger.info("[CHAT-AI-RESPONSE] Mode STRICT via session.custom_prompt")
+
+    # 2. Fallback : si pas de custom_prompt, vérifier via link_token (URL du client)
+    if not use_strict_mode:
+        link_token = body.get("link_token", "").strip() if body.get("link_token") else ""
+        # Chercher aussi le link_token stocké dans la session
+        if not link_token:
+            link_token = session.get("link_token", "") if session else ""
+        if link_token:
+            try:
+                # Récupérer la session originale du lien pour son custom_prompt
+                link_session = await db.chat_sessions.find_one(
+                    {"link_token": link_token, "is_deleted": {"$ne": True}},
+                    {"_id": 0, "custom_prompt": 1}
+                )
+                if link_session and link_session.get("custom_prompt"):
+                    prompt_from_link = link_session["custom_prompt"].strip()
+                    if prompt_from_link:
+                        CUSTOM_PROMPT = prompt_from_link
+                        use_strict_mode = True
+                        logger.info(f"[CHAT-AI-RESPONSE] Mode STRICT via link_token {link_token[:8]}")
+            except Exception as e:
+                logger.warning(f"[CHAT-AI-RESPONSE] Erreur récup custom_prompt via link_token: {e}")
     
     # CONSTRUCTION DU CONTEXTE
     logger.info("[CHAT-AI-RESPONSE] Construction contexte...")
