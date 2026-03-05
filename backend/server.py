@@ -89,6 +89,24 @@ init_stripe_db(db)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+
+# ── HELPER SÉCURITÉ : vérification authentification par header ──────────
+def require_auth(request: Request) -> str:
+    """
+    Vérifie que le header X-User-Email est présent dans la requête.
+    Retourne l'email (en minuscule, sans espaces) si valide.
+    Lève HTTP 401 si le header est absent ou vide.
+    Utilisé sur toutes les routes d'écriture (POST/PUT/DELETE).
+    """
+    email = request.headers.get("X-User-Email", "").lower().strip()
+    if not email:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentification requise : header X-User-Email manquant"
+        )
+    return email
+
+
 # Créer l'application FastAPI (interne)
 fastapi_app = FastAPI(title="Afroboost API")
 api_router = APIRouter(prefix="/api")
@@ -982,14 +1000,18 @@ async def get_courses():
     return courses
 
 @api_router.post("/courses", response_model=Course)
-async def create_course(course: CourseCreate):
+async def create_course(course: CourseCreate, request: Request):
+    # Sécurité : vérifier que l'utilisateur est authentifié
+    require_auth(request)
     course_obj = Course(**course.model_dump())
     await db.courses.insert_one(course_obj.model_dump())
     return course_obj
 
 @api_router.put("/courses/{course_id}", response_model=Course)
-async def update_course(course_id: str, course_update: dict):
+async def update_course(course_id: str, course_update: dict, request: Request):
     """Update a course - supports partial updates including playlist"""
+    # Sécurité : vérifier que l'utilisateur est authentifié
+    require_auth(request)
     # Récupérer le cours existant
     existing = await db.courses.find_one({"id": course_id}, {"_id": 0})
     if not existing:
@@ -1003,18 +1025,22 @@ async def update_course(course_id: str, course_update: dict):
     return updated
 
 @api_router.put("/courses/{course_id}/archive")
-async def archive_course(course_id: str):
+async def archive_course(course_id: str, request: Request):
     """Archive a course instead of deleting it"""
+    # Sécurité : vérifier que l'utilisateur est authentifié
+    require_auth(request)
     await db.courses.update_one({"id": course_id}, {"$set": {"archived": True}})
     updated = await db.courses.find_one({"id": course_id}, {"_id": 0})
     return {"success": True, "course": updated}
 
 @api_router.delete("/courses/{course_id}")
-async def delete_course(course_id: str):
+async def delete_course(course_id: str, request: Request):
     """
     HARD DELETE - Supprime PHYSIQUEMENT un cours de toutes les tables.
     Aucune trace ne doit rester dans la base de données.
     """
+    # Sécurité : vérifier que l'utilisateur est authentifié
+    require_auth(request)
     deleted_counts = {
         "course": 0,
         "reservations": 0,
@@ -1056,11 +1082,13 @@ async def delete_course(course_id: str):
     }
 
 @api_router.delete("/courses/purge/archived")
-async def purge_archived_courses():
+async def purge_archived_courses(request: Request):
     """
     PURGE TOTAL - Supprime tous les cours archivés et leurs données liées.
     Utilisé pour nettoyer la base de données des cours obsolètes.
     """
+    # Sécurité : vérifier que l'utilisateur est authentifié
+    require_auth(request)
     # Trouver tous les cours archivés
     archived_courses = await db.courses.find({"archived": True}, {"id": 1}).to_list(1000)
     archived_ids = [c["id"] for c in archived_courses]
@@ -1107,20 +1135,26 @@ async def get_offers():
     return offers
 
 @api_router.post("/offers", response_model=Offer)
-async def create_offer(offer: OfferCreate):
+async def create_offer(offer: OfferCreate, request: Request):
+    # Sécurité : vérifier que l'utilisateur est authentifié
+    require_auth(request)
     offer_obj = Offer(**offer.model_dump())
     await db.offers.insert_one(offer_obj.model_dump())
     return offer_obj
 
 @api_router.put("/offers/{offer_id}", response_model=Offer)
-async def update_offer(offer_id: str, offer: OfferCreate):
+async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
+    # Sécurité : vérifier que l'utilisateur est authentifié
+    require_auth(request)
     await db.offers.update_one({"id": offer_id}, {"$set": offer.model_dump()})
     updated = await db.offers.find_one({"id": offer_id}, {"_id": 0})
     return updated
 
 @api_router.delete("/offers/{offer_id}")
-async def delete_offer(offer_id: str):
+async def delete_offer(offer_id: str, request: Request):
     """Supprime une offre et nettoie les références dans les codes promo"""
+    # Sécurité : vérifier que l'utilisateur est authentifié
+    require_auth(request)
     # 1. Supprimer l'offre
     await db.offers.delete_one({"id": offer_id})
     
