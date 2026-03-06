@@ -1,15 +1,25 @@
 /**
- * CoachVitrine - Vitrine publique d'un coach v9.1.5 MIROIR
+ * CoachVitrine - Vitrine publique d'un coach v13.0 MIROIR EXACT
  * Route: /coach/[username]
- * Design miroir de la page Bassi avec CSS Afroboost
+ * Layout IDENTIQUE à la page d'accueil :
+ *   - Hero 85vh avec YouTube Lite Facade (thumbnail + play)
+ *   - Nom coach + actions overlays (style Instagram Reels)
+ *   - Sous le hero : Cours/Sessions + Offres + Footer
  */
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
-import { copyToClipboard } from "../utils/clipboard"; // Fallback mobile robuste
+import { copyToClipboard } from "../utils/clipboard";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
+
+// === UTILITAIRES VIDEO ===
+const getYoutubeId = (url) => {
+  if (!url) return null;
+  const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  return match ? match[1] : null;
+};
 
 // Offres par défaut Afroboost si le coach n'a pas créé les siennes
 const DEFAULT_STARTER_OFFERS = [
@@ -44,193 +54,6 @@ const LocationIcon = () => (
   </svg>
 );
 
-// Composant carte offre avec style Afroboost
-const OfferCardVitrine = ({ offer, onSelect }) => {
-  const [showDescription, setShowDescription] = useState(false);
-  const defaultImage = "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=400&h=300&fit=crop";
-  
-  const imageUrl = offer.imageUrl || offer.thumbnail || offer.images?.[0] || defaultImage;
-  
-  return (
-    <div 
-      className="flex-shrink-0 snap-start"
-      style={{ width: '280px', minWidth: '280px', padding: '4px' }}
-    >
-      <div 
-        className="rounded-xl overflow-hidden cursor-pointer transition-all duration-300 hover:scale-[1.02]"
-        style={{
-          boxShadow: '0 4px 20px rgba(0,0,0,0.4), 0 0 30px rgba(217, 28, 210, 0.2)',
-          background: 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(5,0,15,0.99) 100%)',
-          border: '1px solid rgba(217, 28, 210, 0.3)'
-        }}
-        onClick={() => onSelect && onSelect(offer)}
-        data-testid={`vitrine-offer-${offer.id}`}
-      >
-        {/* Image Section */}
-        <div style={{ position: 'relative', height: '180px', overflow: 'hidden' }}>
-          {!showDescription ? (
-            <>
-              <img 
-                src={imageUrl} 
-                alt={offer.name} 
-                className="w-full h-full object-cover"
-                onError={(e) => { e.target.src = defaultImage; }}
-              />
-              
-              {/* Info Icon "i" - Top Right */}
-              {offer.description && (
-                <div 
-                  className="absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center cursor-pointer transition-all hover:scale-110"
-                  style={{ 
-                    background: 'rgba(217, 28, 210, 0.85)',
-                    boxShadow: '0 0 8px rgba(217, 28, 210, 0.5)'
-                  }}
-                  onClick={(e) => { e.stopPropagation(); setShowDescription(true); }}
-                  title="Voir la description"
-                >
-                  <span className="text-white text-sm font-bold">i</span>
-                </div>
-              )}
-              
-              {/* Badge prix 0 = GRATUIT */}
-              {offer.price === 0 && (
-                <div 
-                  className="absolute top-3 left-3 px-3 py-1 rounded-full text-xs font-bold text-white"
-                  style={{ 
-                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', 
-                    boxShadow: '0 0 10px rgba(16, 185, 129, 0.5)' 
-                  }}
-                >
-                  GRATUIT
-                </div>
-              )}
-            </>
-          ) : (
-            /* Description Panel */
-            <div 
-              className="w-full h-full flex flex-col justify-center p-4"
-              style={{ background: 'linear-gradient(180deg, rgba(139, 92, 246, 0.95) 0%, rgba(217, 28, 210, 0.9) 100%)' }}
-            >
-              <p className="text-white text-sm leading-relaxed">{offer.description}</p>
-              <button 
-                className="absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center bg-white/20 hover:bg-white/30 transition-all text-white"
-                onClick={(e) => { e.stopPropagation(); setShowDescription(false); }}
-                title="Fermer"
-              >
-                ×
-              </button>
-            </div>
-          )}
-        </div>
-        
-        {/* Content Section */}
-        <div className="p-4">
-          <p className="font-semibold text-white mb-2" style={{ fontSize: '16px' }}>{offer.name}</p>
-          <div className="flex items-baseline gap-2">
-            <span 
-              className="text-xl font-bold" 
-              style={{ 
-                color: '#d91cd2', 
-                textShadow: '0 0 10px rgba(217, 28, 210, 0.4)' 
-              }}
-            >
-              {offer.price === 0 ? 'Offert' : `CHF ${offer.price}.-`}
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Composant carte cours avec style Afroboost
-const CourseCardVitrine = ({ course, onBookClick }) => {
-  // v9.2.8: Générer les prochaines dates pour ce cours
-  const getNextOccurrences = (weekday, count = 4) => {
-    const now = new Date();
-    const results = [];
-    const day = now.getDay();
-    let diff = weekday - day;
-    if (diff < 0) diff += 7;
-    let current = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
-    for (let i = 0; i < count; i++) {
-      results.push(new Date(current));
-      current.setDate(current.getDate() + 7);
-    }
-    return results;
-  };
-  
-  const formatDateShort = (d) => {
-    return d.toLocaleDateString('fr-CH', { weekday: 'short', day: '2-digit', month: '2-digit' });
-  };
-  
-  const upcomingDates = course.weekday !== undefined ? getNextOccurrences(course.weekday, 4) : [];
-  
-  return (
-    <div 
-      className="rounded-xl p-4 transition-all duration-300 hover:scale-[1.01]"
-      style={{
-        background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(217, 28, 210, 0.1) 100%)',
-        border: '1px solid rgba(217, 28, 210, 0.3)',
-        boxShadow: '0 4px 15px rgba(0,0,0,0.3)'
-      }}
-      data-testid={`vitrine-course-${course.id}`}
-    >
-      <h3 className="text-white font-semibold text-lg mb-2">{course.name || course.title}</h3>
-      
-      {(course.locationName || course.location) && (
-        <div className="flex items-center gap-2 text-white/60 text-sm mb-2">
-          <LocationIcon />
-          <span>{course.locationName || course.location}</span>
-        </div>
-      )}
-      
-      {course.description && (
-        <p className="text-white/50 text-sm mb-2">{course.description}</p>
-      )}
-      
-      {course.time && (
-        <div className="flex items-center gap-2 mt-3">
-          <span className="text-lg">⏰</span>
-          <span className="text-purple-400 font-medium">{course.time}</span>
-        </div>
-      )}
-      
-      {/* v9.2.8: Dates cliquables pour réservation */}
-      {upcomingDates.length > 0 && (
-        <div className="mt-3">
-          <p className="text-xs text-white/50 mb-2">Prochaines sessions :</p>
-          <div className="flex flex-wrap gap-2">
-            {upcomingDates.map((date, idx) => (
-              <button
-                key={idx}
-                onClick={() => onBookClick && onBookClick(course, date)}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover:scale-105"
-                style={{
-                  background: 'rgba(217, 28, 210, 0.2)',
-                  border: '1px solid rgba(217, 28, 210, 0.4)',
-                  color: '#d91cd2',
-                  cursor: 'pointer'
-                }}
-                data-testid={`book-course-${course.id}-${idx}`}
-              >
-                {formatDateShort(date)} • {course.time}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-      
-      {course.weekday !== undefined && upcomingDates.length === 0 && (
-        <div className="mt-2 px-3 py-1 inline-block rounded-full text-xs font-medium"
-          style={{ background: 'rgba(217, 28, 210, 0.2)', color: '#d91cd2' }}>
-          {['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'][course.weekday]}
-        </div>
-      )}
-    </div>
-  );
-};
-
 const CoachVitrine = ({ username, onClose, onBack }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -238,103 +61,46 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const [offers, setOffers] = useState([]);
   const [courses, setCourses] = useState([]);
   const [showQR, setShowQR] = useState(false);
+  const [ytPlaying, setYtPlaying] = useState(false);
   const sliderRef = useRef(null);
-  
-  // v14.6: Recherche par mots-clés
+
+  // Recherche offres
   const [offerSearch, setOfferSearch] = useState('');
-  
-  // v9.2.9: Configuration paiement du coach
+
+  // Config paiement
   const [paymentConfig, setPaymentConfig] = useState({
     stripe: '', paypal: '', twint: '', coachWhatsapp: ''
   });
-  
-  // v9.3.2: Concept du coach (contient la vidéo header)
+
+  // Concept du coach (vidéo header)
   const [coachConcept, setCoachConcept] = useState(null);
-  
-  // v9.2.8: Modal de réservation pour les cours
+
+  // Booking modal
   const [showBookingModal, setShowBookingModal] = useState(false);
-  const [selectedBooking, setSelectedBooking] = useState(null); // { course, date }
+  const [selectedBooking, setSelectedBooking] = useState(null);
   const [bookingForm, setBookingForm] = useState({ name: '', email: '', whatsapp: '', promoCode: '' });
   const [bookingLoading, setBookingLoading] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState(false);
-  
-  // v9.2.9: Code promo
+
+  // Promo
   const [promoMessage, setPromoMessage] = useState({ type: '', text: '' });
   const [appliedDiscount, setAppliedDiscount] = useState(null);
   const [selectedOffer, setSelectedOffer] = useState(null);
-  
-  // v9.4.6: État pour le bouton d'installation PWA
-  const [deferredPrompt, setDeferredPrompt] = useState(null);
-  const [isInstallable, setIsInstallable] = useState(false);
-  const [isInstalled, setIsInstalled] = useState(false);
-  
-  // v9.4.9: Vérifier si on vient du flux pour afficher "Retour au Flux"
+
+  // Retour au flux
   const [cameFromFlux, setCameFromFlux] = useState(false);
-  
+
   useEffect(() => {
-    // Vérifier si on a une position de flux sauvegardée
     const fluxIndex = sessionStorage.getItem('afroboost_flux_index');
-    if (fluxIndex !== null) {
-      setCameFromFlux(true);
-    }
+    if (fluxIndex !== null) setCameFromFlux(true);
   }, []);
-  
-  // v12: Retour au flux - transition fluide via onBack (pas de rechargement page)
+
   const handleReturnToFlux = () => {
-    // La position est déjà sauvegardée dans sessionStorage
-    if (onBack) {
-      onBack();
-    } else {
-      window.history.pushState({}, '', '/');
-    }
-  };
-  
-  // v9.4.6: Capturer l'événement beforeinstallprompt
-  useEffect(() => {
-    const handleBeforeInstallPrompt = (e) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-      setIsInstallable(true);
-      console.log('[PWA] Install prompt captured');
-    };
-    
-    // Vérifier si déjà installé
-    if (window.matchMedia('(display-mode: standalone)').matches) {
-      setIsInstalled(true);
-    }
-    
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    window.addEventListener('appinstalled', () => {
-      setIsInstalled(true);
-      setIsInstallable(false);
-      console.log('[PWA] App installed');
-    });
-    
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    };
-  }, []);
-  
-  // v9.4.6: Fonction pour installer l'app PWA
-  const handleInstallPWA = async () => {
-    if (!deferredPrompt) {
-      // Fallback si pas de prompt disponible
-      alert(`Pour installer ${displayName} sur votre écran :\n\n📱 Mobile: Utilisez "Ajouter à l'écran d'accueil" dans le menu de votre navigateur.\n\n💻 PC: Cliquez sur l'icône d'installation dans la barre d'adresse de Chrome.`);
-      return;
-    }
-    
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    console.log('[PWA] Install outcome:', outcome);
-    
-    if (outcome === 'accepted') {
-      setIsInstalled(true);
-      setIsInstallable(false);
-    }
-    setDeferredPrompt(null);
+    if (onBack) onBack();
+    else window.history.pushState({}, '', '/');
   };
 
-  // v9.2.8: Handler clic sur date de cours
+  // Handler clic sur date de cours
   const handleBookClick = (course, date) => {
     setSelectedBooking({ course, date });
     setShowBookingModal(true);
@@ -342,33 +108,25 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     setPromoMessage({ type: '', text: '' });
     setAppliedDiscount(null);
   };
-  
-  // v9.2.9: Valider code promo
+
+  // Valider code promo
   const validatePromoCode = async (code) => {
     if (!code || code.length < 2) {
       setPromoMessage({ type: '', text: '' });
       setAppliedDiscount(null);
       return;
     }
-    
     try {
-      const res = await axios.post(`${API}/discount-codes/validate`, { 
+      const res = await axios.post(`${API}/discount-codes/validate`, {
         code: code.trim(),
         coach_id: coach?.email || username
       });
-      
       if (res.data && res.data.valid) {
         const discountCode = res.data.code;
         let discountText = '';
-        
-        if (discountCode.type === '100%') {
-          discountText = `Code validé : GRATUIT`;
-        } else if (discountCode.type === '%') {
-          discountText = `Code validé : -${discountCode.value}%`;
-        } else {
-          discountText = `Code validé : -${discountCode.value} CHF`;
-        }
-        
+        if (discountCode.type === '100%') discountText = `Code validé : GRATUIT`;
+        else if (discountCode.type === '%') discountText = `Code validé : -${discountCode.value}%`;
+        else discountText = `Code validé : -${discountCode.value} CHF`;
         setPromoMessage({ type: 'success', text: `✅ ${discountText}` });
         setAppliedDiscount(discountCode);
       } else {
@@ -380,12 +138,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       setAppliedDiscount(null);
     }
   };
-  
-  // v9.2.9: Calculer le prix avec réduction
+
+  // Calculer prix final
   const calculateFinalPrice = () => {
     if (!selectedOffer) return 0;
     let total = selectedOffer.price || 0;
-    
     if (appliedDiscount) {
       if (appliedDiscount.type === '100%') return 0;
       if (appliedDiscount.type === '%') return total * (1 - parseFloat(appliedDiscount.value) / 100);
@@ -393,12 +150,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     }
     return total;
   };
-  
-  // v9.2.8: Soumettre réservation
+
+  // Soumettre réservation
   const handleBookingSubmit = async (e) => {
     e.preventDefault();
     if (!selectedBooking || bookingLoading) return;
-    
     setBookingLoading(true);
     try {
       const res = await axios.post(`${API}/reservations`, {
@@ -412,21 +168,14 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         coach_id: coach?.email || username,
         source: 'vitrine_partenaire',
         appliedDiscount: appliedDiscount ? {
-          id: appliedDiscount.id,
-          code: appliedDiscount.code,
-          type: appliedDiscount.type,
-          value: appliedDiscount.value
+          id: appliedDiscount.id, code: appliedDiscount.code,
+          type: appliedDiscount.type, value: appliedDiscount.value
         } : null
       });
-      
       if (res.data) {
-        // v9.2.9: Marquer le code comme utilisé
         if (appliedDiscount) {
-          try {
-            await axios.post(`${API}/discount-codes/${appliedDiscount.id}/use`);
-          } catch (e) { console.log('[PROMO] Code déjà utilisé ou erreur'); }
+          try { await axios.post(`${API}/discount-codes/${appliedDiscount.id}/use`); } catch (e) {}
         }
-        
         setBookingSuccess(true);
         setBookingForm({ name: '', email: '', whatsapp: '', promoCode: '' });
         setTimeout(() => {
@@ -444,50 +193,33 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   };
 
   // URL de la vitrine pour le QR code
-  const vitrineUrl = typeof window !== 'undefined' 
-    ? `${window.location.origin}/coach/${username}` 
+  const vitrineUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/coach/${username}`
     : '';
 
   useEffect(() => {
     const fetchVitrine = async () => {
-      if (!username) {
-        setError('Aucun coach spécifié');
-        setLoading(false);
-        return;
-      }
-      
+      if (!username) { setError('Aucun coach spécifié'); setLoading(false); return; }
       try {
         const res = await axios.get(`${API}/coach/vitrine/${encodeURIComponent(username)}`);
         setCoach(res.data.coach);
-        
-        // v9.1.5: Si le coach n'a pas d'offres, utiliser les offres par défaut Afroboost
         const coachOffers = res.data.offers || [];
-        if (coachOffers.length === 0) {
-          setOffers(DEFAULT_STARTER_OFFERS);
-        } else {
-          setOffers(coachOffers);
-        }
-        
+        setOffers(coachOffers.length === 0 ? DEFAULT_STARTER_OFFERS : coachOffers);
         setCourses(res.data.courses || []);
-        
-        // v9.3.0: Charger les liens de paiement du coach
+
+        // Charger paiement
         try {
           const paymentRes = await axios.get(`${API}/payment-links/${encodeURIComponent(res.data.coach.email || username)}`);
           setPaymentConfig(paymentRes.data);
-        } catch (e) {
-          console.log('[VITRINE] Pas de liens de paiement configurés');
-        }
-        
-        // v9.3.2: Charger le concept du coach (pour la vidéo header)
+        } catch (e) {}
+
+        // Charger le concept (vidéo header)
         try {
           const conceptRes = await axios.get(`${API}/concept`, {
             headers: { 'X-User-Email': res.data.coach.email || username }
           });
           setCoachConcept(conceptRes.data);
-          console.log('[VITRINE] Concept chargé:', conceptRes.data?.heroImageUrl);
-        } catch (e) {
-          console.log('[VITRINE] Pas de concept trouvé, utilisation du placeholder');
-        }
+        } catch (e) {}
       } catch (err) {
         console.error('[VITRINE] Erreur:', err);
         setError(err.response?.data?.detail || 'Coach non trouvé');
@@ -495,526 +227,495 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         setLoading(false);
       }
     };
-    
     fetchVitrine();
   }, [username]);
 
-  // Partager la vitrine
+  // Partager
   const handleShare = async () => {
     const shareData = {
       title: `${coach?.platform_name || coach?.name} - Coach`,
       text: `Découvrez ${coach?.platform_name || coach?.name} sur Afroboost!`,
       url: vitrineUrl
     };
-    
     if (navigator.share) {
-      try {
-        await navigator.share(shareData);
-      } catch (err) {
-        console.log('Partage annulé');
-      }
+      try { await navigator.share(shareData); } catch (err) {}
     } else {
-      // Fallback: copier le lien avec support mobile robuste
       const result = await copyToClipboard(vitrineUrl);
       alert(result.success ? 'Lien copié!' : 'Impossible de copier. URL: ' + vitrineUrl);
     }
   };
 
+  // Générer prochaines dates
+  const getNextOccurrences = (weekday, count = 4) => {
+    const now = new Date();
+    const results = [];
+    const day = now.getDay();
+    let diff = weekday - day;
+    if (diff < 0) diff += 7;
+    let current = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
+    for (let i = 0; i < count; i++) {
+      results.push(new Date(current));
+      current.setDate(current.getDate() + 7);
+    }
+    return results;
+  };
+
+  const formatDateShort = (d) => {
+    return d.toLocaleDateString('fr-CH', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  };
+
+  // === LOADING ===
   if (loading) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'linear-gradient(180deg, #0a0a0f 0%, #1a0a1f 100%)' }}>
+      <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: '#000' }}>
         <div className="text-center">
           <div className="animate-spin w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-white text-lg">Chargement de la vitrine...</p>
+          <p className="text-white text-lg">Chargement...</p>
         </div>
       </div>
     );
   }
 
+  // === ERREUR ===
   if (error || !coach) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center flex-col gap-6 p-6" style={{ background: 'linear-gradient(180deg, #0a0a0f 0%, #1a0a1f 100%)' }}>
+      <div className="fixed inset-0 z-50 flex items-center justify-center flex-col gap-6 p-6" style={{ background: '#0a0a0f' }}>
         <div className="text-center">
           <div className="text-6xl mb-4">😕</div>
           <p className="text-red-400 text-xl font-semibold mb-2">{error || 'Coach non trouvé'}</p>
-          <p className="text-white/50">Cette vitrine n'existe pas ou a été désactivée.</p>
         </div>
-        <button 
-          onClick={onBack || onClose}
-          className="px-6 py-3 rounded-xl text-white font-medium transition-all hover:scale-105"
-          style={{ 
-            background: `linear-gradient(135deg, var(--primary-color, #8b5cf6) 0%, var(--secondary-color, #d91cd2) 100%)`,
-            boxShadow: `0 0 20px var(--glow-color, rgba(217, 28, 210, 0.3))`
-          }}
-        >
-          ← Retour à l'accueil
+        <button onClick={onBack || onClose}
+          className="px-6 py-3 rounded-xl text-white font-medium"
+          style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #d91cd2 100%)' }}>
+          ← Retour
         </button>
       </div>
     );
   }
 
-  // Nom affiché (platform_name prioritaire)
   const displayName = coach.platform_name || coach.name || 'Coach';
-  
-  // Initiale pour l'avatar par défaut
   const initial = displayName.charAt(0).toUpperCase();
+
+  // Extraire YouTube ID du concept
+  const heroVideoUrl = coachConcept?.heroImageUrl || coachConcept?.heroVideoUrl || coach.video_url;
+  const youtubeId = getYoutubeId(heroVideoUrl);
+
+  // Déduplication des cours par nom
+  const uniqueCourses = (() => {
+    const seen = new Set();
+    return courses.filter(c => {
+      if (c.visible === false || c.archived === true) return false;
+      const key = (c.name || '').toLowerCase().trim();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  })();
+
+  // Déduplication des offres par nom
+  const uniqueOffers = (() => {
+    const seen = new Set();
+    return offers.filter(o => {
+      if (o.visible === false) return false;
+      const key = (o.name || '').toLowerCase().trim();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  })();
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto" style={{ background: 'var(--background-color, #0a0a0f)' }}>
-      
+
+      {/* ============================================= */}
       {/* QR Code Modal */}
+      {/* ============================================= */}
       {showQR && (
-        <div 
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4"
-          style={{ background: 'rgba(0,0,0,0.9)' }}
-          onClick={() => setShowQR(false)}
-        >
-          <div 
-            className="bg-white rounded-2xl p-8 max-w-sm w-full text-center"
-            onClick={e => e.stopPropagation()}
-          >
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.9)' }} onClick={() => setShowQR(false)}>
+          <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center" onClick={e => e.stopPropagation()}>
             <h3 className="text-gray-900 font-bold text-xl mb-4">Partagez cette vitrine</h3>
             <div className="bg-white p-4 rounded-xl inline-block mb-4">
-              <QRCodeSVG 
-                value={vitrineUrl} 
-                size={200}
-                bgColor="#ffffff"
-                fgColor="#1a0a1f"
-                level="M"
-              />
+              <QRCodeSVG value={vitrineUrl} size={200} bgColor="#ffffff" fgColor="#1a0a1f" level="M" />
             </div>
             <p className="text-gray-600 text-sm mb-4 break-all">{vitrineUrl}</p>
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText(vitrineUrl);
-                alert('Lien copié!');
-              }}
+            <button onClick={() => { navigator.clipboard.writeText(vitrineUrl); alert('Lien copié!'); }}
               className="w-full py-3 rounded-xl text-white font-medium"
-              style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #d91cd2 100%)' }}
-            >
-              📋 Copier le lien
+              style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #d91cd2 100%)' }}>
+              Copier le lien
             </button>
           </div>
         </div>
       )}
-      
-      <div className="min-h-screen py-6 px-4">
-        <div className="max-w-4xl mx-auto">
-          
-          {/* Header avec boutons */}
-          <div className="flex justify-between items-center mb-6">
-            {/* v10.7: Bouton Retour - Icône compacte */}
-            <button 
-              onClick={cameFromFlux ? handleReturnToFlux : (onBack || onClose)}
-              className="w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110"
-              style={{ 
-                background: 'rgba(139, 92, 246, 0.2)', 
-                border: '1px solid rgba(217, 28, 210, 0.3)',
-                boxShadow: '0 0 10px rgba(217, 28, 210, 0.2)'
-              }}
-              data-testid="vitrine-back-btn"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="white" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-            
-            <div className="flex items-center gap-3">
-              {/* v9.2.7: Photo et nom du coach en haut à droite */}
-              <div className="flex items-center gap-2 mr-2">
-                {coach.logo_url ? (
-                  <img 
-                    src={coach.logo_url} 
+
+      {/* ============================================= */}
+      {/* HERO 85vh — MIROIR EXACT du PartnersCarousel */}
+      {/* ============================================= */}
+      <div className="relative w-full" style={{ height: '85vh', maxHeight: '85vh', background: '#000000' }}>
+
+        {/* Fond vidéo/thumbnail plein écran */}
+        <div className="absolute inset-0 overflow-hidden">
+          {youtubeId ? (
+            <>
+              {!ytPlaying ? (
+                <>
+                  {/* YouTube Lite Facade — Thumbnail haute qualité */}
+                  <img
+                    src={`https://img.youtube.com/vi/${youtubeId}/0.jpg`}
                     alt={displayName}
-                    className="w-8 h-8 rounded-full object-cover"
-                    style={{ border: '2px solid rgba(217, 28, 210, 0.5)' }}
-                  />
-                ) : (
-                  <div 
-                    className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold"
-                    style={{ 
-                      background: 'linear-gradient(135deg, #8b5cf6 0%, #d91cd2 100%)',
-                      color: 'white'
-                    }}
-                  >
-                    {initial}
-                  </div>
-                )}
-                <span className="text-white/80 text-sm font-medium hidden sm:block">{displayName}</span>
-              </div>
-              
-              <button
-                onClick={() => setShowQR(true)}
-                className="p-2 rounded-lg transition-all hover:scale-110"
-                style={{ background: 'rgba(217, 28, 210, 0.2)', border: '1px solid rgba(217, 28, 210, 0.3)' }}
-                title="QR Code"
-                data-testid="vitrine-qr-btn"
-              >
-                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h2M4 12h2m14 0h2M6 20h2m-2-8h2" />
-                </svg>
-              </button>
-              <button
-                onClick={handleShare}
-                className="p-2 rounded-lg transition-all hover:scale-110"
-                style={{ background: 'rgba(139, 92, 246, 0.2)', border: '1px solid rgba(139, 92, 246, 0.3)' }}
-                title="Partager"
-                data-testid="vitrine-share-btn"
-              >
-                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-                </svg>
-              </button>
-            </div>
-          </div>
-          
-          {/* v9.3.3: HERO CINÉMATOGRAPHIQUE - Miroir exact de Bassi */}
-          <div 
-            className="relative mb-8 -mx-4 sm:-mx-6 lg:-mx-8"
-            style={{ 
-              minHeight: '60vh',
-              maxHeight: '80vh',
-              overflow: 'hidden'
-            }}
-            data-testid="vitrine-hero-container"
-          >
-            {/* Vidéo/Image en arrière-plan FULL WIDTH */}
-            <div className="absolute inset-0">
-              {coachConcept?.heroImageUrl ? (
-                <>
-                  {/* YouTube */}
-                  {(coachConcept.heroImageUrl.includes('youtube.com') || coachConcept.heroImageUrl.includes('youtu.be')) ? (
-                    <iframe
-                      className="absolute inset-0 w-full h-full scale-125"
-                      src={`https://www.youtube.com/embed/${
-                        coachConcept.heroImageUrl.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/)?.[1] || ''
-                      }?autoplay=1&mute=1&loop=1&controls=0&showinfo=0&rel=0&modestbranding=1&playsinline=1&playlist=${
-                        coachConcept.heroImageUrl.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/)?.[1] || ''
-                      }`}
-                      title="Video Background"
-                      frameBorder="0"
-                      allow="autoplay; encrypted-media"
-                      style={{ border: 'none', pointerEvents: 'none' }}
-                      data-testid="vitrine-youtube-hero"
-                    />
-                  ) : coachConcept.heroImageUrl.includes('vimeo.com') ? (
-                    /* Vimeo */
-                    <iframe
-                      className="absolute inset-0 w-full h-full scale-125"
-                      src={`https://player.vimeo.com/video/${
-                        coachConcept.heroImageUrl.match(/vimeo\.com\/(?:video\/)?(\d+)/)?.[1] || ''
-                      }?autoplay=1&muted=1&loop=1&background=1`}
-                      title="Video Background"
-                      frameBorder="0"
-                      allow="autoplay; fullscreen"
-                      style={{ border: 'none', pointerEvents: 'none' }}
-                      data-testid="vitrine-vimeo-hero"
-                    />
-                  ) : coachConcept.heroImageUrl.match(/\.(mp4|webm|mov|avi)$/i) ? (
-                    /* MP4/Video */
-                    <video
-                      autoPlay
-                      muted
-                      loop
-                      playsInline
-                      className="absolute inset-0 w-full h-full object-cover"
-                      style={{ filter: 'brightness(0.7)' }}
-                      data-testid="vitrine-mp4-hero"
-                    >
-                      <source src={coachConcept.heroImageUrl} type="video/mp4" />
-                    </video>
-                  ) : (
-                    /* Image */
-                    <img 
-                      src={coachConcept.heroImageUrl}
-                      alt="Coach Banner"
-                      className="absolute inset-0 w-full h-full object-cover"
-                      style={{ filter: 'brightness(0.7)' }}
-                      data-testid="vitrine-image-hero"
-                    />
-                  )}
-                </>
-              ) : coach.video_url ? (
-                <video
-                  autoPlay
-                  muted
-                  loop
-                  playsInline
-                  className="absolute inset-0 w-full h-full object-cover"
-                  style={{ filter: 'brightness(0.7)' }}
-                >
-                  <source src={coach.video_url} type="video/mp4" />
-                </video>
-              ) : (
-                /* Placeholder animé premium */
-                <div 
-                  className="absolute inset-0"
-                  style={{
-                    background: 'linear-gradient(180deg, rgba(10,5,20,1) 0%, rgba(26,10,41,1) 50%, rgba(10,5,20,1) 100%)'
-                  }}
-                >
-                  <div 
-                    className="absolute inset-0"
-                    style={{
-                      background: 'radial-gradient(circle at 50% 30%, rgba(217, 28, 210, 0.2) 0%, transparent 50%)',
-                      animation: 'pulse 4s ease-in-out infinite'
+                    className="absolute inset-0 w-full h-full object-cover"
+                    style={{ filter: 'brightness(0.85)' }}
+                    onError={(e) => {
+                      e.target.src = `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg`;
                     }}
                   />
-                </div>
-              )}
-            </div>
-            
-            {/* Overlay gradient pour lisibilité du texte */}
-            <div 
-              className="absolute inset-0"
-              style={{
-                background: 'linear-gradient(180deg, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.5) 50%, rgba(10,5,20,0.95) 100%)'
-              }}
-            />
-            
-            {/* v10.9: Contenu ÉPURÉ - Seul le bouton Réserver en bas à droite */}
-            <div className="absolute inset-0 z-10">
-              {/* v10.9: Bouton Réserver ÉPURÉ - En bas à droite, SANS CADRE */}
-              {/* v11.8: Log ajouté pour debug + scroll garanti */}
-              <button
-                onClick={() => {
-                  console.log('[SCROLL-RESERVE] Clic sur Réserver - Scroll vers offres');
-                  const target = document.getElementById('vitrine-courses-section');
-                  if (target) {
-                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    console.log('[SCROLL-RESERVE] ✅ scrollIntoView déclenché');
-                  } else {
-                    console.log('[SCROLL-RESERVE] ❌ Section vitrine-courses-section non trouvée');
-                  }
-                }}
-                className="absolute bottom-8 right-4 flex items-center gap-2 transition-all hover:scale-105"
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  padding: '8px 0'
-                }}
-                data-testid="vitrine-cta-btn"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5">
-                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                  <line x1="16" y1="2" x2="16" y2="6" />
-                  <line x1="8" y1="2" x2="8" y2="6" />
-                  <line x1="3" y1="10" x2="21" y2="10" />
-                </svg>
-                <span 
-                  className="text-white text-sm font-light"
-                  style={{ textShadow: '0 1px 4px rgba(0,0,0,0.8)' }}
-                >
-                  Réserver
-                </span>
-              </button>
-            </div>
-            
-            {/* Animation CSS */}
-            <style>{`
-              @keyframes pulse {
-                0%, 100% { opacity: 0.8; }
-                50% { opacity: 1; }
-              }
-            `}</style>
-          </div>
-
-          {/* Section Cours - ID pour le scroll */}
-          <div id="vitrine-courses-section">
-            {/* v9.4.5: Bloc Profil supprimé - Les infos coach sont déjà dans le header vidéo */}
-            
-            {/* Section Offres avec Slider horizontal */}
-            <div className="mb-8">
-              <div className="flex items-center justify-between mb-4">
-                <h2 
-                  className="font-semibold text-white flex items-center gap-3"
-                  style={{ fontSize: '20px' }}
-                >
-                  <span className="text-2xl">🎯</span>
-                  {offers === DEFAULT_STARTER_OFFERS ? 'Offres de démarrage Afroboost' : 'Offres disponibles'}
-                </h2>
-                
-                {/* v14.6: Champ de recherche par mots-clés */}
-                {offers.length > 1 && (
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50">🔍</span>
-                    <input
-                      type="text"
-                      value={offerSearch}
-                      onChange={(e) => setOfferSearch(e.target.value)}
-                      placeholder="Rechercher..."
-                      className="pl-9 pr-4 py-2 rounded-full bg-black/40 text-white text-sm border border-white/20 focus:outline-none focus:ring-2 focus:ring-violet-500 w-40 md:w-56"
-                      data-testid="offer-search-input"
-                    />
-                    {offerSearch && (
-                      <button
-                        onClick={() => setOfferSearch('')}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 hover:text-white"
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            
-            {offers === DEFAULT_STARTER_OFFERS && (
-              <p className="text-white/50 text-sm mb-4 italic">
-                Ce coach va bientôt proposer ses propres offres. En attendant, découvrez nos offres de démarrage!
-              </p>
-            )}
-            
-            {/* v14.6: Filtrer les offres par mots-clés ou nom */}
-            {(() => {
-              const searchTerm = offerSearch.toLowerCase().trim();
-              const filteredOffers = searchTerm 
-                ? offers.filter(offer => {
-                    const nameMatch = offer.name?.toLowerCase().includes(searchTerm);
-                    const descMatch = offer.description?.toLowerCase().includes(searchTerm);
-                    const keywordsMatch = offer.keywords?.toLowerCase().includes(searchTerm);
-                    return nameMatch || descMatch || keywordsMatch;
-                  })
-                : offers;
-              
-              return filteredOffers.length > 0 ? (
-                <>
-                  <div 
-                    ref={sliderRef}
-                    className="flex gap-4 overflow-x-auto snap-x snap-mandatory pb-4"
-                    style={{ 
-                      scrollBehavior: 'smooth',
-                      WebkitOverflowScrolling: 'touch',
-                      scrollbarWidth: 'none',
-                      msOverflowStyle: 'none'
-                    }}
-                    data-testid="vitrine-offers-slider"
-                  >
-                    {filteredOffers.map((offer) => (
-                      <OfferCardVitrine
-                        key={offer.id}
-                        offer={offer}
-                      />
-                    ))}
-                  </div>
-                  
-                  {/* Indicateurs si plusieurs offres */}
-                  {filteredOffers.length > 1 && (
-                    <div className="flex justify-center gap-2 mt-2">
-                      {filteredOffers.map((_, idx) => (
-                        <div
-                          key={idx}
-                          className="w-2 h-2 rounded-full bg-white/30"
-                        />
-                      ))}
+                  {/* Bouton Play central magenta */}
+                  <div className="absolute inset-0 flex items-center justify-center cursor-pointer"
+                    onClick={() => setYtPlaying(true)}>
+                    <div className="w-20 h-20 rounded-full flex items-center justify-center transition-transform hover:scale-110"
+                      style={{
+                        background: 'rgba(217, 28, 210, 0.85)',
+                        boxShadow: '0 0 30px rgba(217, 28, 210, 0.6), 0 0 60px rgba(217, 28, 210, 0.3)',
+                        backdropFilter: 'blur(4px)'
+                      }}>
+                      <svg width="36" height="36" viewBox="0 0 24 24" fill="white">
+                        <polygon points="6 3 20 12 6 21 6 3" />
+                      </svg>
                     </div>
-                  )}
+                  </div>
+                  {/* Badge Shorts */}
+                  <div className="absolute top-4 left-4 px-3 py-1 rounded-full text-xs font-bold text-white"
+                    style={{ background: 'rgba(255, 0, 0, 0.8)' }}>
+                    Shorts
+                  </div>
                 </>
               ) : (
-                <p className="text-white/50 text-center py-8">
-                  Aucune offre ne correspond à "{offerSearch}"
-                </p>
-              );
-            })()}
-          </div>
-
-          {/* Section Cours */}
-          {courses.length > 0 && (
-            <div className="mb-8">
-              <h2 
-                className="font-semibold text-white mb-4 flex items-center gap-3"
-                style={{ fontSize: '20px' }}
-              >
-                <span className="text-2xl">📅</span>
-                Cours & Sessions
-              </h2>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {courses.map(course => (
-                  <CourseCardVitrine 
-                    key={course.id} 
-                    course={course} 
-                    onBookClick={handleBookClick}
-                  />
-                ))}
+                <iframe
+                  className="absolute"
+                  src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=1&loop=1&playlist=${youtubeId}&controls=1&showinfo=0&rel=0&modestbranding=1&playsinline=1`}
+                  title={displayName}
+                  frameBorder="0"
+                  allow="autoplay; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  style={{
+                    pointerEvents: 'auto',
+                    position: 'absolute',
+                    top: '50%', left: '50%',
+                    width: '56.25vh', height: '100vh',
+                    minWidth: '100%', minHeight: '177.78vw',
+                    transform: 'translate(-50%, -50%)'
+                  }}
+                  onError={() => setYtPlaying(false)}
+                />
+              )}
+            </>
+          ) : heroVideoUrl && heroVideoUrl.match(/\.(mp4|webm|mov)$/i) ? (
+            <video autoPlay muted loop playsInline className="absolute inset-0 w-full h-full object-cover"
+              style={{ filter: 'brightness(0.7)' }}>
+              <source src={heroVideoUrl} type="video/mp4" />
+            </video>
+          ) : (
+            /* Placeholder animé — même style que PartnersCarousel */
+            <div className="absolute inset-0"
+              style={{ background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.5) 0%, rgba(217, 28, 210, 0.4) 100%)' }}>
+              <div className="absolute inset-0 flex items-center justify-center"
+                style={{ background: 'radial-gradient(circle at 50% 50%, rgba(217, 28, 210, 0.3) 0%, transparent 70%)' }}>
+                <span className="text-5xl opacity-70">🎬</span>
               </div>
             </div>
           )}
+        </div>
 
-          {/* v9.4.6: Section Installation PWA (remplace "Intéressé par les services") */}
-          <div 
-            className="rounded-xl p-6 text-center"
-            style={{ 
-              background: `linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(217, 28, 210, 0.05) 100%)`,
-              border: `1px solid var(--primary-color, rgba(217, 28, 210, 0.3))`
-            }}
-          >
-            {isInstalled ? (
-              <div className="flex items-center justify-center gap-3">
-                <span className="text-2xl">✅</span>
-                <p className="text-white/70">
-                  Application installée ! Retrouvez <strong className="text-white">{displayName}</strong> sur votre écran.
-                </p>
-              </div>
+        {/* Gradient overlay bas — IDENTIQUE au PartnersCarousel */}
+        <div className="absolute inset-0 pointer-events-none"
+          style={{ background: 'linear-gradient(0deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.3) 25%, transparent 50%)' }} />
+
+        {/* === HEADER OVERLAY — Bouton retour + Logo Afroboost === */}
+        <div className="absolute top-0 left-0 right-0 z-20 flex justify-between items-center px-4 pt-4">
+          {/* Bouton Retour */}
+          <button onClick={cameFromFlux ? handleReturnToFlux : (onBack || onClose)}
+            className="w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110"
+            style={{ background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(8px)' }}>
+            <svg className="w-5 h-5" fill="none" stroke="white" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+
+          {/* Logo Afroboost centre */}
+          <div className="flex items-center gap-2">
+            <svg width="28" height="28" viewBox="0 0 40 40" fill="none">
+              <defs>
+                <linearGradient id="vitrineLogo" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="#D91CD2" />
+                  <stop offset="100%" stopColor="#8b5cf6" />
+                </linearGradient>
+              </defs>
+              <circle cx="20" cy="20" r="18" stroke="url(#vitrineLogo)" strokeWidth="2.5" fill="none" />
+              <path d="M20 10 L26 28 H14 L20 10Z" fill="url(#vitrineLogo)" />
+              <circle cx="20" cy="18" r="4" fill="url(#vitrineLogo)" />
+            </svg>
+          </div>
+
+          {/* Bouton Partage header */}
+          <button onClick={handleShare}
+            className="w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110"
+            style={{ background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(8px)' }}>
+            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+            </svg>
+          </button>
+        </div>
+
+        {/* === BARRE D'ACTIONS DROITE — Style Instagram Reels === */}
+        <div className="absolute right-3 bottom-32 z-20 flex flex-col items-center gap-5">
+          {/* Avatar coach */}
+          <div className="flex flex-col items-center gap-1">
+            {coach.logo_url || coach.photo_url ? (
+              <img src={coach.logo_url || coach.photo_url} alt={displayName}
+                className="w-10 h-10 rounded-full object-cover"
+                style={{ border: '2px solid #D91CD2' }} />
             ) : (
-              <>
-                <p className="text-white/70 mb-4 flex items-center justify-center gap-2">
-                  <span className="text-xl">📲</span>
-                  Installer la page de <strong className="text-white mx-1">{displayName}</strong> sur votre écran
-                </p>
-                <p className="text-white/40 text-xs mb-4">(Mobile ou PC)</p>
-                <button
-                  onClick={handleInstallPWA}
-                  className="px-6 py-3 rounded-xl text-white font-medium transition-all hover:scale-105"
-                  style={{ 
-                    background: `linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, var(--secondary-color, #8b5cf6) 100%)`,
-                    boxShadow: `0 0 20px var(--glow-color, rgba(217, 28, 210, 0.3))`
-                  }}
-                  data-testid="install-pwa-btn"
-                >
-                  📥 Installer l'application
-                </button>
-              </>
+              <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold"
+                style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #d91cd2 100%)', color: 'white', border: '2px solid #D91CD2' }}>
+                {initial}
+              </div>
             )}
           </div>
-          
-          {/* Footer Afroboost */}
-          <div className="text-center mt-8 pb-8">
-            <p className="text-white/30 text-xs">
-              Propulsé par <span style={{ color: 'var(--primary-color, #d91cd2)' }}>Afroboost</span> - La plateforme des coachs
+
+          {/* QR Code */}
+          <button onClick={() => setShowQR(true)} className="flex flex-col items-center gap-1">
+            <div className="w-10 h-10 rounded-full flex items-center justify-center"
+              style={{ background: 'rgba(255,255,255,0.15)', backdropFilter: 'blur(8px)' }}>
+              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h2M4 12h2m14 0h2M6 20h2m-2-8h2" />
+              </svg>
+            </div>
+            <span className="text-white text-[10px]">QR</span>
+          </button>
+
+          {/* Partager */}
+          <button onClick={handleShare} className="flex flex-col items-center gap-1">
+            <div className="w-10 h-10 rounded-full flex items-center justify-center"
+              style={{ background: 'rgba(255,255,255,0.15)', backdropFilter: 'blur(8px)' }}>
+              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+              </svg>
+            </div>
+            <span className="text-white text-[10px]">Partager</span>
+          </button>
+
+          {/* Réserver (scroll vers les cours) */}
+          <button onClick={() => {
+            const target = document.getElementById('vitrine-content-section');
+            if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }} className="flex flex-col items-center gap-1">
+            <div className="w-10 h-10 rounded-full flex items-center justify-center"
+              style={{ background: 'rgba(217, 28, 210, 0.7)', boxShadow: '0 0 15px rgba(217, 28, 210, 0.5)' }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                <line x1="16" y1="2" x2="16" y2="6" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+              </svg>
+            </div>
+            <span className="text-white text-[10px]">Réserver</span>
+          </button>
+        </div>
+
+        {/* === NOM DU COACH EN BAS — Style Instagram Reels === */}
+        <div className="absolute bottom-4 left-4 right-16 z-20">
+          <h2 className="text-white font-bold text-xl mb-1" style={{ textShadow: '0 2px 8px rgba(0,0,0,0.8)' }}>
+            {displayName}
+          </h2>
+          {coach.bio && (
+            <p className="text-white/70 text-sm line-clamp-2" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.8)' }}>
+              {coach.bio}
             </p>
-          </div>
-          </div>
-          {/* Fin de la section vitrine-courses-section */}
+          )}
         </div>
       </div>
-      
-      {/* v9.2.8: Modal de réservation */}
+
+      {/* ============================================= */}
+      {/* CONTENU SOUS LE HERO — MIROIR EXACT de la page d'accueil */}
+      {/* ============================================= */}
+      <div id="vitrine-content-section" className="max-w-4xl mx-auto px-6 pt-2"
+        style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
+
+        {/* === Section Cours/Sessions — Style IDENTIQUE à la page d'accueil === */}
+        {uniqueCourses.length > 0 && (
+          <div id="vitrine-courses-section" className="mb-8" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
+            <h2 className="font-semibold mb-4 text-white" style={{ fontSize: '18px' }}>
+              Choisissez votre session
+            </h2>
+            <div className="space-y-4 sessions-scrollbar"
+              style={{ maxHeight: '400px', overflowY: 'auto', paddingRight: '8px', background: 'transparent' }}>
+              {uniqueCourses.map(course => {
+                const upcomingDates = course.weekday !== undefined ? getNextOccurrences(course.weekday, 4) : [];
+                return (
+                  <div key={course.id}
+                    className="rounded-xl p-5"
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                      boxShadow: 'none'
+                    }}>
+                    <h3 className="font-semibold text-white">{course.name || course.title}</h3>
+
+                    {(course.locationName || course.location) && (
+                      <div className="flex items-center gap-2 text-xs text-white opacity-60 mb-1">
+                        <LocationIcon />
+                        <span>{course.locationName || course.location}</span>
+                      </div>
+                    )}
+
+                    {course.time && (
+                      <div className="flex items-center gap-2 mt-2">
+                        <span className="text-sm">⏰</span>
+                        <span className="text-purple-400 font-medium text-sm">{course.time}</span>
+                      </div>
+                    )}
+
+                    {/* Dates cliquables pour réservation */}
+                    {upcomingDates.length > 0 && (
+                      <div className="mt-3">
+                        <div className="flex flex-wrap gap-2">
+                          {upcomingDates.map((date, idx) => (
+                            <button key={idx}
+                              onClick={() => handleBookClick(course, date)}
+                              className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover:scale-105"
+                              style={{
+                                background: 'rgba(217, 28, 210, 0.2)',
+                                border: '1px solid rgba(217, 28, 210, 0.4)',
+                                color: '#d91cd2', cursor: 'pointer'
+                              }}>
+                              {formatDateShort(date)} • {course.time}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {course.weekday !== undefined && upcomingDates.length === 0 && (
+                      <div className="mt-2 px-3 py-1 inline-block rounded-full text-xs font-medium"
+                        style={{ background: 'rgba(217, 28, 210, 0.2)', color: '#d91cd2' }}>
+                        {['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'][course.weekday]}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* === Section Offres — Slider horizontal comme sur la page d'accueil === */}
+        {uniqueOffers.length > 0 && (
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-semibold text-white" style={{ fontSize: '18px' }}>
+                {offers === DEFAULT_STARTER_OFFERS ? 'Offres de démarrage' : 'Offres disponibles'}
+              </h2>
+
+              {uniqueOffers.length > 1 && (
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50 text-sm">🔍</span>
+                  <input type="text" value={offerSearch} onChange={(e) => setOfferSearch(e.target.value)}
+                    placeholder="Rechercher..."
+                    className="pl-9 pr-4 py-2 rounded-full bg-black/40 text-white text-sm border border-white/20 focus:outline-none focus:ring-2 focus:ring-violet-500 w-40" />
+                </div>
+              )}
+            </div>
+
+            {offers === DEFAULT_STARTER_OFFERS && (
+              <p className="text-white/50 text-sm mb-4 italic">
+                Ce coach va bientôt proposer ses propres offres.
+              </p>
+            )}
+
+            {/* Slider horizontal */}
+            {(() => {
+              const searchTerm = offerSearch.toLowerCase().trim();
+              const filtered = searchTerm
+                ? uniqueOffers.filter(o => {
+                    return (o.name || '').toLowerCase().includes(searchTerm) ||
+                           (o.description || '').toLowerCase().includes(searchTerm);
+                  })
+                : uniqueOffers;
+
+              return filtered.length > 0 ? (
+                <div ref={sliderRef}
+                  className="flex gap-4 overflow-x-auto snap-x snap-mandatory pb-4"
+                  style={{ scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
+                  {filtered.map((offer) => {
+                    const defaultImage = "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=400&h=300&fit=crop";
+                    const imageUrl = offer.imageUrl || offer.thumbnail || offer.images?.[0] || defaultImage;
+                    return (
+                      <div key={offer.id} className="flex-shrink-0 snap-start" style={{ width: '280px', minWidth: '280px', padding: '4px' }}>
+                        <div className="rounded-xl overflow-hidden cursor-pointer transition-all duration-300 hover:scale-[1.02]"
+                          style={{
+                            boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+                            background: 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(5,0,15,0.99) 100%)',
+                            border: '1px solid rgba(217, 28, 210, 0.3)'
+                          }}
+                          onClick={() => setSelectedOffer(offer)}>
+                          <div style={{ position: 'relative', height: '180px', overflow: 'hidden' }}>
+                            <img src={imageUrl} alt={offer.name} className="w-full h-full object-cover"
+                              onError={(e) => { e.target.src = defaultImage; }} />
+                            {offer.price === 0 && (
+                              <div className="absolute top-3 left-3 px-3 py-1 rounded-full text-xs font-bold text-white"
+                                style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)' }}>
+                                GRATUIT
+                              </div>
+                            )}
+                          </div>
+                          <div className="p-4">
+                            <p className="font-semibold text-white mb-2" style={{ fontSize: '16px' }}>{offer.name}</p>
+                            <span className="text-xl font-bold" style={{ color: '#d91cd2' }}>
+                              {offer.price === 0 ? 'Offert' : `CHF ${offer.price}.-`}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-white/50 text-center py-8">Aucune offre ne correspond à "{offerSearch}"</p>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* === Footer Afroboost === */}
+        <div className="text-center mt-8 pb-8">
+          <p className="text-white/30 text-xs">
+            Propulsé par <span style={{ color: '#d91cd2' }}>Afroboost</span> - La plateforme des coachs
+          </p>
+        </div>
+      </div>
+
+      {/* ============================================= */}
+      {/* MODAL DE RÉSERVATION (inchangé) */}
+      {/* ============================================= */}
       {showBookingModal && selectedBooking && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: 'rgba(0,0,0,0.85)' }}
-          onClick={() => setShowBookingModal(false)}
-        >
-          <div 
-            className="rounded-xl p-6 w-full max-w-md"
-            style={{
-              background: 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(10,5,20,0.99) 100%)',
-              border: '1px solid rgba(217, 28, 210, 0.4)',
-              boxShadow: '0 0 40px rgba(217, 28, 210, 0.2)'
-            }}
-            onClick={e => e.stopPropagation()}
-          >
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.85)' }} onClick={() => setShowBookingModal(false)}>
+          <div className="rounded-xl p-6 w-full max-w-md overflow-y-auto" style={{ maxHeight: '90vh',
+            background: 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(10,5,20,0.99) 100%)',
+            border: '1px solid rgba(217, 28, 210, 0.4)',
+            boxShadow: '0 0 40px rgba(217, 28, 210, 0.2)'
+          }} onClick={e => e.stopPropagation()}>
+
             {/* Header */}
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-white">📅 Réservation</h3>
-              <button 
-                onClick={() => setShowBookingModal(false)}
-                className="w-8 h-8 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10"
-              >
+              <h3 className="text-xl font-bold text-white">Réservation</h3>
+              <button onClick={() => setShowBookingModal(false)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10">
                 ✕
               </button>
             </div>
-            
+
             {bookingSuccess ? (
               <div className="text-center py-8">
                 <div className="text-5xl mb-4">✅</div>
@@ -1024,109 +725,71 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             ) : (
               <>
                 {/* Détails cours */}
-                <div 
-                  className="rounded-lg p-4 mb-6"
-                  style={{ background: 'rgba(217, 28, 210, 0.1)', border: '1px solid rgba(217, 28, 210, 0.2)' }}
-                >
+                <div className="rounded-lg p-4 mb-6"
+                  style={{ background: 'rgba(217, 28, 210, 0.1)', border: '1px solid rgba(217, 28, 210, 0.2)' }}>
                   <p className="text-white font-semibold">{selectedBooking.course.name || selectedBooking.course.title}</p>
                   <p className="text-purple-400 text-sm mt-1">
                     {selectedBooking.date.toLocaleDateString('fr-CH', { weekday: 'long', day: '2-digit', month: 'long' })}
                     {' • '}{selectedBooking.course.time}
                   </p>
                 </div>
-                
+
                 {/* Formulaire */}
                 <form onSubmit={handleBookingSubmit} className="space-y-4">
                   <div>
                     <label className="text-white/60 text-xs mb-1 block">Nom complet</label>
-                    <input
-                      type="text"
-                      required
-                      value={bookingForm.name}
+                    <input type="text" required value={bookingForm.name}
                       onChange={e => setBookingForm(prev => ({ ...prev, name: e.target.value }))}
                       className="w-full px-4 py-3 rounded-lg text-white"
                       style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)' }}
-                      placeholder="Votre nom"
-                      data-testid="booking-name-input"
-                    />
+                      placeholder="Votre nom" />
                   </div>
-                  
                   <div>
                     <label className="text-white/60 text-xs mb-1 block">Email</label>
-                    <input
-                      type="email"
-                      required
-                      value={bookingForm.email}
+                    <input type="email" required value={bookingForm.email}
                       onChange={e => setBookingForm(prev => ({ ...prev, email: e.target.value }))}
                       className="w-full px-4 py-3 rounded-lg text-white"
                       style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)' }}
-                      placeholder="email@example.com"
-                      data-testid="booking-email-input"
-                    />
+                      placeholder="email@example.com" />
                   </div>
-                  
                   <div>
                     <label className="text-white/60 text-xs mb-1 block">WhatsApp</label>
-                    <input
-                      type="tel"
-                      required
-                      value={bookingForm.whatsapp}
+                    <input type="tel" required value={bookingForm.whatsapp}
                       onChange={e => setBookingForm(prev => ({ ...prev, whatsapp: e.target.value }))}
                       className="w-full px-4 py-3 rounded-lg text-white"
                       style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)' }}
-                      placeholder="+41 79 XXX XX XX"
-                      data-testid="booking-whatsapp-input"
-                    />
+                      placeholder="+41 79 XXX XX XX" />
                   </div>
-                  
-                  {/* v9.2.9: Champ Code Promo */}
+
+                  {/* Code Promo */}
                   <div>
                     <label className="text-white/60 text-xs mb-1 block">Code Promo (optionnel)</label>
                     <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={bookingForm.promoCode}
-                        onChange={e => {
-                          setBookingForm(prev => ({ ...prev, promoCode: e.target.value.toUpperCase() }));
-                        }}
+                      <input type="text" value={bookingForm.promoCode}
+                        onChange={e => setBookingForm(prev => ({ ...prev, promoCode: e.target.value.toUpperCase() }))}
                         className="flex-1 px-4 py-3 rounded-lg text-white"
-                        style={{ 
-                          background: appliedDiscount ? 'rgba(34, 197, 94, 0.15)' : 'rgba(255,255,255,0.08)', 
-                          border: appliedDiscount ? '1px solid rgba(34, 197, 94, 0.5)' : '1px solid rgba(255,255,255,0.15)' 
+                        style={{
+                          background: appliedDiscount ? 'rgba(34, 197, 94, 0.15)' : 'rgba(255,255,255,0.08)',
+                          border: appliedDiscount ? '1px solid rgba(34, 197, 94, 0.5)' : '1px solid rgba(255,255,255,0.15)'
                         }}
-                        placeholder="CODE123"
-                        data-testid="booking-promo-input"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => validatePromoCode(bookingForm.promoCode)}
+                        placeholder="CODE123" />
+                      <button type="button" onClick={() => validatePromoCode(bookingForm.promoCode)}
                         className="px-4 py-3 rounded-lg font-medium transition-all hover:scale-105"
-                        style={{ 
-                          background: 'rgba(217, 28, 210, 0.3)', 
-                          border: '1px solid rgba(217, 28, 210, 0.5)',
-                          color: '#D91CD2'
-                        }}
-                        data-testid="validate-promo-btn"
-                      >
+                        style={{ background: 'rgba(217, 28, 210, 0.3)', border: '1px solid rgba(217, 28, 210, 0.5)', color: '#D91CD2' }}>
                         Valider
                       </button>
                     </div>
                     {promoMessage.text && (
-                      <p 
-                        className={`mt-2 text-sm font-medium ${promoMessage.type === 'success' ? 'text-green-400' : 'text-red-400'}`}
-                        data-testid="promo-message-vitrine"
-                      >
+                      <p className={`mt-2 text-sm font-medium ${promoMessage.type === 'success' ? 'text-green-400' : 'text-red-400'}`}>
                         {promoMessage.text}
                       </p>
                     )}
                   </div>
-                  
-                  {/* v9.2.9: Résumé prix avec réduction */}
+
+                  {/* Résumé prix */}
                   {selectedOffer && (
-                    <div 
-                      className="rounded-lg p-3"
-                      style={{ background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.3)' }}
-                    >
+                    <div className="rounded-lg p-3"
+                      style={{ background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
                       <div className="flex justify-between text-sm text-white/70">
                         <span>Offre</span>
                         <span>{selectedOffer.price?.toFixed(2) || '0.00'} CHF</span>
@@ -1134,11 +797,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       {appliedDiscount && (
                         <div className="flex justify-between text-sm text-green-400 mt-1">
                           <span>Réduction ({appliedDiscount.code})</span>
-                          <span>
-                            -{appliedDiscount.type === '100%' ? '100%' : 
-                              appliedDiscount.type === '%' ? `${appliedDiscount.value}%` : 
-                              `${appliedDiscount.value} CHF`}
-                          </span>
+                          <span>-{appliedDiscount.type === '100%' ? '100%' : appliedDiscount.type === '%' ? `${appliedDiscount.value}%` : `${appliedDiscount.value} CHF`}</span>
                         </div>
                       )}
                       <div className="flex justify-between text-white font-bold mt-2 pt-2 border-t border-white/10">
@@ -1147,83 +806,49 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       </div>
                     </div>
                   )}
-                  
-                  {/* v9.4.5: Section paiement épurée - Intégrée directement */}
+
+                  {/* Liens paiement */}
                   {(paymentConfig.stripe || paymentConfig.twint || paymentConfig.paypal) && (
                     <div className="py-2">
                       <div className="flex flex-wrap gap-2 justify-center">
                         {paymentConfig.stripe && (
-                          <a
-                            href={paymentConfig.stripe}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition-all hover:scale-105 text-xs"
-                            style={{ 
-                              background: 'rgba(99, 91, 255, 0.2)',
-                              color: '#A5B4FC',
-                              border: '1px solid rgba(99, 91, 255, 0.3)'
-                            }}
-                            data-testid="stripe-payment-btn"
-                          >
-                            💳 Stripe
+                          <a href={paymentConfig.stripe} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs"
+                            style={{ background: 'rgba(99, 91, 255, 0.2)', color: '#A5B4FC', border: '1px solid rgba(99, 91, 255, 0.3)' }}>
+                            Stripe
                           </a>
                         )}
                         {paymentConfig.twint && (
-                          <a
-                            href={paymentConfig.twint}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition-all hover:scale-105 text-xs"
-                            style={{ 
-                              background: 'rgba(255, 255, 255, 0.1)',
-                              color: '#E5E7EB',
-                              border: '1px solid rgba(255, 255, 255, 0.2)'
-                            }}
-                            data-testid="twint-payment-btn"
-                          >
-                            📱 TWINT
+                          <a href={paymentConfig.twint} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs"
+                            style={{ background: 'rgba(255,255,255,0.1)', color: '#E5E7EB', border: '1px solid rgba(255,255,255,0.2)' }}>
+                            TWINT
                           </a>
                         )}
                         {paymentConfig.paypal && (
-                          <a
-                            href={paymentConfig.paypal}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition-all hover:scale-105 text-xs"
-                            style={{ 
-                              background: 'rgba(0, 112, 186, 0.2)',
-                              color: '#93C5FD',
-                              border: '1px solid rgba(0, 112, 186, 0.3)'
-                            }}
-                            data-testid="paypal-payment-btn"
-                          >
-                            💳 PayPal
+                          <a href={paymentConfig.paypal} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs"
+                            style={{ background: 'rgba(0, 112, 186, 0.2)', color: '#93C5FD', border: '1px solid rgba(0, 112, 186, 0.3)' }}>
+                            PayPal
                           </a>
                         )}
                       </div>
                     </div>
                   )}
-                  
-                  {/* Message si pas de liens de paiement configurés */}
+
                   {!paymentConfig.stripe && !paymentConfig.twint && !paymentConfig.paypal && (
                     <div className="text-center text-white/40 text-xs py-2">
-                      💡 Réservez d'abord, le paiement sera confirmé par le coach
+                      Réservez d'abord, le paiement sera confirmé par le coach
                     </div>
                   )}
-                  
-                  {/* v9.4.5: Bouton Confirmer et Payer - Style épuré */}
-                  <button
-                    type="submit"
-                    disabled={bookingLoading}
+
+                  {/* Bouton Confirmer */}
+                  <button type="submit" disabled={bookingLoading}
                     className="w-full py-4 rounded-xl text-white font-semibold transition-all hover:scale-[1.02]"
                     style={{
-                      background: bookingLoading 
-                        ? 'rgba(139, 92, 246, 0.5)' 
-                        : 'linear-gradient(135deg, #D91CD2 0%, #8b5cf6 100%)',
+                      background: bookingLoading ? 'rgba(139, 92, 246, 0.5)' : 'linear-gradient(135deg, #D91CD2 0%, #8b5cf6 100%)',
                       boxShadow: bookingLoading ? 'none' : '0 0 25px rgba(217, 28, 210, 0.4)'
-                    }}
-                    data-testid="confirm-booking-btn"
-                  >
+                    }}>
                     {bookingLoading ? (
                       <span className="flex items-center justify-center gap-2">
                         <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
@@ -1232,11 +857,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                         </svg>
                         Réservation en cours...
                       </span>
-                    ) : (
-                      <span className="flex items-center justify-center gap-2">
-                        💳 Confirmer et Payer
-                      </span>
-                    )}
+                    ) : 'Confirmer la réservation'}
                   </button>
                 </form>
               </>
