@@ -216,7 +216,6 @@ async def api_health_check():
 async def debug_config():
     """Debug endpoint to check environment configuration (no secrets exposed)"""
     mongo = os.environ.get('MONGO_URL', '')
-    # Masquer le mot de passe dans l'URL
     import re
     masked_mongo = re.sub(r'://([^:]+):([^@]+)@', r'://\1:****@', mongo) if mongo else 'NOT SET'
 
@@ -228,10 +227,51 @@ async def debug_config():
         "stripe_key_set": bool(os.environ.get('STRIPE_SECRET_KEY')),
         "openai_key_set": bool(os.environ.get('OPENAI_API_KEY')),
         "resend_key_set": bool(os.environ.get('RESEND_API_KEY')),
-        "mongo_client_options": {
-            "host": client.HOST if hasattr(client, 'HOST') else str(client.address) if hasattr(client, 'address') else 'unknown',
-        }
     })
+
+@fastapi_app.get("/api/debug/network")
+async def debug_network():
+    """Debug endpoint to test raw TCP connectivity to MongoDB shards"""
+    import socket
+    import time
+    results = {"dns_srv": [], "tcp_tests": [], "dns_txt": []}
+
+    # Test DNS SRV resolution
+    try:
+        import dns.resolver
+        srv_answers = dns.resolver.resolve('_mongodb._tcp.customer-apps.drejrt.mongodb.net', 'SRV')
+        for rdata in srv_answers:
+            host = str(rdata.target).rstrip('.')
+            results["dns_srv"].append({"host": host, "port": rdata.port})
+    except Exception as e:
+        results["dns_srv_error"] = str(e)
+
+    # Test DNS TXT (for replicaSet info)
+    try:
+        import dns.resolver
+        txt_answers = dns.resolver.resolve('customer-apps.drejrt.mongodb.net', 'TXT')
+        for rdata in txt_answers:
+            results["dns_txt"].append(str(rdata))
+    except Exception as e:
+        results["dns_txt_error"] = str(e)
+
+    # Test raw TCP connectivity to each shard
+    hosts_to_test = [
+        ("customer-apps-shard-00-00.drejrt.mongodb.net", 27017),
+        ("customer-apps-shard-00-01.drejrt.mongodb.net", 27017),
+        ("customer-apps-shard-00-02.drejrt.mongodb.net", 27017),
+    ]
+    for host, port in hosts_to_test:
+        try:
+            start = time.time()
+            sock = socket.create_connection((host, port), timeout=5)
+            elapsed = time.time() - start
+            sock.close()
+            results["tcp_tests"].append({"host": host, "port": port, "status": "OK", "time_ms": round(elapsed * 1000)})
+        except Exception as e:
+            results["tcp_tests"].append({"host": host, "port": port, "status": "FAILED", "error": str(e)})
+
+    return JSONResponse(content=results)
 
 # Favicon endpoint to prevent 404 errors
 @fastapi_app.get("/api/favicon.ico")
