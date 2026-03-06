@@ -346,19 +346,47 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                   <source src={activeMedia.url} type="video/mp4" />
                 </video>
               ) : (
-                <div 
+                <div
                   className="absolute inset-0"
                   style={{
-                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.5) 0%, rgba(217, 28, 210, 0.4) 100%)'
+                    background: 'linear-gradient(180deg, #0a0a1a 0%, #1a0a2e 50%, #0a0a1a 100%)'
                   }}
                 >
-                  <div 
-                    className="absolute inset-0 flex items-center justify-center"
-                    style={{
-                      background: 'radial-gradient(circle at 50% 50%, rgba(217, 28, 210, 0.3) 0%, transparent 70%)'
-                    }}
-                  >
-                    <span className="text-5xl opacity-70">🎬</span>
+                  {/* Fallback hero: Avatar + Nom + Accroche */}
+                  <div className="absolute inset-0 flex flex-col items-center justify-center px-8 text-center">
+                    {/* Avatar large */}
+                    <div
+                      className="w-24 h-24 rounded-full flex items-center justify-center text-3xl font-bold mb-4"
+                      style={{
+                        background: 'linear-gradient(135deg, #D91CD2 0%, #8b5cf6 100%)',
+                        color: 'white',
+                        boxShadow: '0 0 40px rgba(217, 28, 210, 0.5)'
+                      }}
+                    >
+                      {initial}
+                    </div>
+                    {/* Nom du coach */}
+                    <h2 className="text-white text-2xl font-bold mb-2" style={{ textShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>
+                      {displayName}
+                    </h2>
+                    {/* Bio ou accroche */}
+                    <p className="text-white/70 text-sm max-w-xs">
+                      {bio || 'Découvrez nos cours et réservez votre prochaine session'}
+                    </p>
+                    {/* Bouton CTA */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!isBlocked) onNavigate(partner);
+                      }}
+                      className="mt-6 px-6 py-2.5 rounded-full text-white text-sm font-medium transition-all hover:scale-105"
+                      style={{
+                        background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                        boxShadow: '0 4px 20px rgba(217, 28, 210, 0.4)'
+                      }}
+                    >
+                      Voir le profil
+                    </button>
                   </div>
                 </div>
               )}
@@ -520,11 +548,11 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
             </span>
           </div>
           
-          {/* Légende / Bio */}
+          {/* v15: Bio + Tags spécialité + Lieu */}
           {bio && (
-            <p 
-              className="text-white/90 text-sm leading-snug"
-              style={{ 
+            <p
+              className="text-white/90 text-sm leading-snug mb-1.5"
+              style={{
                 textShadow: '0 1px 2px rgba(0,0,0,0.8)',
                 display: '-webkit-box',
                 WebkitLineClamp: 2,
@@ -534,6 +562,37 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
             >
               {bio}
             </p>
+          )}
+          {/* Lieu du coach */}
+          {partner.location && (
+            <div className="flex items-center gap-1 mt-1">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                <circle cx="12" cy="10" r="3" />
+              </svg>
+              <span className="text-white/50 text-xs" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}>
+                {partner.location}
+              </span>
+            </div>
+          )}
+          {/* Tags spécialités */}
+          {partner.specialties && partner.specialties.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {partner.specialties.slice(0, 3).map((tag, i) => (
+                <span
+                  key={i}
+                  className="text-xs px-2 py-0.5 rounded-full"
+                  style={{
+                    background: 'rgba(217, 28, 210, 0.2)',
+                    border: '1px solid rgba(217, 28, 210, 0.3)',
+                    color: 'rgba(255, 255, 255, 0.8)',
+                    textShadow: '0 1px 2px rgba(0,0,0,0.5)'
+                  }}
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
           )}
         </div>
       </div>

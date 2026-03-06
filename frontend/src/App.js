@@ -3717,37 +3717,36 @@ function App() {
       )}
 
       {/* PWA Install Banner */}
+      {/* v15: Bannière install compacte - barre fine en bas au lieu du gros bandeau en haut */}
       {showInstallBanner && (
-        <div 
-          className="fixed top-0 left-0 right-0 z-50 px-4 py-3"
-          style={{ 
-            background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.95) 0%, rgba(217, 28, 210, 0.95) 100%)',
-            boxShadow: '0 4px 20px rgba(217, 28, 210, 0.4)'
+        <div
+          className="fixed bottom-0 left-0 right-0 z-50 px-3 py-2"
+          style={{
+            background: 'rgba(10, 10, 20, 0.95)',
+            borderTop: '1px solid rgba(217, 28, 210, 0.3)',
+            backdropFilter: 'blur(12px)'
           }}
           data-testid="pwa-install-banner"
         >
-          <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <span className="text-2xl">{isIOS ? '📤' : '📲'}</span>
-              <div>
-                <p className="text-white font-semibold text-sm">Installer Afroboost</p>
-                <p className="text-white text-xs opacity-80">
-                  {isIOS ? 'Appuyez sur Partager puis "Sur l\'écran d\'accueil"' : 'Accès rapide depuis votre écran d\'accueil'}
-                </p>
-              </div>
+          <div className="max-w-4xl mx-auto flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-sm">{isIOS ? '📤' : '📲'}</span>
+              <p className="text-white text-xs opacity-80">
+                {isIOS ? 'Ajoutez Afroboost à votre écran' : 'Installer l\'app Afroboost'}
+              </p>
             </div>
             <div className="flex items-center gap-2">
-              <button 
+              <button
                 onClick={handleInstallClick}
-                className="px-4 py-2 rounded-full text-sm font-semibold"
-                style={{ background: '#000', color: '#fff' }}
+                className="px-3 py-1.5 rounded-full text-xs font-medium"
+                style={{ background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', color: '#fff' }}
                 data-testid="pwa-install-btn"
               >
                 {isIOS ? 'Comment ?' : 'Installer'}
               </button>
-              <button 
+              <button
                 onClick={dismissInstallBanner}
-                className="p-2 text-white opacity-70 hover:opacity-100"
+                className="text-white opacity-50 hover:opacity-100 text-xs p-1"
                 data-testid="pwa-dismiss-btn"
               >
                 ✕
@@ -3827,18 +3826,59 @@ function App() {
         </div>
       )}
 
-      {/* v9.5.8: Contenu scrollable SOUS le flux Reels - Espacement réduit */}
-      {/* v11.9: Ajout p-6 ici car retiré du container principal pour full-width video */}
-      {/* v13.6: Fond transparent pour s'intégrer au design global - Zéro Cadre */}
+      {/* v15: BARRE DE NAVIGATION STICKY - Sections claires */}
       <div
-        className="max-w-4xl mx-auto px-6 pt-2"
+        className="sticky top-0 z-40 w-full"
+        style={{
+          background: 'rgba(10, 10, 20, 0.95)',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+          backdropFilter: 'blur(12px)'
+        }}
+      >
+        <div className="max-w-4xl mx-auto flex items-center gap-1 px-4 py-2 overflow-x-auto hide-scrollbar">
+          {[
+            { key: 'all', label: 'Tout', icon: '✨' },
+            { key: 'sessions', label: 'Sessions', icon: '📅' },
+            { key: 'offers', label: 'Offres', icon: '🎁' },
+            { key: 'shop', label: 'Shop', icon: '🛒' }
+          ].map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => {
+                setActiveFilter(tab.key);
+                const sectionMap = { sessions: 'sessions-section', offers: 'offers-section', shop: 'products-section' };
+                if (sectionMap[tab.key]) {
+                  const el = document.getElementById(sectionMap[tab.key]);
+                  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+              }}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all"
+              style={{
+                background: activeFilter === tab.key
+                  ? 'linear-gradient(135deg, rgba(217, 28, 210, 0.3), rgba(139, 92, 246, 0.3))'
+                  : 'rgba(255, 255, 255, 0.06)',
+                border: activeFilter === tab.key
+                  ? '1px solid rgba(217, 28, 210, 0.5)'
+                  : '1px solid rgba(255, 255, 255, 0.1)',
+                color: activeFilter === tab.key ? '#fff' : 'rgba(255, 255, 255, 0.6)'
+              }}
+            >
+              <span>{tab.icon}</span>
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* v9.5.8: Contenu scrollable SOUS le flux Reels */}
+      <div
+        className="max-w-4xl mx-auto px-6 pt-4"
         style={{
           background: 'transparent',
           border: 'none',
           boxShadow: 'none'
         }}
       >
-        {/* v9.5.8: Suppression espace vide */}
 
         {/* Message si aucun résultat */}
         {filteredServices.length === 0 && filteredProducts.length === 0 && visibleCourses.length === 0 && searchQuery.trim() && (
@@ -4120,14 +4160,27 @@ function App() {
             ===================================================== */}
         {filteredProducts.length > 0 && (activeFilter === 'shop' || activeFilter === 'all') && (
           <div id="products-section" className="mb-8" style={{ paddingTop: '10px' }}>
-            <h2 className="font-semibold mb-2 text-white" style={{ fontSize: '18px' }}>
-              🛒 {t('shop') || 'Boutique'}
-            </h2>
-            
-            {/* Texte blanc pur et police fine */}
-            <p className="text-sm mb-4" style={{ color: '#ffffff', fontWeight: '300', letterSpacing: '0.3px' }}>
-              Nos produits physiques - livraison disponible
-            </p>
+            {/* v15: Header Shop amélioré avec badge livraison */}
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="font-semibold text-white" style={{ fontSize: '18px' }}>
+                  {t('shop') || 'Boutique'}
+                </h2>
+                <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)', fontWeight: '300' }}>
+                  Produits exclusifs Afroboost
+                </p>
+              </div>
+              <span
+                className="text-xs px-3 py-1 rounded-full"
+                style={{
+                  background: 'rgba(34, 197, 94, 0.15)',
+                  border: '1px solid rgba(34, 197, 94, 0.3)',
+                  color: 'rgba(34, 197, 94, 0.9)'
+                }}
+              >
+                📦 Livraison dispo
+              </span>
+            </div>
             
             <OffersSliderAutoPlay 
               offers={filteredProducts}
@@ -4440,8 +4493,11 @@ function App() {
           </div>
         )}
 
-        {/* Footer minimaliste avec navigation textuelle et logos paiement */}
-        <footer className="mt-12 mb-8 text-center">
+        {/* v15: Footer amélioré avec réseaux sociaux + infos utiles */}
+        <footer className="mt-12 mb-8 text-center" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
+          {/* Branding */}
+          <p className="text-white font-semibold text-sm mb-1">Afroboost</p>
+          <p className="text-white/40 text-xs mb-4">La plateforme des coachs</p>
           
           {/* Logos de paiement - Sans rectangle, juste les logos */}
           {(concept.paymentTwint || concept.paymentPaypal || concept.paymentCreditCard) && (
