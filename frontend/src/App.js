@@ -3605,7 +3605,17 @@ function App() {
   );
   
   // 3. COURS avec leur propre visibilité (exclure les archivés et invisibles)
-  const baseCourses = courses.filter(c => c.visible !== false && c.archived !== true);
+  // v12: DÉDUPLICATION par nom - garder uniquement le premier de chaque nom
+  const baseCourses = (() => {
+    const filtered = courses.filter(c => c.visible !== false && c.archived !== true);
+    const seen = new Set();
+    return filtered.filter(c => {
+      const key = (c.name || '').toLowerCase().trim();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  })();
   
   // Fonction de recherche floue (fuzzy search)
   const fuzzyMatch = (text, query) => {
