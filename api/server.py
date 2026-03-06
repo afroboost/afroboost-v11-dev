@@ -1555,6 +1555,19 @@ async def create_campaign(campaign: CampaignCreate, request: Request = None):
     coach_email = ""
     if request:
         coach_email = request.headers.get("X-User-Email", "").lower().strip()
+
+    # v13: Vérification crédits AVANT création (0 crédits = pas d'envoi)
+    if coach_email and not is_super_admin(coach_email):
+        campaign_cost = await get_service_price("campaign")
+        target_count = max(1, len(campaign.targetIds or []))
+        total_cost = campaign_cost * target_count
+        credit_check = await check_credits(coach_email, total_cost)
+        if not credit_check.get("has_credits"):
+            raise HTTPException(
+                status_code=402,
+                detail=f"Crédits insuffisants: {credit_check.get('credits', 0)}/{total_cost} requis. Rechargez votre pack."
+            )
+
     campaign_data = Campaign(
         name=campaign.name,
         message=campaign.message,

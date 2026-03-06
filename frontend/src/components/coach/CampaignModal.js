@@ -1,8 +1,10 @@
 /**
- * CampaignModal.js - v12: Tunnel de création simplifié en 3 étapes
+ * CampaignModal.js - v13: Tunnel de création simplifié en 3 étapes
  * Étape 1: Médias & Objectif (prompt système, objectif IA, message, média)
  * Étape 2: Contacts & Canaux (destinataires, canaux)
  * Étape 3: Confirmation & Coût (récapitulatif, programmation, coût crédits)
+ *
+ * v13: Blocage strict par crédits — 0 crédits = pas d'envoi (sauf Super Admin)
  */
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
@@ -52,6 +54,11 @@ export default function CampaignModal({
   const [step, setStep] = useState(1);
   const [aiSuggestions, setAiSuggestions] = useState([]);
   const [aiSuggestionsLoading, setAiSuggestionsLoading] = useState(false);
+
+  // v13: Calcul coût et blocage crédits
+  const totalCost = (selectedRecipients?.length || 0) * campaignCreditCost;
+  const insufficientCredits = !isSuperAdmin && coachCredits !== null && coachCredits !== -1 && coachCredits < Math.max(1, totalCost);
+  const canCreate = isSuperAdmin || !insufficientCredits;
 
   // Reset step when modal opens
   useEffect(() => {
@@ -415,7 +422,7 @@ export default function CampaignModal({
             </div>
           )}
 
-          {/* ===== ÉTAPE 3: Confirmation ===== */}
+          {/* ===== ÉTAPE 3: Confirmation & Coût ===== */}
           {step === 3 && (
             <div>
               {/* Recap */}
@@ -481,20 +488,59 @@ export default function CampaignModal({
                 ))}
               </div>
 
-              {/* Coût */}
-              <div style={{ padding: '12px', borderRadius: '10px', background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px' }}>💰 Coût estimé</span>
-                  {isSuperAdmin ? (
-                    <span style={{ color: '#a78bfa', fontWeight: 700, fontSize: '14px' }}>∞ Illimité</span>
-                  ) : (
-                    <span style={{ color: '#fff', fontWeight: 700, fontSize: '14px' }}>
-                      {(selectedRecipients?.length || 0) * campaignCreditCost} crédit{(selectedRecipients?.length || 0) * campaignCreditCost > 1 ? 's' : ''}
-                    </span>
-                  )}
-                </div>
-                {!isSuperAdmin && coachCredits !== null && coachCredits >= 0 && coachCredits < (selectedRecipients?.length || 0) * campaignCreditCost && (
-                  <p style={{ color: '#ef4444', fontSize: '11px', marginTop: '4px', marginBottom: 0 }}>⚠️ Solde insuffisant ({coachCredits} crédits)</p>
+              {/* === COÛT & CRÉDITS — Bloc principal === */}
+              <div style={{
+                padding: '16px', borderRadius: '12px',
+                background: insufficientCredits ? 'rgba(239,68,68,0.08)' : 'rgba(139,92,246,0.1)',
+                border: insufficientCredits ? '1px solid rgba(239,68,68,0.4)' : '1px solid rgba(139,92,246,0.3)'
+              }}>
+                {isSuperAdmin ? (
+                  /* Super Admin = illimité */
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px' }}>👑 Mode Super Admin</span>
+                    <span style={{ color: '#D91CD2', fontWeight: 700, fontSize: '16px' }}>∞ Illimité</span>
+                  </div>
+                ) : (
+                  <div>
+                    {/* Détail du calcul */}
+                    <div style={{ display: 'grid', gap: '6px', marginBottom: '10px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                        <span style={{ color: 'rgba(255,255,255,0.5)' }}>Prix par envoi</span>
+                        <span style={{ color: '#c4b5fd' }}>{campaignCreditCost} crédit{campaignCreditCost > 1 ? 's' : ''}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                        <span style={{ color: 'rgba(255,255,255,0.5)' }}>Nombre de destinataires</span>
+                        <span style={{ color: '#c4b5fd' }}>× {selectedRecipients?.length || 0}</span>
+                      </div>
+                      <div style={{ height: '1px', background: 'rgba(255,255,255,0.1)', margin: '2px 0' }}></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 600 }}>
+                        <span style={{ color: '#fff' }}>Coût total</span>
+                        <span style={{ color: insufficientCredits ? '#ef4444' : '#fff' }}>
+                          {totalCost} crédit{totalCost > 1 ? 's' : ''}
+                        </span>
+                      </div>
+                    </div>
+                    {/* Barre solde */}
+                    <div style={{
+                      padding: '10px 12px', borderRadius: '8px',
+                      background: insufficientCredits ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.08)',
+                      border: insufficientCredits ? '1px solid rgba(239,68,68,0.3)' : '1px solid rgba(34,197,94,0.2)'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '12px', color: insufficientCredits ? '#ef4444' : 'rgba(255,255,255,0.6)' }}>
+                          {insufficientCredits ? '🚫 Solde insuffisant' : '💰 Votre solde'}
+                        </span>
+                        <span style={{ fontSize: '13px', fontWeight: 700, color: insufficientCredits ? '#ef4444' : '#22c55e' }}>
+                          {coachCredits ?? 0} crédit{(coachCredits ?? 0) !== 1 ? 's' : ''}
+                        </span>
+                      </div>
+                      {insufficientCredits && (
+                        <p style={{ color: '#fca5a5', fontSize: '11px', marginTop: '6px', marginBottom: 0, lineHeight: 1.4 }}>
+                          Crédits insuffisants. Veuillez recharger votre pack pour programmer des campagnes.
+                        </p>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
@@ -529,14 +575,22 @@ export default function CampaignModal({
               Suivant →
             </button>
           ) : (
-            <button type="button"
-              onClick={(e) => { createCampaign(e); onClose(); }}
-              style={{
-                padding: '10px 24px', borderRadius: '8px', border: 'none', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
-                background: 'linear-gradient(135deg, #22c55e, #16a34a)', color: '#fff'
-              }}>
-              {editingCampaignId ? '💾 Enregistrer' : `🚀 Créer (${selectedRecipients?.length || 0} dest.)`}
-            </button>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+              <button type="button"
+                disabled={!canCreate}
+                onClick={(e) => { if (canCreate) { createCampaign(e); onClose(); } }}
+                style={{
+                  padding: '10px 24px', borderRadius: '8px', border: 'none', fontSize: '13px', fontWeight: 600,
+                  cursor: canCreate ? 'pointer' : 'not-allowed',
+                  background: canCreate ? 'linear-gradient(135deg, #22c55e, #16a34a)' : 'rgba(107,114,128,0.3)',
+                  color: '#fff', opacity: canCreate ? 1 : 0.5
+                }}>
+                {editingCampaignId ? '💾 Enregistrer' : canCreate ? `🚀 Créer (${selectedRecipients?.length || 0} dest.)` : '🔒 Crédits insuffisants'}
+              </button>
+              {!canCreate && (
+                <span style={{ fontSize: '10px', color: '#ef4444' }}>Rechargez votre pack</span>
+              )}
+            </div>
           )}
         </div>
       </div>

@@ -2856,7 +2856,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const createCampaign = async (e) => {
     e.preventDefault();
     if (!newCampaign.name || !newCampaign.message) return;
-    
+
+    // v13: Blocage crédits côté frontend (double sécurité avec backend)
+    if (!isSuperAdmin && coachCredits !== null && coachCredits !== -1 && coachCredits <= 0) {
+      showCampaignToast('🔒 Crédits insuffisants. Rechargez votre pack pour créer des campagnes.', 'error');
+      return;
+    }
+
     // Valider qu'il y a au moins un destinataire
     const hasRecipients = selectedRecipients.length > 0 || newCampaign.channels.whatsapp || newCampaign.channels.email || newCampaign.channels.group;
     if (!hasRecipients) {
@@ -3896,17 +3902,17 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // v8.9.5: Tabs dynamiques avec "Mon Stripe" pour les coachs (pas Bassi)
   // v9.1.3: DASHBOARD JUMEAU - Tous les coaches ont FULL ACCESS (même interface que Bassi)
   // L'indicateur requiresCredits est supprimé - seul le filtrage coach_id sépare les données
-  // v9.5.8: Masquer "Campagnes" pour les partenaires - réservé au Super Admin
+  // v13: Campagnes accessible à tous (CreditsGate bloque si 0 crédits)
   // v13.0: Ajout "Boutique" pour achat de crédits
   const baseTabs = [
-    { id: "reservations", label: t('reservations') }, 
+    { id: "reservations", label: t('reservations') },
     { id: "concept", label: t('conceptVisual') },
-    { id: "courses", label: t('courses') }, 
+    { id: "courses", label: t('courses') },
     { id: "offers", label: t('offers') },
-    { id: "page-vente", label: "🏪 Ma Page" }, 
+    { id: "page-vente", label: "🏪 Ma Page" },
     { id: "codes", label: t('promoCodes') },
-    // v9.5.8: Campagnes masqué pour les partenaires
-    ...(isSuperAdmin ? [{ id: "campaigns", label: "📢 Campagnes" }] : []),
+    // v13: Campagnes visible pour tous — accès contrôlé par CreditsGate
+    { id: "campaigns", label: "📢 Campagnes" },
     { id: "conversations", label: unreadCount > 0 ? `💬 Conversations (${unreadCount})` : "💬 Conversations" }
   ];
   

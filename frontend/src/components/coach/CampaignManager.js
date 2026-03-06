@@ -157,8 +157,12 @@ const CampaignManager = ({
     </div>
   ) : null;
 
-  // Open modal for new campaign
+  // v13: Check credits before opening creation modal
   const openNewCampaign = (dateStr) => {
+    if (!isSuperAdmin && coachCredits !== null && coachCredits !== -1 && coachCredits <= 0) {
+      showCampaignToast?.('🔒 Crédits insuffisants. Rechargez votre pack pour créer des campagnes.', 'error');
+      return;
+    }
     cancelEditCampaign?.(); // Reset form
     setPreSelectedDate(dateStr || null);
     setShowModal(true);
@@ -186,8 +190,12 @@ const CampaignManager = ({
     }
   };
 
-  // Duplicate campaign
+  // Duplicate campaign (v13: check credits first)
   const handleDuplicateCampaign = async (campaign) => {
+    if (!isSuperAdmin && coachCredits !== null && coachCredits !== -1 && coachCredits <= 0) {
+      showCampaignToast?.('🔒 Crédits insuffisants pour dupliquer.', 'error');
+      return;
+    }
     try {
       const dupData = {
         name: `${campaign.name} (copie)`,
