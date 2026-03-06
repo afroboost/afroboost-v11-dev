@@ -212,6 +212,27 @@ async def api_health_check():
     """Health check endpoint via /api prefix for Kubernetes"""
     return await health_check()
 
+@fastapi_app.get("/api/debug/config")
+async def debug_config():
+    """Debug endpoint to check environment configuration (no secrets exposed)"""
+    mongo = os.environ.get('MONGO_URL', '')
+    # Masquer le mot de passe dans l'URL
+    import re
+    masked_mongo = re.sub(r'://([^:]+):([^@]+)@', r'://\1:****@', mongo) if mongo else 'NOT SET'
+
+    return JSONResponse(content={
+        "mongo_url_masked": masked_mongo,
+        "db_name": os.environ.get('DB_NAME', 'NOT SET'),
+        "frontend_url": os.environ.get('FRONTEND_URL', 'NOT SET'),
+        "cors_origins": os.environ.get('CORS_ORIGINS', 'NOT SET'),
+        "stripe_key_set": bool(os.environ.get('STRIPE_SECRET_KEY')),
+        "openai_key_set": bool(os.environ.get('OPENAI_API_KEY')),
+        "resend_key_set": bool(os.environ.get('RESEND_API_KEY')),
+        "mongo_client_options": {
+            "host": client.HOST if hasattr(client, 'HOST') else str(client.address) if hasattr(client, 'address') else 'unknown',
+        }
+    })
+
 # Favicon endpoint to prevent 404 errors
 @fastapi_app.get("/api/favicon.ico")
 async def favicon():
