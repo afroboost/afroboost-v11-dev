@@ -12,6 +12,7 @@ import React, { memo, useState } from 'react';
 import axios from 'axios';
 import { isWhatsAppConfigured } from '../../services/whatsappService';
 import { parseMediaUrl } from '../../services/MediaParser';
+import CampaignCalendar from './CampaignCalendar'; // v11: Calendrier interactif
 
 const CampaignManager = ({
   // === ÉTATS PRINCIPAUX ===
@@ -1846,6 +1847,26 @@ const CampaignManager = ({
         })()}
       </form>
       
+      {/* v11: Calendrier interactif des campagnes */}
+      <CampaignCalendar
+        campaigns={campaigns}
+        onDayClick={(dateStr) => {
+          // Pré-remplir un créneau de scheduling avec la date cliquée
+          setNewCampaign(prev => ({
+            ...prev,
+            scheduleSlots: [{ date: dateStr, time: '10:00' }]
+          }));
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          showCampaignToast(`📅 Date ${dateStr} pré-remplie`, 'info');
+        }}
+        onCampaignClick={(campaign) => {
+          // Ouvrir la campagne en mode édition
+          if (typeof handleEditCampaign === 'function') {
+            handleEditCampaign(campaign);
+          }
+        }}
+      />
+
       {/* Campaign History */}
       <div>
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
