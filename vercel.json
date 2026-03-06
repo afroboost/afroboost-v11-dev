@@ -2,6 +2,12 @@
   "buildCommand": "cd frontend && npm install --legacy-peer-deps && CI=false npx craco build",
   "installCommand": "cd frontend && npm install --legacy-peer-deps",
   "outputDirectory": "frontend/build",
+  "crons": [
+    {
+      "path": "/api/cron/check-campaigns",
+      "schedule": "* * * * *"
+    }
+  ],
   "functions": {
     "api/index.py": {
       "maxDuration": 60

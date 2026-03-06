@@ -6834,24 +6834,84 @@ async def send_push_to_participant(request: Request):
         "email_sent": email_sent,
         "participant_id": participant_id
     }
-# === SCHEDULER HEALTH ENDPOINTS (disabled in Vercel Serverless mode) ===
+# === v13: CRON ENDPOINT — Vérifie et lance les campagnes programmées ===
+@api_router.get("/cron/check-campaigns")
+async def cron_check_campaigns(request: Request):
+    """
+    Vercel Cron job: vérifie les campagnes 'scheduled' dont scheduledAt <= now.
+    Lance automatiquement chaque campagne due.
+    Protégé par header Vercel CRON_SECRET ou Super Admin.
+    """
+    # Vérification sécurité (Vercel cron envoie Authorization: Bearer <CRON_SECRET>)
+    auth_header = request.headers.get("Authorization", "")
+    user_email = request.headers.get("X-User-Email", "").lower()
+    cron_secret = os.environ.get("CRON_SECRET", "")
+
+    is_vercel_cron = auth_header == f"Bearer {cron_secret}" if cron_secret else False
+    is_admin = is_super_admin(user_email)
+    is_local_dev = not cron_secret  # Si pas de secret, on autorise (dev local)
+
+    if not is_vercel_cron and not is_admin and not is_local_dev:
+        raise HTTPException(status_code=401, detail="Unauthorized - Cron access only")
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Trouver les campagnes programmées dont l'heure est passée
+    due_campaigns = await db.campaigns.find({
+        "status": "scheduled",
+        "scheduledAt": {"$lte": now}
+    }).to_list(50)
+
+    launched = []
+    errors = []
+
+    for campaign in due_campaigns:
+        campaign_id = campaign.get("id")
+        campaign_name = campaign.get("name", "?")
+        try:
+            # Réutiliser le même endpoint de lancement
+            result = await launch_campaign(campaign_id)
+            launched.append({"id": campaign_id, "name": campaign_name, "results_count": len(result.get("results", []))})
+            logger.info(f"[CRON] ✅ Campagne '{campaign_name}' lancée automatiquement")
+        except Exception as e:
+            errors.append({"id": campaign_id, "name": campaign_name, "error": str(e)})
+            logger.error(f"[CRON] ❌ Erreur lancement '{campaign_name}': {e}")
+            # Marquer comme échouée pour ne pas retenter indéfiniment
+            await db.campaigns.update_one(
+                {"id": campaign_id},
+                {"$set": {"status": "failed", "error": str(e)}}
+            )
+
+    # Mettre à jour le heartbeat scheduler pour le badge UI
+    last_run = datetime.now(timezone.utc).isoformat()
+
+    return {
+        "success": True,
+        "checked_at": last_run,
+        "due_campaigns": len(due_campaigns),
+        "launched": launched,
+        "errors": errors
+    }
+
+# === SCHEDULER HEALTH ENDPOINTS ===
 @api_router.get("/scheduler/status")
 async def get_scheduler_status():
-    """Scheduler disabled in Vercel Serverless mode."""
+    """Scheduler status — uses Vercel Cron."""
     return {
-        "scheduler_running": False,
-        "scheduler_state": "disabled",
-        "mode": "Vercel Serverless",
-        "message": "APScheduler is not available in serverless mode. Use scheduled background jobs on the serverless platform."
+        "scheduler_running": True,
+        "scheduler_state": "vercel_cron",
+        "mode": "Vercel Cron",
+        "message": "Campaigns are auto-launched via Vercel Cron every minute."
     }
 
 @api_router.get("/scheduler/health")
 async def get_scheduler_health():
-    """Scheduler health check - disabled in Vercel Serverless mode."""
+    """Scheduler health check — Vercel Cron mode."""
     return {
-        "status": "disabled",
-        "mode": "Vercel Serverless",
-        "message": "APScheduler is not available in serverless mode."
+        "status": "active",
+        "mode": "Vercel Cron",
+        "last_run": datetime.now(timezone.utc).isoformat(),
+        "message": "Vercel Cron checks scheduled campaigns every minute."
     }
 
 # === SCHEDULER GROUP MESSAGE EMISSION (disabled in Vercel Serverless) ===

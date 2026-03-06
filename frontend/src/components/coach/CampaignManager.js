@@ -401,7 +401,8 @@ const CampaignManager = ({
                               style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', cursor: 'pointer' }}>🚀</button>
                           )}
                           {campaign.status === 'scheduled' && (
-                            <span style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(234,179,8,0.1)', color: '#fbbf24' }}>⏳</span>
+                            <button type="button" onClick={(e) => launchCampaignWithSend(e, campaign.id)}
+                              style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', cursor: 'pointer' }} title="Lancer maintenant">🚀</button>
                           )}
                           {(campaign.status === 'sent' || campaign.status === 'completed' || campaign.status === 'failed') && (
                             <button type="button" onClick={(e) => launchCampaignWithSend(e, campaign.id)}

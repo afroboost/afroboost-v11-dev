@@ -2944,6 +2944,19 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         const res = await axios.post(`${API}/campaigns`, campaignData);
         setCampaigns([res.data, ...campaigns]);
         addCampaignLog(res.data.id, `Campagne "${newCampaign.name}" créée (${targetIds.length} destinataire(s))`, 'success');
+
+        // v13: Auto-launch immediate campaigns
+        if (targetIds.length > 0) {
+          try {
+            addCampaignLog(res.data.id, '🚀 Lancement automatique en cours...', 'info');
+            const launchRes = await axios.post(`${API}/campaigns/${res.data.id}/launch`);
+            setCampaigns(prev => prev.map(c => c.id === res.data.id ? launchRes.data : c));
+            addCampaignLog(res.data.id, `✅ Campagne envoyée ! (${launchRes.data.results?.length || 0} envoi(s))`, 'success');
+          } catch (launchErr) {
+            console.error('Auto-launch error:', launchErr);
+            addCampaignLog(res.data.id, `⚠️ Créée mais envoi échoué: ${launchErr.response?.data?.detail || launchErr.message}`, 'error');
+          }
+        }
       } else {
         // Create one campaign per schedule slot (multi-date)
         for (let i = 0; i < scheduleSlots.length; i++) {
