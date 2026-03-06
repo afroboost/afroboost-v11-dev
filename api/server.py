@@ -84,8 +84,6 @@ init_promo_db(db)
 init_stripe_db(db)
 
 # === TEMPORARY: Setup coaches for video carousel test ===
-from fastapi import Query as QueryParam
-
 @api_router.post("/setup-coaches")
 async def setup_coaches_temp():
     """TEMPORAIRE - Configure 3 coachs de test avec YouTube Shorts pour le carrousel vidéo"""
