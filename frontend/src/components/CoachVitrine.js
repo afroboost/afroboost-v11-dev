@@ -77,8 +77,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   // Concept du coach (vidéo header)
   const [coachConcept, setCoachConcept] = useState(null);
 
-  // v14: INLINE booking (plus de modal)
-  const [selectedBooking, setSelectedBooking] = useState(null); // { course, date }
+  // v17: INLINE booking multi-séances (tableau de { course, date })
+  const [selectedBookings, setSelectedBookings] = useState([]); // [{ course, date }, ...]
+  const selectedBooking = selectedBookings.length > 0 ? selectedBookings[0] : null; // compat
   const [selectedOffer, setSelectedOffer] = useState(null);
   const [bookingForm, setBookingForm] = useState({ name: '', email: '', whatsapp: '', promoCode: '' });
   const [bookingLoading, setBookingLoading] = useState(false);
@@ -101,9 +102,20 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     else window.history.pushState({}, '', '/');
   };
 
-  // v14: Clic sur date → sélection inline (pas de modal)
+  // v17: Clic sur date → toggle sélection multi-séances (max 3)
   const handleBookClick = (course, date) => {
-    setSelectedBooking({ course, date });
+    const dateStr = date.toISOString();
+    const exists = selectedBookings.findIndex(b => b.course.id === course.id && b.date.toISOString() === dateStr);
+    if (exists >= 0) {
+      // Déselection
+      setSelectedBookings(prev => prev.filter((_, i) => i !== exists));
+    } else if (selectedBookings.length >= 3) {
+      // Max 3 séances
+      alert('Maximum 3 séances à la fois');
+    } else {
+      // Ajout
+      setSelectedBookings(prev => [...prev, { course, date }]);
+    }
     setBookingSuccess(false);
     setPromoMessage({ type: '', text: '' });
     setAppliedDiscount(null);
@@ -159,32 +171,34 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   // Soumettre réservation
   const handleBookingSubmit = async (e) => {
     e.preventDefault();
-    if (!selectedBooking || bookingLoading) return;
+    if (selectedBookings.length === 0 || bookingLoading) return;
     setBookingLoading(true);
     try {
-      const res = await axios.post(`${API}/reservations`, {
-        userName: bookingForm.name,
-        userEmail: bookingForm.email,
-        userWhatsapp: bookingForm.whatsapp,
-        courseId: selectedBooking.course.id,
-        courseName: selectedBooking.course.name || selectedBooking.course.title,
-        courseTime: selectedBooking.course.time,
-        datetime: selectedBooking.date.toISOString(),
-        coach_id: coach?.email || username,
-        source: 'vitrine_partenaire',
-        selectedOffer: selectedOffer ? { id: selectedOffer.id, name: selectedOffer.name, price: selectedOffer.price } : null,
-        appliedDiscount: appliedDiscount ? {
-          id: appliedDiscount.id, code: appliedDiscount.code,
-          type: appliedDiscount.type, value: appliedDiscount.value
-        } : null
-      });
-      if (res.data) {
-        if (appliedDiscount) {
-          try { await axios.post(`${API}/discount-codes/${appliedDiscount.id}/use`); } catch (e) {}
-        }
-        setBookingSuccess(true);
-        setBookingForm({ name: '', email: '', whatsapp: '', promoCode: '' });
+      // Envoyer une réservation par séance sélectionnée
+      for (const booking of selectedBookings) {
+        await axios.post(`${API}/reservations`, {
+          userName: bookingForm.name,
+          userEmail: bookingForm.email,
+          userWhatsapp: bookingForm.whatsapp,
+          courseId: booking.course.id,
+          courseName: booking.course.name || booking.course.title,
+          courseTime: booking.course.time,
+          datetime: booking.date.toISOString(),
+          coach_id: coach?.email || username,
+          source: 'vitrine_partenaire',
+          selectedOffer: selectedOffer ? { id: selectedOffer.id, name: selectedOffer.name, price: selectedOffer.price } : null,
+          appliedDiscount: appliedDiscount ? {
+            id: appliedDiscount.id, code: appliedDiscount.code,
+            type: appliedDiscount.type, value: appliedDiscount.value
+          } : null
+        });
       }
+      if (appliedDiscount) {
+        try { await axios.post(`${API}/discount-codes/${appliedDiscount.id}/use`); } catch (e) {}
+      }
+      setBookingSuccess(true);
+      setBookingForm({ name: '', email: '', whatsapp: '', promoCode: '' });
+      setSelectedBookings([]);
     } catch (err) {
       console.error('[BOOKING] Erreur:', err);
       alert(err.response?.data?.detail || 'Erreur lors de la réservation');
@@ -461,23 +475,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             </svg>
           </div>
 
-          {/* v14: QR + Partage FIXES en haut à droite */}
-          <div className="flex items-center gap-2">
-            <button onClick={() => setShowQR(true)}
-              className="w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110"
-              style={{ background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(8px)' }}>
-              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h2M4 12h2m14 0h2M6 20h2m-2-8h2" />
-              </svg>
-            </button>
-            <button onClick={handleShare}
-              className="w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110"
-              style={{ background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(8px)' }}>
-              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-              </svg>
-            </button>
-          </div>
+          {/* v17: QR + Partage uniquement dans la barre latérale (pas de doublon) */}
+          <div className="flex items-center gap-2" />
         </div>
 
         {/* === BARRE D'ACTIONS DROITE — Style Instagram Reels === */}
@@ -585,14 +584,19 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         {/* === ÉTAPE 1: Cours/Sessions === */}
         {uniqueCourses.length > 0 && (
           <div id="vitrine-courses-section" className="mb-8">
-            <h2 className="font-semibold mb-4 text-white" style={{ fontSize: '18px' }}>
-              Choisissez votre session
+            <h2 className="font-semibold mb-4 text-white flex items-center gap-2" style={{ fontSize: '18px' }}>
+              Choisissez vos sessions
+              {selectedBookings.length > 0 && (
+                <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'rgba(217, 28, 210, 0.3)', color: '#d91cd2' }}>
+                  {selectedBookings.length} sélectionnée{selectedBookings.length > 1 ? 's' : ''}
+                </span>
+              )}
             </h2>
             <div className="space-y-4 sessions-scrollbar"
               style={{ maxHeight: '400px', overflowY: 'auto', paddingRight: '8px' }}>
               {uniqueCourses.map(course => {
                 const upcomingDates = course.weekday !== undefined ? getNextOccurrences(course.weekday, 4) : [];
-                const isSelected = selectedBooking?.course?.id === course.id;
+                const isSelected = selectedBookings.some(b => b.course.id === course.id);
                 return (
                   <div key={course.id}
                     className="rounded-xl p-5 transition-all duration-200"
@@ -621,8 +625,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       <div className="mt-3">
                         <div className="flex flex-wrap gap-2">
                           {upcomingDates.map((date, idx) => {
-                            const isDateSelected = selectedBooking?.course?.id === course.id &&
-                              selectedBooking?.date?.toISOString() === date.toISOString();
+                            const isDateSelected = selectedBookings.some(b => b.course.id === course.id && b.date.toISOString() === date.toISOString());
                             return (
                               <button key={idx}
                                 onClick={() => handleBookClick(course, date)}
@@ -800,7 +803,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 <p className="text-white/60 mb-4">Vous recevrez une confirmation par email.</p>
                 <button onClick={() => {
                   setBookingSuccess(false);
-                  setSelectedBooking(null);
+                  setSelectedBookings([]);
                   setSelectedOffer(null);
                 }}
                   className="px-6 py-3 rounded-xl text-white font-medium transition-all hover:scale-105"
@@ -810,19 +813,33 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               </div>
             ) : (
               <>
-                <h3 className="text-lg font-bold text-white mb-4">Finaliser votre réservation</h3>
+                <h3 className="text-lg font-bold text-white mb-4">
+                  Finaliser votre réservation {selectedBookings.length > 1 && <span className="text-sm font-normal text-purple-400">({selectedBookings.length} séances)</span>}
+                </h3>
 
-                {/* Récapitulatif */}
+                {/* Récapitulatif multi-séances */}
                 <div className="rounded-lg p-4 mb-6"
                   style={{ background: 'rgba(217, 28, 210, 0.1)', border: '1px solid rgba(217, 28, 210, 0.2)' }}>
-                  <p className="text-white font-semibold">{selectedBooking.course.name || selectedBooking.course.title}</p>
-                  <p className="text-purple-400 text-sm mt-1">
-                    {selectedBooking.date.toLocaleDateString('fr-CH', { weekday: 'long', day: '2-digit', month: 'long' })}
-                    {' • '}{selectedBooking.course.time}
-                  </p>
-                  <p className="text-white/60 text-sm mt-2">
-                    Offre : <span className="text-white">{selectedOffer.name}</span> — <span style={{ color: '#d91cd2' }}>{selectedOffer.price === 0 ? 'Offert' : `CHF ${selectedOffer.price}.-`}</span>
-                  </p>
+                  {selectedBookings.map((booking, idx) => (
+                    <div key={idx} className={idx > 0 ? 'mt-3 pt-3' : ''} style={idx > 0 ? { borderTop: '1px solid rgba(255,255,255,0.1)' } : {}}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-white font-semibold text-sm">{booking.course.name || booking.course.title}</p>
+                          <p className="text-purple-400 text-xs mt-0.5">
+                            {booking.date.toLocaleDateString('fr-CH', { weekday: 'long', day: '2-digit', month: 'long' })}
+                            {' • '}{booking.course.time}
+                          </p>
+                        </div>
+                        <button type="button" onClick={() => setSelectedBookings(prev => prev.filter((_, i) => i !== idx))}
+                          className="text-white/40 hover:text-red-400 text-xs ml-2 transition-colors">✕</button>
+                      </div>
+                    </div>
+                  ))}
+                  {selectedOffer && (
+                    <p className="text-white/60 text-sm mt-3 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                      Offre : <span className="text-white">{selectedOffer.name}</span> — <span style={{ color: '#d91cd2' }}>{selectedOffer.price === 0 ? 'Offert' : `CHF ${selectedOffer.price}.-`}</span>
+                    </p>
+                  )}
                 </div>
 
                 {/* Formulaire */}
@@ -852,21 +869,23 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       placeholder="+41 79 XXX XX XX" />
                   </div>
 
-                  {/* Code Promo */}
+                  {/* Code Promo — v17: layout mobile-safe */}
                   <div>
                     <label className="text-white/60 text-xs mb-1 block">Code Promo (optionnel)</label>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2" style={{ flexWrap: 'nowrap', maxWidth: '100%' }}>
                       <input type="text" value={bookingForm.promoCode}
                         onChange={e => setBookingForm(prev => ({ ...prev, promoCode: e.target.value.toUpperCase() }))}
-                        className="flex-1 px-4 py-3 rounded-lg text-white"
+                        className="px-3 py-3 rounded-lg text-white text-sm"
                         style={{
+                          flex: '1 1 0%',
+                          minWidth: 0,
                           background: appliedDiscount ? 'rgba(34, 197, 94, 0.15)' : 'rgba(255,255,255,0.08)',
                           border: appliedDiscount ? '1px solid rgba(34, 197, 94, 0.5)' : '1px solid rgba(255,255,255,0.15)'
                         }}
                         placeholder="CODE123" />
                       <button type="button" onClick={() => validatePromoCode(bookingForm.promoCode)}
-                        className="px-4 py-3 rounded-lg font-medium transition-all hover:scale-105"
-                        style={{ background: 'rgba(217, 28, 210, 0.3)', border: '1px solid rgba(217, 28, 210, 0.5)', color: '#D91CD2' }}>
+                        className="rounded-lg font-medium transition-all hover:scale-105 text-sm"
+                        style={{ flexShrink: 0, padding: '12px 14px', background: 'rgba(217, 28, 210, 0.3)', border: '1px solid rgba(217, 28, 210, 0.5)', color: '#D91CD2', whiteSpace: 'nowrap' }}>
                         Valider
                       </button>
                     </div>
