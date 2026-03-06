@@ -1700,8 +1700,10 @@ async def launch_campaign(campaign_id: str):
     logger.info(f"[CAMPAIGN-LAUNCH] 🚀 Lancement campagne '{campaign_name}' - targetIds: {len(target_ids)}, channels: {channels}")
     
     # ==================== ENVOI INTERNE (Chat) ====================
-    if channels.get("internal") and target_ids:
-        for target_id in target_ids:
+    # Filtrer les targetIds vides/null
+    valid_target_ids = [tid for tid in target_ids if tid and tid.strip()]
+    if channels.get("internal") and valid_target_ids:
+        for target_id in valid_target_ids:
             internal_result = {
                 "targetId": target_id,
                 "channel": "internal",
@@ -1933,8 +1935,14 @@ async def launch_campaign(campaign_id: str):
             })
     
     # Déterminer le statut final
-    all_sent = all(r.get("status") in ["sent", "simulated", "manual"] for r in results)
-    final_status = "completed" if all_sent else "sending"
+    if not results:
+        final_status = "completed"  # Aucun envoi nécessaire (pas de contacts valides)
+    elif fail_count > 0 and success_count == 0:
+        final_status = "failed"
+    elif fail_count > 0:
+        final_status = "completed"  # Partiellement réussi
+    else:
+        final_status = "completed"  # Tout envoyé
     
     # Update campaign
     await db.campaigns.update_one(
