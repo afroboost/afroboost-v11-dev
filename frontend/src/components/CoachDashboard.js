@@ -2942,7 +2942,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // Create one campaign per schedule slot (multi-date)
         for (let i = 0; i < scheduleSlots.length; i++) {
           const slot = scheduleSlots[i];
-          const scheduledAt = `${slot.date}T${slot.time}:00`;
+          // Build ISO string with user's local timezone offset
+          const localDate = new Date(`${slot.date}T${slot.time}:00`);
+          const scheduledAt = localDate.toISOString();
           const campaignData = {
             name: scheduleSlots.length > 1 ? `${newCampaign.name} (${i + 1}/${scheduleSlots.length})` : newCampaign.name,
             message: newCampaign.message,

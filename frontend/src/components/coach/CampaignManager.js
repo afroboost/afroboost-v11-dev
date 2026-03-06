@@ -174,7 +174,9 @@ const CampaignManager = ({
   // Move campaign (drag & drop)
   const handleMoveCampaign = async (campaignId, newDateStr) => {
     try {
-      const newScheduledAt = `${newDateStr}T10:00:00`;
+      // Convert to ISO with user's timezone
+      const localDate = new Date(`${newDateStr}T10:00:00`);
+      const newScheduledAt = localDate.toISOString();
       await axios.put(`${API}/campaigns/${campaignId}`, { scheduledAt: newScheduledAt });
       showCampaignToast?.(`📅 Campagne déplacée au ${newDateStr}`, 'success');
       // Refresh will happen via parent state
