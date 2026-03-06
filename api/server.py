@@ -83,6 +83,91 @@ init_promo_db(db)
 # v13.4: Initialiser la db pour stripe routes
 init_stripe_db(db)
 
+# === TEMPORARY: Setup coaches for video carousel test ===
+from fastapi import Query as QueryParam
+
+@api_router.post("/setup-coaches")
+async def setup_coaches_temp():
+    """TEMPORAIRE - Configure 3 coachs de test avec YouTube Shorts pour le carrousel vidéo"""
+    results = []
+
+    # 1. Fix Bassi's concept: set id to "concept" and add heroVideoUrl
+    bassi_update = await db.concept.update_one(
+        {"id": {"$regex": "^concept"}},
+        {"$set": {
+            "id": "concept",
+            "heroVideoUrl": "https://www.youtube.com/shorts/zUbW0GsRT1k",
+            "heroImageUrl": "https://www.youtube.com/shorts/zUbW0GsRT1k"
+        }}
+    )
+    results.append(f"Bassi concept updated: {bassi_update.modified_count}")
+
+    # 2. Create 2 test coaches
+    test_coaches = [
+        {
+            "id": "coach_dj_energy",
+            "name": "DJ Energy",
+            "email": "dj.energy@test.afroboost.com",
+            "platform_name": "DJ Energy Fitness",
+            "bio": "Cours de danse afro-fusion et cardio intense",
+            "photo_url": None,
+            "logo_url": None,
+            "is_active": True,
+            "created_at": "2026-03-06T00:00:00Z"
+        },
+        {
+            "id": "coach_queen_fit",
+            "name": "Queen Fit",
+            "email": "queen.fit@test.afroboost.com",
+            "platform_name": "Queen Fit Studio",
+            "bio": "Afrobeat workout & body sculpting",
+            "photo_url": None,
+            "logo_url": None,
+            "is_active": True,
+            "created_at": "2026-03-06T00:00:00Z"
+        }
+    ]
+
+    for coach in test_coaches:
+        existing = await db.coaches.find_one({"id": coach["id"]})
+        if not existing:
+            await db.coaches.insert_one(coach)
+            results.append(f"Coach {coach['name']} created")
+        else:
+            results.append(f"Coach {coach['name']} already exists")
+
+    # 3. Create concept documents for each test coach with YouTube Shorts
+    test_concepts = [
+        {
+            "id": "concept_dj_energy_test_afroboost_com",
+            "coach_id": "dj.energy@test.afroboost.com",
+            "heroVideoUrl": "https://www.youtube.com/shorts/gK9TAPwSdEg",
+            "heroImageUrl": "https://www.youtube.com/shorts/gK9TAPwSdEg",
+            "appName": "DJ Energy Fitness",
+            "description": "Danse afro-fusion & cardio intense"
+        },
+        {
+            "id": "concept_queen_fit_test_afroboost_com",
+            "coach_id": "queen.fit@test.afroboost.com",
+            "heroVideoUrl": "https://www.youtube.com/shorts/vTEGPnhR4QA",
+            "heroImageUrl": "https://www.youtube.com/shorts/vTEGPnhR4QA",
+            "appName": "Queen Fit Studio",
+            "description": "Afrobeat workout & body sculpting"
+        }
+    ]
+
+    for concept in test_concepts:
+        existing = await db.concept.find_one({"id": concept["id"]})
+        if not existing:
+            await db.concept.insert_one(concept)
+            results.append(f"Concept for {concept['appName']} created")
+        else:
+            await db.concept.update_one({"id": concept["id"]}, {"$set": concept})
+            results.append(f"Concept for {concept['appName']} updated")
+
+    return {"status": "ok", "results": results}
+# === END TEMPORARY ===
+
 # Configure logging FIRST (needed for socketio)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
