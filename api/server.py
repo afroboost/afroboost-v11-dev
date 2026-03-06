@@ -212,6 +212,33 @@ async def api_health_check():
     """Health check endpoint via /api prefix for Kubernetes"""
     return await health_check()
 
+# TEMPORARY MIGRATION ENDPOINT - Remove after migration
+@fastapi_app.post("/api/migrate")
+async def migrate_data(request: Request):
+    """Temporary endpoint to import data from Emergent into new Atlas cluster"""
+    try:
+        body = await request.json()
+        collection_name = body.get("collection")
+        documents = body.get("documents")
+        if not collection_name or not documents:
+            return JSONResponse(status_code=400, content={"error": "collection and documents required"})
+
+        coll = db[collection_name]
+
+        # Convert _id fields if they exist as strings
+        for doc in documents:
+            if "id" in doc and "_id" not in doc:
+                doc["_id"] = doc.pop("id")
+
+        if len(documents) == 1:
+            await coll.insert_one(documents[0])
+        else:
+            await coll.insert_many(documents)
+
+        return JSONResponse(content={"status": "ok", "collection": collection_name, "inserted": len(documents)})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 @fastapi_app.get("/api/debug/config")
 async def debug_config():
     """Debug endpoint to check environment configuration (no secrets exposed)"""
