@@ -1703,6 +1703,58 @@ async def _save_campaign_chat_message(
     logger.info(f"[CAMPAIGN-CHAT] Message {channel} enregistré dans chat_messages pour {contact_id}")
 
 
+def substitute_campaign_variables(message: str, contact: dict) -> str:
+    """
+    Remplace les variables {prénom}, {nom}, {email}, {prenom}, {name} dans le message.
+    Insensible à la casse et aux accents.
+    """
+    if not message or not contact:
+        return message
+
+    name = contact.get("name", "")
+    first_name = name.split()[0] if name else ""
+    email = contact.get("email", "")
+    phone = contact.get("whatsapp", "") or contact.get("phone", "")
+
+    # Remplacements (insensible à la casse)
+    import re
+    replacements = {
+        r'\{prénom\}': first_name,
+        r'\{prenom\}': first_name,
+        r'\{name\}': name,
+        r'\{nom\}': name,
+        r'\{email\}': email,
+        r'\{phone\}': phone,
+        r'\{tel\}': phone,
+        # Patterns courants avec contenu entre accolades (ex: {pascal}, {jean})
+        # Si c'est un mot simple entre accolades qui ressemble à un prénom, remplacer aussi
+    }
+
+    result = message
+    for pattern, value in replacements.items():
+        result = re.sub(pattern, value, result, flags=re.IGNORECASE)
+
+    return result
+
+
+def format_phone_e164(phone: str, default_country: str = "+33") -> str:
+    """
+    Convertit un numéro de téléphone au format E.164 pour Twilio.
+    Ex: 0765203363 → +33765203363
+    Ex: +33765203363 → +33765203363
+    """
+    if not phone:
+        return ""
+    phone = phone.strip().replace(" ", "").replace("-", "").replace(".", "")
+    if phone.startswith("+"):
+        return phone
+    if phone.startswith("00"):
+        return "+" + phone[2:]
+    if phone.startswith("0"):
+        return default_country + phone[1:]
+    return default_country + phone
+
+
 @api_router.post("/campaigns/{campaign_id}/launch")
 async def launch_campaign(campaign_id: str):
     """
@@ -1759,15 +1811,30 @@ async def launch_campaign(campaign_id: str):
                 "status": "pending",
                 "sentAt": None
             }
-            
+
             try:
-                # Déterminer le type de cible (groupe ou utilisateur)
-                # Chercher si c'est un groupe (session avec titre ou mode groupe)
-                session = await db.chat_sessions.find_one(
-                    {"$or": [{"id": target_id}, {"participant_ids": target_id}]},
-                    {"_id": 0, "id": 1, "mode": 1, "title": 1}
-                )
-                
+                # Résoudre l'email du contact pour chercher sa session chat
+                # L'ID CRM (targetId) ≠ l'ID participant chat — on cherche par email
+                contact_doc = await db.users.find_one({"id": target_id}, {"_id": 0, "email": 1, "name": 1})
+                contact_email = contact_doc.get("email", "") if contact_doc else ""
+                contact_name_internal = contact_doc.get("name", "") if contact_doc else ""
+
+                # Stratégie de recherche: email (fiable) > participant_ids > id direct
+                session = None
+                if contact_email:
+                    session = await db.chat_sessions.find_one(
+                        {"participantEmail": contact_email},
+                        {"_id": 0, "id": 1, "mode": 1, "title": 1, "participant_ids": 1}
+                    )
+                    if session:
+                        logger.info(f"[CAMPAIGN-LAUNCH] 🔗 Session trouvée par email {contact_email}: {session.get('id')}")
+
+                if not session:
+                    session = await db.chat_sessions.find_one(
+                        {"$or": [{"id": target_id}, {"participant_ids": target_id}]},
+                        {"_id": 0, "id": 1, "mode": 1, "title": 1}
+                    )
+
                 if session:
                     session_id = session.get("id")
                 else:
@@ -1777,19 +1844,27 @@ async def launch_campaign(campaign_id: str):
                         "id": session_id,
                         "mode": "user",
                         "participant_ids": [target_id],
+                        "participantEmail": contact_email,
+                        "participantName": contact_name_internal,
                         "created_at": datetime.now(timezone.utc).isoformat(),
                         "updated_at": datetime.now(timezone.utc).isoformat()
                     })
-                    logger.info(f"[CAMPAIGN-LAUNCH] 📝 Session créée pour {target_id}: {session_id}")
+                    logger.info(f"[CAMPAIGN-LAUNCH] 📝 Session créée pour {target_id} ({contact_email}): {session_id}")
                 
+                # Substituer les variables {prénom} etc. avec les infos du contact
+                personalized_message = substitute_campaign_variables(
+                    message_content,
+                    contact_doc or {"name": "", "email": contact_email}
+                )
+
                 # Insérer le message dans la conversation
                 msg_id = str(uuid.uuid4())
                 msg_timestamp = datetime.now(timezone.utc).isoformat()
-                
+
                 await db.chat_messages.insert_one({
                     "id": msg_id,
                     "session_id": session_id,
-                    "content": message_content,
+                    "content": personalized_message,
                     "media_url": media_url or None,
                     "sender_type": "coach",
                     "sender_name": "Coach Bassi",
@@ -1835,7 +1910,10 @@ async def launch_campaign(campaign_id: str):
         contact_name = contact.get("name", "")
         contact_email = contact.get("email", "")
         contact_phone = contact.get("whatsapp", "")
-        
+
+        # Substituer les variables pour chaque contact
+        personalized_msg = substitute_campaign_variables(message_content, contact)
+
         # ==================== ENVOI WHATSAPP (INDÉPENDANT) ====================
         if channels.get("whatsapp") and contact_phone:
             whatsapp_result = {
@@ -1851,10 +1929,11 @@ async def launch_campaign(campaign_id: str):
             }
             
             try:
-                # Envoi DIRECT via Twilio
+                # Envoi DIRECT via Twilio (format E.164)
+                phone_e164 = format_phone_e164(contact_phone)
                 wa_response = await send_whatsapp_direct(
-                    to_phone=contact_phone,
-                    message=message_content,
+                    to_phone=phone_e164,
+                    message=personalized_msg,
                     media_url=media_url if media_url else None
                 )
                 
@@ -1868,7 +1947,7 @@ async def launch_campaign(campaign_id: str):
                     try:
                         await _save_campaign_chat_message(
                             contact_id=contact_id,
-                            content=message_content,
+                            content=personalized_msg,
                             media_url=media_url,
                             channel="whatsapp",
                             campaign_id=campaign_id,
@@ -1924,7 +2003,7 @@ async def launch_campaign(campaign_id: str):
 </div>
 <div style="padding:20px;color:#fff;font-size:14px;line-height:1.6;">
 <p>Salut {first_name},</p>
-{message_content.replace(chr(10), '<br>')}
+{personalized_msg.replace(chr(10), '<br>')}
 </div>
 <div style="padding:15px 20px;border-top:1px solid #333;text-align:center;">
 <a href="https://afroboosteur.com" style="color:#9333EA;text-decoration:none;font-size:11px;">afroboosteur.com</a>
@@ -1950,7 +2029,7 @@ async def launch_campaign(campaign_id: str):
                     try:
                         await _save_campaign_chat_message(
                             contact_id=contact_id,
-                            content=message_content,
+                            content=personalized_msg,
                             media_url=media_url,
                             channel="email",
                             campaign_id=campaign_id,
