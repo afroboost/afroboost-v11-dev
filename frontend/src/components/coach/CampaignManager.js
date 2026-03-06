@@ -1439,11 +1439,16 @@ const CampaignManager = ({
             
             <div>
               <label className="block mb-2 text-white/70 text-sm">Format</label>
-              <div className="flex gap-4">
+              <div className="flex gap-4 flex-wrap">
                 <label className="flex items-center gap-2 text-white text-sm cursor-pointer">
                   <input type="radio" name="mediaFormat" checked={newCampaign.mediaFormat === "9:16"}
                     onChange={() => setNewCampaign({...newCampaign, mediaFormat: "9:16"})} />
                   9:16 (Stories)
+                </label>
+                <label className="flex items-center gap-2 text-white text-sm cursor-pointer">
+                  <input type="radio" name="mediaFormat" checked={newCampaign.mediaFormat === "1:1"}
+                    onChange={() => setNewCampaign({...newCampaign, mediaFormat: "1:1"})} />
+                  1:1 (Carré)
                 </label>
                 <label className="flex items-center gap-2 text-white text-sm cursor-pointer">
                   <input type="radio" name="mediaFormat" checked={newCampaign.mediaFormat === "16:9"}
@@ -1468,27 +1473,44 @@ const CampaignManager = ({
               )}
             </p>
             <div className="flex justify-center">
-              <div style={{ 
-                width: newCampaign.mediaFormat === "9:16" ? '150px' : '280px',
-                height: newCampaign.mediaFormat === "9:16" ? '267px' : '158px',
+              <div style={{
+                width: newCampaign.mediaFormat === "9:16" ? '150px' : newCampaign.mediaFormat === "1:1" ? '200px' : '280px',
+                height: newCampaign.mediaFormat === "9:16" ? '267px' : newCampaign.mediaFormat === "1:1" ? '200px' : '158px',
                 background: '#000', borderRadius: '8px', overflow: 'hidden',
                 border: '1px solid rgba(139, 92, 246, 0.3)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center'
               }}>
-                {resolvedThumbnail ? (
-                  <img 
-                    src={resolvedThumbnail} 
-                    alt="Preview" 
-                    referrerPolicy="no-referrer"
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-                    onError={(e) => { 
-                      e.target.style.display = 'none';
-                      e.target.parentNode.innerHTML = '<span style="color:#888;font-size:12px;">Aperçu non disponible</span>';
-                    }} 
-                  />
-                ) : (
-                  <span style={{ color: '#888', fontSize: '12px' }}>Chargement...</span>
-                )}
+                {/* v11: YouTube iframe embed au lieu de simple thumbnail */}
+                {(() => {
+                  const url = newCampaign.mediaUrl || '';
+                  const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+                  if (ytMatch) {
+                    return (
+                      <iframe
+                        src={`https://www.youtube.com/embed/${ytMatch[1]}`}
+                        title="YouTube Preview"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                        style={{ width: '100%', height: '100%', border: 'none' }}
+                      />
+                    );
+                  }
+                  if (resolvedThumbnail) {
+                    return (
+                      <img
+                        src={resolvedThumbnail}
+                        alt="Preview"
+                        referrerPolicy="no-referrer"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        onError={(e) => {
+                          e.target.style.display = 'none';
+                          e.target.parentNode.innerHTML = '<span style="color:#888;font-size:12px;">Aperçu non disponible</span>';
+                        }}
+                      />
+                    );
+                  }
+                  return <span style={{ color: '#888', fontSize: '12px' }}>Chargement...</span>;
+                })()}
               </div>
             </div>
           </div>

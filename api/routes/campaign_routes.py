@@ -30,6 +30,7 @@ class CampaignCreate(BaseModel):
     message: str
     mediaUrl: Optional[str] = None
     mediaFormat: Optional[str] = None
+    mediaType: Optional[str] = None  # v11: 'upload', 'youtube', 'drive', 'image', 'link'
     targetType: str = "all"
     selectedContacts: Optional[List[str]] = []
     channels: dict = {}

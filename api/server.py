@@ -496,6 +496,7 @@ class Campaign(BaseModel):
     message: str
     mediaUrl: Optional[str] = ""
     mediaFormat: str = "16:9"  # "9:16" or "16:9"
+    mediaType: Optional[str] = None  # v11: 'upload', 'youtube', 'drive', 'image', 'link'
     targetType: str = "all"  # "all" or "selected"
     selectedContacts: List[str] = []
     channels: dict = Field(default_factory=lambda: {"whatsapp": True, "email": False, "instagram": False, "group": False, "internal": False})
@@ -1550,6 +1551,7 @@ async def create_campaign(campaign: CampaignCreate):
         message=campaign.message,
         mediaUrl=campaign.mediaUrl,
         mediaFormat=campaign.mediaFormat,
+        mediaType=campaign.mediaType,
         targetType=campaign.targetType,
         selectedContacts=campaign.selectedContacts,
         channels=campaign.channels,
