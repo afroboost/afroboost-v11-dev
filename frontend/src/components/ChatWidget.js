@@ -2054,7 +2054,11 @@ export const ChatWidget = () => {
                   type: msg.sender_type === 'user' ? 'user' : msg.sender_type === 'coach' ? 'coach' : 'ai',
                   // v10.4: Fallback robuste pour texte (content, text, body)
                   text: msg.content || msg.text || msg.body || '',
-                  sender: msg.sender_name
+                  sender: msg.sender_name,
+                  media_url: msg.media_url || null,
+                  cta_type: msg.cta_type || null,
+                  cta_text: msg.cta_text || null,
+                  cta_link: msg.cta_link || null
                 }));
                 setMessages(restoredMessages);
               }
@@ -2113,7 +2117,11 @@ export const ChatWidget = () => {
               type: msg.sender_type === 'user' ? 'user' : msg.sender_type === 'coach' ? 'coach' : 'ai',
               // v10.4: Fallback robuste pour texte
               text: msg.content || msg.text || msg.body || '',
-              sender: msg.sender_name
+              sender: msg.sender_name,
+              media_url: msg.media_url || null,
+              cta_type: msg.cta_type || null,
+              cta_text: msg.cta_text || null,
+              cta_link: msg.cta_link || null
             }));
             setMessages(restoredMessages);
             setLastMessageCount(restoredMessages.length);
@@ -2176,7 +2184,11 @@ export const ChatWidget = () => {
               type: msg.sender_type === 'user' ? 'user' : msg.sender_type === 'coach' ? 'coach' : 'ai',
               // v10.4: Fallback robuste pour texte
               text: msg.content || msg.text || msg.body || '',
-              sender: msg.sender_name
+              sender: msg.sender_name,
+              media_url: msg.media_url || null,
+              cta_type: msg.cta_type || null,
+              cta_text: msg.cta_text || null,
+              cta_link: msg.cta_link || null
             }));
             setMessages(restoredMessages);
             saveCachedMessages(restoredMessages);
@@ -2895,9 +2907,13 @@ export const ChatWidget = () => {
       const formattedMessages = res.data.map(m => ({
         id: m.id,
         type: m.sender_type === 'user' ? 'user' : m.sender_type === 'coach' ? 'coach' : 'ai',
-        text: m.content,
+        text: m.content || m.text || '',
         sender: m.sender_name,
-        senderId: m.sender_id
+        senderId: m.sender_id,
+        media_url: m.media_url || null,
+        cta_type: m.cta_type || null,
+        cta_text: m.cta_text || null,
+        cta_link: m.cta_link || null
       }));
       setMessages(formattedMessages);
       setLastMessageCount(formattedMessages.length);
