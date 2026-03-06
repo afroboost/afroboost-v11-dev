@@ -2125,10 +2125,19 @@ const CampaignManager = ({
                           </span>
                         )}
                         {result.status === 'sent' && (
-                          <span className="px-2 py-1 rounded text-xs bg-green-600/30 text-green-400">✅ Envoyé</span>
+                          <div className="flex items-center gap-1">
+                            <span className="px-2 py-1 rounded text-xs bg-green-600/30 text-green-400">✅ Envoyé</span>
+                            {/* v11: Tracking delivery/read */}
+                            {result.deliveredAt && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-600/30 text-blue-400" title={`Reçu: ${new Date(result.deliveredAt).toLocaleString('fr-FR')}`}>📬</span>
+                            )}
+                            {result.readAt && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] bg-purple-600/30 text-purple-400" title={`Lu: ${new Date(result.readAt).toLocaleString('fr-FR')}`}>👁️</span>
+                            )}
+                          </div>
                         )}
                         {result.status === 'failed' && (
-                          <span className="px-2 py-1 rounded text-xs bg-red-600/30 text-red-400">❌ Échec</span>
+                          <span className="px-2 py-1 rounded text-xs bg-red-600/30 text-red-400" title={result.error || ''}>❌ Échec</span>
                         )}
                       </div>
                     </div>

@@ -1754,7 +1754,9 @@ async def launch_campaign(campaign_id: str):
                 "contactPhone": contact_phone,
                 "channel": "whatsapp",
                 "status": "pending",
-                "sentAt": None
+                "sentAt": None,
+                "deliveredAt": None,  # v11: tracking
+                "readAt": None        # v11: tracking
             }
             
             try:
@@ -1809,7 +1811,9 @@ async def launch_campaign(campaign_id: str):
                 "contactPhone": contact_phone,
                 "channel": "email",
                 "status": "pending",
-                "sentAt": None
+                "sentAt": None,
+                "deliveredAt": None,  # v11: tracking
+                "readAt": None        # v11: tracking
             }
             
             try:
@@ -1906,6 +1910,49 @@ async def launch_campaign(campaign_id: str):
     logger.info(f"[CAMPAIGN-LAUNCH] 🏁 Campagne '{campaign_name}' terminée - ✅{success_count} / ❌{fail_count}")
     
     return await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
+
+# === v11: WEBHOOK TWILIO STATUS (delivered, read) ===
+@api_router.post("/webhooks/twilio/status")
+async def twilio_status_webhook(request: Request):
+    """
+    Webhook Twilio pour les mises à jour de statut WhatsApp.
+    Twilio envoie: queued, sent, delivered, read, failed, undelivered
+    """
+    try:
+        form_data = await request.form()
+        message_sid = form_data.get("MessageSid", "")
+        message_status = form_data.get("MessageStatus", "")
+
+        if not message_sid or not message_status:
+            return {"ok": True}
+
+        logger.info(f"[TWILIO-WEBHOOK] SID={message_sid} Status={message_status}")
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        # Chercher la campagne contenant ce SID dans ses résultats
+        update_fields = {}
+        if message_status == "delivered":
+            update_fields = {"results.$.deliveredAt": now_iso}
+        elif message_status == "read":
+            update_fields = {"results.$.readAt": now_iso, "results.$.deliveredAt": now_iso}
+        elif message_status in ("failed", "undelivered"):
+            update_fields = {"results.$.status": "failed", "results.$.error": f"Twilio: {message_status}"}
+
+        if update_fields:
+            result = await db.campaigns.update_one(
+                {"results.sid": message_sid},
+                {"$set": update_fields}
+            )
+            if result.modified_count > 0:
+                logger.info(f"[TWILIO-WEBHOOK] ✅ Campagne mise à jour pour SID={message_sid}: {message_status}")
+            else:
+                logger.debug(f"[TWILIO-WEBHOOK] Aucune campagne trouvée pour SID={message_sid}")
+
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"[TWILIO-WEBHOOK] Erreur: {e}")
+        return {"ok": True}  # Toujours retourner 200 à Twilio
 
 @api_router.post("/campaigns/{campaign_id}/mark-sent")
 async def mark_campaign_sent(campaign_id: str, data: dict):
