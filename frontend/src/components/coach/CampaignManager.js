@@ -1906,13 +1906,12 @@ const CampaignManager = ({
       <CampaignCalendar
         campaigns={campaigns}
         onDayClick={(dateStr) => {
-          // Pré-remplir un créneau de scheduling avec la date cliquée
+          // Pré-remplir un créneau de scheduling avec la date cliquée (sans scroll)
           setNewCampaign(prev => ({
             ...prev,
             scheduleSlots: [{ date: dateStr, time: '10:00' }]
           }));
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-          showCampaignToast(`📅 Date ${dateStr} pré-remplie`, 'info');
+          showCampaignToast(`📅 ${dateStr} sélectionné`, 'info');
         }}
         onCampaignClick={(campaign) => {
           // Ouvrir la campagne en mode édition

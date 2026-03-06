@@ -519,22 +519,26 @@ class Campaign(BaseModel):
     updatedAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class CampaignCreate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     name: str
     message: str
     mediaUrl: Optional[str] = ""
     mediaFormat: str = "16:9"
+    mediaType: Optional[str] = None  # v11: 'upload', 'youtube', 'drive', 'image', 'link'
     targetType: str = "all"
     selectedContacts: List[str] = []
     channels: dict = Field(default_factory=lambda: {"whatsapp": True, "email": False, "instagram": False, "group": False, "internal": False})
-    targetGroupId: Optional[str] = "community"  # ID du groupe cible pour le canal "group"
-    targetIds: Optional[List[str]] = []  # Tableau des IDs du panier (nouveau système)
-    targetConversationId: Optional[str] = None  # ID de la conversation interne (legacy - premier du panier)
-    targetConversationName: Optional[str] = None  # Nom de la conversation pour affichage
+    targetGroupId: Optional[str] = "community"
+    targetIds: Optional[List[str]] = []
+    targetConversationId: Optional[str] = None
+    targetConversationName: Optional[str] = None
     scheduledAt: Optional[str] = None
-    # Champs CTA pour boutons d'action
     ctaType: Optional[str] = None
     ctaText: Optional[str] = None
     ctaLink: Optional[str] = None
+    # v11: Prompts indépendants par campagne
+    systemPrompt: Optional[str] = None
+    descriptionPrompt: Optional[str] = None
 
 class Concept(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -1546,9 +1550,11 @@ async def sanitize_data():
     return {"success": True, "codes_cleaned": cleaned_count}
 
 @api_router.post("/campaigns")
-async def create_campaign(campaign: CampaignCreate, request: Request):
+async def create_campaign(campaign: CampaignCreate, request: Request = None):
     # v11: Récupérer le coach_id depuis le header
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
+    coach_email = ""
+    if request:
+        coach_email = request.headers.get("X-User-Email", "").lower().strip()
     campaign_data = Campaign(
         name=campaign.name,
         message=campaign.message,
