@@ -109,32 +109,6 @@ def require_auth(request: Request) -> str:
 fastapi_app = FastAPI(title="Afroboost API")
 api_router = APIRouter(prefix="/api")
 
-# === ENDPOINT TEMPORAIRE: Nettoyage doublons cours par NOM ===
-@api_router.post("/cleanup-courses")
-async def cleanup_duplicate_courses():
-    """Archiver les cours en double - garder 1 seul par nom"""
-    try:
-        from bson import ObjectId
-        all_courses = await db.courses.find({"archived": {"$ne": True}}).to_list(100)
-        seen_names = {}
-        to_delete = []
-        for course in all_courses:
-            name = (course.get("name") or "").strip()
-            if name in seen_names:
-                to_delete.append(course["_id"])
-            else:
-                seen_names[name] = str(course["_id"])
-
-        deleted_count = 0
-        for oid in to_delete:
-            await db.courses.delete_one({"_id": oid})
-            deleted_count += 1
-
-        remaining = await db.courses.find({"archived": {"$ne": True}}, {"_id": 0, "id": 1, "name": 1}).to_list(10)
-        return {"status": "ok", "deleted": deleted_count, "kept": list(seen_names.keys()), "remaining_courses": remaining}
-    except Exception as e:
-        return {"error": str(e)}
-
 # Socket.IO désactivé en mode Vercel Serverless
 
 async def emit_new_message(session_id: str, message_data: dict):
