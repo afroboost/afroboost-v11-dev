@@ -109,45 +109,6 @@ def require_auth(request: Request) -> str:
 fastapi_app = FastAPI(title="Afroboost API")
 api_router = APIRouter(prefix="/api")
 
-# === TEMPORARY: Setup coaches for video carousel test ===
-@api_router.post("/setup-coaches")
-async def setup_coaches_temp():
-    """TEMPORAIRE - Configure 3 coachs de test avec YouTube Shorts"""
-    results = []
-    try:
-        bassi_update = await db.concept.update_one(
-            {"id": {"$regex": "^concept"}},
-            {"$set": {"id": "concept", "heroVideoUrl": "https://www.youtube.com/shorts/zUbW0GsRT1k", "heroImageUrl": "https://www.youtube.com/shorts/zUbW0GsRT1k"}}
-        )
-        results.append(f"Bassi concept updated: {bassi_update.modified_count}")
-        test_coaches = [
-            {"id": "coach_dj_energy", "name": "DJ Energy", "email": "dj.energy@test.afroboost.com", "platform_name": "DJ Energy Fitness", "bio": "Cours de danse afro-fusion et cardio intense", "photo_url": None, "logo_url": None, "is_active": True, "created_at": "2026-03-06T00:00:00Z"},
-            {"id": "coach_queen_fit", "name": "Queen Fit", "email": "queen.fit@test.afroboost.com", "platform_name": "Queen Fit Studio", "bio": "Afrobeat workout & body sculpting", "photo_url": None, "logo_url": None, "is_active": True, "created_at": "2026-03-06T00:00:00Z"}
-        ]
-        for coach in test_coaches:
-            existing = await db.coaches.find_one({"id": coach["id"]})
-            if not existing:
-                await db.coaches.insert_one(coach)
-                results.append(f"Coach {coach['name']} created")
-            else:
-                results.append(f"Coach {coach['name']} already exists")
-        test_concepts = [
-            {"id": "concept_dj_energy_test_afroboost_com", "coach_id": "dj.energy@test.afroboost.com", "heroVideoUrl": "https://www.youtube.com/shorts/gK9TAPwSdEg", "heroImageUrl": "https://www.youtube.com/shorts/gK9TAPwSdEg", "appName": "DJ Energy Fitness", "description": "Danse afro-fusion & cardio intense"},
-            {"id": "concept_queen_fit_test_afroboost_com", "coach_id": "queen.fit@test.afroboost.com", "heroVideoUrl": "https://www.youtube.com/shorts/vTEGPnhR4QA", "heroImageUrl": "https://www.youtube.com/shorts/vTEGPnhR4QA", "appName": "Queen Fit Studio", "description": "Afrobeat workout & body sculpting"}
-        ]
-        for concept in test_concepts:
-            existing = await db.concept.find_one({"id": concept["id"]})
-            if not existing:
-                await db.concept.insert_one(concept)
-                results.append(f"Concept for {concept['appName']} created")
-            else:
-                await db.concept.update_one({"id": concept["id"]}, {"$set": concept})
-                results.append(f"Concept for {concept['appName']} updated")
-        return {"status": "ok", "results": results}
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e), "results": results})
-# === END TEMPORARY ===
-
 # Socket.IO désactivé en mode Vercel Serverless
 
 async def emit_new_message(session_id: str, message_data: dict):
