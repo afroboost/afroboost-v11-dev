@@ -513,6 +513,7 @@ class Campaign(BaseModel):
     # v11: Prompts indépendants par campagne
     systemPrompt: Optional[str] = None  # Instructions système IA pour cette campagne
     descriptionPrompt: Optional[str] = None  # Prompt de description/objectif spécifique
+    coach_id: Optional[str] = None  # v11: Email du coach propriétaire
     results: List[dict] = []
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updatedAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -1545,7 +1546,9 @@ async def sanitize_data():
     return {"success": True, "codes_cleaned": cleaned_count}
 
 @api_router.post("/campaigns")
-async def create_campaign(campaign: CampaignCreate):
+async def create_campaign(campaign: CampaignCreate, request: Request):
+    # v11: Récupérer le coach_id depuis le header
+    coach_email = request.headers.get("X-User-Email", "").lower().strip()
     campaign_data = Campaign(
         name=campaign.name,
         message=campaign.message,
@@ -1565,7 +1568,8 @@ async def create_campaign(campaign: CampaignCreate):
         ctaText=campaign.ctaText,
         ctaLink=campaign.ctaLink,
         systemPrompt=campaign.systemPrompt,
-        descriptionPrompt=campaign.descriptionPrompt
+        descriptionPrompt=campaign.descriptionPrompt,
+        coach_id=coach_email or None
     ).model_dump()
     await db.campaigns.insert_one(campaign_data)
     campaign_data.pop("_id", None)
@@ -1645,7 +1649,24 @@ async def launch_campaign(campaign_id: str):
     campaign = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    
+
+    # v11: Vérification et déduction de crédits (coût × nombre de contacts)
+    coach_email = campaign.get("coach_id", "")
+    if coach_email and not is_super_admin(coach_email):
+        campaign_cost = await get_service_price("campaign")
+        target_count = max(1, len(campaign.get("targetIds", [])))
+        total_cost = campaign_cost * target_count
+        credit_check = await check_credits(coach_email, total_cost)
+        if not credit_check.get("has_credits"):
+            raise HTTPException(
+                status_code=402,
+                detail=f"Crédits insuffisants: {credit_check.get('credits', 0)}/{total_cost} requis ({target_count} contact(s) × {campaign_cost} crédit(s))"
+            )
+        deduct_result = await deduct_credit(coach_email, f"campagne {campaign.get('name', '')}", total_cost)
+        if not deduct_result.get("success"):
+            raise HTTPException(status_code=402, detail=deduct_result.get("error", "Erreur déduction crédits"))
+        logger.info(f"[CAMPAIGN-LAUNCH] 💰 {total_cost} crédits déduits pour {coach_email} ({target_count} contacts)")
+
     # Prepare results and tracking
     results = []
     channels = campaign.get("channels", {})

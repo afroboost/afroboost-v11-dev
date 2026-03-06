@@ -141,7 +141,10 @@ const CampaignManager = ({
   
   // === v9.0.2: CRÉDITS ===
   hasInsufficientCredits = false,
-  coachCredits = null
+  coachCredits = null,
+  // v11: Super Admin + coût campagne
+  isSuperAdmin = false,
+  campaignCreditCost = 1
 }) => {
   // v9.0.2: Message de blocage crédits
   const creditBlockMessage = hasInsufficientCredits ? (
@@ -1827,6 +1830,36 @@ const CampaignManager = ({
           </div>
         )}
         
+        {/* v11: Estimation du coût en crédits */}
+        {selectedRecipients.length > 0 && (
+          <div className="mb-3 p-3 rounded-lg" style={{ background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
+            {isSuperAdmin ? (
+              <div className="flex items-center justify-between">
+                <span className="text-white/70 text-sm">Coût estimé</span>
+                <span className="text-purple-400 font-bold text-sm">∞ Crédits illimités</span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <span className="text-white/70 text-sm">Coût estimé</span>
+                <span className="text-white font-bold text-sm">
+                  {selectedRecipients.length * campaignCreditCost} crédit{selectedRecipients.length * campaignCreditCost > 1 ? 's' : ''}
+                  <span className="text-white/50 font-normal ml-1">
+                    ({selectedRecipients.length} contact{selectedRecipients.length > 1 ? 's' : ''} × {campaignCreditCost})
+                  </span>
+                </span>
+              </div>
+            )}
+            {!isSuperAdmin && coachCredits !== null && coachCredits >= 0 && (
+              <div className="mt-1 text-xs text-white/50">
+                Solde actuel: {coachCredits} crédit{coachCredits > 1 ? 's' : ''}
+                {coachCredits < selectedRecipients.length * campaignCreditCost && (
+                  <span className="text-red-400 ml-2">⚠️ Insuffisant</span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Bouton de soumission avec validation CTA */}
         {(() => {
           // Validation CTA URL
