@@ -122,6 +122,7 @@ const getMediaInfo = (videoUrl) => {
 const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onNavigate, isPaused, onTogglePause, isVisible, maintenanceMode = false, isSuperAdmin = false }) => {
   const videoRef = useRef(null);
   const [hasError, setHasError] = useState(false);
+  const [ytPlaying, setYtPlaying] = useState(false); // v12: YouTube Lite - afficher iframe seulement après clic
   const lastClickTime = useRef(0);
   const clickCount = useRef(0);
   const clickTimer = useRef(null);
@@ -244,26 +245,70 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
             <>
               {activeMedia.youtubeId ? (
                 <div className="absolute inset-0 overflow-hidden">
-                  <iframe
-                    className="absolute"
-                    src={`https://www.youtube-nocookie.com/embed/${activeMedia.youtubeId}?autoplay=${isPaused ? 0 : 1}&mute=1&loop=1&playlist=${activeMedia.youtubeId}&controls=0&showinfo=0&rel=0&modestbranding=1&playsinline=1&enablejsapi=1&origin=${window.location.origin}`}
-                    title={displayName}
-                    frameBorder="0"
-                    allow="autoplay; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                    style={{
-                      pointerEvents: 'none',
-                      position: 'absolute',
-                      top: '50%',
-                      left: '50%',
-                      width: '56.25vh', /* 9:16 aspect ratio for Shorts: 100vh * 9/16 */
-                      height: '100vh',
-                      minWidth: '100%',
-                      minHeight: '177.78vw', /* 16:9 inverse for portrait */
-                      transform: 'translate(-50%, -50%)'
-                    }}
-                    onError={() => setHasError(true)}
-                  />
+                  {/* v12: YouTube Lite Facade - Thumbnail d'abord, iframe au clic */}
+                  {!ytPlaying ? (
+                    <>
+                      {/* Thumbnail YouTube haute qualité */}
+                      <img
+                        src={`https://img.youtube.com/vi/${activeMedia.youtubeId}/0.jpg`}
+                        alt={displayName}
+                        className="absolute inset-0 w-full h-full object-cover"
+                        style={{ filter: 'brightness(0.85)' }}
+                        onError={(e) => {
+                          e.target.src = `https://img.youtube.com/vi/${activeMedia.youtubeId}/hqdefault.jpg`;
+                        }}
+                      />
+                      {/* Bouton Play central */}
+                      <div
+                        className="absolute inset-0 flex items-center justify-center cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setYtPlaying(true);
+                        }}
+                      >
+                        <div
+                          className="w-20 h-20 rounded-full flex items-center justify-center transition-transform hover:scale-110"
+                          style={{
+                            background: 'rgba(217, 28, 210, 0.85)',
+                            boxShadow: '0 0 30px rgba(217, 28, 210, 0.6), 0 0 60px rgba(217, 28, 210, 0.3)',
+                            backdropFilter: 'blur(4px)'
+                          }}
+                        >
+                          <svg width="36" height="36" viewBox="0 0 24 24" fill="white">
+                            <polygon points="6 3 20 12 6 21 6 3" />
+                          </svg>
+                        </div>
+                      </div>
+                      {/* Badge "Shorts" */}
+                      <div
+                        className="absolute top-4 left-4 px-3 py-1 rounded-full text-xs font-bold text-white"
+                        style={{ background: 'rgba(255, 0, 0, 0.8)' }}
+                      >
+                        Shorts
+                      </div>
+                    </>
+                  ) : (
+                    <iframe
+                      className="absolute"
+                      src={`https://www.youtube.com/embed/${activeMedia.youtubeId}?autoplay=1&mute=1&loop=1&playlist=${activeMedia.youtubeId}&controls=1&showinfo=0&rel=0&modestbranding=1&playsinline=1`}
+                      title={displayName}
+                      frameBorder="0"
+                      allow="autoplay; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                      style={{
+                        pointerEvents: 'auto',
+                        position: 'absolute',
+                        top: '50%',
+                        left: '50%',
+                        width: '56.25vh',
+                        height: '100vh',
+                        minWidth: '100%',
+                        minHeight: '177.78vw',
+                        transform: 'translate(-50%, -50%)'
+                      }}
+                      onError={() => { setHasError(true); setYtPlaying(false); }}
+                    />
+                  )}
                 </div>
               ) : activeMedia.vimeoId ? (
                 <div className="absolute inset-0 overflow-hidden">
