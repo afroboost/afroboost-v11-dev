@@ -157,24 +157,31 @@ const CampaignManager = ({
   const [aiSuggestions, setAiSuggestions] = useState([]); // 3 suggestions de messages
   const [aiSuggestionsLoading, setAiSuggestionsLoading] = useState(false);
   const [showAiSuggestions, setShowAiSuggestions] = useState(false);
-  const [campaignGoal, setCampaignGoal] = useState(''); // Prompt/objectif de la campagne
-  
-  // === v9.4.1: Fonction pour générer des suggestions avec l'IA ===
+  // v11: campaignGoal remplacé par newCampaign.descriptionPrompt (persisté dans la campagne)
+  const campaignGoal = newCampaign.descriptionPrompt || '';
+  const setCampaignGoal = (val) => setNewCampaign(prev => ({ ...prev, descriptionPrompt: typeof val === 'function' ? val(prev.descriptionPrompt || '') : val }));
+
+  // === v11: Fonction pour générer des suggestions avec l'IA (prompts indépendants) ===
   const generateAiSuggestions = async () => {
-    if (!campaignGoal.trim() && !aiConfig?.campaignPrompt?.trim()) {
+    const descPrompt = (newCampaign.descriptionPrompt || '').trim();
+    const sysPrompt = (newCampaign.systemPrompt || '').trim();
+    if (!descPrompt && !sysPrompt && !aiConfig?.campaignPrompt?.trim()) {
       showCampaignToast('⚠️ Définissez un objectif ou un prompt de campagne d\'abord', 'error');
       return;
     }
-    
+
     setAiSuggestionsLoading(true);
     setShowAiSuggestions(true);
-    
+
     try {
-      const prompt = campaignGoal.trim() || aiConfig?.campaignPrompt || '';
+      const prompt = descPrompt || aiConfig?.campaignPrompt || '';
       const response = await axios.post(`${API}/ai/campaign-suggestions`, {
         campaign_goal: prompt,
         campaign_name: newCampaign.name || 'Campagne',
-        recipient_count: selectedRecipients.length || 1
+        recipient_count: selectedRecipients.length || 1,
+        // v11: Envoyer les prompts indépendants de la campagne
+        system_prompt: sysPrompt,
+        description_prompt: descPrompt
       });
       
       if (response.data.suggestions && response.data.suggestions.length > 0) {
@@ -1198,8 +1205,32 @@ const CampaignManager = ({
           )}
         </div>
         
-        {/* === v9.4.1: DOUBLE CASE - OBJECTIF & MESSAGE === */}
-        {/* Case 1: Objectif/Prompt de campagne */}
+        {/* === v11: TRIPLE CASE - SYSTEM PROMPT + OBJECTIF + MESSAGE === */}
+        {/* Case 0: System Prompt (Instructions IA spécifiques à cette campagne) */}
+        <div className="mb-4 p-4 rounded-xl glass border border-purple-500/30">
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-white text-sm font-medium flex items-center gap-2">
+              🧠 Prompt Système
+              <span className="text-xs text-purple-400 font-normal">(instructions IA pour cette campagne)</span>
+            </label>
+            {newCampaign.systemPrompt && (
+              <span className="text-xs text-green-400">✓ Personnalisé</span>
+            )}
+          </div>
+          <textarea
+            value={newCampaign.systemPrompt || ''}
+            onChange={e => setNewCampaign(prev => ({ ...prev, systemPrompt: e.target.value }))}
+            className="w-full px-4 py-3 rounded-lg neon-input text-sm"
+            rows={3}
+            placeholder="Ex: Tu es un coach Afrobeat motivant. Utilise un ton jeune et dynamique. Mentionne toujours les casques silencieux."
+            data-testid="campaign-system-prompt"
+          />
+          <p className="text-xs text-white/50 mt-1">
+            Instructions système pour l'IA de cette campagne. Si vide, le prompt global sera utilisé.
+          </p>
+        </div>
+
+        {/* Case 1: Objectif/Prompt de description (persisté dans la campagne) */}
         <div className="mb-4 p-4 rounded-xl glass border border-yellow-500/30">
           <div className="flex items-center justify-between mb-2">
             <label className="text-white text-sm font-medium flex items-center gap-2">
@@ -1207,16 +1238,16 @@ const CampaignManager = ({
               <span className="text-xs text-yellow-400 font-normal">(pour l'IA)</span>
             </label>
           </div>
-          <textarea 
-            value={campaignGoal} 
+          <textarea
+            value={campaignGoal}
             onChange={e => setCampaignGoal(e.target.value)}
-            className="w-full px-4 py-3 rounded-lg neon-input text-sm" 
+            className="w-full px-4 py-3 rounded-lg neon-input text-sm"
             rows={2}
             placeholder="Ex: Ton motivant pour le cours de dimanche. / Relance clients inactifs avec promo -20%."
             data-testid="campaign-goal-input"
           />
           <p className="text-xs text-white/50 mt-1">
-            Décrivez l'objectif de votre message. L'IA utilisera ce prompt pour générer des suggestions.
+            Décrivez l'objectif de votre message. L'IA utilisera ce prompt pour générer des suggestions. Sauvegardé avec la campagne.
           </p>
         </div>
         

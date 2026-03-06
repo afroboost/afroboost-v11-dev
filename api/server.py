@@ -509,6 +509,9 @@ class Campaign(BaseModel):
     ctaType: Optional[str] = None  # "reserver", "offre", "personnalise"
     ctaText: Optional[str] = None  # Texte du bouton
     ctaLink: Optional[str] = None  # URL du bouton
+    # v11: Prompts indépendants par campagne
+    systemPrompt: Optional[str] = None  # Instructions système IA pour cette campagne
+    descriptionPrompt: Optional[str] = None  # Prompt de description/objectif spécifique
     results: List[dict] = []
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updatedAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -1558,7 +1561,9 @@ async def create_campaign(campaign: CampaignCreate):
         status="scheduled" if campaign.scheduledAt else "draft",
         ctaType=campaign.ctaType,
         ctaText=campaign.ctaText,
-        ctaLink=campaign.ctaLink
+        ctaLink=campaign.ctaLink,
+        systemPrompt=campaign.systemPrompt,
+        descriptionPrompt=campaign.descriptionPrompt
     ).model_dump()
     await db.campaigns.insert_one(campaign_data)
     campaign_data.pop("_id", None)
@@ -3410,20 +3415,27 @@ async def generate_campaign_suggestions(data: dict):
     campaign_goal = data.get("campaign_goal", "")
     campaign_name = data.get("campaign_name", "Campagne")
     recipient_count = data.get("recipient_count", 1)
-    
-    if not campaign_goal:
+    # v11: Prompts indépendants par campagne
+    campaign_system_prompt = data.get("system_prompt", "")
+    campaign_description_prompt = data.get("description_prompt", "")
+
+    if not campaign_goal and not campaign_description_prompt:
         raise HTTPException(status_code=400, detail="Objectif de campagne requis")
-    
+
     # Récupérer la config IA
     ai_config = await db.ai_config.find_one({"id": "ai_config"}, {"_id": 0})
     if not ai_config:
         ai_config = {}
-    
+
+    # v11: Priorité — prompt campagne > prompt global
+    effective_goal = campaign_description_prompt or campaign_goal
+    extra_instructions = campaign_system_prompt or ai_config.get('campaignPrompt', '')
+
     # Système prompt pour la génération de suggestions
     system_prompt = f"""Tu es un expert en marketing et copywriting pour une application de fitness/danse appelée Afroboost.
-    
+
 Tu dois générer EXACTEMENT 3 variantes de messages WhatsApp/SMS basées sur l'objectif suivant:
-"{campaign_goal}"
+"{effective_goal}"
 
 RÈGLES STRICTES:
 1. Chaque message doit être COURT (max 200 caractères)
@@ -3446,7 +3458,7 @@ Contexte:
 - Nombre de destinataires: {recipient_count}
 - Application: Cours de danse Afrobeat, casques silencieux
 
-{ai_config.get('campaignPrompt', '')}
+{extra_instructions}
 """
     
     try:

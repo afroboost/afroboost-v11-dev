@@ -41,6 +41,9 @@ class CampaignCreate(BaseModel):
     ctaType: Optional[str] = None
     ctaText: Optional[str] = None
     ctaLink: Optional[str] = None
+    # v11: Prompts indépendants par campagne
+    systemPrompt: Optional[str] = None
+    descriptionPrompt: Optional[str] = None
 
 # === ENDPOINTS CAMPAGNES ===
 @campaign_router.get("/campaigns")

@@ -1548,7 +1548,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     // === CHAMPS CTA ===
     ctaType: 'none', // 'none', 'reserver', 'offre', 'personnalise'
     ctaText: '',     // Texte personnalisé du bouton
-    ctaLink: ''      // URL du bouton (pour offre et personnalise)
+    ctaLink: '',     // URL du bouton (pour offre et personnalise)
+    // === v11: PROMPTS INDÉPENDANTS PAR CAMPAGNE ===
+    systemPrompt: '',        // Instructions système IA pour cette campagne
+    descriptionPrompt: ''    // Prompt de description/objectif spécifique
   });
   const [selectedContactsForCampaign, setSelectedContactsForCampaign] = useState([]);
   const [contactSearchQuery, setContactSearchQuery] = useState("");
@@ -2796,7 +2799,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       targetGroupId: campaign.targetGroupId || 'community',
       targetConversationId: campaign.targetConversationId || '',
       targetConversationName: campaign.targetConversationName || '',
-      scheduleSlots: [] // On ne peut pas modifier les schedules existants
+      scheduleSlots: [], // On ne peut pas modifier les schedules existants
+      // v11: Charger les prompts de la campagne
+      systemPrompt: campaign.systemPrompt || '',
+      descriptionPrompt: campaign.descriptionPrompt || ''
     });
     // Pré-sélectionner les contacts CRM si mode "selected"
     if (campaign.targetType === "selected" && campaign.selectedContacts) {
@@ -2838,7 +2844,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       targetGroupId: 'community',
       targetConversationId: '',
       targetConversationName: '',
-      scheduleSlots: [] 
+      scheduleSlots: [],
+      systemPrompt: '',
+      descriptionPrompt: ''
     });
     setSelectedContactsForCampaign([]);
     setSelectedRecipients([]); // Vider aussi le panier
@@ -2873,7 +2881,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           targetGroupId: newCampaign.targetGroupId || 'community',
           targetIds: targetIds, // Tableau des IDs du panier
           targetConversationId: targetIds[0] || '', // Premier ID pour compatibilité
-          targetConversationName: selectedRecipients[0]?.name || ''
+          targetConversationName: selectedRecipients[0]?.name || '',
+          // v11: Prompts indépendants
+          systemPrompt: newCampaign.systemPrompt || null,
+          descriptionPrompt: newCampaign.descriptionPrompt || null
         };
         const res = await axios.put(`${API}/campaigns/${editingCampaignId}`, updateData);
         setCampaigns(campaigns.map(c => c.id === editingCampaignId ? res.data : c));
@@ -2919,6 +2930,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           targetConversationId: targetIds[0] || '',
           targetConversationName: selectedRecipients[0]?.name || '',
           scheduledAt: null,
+          // v11: Prompts indépendants
+          systemPrompt: newCampaign.systemPrompt || null,
+          descriptionPrompt: newCampaign.descriptionPrompt || null,
           ...ctaFields  // Ajouter les champs CTA
         };
         const res = await axios.post(`${API}/campaigns`, campaignData);
@@ -2942,6 +2956,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             targetConversationId: targetIds[0] || '',
             targetConversationName: selectedRecipients[0]?.name || '',
             scheduledAt,
+            // v11: Prompts indépendants
+            systemPrompt: newCampaign.systemPrompt || null,
+            descriptionPrompt: newCampaign.descriptionPrompt || null,
             ...ctaFields  // Ajouter les champs CTA
           };
           const res = await axios.post(`${API}/campaigns`, campaignData);
