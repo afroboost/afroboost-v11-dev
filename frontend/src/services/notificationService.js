@@ -453,7 +453,7 @@ const EMOJI_FALLBACK_MAP = {
 export const parseEmojis = (text) => {
   if (!text) return '';
   
-  const API = process.env.REACT_APP_BACKEND_URL + '/api';
+  const API = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
   
   // Regex pour detecter [emoji:filename.svg] ou [emoji:filename]
   const emojiRegex = /\[emoji:([^\]]+)\]/g;

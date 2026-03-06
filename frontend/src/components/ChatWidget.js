@@ -35,8 +35,8 @@ import MessageSkeleton from './chat/MessageSkeleton';
 import MediaMessage from './chat/MediaMessage';
 import { parseMediaUrl, isMediaUrl } from '../services/MediaParser';
 
-const API = process.env.REACT_APP_BACKEND_URL + '/api';
-const SOCKET_URL = process.env.REACT_APP_BACKEND_URL; // URL Socket.IO (même que backend)
+const API = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
+const SOCKET_URL = process.env.REACT_APP_BACKEND_URL || ''; // URL Socket.IO (même que backend)
 
 // Clés localStorage pour la mémorisation client (persistance de session)
 const CHAT_CLIENT_KEY = 'af_chat_client';

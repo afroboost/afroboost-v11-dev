@@ -3,7 +3,7 @@
 
 import axios from 'axios';
 
-const API = process.env.REACT_APP_BACKEND_URL + '/api';
+const API = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
 
 // Clé pour stocker l'état de souscription
 const PUSH_SUBSCRIPTION_KEY = 'af_push_subscribed';
