@@ -94,7 +94,7 @@ const MediaViewer = ({ slug }) => {
     return (
       <div style={styles.errorContainer}>
         <p style={styles.errorText}>{error}</p>
-        <a href="https://afroboosteur.com" style={styles.errorLink}>Retour à l'accueil</a>
+        <a href="https://afroboost.com" style={styles.errorLink}>Retour à l'accueil</a>
       </div>
     );
   }
@@ -104,7 +104,7 @@ const MediaViewer = ({ slug }) => {
     return (
       <div style={styles.errorContainer}>
         <p style={styles.errorText}>Données non disponibles</p>
-        <a href="https://afroboosteur.com" style={styles.errorLink}>Retour à l'accueil</a>
+        <a href="https://afroboost.com" style={styles.errorLink}>Retour à l'accueil</a>
       </div>
     );
   }
@@ -133,7 +133,7 @@ const MediaViewer = ({ slug }) => {
     <div style={styles.page}>
       {/* Header */}
       <header style={styles.header}>
-        <a href="https://afroboosteur.com" style={styles.logo}>
+        <a href="https://afroboost.com" style={styles.logo}>
           <span style={styles.logoIcon}>🎧</span>
           <span style={styles.logoText}>Afroboost</span>
         </a>
@@ -210,7 +210,7 @@ const MediaViewer = ({ slug }) => {
         <div style={styles.shareSection}>
           <button
             onClick={async () => {
-              const shareUrl = `https://afroboosteur.com/#/v/${media.slug}`;
+              const shareUrl = `https://afroboost.com/#/v/${media.slug}`;
               const result = await copyToClipboard(shareUrl);
               if (result.success) alert('Lien copié !');
               else alert('Impossible de copier le lien. Copiez-le manuellement : ' + shareUrl);
@@ -221,7 +221,7 @@ const MediaViewer = ({ slug }) => {
             📋 Copier le lien
           </button>
           <a
-            href={`https://wa.me/?text=${encodeURIComponent((media.title || 'Vidéo') + '\nhttps://afroboosteur.com/#/v/' + media.slug)}`}
+            href={`https://wa.me/?text=${encodeURIComponent((media.title || 'Vidéo') + '\nhttps://afroboost.com/#/v/' + media.slug)}`}
             target="_blank"
             rel="noopener noreferrer"
             style={styles.whatsappButton}

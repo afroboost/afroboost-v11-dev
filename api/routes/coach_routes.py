@@ -392,7 +392,7 @@ async def create_stripe_connect_onboard(request: Request):
     coach = await db.coaches.find_one({"email": coach_email, "is_active": True})
     if not coach:
         raise HTTPException(status_code=404, detail="Coach non trouvé")
-    frontend_url = os.environ.get('FRONTEND_URL', 'https://afroboosteur.com')
+    frontend_url = os.environ.get('FRONTEND_URL', 'https://afroboost.com')
     if coach.get("stripe_connect_id"):
         link = stripe.AccountLink.create(account=coach["stripe_connect_id"], type="account_onboarding", refresh_url=f"{frontend_url}/coach/settings", return_url=f"{frontend_url}/coach/settings?stripe=success")
         return {"url": link.url, "account_id": coach["stripe_connect_id"]}

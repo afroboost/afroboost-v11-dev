@@ -2231,7 +2231,7 @@ function App() {
     }
     
     // === HASH ROUTING pour Media Viewer ===
-    // Format: https://afroboosteur.com/#/v/{slug}
+    // Format: https://afroboost.com/#/v/{slug}
     if (hash.startsWith('#/v/')) {
       const slug = hash.replace('#/v/', '').split('/')[0].split('?')[0].trim();
       console.log('App.js - Hash routing - Media slug detected:', slug);

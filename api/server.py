@@ -1898,15 +1898,17 @@ async def launch_campaign(campaign_id: str):
             results.append(internal_result)
     
     # ==================== ENVOI WHATSAPP/EMAIL (via contacts CRM) ====================
-    # Get contacts based on targetType (pour les canaux WhatsApp/Email)
+    # Résoudre les contacts pour email/WhatsApp depuis targetIds OU selectedContacts
     contacts = []
     if channels.get("whatsapp") or channels.get("email"):
         if campaign.get("targetType") == "all":
             contacts = await db.users.find({}, {"_id": 0}).to_list(1000)
         else:
-            selected_ids = campaign.get("selectedContacts", [])
-            if selected_ids:
-                contacts = await db.users.find({"id": {"$in": selected_ids}}, {"_id": 0}).to_list(1000)
+            # Utiliser targetIds en priorité (panier du frontend), sinon selectedContacts
+            contact_ids = valid_target_ids if valid_target_ids else campaign.get("selectedContacts", [])
+            if contact_ids:
+                contacts = await db.users.find({"id": {"$in": contact_ids}}, {"_id": 0}).to_list(1000)
+                logger.info(f"[CAMPAIGN-LAUNCH] 📧 {len(contacts)} contacts résolus pour email/WhatsApp depuis {'targetIds' if valid_target_ids else 'selectedContacts'}")
     
     for contact in contacts:
         contact_id = contact.get("id", "")
@@ -2009,14 +2011,14 @@ async def launch_campaign(campaign_id: str):
 {personalized_msg.replace(chr(10), '<br>')}
 </div>
 <div style="padding:15px 20px;border-top:1px solid #333;text-align:center;">
-<a href="https://afroboosteur.com" style="color:#9333EA;text-decoration:none;font-size:11px;">afroboosteur.com</a>
+<a href="https://afroboost.com" style="color:#9333EA;text-decoration:none;font-size:11px;">afroboost.com</a>
 </div>
 </div>
 </body>
 </html>"""
                     
                     params = {
-                        "from": "Afroboost <notifications@afroboosteur.com>",
+                        "from": "Afroboost <notifications@afroboost.com>",
                         "to": [contact_email],
                         "subject": subject,
                         "html": html_content
@@ -2456,7 +2458,7 @@ async def stripe_webhook(request: Request):
                             <p style="color:#888;font-size:12px;">Utilisez vos crédits pour les campagnes, conversations IA et codes promo.</p>
                             </div></div>"""
                             await asyncio.to_thread(resend.Emails.send, {
-                                "from": "Afroboost <notifications@afroboosteur.com>",
+                                "from": "Afroboost <notifications@afroboost.com>",
                                 "to": [coach_email],
                                 "subject": f"✅ +{credits} crédits ajoutés à votre compte",
                                 "html": html
@@ -2476,7 +2478,7 @@ async def stripe_webhook(request: Request):
                             <p style="margin:8px 0 0;color:#d91cd2;"><strong>Crédits:</strong> +{credits}</p>
                             </div></div>"""
                             await asyncio.to_thread(resend.Emails.send, {
-                                "from": "Afroboost System <notifications@afroboosteur.com>",
+                                "from": "Afroboost System <notifications@afroboost.com>",
                                 "to": [SUPER_ADMIN_EMAIL],
                                 "subject": f"💰 Vente: {pack_name} à {metadata.get('customer_name', coach_email)}",
                                 "html": bassi_html
@@ -2526,7 +2528,7 @@ async def stripe_webhook(request: Request):
                         </div>
                         <p style="color:#888;font-size:12px;">Accédez au Panel Admin pour gérer ce coach.</p>
                         </div>"""
-                        await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost System <notifications@afroboosteur.com>", "to": [SUPER_ADMIN_EMAIL], "subject": f"🔔 Nouveau Coach: {coach_name}", "html": bassi_html})
+                        await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost System <notifications@afroboost.com>", "to": [SUPER_ADMIN_EMAIL], "subject": f"🔔 Nouveau Coach: {coach_name}", "html": bassi_html})
                         logger.info(f"[WEBHOOK] Notification Bassi envoyée pour {coach_email}")
                     except Exception as notify_err:
                         logger.warning(f"[WEBHOOK] Notification Bassi error: {notify_err}")
@@ -2540,10 +2542,10 @@ async def stripe_webhook(request: Request):
                         <div style="padding:24px;color:#fff;">
                         <p>Félicitations {coach_name} !</p>
                         <p>Ton compte Coach Afroboost est maintenant actif avec <strong>{credits} crédits</strong>.</p>
-                        <p style="color:#a855f7;">Connecte-toi via le bouton "S'identifier" sur afroboosteur.com pour accéder à ton Dashboard personnel.</p>
+                        <p style="color:#a855f7;">Connecte-toi via le bouton "S'identifier" sur afroboost.com pour accéder à ton Dashboard personnel.</p>
                         </div></div>"""
                         await asyncio.to_thread(resend.Emails.send, {
-                            "from": "Afroboost <notifications@afroboosteur.com>",
+                            "from": "Afroboost <notifications@afroboost.com>",
                             "to": [coach_email],
                             "subject": "Bienvenue Coach Afroboost !",
                             "html": html
@@ -2564,9 +2566,9 @@ async def stripe_webhook(request: Request):
                 # v8.1: EMAIL AVEC QR CODE + CODE TEXTE
                 if RESEND_AVAILABLE and RESEND_API_KEY and customer_email:
                     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=AFROBOOST:{new_code}&format=png"
-                    html = f"""<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0a0a0a;"><div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:24px;text-align:center;"><h1 style="color:white;margin:0;font-size:22px;">Bienvenue chez Afroboost</h1></div><div style="padding:24px;color:#fff;"><p style="color:#a855f7;font-size:16px;line-height:1.6;">Merci pour ton achat et bienvenue dans la communaute Afroboost ! <span style="font-size:18px;">&#9889;</span><br><br>Ton energie va faire la difference. Tu trouveras ci-dessous ton code personnel et ton QR Code pour acceder a tes seances.</p><div style="background:rgba(147,51,234,0.15);border:1px solid rgba(147,51,234,0.3);border-radius:12px;padding:20px;margin:20px 0;text-align:center;"><p style="margin:0 0 8px;color:#888;">Ton code d'acces personnel</p><p style="margin:0;color:#d91cd2;font-size:28px;font-weight:bold;letter-spacing:3px;">{new_code}</p><p style="margin:12px 0 0;color:#888;">{sessions_count} seances incluses</p></div><div style="text-align:center;margin:30px 0;"><p style="color:#888;margin-bottom:16px;">Ton QR Code d'acces</p><img src="{qr_url}" alt="QR Code Afroboost" width="150" height="150" style="background:white;padding:10px;border-radius:8px;display:block;margin:0 auto;"/><p style="color:#a855f7;font-size:13px;margin-top:12px;">Presente ce QR Code a l'entree de ton cours.</p></div><div style="text-align:center;margin:30px 0;"><a href="https://afroboosteur.com" style="display:inline-block;background:#d91cd2;color:white;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;">Acceder a mon espace Afroboost</a></div><p style="color:#666;font-size:12px;text-align:center;margin-top:30px;">Conserve ce mail precieusement. A tres vite !</p></div></div>"""
+                    html = f"""<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0a0a0a;"><div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:24px;text-align:center;"><h1 style="color:white;margin:0;font-size:22px;">Bienvenue chez Afroboost</h1></div><div style="padding:24px;color:#fff;"><p style="color:#a855f7;font-size:16px;line-height:1.6;">Merci pour ton achat et bienvenue dans la communaute Afroboost ! <span style="font-size:18px;">&#9889;</span><br><br>Ton energie va faire la difference. Tu trouveras ci-dessous ton code personnel et ton QR Code pour acceder a tes seances.</p><div style="background:rgba(147,51,234,0.15);border:1px solid rgba(147,51,234,0.3);border-radius:12px;padding:20px;margin:20px 0;text-align:center;"><p style="margin:0 0 8px;color:#888;">Ton code d'acces personnel</p><p style="margin:0;color:#d91cd2;font-size:28px;font-weight:bold;letter-spacing:3px;">{new_code}</p><p style="margin:12px 0 0;color:#888;">{sessions_count} seances incluses</p></div><div style="text-align:center;margin:30px 0;"><p style="color:#888;margin-bottom:16px;">Ton QR Code d'acces</p><img src="{qr_url}" alt="QR Code Afroboost" width="150" height="150" style="background:white;padding:10px;border-radius:8px;display:block;margin:0 auto;"/><p style="color:#a855f7;font-size:13px;margin-top:12px;">Presente ce QR Code a l'entree de ton cours.</p></div><div style="text-align:center;margin:30px 0;"><a href="https://afroboost.com" style="display:inline-block;background:#d91cd2;color:white;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;">Acceder a mon espace Afroboost</a></div><p style="color:#666;font-size:12px;text-align:center;margin-top:30px;">Conserve ce mail precieusement. A tres vite !</p></div></div>"""
                     try:
-                        await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost <notifications@afroboosteur.com>", "to": [customer_email], "subject": f"Votre acces Afroboost - {new_code}", "html": html})
+                        await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost <notifications@afroboost.com>", "to": [customer_email], "subject": f"Votre acces Afroboost - {new_code}", "html": html})
                         logger.info(f"[PAYMENT] Email envoye a {customer_email}")
                     except Exception as mail_err:
                         logger.warning(f"[PAYMENT] Email error: {mail_err}")
@@ -2611,7 +2613,7 @@ async def create_coach_checkout(request: Request):
             parsed = urlparse(referer)
             frontend_url = f"{parsed.scheme}://{parsed.netloc}"
         else:
-            frontend_url = os.environ.get('FRONTEND_URL', 'https://afroboosteur.com')
+            frontend_url = os.environ.get('FRONTEND_URL', 'https://afroboost.com')
         
         # v9.2.5: URL de redirection post-paiement vers partner-dashboard
         # v9.2.6: URL de production afroboost.com avec hash partner-dashboard
@@ -6559,7 +6561,7 @@ async def send_backup_email(participant_id: str, message_preview: str):
                     "{message_preview[:150]}{'...' if len(message_preview) > 150 else ''}"
                 </p>
             </div>
-            <a href="https://afroboosteur.com" 
+            <a href="https://afroboost.com" 
                style="display: inline-block; background: linear-gradient(135deg, #d91cd2, #8b5cf6); color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold;">
                 Voir la conversation
             </a>
@@ -6572,7 +6574,7 @@ async def send_backup_email(participant_id: str, message_preview: str):
     
     try:
         params = {
-            "from": "Afroboost <notifications@afroboosteur.com>",
+            "from": "Afroboost <notifications@afroboost.com>",
             "to": [email],
             "subject": "Nouvelle reponse sur Afroboost",
             "html": html_content
@@ -6625,7 +6627,7 @@ async def notify_coach_new_message(participant_name: str, message_preview: str, 
             <p style="font-size: 12px; color: #aaaaaa; margin-bottom: 20px;">
                 Ce message nécessite votre réponse en mode humain.
             </p>
-            <a href="https://afroboosteur.com/coach" 
+            <a href="https://afroboost.com/coach" 
                style="display: inline-block; background: linear-gradient(135deg, #d91cd2, #8b5cf6); color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold;">
                 Répondre maintenant
             </a>
@@ -6635,7 +6637,7 @@ async def notify_coach_new_message(participant_name: str, message_preview: str, 
     
     try:
         params = {
-            "from": "Afroboost <notifications@afroboosteur.com>",
+            "from": "Afroboost <notifications@afroboost.com>",
             "to": [coach_email],
             "subject": f"🔔 Nouveau message de {participant_name}",
             "html": html_content
@@ -6685,18 +6687,18 @@ async def send_campaign_email(request: Request):
         # PRIORITÉ: 1. FRONTEND_URL explicite, 2. Même domaine que REACT_APP_BACKEND_URL
         frontend_base = os.environ.get('FRONTEND_URL', '')
         
-        # Si pas de FRONTEND_URL ou si c'est afroboosteur.com, vérifier si on est en preview
-        if not frontend_base or 'afroboosteur.com' in frontend_base:
+        # Si pas de FRONTEND_URL ou si c'est afroboost.com, vérifier si on est en preview
+        if not frontend_base or 'afroboost.com' in frontend_base:
             # Utiliser le même domaine que le backend (pour l'environnement preview)
             # Le backend est appelé via REACT_APP_BACKEND_URL qui contient le domaine preview
             from fastapi import Request
-            # Par défaut, utiliser afroboosteur.com pour la production
-            frontend_base = 'https://afroboosteur.com'
+            # Par défaut, utiliser afroboost.com pour la production
+            frontend_base = 'https://afroboost.com'
         
         logger.info(f"Frontend base URL: {frontend_base}")
         
         # Vérifier si c'est un lien média interne
-        # Formats supportés: /v/slug, /api/share/slug, afroboosteur.com/v/slug
+        # Formats supportés: /v/slug, /api/share/slug, afroboost.com/v/slug
         slug = None
         if '/api/share/' in media_url:
             slug = media_url.split('/api/share/')[-1].split('?')[0].split('#')[0].strip('/')
@@ -6785,7 +6787,7 @@ Clique sur le bouton ci-dessous pour la découvrir.
 
 <!-- HEADER VIOLET -->
 <tr><td align="center" style="background-color:#9333EA;padding:16px 20px;">
-<a href="https://afroboosteur.com" style="color:#ffffff;font-size:22px;font-weight:bold;text-decoration:none;font-family:Arial,sans-serif;">Afroboost</a>
+<a href="https://afroboost.com" style="color:#ffffff;font-size:22px;font-weight:bold;text-decoration:none;font-family:Arial,sans-serif;">Afroboost</a>
 </td></tr>
 
 <!-- CONTENU -->
@@ -6806,7 +6808,7 @@ Clique sur le bouton ci-dessous pour la découvrir.
 <!-- FOOTER -->
 <tr><td align="center" style="padding:15px 20px;border-top:1px solid #333333;">
 <p style="color:#888888;font-size:11px;margin:0;font-family:Arial,sans-serif;">
-<a href="https://afroboosteur.com" style="color:#9333EA;text-decoration:none;">afroboosteur.com</a>
+<a href="https://afroboost.com" style="color:#9333EA;text-decoration:none;">afroboost.com</a>
 </p>
 </td></tr>
 
@@ -6820,7 +6822,7 @@ Clique sur le bouton ci-dessous pour la découvrir.
     
     try:
         params = {
-            "from": "Afroboost <notifications@afroboosteur.com>",
+            "from": "Afroboost <notifications@afroboost.com>",
             "to": [to_email],
             "subject": subject,
             "html": html_content
@@ -6895,7 +6897,7 @@ async def send_bulk_campaign_email(request: Request, background_tasks: Backgroun
 <p style="color:#ffffff;margin-top:20px;line-height:1.6;">{personalized_msg.replace(chr(10), '<br>')}</p>
 </td></tr>
 <tr><td style="padding:15px;border-top:1px solid #333;text-align:center;">
-<a href="https://afroboosteur.com" style="color:#9333EA;font-size:12px;">afroboosteur.com</a>
+<a href="https://afroboost.com" style="color:#9333EA;font-size:12px;">afroboost.com</a>
 </td></tr>
 </table>
 </td></tr>
@@ -6903,7 +6905,7 @@ async def send_bulk_campaign_email(request: Request, background_tasks: Backgroun
 </body></html>'''
                 
                 params = {
-                    "from": "Afroboost <notifications@afroboosteur.com>",
+                    "from": "Afroboost <notifications@afroboost.com>",
                     "to": [to_email],
                     "subject": subj,
                     "html": html_content
@@ -7021,6 +7023,27 @@ async def cron_check_campaigns(request: Request):
                 {"$set": {"status": "failed", "error": str(e)}}
             )
 
+    # Nettoyer les campagnes bloquées en "sending" depuis plus de 10 minutes
+    ten_minutes_ago = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    stuck_campaigns = await db.campaigns.find({
+        "status": "sending",
+        "updatedAt": {"$lte": ten_minutes_ago}
+    }).to_list(50)
+
+    stuck_fixed = 0
+    for stuck in stuck_campaigns:
+        stuck_results = stuck.get("results", [])
+        has_success = any(r.get("status") == "sent" for r in stuck_results)
+        await db.campaigns.update_one(
+            {"id": stuck.get("id")},
+            {"$set": {
+                "status": "completed" if has_success else "failed",
+                "updatedAt": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+        stuck_fixed += 1
+        logger.info(f"[CRON] 🔧 Campagne bloquée '{stuck.get('name')}' corrigée → {'completed' if has_success else 'failed'}")
+
     # Mettre à jour le heartbeat scheduler pour le badge UI
     last_run = datetime.now(timezone.utc).isoformat()
 
@@ -7029,7 +7052,8 @@ async def cron_check_campaigns(request: Request):
         "checked_at": last_run,
         "due_campaigns": len(due_campaigns),
         "launched": launched,
-        "errors": errors
+        "errors": errors,
+        "stuck_fixed": stuck_fixed
     }
 
 # === SCHEDULER HEALTH ENDPOINTS ===
