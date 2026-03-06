@@ -3828,11 +3828,15 @@ function App() {
 
       {/* v15: BARRE DE NAVIGATION STICKY - Sections claires */}
       <div
-        className="sticky top-0 z-40 w-full"
+        className="w-full"
         style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 40,
           background: 'rgba(10, 10, 20, 0.95)',
           borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-          backdropFilter: 'blur(12px)'
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)'
         }}
       >
         <div className="max-w-4xl mx-auto flex items-center gap-1 px-4 py-2 overflow-x-auto hide-scrollbar">
