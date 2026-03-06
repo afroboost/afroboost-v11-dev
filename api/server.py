@@ -1607,9 +1607,9 @@ async def update_campaign(campaign_id: str, request: Request):
     if not existing:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
-    # Empêcher la modification d'une campagne déjà lancée
-    if existing.get("status") in ["sending", "completed"]:
-        raise HTTPException(status_code=400, detail="Cannot edit a campaign that has already been sent")
+    # Empêcher la modification d'une campagne en cours d'envoi uniquement
+    if existing.get("status") == "sending":
+        raise HTTPException(status_code=400, detail="Cannot edit a campaign while it is being sent")
 
     # Champs modifiables
     allowed_fields = [
@@ -1629,6 +1629,9 @@ async def update_campaign(campaign_id: str, request: Request):
     if "scheduledAt" in update_data:
         if update_data["scheduledAt"]:
             update_data["status"] = "scheduled"
+            # Nettoyer les anciens résultats pour permettre un relancement propre
+            update_data["results"] = []
+            update_data["launchedAt"] = None
         else:
             update_data["status"] = "draft"
 
