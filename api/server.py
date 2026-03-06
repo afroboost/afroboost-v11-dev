@@ -1898,17 +1898,48 @@ async def launch_campaign(campaign_id: str):
             results.append(internal_result)
     
     # ==================== ENVOI WHATSAPP/EMAIL (via contacts CRM) ====================
-    # Résoudre les contacts pour email/WhatsApp depuis targetIds OU selectedContacts
+    # Résoudre les contacts pour email/WhatsApp
+    # Les targetIds peuvent être des IDs utilisateur OU des IDs de conversation/session
+    # On essaie d'abord par ID utilisateur, puis par email via chat_sessions
     contacts = []
     if channels.get("whatsapp") or channels.get("email"):
         if campaign.get("targetType") == "all":
             contacts = await db.users.find({}, {"_id": 0}).to_list(1000)
         else:
-            # Utiliser targetIds en priorité (panier du frontend), sinon selectedContacts
             contact_ids = valid_target_ids if valid_target_ids else campaign.get("selectedContacts", [])
             if contact_ids:
+                # 1) Essayer de trouver directement par ID utilisateur
                 contacts = await db.users.find({"id": {"$in": contact_ids}}, {"_id": 0}).to_list(1000)
-                logger.info(f"[CAMPAIGN-LAUNCH] 📧 {len(contacts)} contacts résolus pour email/WhatsApp depuis {'targetIds' if valid_target_ids else 'selectedContacts'}")
+
+                # 2) Si rien trouvé, les IDs sont peut-être des conversation/session IDs
+                #    → résoudre via participantEmail des chat_sessions
+                if not contacts:
+                    for cid in contact_ids:
+                        # Chercher le user par ID direct
+                        user_doc = await db.users.find_one({"id": cid}, {"_id": 0})
+                        if user_doc:
+                            contacts.append(user_doc)
+                            continue
+                        # Chercher la session chat pour trouver l'email du participant
+                        session_doc = await db.chat_sessions.find_one(
+                            {"$or": [{"id": cid}, {"participant_ids": cid}]},
+                            {"_id": 0, "participantEmail": 1, "participantName": 1}
+                        )
+                        if session_doc and session_doc.get("participantEmail"):
+                            pemail = session_doc["participantEmail"]
+                            user_by_email = await db.users.find_one({"email": pemail}, {"_id": 0})
+                            if user_by_email:
+                                contacts.append(user_by_email)
+                            else:
+                                # Créer un contact virtuel avec les infos de la session
+                                contacts.append({
+                                    "id": cid,
+                                    "name": session_doc.get("participantName", ""),
+                                    "email": pemail,
+                                    "whatsapp": ""
+                                })
+
+                logger.info(f"[CAMPAIGN-LAUNCH] 📧 {len(contacts)} contacts résolus pour email/WhatsApp")
     
     for contact in contacts:
         contact_id = contact.get("id", "")
