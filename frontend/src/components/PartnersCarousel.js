@@ -246,23 +246,23 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                 <div className="absolute inset-0 overflow-hidden">
                   <iframe
                     className="absolute"
-                    src={`https://www.youtube.com/embed/${activeMedia.youtubeId}?autoplay=${isPaused ? 0 : 1}&mute=${isMuted ? 1 : 0}&loop=1&playlist=${activeMedia.youtubeId}&controls=0&showinfo=0&rel=0&modestbranding=1&playsinline=1`}
+                    src={`https://www.youtube-nocookie.com/embed/${activeMedia.youtubeId}?autoplay=${isPaused ? 0 : 1}&mute=1&loop=1&playlist=${activeMedia.youtubeId}&controls=0&showinfo=0&rel=0&modestbranding=1&playsinline=1&enablejsapi=1&origin=${window.location.origin}`}
                     title={displayName}
                     frameBorder="0"
-                    allow="autoplay; encrypted-media"
-                    style={{ 
+                    allow="autoplay; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                    style={{
                       pointerEvents: 'none',
                       position: 'absolute',
                       top: '50%',
                       left: '50%',
-                      width: '177.78vh', /* 16:9 aspect ratio: 100vh * 16/9 */
+                      width: '56.25vh', /* 9:16 aspect ratio for Shorts: 100vh * 9/16 */
                       height: '100vh',
                       minWidth: '100%',
-                      minHeight: '56.25vw', /* 9:16 inverse */
+                      minHeight: '177.78vw', /* 16:9 inverse for portrait */
                       transform: 'translate(-50%, -50%)'
                     }}
                     onError={() => setHasError(true)}
-                    loading="lazy"
                   />
                 </div>
               ) : activeMedia.vimeoId ? (
@@ -273,19 +273,18 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                     title={displayName}
                     frameBorder="0"
                     allow="autoplay"
-                    style={{ 
+                    style={{
                       pointerEvents: 'none',
                       position: 'absolute',
                       top: '50%',
                       left: '50%',
-                      width: '177.78vh',
+                      width: '56.25vh',
                       height: '100vh',
                       minWidth: '100%',
-                      minHeight: '56.25vw',
+                      minHeight: '177.78vw',
                       transform: 'translate(-50%, -50%)'
                     }}
                     onError={() => setHasError(true)}
-                    loading="lazy"
                   />
                 </div>
               ) : activeMedia.isDirectVideo ? (
