@@ -1595,6 +1595,55 @@ async def create_campaign(campaign: CampaignCreate, request: Request = None):
     return campaign_data
 
 
+@api_router.put("/campaigns/{campaign_id}")
+async def update_campaign(campaign_id: str, request: Request):
+    """
+    Met à jour une campagne existante (nom, message, horaire, canaux, etc.)
+    Seules les campagnes draft/scheduled peuvent être modifiées.
+    """
+    body = await request.json()
+
+    existing = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    # Empêcher la modification d'une campagne déjà lancée
+    if existing.get("status") in ["sending", "completed"]:
+        raise HTTPException(status_code=400, detail="Cannot edit a campaign that has already been sent")
+
+    # Champs modifiables
+    allowed_fields = [
+        "name", "message", "mediaUrl", "mediaFormat", "mediaType",
+        "targetType", "selectedContacts", "channels", "targetGroupId",
+        "targetIds", "targetConversationId", "targetConversationName",
+        "scheduledAt", "ctaType", "ctaText", "ctaLink",
+        "systemPrompt", "descriptionPrompt"
+    ]
+
+    update_data = {}
+    for field in allowed_fields:
+        if field in body:
+            update_data[field] = body[field]
+
+    # Mettre à jour le statut en fonction de scheduledAt
+    if "scheduledAt" in update_data:
+        if update_data["scheduledAt"]:
+            update_data["status"] = "scheduled"
+        else:
+            update_data["status"] = "draft"
+
+    update_data["updatedAt"] = datetime.now(timezone.utc).isoformat()
+
+    await db.campaigns.update_one(
+        {"id": campaign_id},
+        {"$set": update_data}
+    )
+
+    updated = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
+    logger.info(f"[CAMPAIGN-UPDATE] ✏️ Campagne '{updated.get('name')}' modifiée (champs: {list(update_data.keys())})")
+    return updated
+
+
 # ── HELPER OMNICANALITÉ : écrire les messages campagne dans chat_messages ──
 async def _save_campaign_chat_message(
     contact_id: str,

@@ -2799,7 +2799,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       targetGroupId: campaign.targetGroupId || 'community',
       targetConversationId: campaign.targetConversationId || '',
       targetConversationName: campaign.targetConversationName || '',
-      scheduleSlots: [], // On ne peut pas modifier les schedules existants
+      scheduleSlots: campaign.scheduledAt ? [{
+        date: new Date(campaign.scheduledAt).toISOString().split('T')[0],
+        time: new Date(campaign.scheduledAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false })
+      }] : [],
       // v11: Charger les prompts de la campagne
       systemPrompt: campaign.systemPrompt || '',
       descriptionPrompt: campaign.descriptionPrompt || ''
@@ -2876,6 +2879,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     // === MODE ÉDITION : Mise à jour d'une campagne existante ===
     if (editingCampaignId) {
       try {
+        // Calculer scheduledAt depuis les scheduleSlots (si modifié)
+        const editSlots = newCampaign.scheduleSlots || [];
+        let editScheduledAt = null;
+        if (editSlots.length > 0 && editSlots[0].date && editSlots[0].time) {
+          const localDate = new Date(`${editSlots[0].date}T${editSlots[0].time}:00`);
+          editScheduledAt = localDate.toISOString();
+        }
+
         const updateData = {
           name: newCampaign.name,
           message: newCampaign.message,
@@ -2883,11 +2894,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           mediaFormat: newCampaign.mediaFormat,
           targetType: newCampaign.targetType,
           selectedContacts: newCampaign.targetType === "selected" ? selectedContactsForCampaign : [],
-          channels: newCampaign.channels,
+          channels: { ...newCampaign.channels, internal: selectedRecipients.length > 0 },
           targetGroupId: newCampaign.targetGroupId || 'community',
           targetIds: targetIds, // Tableau des IDs du panier
           targetConversationId: targetIds[0] || '', // Premier ID pour compatibilité
           targetConversationName: selectedRecipients[0]?.name || '',
+          scheduledAt: editScheduledAt, // Mise à jour de l'horaire
           // v11: Prompts indépendants
           systemPrompt: newCampaign.systemPrompt || null,
           descriptionPrompt: newCampaign.descriptionPrompt || null
