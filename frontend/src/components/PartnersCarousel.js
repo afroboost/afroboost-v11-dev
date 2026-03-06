@@ -902,6 +902,27 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
               <SoundIcon muted={globalMuted} />
             </button>
 
+            {/* v14: Bouton QR Code - toujours visible */}
+            <button
+              onClick={() => {
+                const url = window.location.href;
+                const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(url)}`;
+                window.open(qrUrl, '_blank');
+              }}
+              className="w-7 h-7 flex items-center justify-center rounded-full transition-all hover:scale-110"
+              style={{ background: 'rgba(255,255,255,0.1)', color: 'white' }}
+              data-testid="qr-btn-carousel"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="2" width="8" height="8" rx="1" />
+                <rect x="14" y="2" width="8" height="8" rx="1" />
+                <rect x="2" y="14" width="8" height="8" rx="1" />
+                <rect x="14" y="14" width="4" height="4" />
+                <line x1="22" y1="14" x2="22" y2="18" />
+                <line x1="18" y1="22" x2="22" y2="22" />
+              </svg>
+            </button>
+
             {/* v12: Bouton Partage - toujours visible */}
             <button
               onClick={() => {

@@ -3805,13 +3805,12 @@ function App() {
         />
       </div>
 
-      {/* v12: VITRINE COACH OVERLAY - Transition fluide sans démontage du carrousel */}
+      {/* v14: VITRINE COACH OVERLAY - Transition instantanée, pas d'écran de chargement violet */}
       {showCoachVitrine && (
         <div
           className="fixed inset-0 z-50"
           style={{
-            animation: 'slideUpVitrine 0.35s ease-out forwards',
-            background: 'var(--background-color, #0a0a0f)'
+            background: '#000'
           }}
         >
           <CoachVitrine
