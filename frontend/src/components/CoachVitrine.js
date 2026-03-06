@@ -156,10 +156,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     }
   };
 
-  // Calculer prix final
+  // v17: Calculer prix final × nombre de séances
   const calculateFinalPrice = () => {
     if (!selectedOffer) return 0;
-    let total = selectedOffer.price || 0;
+    const qty = Math.max(1, selectedBookings.length);
+    let total = (selectedOffer.price || 0) * qty;
     if (appliedDiscount) {
       if (appliedDiscount.type === '100%') return 0;
       if (appliedDiscount.type === '%') return total * (1 - parseFloat(appliedDiscount.value) / 100);
@@ -896,12 +897,12 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                     )}
                   </div>
 
-                  {/* Résumé prix */}
+                  {/* Résumé prix — v17: × nombre de séances */}
                   <div className="rounded-lg p-3"
                     style={{ background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
                     <div className="flex justify-between text-sm text-white/70">
-                      <span>{selectedOffer.name}</span>
-                      <span>{selectedOffer.price?.toFixed(2) || '0.00'} CHF</span>
+                      <span>{selectedOffer.name} {selectedBookings.length > 1 ? `× ${selectedBookings.length} séances` : ''}</span>
+                      <span>{((selectedOffer.price || 0) * Math.max(1, selectedBookings.length)).toFixed(2)} CHF</span>
                     </div>
                     {appliedDiscount && (
                       <div className="flex justify-between text-sm text-green-400 mt-1">
