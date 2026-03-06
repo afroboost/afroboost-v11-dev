@@ -27,6 +27,18 @@
   box-sizing: border-box;
 }
 
+/* v12: Animation slide-up pour transition vitrine coach */
+@keyframes slideUpVitrine {
+  from {
+    transform: translateY(100%);
+    opacity: 0.8;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 /* Hide scrollbar utility class */
 .hide-scrollbar {
   -ms-overflow-style: none;  /* IE and Edge */

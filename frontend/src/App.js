@@ -3491,20 +3491,9 @@ function App() {
     />
   );
   
-  // v8.9.6: Vitrine Coach publique
-  if (showCoachVitrine) return (
-    <CoachVitrine 
-      username={showCoachVitrine}
-      onClose={() => {
-        setShowCoachVitrine(null);
-        window.history.pushState({}, '', '/');
-      }}
-      onBack={() => {
-        setShowCoachVitrine(null);
-        window.history.pushState({}, '', '/');
-      }}
-    />
-  );
+  // v12: Vitrine Coach publique - rendu en overlay (plus d'early return)
+  // La vitrine s'affiche PAR-DESSUS le carrousel pour une transition fluide
+  // (Déplacé dans le JSX principal au lieu d'un early return)
   
   // === v9.2.8: PAGE DE MAINTENANCE - Blocage total sauf Super Admin ===
   const isSuperAdmin = isSuperAdminEmail(coachUser?.email);
@@ -3800,10 +3789,12 @@ function App() {
           background: '#000000' 
         }}
       >
-        <PartnersCarousel 
+        <PartnersCarousel
           onPartnerClick={(partner) => {
             const username = partner.email || partner.id || partner.name?.toLowerCase().replace(/\s+/g, '-');
-            window.location.href = `/coach/${username}`;
+            // v12: Transition fluide sans rechargement page
+            window.history.pushState({}, '', `/coach/${username}`);
+            setShowCoachVitrine(username);
           }}
           onSearch={() => setShowCoachSearch(true)}
           maintenanceMode={platformSettings.maintenance_mode}
@@ -3813,15 +3804,38 @@ function App() {
           currentVitrineEmail={null}
         />
       </div>
-      
+
+      {/* v12: VITRINE COACH OVERLAY - Transition fluide sans démontage du carrousel */}
+      {showCoachVitrine && (
+        <div
+          className="fixed inset-0 z-50"
+          style={{
+            animation: 'slideUpVitrine 0.35s ease-out forwards',
+            background: 'var(--background-color, #0a0a0f)'
+          }}
+        >
+          <CoachVitrine
+            username={showCoachVitrine}
+            onClose={() => {
+              setShowCoachVitrine(null);
+              window.history.pushState({}, '', '/');
+            }}
+            onBack={() => {
+              setShowCoachVitrine(null);
+              window.history.pushState({}, '', '/');
+            }}
+          />
+        </div>
+      )}
+
       {/* v9.5.8: Contenu scrollable SOUS le flux Reels - Espacement réduit */}
       {/* v11.9: Ajout p-6 ici car retiré du container principal pour full-width video */}
       {/* v13.6: Fond transparent pour s'intégrer au design global - Zéro Cadre */}
-      <div 
-        className="max-w-4xl mx-auto px-6 pt-2" 
-        style={{ 
-          background: 'transparent', 
-          border: 'none', 
+      <div
+        className="max-w-4xl mx-auto px-6 pt-2"
+        style={{
+          background: 'transparent',
+          border: 'none',
           boxShadow: 'none'
         }}
       >

@@ -279,10 +279,14 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     }
   }, []);
   
-  // v9.4.9: Retour au flux à la position sauvegardée
+  // v12: Retour au flux - transition fluide via onBack (pas de rechargement page)
   const handleReturnToFlux = () => {
     // La position est déjà sauvegardée dans sessionStorage
-    window.location.href = '/';
+    if (onBack) {
+      onBack();
+    } else {
+      window.history.pushState({}, '', '/');
+    }
   };
   
   // v9.4.6: Capturer l'événement beforeinstallprompt
