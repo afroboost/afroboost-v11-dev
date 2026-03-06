@@ -1832,43 +1832,61 @@ async def launch_campaign(campaign_id: str):
             }
 
             try:
-                # Résoudre l'email du contact pour chercher sa session chat
-                # L'ID CRM (targetId) ≠ l'ID participant chat — on cherche par email
-                contact_doc = await db.users.find_one({"id": target_id}, {"_id": 0, "email": 1, "name": 1})
-                contact_email = contact_doc.get("email", "") if contact_doc else ""
-                contact_name_internal = contact_doc.get("name", "") if contact_doc else ""
+                # === DÉTECTION GROUPE OU UTILISATEUR ===
+                # Chercher d'abord si le targetId est une session de groupe
+                group_session = await db.chat_sessions.find_one(
+                    {"id": target_id, "$or": [
+                        {"title": {"$exists": True, "$ne": ""}},
+                        {"mode": {"$in": ["community", "vip", "promo", "group"]}}
+                    ]},
+                    {"_id": 0, "id": 1, "mode": 1, "title": 1, "participant_ids": 1}
+                )
 
-                # Stratégie de recherche: email (fiable) > participant_ids > id direct
-                session = None
-                if contact_email:
-                    session = await db.chat_sessions.find_one(
-                        {"participantEmail": contact_email},
-                        {"_id": 0, "id": 1, "mode": 1, "title": 1, "participant_ids": 1}
-                    )
-                    if session:
-                        logger.info(f"[CAMPAIGN-LAUNCH] 🔗 Session trouvée par email {contact_email}: {session.get('id')}")
+                is_group = group_session is not None
 
-                if not session:
-                    session = await db.chat_sessions.find_one(
-                        {"$or": [{"id": target_id}, {"participant_ids": target_id}]},
-                        {"_id": 0, "id": 1, "mode": 1, "title": 1}
-                    )
-
-                if session:
-                    session_id = session.get("id")
+                if is_group:
+                    # === ENVOI GROUPE : message dans la session de groupe directement ===
+                    session_id = group_session.get("id")
+                    group_name = group_session.get("title", "Groupe")
+                    logger.info(f"[CAMPAIGN-LAUNCH] 👥 Groupe détecté: {group_name} ({session_id})")
+                    contact_doc = {"name": group_name, "email": ""}
                 else:
-                    # Créer une session pour cet utilisateur s'il n'en a pas
-                    session_id = str(uuid.uuid4())
-                    await db.chat_sessions.insert_one({
-                        "id": session_id,
-                        "mode": "user",
-                        "participant_ids": [target_id],
-                        "participantEmail": contact_email,
-                        "participantName": contact_name_internal,
-                        "created_at": datetime.now(timezone.utc).isoformat(),
-                        "updated_at": datetime.now(timezone.utc).isoformat()
-                    })
-                    logger.info(f"[CAMPAIGN-LAUNCH] 📝 Session créée pour {target_id} ({contact_email}): {session_id}")
+                    # === ENVOI INDIVIDUEL : résoudre l'utilisateur ===
+                    contact_doc = await db.users.find_one({"id": target_id}, {"_id": 0, "email": 1, "name": 1})
+                    contact_email = contact_doc.get("email", "") if contact_doc else ""
+                    contact_name_internal = contact_doc.get("name", "") if contact_doc else ""
+
+                    # Stratégie de recherche: email (fiable) > participant_ids > id direct
+                    session = None
+                    if contact_email:
+                        session = await db.chat_sessions.find_one(
+                            {"participantEmail": contact_email},
+                            {"_id": 0, "id": 1, "mode": 1, "title": 1, "participant_ids": 1}
+                        )
+                        if session:
+                            logger.info(f"[CAMPAIGN-LAUNCH] 🔗 Session trouvée par email {contact_email}: {session.get('id')}")
+
+                    if not session:
+                        session = await db.chat_sessions.find_one(
+                            {"$or": [{"id": target_id}, {"participant_ids": target_id}]},
+                            {"_id": 0, "id": 1, "mode": 1, "title": 1}
+                        )
+
+                    if session:
+                        session_id = session.get("id")
+                    else:
+                        # Créer une session pour cet utilisateur s'il n'en a pas
+                        session_id = str(uuid.uuid4())
+                        await db.chat_sessions.insert_one({
+                            "id": session_id,
+                            "mode": "user",
+                            "participant_ids": [target_id],
+                            "participantEmail": contact_email,
+                            "participantName": contact_name_internal,
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                            "updated_at": datetime.now(timezone.utc).isoformat()
+                        })
+                        logger.info(f"[CAMPAIGN-LAUNCH] 📝 Session créée pour {target_id} ({contact_email}): {session_id}")
                 
                 # Substituer les variables {prénom} etc. avec les infos du contact
                 personalized_message = substitute_campaign_variables(
@@ -1888,6 +1906,7 @@ async def launch_campaign(campaign_id: str):
                     "sender_type": "coach",
                     "sender_name": "Coach Bassi",
                     "sender_id": "coach-campaign",
+                    "is_group": is_group,
                     "timestamp": msg_timestamp,
                     "created_at": msg_timestamp
                 }

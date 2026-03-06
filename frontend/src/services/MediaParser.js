@@ -33,8 +33,25 @@ const GOOGLE_DRIVE_FOLDER_PATTERNS = [
   /drive\.google\.com\/folderview\?id=([a-zA-Z0-9_-]+)/
 ];
 
-const DIRECT_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
-const DIRECT_VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogg', 'mov'];
+const DIRECT_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'];
+const DIRECT_VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogg', 'mov', 'avi'];
+
+// Patterns pour les hébergeurs d'images connus (URLs sans extension standard)
+const IMAGE_HOSTING_PATTERNS = [
+  /images\.unsplash\.com\//i,
+  /i\.imgur\.com\//i,
+  /imgur\.com\/[a-zA-Z0-9]+\.(jpg|png|gif)/i,
+  /cloudinary\.com\/.*\/image\//i,
+  /res\.cloudinary\.com\//i,
+  /pbs\.twimg\.com\//i,
+  /media\.giphy\.com\//i,
+  /cdn\.pixabay\.com\//i,
+  /upload\.wikimedia\.org\/.*\.(jpg|jpeg|png|gif|svg|webp)/i,
+  /firebasestorage\.googleapis\.com\/.*\.(jpg|jpeg|png|gif|webp)/i,
+  /storage\.googleapis\.com\/.*\.(jpg|jpeg|png|gif|webp)/i,
+  /blob\.core\.windows\.net\/.*\.(jpg|jpeg|png|gif|webp)/i,
+  /s3\.amazonaws\.com\/.*\.(jpg|jpeg|png|gif|webp)/i
+];
 
 /**
  * Analyse une URL et retourne les informations du média
@@ -137,6 +154,18 @@ export const parseMediaUrl = (url) => {
       directUrl: trimmedUrl,
       thumbnailUrl: null // Pas de miniature pour les vidéos directes
     };
+  }
+
+  // === HÉBERGEURS D'IMAGES CONNUS ===
+  for (const pattern of IMAGE_HOSTING_PATTERNS) {
+    if (pattern.test(trimmedUrl)) {
+      return {
+        type: 'image',
+        platform: 'hosted_image',
+        directUrl: trimmedUrl,
+        thumbnailUrl: trimmedUrl
+      };
+    }
   }
 
   // === INCONNU ===

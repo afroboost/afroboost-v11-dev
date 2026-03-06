@@ -93,6 +93,7 @@ const MediaMessage = ({
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const [linkImageError, setLinkImageError] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
 
   // Extensions non supportees
@@ -313,19 +314,39 @@ const MediaMessage = ({
           />
         )}
 
-        {/* Fallback si erreur */}
+        {/* Fallback: essayer d'afficher comme image, sinon lien externe */}
         {(imageError || mediaInfo.type === 'link') && (
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '20px',
-            color: '#888'
-          }}>
-            <LinkIcon />
-            <span style={{ fontSize: '12px', marginTop: '8px' }}>Média externe</span>
-          </div>
+          !linkImageError ? (
+            <img
+              src={mediaUrl}
+              alt="Média"
+              style={{
+                width: '100%',
+                height: isCompact ? '120px' : '180px',
+                objectFit: 'cover'
+              }}
+              onError={() => setLinkImageError(true)}
+            />
+          ) : (
+            <a
+              href={mediaUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '20px',
+                color: '#888',
+                textDecoration: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              <LinkIcon />
+              <span style={{ fontSize: '12px', marginTop: '8px' }}>Ouvrir le média</span>
+            </a>
+          )
         )}
       </div>
       )}
