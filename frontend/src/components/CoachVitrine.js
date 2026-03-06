@@ -213,13 +213,30 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           setPaymentConfig(paymentRes.data);
         } catch (e) {}
 
-        // Charger le concept (vidéo header)
+        // Charger la vidéo du coach depuis /partners/active (source fiable)
         try {
-          const conceptRes = await axios.get(`${API}/concept`, {
-            headers: { 'X-User-Email': res.data.coach.email || username }
-          });
-          setCoachConcept(conceptRes.data);
-        } catch (e) {}
+          const partnersRes = await axios.get(`${API}/partners/active`);
+          const coachEmail = (res.data.coach.email || username).toLowerCase();
+          const partnerData = partnersRes.data.find(p =>
+            p.email?.toLowerCase() === coachEmail ||
+            p.name?.toLowerCase() === username.toLowerCase() ||
+            p.platform_name?.toLowerCase() === username.toLowerCase()
+          );
+          if (partnerData) {
+            setCoachConcept({
+              heroImageUrl: partnerData.heroImageUrl || partnerData.video_url,
+              heroVideoUrl: partnerData.video_url
+            });
+          }
+        } catch (e) {
+          // Fallback: essayer le concept direct
+          try {
+            const conceptRes = await axios.get(`${API}/concept`, {
+              headers: { 'X-User-Email': res.data.coach.email || username }
+            });
+            setCoachConcept(conceptRes.data);
+          } catch (e2) {}
+        }
       } catch (err) {
         console.error('[VITRINE] Erreur:', err);
         setError(err.response?.data?.detail || 'Coach non trouvé');
