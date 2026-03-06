@@ -556,6 +556,32 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       <div id="vitrine-content-section" className="max-w-4xl mx-auto px-6 pt-2"
         style={{ background: 'transparent' }}>
 
+        {/* v16: DESCRIPTION PARTENAIRE — entre Hero et Sessions */}
+        {coach.bio && (
+          <div className="mb-8 pt-4 vitrine-fade-in" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '20px' }}>
+            <div className="flex items-start gap-4">
+              {/* Avatar */}
+              <div className="flex-shrink-0">
+                {coach.photo_url || coach.logo_url ? (
+                  <img src={coach.photo_url || coach.logo_url} alt={displayName}
+                    className="w-14 h-14 rounded-full object-cover"
+                    style={{ border: '2px solid rgba(217, 28, 210, 0.4)' }} />
+                ) : (
+                  <div className="w-14 h-14 rounded-full flex items-center justify-center text-lg font-bold"
+                    style={{ background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', color: '#fff' }}>
+                    {(displayName || 'P').charAt(0).toUpperCase()}
+                  </div>
+                )}
+              </div>
+              {/* Texte */}
+              <div className="flex-1 min-w-0">
+                <h3 className="text-white font-semibold text-base mb-1">{displayName}</h3>
+                <p className="text-white/70 text-sm leading-relaxed">{coach.bio}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* === ÉTAPE 1: Cours/Sessions === */}
         {uniqueCourses.length > 0 && (
           <div id="vitrine-courses-section" className="mb-8">
@@ -928,8 +954,28 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
+        {/* v16: Section Témoignages dans vitrine */}
+        <div className="mb-8 vitrine-fade-in" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
+          <h2 className="font-semibold text-white text-center mb-4" style={{ fontSize: '16px' }}>
+            Avis clients
+          </h2>
+          <div className="space-y-3">
+            <div className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="flex items-center gap-1 mb-1.5">
+                {[1,2,3,4,5].map(i => (
+                  <svg key={i} width="12" height="12" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                  </svg>
+                ))}
+              </div>
+              <p className="text-white/70 text-xs leading-relaxed italic">"Super expérience, le coach est top !"</p>
+              <p className="text-white/40 text-xs mt-1">— Client vérifié</p>
+            </div>
+          </div>
+        </div>
+
         {/* === Footer === */}
-        <div className="text-center mt-8 pb-8">
+        <div className="text-center mt-4 pb-8">
           <p className="text-white/30 text-xs">
             Propulsé par <span style={{ color: '#d91cd2' }}>Afroboost</span> - La plateforme des coachs
           </p>

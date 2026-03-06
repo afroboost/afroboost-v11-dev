@@ -679,11 +679,28 @@ html, body {
   .print-proof button { display: none !important; }
 }
 
-/* Scrollbar Styling */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.9); }
-::-webkit-scrollbar-thumb { background: rgba(217, 28, 210, 0.4); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(217, 28, 210, 0.6); }
+/* v16: Scrollbar ultra-fine style mobile moderne */
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.25); }
+* { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent; }
+
+/* v16: Animations fade-in au scroll */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-in-section {
+  animation: fadeInUp 0.5s ease-out forwards;
+}
+.vitrine-fade-in {
+  animation: fadeInUp 0.4s ease-out forwards;
+}
+
+/* v16: Contraste texte amélioré - textes secondaires plus lisibles */
+.text-white\/50 { color: rgba(255, 255, 255, 0.6) !important; }
+.text-white\/40 { color: rgba(255, 255, 255, 0.55) !important; }
 
 /* Input Styling */
 input, select, textarea {

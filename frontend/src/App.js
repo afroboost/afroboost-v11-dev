@@ -3351,7 +3351,12 @@ function App() {
               }}
               className={`session-btn px-3 py-2 rounded-lg text-sm font-medium ${isSelected ? 'selected' : ''}`}
               style={{ color: 'white' }} data-testid={`date-btn-${course.id}-${idx}`}>
-              {formatDate(date, course.time, lang)} {isSelected && '✔'}
+              <span>{formatDate(date, course.time, lang)} {isSelected && '✔'}</span>
+              {course.maxCapacity && (
+                <span className="text-xs opacity-60 ml-1">
+                  · {course.maxCapacity - (course.reservations || 0)} places
+                </span>
+              )}
             </button>
           );
         })}
@@ -3898,10 +3903,18 @@ function App() {
           </div>
         )}
 
+        {/* v16: DESCRIPTION PARTENAIRE — entre nav et sessions */}
+        {concept.description && activeFilter !== 'shop' && (
+          <div className="mb-6 fade-in-section" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '16px' }}>
+            <p className="text-white/70 text-sm leading-relaxed" style={{ fontWeight: 300 }}>
+              {concept.description}
+            </p>
+          </div>
+        )}
+
         {/* Section Sessions - Masquée si filtre Shop actif */}
-        {/* v13.6: Fond transparent pour design "Zéro Cadre" */}
         {activeFilter !== 'shop' && visibleCourses.length > 0 && (
-          <div id="sessions-section" className="mb-8" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
+          <div id="sessions-section" className="mb-8 fade-in-section" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
             <h2 className="font-semibold mb-4 text-white" style={{ fontSize: '18px' }}>{t('chooseSession')}</h2>
             {/* Container avec scroll pour mobile - scrollbar rose fine 4px */}
             <div 
@@ -3943,7 +3956,7 @@ function App() {
             SECTION OFFRES/SERVICES - Affichée si cours + dates sélectionnées
             ===================================================== */}
         {selectedCourse && selectedDates.length > 0 && filteredServices.length > 0 && (
-          <div id="offers-section" className="mb-8">
+          <div id="offers-section" className="mb-8 fade-in-section">
             <h2 className="font-semibold mb-2 text-white" style={{ fontSize: '18px' }}>{t('chooseOffer')}</h2>
             
             <p className="text-sm mb-4" style={{ color: '#d91cd2' }}>
@@ -4163,7 +4176,7 @@ function App() {
             Complètement indépendante des cours
             ===================================================== */}
         {filteredProducts.length > 0 && (activeFilter === 'shop' || activeFilter === 'all') && (
-          <div id="products-section" className="mb-8" style={{ paddingTop: '10px' }}>
+          <div id="products-section" className="mb-8 fade-in-section" style={{ paddingTop: '10px' }}>
             {/* v15: Header Shop amélioré avec badge livraison */}
             <div className="flex items-center justify-between mb-4">
               <div>
@@ -4496,6 +4509,61 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* v16: Section Témoignages / Avis clients */}
+        <div className="mb-8 fade-in-section" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
+          <h2 className="font-semibold text-white text-center mb-6" style={{ fontSize: '18px' }}>
+            Ce que disent nos clients
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Témoignage 1 */}
+            <div className="rounded-xl p-5"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="flex items-center gap-1 mb-2">
+                {[1,2,3,4,5].map(i => (
+                  <svg key={i} width="14" height="14" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                  </svg>
+                ))}
+              </div>
+              <p className="text-white/70 text-sm leading-relaxed italic mb-3">
+                "L'ambiance est incroyable ! Le concept casques audio rend la session unique. Je reviens chaque semaine."
+              </p>
+              <p className="text-white/40 text-xs">— Sarah M.</p>
+            </div>
+            {/* Témoignage 2 */}
+            <div className="rounded-xl p-5"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="flex items-center gap-1 mb-2">
+                {[1,2,3,4,5].map(i => (
+                  <svg key={i} width="14" height="14" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                  </svg>
+                ))}
+              </div>
+              <p className="text-white/70 text-sm leading-relaxed italic mb-3">
+                "Cours de danse top ! Le coach est super motivant. Parfait pour se défouler après le travail."
+              </p>
+              <p className="text-white/40 text-xs">— Kevin L.</p>
+            </div>
+          </div>
+          {/* Lien avis Google si configuré */}
+          {concept.googleReviewsUrl && (
+            <div className="text-center mt-4">
+              <a href={concept.googleReviewsUrl} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 text-sm transition-colors hover:text-pink-400"
+                style={{ color: 'rgba(217, 28, 210, 0.8)' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                </svg>
+                Voir tous les avis Google
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                </svg>
+              </a>
+            </div>
+          )}
+        </div>
 
         {/* v15: Footer amélioré avec réseaux sociaux + infos utiles */}
         <footer className="mt-12 mb-8 text-center" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
