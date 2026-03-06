@@ -1,5 +1,5 @@
 /**
- * CampaignManager.js - v12: Refonte UX simplifiée
+ * CampaignManager.js - v13: Refonte UX + Auto-launch
  *
  * La page ne montre que le Calendrier + Historique.
  * Le formulaire est dans un Modal étape par étape (CampaignModal).
