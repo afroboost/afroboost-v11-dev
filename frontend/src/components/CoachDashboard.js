@@ -4828,6 +4828,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             // v11: Super Admin + coût campagne
             isSuperAdmin={isSuperAdmin}
             campaignCreditCost={servicePrices?.campaign || 1}
+            chatLinks={chatLinks}
           />
         )}
         {/* [CAMPAGNE_END] - Section extraite vers CampaignManager.js (~1490 lignes économisées) */}

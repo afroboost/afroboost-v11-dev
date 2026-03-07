@@ -49,7 +49,9 @@ export default function CampaignModal({
   removeScheduleSlot,
   updateScheduleSlot,
   // Pre-selected date from calendar
-  preSelectedDate
+  preSelectedDate,
+  // v16.3: Chat links pour CTA "Lier à une Conversation"
+  chatLinks = []
 }) {
   const [step, setStep] = useState(1);
   const [aiSuggestions, setAiSuggestions] = useState([]);
@@ -388,19 +390,71 @@ export default function CampaignModal({
                 </div>
               </div>
 
-              {/* CTA */}
+              {/* CTA — v16.3: Ajout option "Lier à une Conversation" */}
               <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '10px', background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
                 <label style={{ display: 'block', color: '#c4b5fd', fontSize: '12px', fontWeight: 500, marginBottom: '8px' }}>🔘 Bouton d'action (CTA)</label>
                 <select
                   value={newCampaign.ctaType || 'none'}
-                  onChange={e => setNewCampaign(prev => ({ ...prev, ctaType: e.target.value, ctaText: '', ctaLink: '' }))}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setNewCampaign(prev => ({ ...prev, ctaType: val, ctaText: val === 'conversation' ? 'Discuter avec l\'IA' : '', ctaLink: '' }));
+                  }}
                   style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', fontSize: '13px', outline: 'none' }}>
                   <option value="none">Aucun bouton</option>
                   <option value="reserver">🗓️ Réserver</option>
                   <option value="offre">🎁 Offre</option>
+                  <option value="conversation">💬 Lier à une Conversation</option>
                   <option value="personnalise">✨ Personnalisé</option>
                 </select>
-                {newCampaign.ctaType && newCampaign.ctaType !== 'none' && (
+
+                {/* v16.3: Sélecteur de lien conversation */}
+                {newCampaign.ctaType === 'conversation' && (
+                  <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <select
+                      value={newCampaign.ctaLink || ''}
+                      onChange={e => {
+                        const token = e.target.value;
+                        const selectedLink = chatLinks.find(l => (l.link_token || l.token) === token);
+                        const url = token ? `${window.location.origin}/?link=${token}` : '';
+                        setNewCampaign(prev => ({
+                          ...prev,
+                          ctaLink: url,
+                          ctaConversationToken: token,
+                          ctaText: prev.ctaText || (selectedLink ? `💬 ${selectedLink.title || 'Discuter'}` : 'Discuter avec l\'IA')
+                        }));
+                      }}
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', background: 'rgba(217,28,210,0.1)', border: '1px solid rgba(217,28,210,0.3)', color: '#fff', fontSize: '13px', outline: 'none' }}>
+                      <option value="">— Choisir un lien de conversation —</option>
+                      {chatLinks.map(link => {
+                        const token = link.link_token || link.token || '';
+                        return (
+                          <option key={token} value={token}>
+                            {link.title || 'Lien sans titre'} {link.custom_prompt || link.customPrompt ? '🤖' : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    {chatLinks.length === 0 && (
+                      <p style={{ color: '#f59e0b', fontSize: '11px', margin: 0 }}>
+                        ⚠️ Créez d'abord un lien dans l'onglet Conversations.
+                      </p>
+                    )}
+                    <input
+                      value={newCampaign.ctaText || ''}
+                      onChange={e => setNewCampaign(prev => ({ ...prev, ctaText: e.target.value }))}
+                      placeholder="Texte du bouton (ex: Discuter avec l'IA)"
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontSize: '12px', outline: 'none' }}
+                    />
+                    {newCampaign.ctaLink && (
+                      <p style={{ color: 'rgba(217,28,210,0.6)', fontSize: '11px', margin: 0, wordBreak: 'break-all' }}>
+                        🔗 {newCampaign.ctaLink}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Types existants: texte + lien */}
+                {newCampaign.ctaType && newCampaign.ctaType !== 'none' && newCampaign.ctaType !== 'conversation' && (
                   <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
                     <input
                       value={newCampaign.ctaText || ''}

@@ -2082,6 +2082,31 @@ async def launch_campaign(campaign_id: str):
                     subject = f"📢 {campaign_name}"
                     first_name = contact_name.split()[0] if contact_name else "ami(e)"
                     
+                    # v16.3: Construire le bloc CTA HTML pour l'email
+                    cta_html = ""
+                    if cta_text and cta_link:
+                        cta_color = "#D91CD2" if cta_type == "conversation" else "#9333EA" if cta_type == "reserver" else "#6366f1"
+                        cta_html = f"""
+<div style="padding:16px 20px;text-align:center;">
+<a href="{cta_link}" style="display:inline-block;padding:14px 32px;background:{cta_color};color:#fff;font-size:15px;font-weight:bold;text-decoration:none;border-radius:8px;">{cta_text}</a>
+</div>"""
+                    elif cta_text and cta_type == "reserver":
+                        site_url = "https://afroboost-v11-dev-pm7l.vercel.app"
+                        cta_html = f"""
+<div style="padding:16px 20px;text-align:center;">
+<a href="{site_url}/#devenir-coach" style="display:inline-block;padding:14px 32px;background:#9333EA;color:#fff;font-size:15px;font-weight:bold;text-decoration:none;border-radius:8px;">{cta_text or 'Réserver'}</a>
+</div>"""
+
+                    # Construire le bloc média HTML
+                    media_html = ""
+                    if media_url:
+                        if any(media_url.lower().endswith(ext) for ext in ['.mp4', '.webm', '.mov']):
+                            media_html = f'<div style="padding:0;text-align:center;"><a href="{media_url}" style="color:#9333EA;font-size:13px;">▶ Voir la vidéo</a></div>'
+                        elif any(media_url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
+                            media_html = f'<div style="padding:0;"><img src="{media_url}" alt="Média" style="width:100%;max-height:300px;object-fit:cover;" /></div>'
+                        elif 'youtube.com' in media_url or 'youtu.be' in media_url:
+                            media_html = f'<div style="padding:10px 20px;text-align:center;"><a href="{media_url}" style="color:#9333EA;font-size:13px;">▶ Voir la vidéo YouTube</a></div>'
+
                     html_content = f"""<!DOCTYPE html>
 <html lang="fr">
 <head><meta charset="utf-8"><title>Message Afroboost</title></head>
@@ -2090,10 +2115,12 @@ async def launch_campaign(campaign_id: str):
 <div style="background:#9333EA;padding:16px 20px;text-align:center;">
 <span style="color:#fff;font-size:22px;font-weight:bold;">Afroboost</span>
 </div>
+{media_html}
 <div style="padding:20px;color:#fff;font-size:14px;line-height:1.6;">
 <p>Salut {first_name},</p>
 {personalized_msg.replace(chr(10), '<br>')}
 </div>
+{cta_html}
 <div style="padding:15px 20px;border-top:1px solid #333;text-align:center;">
 <a href="https://afroboost.com" style="color:#9333EA;text-decoration:none;font-size:11px;">afroboost.com</a>
 </div>

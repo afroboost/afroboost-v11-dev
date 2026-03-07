@@ -616,8 +616,9 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
   // Si c'est un message média avec CTA, utiliser MediaMessage
   if (hasMedia || hasCta) {
     const ctaConfig = hasCta ? {
-      type: msg.cta_type === 'reserver' ? 'RESERVER' : 
-            msg.cta_type === 'offre' ? 'OFFRE' : 'PERSONNALISE',
+      type: msg.cta_type === 'reserver' ? 'RESERVER' :
+            msg.cta_type === 'offre' ? 'OFFRE' :
+            msg.cta_type === 'conversation' ? 'CONVERSATION' : 'PERSONNALISE',
       text: msg.cta_text,
       url: msg.cta_link || '#'
     } : null;
@@ -1739,18 +1740,32 @@ export const ChatWidget = () => {
       return;
     }
     
-    // v9.3.7: Ouvrir le panel pour tous les utilisateurs
-    // La vérification d'éligibilité se fait à la confirmation
+    // v16.3: Tunnel dynamique Réserver
+    // Cas A: Contact NON-abonné → redirection vers formulaire d'inscription/paiement
+    if (!afroboostProfile?.code) {
+      // Chercher la section offres/paiement sur la page
+      const offresSection = document.getElementById('devenir-coach') || document.getElementById('offres');
+      if (offresSection) {
+        offresSection.scrollIntoView({ behavior: 'smooth' });
+      } else {
+        // Fallback: ouvrir la page d'offres dans un nouvel onglet
+        window.open(`${window.location.origin}/#devenir-coach`, '_blank');
+      }
+      // Ajouter un message IA pour guider le contact
+      setMessages(prev => [...prev, {
+        id: `sys_reserve_${Date.now()}`,
+        type: 'ai',
+        text: '📋 Pour réserver un cours, vous devez d\'abord souscrire à un pack. Consultez nos offres pour commencer !',
+        timestamp: new Date().toISOString()
+      }]);
+      return;
+    }
+
+    // Cas B: Contact DÉJÀ abonné → ouvrir directement le sélecteur de sessions
     loadAvailableCourses();
     setShowReservationPanel(true);
     setSelectedCourse(null);
-    
-    // Vérifier l'éligibilité en arrière-plan pour afficher un message si nécessaire
-    if (!afroboostProfile?.code) {
-      setReservationError("Entrez un code promo valide pour réserver un cours.");
-    } else {
-      setReservationError('');
-    }
+    setReservationError('');
   }, [showReservationPanel, isVisitorPreview, afroboostProfile]);
 
   // === HANDLER CONFIRMATION RÉSERVATION (extrait pour BookingPanel) ===

@@ -140,7 +140,9 @@ const CampaignManager = ({
   hasInsufficientCredits = false,
   coachCredits = null,
   isSuperAdmin = false,
-  campaignCreditCost = 1
+  campaignCreditCost = 1,
+  // v16.3: Chat links pour CTA "Lier à une Conversation"
+  chatLinks = []
 }) => {
   // v12: Modal state
   const [showModal, setShowModal] = useState(false);
@@ -298,6 +300,7 @@ const CampaignManager = ({
         removeScheduleSlot={removeScheduleSlot}
         updateScheduleSlot={updateScheduleSlot}
         preSelectedDate={preSelectedDate}
+        chatLinks={chatLinks}
       />
 
       {/* === HISTORIQUE DES CAMPAGNES === */}

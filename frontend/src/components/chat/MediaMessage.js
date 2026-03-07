@@ -73,6 +73,17 @@ const CTA_CONFIG = {
     defaultText: 'EN SAVOIR PLUS',
     color: '#6366f1', // Indigo
     hoverColor: '#4f46e5'
+  },
+  // v16.3: CTA Lier à une Conversation
+  CONVERSATION: {
+    icon: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+      </svg>
+    ),
+    defaultText: 'DISCUTER AVEC L\'IA',
+    color: '#D91CD2', // Rose Afroboost
+    hoverColor: '#c026d3'
   }
 };
 
@@ -301,17 +312,25 @@ const MediaMessage = ({
           />
         )}
 
-        {/* Vidéo directe */}
+        {/* Vidéo directe — v16.3: Amélioration lecture multi-canal */}
         {mediaInfo.type === 'video' && (
           <video
             src={mediaInfo.directUrl}
             controls
+            preload="metadata"
+            playsInline
+            controlsList="nodownload"
             style={{
               width: '100%',
-              height: isCompact ? '120px' : '180px',
-              objectFit: 'cover'
+              maxHeight: isCompact ? '200px' : '320px',
+              objectFit: 'contain',
+              background: '#000'
             }}
-          />
+          >
+            <source src={mediaInfo.directUrl} type="video/mp4" />
+            <source src={mediaInfo.directUrl} type="video/webm" />
+            Votre navigateur ne supporte pas la lecture vidéo.
+          </video>
         )}
 
         {/* Fallback: essayer d'afficher comme image, sinon lien externe */}
