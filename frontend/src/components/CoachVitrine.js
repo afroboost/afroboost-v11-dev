@@ -257,29 +257,45 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           setFaqs(Array.isArray(faqRes.data) ? faqRes.data : []);
         } catch (e) {}
 
-        // v18: Charger le concept complet (avec heroVideos) depuis l'API
+        // v20.2: Charger le concept — ADMIN != PARTENAIRE
+        // Super Admin: concept_id="concept", Partenaire: concept_id="concept_{email}"
+        const coachEmail = res.data.coach.email || username;
+        const isSuperAdmin = ['bassi', 'afroboost', 'contact.artboost@gmail.com', 'afroboost.bassi@gmail.com']
+          .includes((username || '').toLowerCase()) ||
+          ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com']
+          .includes((coachEmail || '').toLowerCase());
+
+        let conceptLoaded = false;
+        // Tentative 1: avec X-User-Email (charge le bon concept_id)
         try {
           const conceptRes = await axios.get(`${API}/concept`, {
-            headers: { 'X-User-Email': res.data.coach.email || username }
+            headers: { 'X-User-Email': coachEmail }
           });
-          setCoachConcept(conceptRes.data);
+          if (conceptRes.data) {
+            setCoachConcept(conceptRes.data);
+            conceptLoaded = true;
+            console.warn('[VITRINE-CONCEPT] ✅ Concept chargé via header:', coachEmail, 'heroVideos:', conceptRes.data.heroVideos?.length || 0);
+          }
         } catch (e) {
-          // Fallback: charger depuis /partners/active
+          console.warn('[VITRINE-CONCEPT] ❌ Erreur chargement concept avec header:', e.message);
+        }
+
+        // Tentative 2 (Super Admin uniquement): sans header → API retourne concept admin par défaut
+        if (!conceptLoaded && isSuperAdmin) {
           try {
-            const partnersRes = await axios.get(`${API}/partners/active`);
-            const coachEmail = (res.data.coach.email || username).toLowerCase();
-            const partnerData = partnersRes.data.find(p =>
-              p.email?.toLowerCase() === coachEmail ||
-              p.name?.toLowerCase() === username.toLowerCase() ||
-              p.platform_name?.toLowerCase() === username.toLowerCase()
-            );
-            if (partnerData) {
-              setCoachConcept({
-                heroImageUrl: partnerData.heroImageUrl || partnerData.video_url,
-                heroVideoUrl: partnerData.video_url
-              });
+            const conceptRes2 = await axios.get(`${API}/concept`);
+            if (conceptRes2.data) {
+              setCoachConcept(conceptRes2.data);
+              conceptLoaded = true;
+              console.warn('[VITRINE-CONCEPT] ✅ Concept admin chargé (fallback sans header):', conceptRes2.data.heroVideos?.length || 0);
             }
-          } catch (e2) {}
+          } catch (e2) {
+            console.warn('[VITRINE-CONCEPT] ❌ Fallback admin échoué:', e2.message);
+          }
+        }
+
+        if (!conceptLoaded) {
+          console.warn('[VITRINE-CONCEPT] ⚠️ Aucun concept trouvé pour:', username, coachEmail);
         }
       } catch (err) {
         console.error('[VITRINE] Erreur:', err);
@@ -665,7 +681,6 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   key={`img-${heroVideoUrl}`}
                   src={heroVideoUrl}
                   alt={displayName}
-                  crossOrigin="anonymous"
                   className="absolute inset-0 w-full h-full object-cover"
                   style={{ filter: 'brightness(0.75)' }}
                   onLoad={() => {
@@ -696,7 +711,6 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                     loop={true}
                     playsInline={true}
                     preload="auto"
-                    crossOrigin="anonymous"
                     className="absolute inset-0 w-full h-full object-cover"
                     style={{ filter: 'brightness(0.7)' }}
                     ref={(el) => {
