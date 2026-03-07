@@ -86,6 +86,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const [faqs, setFaqs] = useState([]);
   const [openFaqId, setOpenFaqId] = useState(null);
 
+  // v18: Multi-vidéos héro
+  const [activeVideoIndex, setActiveVideoIndex] = useState(0);
+
   // v17: INLINE booking multi-séances (tableau de { course, date })
   const [selectedBookings, setSelectedBookings] = useState([]); // [{ course, date }, ...]
   const selectedBooking = selectedBookings.length > 0 ? selectedBookings[0] : null; // compat
@@ -408,8 +411,17 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const displayName = coach.platform_name || coach.name || 'Coach';
   const initial = displayName.charAt(0).toUpperCase();
 
-  // Extraire YouTube ID du concept
-  const heroVideoUrl = coachConcept?.heroImageUrl || coachConcept?.heroVideoUrl || coach.video_url;
+  // v18: Multi-vidéos héro avec fallback legacy
+  const heroVideos = (() => {
+    if (coachConcept?.heroVideos && coachConcept.heroVideos.length > 0) {
+      return coachConcept.heroVideos.filter(v => v && v.url);
+    }
+    const legacyUrl = coachConcept?.heroImageUrl || coachConcept?.heroVideoUrl || coach?.video_url;
+    if (legacyUrl) return [{ url: legacyUrl, type: 'youtube' }];
+    return [];
+  })();
+  const currentHeroVideo = heroVideos[activeVideoIndex] || heroVideos[0] || null;
+  const heroVideoUrl = currentHeroVideo?.url || '';
   const youtubeId = getYoutubeId(heroVideoUrl);
 
   // Déduplication des cours par nom
@@ -465,61 +477,44 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       {/* ============================================= */}
       <div className="relative w-full" style={{ height: '85vh', maxHeight: '85vh', background: '#000000' }}>
 
-        {/* Fond vidéo/thumbnail plein écran */}
+        {/* Fond vidéo plein écran — autoplay natif */}
         <div className="absolute inset-0 overflow-hidden">
           {youtubeId ? (
-            <>
-              {!ytPlaying ? (
-                <>
-                  <img
-                    src={`https://img.youtube.com/vi/${youtubeId}/0.jpg`}
-                    alt={displayName}
-                    className="absolute inset-0 w-full h-full object-cover"
-                    style={{ filter: 'brightness(0.85)' }}
-                    onError={(e) => { e.target.src = `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg`; }}
-                  />
-                  <div className="absolute inset-0 flex items-center justify-center cursor-pointer"
-                    onClick={() => setYtPlaying(true)}>
-                    <div className="w-20 h-20 rounded-full flex items-center justify-center transition-transform hover:scale-110"
-                      style={{
-                        background: 'rgba(217, 28, 210, 0.85)',
-                        boxShadow: '0 0 30px rgba(217, 28, 210, 0.6), 0 0 60px rgba(217, 28, 210, 0.3)',
-                        backdropFilter: 'blur(4px)'
-                      }}>
-                      <svg width="36" height="36" viewBox="0 0 24 24" fill="white">
-                        <polygon points="6 3 20 12 6 21 6 3" />
-                      </svg>
-                    </div>
-                  </div>
-                  <div className="absolute top-4 left-4 px-3 py-1 rounded-full text-xs font-bold text-white"
-                    style={{ background: 'rgba(255, 0, 0, 0.8)' }}>
-                    Shorts
-                  </div>
-                </>
-              ) : (
-                <iframe
-                  className="absolute"
-                  src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=1&loop=1&playlist=${youtubeId}&controls=1&showinfo=0&rel=0&modestbranding=1&playsinline=1`}
-                  title={displayName}
-                  frameBorder="0"
-                  allow="autoplay; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                  style={{
-                    pointerEvents: 'auto', position: 'absolute',
-                    top: '50%', left: '50%',
-                    width: '56.25vh', height: '100vh',
-                    minWidth: '100%', minHeight: '177.78vw',
-                    transform: 'translate(-50%, -50%)'
-                  }}
-                  onError={() => setYtPlaying(false)}
-                />
-              )}
-            </>
+            <iframe
+              className="absolute"
+              src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=1&loop=1&playlist=${youtubeId}&controls=0&showinfo=0&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`}
+              title={displayName}
+              frameBorder="0"
+              allow="autoplay; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              style={{
+                pointerEvents: 'none', position: 'absolute',
+                top: '50%', left: '50%',
+                width: '177.78vh', height: '100vh',
+                minWidth: '100%', minHeight: '56.25vw',
+                transform: 'translate(-50%, -50%)'
+              }}
+            />
           ) : heroVideoUrl && heroVideoUrl.match(/\.(mp4|webm|mov)$/i) ? (
             <video autoPlay muted loop playsInline className="absolute inset-0 w-full h-full object-cover"
               style={{ filter: 'brightness(0.7)' }}>
               <source src={heroVideoUrl} type="video/mp4" />
             </video>
+          ) : heroVideoUrl && heroVideoUrl.includes('vimeo.com') ? (
+            <iframe
+              className="absolute"
+              src={`https://player.vimeo.com/video/${heroVideoUrl.split('/').pop()}?autoplay=1&muted=1&loop=1&background=1`}
+              title={displayName}
+              frameBorder="0"
+              allow="autoplay; fullscreen"
+              style={{
+                pointerEvents: 'none', position: 'absolute',
+                top: '50%', left: '50%',
+                width: '177.78vh', height: '100vh',
+                minWidth: '100%', minHeight: '56.25vw',
+                transform: 'translate(-50%, -50%)'
+              }}
+            />
           ) : (
             <div className="absolute inset-0"
               style={{ background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.5) 0%, rgba(217, 28, 210, 0.4) 100%)' }}>
@@ -530,6 +525,25 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             </div>
           )}
         </div>
+
+        {/* Navigation dots multi-vidéos */}
+        {heroVideos.length > 1 && (
+          <div className="absolute z-20" style={{ bottom: '120px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '8px' }}>
+            {heroVideos.map((_, idx) => (
+              <button
+                key={idx}
+                onClick={() => setActiveVideoIndex(idx)}
+                style={{
+                  width: activeVideoIndex === idx ? '24px' : '10px', height: '10px',
+                  borderRadius: '5px', border: 'none', cursor: 'pointer',
+                  background: activeVideoIndex === idx ? '#D91CD2' : 'rgba(255,255,255,0.4)',
+                  boxShadow: activeVideoIndex === idx ? '0 0 10px rgba(217,28,210,0.6)' : 'none',
+                  transition: 'all 0.3s ease'
+                }}
+              />
+            ))}
+          </div>
+        )}
 
         {/* Gradient overlay bas */}
         <div className="absolute inset-0 pointer-events-none"

@@ -11,9 +11,66 @@ const ConceptEditor = ({
   conceptSaveStatus,
   saveConcept,
   API,
-  t
+  t,
+  isSuperAdmin = false,
+  coachEmail = ''
 }) => {
   const [aiLegalLoading, setAiLegalLoading] = React.useState(false);
+  const [uploadingVideo, setUploadingVideo] = React.useState(null); // slot index being uploaded
+
+  // Helper: get heroVideos array (with migration from legacy heroImageUrl)
+  const getHeroVideos = () => {
+    if (concept.heroVideos && concept.heroVideos.length > 0) return concept.heroVideos;
+    if (concept.heroImageUrl) return [{ url: concept.heroImageUrl, type: 'youtube', title: '' }];
+    return [];
+  };
+
+  const updateHeroVideo = (index, field, value) => {
+    const videos = [...getHeroVideos()];
+    if (videos[index]) {
+      videos[index] = { ...videos[index], [field]: value };
+    }
+    setConcept({ ...concept, heroVideos: videos, heroImageUrl: videos[0]?.url || '' });
+  };
+
+  const addHeroVideo = () => {
+    const videos = [...getHeroVideos()];
+    if (videos.length >= 3) return;
+    videos.push({ url: '', type: 'youtube', title: '' });
+    setConcept({ ...concept, heroVideos: videos });
+  };
+
+  const removeHeroVideo = (index) => {
+    const videos = [...getHeroVideos()];
+    videos.splice(index, 1);
+    setConcept({ ...concept, heroVideos: videos, heroImageUrl: videos[0]?.url || '' });
+  };
+
+  const handleVideoUpload = async (file, slotIndex) => {
+    if (!file || !isSuperAdmin) return;
+    setUploadingVideo(slotIndex);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('asset_type', 'video');
+      const res = await fetch(`${API}/coach/upload-asset`, {
+        method: 'POST',
+        headers: { 'X-User-Email': coachEmail },
+        body: formData
+      });
+      const data = await res.json();
+      if (data.url) {
+        const videos = [...getHeroVideos()];
+        videos[slotIndex] = { url: data.url, type: 'upload', title: file.name.replace(/\.[^.]+$/, '') };
+        setConcept({ ...concept, heroVideos: videos, heroImageUrl: videos[0]?.url || '' });
+      }
+    } catch (err) {
+      console.error('Erreur upload vidéo:', err);
+      alert('Erreur lors de l\'upload de la vidéo');
+    } finally {
+      setUploadingVideo(null);
+    }
+  };
 
   const handleAILegal = async () => {
     const text = concept.termsText;
@@ -222,16 +279,103 @@ const ConceptEditor = ({
             />
           </div>
           
-          {/* Hero Image URL */}
+          {/* v18: Multi-Vidéos Héro (3 max) */}
           <div className="mb-4">
-            <label className="block mb-1 text-white text-xs opacity-70">{t('heroImageUrl')}</label>
-            <input 
-              type="url" 
-              value={concept.heroImageUrl || ''} 
-              onChange={(e) => setConcept({ ...concept, heroImageUrl: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg neon-input text-sm" 
-              placeholder="https://..."
-            />
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-white text-xs opacity-70">🎬 Vidéos Héro (max 3)</label>
+              {getHeroVideos().length < 3 && (
+                <button
+                  type="button"
+                  onClick={addHeroVideo}
+                  style={{
+                    background: 'rgba(217,28,210,0.2)', border: '1px solid rgba(217,28,210,0.4)',
+                    color: '#D91CD2', fontSize: '11px', padding: '3px 10px', borderRadius: '8px', cursor: 'pointer'
+                  }}
+                >+ Ajouter une vidéo</button>
+              )}
+            </div>
+            {getHeroVideos().length === 0 && (
+              <div
+                onClick={addHeroVideo}
+                style={{
+                  border: '2px dashed rgba(217,28,210,0.3)', borderRadius: '12px', padding: '20px',
+                  textAlign: 'center', cursor: 'pointer', background: 'rgba(217,28,210,0.04)'
+                }}
+              >
+                <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>
+                  Cliquez pour ajouter votre première vidéo héro
+                </p>
+              </div>
+            )}
+            {getHeroVideos().map((video, idx) => (
+              <div key={idx} style={{
+                background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: '10px', padding: '12px', marginBottom: '8px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: 600 }}>Vidéo {idx + 1}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeHeroVideo(idx)}
+                    style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', fontSize: '11px', padding: '2px 8px', borderRadius: '6px', cursor: 'pointer' }}
+                  >Retirer</button>
+                </div>
+                <input
+                  type="url"
+                  value={video.url || ''}
+                  onChange={(e) => {
+                    const url = e.target.value;
+                    const isYT = url.includes('youtube.com') || url.includes('youtu.be');
+                    const isVimeo = url.includes('vimeo.com');
+                    updateHeroVideo(idx, 'url', url);
+                    if (isYT) updateHeroVideo(idx, 'type', 'youtube');
+                    else if (isVimeo) updateHeroVideo(idx, 'type', 'vimeo');
+                  }}
+                  className="w-full px-3 py-2 rounded-lg neon-input text-sm"
+                  placeholder="Lien YouTube ou Vimeo (ex: https://youtu.be/...)"
+                  style={{ marginBottom: '6px' }}
+                />
+                {isSuperAdmin && (
+                  <div style={{ marginTop: '4px' }}>
+                    <label
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer',
+                        background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)',
+                        padding: '4px 10px', borderRadius: '8px', fontSize: '11px', color: '#a78bfa'
+                      }}
+                    >
+                      {uploadingVideo === idx ? '⏳ Upload...' : '📁 Upload fichier (MP4/MOV)'}
+                      <input
+                        type="file"
+                        accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
+                        style={{ display: 'none' }}
+                        onChange={(e) => { if (e.target.files[0]) handleVideoUpload(e.target.files[0], idx); }}
+                        disabled={uploadingVideo !== null}
+                      />
+                    </label>
+                    <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', marginLeft: '6px' }}>
+                      Admin uniquement — max 15MB
+                    </span>
+                  </div>
+                )}
+                {video.url && (video.url.includes('youtu') || video.url.includes('vimeo')) && (
+                  <div style={{ marginTop: '6px', borderRadius: '8px', overflow: 'hidden', maxWidth: '240px' }}>
+                    <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0 }}>
+                      <iframe
+                        src={video.url.includes('youtu')
+                          ? `https://www.youtube.com/embed/${video.url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/)?.[1] || ''}`
+                          : `https://player.vimeo.com/video/${video.url.split('/').pop()}`
+                        }
+                        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
+                        allow="autoplay; encrypted-media"
+                        allowFullScreen
+                        title={`Preview vidéo ${idx + 1}`}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
           
           {/* Logo URL */}

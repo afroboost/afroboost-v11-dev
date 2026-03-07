@@ -569,6 +569,7 @@ class Concept(BaseModel):
     description: str = "Le concept Afroboost : cardio + danse afrobeat + casques audio immersifs. Un entraînement fun, énergétique et accessible à tous."
     heroImageUrl: str = ""
     heroVideoUrl: str = ""
+    heroVideos: List[dict] = []  # v18: Multi-vidéos [{url, type: 'youtube'|'upload', title}] max 3
     logoUrl: str = ""
     faviconUrl: str = ""
     termsText: str = ""  # CGV - Conditions Générales de Vente
@@ -598,6 +599,7 @@ class ConceptUpdate(BaseModel):
     description: Optional[str] = None
     heroImageUrl: Optional[str] = None
     heroVideoUrl: Optional[str] = None
+    heroVideos: Optional[List[dict]] = None  # v18: Multi-vidéos max 3
     logoUrl: Optional[str] = None
     faviconUrl: Optional[str] = None
     termsText: Optional[str] = None  # CGV - Conditions Générales de Vente

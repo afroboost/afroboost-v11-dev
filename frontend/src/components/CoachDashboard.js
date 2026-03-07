@@ -1538,7 +1538,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     if (!window.confirm("⚠️ SUPPRESSION DÉFINITIVE\n\nCette offre sera supprimée de la base de données.\nElle sera retirée de tous les codes promo.\n\nConfirmer la suppression ?")) return;
     try {
       // 1. Supprimer en base de données (le backend nettoie aussi les codes promo)
-      await axios.delete(`${API}/offers/${offerId}`);
+      await axios.delete(`${API}/offers/${offerId}`, getCoachHeaders());
       
       // 2. Mettre à jour le state local
       setOffers(prev => prev.filter(o => o.id !== offerId));
@@ -1551,12 +1551,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       
       // 4. Appeler sanitizeData pour s'assurer que la base est propre
       try {
-        await axios.post(`${API}/sanitize-data`);
+        await axios.post(`${API}/sanitize-data`, {}, getCoachHeaders());
       } catch (sanitizeErr) {
         console.warn("Sanitize warning:", sanitizeErr);
       }
-      
-      console.log(`✅ Offre ${offerId} supprimée définitivement`);
+
+      alert(`Offre supprimée avec succès`);
+      console.log(`Offre ${offerId} supprimée définitivement`);
     } catch (err) {
       console.error("Erreur suppression offre:", err);
       alert("❌ Erreur lors de la suppression");
@@ -4911,6 +4912,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               saveConcept={saveConcept}
               API={API}
               t={t}
+              isSuperAdmin={isSuperAdmin}
+              coachEmail={safeCoachUser?.email || ''}
             />
             <BrandingManager
               API={API}
