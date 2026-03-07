@@ -509,10 +509,20 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       {/* ============================================= */}
       <div className="relative w-full" style={{ height: '85vh', maxHeight: '85vh', background: '#000000' }}>
 
-        {/* v18.2: Loading spinner médias uploadés */}
+        {/* v18.3: Loading spinner médias uploadés — auto-hide après 5s */}
         {heroVideoUrl && (heroMediaType === 'video' || heroMediaType === 'image') && heroVideoUrl.includes('/api/files') && (
           <div id="hero-media-loader" className="absolute inset-0 z-10 flex items-center justify-center"
-            style={{ background: 'rgba(0,0,0,0.85)' }}>
+            style={{ background: 'rgba(0,0,0,0.85)' }}
+            ref={(el) => {
+              if (el) {
+                // v18.3: Auto-hide après 5s pour éviter spinner infini
+                const timer = setTimeout(() => {
+                  if (el) { el.style.opacity = '0'; el.style.pointerEvents = 'none'; }
+                  setTimeout(() => { if (el) el.style.display = 'none'; }, 500);
+                }, 5000);
+                el._loaderTimer = timer;
+              }
+            }}>
             <div style={{
               width: '48px', height: '48px', borderRadius: '50%',
               border: '3px solid rgba(217,28,210,0.2)', borderTopColor: '#D91CD2',
@@ -612,37 +622,47 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             // === VIDEO (uploadée ou externe) — AUTOPLAY OBLIGATOIRE ===
             if (heroMediaType === 'video') {
               return (
-                <video
-                  key={`vid-${heroVideoUrl}`}
-                  src={heroVideoUrl}
-                  autoPlay
-                  muted
-                  loop
-                  playsInline
-                  preload="auto"
-                  className="absolute inset-0 w-full h-full object-cover"
-                  style={{ filter: 'brightness(0.7)' }}
-                  onCanPlay={(e) => {
-                    console.log('[VITRINE-MEDIA] ✅ Vidéo prête, lancement autoplay:', heroVideoUrl);
-                    const loader = document.getElementById('hero-media-loader');
-                    if (loader) loader.style.display = 'none';
-                    // Force autoplay si le navigateur l'a bloqué
-                    if (e.target.paused) {
-                      e.target.muted = true;
-                      e.target.play().catch(() => {});
-                    }
-                  }}
-                  onLoadedData={() => {
-                    console.log('[VITRINE-MEDIA] ✅ Vidéo autoplay chargée:', heroVideoUrl);
-                    const loader = document.getElementById('hero-media-loader');
-                    if (loader) loader.style.display = 'none';
-                  }}
-                  onError={(e) => {
-                    console.error('[VITRINE-MEDIA] ❌ Erreur chargement vidéo:', heroVideoUrl, e.target.error);
-                    const loader = document.getElementById('hero-media-loader');
-                    if (loader) loader.style.display = 'none';
-                  }}
-                />
+                <div className="absolute inset-0" key={`vid-wrap-${heroVideoUrl}`}>
+                  <video
+                    key={`vid-${heroVideoUrl}`}
+                    src={heroVideoUrl}
+                    autoPlay
+                    muted
+                    loop
+                    playsInline
+                    preload="auto"
+                    className="absolute inset-0 w-full h-full object-cover"
+                    style={{ filter: 'brightness(0.7)' }}
+                    onCanPlay={(e) => {
+                      console.log('[VITRINE-MEDIA] ✅ Vidéo prête, lancement autoplay:', heroVideoUrl);
+                      const loader = document.getElementById('hero-media-loader');
+                      if (loader) loader.style.display = 'none';
+                      if (e.target.paused) {
+                        e.target.muted = true;
+                        e.target.play().catch(() => {});
+                      }
+                    }}
+                    onLoadedData={() => {
+                      console.log('[VITRINE-MEDIA] ✅ Vidéo autoplay chargée:', heroVideoUrl);
+                      const loader = document.getElementById('hero-media-loader');
+                      if (loader) loader.style.display = 'none';
+                    }}
+                    onError={(e) => {
+                      console.error('[VITRINE-MEDIA] ❌ Erreur chargement vidéo:', heroVideoUrl, e.target.error);
+                      const loader = document.getElementById('hero-media-loader');
+                      if (loader) loader.style.display = 'none';
+                    }}
+                  />
+                  {/* v18.3: Gradient fallback derrière la vidéo (visible si vidéo ne charge pas) */}
+                  <div className="absolute inset-0" style={{
+                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.6) 0%, rgba(217, 28, 210, 0.5) 50%, rgba(30, 0, 50, 0.9) 100%)',
+                    zIndex: -1
+                  }}>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span style={{ fontSize: '4rem', opacity: 0.3 }}>🎬</span>
+                    </div>
+                  </div>
+                </div>
               );
             }
 
