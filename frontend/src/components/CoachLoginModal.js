@@ -1,9 +1,10 @@
 /**
- * CoachLoginModal Component - Google OAuth Authentication
- * 
- * Authentification Google exclusive pour le Coach/Super Admin
- * Seul l'email autorisé (coach@afroboost.com) peut accéder au dashboard
- * 
+ * CoachLoginModal Component v10.0 - Google OAuth + Email/Password
+ *
+ * Authentification multi-méthodes pour les Partenaires et Super Admin
+ * - Google OAuth (existant, fiabilisé avec retry)
+ * - Email/Password classique (nouveau)
+ *
  * REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
  */
 import { useState, useEffect, useRef } from 'react';
@@ -23,11 +24,40 @@ const GoogleIcon = () => (
   </svg>
 );
 
+// Icône Email
+const EmailIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+    <polyline points="22,6 12,13 2,6"/>
+  </svg>
+);
+
+// Icône œil (show/hide password)
+const EyeIcon = ({ open }) => open ? (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+    <circle cx="12" cy="12" r="3"/>
+  </svg>
+) : (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/>
+    <line x1="1" y1="1" x2="23" y2="23"/>
+  </svg>
+);
+
 const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const hasProcessedRef = useRef(false);
+
+  // Email/Password form state
+  const [authMode, setAuthMode] = useState('choice'); // 'choice' | 'login' | 'register'
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   // Vérifier si déjà authentifié au chargement
   useEffect(() => {
@@ -52,47 +82,54 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
   // Traiter le session_id dans l'URL (callback OAuth)
   useEffect(() => {
     const processOAuthCallback = async () => {
-      // Éviter le double traitement (StrictMode)
       if (hasProcessedRef.current) return;
-      
+
       const hash = window.location.hash;
       if (!hash.includes('session_id=')) return;
-      
+
       hasProcessedRef.current = true;
       setIsLoading(true);
       setError("");
-      
+
       const sessionId = hash.split('session_id=')[1]?.split('&')[0];
       if (!sessionId) {
         setError("Session invalide");
         setIsLoading(false);
         return;
       }
-      
-      // Nettoyer l'URL immédiatement
+
       window.history.replaceState(null, '', window.location.pathname);
-      
-      try {
-        const response = await axios.post(`${API}/auth/google/session`, 
-          { session_id: sessionId },
-          { withCredentials: true }
-        );
-        
-        if (response.data.success) {
-          console.log('✅ Authentification Google réussie:', response.data.user.email);
-          onLogin(response.data.user);
-        } else {
-          // Accès refusé (email non autorisé)
-          setError(response.data.message || "Accès refusé");
+
+      // Retry logic for Google OAuth
+      let lastError = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await axios.post(`${API}/auth/google/session`,
+            { session_id: sessionId },
+            { withCredentials: true, timeout: 8000 }
+          );
+
+          if (response.data.success) {
+            console.log('✅ Authentification Google réussie:', response.data.user.email);
+            onLogin(response.data.user);
+            return;
+          } else {
+            setError(response.data.message || "Accès refusé");
+            setIsLoading(false);
+            return;
+          }
+        } catch (err) {
+          lastError = err;
+          console.warn(`⚠️ Tentative ${attempt}/3 échouée:`, err.message);
+          if (attempt < 3) await new Promise(r => setTimeout(r, 1000));
         }
-      } catch (err) {
-        console.error('❌ Erreur OAuth:', err);
-        setError(err.response?.data?.message || "Erreur d'authentification");
-      } finally {
-        setIsLoading(false);
       }
+
+      console.error('❌ Erreur OAuth après 3 tentatives:', lastError);
+      setError("La connexion Google a échoué. Réessayez ou utilisez votre email.");
+      setIsLoading(false);
     };
-    
+
     processOAuthCallback();
   }, [onLogin]);
 
@@ -100,132 +137,394 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
   const handleGoogleLogin = () => {
     setIsLoading(true);
     setError("");
-    
+
     // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
     const redirectUrl = window.location.origin + window.location.pathname;
     window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
   };
 
+  // Connexion Email/Password
+  const handleEmailLogin = async (e) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError("");
+
+    try {
+      const response = await axios.post(`${API}/auth/login`,
+        { email, password },
+        { withCredentials: true }
+      );
+
+      if (response.data.success) {
+        console.log('✅ Connexion email réussie:', response.data.user.email);
+        onLogin(response.data.user);
+      }
+    } catch (err) {
+      const msg = err.response?.data?.detail || "Erreur de connexion";
+      setError(msg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Inscription Email/Password
+  const handleEmailRegister = async (e) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError("");
+
+    if (password.length < 6) {
+      setError("Le mot de passe doit contenir au moins 6 caractères");
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const response = await axios.post(`${API}/auth/register`,
+        { email, name, password },
+        { withCredentials: true }
+      );
+
+      if (response.data.success) {
+        console.log('✅ Inscription réussie:', response.data.user.email);
+        onLogin(response.data.user);
+      }
+    } catch (err) {
+      const msg = err.response?.data?.detail || "Erreur d'inscription";
+      setError(msg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Reset form
+  const resetForm = () => {
+    setEmail('');
+    setName('');
+    setPassword('');
+    setError('');
+    setSuccessMsg('');
+    setShowPassword(false);
+  };
+
   // Affichage pendant la vérification
   if (isCheckingAuth) {
     return (
-      <div className="modal-overlay">
-        <div className="modal-content glass rounded-xl p-8 max-w-md w-full neon-border">
-          <div className="text-center">
-            <div className="animate-spin w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-            <p className="text-white text-sm">Vérification de la session...</p>
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+        <div style={{ background: 'rgba(30,20,50,0.95)', borderRadius: '16px', padding: '32px', maxWidth: '400px', width: '90%', border: '1px solid rgba(139,92,246,0.3)' }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ width: '32px', height: '32px', border: '2px solid #8b5cf6', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 16px' }}></div>
+            <p style={{ color: 'white', fontSize: '14px' }}>Vérification de la session...</p>
           </div>
         </div>
       </div>
     );
   }
 
+  // === STYLES COMMUNS ===
+  const inputStyle = {
+    width: '100%',
+    padding: '10px 12px',
+    borderRadius: '8px',
+    background: 'rgba(255,255,255,0.08)',
+    border: '1px solid rgba(255,255,255,0.15)',
+    color: 'white',
+    fontSize: '14px',
+    outline: 'none',
+    boxSizing: 'border-box'
+  };
+
+  const labelStyle = {
+    display: 'block',
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: '12px',
+    marginBottom: '4px'
+  };
+
+  const primaryBtnStyle = {
+    width: '100%',
+    padding: '12px',
+    borderRadius: '8px',
+    fontWeight: '600',
+    fontSize: '14px',
+    cursor: isLoading ? 'wait' : 'pointer',
+    opacity: isLoading ? 0.7 : 1,
+    border: 'none',
+    transition: 'all 0.2s'
+  };
+
   return (
-    <div className="modal-overlay">
-      <div className="modal-content glass rounded-xl p-6 max-w-md w-full neon-border">
-        
-        {/* v9.6.4: Header simplifié */}
-        <div className="text-center mb-4">
-          <div className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 mx-auto mb-3 flex items-center justify-center">
-            <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+      <div style={{ background: 'rgba(30,20,50,0.95)', borderRadius: '16px', padding: '24px', maxWidth: '420px', width: '90%', border: '1px solid rgba(139,92,246,0.3)', maxHeight: '90vh', overflowY: 'auto' }}>
+
+        {/* Header */}
+        <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+          <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: 'linear-gradient(135deg, #8b5cf6, #ec4899)', margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
             </svg>
           </div>
-          <h2 className="font-bold text-white text-lg mb-1">{t('coachLogin') || 'Espace Partenaire'}</h2>
+          <h2 style={{ fontWeight: 'bold', color: 'white', fontSize: '18px', marginBottom: '4px' }}>
+            {t('coachLogin') || 'Espace Partenaire'}
+          </h2>
         </div>
 
-        {/* v9.1.8: Message de bienvenue après paiement */}
+        {/* Message de bienvenue après paiement */}
         {welcomeMessage && (
-          <div 
-            className="mb-4 p-3 rounded-lg text-center"
-            style={{ 
-              background: 'rgba(34, 197, 94, 0.2)', 
-              border: '1px solid rgba(34, 197, 94, 0.5)' 
-            }}
-          >
-            <p className="text-green-400 text-sm font-medium">{welcomeMessage}</p>
+          <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '8px', textAlign: 'center', background: 'rgba(34,197,94,0.2)', border: '1px solid rgba(34,197,94,0.5)' }}>
+            <p style={{ color: '#4ade80', fontSize: '13px', fontWeight: '500' }}>{welcomeMessage}</p>
           </div>
         )}
 
         {/* Message d'erreur */}
         {error && (
-          <div 
-            className="mb-4 p-3 rounded-lg text-center"
-            style={{ 
-              background: 'rgba(239, 68, 68, 0.2)', 
-              border: '1px solid rgba(239, 68, 68, 0.5)' 
-            }}
-          >
-            <p className="text-red-400 text-sm">{error}</p>
+          <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '8px', textAlign: 'center', background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.5)' }}>
+            <p style={{ color: '#f87171', fontSize: '13px' }}>{error}</p>
           </div>
         )}
 
-        {/* v9.6.4: BOUTON PRINCIPAL EN HAUT - Déjà Partenaire */}
-        <div className="space-y-3">
-          <p className="text-white/70 text-xs text-center mb-2">Déjà partenaire ?</p>
-          <button
-            onClick={handleGoogleLogin}
-            disabled={isLoading}
-            className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-lg font-medium transition-all duration-200 hover:scale-[1.02]"
-            style={{
-              background: '#ffffff',
-              color: '#1f1f1f',
-              border: 'none',
-              cursor: isLoading ? 'wait' : 'pointer',
-              opacity: isLoading ? 0.7 : 1,
-              boxShadow: '0 4px 15px rgba(255,255,255,0.2)'
-            }}
-            data-testid="google-login-btn"
-          >
-            {isLoading ? (
-              <div className="animate-spin w-5 h-5 border-2 border-gray-400 border-t-transparent rounded-full"></div>
-            ) : (
-              <GoogleIcon />
-            )}
-            <span className="font-semibold">{isLoading ? 'Connexion...' : 'Se connecter avec Google'}</span>
-          </button>
-        </div>
+        {/* Message de succès */}
+        {successMsg && (
+          <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '8px', textAlign: 'center', background: 'rgba(34,197,94,0.2)', border: '1px solid rgba(34,197,94,0.5)' }}>
+            <p style={{ color: '#4ade80', fontSize: '13px' }}>{successMsg}</p>
+          </div>
+        )}
 
-        {/* Séparateur */}
-        <div className="flex items-center my-5">
-          <div className="flex-1 h-px bg-white/20"></div>
-          <span className="px-3 text-white/40 text-xs">ou</span>
-          <div className="flex-1 h-px bg-white/20"></div>
-        </div>
+        {/* === MODE CHOIX (par défaut) === */}
+        {authMode === 'choice' && (
+          <>
+            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', textAlign: 'center', marginBottom: '12px' }}>Déjà partenaire ?</p>
 
-        {/* v9.6.4: BOUTON SECONDAIRE EN BAS - Devenir Partenaire */}
-        <button 
-          type="button" 
-          onClick={() => {
-            onCancel();
-            window.location.hash = '#become-coach';
-          }} 
-          className="w-full py-3 rounded-lg font-medium text-sm transition-all hover:scale-[1.02]"
-          style={{
-            background: 'linear-gradient(135deg, rgba(217,28,210,0.3), rgba(139,92,246,0.3))',
-            border: '1px solid rgba(217,28,210,0.5)',
-            color: '#D91CD2'
-          }}
-          data-testid="become-partner-btn"
-        >
-          ✨ Devenir Partenaire
-        </button>
+            {/* Bouton Google */}
+            <button
+              onClick={handleGoogleLogin}
+              disabled={isLoading}
+              style={{
+                ...primaryBtnStyle,
+                background: '#ffffff',
+                color: '#1f1f1f',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px',
+                boxShadow: '0 4px 15px rgba(255,255,255,0.15)',
+                marginBottom: '10px'
+              }}
+              data-testid="google-login-btn"
+            >
+              {isLoading ? (
+                <div style={{ width: '20px', height: '20px', border: '2px solid #999', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
+              ) : (
+                <GoogleIcon />
+              )}
+              <span>{isLoading ? 'Connexion...' : 'Se connecter avec Google'}</span>
+            </button>
 
-        {/* Info sécurité compacte */}
-        <p className="text-white/40 text-[10px] text-center mt-4">
-          🔒 Connexion sécurisée via Google
+            {/* Bouton Email */}
+            <button
+              onClick={() => { resetForm(); setAuthMode('login'); }}
+              disabled={isLoading}
+              style={{
+                ...primaryBtnStyle,
+                background: 'rgba(139,92,246,0.2)',
+                color: '#c4b5fd',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px',
+                border: '1px solid rgba(139,92,246,0.4)',
+                marginBottom: '0'
+              }}
+            >
+              <EmailIcon />
+              <span>Se connecter avec Email</span>
+            </button>
+
+            {/* Séparateur */}
+            <div style={{ display: 'flex', alignItems: 'center', margin: '20px 0' }}>
+              <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.15)' }}></div>
+              <span style={{ padding: '0 12px', color: 'rgba(255,255,255,0.3)', fontSize: '12px' }}>ou</span>
+              <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.15)' }}></div>
+            </div>
+
+            {/* Devenir Partenaire */}
+            <button
+              type="button"
+              onClick={() => { onCancel(); window.location.hash = '#become-coach'; }}
+              style={{
+                ...primaryBtnStyle,
+                background: 'linear-gradient(135deg, rgba(217,28,210,0.3), rgba(139,92,246,0.3))',
+                border: '1px solid rgba(217,28,210,0.5)',
+                color: '#D91CD2'
+              }}
+              data-testid="become-partner-btn"
+            >
+              ✨ Devenir Partenaire
+            </button>
+          </>
+        )}
+
+        {/* === MODE CONNEXION EMAIL === */}
+        {authMode === 'login' && (
+          <form onSubmit={handleEmailLogin}>
+            <div style={{ marginBottom: '12px' }}>
+              <label style={labelStyle}>Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="votre@email.com"
+                required
+                style={inputStyle}
+              />
+            </div>
+            <div style={{ marginBottom: '16px', position: 'relative' }}>
+              <label style={labelStyle}>Mot de passe</label>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••"
+                required
+                style={{ ...inputStyle, paddingRight: '40px' }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                style={{ position: 'absolute', right: '10px', top: '28px', background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: '4px' }}
+              >
+                <EyeIcon open={showPassword} />
+              </button>
+            </div>
+            <button
+              type="submit"
+              disabled={isLoading}
+              style={{
+                ...primaryBtnStyle,
+                background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)',
+                color: 'white',
+                marginBottom: '10px'
+              }}
+            >
+              {isLoading ? 'Connexion...' : 'Se connecter'}
+            </button>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+              <button
+                type="button"
+                onClick={() => { resetForm(); setAuthMode('register'); }}
+                style={{ background: 'none', border: 'none', color: '#c4b5fd', fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' }}
+              >
+                Créer un compte
+              </button>
+              <button
+                type="button"
+                onClick={() => { resetForm(); setAuthMode('choice'); }}
+                style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: '12px', cursor: 'pointer' }}
+              >
+                ← Retour
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* === MODE INSCRIPTION EMAIL === */}
+        {authMode === 'register' && (
+          <form onSubmit={handleEmailRegister}>
+            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', textAlign: 'center', marginBottom: '16px' }}>
+              Créer votre compte Partenaire
+            </p>
+            <div style={{ marginBottom: '12px' }}>
+              <label style={labelStyle}>Nom complet</label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Votre nom"
+                required
+                style={inputStyle}
+              />
+            </div>
+            <div style={{ marginBottom: '12px' }}>
+              <label style={labelStyle}>Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="votre@email.com"
+                required
+                style={inputStyle}
+              />
+            </div>
+            <div style={{ marginBottom: '16px', position: 'relative' }}>
+              <label style={labelStyle}>Mot de passe (min. 6 caractères)</label>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••"
+                required
+                minLength={6}
+                style={{ ...inputStyle, paddingRight: '40px' }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                style={{ position: 'absolute', right: '10px', top: '28px', background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: '4px' }}
+              >
+                <EyeIcon open={showPassword} />
+              </button>
+            </div>
+            <button
+              type="submit"
+              disabled={isLoading}
+              style={{
+                ...primaryBtnStyle,
+                background: 'linear-gradient(135deg, #ec4899, #8b5cf6)',
+                color: 'white',
+                marginBottom: '10px'
+              }}
+            >
+              {isLoading ? 'Inscription...' : 'Créer mon compte'}
+            </button>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+              <button
+                type="button"
+                onClick={() => { resetForm(); setAuthMode('login'); }}
+                style={{ background: 'none', border: 'none', color: '#c4b5fd', fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' }}
+              >
+                Déjà un compte ? Se connecter
+              </button>
+              <button
+                type="button"
+                onClick={() => { resetForm(); setAuthMode('choice'); }}
+                style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: '12px', cursor: 'pointer' }}
+              >
+                ← Retour
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Info sécurité */}
+        <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: '10px', textAlign: 'center', marginTop: '16px' }}>
+          🔒 Connexion sécurisée
         </p>
 
         {/* Bouton Fermer */}
-        <button 
-          type="button" 
-          onClick={onCancel} 
-          className="w-full py-2 mt-3 rounded-lg text-white/60 text-xs hover:text-white transition-colors"
+        <button
+          type="button"
+          onClick={onCancel}
+          style={{ width: '100%', padding: '8px', marginTop: '8px', borderRadius: '8px', background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: '12px', cursor: 'pointer' }}
           data-testid="coach-login-cancel"
         >
           Fermer
         </button>
       </div>
+
+      {/* CSS animation keyframe */}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 };
