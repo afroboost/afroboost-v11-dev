@@ -89,6 +89,7 @@ const SubscriberForm = ({
   useEffect(() => {
     const saved = loadSavedInfo();
     if (saved) {
+      console.log('[SUBSCRIBER-FORM] Auto-fill from localStorage:', saved);
       setFormData(prev => ({
         ...prev,
         name: saved.name || prev.name,
@@ -99,28 +100,45 @@ const SubscriberForm = ({
     }
   }, [setFormData]);
 
-  // Wrapper soumission : sauvegarde ou supprime selon toggle
+  // Sauvegarde en TEMPS RÉEL quand le toggle est ON et les champs changent
+  useEffect(() => {
+    if (rememberMe && (formData.name || formData.whatsapp || formData.email)) {
+      saveInfo(formData);
+      console.log('[SUBSCRIBER-FORM] Auto-save to localStorage:', {
+        name: formData.name, whatsapp: formData.whatsapp, email: formData.email
+      });
+    }
+  }, [rememberMe, formData.name, formData.whatsapp, formData.email]);
+
+  // Wrapper soumission : sauvegarde finale ou supprime selon toggle
   const handleSubmit = useCallback((e) => {
     e.preventDefault();
     if (rememberMe) {
       saveInfo(formData);
+      console.log('[SUBSCRIBER-FORM] Save on submit');
     } else {
       clearSavedInfo();
+      console.log('[SUBSCRIBER-FORM] Clear on submit (toggle OFF)');
     }
-    // Appeler le onSubmit original (qui attend un event)
     onSubmit(e);
   }, [rememberMe, formData, onSubmit]);
 
-  // Toggle handler
+  // Toggle handler — sauvegarde immédiate si ON, supprime si OFF
   const toggleRemember = useCallback(() => {
     setRememberMe(prev => {
       const next = !prev;
-      if (!next) {
+      if (next) {
+        // Toggle activé → sauvegarder immédiatement les données actuelles
+        saveInfo(formData);
+        console.log('[SUBSCRIBER-FORM] Toggle ON → saved');
+      } else {
+        // Toggle désactivé → supprimer les données
         clearSavedInfo();
+        console.log('[SUBSCRIBER-FORM] Toggle OFF → cleared');
       }
       return next;
     });
-  }, []);
+  }, [formData]);
 
   return (
     <form
