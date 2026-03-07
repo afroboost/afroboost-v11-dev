@@ -3626,7 +3626,21 @@ function App() {
     );
   }
   
-  if (coachMode) return <CoachDashboard t={t} lang={lang} onBack={handleBackFromCoach} onLogout={handleLogout} coachUser={coachUser} />;
+  // v18.2: Si l'URL est /coach/xxx, afficher la vitrine MÊME si le coach est connecté
+  if (coachMode) {
+    if (showCoachVitrine) {
+      return (
+        <div className="fixed inset-0 z-50" style={{ background: '#000' }}>
+          <CoachVitrine
+            username={showCoachVitrine}
+            onClose={() => { setShowCoachVitrine(null); window.history.pushState({}, '', '/'); }}
+            onBack={() => { setShowCoachVitrine(null); window.history.pushState({}, '', '/'); }}
+          />
+        </div>
+      );
+    }
+    return <CoachDashboard t={t} lang={lang} onBack={handleBackFromCoach} onLogout={handleLogout} coachUser={coachUser} />;
+  }
 
   // Filtrer les offres et cours selon visibilité, filtre actif et recherche
   // =====================================================
