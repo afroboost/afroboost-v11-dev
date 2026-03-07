@@ -29,6 +29,7 @@ import {
 } from '../services/SoundManager';
 import EmojiPicker from './EmojiPicker';
 import SubscriberForm from './chat/SubscriberForm';
+import OnboardingTunnel from './chat/OnboardingTunnel';
 import PrivateChatView from './chat/PrivateChatView';
 import BookingPanel from './chat/BookingPanel';
 import MessageSkeleton from './chat/MessageSkeleton';
@@ -1044,6 +1045,10 @@ export const ChatWidget = () => {
   const [showSubscriberForm, setShowSubscriberForm] = useState(false); // Afficher le formulaire abonné
   const [subscriberFormData, setSubscriberFormData] = useState({ name: '', whatsapp: '', email: '', code: '' });
   const [validatingCode, setValidatingCode] = useState(false); // Loading pendant validation du code
+
+  // === v16.0: TUNNEL D'ONBOARDING (liens personnalisés) ===
+  const [showOnboardingTunnel, setShowOnboardingTunnel] = useState(false); // Tunnel actif
+  const [currentLinkToken, setCurrentLinkToken] = useState(null); // Token du lien actuel
 
   // === v11.6: RÉCUPÉRATION D'ACCÈS & MON PASS ===
   const [showRecoverForm, setShowRecoverForm] = useState(false); // Formulaire "Retrouver mes accès"
@@ -2266,7 +2271,13 @@ export const ChatWidget = () => {
   }, [isOpen]); // Se déclenche uniquement quand isOpen change
 
   // Extraire le token de lien depuis l'URL si présent
+  // v16.0: Supporte /?link={token} (format shareable) ET /chat/{token} (ancien format)
   const getLinkTokenFromUrl = () => {
+    // 1. Vérifier le query param ?link=
+    const urlParams = new URLSearchParams(window.location.search);
+    const linkParam = urlParams.get('link');
+    if (linkParam) return linkParam;
+    // 2. Fallback: ancien format /chat/{token}
     const path = window.location.pathname;
     const match = path.match(/\/chat\/([a-zA-Z0-9-]+)/);
     return match ? match[1] : null;
@@ -2917,9 +2928,34 @@ export const ChatWidget = () => {
     }
 
     // Si on arrive via un lien partagé, ouvrir automatiquement le widget
+    // v16.0: Vérifier si onboarding déjà fait, sinon afficher le tunnel
     const linkToken = getLinkTokenFromUrl();
     if (linkToken) {
+      setCurrentLinkToken(linkToken);
       setIsOpen(true);
+      setIsFullscreen(true);
+
+      // Vérifier si le visiteur a déjà complété l'onboarding pour ce lien
+      const storedParticipant = localStorage.getItem(`af_participant_${linkToken}`);
+      if (storedParticipant) {
+        try {
+          const parsed = JSON.parse(storedParticipant);
+          console.log('[CHATWIDGET] 🔄 Visiteur reconnu via onboarding:', parsed.name);
+          // Lancer smart-entry avec les données sauvegardées
+          handleSmartEntry({
+            firstName: parsed.name,
+            email: parsed.email,
+            whatsapp: parsed.whatsapp
+          }, linkToken);
+        } catch (e) {
+          localStorage.removeItem(`af_participant_${linkToken}`);
+          setShowOnboardingTunnel(true);
+        }
+      } else {
+        // Nouveau visiteur → afficher le tunnel d'onboarding
+        console.log('[CHATWIDGET] 🆕 Nouveau visiteur, affichage tunnel onboarding');
+        setShowOnboardingTunnel(true);
+      }
     }
   }, []);
 
@@ -4286,8 +4322,27 @@ export const ChatWidget = () => {
                   flexDirection: 'column'
                 }}
               >
-                {/* === FORMULAIRE ABONNÉ (4 champs avec code promo) === */}
-                {showSubscriberForm ? (
+                {/* === v16.0: TUNNEL D'ONBOARDING (liens personnalisés) === */}
+                {showOnboardingTunnel && currentLinkToken ? (
+                  <OnboardingTunnel
+                    linkToken={currentLinkToken}
+                    onComplete={async (participantId, sessionId, clientData) => {
+                      console.log('[CHATWIDGET] ✅ Onboarding terminé:', { participantId, sessionId });
+                      setShowOnboardingTunnel(false);
+                      // Lancer le chat via smart-entry (réutilise le flux existant)
+                      try {
+                        await handleSmartEntry(clientData, currentLinkToken);
+                      } catch (err) {
+                        console.error('[CHATWIDGET] Erreur post-onboarding:', err);
+                        setMessages([{
+                          type: 'ai',
+                          text: `Bienvenue ${clientData.firstName} ! 😊 Comment puis-je vous aider ?`
+                        }]);
+                      }
+                    }}
+                  />
+                ) : showSubscriberForm ? (
+                  /* === FORMULAIRE ABONNÉ (4 champs avec code promo) === */
                   <SubscriberForm
                     formData={subscriberFormData}
                     setFormData={setSubscriberFormData}

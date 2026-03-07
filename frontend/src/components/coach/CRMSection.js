@@ -1,8 +1,9 @@
-// CRMSection.js - Section CRM/Conversations v9.2.0
+// CRMSection.js - Section CRM/Conversations v16.0
 // Extrait de CoachDashboard.js pour modularisation
+// v16.0: Conversations groupées par lien + WhatsApp + toggle IA/Humain amélioré
 
-import React, { useRef, useCallback, memo } from 'react';
-import { ChevronDown, Trash2, Send, Copy, Check, ExternalLink } from 'lucide-react';
+import React, { useRef, useCallback, memo, useMemo, useState } from 'react';
+import { ChevronDown, Trash2, Send, Copy, Check, ExternalLink, Phone } from 'lucide-react';
 
 // ====== COMPOSANT NOTIFICATION BANNER ======
 const NotificationBanner = memo(({ 
@@ -417,10 +418,28 @@ const ConversationItem = memo(({
           <p className="text-white/60 text-sm mt-1 truncate">
             {session.lastMessage || 'Nouvelle conversation'}
           </p>
-          {/* v14.3: Afficher la source du lien */}
-          {session.title && (
-            <p className="text-violet-400/70 text-xs mt-1">
-              🔗 Source : {session.title}
+          {/* v16.0: Afficher WhatsApp si disponible */}
+          {session.participantWhatsapp && (
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-green-400/80 text-xs">📱 {session.participantWhatsapp}</span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const phone = session.participantWhatsapp.replace(/[\s\-()]/g, '');
+                  window.open(`https://wa.me/${phone.replace('+', '')}`, '_blank');
+                }}
+                className="text-green-400 hover:text-green-300 transition-colors"
+                title="Contacter sur WhatsApp"
+                style={{ padding: '2px 4px', fontSize: '10px', background: 'rgba(34, 197, 94, 0.15)', borderRadius: '4px', border: 'none', cursor: 'pointer', color: '#22c55e' }}
+              >
+                💬 WA
+              </button>
+            </div>
+          )}
+          {/* v14.3: Afficher email si différent du nom */}
+          {session.participantEmail && session.participantEmail !== session.participantName && (
+            <p className="text-white/40 text-xs mt-1">
+              ✉️ {session.participantEmail}
             </p>
           )}
           <div className="flex items-center gap-3 mt-2 text-xs text-white/40">
@@ -460,6 +479,134 @@ const ConversationItem = memo(({
   );
 });
 ConversationItem.displayName = 'ConversationItem';
+
+// ====== v16.0: COMPOSANT GROUPED CONVERSATION LIST ======
+const GroupedConversationList = memo(({
+  enrichedConversations,
+  conversationsListRef,
+  handleConversationsScroll,
+  selectedSession,
+  setSelectedSession,
+  loadSessionMessages,
+  setSessionMode,
+  deleteChatSession,
+  isSuperAdmin,
+  conversationsHasMore,
+  conversationsLoading
+}) => {
+  const [collapsedGroups, setCollapsedGroups] = useState({});
+
+  // Grouper par titre de lien (ou "Sans lien" si pas de titre)
+  const grouped = useMemo(() => {
+    const groups = {};
+    enrichedConversations.forEach(session => {
+      const key = session.title || 'Conversations directes';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(session);
+    });
+    return groups;
+  }, [enrichedConversations]);
+
+  const groupKeys = Object.keys(grouped);
+  const toggleGroup = (key) => {
+    setCollapsedGroups(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  return (
+    <div
+      ref={conversationsListRef}
+      onScroll={handleConversationsScroll}
+      style={{ maxHeight: '500px', overflowY: 'auto', paddingRight: '8px' }}
+    >
+      {enrichedConversations.length === 0 ? (
+        <p className="text-white/40 text-center py-8">Aucune conversation pour le moment</p>
+      ) : (
+        groupKeys.map(groupKey => {
+          const sessions = grouped[groupKey];
+          const isCollapsed = collapsedGroups[groupKey];
+          const totalUnread = sessions.reduce((sum, s) => sum + (s.unreadCount || 0), 0);
+
+          return (
+            <div key={groupKey} style={{ marginBottom: '16px' }}>
+              {/* Header du groupe */}
+              <button
+                onClick={() => toggleGroup(groupKey)}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '10px 14px',
+                  borderRadius: '10px',
+                  border: '1px solid rgba(139, 92, 246, 0.3)',
+                  background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(217, 28, 210, 0.08))',
+                  cursor: 'pointer',
+                  marginBottom: isCollapsed ? '0' : '8px',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{
+                    fontSize: '10px',
+                    color: 'rgba(255,255,255,0.5)',
+                    transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.2s ease',
+                    display: 'inline-block'
+                  }}>▼</span>
+                  <span style={{ color: '#a78bfa', fontSize: '13px', fontWeight: '600' }}>
+                    🔗 {groupKey}
+                  </span>
+                  <span style={{
+                    color: 'rgba(255,255,255,0.4)',
+                    fontSize: '11px'
+                  }}>
+                    ({sessions.length} conv.)
+                  </span>
+                </div>
+                {totalUnread > 0 && (
+                  <span style={{
+                    background: '#ef4444',
+                    color: '#fff',
+                    fontSize: '11px',
+                    fontWeight: '700',
+                    padding: '2px 8px',
+                    borderRadius: '10px'
+                  }}>
+                    {totalUnread}
+                  </span>
+                )}
+              </button>
+
+              {/* Conversations du groupe */}
+              {!isCollapsed && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingLeft: '8px' }}>
+                  {sessions.map(session => (
+                    <ConversationItem
+                      key={session.id}
+                      session={session}
+                      selectedSession={selectedSession}
+                      setSelectedSession={setSelectedSession}
+                      loadSessionMessages={loadSessionMessages}
+                      setSessionMode={setSessionMode}
+                      deleteChatSession={deleteChatSession}
+                      isSuperAdmin={isSuperAdmin}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
+      {conversationsHasMore && (
+        <div className="text-center py-3 text-white/40">
+          {conversationsLoading ? '⏳ Chargement...' : '↓ Scroll pour plus'}
+        </div>
+      )}
+    </div>
+  );
+});
+GroupedConversationList.displayName = 'GroupedConversationList';
 
 // ====== COMPOSANT MAIN CRM SECTION ======
 const CRMSection = ({
@@ -600,34 +747,20 @@ const CRMSection = ({
             data-testid="conversation-search"
           />
           
-          {/* List */}
-          <div 
-            ref={conversationsListRef}
-            onScroll={handleConversationsScroll}
-            className="space-y-3 max-h-[500px] overflow-y-auto pr-2"
-          >
-            {enrichedConversations.length === 0 ? (
-              <p className="text-white/40 text-center py-8">Aucune conversation pour le moment</p>
-            ) : (
-              enrichedConversations.map(session => (
-                <ConversationItem 
-                  key={session.id}
-                  session={session}
-                  selectedSession={selectedSession}
-                  setSelectedSession={setSelectedSession}
-                  loadSessionMessages={loadSessionMessages}
-                  setSessionMode={setSessionMode}
-                  deleteChatSession={deleteChatSession}
-                  isSuperAdmin={isSuperAdmin}
-                />
-              ))
-            )}
-            {conversationsHasMore && (
-              <div className="text-center py-3 text-white/40">
-                {conversationsLoading ? '⏳ Chargement...' : '↓ Scroll pour plus'}
-              </div>
-            )}
-          </div>
+          {/* v16.0: Liste groupée par lien */}
+          <GroupedConversationList
+            enrichedConversations={enrichedConversations}
+            conversationsListRef={conversationsListRef}
+            handleConversationsScroll={handleConversationsScroll}
+            selectedSession={selectedSession}
+            setSelectedSession={setSelectedSession}
+            loadSessionMessages={loadSessionMessages}
+            setSessionMode={setSessionMode}
+            deleteChatSession={deleteChatSession}
+            isSuperAdmin={isSuperAdmin}
+            conversationsHasMore={conversationsHasMore}
+            conversationsLoading={conversationsLoading}
+          />
         </div>
         
         {/* Right: Selected Conversation Messages */}
@@ -646,6 +779,12 @@ const CRMSection = ({
                     {selectedSession.participantName || selectedSession.participantEmail || 'Client'}
                   </p>
                   <p className="text-white/40 text-sm">{selectedSession.participantEmail || ''}</p>
+                  {/* v16.0: Afficher WhatsApp si disponible */}
+                  {selectedSession.participantWhatsapp && (
+                    <p className="text-green-400/80 text-xs mt-1">
+                      📱 {selectedSession.participantWhatsapp}
+                    </p>
+                  )}
                   {/* v14.3: Afficher la source du lien */}
                   {selectedSession.title && (
                     <p className="text-violet-400/80 text-xs mt-1">
@@ -666,11 +805,30 @@ const CRMSection = ({
                   <p className="text-white/40 text-center py-8">Aucun message</p>
                 ) : (
                   sessionMessages.map((msg, idx) => {
+                    // v16.0: Messages système (toggle IA/Humain) — centré
+                    const isSystemMessage = msg.sender_type === 'system';
+                    if (isSystemMessage) {
+                      return (
+                        <div key={msg.id || idx} style={{ display: 'flex', justifyContent: 'center' }}>
+                          <div style={{
+                            background: 'rgba(139, 92, 246, 0.15)',
+                            border: '1px solid rgba(139, 92, 246, 0.3)',
+                            borderRadius: '20px',
+                            padding: '6px 16px',
+                            fontSize: '12px',
+                            color: 'rgba(255,255,255,0.6)'
+                          }}>
+                            {msg.content || msg.text || ''}
+                          </div>
+                        </div>
+                      );
+                    }
+
                     // v14.3: Déterminer si c'est un message du client ou du coach/IA
                     const isClientMessage = msg.sender_type === 'user' || msg.role === 'user';
-                    const isCoachOrAI = msg.sender_type === 'coach' || msg.sender_type === 'assistant' || 
+                    const isCoachOrAI = msg.sender_type === 'coach' || msg.sender_type === 'assistant' ||
                                         msg.role === 'coach' || msg.role === 'assistant';
-                    
+
                     return (
                       <div
                         key={msg.id || idx}
@@ -686,7 +844,7 @@ const CRMSection = ({
                         >
                           {/* v14.3: Nom de l'expéditeur */}
                           <p className="text-xs font-semibold mb-1 opacity-70">
-                            {isClientMessage 
+                            {isClientMessage
                               ? (msg.sender_name || selectedSession.participantName || 'Client')
                               : (msg.sender_type === 'assistant' || msg.role === 'assistant' ? '🤖 Assistant IA' : '👤 Vous')
                             }

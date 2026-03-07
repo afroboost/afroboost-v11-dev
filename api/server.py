@@ -4927,13 +4927,15 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
     for session in sessions:
         participant_name = ""
         participant_email = ""
-        
+        participant_whatsapp = ""
+
         # Chercher dans participant_ids
         for pid in session.get("participant_ids", []):
-            participant = await db.chat_participants.find_one({"id": pid}, {"_id": 0, "name": 1, "email": 1})
+            participant = await db.chat_participants.find_one({"id": pid}, {"_id": 0, "name": 1, "email": 1, "whatsapp": 1})
             if participant:
                 participant_name = participant.get("name", "")
                 participant_email = participant.get("email", "")
+                participant_whatsapp = participant.get("whatsapp", "")
                 break
         
         # Fallback sur le titre de la session
@@ -4957,6 +4959,7 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
             **session,
             "participantName": participant_name,
             "participantEmail": participant_email,
+            "participantWhatsapp": participant_whatsapp,
             "lastMessage": last_message.get("content", "")[:100] if last_message else "Nouvelle conversation",
             "messageCount": message_count
         })
@@ -5094,21 +5097,24 @@ async def get_conversations_advanced(
             "is_deleted": {"$ne": True}
         })
         
-        # v14.0: Extraire le nom et email du premier participant pour l'affichage CRM
+        # v14.0: Extraire le nom, email et WhatsApp du premier participant pour l'affichage CRM
         first_participant_name = ""
         first_participant_email = ""
+        first_participant_whatsapp = ""
         if participants_info:
             first_participant_name = participants_info[0].get("name", "")
             first_participant_email = participants_info[0].get("email", "")
+            first_participant_whatsapp = participants_info[0].get("whatsapp", "")
         # Fallback sur le titre de la session (pour les liens nommés)
         if not first_participant_name and session.get("title"):
             first_participant_name = session.get("title")
-        
+
         enriched_conversations.append({
             **session,
             "participants": participants_info,
             "participantName": first_participant_name,  # v14.0: Pour l'affichage CRM
             "participantEmail": first_participant_email,  # v14.0: Pour l'affichage CRM
+            "participantWhatsapp": first_participant_whatsapp,  # v16.0: WhatsApp pour CRM
             "lastMessage": last_message.get("content", "")[:100] if last_message else "Nouvelle conversation",
             "last_message": {
                 "content": last_message.get("content", "")[:100] if last_message else "",
@@ -5221,7 +5227,7 @@ async def toggle_session_ai(session_id: str):
     
     new_state = not session.get("is_ai_active", True)
     new_mode = "ai" if new_state else "human"
-    
+
     await db.chat_sessions.update_one(
         {"id": session_id},
         {"$set": {
@@ -5230,7 +5236,21 @@ async def toggle_session_ai(session_id: str):
             "updated_at": datetime.now(timezone.utc).isoformat()
         }}
     )
-    
+
+    # v16.0: Insérer un message système visible pour le visiteur
+    system_text = "🤖 L'assistant IA est de retour" if new_state else "🟢 Un conseiller humain a pris le relais"
+    system_msg = {
+        "id": str(uuid.uuid4()),
+        "session_id": session_id,
+        "sender_type": "system",
+        "sender_name": "Système",
+        "sender_id": "system",
+        "content": system_text,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "is_deleted": False
+    }
+    await db.chat_messages.insert_one(system_msg)
+
     updated = await db.chat_sessions.find_one({"id": session_id}, {"_id": 0})
     return updated
 
