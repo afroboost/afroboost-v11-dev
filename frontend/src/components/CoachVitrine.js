@@ -602,12 +602,24 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               return (
                 <video
                   key={`vid-${heroVideoUrl}`}
+                  src={heroVideoUrl}
                   autoPlay
                   muted
                   loop
                   playsInline
+                  preload="auto"
                   className="absolute inset-0 w-full h-full object-cover"
                   style={{ filter: 'brightness(0.7)' }}
+                  onCanPlay={(e) => {
+                    console.log('[VITRINE-MEDIA] ✅ Vidéo prête, lancement autoplay:', heroVideoUrl);
+                    const loader = document.getElementById('hero-media-loader');
+                    if (loader) loader.style.display = 'none';
+                    // Force autoplay si le navigateur l'a bloqué
+                    if (e.target.paused) {
+                      e.target.muted = true;
+                      e.target.play().catch(() => {});
+                    }
+                  }}
                   onLoadedData={() => {
                     console.log('[VITRINE-MEDIA] ✅ Vidéo autoplay chargée:', heroVideoUrl);
                     const loader = document.getElementById('hero-media-loader');
@@ -618,9 +630,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                     const loader = document.getElementById('hero-media-loader');
                     if (loader) loader.style.display = 'none';
                   }}
-                >
-                  <source src={heroVideoUrl} type={heroVideoUrl.match(/\.webm$/i) ? 'video/webm' : 'video/mp4'} />
-                </video>
+                />
               );
             }
 
