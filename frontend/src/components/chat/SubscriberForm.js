@@ -82,14 +82,17 @@ const SubscriberForm = ({
   error,
   isLoading
 }) => {
-  // État du toggle "Mémoriser" — TOUJOURS ON par défaut pour sauvegarder automatiquement
+  // Toggle "Mémoriser" — TOUJOURS ON par défaut
   const [rememberMe, setRememberMe] = useState(true);
+  // Ref pour accéder à rememberMe dans les handlers sans re-render
+  const rememberRef = React.useRef(true);
+  rememberRef.current = rememberMe;
 
   // Auto-remplissage au montage si données sauvegardées
   useEffect(() => {
     const saved = loadSavedInfo();
     if (saved) {
-      console.log('[SUBSCRIBER-FORM] Auto-fill from localStorage:', saved);
+      console.log('[SUBSCRIBER-FORM] Auto-fill from localStorage:', JSON.stringify(saved));
       setFormData(prev => ({
         ...prev,
         name: saved.name || prev.name,
@@ -97,20 +100,26 @@ const SubscriberForm = ({
         email: saved.email || prev.email
         // code: JAMAIS pré-rempli
       }));
+    } else {
+      console.log('[SUBSCRIBER-FORM] No saved data found in localStorage');
     }
   }, [setFormData]);
 
-  // Sauvegarde en TEMPS RÉEL quand le toggle est ON et les champs changent
-  useEffect(() => {
-    if (rememberMe && (formData.name || formData.whatsapp || formData.email)) {
-      saveInfo(formData);
-      console.log('[SUBSCRIBER-FORM] Auto-save to localStorage:', {
-        name: formData.name, whatsapp: formData.whatsapp, email: formData.email
-      });
+  /**
+   * Handler de changement de champ — sauvegarde DIRECTE dans localStorage
+   * Pas de useEffect, pas de dépendances, pas de closures stales.
+   */
+  const handleFieldChange = useCallback((field, value) => {
+    const updatedData = { ...formData, [field]: value };
+    setFormData(updatedData);
+    // Sauvegarde directe et immédiate
+    if (rememberRef.current) {
+      saveInfo(updatedData);
+      console.log('[SUBSCRIBER-FORM] Direct save:', field, '→', value.substring(0, 20));
     }
-  }, [rememberMe, formData.name, formData.whatsapp, formData.email]);
+  }, [formData, setFormData]);
 
-  // Wrapper soumission : sauvegarde finale ou supprime selon toggle
+  // Wrapper soumission
   const handleSubmit = useCallback((e) => {
     e.preventDefault();
     if (rememberMe) {
@@ -123,16 +132,14 @@ const SubscriberForm = ({
     onSubmit(e);
   }, [rememberMe, formData, onSubmit]);
 
-  // Toggle handler — sauvegarde immédiate si ON, supprime si OFF
+  // Toggle handler
   const toggleRemember = useCallback(() => {
     setRememberMe(prev => {
       const next = !prev;
       if (next) {
-        // Toggle activé → sauvegarder immédiatement les données actuelles
         saveInfo(formData);
         console.log('[SUBSCRIBER-FORM] Toggle ON → saved');
       } else {
-        // Toggle désactivé → supprimer les données
         clearSavedInfo();
         console.log('[SUBSCRIBER-FORM] Toggle OFF → cleared');
       }
@@ -180,7 +187,7 @@ const SubscriberForm = ({
         <input
           type="text"
           value={formData.name}
-          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+          onChange={(e) => handleFieldChange('name', e.target.value)}
           placeholder="Votre nom complet"
           className="w-full px-3 py-2 rounded-lg text-sm"
           style={{
@@ -199,7 +206,7 @@ const SubscriberForm = ({
         <input
           type="tel"
           value={formData.whatsapp}
-          onChange={(e) => setFormData({ ...formData, whatsapp: e.target.value })}
+          onChange={(e) => handleFieldChange('whatsapp', e.target.value)}
           placeholder="+41 79 123 45 67"
           className="w-full px-3 py-2 rounded-lg text-sm"
           style={{
@@ -218,7 +225,7 @@ const SubscriberForm = ({
         <input
           type="email"
           value={formData.email}
-          onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+          onChange={(e) => handleFieldChange('email', e.target.value)}
           placeholder="votre@email.com"
           className="w-full px-3 py-2 rounded-lg text-sm"
           style={{
@@ -237,7 +244,7 @@ const SubscriberForm = ({
         <input
           type="text"
           value={formData.code}
-          onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
+          onChange={(e) => handleFieldChange('code', e.target.value.toUpperCase())}
           placeholder="Votre code abonné"
           className="w-full px-3 py-2 rounded-lg text-sm"
           style={{
