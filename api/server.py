@@ -3434,6 +3434,483 @@ async def check_duplicate_contacts(request: Request):
     }
 
 
+# ============================================================
+# CONTACTS UNIFIÉS — v18: Merge participants + users + groupes
+# ============================================================
+
+@api_router.get("/contacts/all")
+async def get_all_contacts_unified(request: Request):
+    """
+    Endpoint unifié qui fusionne chat_participants, users, et groupes
+    pour la sélection de destinataires dans les campagnes.
+    Dédupliqué par email/phone. Retourne groupes + contacts individuels.
+    """
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not caller_email:
+        raise HTTPException(status_code=401, detail="Email requis")
+
+    try:
+        contacts = []
+        seen_emails = set()
+        seen_phones = set()
+
+        # 1. GROUPES — Sessions avec titre ou mode groupe
+        sessions = await db.chat_sessions.find(
+            {"is_deleted": {"$ne": True}},
+            {"_id": 0, "id": 1, "mode": 1, "title": 1, "participant_ids": 1, "updated_at": 1}
+        ).sort("updated_at", -1).to_list(500)
+
+        for session in sessions:
+            title = (session.get("title") or "").strip()
+            mode = session.get("mode", "user")
+            if title or mode in ["community", "vip", "promo", "group"]:
+                mode_names = {"community": "Communauté", "vip": "VIP", "promo": "Offres Spéciales", "group": "Groupe"}
+                contacts.append({
+                    "id": session.get("id", ""),
+                    "name": title or mode_names.get(mode, f"Groupe {mode}"),
+                    "type": "group",
+                    "category": mode,
+                    "phone": None,
+                    "email": None,
+                    "source": "session",
+                    "member_count": len(session.get("participant_ids", []))
+                })
+
+        # Groupes standards si manquants
+        existing_ids = set(c["id"] for c in contacts)
+        for gid, gname in [("community", "Communauté Générale"), ("vip", "Groupe VIP"), ("promo", "Offres Spéciales")]:
+            if gid not in existing_ids:
+                contacts.append({
+                    "id": gid, "name": gname, "type": "group",
+                    "category": gid, "phone": None, "email": None,
+                    "source": "default", "member_count": 0
+                })
+
+        # 2. CHAT_PARTICIPANTS — Contacts CRM (imports, stripe, chat)
+        if is_super_admin(caller_email):
+            participants = await db.chat_participants.find({}, {"_id": 0}).to_list(5000)
+        else:
+            participants = await db.chat_participants.find(
+                {"coach_id": caller_email}, {"_id": 0}
+            ).to_list(5000)
+
+        for p in participants:
+            email = (p.get("email") or "").strip().lower()
+            phone = (p.get("whatsapp") or p.get("phone") or "").strip()
+            # Dedup
+            if email and email in seen_emails:
+                continue
+            if phone and phone in seen_phones:
+                continue
+            if email:
+                seen_emails.add(email)
+            if phone:
+                seen_phones.add(phone)
+
+            contacts.append({
+                "id": p.get("id", ""),
+                "name": p.get("name") or email or phone or "Sans nom",
+                "type": "user",
+                "category": p.get("source", "import"),
+                "phone": phone or None,
+                "email": email or None,
+                "source": p.get("source", "import"),
+                "tags": p.get("tags", [])
+            })
+
+        # 3. USERS — Utilisateurs de l'app (ceux pas déjà dans participants)
+        all_users = await db.users.find({}, {"_id": 0, "id": 1, "name": 1, "email": 1, "created_at": 1}).to_list(5000)
+        for u in all_users:
+            email = (u.get("email") or "").strip().lower()
+            if email and email in seen_emails:
+                continue
+            if email:
+                seen_emails.add(email)
+            contacts.append({
+                "id": u.get("id", ""),
+                "name": u.get("name") or email or "Sans nom",
+                "type": "user",
+                "category": "app_user",
+                "phone": None,
+                "email": email or None,
+                "source": "app",
+                "tags": []
+            })
+
+        # Sort: groupes d'abord, puis contacts par nom
+        contacts.sort(key=lambda x: (0 if x["type"] == "group" else 1, (x.get("name") or "").lower()))
+
+        groups_count = len([c for c in contacts if c["type"] == "group"])
+        users_count = len([c for c in contacts if c["type"] == "user"])
+
+        return {
+            "success": True,
+            "contacts": contacts,
+            "total": len(contacts),
+            "groups_count": groups_count,
+            "users_count": users_count
+        }
+    except Exception as e:
+        logger.error(f"[CONTACTS-ALL] Erreur: {e}")
+        return {"success": False, "contacts": [], "error": str(e)}
+
+
+@api_router.post("/contacts/bulk-import")
+async def bulk_import_contacts(request: Request):
+    """
+    Import en masse de contacts dans chat_participants.
+    Accepte un tableau de {name, phone, email, source, tags}.
+    Déduplique par phone/email. Retourne le nombre importé.
+    """
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not caller_email:
+        raise HTTPException(status_code=401, detail="Email requis")
+
+    body = await request.json()
+    contacts_list = body.get("contacts", [])
+    source = body.get("source", "import")
+
+    if not contacts_list:
+        return {"imported": 0, "duplicates": 0, "errors": 0}
+
+    imported = 0
+    duplicates = 0
+    errors = 0
+
+    for c in contacts_list:
+        try:
+            email = (c.get("email") or "").strip().lower()
+            phone = (c.get("phone") or c.get("whatsapp") or "").strip()
+            name = (c.get("name") or "").strip()
+
+            if not email and not phone:
+                errors += 1
+                continue
+
+            # Check duplicate
+            dup_query = {"$or": []}
+            if email:
+                dup_query["$or"].append({"email": {"$regex": f"^{email}$", "$options": "i"}})
+            if phone:
+                clean = phone.replace(" ", "").replace("-", "")
+                dup_query["$or"].append({"whatsapp": {"$regex": clean}})
+                dup_query["$or"].append({"phone": {"$regex": clean}})
+
+            if dup_query["$or"]:
+                existing = await db.chat_participants.find_one(dup_query, {"_id": 0})
+                if existing:
+                    # Update name if better
+                    if name and not existing.get("name"):
+                        await db.chat_participants.update_one(
+                            {"id": existing["id"]},
+                            {"$set": {"name": name, "last_seen_at": datetime.now(timezone.utc).isoformat()}}
+                        )
+                    duplicates += 1
+                    continue
+
+            # Insert new
+            new_participant = {
+                "id": str(uuid.uuid4()),
+                "name": name or email or phone,
+                "email": email or None,
+                "whatsapp": phone or None,
+                "phone": phone or None,
+                "source": source,
+                "coach_id": caller_email if not is_super_admin(caller_email) else DEFAULT_COACH_ID,
+                "tags": c.get("tags", []),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_seen_at": datetime.now(timezone.utc).isoformat()
+            }
+            await db.chat_participants.insert_one(new_participant)
+            imported += 1
+
+        except Exception as err:
+            logger.warning(f"[BULK-IMPORT] Erreur contact: {err}")
+            errors += 1
+
+    return {
+        "success": True,
+        "imported": imported,
+        "duplicates": duplicates,
+        "errors": errors,
+        "total_processed": len(contacts_list)
+    }
+
+
+# ============================================================
+# GOOGLE CONTACTS SYNC — v18: OAuth2 + People API
+# ============================================================
+
+GOOGLE_CONTACTS_CLIENT_ID = os.environ.get("GOOGLE_CONTACTS_CLIENT_ID", "")
+GOOGLE_CONTACTS_CLIENT_SECRET = os.environ.get("GOOGLE_CONTACTS_CLIENT_SECRET", "")
+GOOGLE_CONTACTS_SCOPES = "https://www.googleapis.com/auth/contacts.readonly"
+
+@api_router.get("/google-contacts/auth-url")
+async def get_google_contacts_auth_url(request: Request):
+    """Génère l'URL d'autorisation Google pour la sync contacts"""
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not caller_email:
+        raise HTTPException(status_code=401, detail="Email requis")
+
+    if not GOOGLE_CONTACTS_CLIENT_ID:
+        raise HTTPException(status_code=503, detail="Google Contacts non configuré (GOOGLE_CONTACTS_CLIENT_ID manquant)")
+
+    # Redirect URI = notre callback
+    base_url = os.environ.get("VERCEL_URL", "afroboost-v11-dev-pm7l.vercel.app")
+    redirect_uri = f"https://{base_url}/api/google-contacts/callback"
+
+    import urllib.parse
+    params = urllib.parse.urlencode({
+        "client_id": GOOGLE_CONTACTS_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": GOOGLE_CONTACTS_SCOPES,
+        "access_type": "offline",
+        "prompt": "consent",
+        "state": caller_email  # Pour identifier le coach
+    })
+
+    return {
+        "auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{params}",
+        "configured": True
+    }
+
+
+@api_router.get("/google-contacts/callback")
+async def google_contacts_callback(code: str = "", state: str = "", error: str = ""):
+    """Callback OAuth2 Google — échange le code contre un token"""
+    from fastapi.responses import HTMLResponse
+    import httpx
+
+    if error:
+        return HTMLResponse(f"<html><body><h2>Erreur: {error}</h2><script>window.close()</script></body></html>")
+
+    if not code or not state:
+        return HTMLResponse("<html><body><h2>Code manquant</h2><script>window.close()</script></body></html>")
+
+    coach_email = state.lower().strip()
+    base_url = os.environ.get("VERCEL_URL", "afroboost-v11-dev-pm7l.vercel.app")
+    redirect_uri = f"https://{base_url}/api/google-contacts/callback"
+
+    try:
+        # Exchange code for tokens
+        async with httpx.AsyncClient() as client:
+            token_resp = await client.post("https://oauth2.googleapis.com/token", data={
+                "client_id": GOOGLE_CONTACTS_CLIENT_ID,
+                "client_secret": GOOGLE_CONTACTS_CLIENT_SECRET,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": redirect_uri
+            })
+            tokens = token_resp.json()
+
+        if "error" in tokens:
+            return HTMLResponse(f"<html><body><h2>Erreur token: {tokens.get('error_description', tokens['error'])}</h2><script>setTimeout(()=>window.close(),3000)</script></body></html>")
+
+        # Store refresh token for the coach
+        await db.google_tokens.update_one(
+            {"coach_email": coach_email},
+            {"$set": {
+                "coach_email": coach_email,
+                "access_token": tokens.get("access_token"),
+                "refresh_token": tokens.get("refresh_token"),
+                "expires_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }},
+            upsert=True
+        )
+
+        return HTMLResponse("""
+        <html><body style="background:#1a1025;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+        <div style="text-align:center">
+            <h2 style="color:#22c55e">✅ Google Contacts connecté !</h2>
+            <p>Vous pouvez fermer cette fenêtre et cliquer sur "Synchroniser".</p>
+            <script>setTimeout(()=>window.close(),2000)</script>
+        </div>
+        </body></html>
+        """)
+
+    except Exception as e:
+        logger.error(f"[GOOGLE-CONTACTS] Callback error: {e}")
+        return HTMLResponse(f"<html><body><h2>Erreur: {str(e)}</h2><script>setTimeout(()=>window.close(),3000)</script></body></html>")
+
+
+@api_router.get("/google-contacts/status")
+async def google_contacts_status(request: Request):
+    """Vérifie si le coach a connecté Google Contacts"""
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    token_doc = await db.google_tokens.find_one({"coach_email": caller_email}, {"_id": 0})
+    return {
+        "connected": bool(token_doc and token_doc.get("refresh_token")),
+        "last_sync": token_doc.get("last_sync") if token_doc else None,
+        "configured": bool(GOOGLE_CONTACTS_CLIENT_ID)
+    }
+
+
+@api_router.post("/google-contacts/sync")
+async def sync_google_contacts(request: Request):
+    """
+    Synchronise les contacts Google dans chat_participants.
+    Utilise le refresh_token stocké pour obtenir un access_token frais.
+    """
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not caller_email:
+        raise HTTPException(status_code=401, detail="Email requis")
+
+    token_doc = await db.google_tokens.find_one({"coach_email": caller_email}, {"_id": 0})
+    if not token_doc or not token_doc.get("refresh_token"):
+        raise HTTPException(status_code=400, detail="Google non connecté. Cliquez sur 'Connecter Google' d'abord.")
+
+    import httpx
+
+    try:
+        # 1. Refresh the access token
+        async with httpx.AsyncClient() as client:
+            token_resp = await client.post("https://oauth2.googleapis.com/token", data={
+                "client_id": GOOGLE_CONTACTS_CLIENT_ID,
+                "client_secret": GOOGLE_CONTACTS_CLIENT_SECRET,
+                "refresh_token": token_doc["refresh_token"],
+                "grant_type": "refresh_token"
+            })
+            tokens = token_resp.json()
+
+        if "error" in tokens:
+            raise HTTPException(status_code=400, detail=f"Token refresh failed: {tokens.get('error_description', tokens['error'])}")
+
+        access_token = tokens["access_token"]
+
+        # 2. Fetch contacts from Google People API (paginated)
+        all_contacts = []
+        next_page_token = None
+        page_count = 0
+
+        async with httpx.AsyncClient() as client:
+            while page_count < 10:  # Max 10 pages (10000 contacts)
+                params = {
+                    "personFields": "names,emailAddresses,phoneNumbers",
+                    "pageSize": 1000,
+                    "sources": "READ_SOURCE_TYPE_CONTACT"
+                }
+                if next_page_token:
+                    params["pageToken"] = next_page_token
+
+                resp = await client.get(
+                    "https://people.googleapis.com/v1/people/me/connections",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params=params
+                )
+
+                if resp.status_code != 200:
+                    logger.error(f"[GOOGLE-SYNC] API error: {resp.status_code} {resp.text[:200]}")
+                    break
+
+                data = resp.json()
+                connections = data.get("connections", [])
+
+                for person in connections:
+                    names = person.get("names", [])
+                    emails = person.get("emailAddresses", [])
+                    phones = person.get("phoneNumbers", [])
+
+                    name = names[0].get("displayName", "") if names else ""
+                    email = emails[0].get("value", "") if emails else ""
+                    phone = phones[0].get("value", "") if phones else ""
+
+                    if email or phone:
+                        all_contacts.append({
+                            "name": name,
+                            "email": email.lower().strip() if email else None,
+                            "phone": phone.strip() if phone else None,
+                            "source": "google",
+                            "tags": ["google"]
+                        })
+
+                next_page_token = data.get("nextPageToken")
+                if not next_page_token:
+                    break
+                page_count += 1
+
+        # 3. Bulk import with dedup
+        imported = 0
+        duplicates = 0
+
+        for c in all_contacts:
+            email = c.get("email")
+            phone = c.get("phone")
+
+            dup_query = {"$or": []}
+            if email:
+                dup_query["$or"].append({"email": {"$regex": f"^{email}$", "$options": "i"}})
+            if phone:
+                clean = (phone or "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+                if clean:
+                    dup_query["$or"].append({"whatsapp": {"$regex": clean}})
+                    dup_query["$or"].append({"phone": {"$regex": clean}})
+
+            if dup_query["$or"]:
+                existing = await db.chat_participants.find_one(dup_query, {"_id": 0, "id": 1})
+                if existing:
+                    duplicates += 1
+                    continue
+
+            await db.chat_participants.insert_one({
+                "id": str(uuid.uuid4()),
+                "name": c["name"] or c["email"] or c["phone"],
+                "email": c.get("email"),
+                "whatsapp": c.get("phone"),
+                "phone": c.get("phone"),
+                "source": "google",
+                "coach_id": caller_email if not is_super_admin(caller_email) else DEFAULT_COACH_ID,
+                "tags": ["google"],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_seen_at": datetime.now(timezone.utc).isoformat()
+            })
+            imported += 1
+
+        # Update last sync time
+        await db.google_tokens.update_one(
+            {"coach_email": caller_email},
+            {"$set": {"last_sync": datetime.now(timezone.utc).isoformat()}}
+        )
+
+        return {
+            "success": True,
+            "imported": imported,
+            "duplicates": duplicates,
+            "total_google": len(all_contacts),
+            "message": f"✅ {imported} nouveaux contacts importés ({duplicates} doublons ignorés)"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[GOOGLE-SYNC] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/contacts/add-tags")
+async def add_tags_to_contacts(request: Request):
+    """Ajoute des tags à une liste de contacts (pour grouper/catégoriser)"""
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    body = await request.json()
+    contact_ids = body.get("contact_ids", [])
+    tags = body.get("tags", [])
+
+    if not contact_ids or not tags:
+        return {"updated": 0}
+
+    updated = 0
+    for cid in contact_ids:
+        result = await db.chat_participants.update_one(
+            {"id": cid},
+            {"$addToSet": {"tags": {"$each": tags}}}
+        )
+        if result.modified_count:
+            updated += 1
+
+    return {"success": True, "updated": updated}
+
+
 # --- Config ---
 @api_router.get("/config", response_model=AppConfig)
 async def get_config():

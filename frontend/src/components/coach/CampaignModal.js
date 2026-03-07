@@ -1,14 +1,13 @@
 /**
- * CampaignModal.js - v13: Tunnel de création simplifié en 3 étapes
+ * CampaignModal.js — v18: Tunnel de création en 3 étapes avec sélection contacts corrigée
  * Étape 1: Médias & Objectif (prompt système, objectif IA, message, média)
- * Étape 2: Contacts & Canaux (destinataires, canaux)
+ * Étape 2: Contacts & Canaux (checkboxes multi-select, recherche, import, sync)
  * Étape 3: Confirmation & Coût (récapitulatif, programmation, coût crédits)
  *
- * v13: Blocage strict par crédits — 0 crédits = pas d'envoi (sauf Super Admin)
+ * v18 FIX: Sélection par checkboxes fonctionnelle, contacts unifiés (participants + users + groupes)
  */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
-import { parseMediaUrl } from '../../services/MediaParser';
 import { parseContacts } from '../../utils/contactParser';
 
 const STEPS = [
@@ -52,16 +51,58 @@ export default function CampaignModal({
   // Pre-selected date from calendar
   preSelectedDate,
   // v16.3: Chat links pour CTA "Lier à une Conversation"
-  chatLinks = []
+  chatLinks = [],
+  // v18: Coach email for unified contacts
+  coachEmail
 }) {
   const [step, setStep] = useState(1);
   const [aiSuggestions, setAiSuggestions] = useState([]);
   const [aiSuggestionsLoading, setAiSuggestionsLoading] = useState(false);
 
+  // v18: Unified contacts system
+  const [allContacts, setAllContacts] = useState([]);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const [contactSearch, setContactSearch] = useState('');
+  const [contactFilter, setContactFilter] = useState('all'); // all, group, user
+
   // v17.3: Import contacts
   const importFileRef = useRef(null);
   const [importedContacts, setImportedContacts] = useState([]);
   const [showImportPreview, setShowImportPreview] = useState(false);
+
+  // v18: Load unified contacts when step 2 opens
+  const loadUnifiedContacts = useCallback(async () => {
+    if (!API) return;
+    setContactsLoading(true);
+    try {
+      const headers = { 'X-User-Email': coachEmail || '' };
+      const res = await axios.get(`${API}/contacts/all`, { headers });
+      if (res.data.success) {
+        setAllContacts(res.data.contacts || []);
+      }
+    } catch (err) {
+      // Fallback to activeConversations
+      if (activeConversations?.length > 0) {
+        setAllContacts(activeConversations.map(c => ({
+          id: c.conversation_id,
+          name: (c.name || 'Sans nom').replace(/^(👤|👥)\s*/, ''),
+          type: c.type || 'user',
+          email: c.email || null,
+          phone: null,
+          source: 'session',
+          category: c.mode || 'user'
+        })));
+      }
+    } finally {
+      setContactsLoading(false);
+    }
+  }, [API, coachEmail, activeConversations]);
+
+  useEffect(() => {
+    if (isOpen && step === 2 && allContacts.length === 0) {
+      loadUnifiedContacts();
+    }
+  }, [isOpen, step, loadUnifiedContacts, allContacts.length]);
 
   const handleFileImport = (e) => {
     const file = e.target.files?.[0];
@@ -96,6 +137,54 @@ export default function CampaignModal({
     setImportedContacts([]);
   };
 
+  // v18: Toggle contact selection (checkbox)
+  const toggleContact = (contact) => {
+    const isSelected = selectedRecipients?.some(r => r.id === contact.id);
+    if (isSelected) {
+      setSelectedRecipients(prev => prev.filter(r => r.id !== contact.id));
+    } else {
+      setSelectedRecipients(prev => [...prev, {
+        id: contact.id,
+        name: contact.name || 'Sans nom',
+        type: contact.type || 'user',
+        phone: contact.phone || null,
+        email: contact.email || null
+      }]);
+    }
+  };
+
+  // v18: Select all visible contacts
+  const selectAllVisible = () => {
+    const existingIds = new Set((selectedRecipients || []).map(r => r.id));
+    const newOnes = filteredContacts
+      .filter(c => !existingIds.has(c.id))
+      .map(c => ({
+        id: c.id,
+        name: c.name || 'Sans nom',
+        type: c.type || 'user',
+        phone: c.phone || null,
+        email: c.email || null
+      }));
+    setSelectedRecipients(prev => [...prev, ...newOnes]);
+  };
+
+  const deselectAll = () => {
+    setSelectedRecipients([]);
+  };
+
+  // Filtered contacts for display
+  const filteredContacts = allContacts.filter(c => {
+    const matchSearch = !contactSearch ||
+      (c.name || '').toLowerCase().includes(contactSearch.toLowerCase()) ||
+      (c.email || '').toLowerCase().includes(contactSearch.toLowerCase()) ||
+      (c.phone || '').includes(contactSearch);
+    const matchFilter =
+      contactFilter === 'all' ? true :
+      contactFilter === 'group' ? c.type === 'group' :
+      c.type === 'user';
+    return matchSearch && matchFilter;
+  });
+
   // v13: Calcul coût et blocage crédits
   const totalCost = (selectedRecipients?.length || 0) * campaignCreditCost;
   const insufficientCredits = !isSuperAdmin && coachCredits !== null && coachCredits !== -1 && coachCredits < Math.max(1, totalCost);
@@ -103,7 +192,10 @@ export default function CampaignModal({
 
   // Reset step when modal opens
   useEffect(() => {
-    if (isOpen) setStep(1);
+    if (isOpen) {
+      setStep(1);
+      setAllContacts([]);
+    }
   }, [isOpen]);
 
   // Pre-fill date from calendar
@@ -347,70 +439,153 @@ export default function CampaignModal({
             </div>
           )}
 
-          {/* ===== ÉTAPE 2: Contacts & Canaux ===== */}
+          {/* ===== ÉTAPE 2: Contacts & Canaux (v18: CHECKBOX MULTI-SELECT) ===== */}
           {step === 2 && (
             <div>
-              {/* Destinataires (panier) */}
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', color: '#fff', fontSize: '13px', fontWeight: 500, marginBottom: '8px' }}>
-                  🎯 Destinataires ({selectedRecipients?.length || 0})
-                </label>
-                {/* Selected tags */}
+              {/* Destinataires header + counter */}
+              <div style={{ marginBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <label style={{ color: '#fff', fontSize: '13px', fontWeight: 500 }}>
+                    🎯 Destinataires ({selectedRecipients?.length || 0} sélectionnés)
+                  </label>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    {selectedRecipients?.length > 0 && (
+                      <button type="button" onClick={deselectAll} style={{
+                        padding: '4px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 600,
+                        background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
+                        color: '#ef4444', cursor: 'pointer'
+                      }}>Tout désélectionner</button>
+                    )}
+                    {filteredContacts.length > 0 && (
+                      <button type="button" onClick={selectAllVisible} style={{
+                        padding: '4px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 600,
+                        background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)',
+                        color: '#22c55e', cursor: 'pointer'
+                      }}>Tout sélectionner</button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Selected tags (compact view) */}
                 {selectedRecipients?.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px', padding: '8px', borderRadius: '8px', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)' }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '10px', padding: '8px', borderRadius: '8px', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)', maxHeight: '80px', overflowY: 'auto' }}>
                     {selectedRecipients.map(r => (
                       <span key={r.id} style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '4px',
-                        padding: '4px 10px', borderRadius: '20px', fontSize: '12px',
-                        background: r.type === 'group' ? 'rgba(139,92,246,0.3)' : 'rgba(59,130,246,0.3)',
-                        color: '#fff', border: '1px solid rgba(255,255,255,0.15)'
+                        display: 'inline-flex', alignItems: 'center', gap: '3px',
+                        padding: '3px 8px', borderRadius: '12px', fontSize: '11px',
+                        background: r.type === 'group' ? 'rgba(139,92,246,0.25)' : 'rgba(59,130,246,0.25)',
+                        color: '#fff', border: '1px solid rgba(255,255,255,0.1)'
                       }}>
-                        {r.type === 'group' ? '👥' : '👤'} {r.name}
+                        {r.type === 'group' ? '👥' : '👤'} {(r.name || '').slice(0, 20)}
                         <button type="button" onClick={() => setSelectedRecipients(prev => prev.filter(x => x.id !== r.id))}
-                          style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', fontSize: '12px', padding: '0 2px' }}>✕</button>
+                          style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: '10px', padding: '0 1px', lineHeight: 1 }}>✕</button>
                       </span>
                     ))}
                   </div>
                 )}
-                {/* Search dropdown */}
-                <div style={{ position: 'relative' }}>
-                  <input
-                    placeholder="🔍 Rechercher un groupe ou contact..."
-                    value={conversationSearch || ''}
-                    onChange={e => { setConversationSearch(e.target.value); setShowConversationDropdown(true); }}
-                    onFocus={() => setShowConversationDropdown(true)}
-                    style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(139,92,246,0.3)', color: '#fff', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
-                  />
-                  {showConversationDropdown && activeConversations?.length > 0 && (
-                    <div style={{
-                      position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
-                      maxHeight: '200px', overflowY: 'auto', marginTop: '4px',
-                      background: '#1a1025', borderRadius: '8px', border: '1px solid rgba(139,92,246,0.3)'
+              </div>
+
+              {/* Search + Filter */}
+              <div style={{ marginBottom: '10px' }}>
+                <input
+                  placeholder="🔍 Rechercher un contact, groupe, email, téléphone..."
+                  value={contactSearch}
+                  onChange={e => setContactSearch(e.target.value)}
+                  style={{
+                    width: '100%', padding: '10px 14px', borderRadius: '8px',
+                    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(139,92,246,0.3)',
+                    color: '#fff', fontSize: '13px', outline: 'none', boxSizing: 'border-box', marginBottom: '6px'
+                  }}
+                />
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  {[
+                    { key: 'all', label: 'Tous', count: allContacts.length },
+                    { key: 'group', label: '👥 Groupes', count: allContacts.filter(c => c.type === 'group').length },
+                    { key: 'user', label: '👤 Contacts', count: allContacts.filter(c => c.type === 'user').length }
+                  ].map(f => (
+                    <button key={f.key} type="button" onClick={() => setContactFilter(f.key)} style={{
+                      padding: '4px 10px', borderRadius: '14px', fontSize: '11px', fontWeight: 500, cursor: 'pointer',
+                      background: contactFilter === f.key ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.05)',
+                      border: contactFilter === f.key ? '1px solid rgba(139,92,246,0.5)' : '1px solid rgba(255,255,255,0.08)',
+                      color: contactFilter === f.key ? '#c4b5fd' : 'rgba(255,255,255,0.5)'
                     }}>
-                      {activeConversations
-                        .filter(c => !conversationSearch || (c.name || '').toLowerCase().includes(conversationSearch.toLowerCase()))
-                        .filter(c => !selectedRecipients?.some(r => r.id === c.conversation_id))
-                        .slice(0, 10)
-                        .map(c => (
-                          <div key={c.conversation_id}
-                            onClick={() => {
-                              setSelectedRecipients(prev => [...prev, { id: c.conversation_id, name: c.name || 'Sans nom', type: c.type || 'user' }]);
-                              setConversationSearch('');
-                              setShowConversationDropdown(false);
-                            }}
-                            style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}
-                            onMouseEnter={e => e.currentTarget.style.background = 'rgba(139,92,246,0.15)'}
-                            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                            <span>{c.type === 'group' ? '👥' : '👤'}</span>
-                            <span>{c.name || 'Sans nom'}</span>
-                          </div>
-                        ))}
-                    </div>
-                  )}
+                      {f.label} ({f.count})
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* v17.3: Import Contacts */}
+              {/* Contacts List with Checkboxes */}
+              <div style={{
+                maxHeight: '220px', overflowY: 'auto',
+                borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)',
+                marginBottom: '12px'
+              }}>
+                {contactsLoading ? (
+                  <div style={{ padding: '20px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>⏳ Chargement des contacts...</div>
+                ) : filteredContacts.length === 0 ? (
+                  <div style={{ padding: '20px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>
+                    {contactSearch ? 'Aucun résultat' : 'Aucun contact disponible'}
+                  </div>
+                ) : (
+                  filteredContacts.slice(0, 100).map((c, i) => {
+                    const isChecked = selectedRecipients?.some(r => r.id === c.id);
+                    return (
+                      <div key={c.id || i}
+                        onClick={() => toggleContact(c)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '10px',
+                          padding: '8px 12px', cursor: 'pointer',
+                          borderBottom: '1px solid rgba(255,255,255,0.04)',
+                          background: isChecked ? 'rgba(34,197,94,0.08)' : i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
+                          transition: 'background 0.15s'
+                        }}
+                        onMouseEnter={e => { if (!isChecked) e.currentTarget.style.background = 'rgba(139,92,246,0.08)'; }}
+                        onMouseLeave={e => { if (!isChecked) e.currentTarget.style.background = i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent'; }}
+                      >
+                        {/* Checkbox */}
+                        <div style={{
+                          width: '18px', height: '18px', borderRadius: '4px', flexShrink: 0,
+                          border: isChecked ? '2px solid #22c55e' : '2px solid rgba(255,255,255,0.2)',
+                          background: isChecked ? 'rgba(34,197,94,0.3)' : 'transparent',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          transition: 'all 0.15s'
+                        }}>
+                          {isChecked && <span style={{ color: '#22c55e', fontSize: '12px', fontWeight: 700 }}>✓</span>}
+                        </div>
+                        {/* Icon */}
+                        <span style={{ fontSize: '14px', width: '20px', textAlign: 'center', flexShrink: 0 }}>
+                          {c.type === 'group' ? '👥' : c.source === 'google' ? '🔵' : '👤'}
+                        </span>
+                        {/* Name + details */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: '12px', color: '#fff', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {c.name || 'Sans nom'}
+                          </div>
+                          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.35)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {c.type === 'group' ? `${c.member_count || 0} membres` : [c.email, c.phone].filter(Boolean).join(' · ') || ''}
+                          </div>
+                        </div>
+                        {/* Source badge */}
+                        <span style={{
+                          padding: '2px 6px', borderRadius: '8px', fontSize: '9px', flexShrink: 0,
+                          background: c.type === 'group' ? 'rgba(139,92,246,0.15)' : c.source === 'google' ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.05)',
+                          color: c.type === 'group' ? '#a855f7' : c.source === 'google' ? '#22c55e' : 'rgba(255,255,255,0.4)'
+                        }}>
+                          {c.type === 'group' ? 'Groupe' : c.source === 'google' ? 'Google' : c.source === 'app' ? 'App' : 'CRM'}
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
+                {filteredContacts.length > 100 && (
+                  <div style={{ padding: '8px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>
+                    ... et {filteredContacts.length - 100} autres — affinez la recherche
+                  </div>
+                )}
+              </div>
+
+              {/* Import CSV/vCard */}
               <div style={{ marginBottom: '12px' }}>
                 <input
                   ref={importFileRef}
@@ -424,7 +599,7 @@ export default function CampaignModal({
                   onClick={() => importFileRef.current?.click()}
                   style={{
                     width: '100%', padding: '10px', borderRadius: '8px', fontSize: '12px',
-                    background: 'rgba(217,28,210,0.1)', border: '1px dashed rgba(217,28,210,0.4)',
+                    background: 'rgba(217,28,210,0.08)', border: '1px dashed rgba(217,28,210,0.4)',
                     color: '#D91CD2', cursor: 'pointer', fontWeight: 500
                   }}
                 >
@@ -440,16 +615,14 @@ export default function CampaignModal({
                     <p style={{ color: '#22c55e', fontSize: '12px', fontWeight: 600, margin: '0 0 6px 0' }}>
                       ✓ {importedContacts.length} contacts trouvés
                     </p>
-                    <div style={{ maxHeight: '120px', overflowY: 'auto' }}>
+                    <div style={{ maxHeight: '100px', overflowY: 'auto' }}>
                       {importedContacts.slice(0, 10).map((c, i) => (
                         <div key={i} style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', padding: '2px 0' }}>
                           {c.name} {c.phone && `— ${c.phone}`} {c.email && `— ${c.email}`}
                         </div>
                       ))}
                       {importedContacts.length > 10 && (
-                        <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', padding: '2px 0' }}>
-                          ... et {importedContacts.length - 10} autres
-                        </div>
+                        <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>... et {importedContacts.length - 10} autres</div>
                       )}
                     </div>
                     <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
@@ -490,7 +663,7 @@ export default function CampaignModal({
                 </div>
               </div>
 
-              {/* CTA — v16.3: Ajout option "Lier à une Conversation" */}
+              {/* CTA — v16.3 */}
               <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '10px', background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
                 <label style={{ display: 'block', color: '#c4b5fd', fontSize: '12px', fontWeight: 500, marginBottom: '8px' }}>🔘 Bouton d'action (CTA)</label>
                 <select
@@ -642,21 +815,19 @@ export default function CampaignModal({
                 ))}
               </div>
 
-              {/* === COÛT & CRÉDITS — Bloc principal === */}
+              {/* === COÛT & CRÉDITS === */}
               <div style={{
                 padding: '16px', borderRadius: '12px',
                 background: insufficientCredits ? 'rgba(239,68,68,0.08)' : 'rgba(139,92,246,0.1)',
                 border: insufficientCredits ? '1px solid rgba(239,68,68,0.4)' : '1px solid rgba(139,92,246,0.3)'
               }}>
                 {isSuperAdmin ? (
-                  /* Super Admin = illimité */
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px' }}>👑 Mode Super Admin</span>
                     <span style={{ color: '#D91CD2', fontWeight: 700, fontSize: '16px' }}>∞ Illimité</span>
                   </div>
                 ) : (
                   <div>
-                    {/* Détail du calcul */}
                     <div style={{ display: 'grid', gap: '6px', marginBottom: '10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
                         <span style={{ color: 'rgba(255,255,255,0.5)' }}>Prix par envoi</span>
@@ -674,7 +845,6 @@ export default function CampaignModal({
                         </span>
                       </div>
                     </div>
-                    {/* Barre solde */}
                     <div style={{
                       padding: '10px 12px', borderRadius: '8px',
                       background: insufficientCredits ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.08)',

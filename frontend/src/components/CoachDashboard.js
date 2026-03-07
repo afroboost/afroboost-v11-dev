@@ -27,7 +27,7 @@ import CRMSection from "./coach/CRMSection"; // v9.2.0 Import CRM Section
 import { parseMediaUrl, getMediaThumbnail } from "../services/MediaParser"; // Media Parser
 import SuperAdminPanel from "./SuperAdminPanel"; // v8.9 Super Admin Panel
 // v13.5: Composants extraits pour alléger CoachDashboard
-import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab, PaymentConfigTab, BrandingManager, SEOManager, FAQManager } from "./dashboard";
+import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab, PaymentConfigTab, BrandingManager, SEOManager, FAQManager, ContactsManager } from "./dashboard";
 import { copyToClipboard } from "../utils/clipboard"; // Utilitaire copier avec fallback mobile
 
 // v9.2.1: ErrorBoundary pour isoler les erreurs de composants
@@ -3976,6 +3976,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     { id: "offers", label: t('offers') },
     { id: "page-vente", label: "🏪 Ma Page" },
     { id: "codes", label: t('promoCodes') },
+    // v18: Contacts centralisés avec sync Google
+    { id: "contacts", label: "📇 Contacts" },
     // v13: Campagnes visible pour tous — accès contrôlé par CreditsGate
     { id: "campaigns", label: "📢 Campagnes" },
     { id: "conversations", label: unreadCount > 0 ? `💬 Conversations (${unreadCount})` : "💬 Conversations" }
@@ -4710,6 +4712,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           />
         )}
 
+        {/* === CONTACTS TAB v18 === */}
+        {tab === "contacts" && (
+          <div className="card-gradient rounded-xl p-4 sm:p-6">
+            <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: 700, marginBottom: '16px' }}>📇 Mes Contacts</h2>
+            <ContactsManager API={API} coachEmail={coachUser?.email} />
+          </div>
+        )}
+
         {/* === CAMPAIGNS TAB === */}
         {/* [CAMPAGNE_START] - Section extraite vers CampaignManager.js */}
         {/* v13.2: Verrouillage crédits avec composant CreditsGate */}
@@ -4854,6 +4864,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             isSuperAdmin={isSuperAdmin}
             campaignCreditCost={servicePrices?.campaign || 1}
             chatLinks={chatLinks}
+            coachEmail={coachUser?.email}
           />
         )}
         {/* [CAMPAGNE_END] - Section extraite vers CampaignManager.js (~1490 lignes économisées) */}
