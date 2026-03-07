@@ -1321,7 +1321,6 @@ async def upload_coach_asset(
             "created_at": datetime.utcnow()
         }
 
-        db = get_db()
         await db.uploaded_files.insert_one(file_doc)
 
         # URL publique via API endpoint
@@ -1350,7 +1349,6 @@ async def serve_uploaded_file(file_id: str, filename: str):
     """
     from fastapi.responses import Response
 
-    db = get_db()
     file_doc = await db.uploaded_files.find_one({"file_id": file_id})
 
     if not file_doc:
