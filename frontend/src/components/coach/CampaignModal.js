@@ -117,7 +117,7 @@ export default function CampaignModal({
   };
 
   // YouTube detection for preview
-  const ytMatch = (newCampaign.mediaUrl || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+  const ytMatch = (newCampaign.mediaUrl || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
 
   return (
     <div style={{
@@ -283,7 +283,12 @@ export default function CampaignModal({
                       background: '#000', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(139,92,246,0.3)'
                     }}>
                       {ytMatch ? (
-                        <iframe src={`https://www.youtube.com/embed/${ytMatch[1]}`} title="YT" allow="autoplay" allowFullScreen style={{ width: '100%', height: '100%', border: 'none' }} />
+                        <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                          <img src={`https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`} alt="YT" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.target.src = `https://img.youtube.com/vi/${ytMatch[1]}/default.jpg`; }} />
+                          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: '40px', height: '40px', background: 'rgba(255,0,0,0.85)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <div style={{ width: 0, height: 0, borderTop: '8px solid transparent', borderBottom: '8px solid transparent', borderLeft: '14px solid #fff', marginLeft: '2px' }} />
+                          </div>
+                        </div>
                       ) : (
                         <img src={newCampaign.mediaUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.target.style.display = 'none'; }} />
                       )}

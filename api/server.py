@@ -2105,7 +2105,14 @@ async def launch_campaign(campaign_id: str):
                         elif any(media_url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
                             media_html = f'<div style="padding:0;"><img src="{media_url}" alt="Média" style="width:100%;max-height:300px;object-fit:cover;" /></div>'
                         elif 'youtube.com' in media_url or 'youtu.be' in media_url:
-                            media_html = f'<div style="padding:10px 20px;text-align:center;"><a href="{media_url}" style="color:#9333EA;font-size:13px;">▶ Voir la vidéo YouTube</a></div>'
+                            # Extraire l'ID YouTube (watch, embed, shorts, youtu.be)
+                            import re as re_yt
+                            yt_match = re_yt.search(r'(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})', media_url)
+                            yt_id = yt_match.group(1) if yt_match else None
+                            if yt_id:
+                                media_html = f'<div style="padding:0;text-align:center;"><a href="{media_url}" style="text-decoration:none;"><img src="https://img.youtube.com/vi/{yt_id}/hqdefault.jpg" alt="Vidéo" style="width:100%;max-height:300px;object-fit:cover;border-radius:4px;" /><div style="padding:8px;color:#9333EA;font-size:13px;font-weight:bold;">▶ Voir la vidéo YouTube</div></a></div>'
+                            else:
+                                media_html = f'<div style="padding:10px 20px;text-align:center;"><a href="{media_url}" style="color:#9333EA;font-size:13px;">▶ Voir la vidéo YouTube</a></div>'
 
                     html_content = f"""<!DOCTYPE html>
 <html lang="fr">
