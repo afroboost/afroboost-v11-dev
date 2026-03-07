@@ -1230,7 +1230,7 @@ async def upload_user_photo(file: UploadFile = File(...), participant_id: str = 
 async def upload_coach_asset(
     request: Request,
     file: UploadFile = File(...), 
-    asset_type: str = Form("image")  # "image", "video", "logo"
+    asset_type: str = Form("image")  # "image", "video", "logo", "audio"
 ):
     """
     Upload d'assets pour les coaches - ISOLÉ par coach_id
@@ -1252,7 +1252,8 @@ async def upload_coach_asset(
     allowed_types = {
         "image": ["image/jpeg", "image/png", "image/webp", "image/gif"],
         "video": ["video/mp4", "video/webm", "video/quicktime"],
-        "logo": ["image/jpeg", "image/png", "image/webp", "image/svg+xml"]
+        "logo": ["image/jpeg", "image/png", "image/webp", "image/svg+xml"],
+        "audio": ["audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/aac", "audio/mp4"]
     }
     
     if asset_type not in allowed_types:
@@ -1264,7 +1265,7 @@ async def upload_coach_asset(
     contents = await file.read()
     
     # Limite de taille selon le type
-    max_sizes = {"image": 5*1024*1024, "video": 50*1024*1024, "logo": 2*1024*1024}
+    max_sizes = {"image": 5*1024*1024, "video": 50*1024*1024, "logo": 2*1024*1024, "audio": 20*1024*1024}
     if len(contents) > max_sizes.get(asset_type, 5*1024*1024):
         raise HTTPException(status_code=400, detail=f"Fichier trop volumineux (max {max_sizes[asset_type]//1024//1024}MB)")
     
@@ -3162,6 +3163,267 @@ async def update_concept(concept: ConceptUpdate, request: Request):
     except Exception as e:
         logger.error(f"Error updating concept: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- v17.0: Branding (couleur accent + logo) ---
+@api_router.post("/coach/update-branding")
+async def update_coach_branding(request: Request):
+    """Met à jour accent_color et logo_url du coach"""
+    body = await request.json()
+    email = request.headers.get('X-User-Email', '').lower().strip()
+    if not email:
+        raise HTTPException(status_code=401, detail="Email requis")
+
+    updates = {}
+    if "accent_color" in body:
+        updates["accent_color"] = body["accent_color"]
+    if "logo_url" in body:
+        updates["logo_url"] = body["logo_url"]
+
+    if updates:
+        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await db.coaches.update_one({"email": email}, {"$set": updates}, upsert=True)
+
+    coach = await db.coaches.find_one({"email": email}, {"_id": 0})
+    return {"accent_color": coach.get("accent_color", "#D91CD2"), "logo_url": coach.get("logo_url", "")}
+
+@api_router.get("/coach/branding/{coach_email}")
+async def get_coach_branding(coach_email: str):
+    """Récupère le branding public d'un coach"""
+    coach = await db.coaches.find_one({"email": coach_email.lower()}, {"_id": 0, "accent_color": 1, "logo_url": 1})
+    if not coach:
+        return {"accent_color": "#D91CD2", "logo_url": ""}
+    return {"accent_color": coach.get("accent_color", "#D91CD2"), "logo_url": coach.get("logo_url", "")}
+
+
+# --- v17.1: SEO Dynamique ---
+@api_router.post("/coach/update-seo")
+async def update_coach_seo(request: Request):
+    """Met à jour meta_title, meta_description, keywords du coach"""
+    body = await request.json()
+    email = request.headers.get('X-User-Email', '').lower().strip()
+    if not email:
+        raise HTTPException(status_code=401, detail="Email requis")
+
+    updates = {}
+    for field in ["meta_title", "meta_description", "seo_keywords"]:
+        if field in body:
+            updates[field] = body[field]
+
+    if updates:
+        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await db.coaches.update_one({"email": email}, {"$set": updates}, upsert=True)
+
+    coach = await db.coaches.find_one({"email": email}, {"_id": 0, "meta_title": 1, "meta_description": 1, "seo_keywords": 1})
+    return coach or {}
+
+@api_router.get("/coach/seo/{coach_email}")
+async def get_coach_seo(coach_email: str):
+    """Récupère les meta SEO d'un coach (public)"""
+    coach = await db.coaches.find_one(
+        {"email": coach_email.lower()},
+        {"_id": 0, "meta_title": 1, "meta_description": 1, "seo_keywords": 1, "name": 1, "platform_name": 1, "accent_color": 1, "logo_url": 1}
+    )
+    if not coach:
+        return {}
+    return coach
+
+@api_router.get("/og/{username}")
+async def get_og_meta(username: str, request: Request):
+    """v17.1: HTML OpenGraph pour crawlers (WhatsApp, Instagram, Facebook)"""
+    from starlette.responses import HTMLResponse
+
+    # Trouver le coach par username
+    coach = await db.coaches.find_one(
+        {"$or": [{"username": username.lower()}, {"name": {"$regex": f"^{username}$", "$options": "i"}}]},
+        {"_id": 0}
+    )
+
+    if not coach:
+        return HTMLResponse("<html><head><title>Afroboost</title></head><body>Coach not found</body></html>", status_code=404)
+
+    title = coach.get("meta_title") or f"{coach.get('platform_name') or coach.get('name', username)} | Afroboost"
+    description = coach.get("meta_description") or f"Découvrez les cours et services de {coach.get('name', username)} sur Afroboost"
+    image = coach.get("logo_url") or "https://afroboost-v11-dev-pm7l.vercel.app/logo192.png"
+    url = f"https://afroboost-v11-dev-pm7l.vercel.app/coach/{username}"
+    accent = coach.get("accent_color", "#D91CD2")
+
+    html = f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8"/>
+    <title>{title}</title>
+    <meta name="description" content="{description}"/>
+    <meta name="theme-color" content="{accent}"/>
+
+    <!-- OpenGraph -->
+    <meta property="og:type" content="website"/>
+    <meta property="og:title" content="{title}"/>
+    <meta property="og:description" content="{description}"/>
+    <meta property="og:image" content="{image}"/>
+    <meta property="og:url" content="{url}"/>
+    <meta property="og:site_name" content="Afroboost"/>
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image"/>
+    <meta name="twitter:title" content="{title}"/>
+    <meta name="twitter:description" content="{description}"/>
+    <meta name="twitter:image" content="{image}"/>
+
+    <meta http-equiv="refresh" content="0;url={url}"/>
+</head>
+<body>
+    <h1>{title}</h1>
+    <p>{description}</p>
+    <a href="{url}">Voir la page</a>
+</body>
+</html>"""
+    return HTMLResponse(html)
+
+@api_router.get("/sitemap.xml")
+async def get_sitemap():
+    """v17.1: Sitemap XML dynamique"""
+    from starlette.responses import Response
+
+    base_url = "https://afroboost-v11-dev-pm7l.vercel.app"
+    now = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+
+    urls = [
+        f'  <url><loc>{base_url}/</loc><lastmod>{now}</lastmod><priority>1.0</priority></url>',
+        f'  <url><loc>{base_url}/devenir-coach</loc><lastmod>{now}</lastmod><priority>0.8</priority></url>'
+    ]
+
+    # Ajouter toutes les vitrines de coachs actifs
+    coaches = await db.coaches.find(
+        {"active": {"$ne": False}},
+        {"_id": 0, "username": 1, "name": 1}
+    ).to_list(200)
+
+    for c in coaches:
+        slug = c.get("username") or c.get("name", "").lower().replace(" ", "-")
+        if slug:
+            urls.append(f'  <url><loc>{base_url}/coach/{slug}</loc><lastmod>{now}</lastmod><priority>0.7</priority></url>')
+
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+{chr(10).join(urls)}
+</urlset>"""
+
+    return Response(content=xml, media_type="application/xml")
+
+
+# --- v17.2: FAQ Module ---
+@api_router.get("/coach/faqs/{coach_email}")
+async def get_coach_faqs(coach_email: str):
+    """Récupère les FAQs publiques d'un coach"""
+    faqs = await db.faqs.find(
+        {"coach_email": coach_email.lower()},
+        {"_id": 0}
+    ).sort("order", 1).to_list(50)
+    return faqs
+
+@api_router.post("/coach/faq")
+async def create_faq(request: Request):
+    """Créer une FAQ"""
+    body = await request.json()
+    email = request.headers.get('X-User-Email', '').lower().strip()
+    if not email:
+        raise HTTPException(status_code=401, detail="Email requis")
+
+    faq = {
+        "id": f"faq_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{os.urandom(3).hex()}",
+        "coach_email": email,
+        "question": body.get("question", "").strip(),
+        "answer": body.get("answer", "").strip(),
+        "category": body.get("category", "general"),
+        "order": body.get("order", 0),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+
+    if not faq["question"]:
+        raise HTTPException(status_code=400, detail="La question est requise")
+
+    await db.faqs.insert_one(faq)
+    faq.pop("_id", None)
+    return faq
+
+@api_router.put("/coach/faq/{faq_id}")
+async def update_faq(faq_id: str, request: Request):
+    """Modifier une FAQ"""
+    body = await request.json()
+    email = request.headers.get('X-User-Email', '').lower().strip()
+    if not email:
+        raise HTTPException(status_code=401, detail="Email requis")
+
+    updates = {}
+    for field in ["question", "answer", "category", "order"]:
+        if field in body:
+            updates[field] = body[field]
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    result = await db.faqs.update_one(
+        {"id": faq_id, "coach_email": email},
+        {"$set": updates}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="FAQ non trouvée")
+
+    faq = await db.faqs.find_one({"id": faq_id}, {"_id": 0})
+    return faq
+
+@api_router.delete("/coach/faq/{faq_id}")
+async def delete_faq(faq_id: str, request: Request):
+    """Supprimer une FAQ"""
+    email = request.headers.get('X-User-Email', '').lower().strip()
+    if not email:
+        raise HTTPException(status_code=401, detail="Email requis")
+
+    result = await db.faqs.delete_one({"id": faq_id, "coach_email": email})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="FAQ non trouvée")
+
+    return {"deleted": True}
+
+
+# --- v17.3: Import Auto Contacts ---
+@api_router.post("/contacts/check-duplicates")
+async def check_duplicate_contacts(request: Request):
+    """Vérifie les doublons dans la liste de contacts importés"""
+    body = await request.json()
+    phones = [p.strip() for p in body.get("phones", []) if p.strip()]
+    emails = [e.strip().lower() for e in body.get("emails", []) if e.strip()]
+    coach_email = request.headers.get('X-User-Email', '').lower().strip()
+
+    if not coach_email:
+        raise HTTPException(status_code=401, detail="Email requis")
+
+    existing_phones = set()
+    existing_emails = set()
+
+    if phones:
+        cursor = db.chat_participants.find(
+            {"phone": {"$in": phones}},
+            {"_id": 0, "phone": 1}
+        )
+        async for doc in cursor:
+            if doc.get("phone"):
+                existing_phones.add(doc["phone"])
+
+    if emails:
+        cursor = db.chat_participants.find(
+            {"email": {"$in": emails}},
+            {"_id": 0, "email": 1}
+        )
+        async for doc in cursor:
+            if doc.get("email"):
+                existing_emails.add(doc["email"].lower())
+
+    return {
+        "existing_phones": list(existing_phones),
+        "existing_emails": list(existing_emails),
+        "total_checked": len(phones) + len(emails)
+    }
+
 
 # --- Config ---
 @api_router.get("/config", response_model=AppConfig)
@@ -5973,6 +6235,91 @@ Réponds UNIQUEMENT avec le prompt amélioré, sans explication."""
         # Fallback: retourner le prompt original structuré manuellement
         fallback = f"Tu es un assistant virtuel professionnel. {raw_prompt}. Sois courtois et aide l'utilisateur au mieux."
         return {"enhanced_prompt": fallback, "original": raw_prompt, "fallback": True}
+
+@api_router.post("/ai/enhance-text")
+async def enhance_text_with_ai(request: Request):
+    """
+    v17.0 — Assistant rédaction IA générique.
+    Contextes: offer, pack, legal, seo, faq_answer, general
+    """
+    body = await request.json()
+    text = body.get("text", "").strip()
+    context = body.get("context", "general")
+    lang = body.get("lang", "fr")
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Le texte est requis")
+
+    try:
+        from openai import OpenAI
+
+        openai_key = os.environ.get("OPENAI_API_KEY")
+        if not openai_key:
+            raise ValueError("OPENAI_API_KEY not configured")
+
+        client = OpenAI(api_key=openai_key)
+
+        prompts = {
+            "offer": f"""Tu es un expert en marketing fitness/wellness.
+Améliore cette description d'offre pour la rendre attractive et professionnelle.
+- Garde le sens original, rends-la percutante et vendeuse
+- Max 150 caractères
+- Utilise des mots-clés fitness/bien-être
+- Langue: {lang}
+Réponds UNIQUEMENT avec le texte amélioré.""",
+            "pack": f"""Tu es un expert en marketing digital pour coaches sportifs.
+Améliore cette description de pack/abonnement pour maximiser les conversions.
+- Mets en avant la valeur et les bénéfices
+- Crée un sentiment d'urgence subtil
+- Max 200 caractères
+- Langue: {lang}
+Réponds UNIQUEMENT avec le texte amélioré.""",
+            "legal": f"""Tu es un juriste spécialisé en droit suisse du commerce en ligne.
+Améliore et professionnalise ces conditions générales.
+- Assure la conformité légale suisse (CO, LPD)
+- Langage clair mais juridiquement précis
+- Langue: {lang}
+Réponds UNIQUEMENT avec le texte amélioré.""",
+            "seo": f"""Tu es un expert SEO pour sites de coaching fitness.
+Optimise ce texte pour le référencement naturel.
+- Intègre des mots-clés pertinents naturellement
+- Respecte les bonnes pratiques SEO (meta title < 60 car, meta desc < 160 car)
+- Langue: {lang}
+Réponds UNIQUEMENT avec le texte optimisé.""",
+            "faq_answer": f"""Tu es un coach sportif professionnel et bienveillant.
+Rédige une réponse claire et rassurante à cette question de FAQ.
+- Ton professionnel mais chaleureux
+- Réponse concise (2-3 phrases max)
+- Langue: {lang}
+Réponds UNIQUEMENT avec la réponse.""",
+            "general": f"""Tu es un assistant rédaction professionnel.
+Améliore ce texte pour le rendre plus clair et impactant.
+- Garde le sens original
+- Langue: {lang}
+Réponds UNIQUEMENT avec le texte amélioré."""
+        }
+
+        system_prompt = prompts.get(context, prompts["general"])
+
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text}
+            ],
+            max_tokens=500
+        )
+
+        enhanced = response.choices[0].message.content.strip()
+        logger.info(f"[ENHANCE-TEXT] ctx={context} | {text[:30]}... -> {enhanced[:50]}...")
+
+        return {"enhanced_text": enhanced, "original": text, "context": context}
+
+    except Exception as e:
+        logger.error(f"[ENHANCE-TEXT] Erreur: {str(e)}")
+        return {"enhanced_text": text, "original": text, "context": context, "fallback": True, "error": str(e)}
+
 
 # --- Intelligent Chat Entry Point ---
 @api_router.post("/chat/smart-entry")

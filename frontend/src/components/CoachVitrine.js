@@ -12,6 +12,7 @@ import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
 import { copyToClipboard } from "../utils/clipboard";
 import VitrineCheckout from "./VitrineCheckout"; // v15.0
+import AudioPlayer from "./AudioPlayer"; // v17.4
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -77,6 +78,13 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
 
   // Concept du coach (vidéo header)
   const [coachConcept, setCoachConcept] = useState(null);
+
+  // v17.0: Branding dynamique
+  const [brandAccent, setBrandAccent] = useState('#D91CD2');
+
+  // v17.2: FAQ
+  const [faqs, setFaqs] = useState([]);
+  const [openFaqId, setOpenFaqId] = useState(null);
 
   // v17: INLINE booking multi-séances (tableau de { course, date })
   const [selectedBookings, setSelectedBookings] = useState([]); // [{ course, date }, ...]
@@ -234,6 +242,18 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           setPaymentConfig(paymentRes.data);
         } catch (e) {}
 
+        // v17.0: Charger branding
+        try {
+          const brandRes = await axios.get(`${API}/coach/branding/${encodeURIComponent(res.data.coach.email || username)}`);
+          if (brandRes.data?.accent_color) setBrandAccent(brandRes.data.accent_color);
+        } catch (e) {}
+
+        // v17.2: Charger FAQ
+        try {
+          const faqRes = await axios.get(`${API}/coach/faqs/${encodeURIComponent(res.data.coach.email || username)}`);
+          setFaqs(Array.isArray(faqRes.data) ? faqRes.data : []);
+        } catch (e) {}
+
         // Charger la vidéo du coach depuis /partners/active (source fiable)
         try {
           const partnersRes = await axios.get(`${API}/partners/active`);
@@ -267,6 +287,66 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     };
     fetchVitrine();
   }, [username]);
+
+  // v17.1: SEO Dynamique — meta tags + OpenGraph pour chaque vitrine
+  useEffect(() => {
+    if (!coach) return;
+    const coachName = coach.platform_name || coach.name || username;
+    const coachEmail = coach.email || username;
+
+    // Fetch SEO data
+    fetch(`${API}/coach/seo/${encodeURIComponent(coachEmail)}`)
+      .then(r => r.json())
+      .then(seo => {
+        const title = seo.meta_title || `${coachName} | Afroboost`;
+        const desc = seo.meta_description || `Découvrez les cours et services de ${coachName} sur Afroboost`;
+        const keywords = seo.seo_keywords || `${coachName}, fitness, coaching, Afroboost`;
+        const image = seo.logo_url || `${window.location.origin}/logo192.png`;
+        const url = `${window.location.origin}/coach/${username}`;
+
+        // Title
+        document.title = title;
+
+        // Helper to set/create meta
+        const setMeta = (attr, key, content) => {
+          let el = document.querySelector(`meta[${attr}="${key}"]`);
+          if (!el) { el = document.createElement('meta'); el.setAttribute(attr, key); document.head.appendChild(el); }
+          el.setAttribute('content', content);
+        };
+
+        // Standard meta
+        setMeta('name', 'description', desc);
+        setMeta('name', 'keywords', keywords);
+        setMeta('name', 'theme-color', brandAccent);
+
+        // OpenGraph
+        setMeta('property', 'og:type', 'website');
+        setMeta('property', 'og:title', title);
+        setMeta('property', 'og:description', desc);
+        setMeta('property', 'og:image', image);
+        setMeta('property', 'og:url', url);
+        setMeta('property', 'og:site_name', 'Afroboost');
+
+        // Twitter Card
+        setMeta('name', 'twitter:card', 'summary_large_image');
+        setMeta('name', 'twitter:title', title);
+        setMeta('name', 'twitter:description', desc);
+        setMeta('name', 'twitter:image', image);
+      })
+      .catch(() => {
+        // Fallback: minimal title
+        document.title = `${coachName} | Afroboost`;
+      });
+
+    // Cleanup on unmount
+    return () => {
+      document.title = 'Afroboost';
+      ['description', 'keywords'].forEach(name => {
+        const el = document.querySelector(`meta[name="${name}"]`);
+        if (el) el.setAttribute('content', '');
+      });
+    };
+  }, [coach, username, brandAccent]);
 
   // Partager
   const handleShare = async () => {
@@ -791,6 +871,35 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         )}
 
         {/* ============================================= */}
+        {/* v17.4: Section Contenus Audio */}
+        {courses.filter(c => c.audio_url).length > 0 && (
+          <div className="mb-8 vitrine-fade-in" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
+            <h2 className="font-semibold text-white text-center mb-4" style={{ fontSize: '16px' }}>
+              🎵 Contenus Audio
+            </h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {courses.filter(c => c.audio_url).map(course => (
+                <AudioPlayer
+                  key={course.id || course.title}
+                  audioUrl={course.audio_url}
+                  previewUrl={course.audio_preview_url}
+                  title={course.title || course.name || 'Audio'}
+                  thumbnail={course.image || course.thumbnail}
+                  duration={course.audio_duration}
+                  price={course.audio_price}
+                  accentColor={brandAccent}
+                  isPreview={!!course.audio_price && course.audio_price > 0}
+                  onBuyClick={course.audio_price ? () => {
+                    setSelectedOffer({ name: course.title, price: course.audio_price, id: course.id });
+                    const el = document.getElementById('vitrine-booking-form');
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  } : undefined}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ÉTAPE 3: FORMULAIRE INLINE (pas de pop-up) */}
         {/* Apparaît quand session + offre sélectionnées */}
         {/* ============================================= */}
@@ -982,6 +1091,52 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             </div>
           </div>
         </div>
+
+        {/* v17.2: Section FAQ Accordéon */}
+        {faqs.length > 0 && (
+          <div className="mb-8 vitrine-fade-in" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
+            <h2 className="font-semibold text-white text-center mb-4" style={{ fontSize: '16px' }}>
+              Questions fréquentes
+            </h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {faqs.map(faq => (
+                <div key={faq.id} style={{
+                  borderRadius: '10px',
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  overflow: 'hidden'
+                }}>
+                  <button
+                    onClick={() => setOpenFaqId(openFaqId === faq.id ? null : faq.id)}
+                    style={{
+                      width: '100%', padding: '12px 16px',
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left'
+                    }}
+                  >
+                    <span style={{ color: '#fff', fontSize: '13px', fontWeight: 500 }}>{faq.question}</span>
+                    <span style={{
+                      color: brandAccent, fontSize: '16px', fontWeight: 700,
+                      transform: openFaqId === faq.id ? 'rotate(45deg)' : 'none',
+                      transition: 'transform 0.2s ease'
+                    }}>+</span>
+                  </button>
+                  {openFaqId === faq.id && faq.answer && (
+                    <div style={{
+                      padding: '0 16px 12px',
+                      color: 'rgba(255,255,255,0.6)',
+                      fontSize: '12px',
+                      lineHeight: '1.5',
+                      animation: 'afroMsgSlideIn 0.2s ease-out'
+                    }}>
+                      {faq.answer}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* === Footer === */}
         <div className="text-center mt-4 pb-8">

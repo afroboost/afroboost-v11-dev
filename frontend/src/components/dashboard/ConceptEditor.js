@@ -10,8 +10,31 @@ const ConceptEditor = ({
   setConcept,
   conceptSaveStatus,
   saveConcept,
+  API,
   t
 }) => {
+  const [aiLegalLoading, setAiLegalLoading] = React.useState(false);
+
+  const handleAILegal = async () => {
+    const text = concept.termsText;
+    if (!text || text.trim().length < 10) return;
+    setAiLegalLoading(true);
+    try {
+      const res = await fetch(`${API}/ai/enhance-text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, context: 'legal' })
+      });
+      const data = await res.json();
+      if (data.enhanced_text && !data.fallback) {
+        setConcept({ ...concept, termsText: data.enhanced_text });
+      }
+    } catch (err) {
+      console.error('[AI Legal]', err);
+    } finally {
+      setAiLegalLoading(false);
+    }
+  };
   return (
     <div className="card-gradient rounded-xl p-6">
       {/* Indicateur de sauvegarde automatique */}
@@ -237,11 +260,29 @@ const ConceptEditor = ({
           
           {/* Conditions générales */}
           <div className="mb-4">
-            <label className="block mb-1 text-white text-xs opacity-70">{t('termsText')}</label>
-            <textarea 
-              value={concept.termsText} 
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-white text-xs opacity-70">{t('termsText')}</label>
+              <button
+                type="button"
+                onClick={handleAILegal}
+                disabled={aiLegalLoading || !(concept.termsText?.trim()?.length >= 10)}
+                className="text-xs px-2 py-1 rounded-lg"
+                style={{
+                  background: aiLegalLoading ? 'rgba(139,92,246,0.2)' : 'rgba(217,28,210,0.2)',
+                  border: '1px solid rgba(217,28,210,0.4)',
+                  color: '#D91CD2',
+                  cursor: aiLegalLoading ? 'wait' : 'pointer',
+                  opacity: !(concept.termsText?.trim()?.length >= 10) ? 0.4 : 1
+                }}
+                data-testid="ai-enhance-legal"
+              >
+                {aiLegalLoading ? '⏳ IA...' : '✨ Aide IA'}
+              </button>
+            </div>
+            <textarea
+              value={concept.termsText}
               onChange={(e) => setConcept({ ...concept, termsText: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg neon-input text-sm" 
+              className="w-full px-3 py-2 rounded-lg neon-input text-sm"
               rows={4}
             />
           </div>

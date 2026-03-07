@@ -27,7 +27,7 @@ import CRMSection from "./coach/CRMSection"; // v9.2.0 Import CRM Section
 import { parseMediaUrl, getMediaThumbnail } from "../services/MediaParser"; // Media Parser
 import SuperAdminPanel from "./SuperAdminPanel"; // v8.9 Super Admin Panel
 // v13.5: Composants extraits pour alléger CoachDashboard
-import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab, PaymentConfigTab } from "./dashboard";
+import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab, PaymentConfigTab, BrandingManager, SEOManager, FAQManager } from "./dashboard";
 import { copyToClipboard } from "../utils/clipboard"; // Utilitaire copier avec fallback mobile
 
 // v9.2.1: ErrorBoundary pour isoler les erreurs de composants
@@ -4585,13 +4585,21 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
         {/* v13.4: Concept Tab - Composant extrait */}
         {tab === "concept" && (
-          <ConceptEditor
-            concept={concept}
-            setConcept={setConcept}
-            conceptSaveStatus={conceptSaveStatus}
-            saveConcept={saveConcept}
-            t={t}
-          />
+          <>
+            <ConceptEditor
+              concept={concept}
+              setConcept={setConcept}
+              conceptSaveStatus={conceptSaveStatus}
+              saveConcept={saveConcept}
+              API={API}
+              t={t}
+            />
+            <BrandingManager
+              API={API}
+              coachEmail={safeCoachUser?.email}
+              t={t}
+            />
+          </>
         )}
 
         {/* v13.4: Courses Tab - Composant extrait */}
@@ -4623,21 +4631,35 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             deleteOffer={deleteOffer}
             startEditOffer={startEditOffer}
             cancelEditOffer={cancelEditOffer}
+            API={API}
             t={t}
           />
         )}
 
         {/* v13.5: Ma Page de Vente - Composant extrait */}
         {tab === "page-vente" && (
-          <PageVenteTab
-            coachVitrineUrl={coachVitrineUrl}
-            linkCopied={linkCopied}
-            onCopyLink={handleCoachShareLink}
-            paymentLinks={paymentLinks}
-            setPaymentLinks={setPaymentLinks}
-            paymentSaveStatus={paymentSaveStatus}
-            t={t}
-          />
+          <>
+            <PageVenteTab
+              coachVitrineUrl={coachVitrineUrl}
+              linkCopied={linkCopied}
+              onCopyLink={handleCoachShareLink}
+              paymentLinks={paymentLinks}
+              setPaymentLinks={setPaymentLinks}
+              paymentSaveStatus={paymentSaveStatus}
+              t={t}
+            />
+            <SEOManager
+              API={API}
+              coachEmail={safeCoachUser?.email}
+              coachUsername={coachUsername}
+              t={t}
+            />
+            <FAQManager
+              API={API}
+              coachEmail={safeCoachUser?.email}
+              t={t}
+            />
+          </>
         )}
 
         {/* v13.8: Promo Codes Tab - RESTAURATION COMPLÈTE */}

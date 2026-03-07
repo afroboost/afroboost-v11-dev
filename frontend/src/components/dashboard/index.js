@@ -13,3 +13,6 @@ export { default as PageVenteTab } from './PageVenteTab';
 export { default as PromoCodesTab } from './PromoCodesTab';
 export { default as DashboardHeader } from './DashboardHeader';
 export { default as PaymentConfigTab } from './PaymentConfigTab';
+export { default as BrandingManager } from './BrandingManager';
+export { default as SEOManager } from './SEOManager';
+export { default as FAQManager } from './FAQManager';

@@ -6,9 +6,10 @@
  *
  * v13: Blocage strict par crédits — 0 crédits = pas d'envoi (sauf Super Admin)
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { parseMediaUrl } from '../../services/MediaParser';
+import { parseContacts } from '../../utils/contactParser';
 
 const STEPS = [
   { id: 1, label: 'Médias & Objectif', icon: '🎯' },
@@ -56,6 +57,44 @@ export default function CampaignModal({
   const [step, setStep] = useState(1);
   const [aiSuggestions, setAiSuggestions] = useState([]);
   const [aiSuggestionsLoading, setAiSuggestionsLoading] = useState(false);
+
+  // v17.3: Import contacts
+  const importFileRef = useRef(null);
+  const [importedContacts, setImportedContacts] = useState([]);
+  const [showImportPreview, setShowImportPreview] = useState(false);
+
+  const handleFileImport = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const text = evt.target.result;
+      const contacts = parseContacts(text, file.name);
+      setImportedContacts(contacts);
+      setShowImportPreview(true);
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // reset input
+  };
+
+  const addImportedToRecipients = () => {
+    const newRecipients = importedContacts
+      .filter(c => c.phone || c.email)
+      .map(c => ({
+        id: `import_${c.phone || c.email}`,
+        name: c.name || c.phone || c.email,
+        type: 'user',
+        phone: c.phone,
+        email: c.email,
+        imported: true
+      }));
+    // Deduplicate against existing
+    const existingIds = new Set((selectedRecipients || []).map(r => r.id));
+    const unique = newRecipients.filter(r => !existingIds.has(r.id));
+    setSelectedRecipients(prev => [...prev, ...unique]);
+    setShowImportPreview(false);
+    setImportedContacts([]);
+  };
 
   // v13: Calcul coût et blocage crédits
   const totalCost = (selectedRecipients?.length || 0) * campaignCreditCost;
@@ -369,6 +408,62 @@ export default function CampaignModal({
                     </div>
                   )}
                 </div>
+              </div>
+
+              {/* v17.3: Import Contacts */}
+              <div style={{ marginBottom: '12px' }}>
+                <input
+                  ref={importFileRef}
+                  type="file"
+                  accept=".csv,.vcf,.txt"
+                  onChange={handleFileImport}
+                  style={{ display: 'none' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => importFileRef.current?.click()}
+                  style={{
+                    width: '100%', padding: '10px', borderRadius: '8px', fontSize: '12px',
+                    background: 'rgba(217,28,210,0.1)', border: '1px dashed rgba(217,28,210,0.4)',
+                    color: '#D91CD2', cursor: 'pointer', fontWeight: 500
+                  }}
+                >
+                  📤 Importer CSV / vCard (.vcf)
+                </button>
+
+                {/* Import Preview */}
+                {showImportPreview && importedContacts.length > 0 && (
+                  <div style={{
+                    marginTop: '8px', padding: '10px', borderRadius: '8px',
+                    background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)'
+                  }}>
+                    <p style={{ color: '#22c55e', fontSize: '12px', fontWeight: 600, margin: '0 0 6px 0' }}>
+                      ✓ {importedContacts.length} contacts trouvés
+                    </p>
+                    <div style={{ maxHeight: '120px', overflowY: 'auto' }}>
+                      {importedContacts.slice(0, 10).map((c, i) => (
+                        <div key={i} style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', padding: '2px 0' }}>
+                          {c.name} {c.phone && `— ${c.phone}`} {c.email && `— ${c.email}`}
+                        </div>
+                      ))}
+                      {importedContacts.length > 10 && (
+                        <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', padding: '2px 0' }}>
+                          ... et {importedContacts.length - 10} autres
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                      <button type="button" onClick={addImportedToRecipients}
+                        style={{ flex: 1, padding: '8px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, background: 'rgba(34,197,94,0.3)', border: '1px solid rgba(34,197,94,0.5)', color: '#22c55e', cursor: 'pointer' }}>
+                        ✓ Ajouter tous
+                      </button>
+                      <button type="button" onClick={() => { setShowImportPreview(false); setImportedContacts([]); }}
+                        style={{ padding: '8px 12px', borderRadius: '6px', fontSize: '12px', background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', cursor: 'pointer' }}>
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Canaux */}

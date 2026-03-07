@@ -17,8 +17,36 @@ const OffersManager = ({
   deleteOffer,
   startEditOffer,
   cancelEditOffer,
+  enhanceWithAI,
+  API,
   t
 }) => {
+  const [aiLoading, setAiLoading] = React.useState(false);
+
+  const handleAIEnhance = async (field) => {
+    const text = field === 'name' ? newOffer.name : newOffer.description;
+    if (!text || text.trim().length < 3) return;
+    setAiLoading(true);
+    try {
+      const res = await fetch(`${API}/ai/enhance-text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, context: 'offer' })
+      });
+      const data = await res.json();
+      if (data.enhanced_text && !data.fallback) {
+        if (field === 'name') {
+          setNewOffer({ ...newOffer, name: data.enhanced_text });
+        } else {
+          setNewOffer({ ...newOffer, description: data.enhanced_text.slice(0, 150) });
+        }
+      }
+    } catch (err) {
+      console.error('[AI Enhance]', err);
+    } finally {
+      setAiLoading(false);
+    }
+  };
   return (
     <div className="card-gradient rounded-xl p-4 sm:p-6">
       {/* En-tête fixe avec titre et recherche */}
@@ -207,11 +235,29 @@ const OffersManager = ({
         
         {/* Description */}
         <div className="mt-4">
-          <label className="text-xs text-white opacity-60 mb-1 block">Description (icône "i")</label>
-          <textarea 
-            value={newOffer.description || ''} 
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-xs text-white opacity-60">Description (icône "i")</label>
+            <button
+              type="button"
+              onClick={() => handleAIEnhance('description')}
+              disabled={aiLoading || !(newOffer.description?.trim())}
+              className="text-xs px-2 py-1 rounded-lg"
+              style={{
+                background: aiLoading ? 'rgba(139,92,246,0.2)' : 'rgba(217,28,210,0.2)',
+                border: '1px solid rgba(217,28,210,0.4)',
+                color: '#D91CD2',
+                cursor: aiLoading ? 'wait' : 'pointer',
+                opacity: !(newOffer.description?.trim()) ? 0.4 : 1
+              }}
+              data-testid="ai-enhance-description"
+            >
+              {aiLoading ? '⏳ IA...' : '✨ Aide IA'}
+            </button>
+          </div>
+          <textarea
+            value={newOffer.description || ''}
             onChange={e => setNewOffer({ ...newOffer, description: e.target.value })}
-            className="w-full px-3 py-3 rounded-lg neon-input text-sm" 
+            className="w-full px-3 py-3 rounded-lg neon-input text-sm"
             rows={2}
             maxLength={150}
             placeholder="Description visible au clic sur l'icône i (max 150 car.)"

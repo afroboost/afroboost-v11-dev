@@ -50,6 +50,29 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
   });
   const [savingPrices, setSavingPrices] = useState(false);
   
+  const [aiPackLoading, setAiPackLoading] = useState(false);
+
+  const handleAIPackEnhance = async () => {
+    const text = packForm.description;
+    if (!text || text.trim().length < 3) return;
+    setAiPackLoading(true);
+    try {
+      const res = await fetch(`${API}/ai/enhance-text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, context: 'pack' })
+      });
+      const data = await res.json();
+      if (data.enhanced_text && !data.fallback) {
+        setPackForm(prev => ({ ...prev, description: data.enhanced_text }));
+      }
+    } catch (err) {
+      console.error('[AI Pack]', err);
+    } finally {
+      setAiPackLoading(false);
+    }
+  };
+
   const [packForm, setPackForm] = useState({
     name: '',
     price: '',
@@ -331,7 +354,25 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                       />
                     </div>
                     <div>
-                      <label className="text-white/50 text-sm mb-2 block">Description</label>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-white/50 text-sm">Description</label>
+                        <button
+                          type="button"
+                          onClick={handleAIPackEnhance}
+                          disabled={aiPackLoading || !(packForm.description?.trim())}
+                          className="text-xs px-2 py-1 rounded-lg"
+                          style={{
+                            background: aiPackLoading ? 'rgba(139,92,246,0.2)' : 'rgba(217,28,210,0.2)',
+                            border: '1px solid rgba(217,28,210,0.4)',
+                            color: '#D91CD2',
+                            cursor: aiPackLoading ? 'wait' : 'pointer',
+                            opacity: !(packForm.description?.trim()) ? 0.4 : 1
+                          }}
+                          data-testid="ai-enhance-pack"
+                        >
+                          {aiPackLoading ? '⏳ IA...' : '✨ Aide IA'}
+                        </button>
+                      </div>
                       <input
                         type="text"
                         value={packForm.description}
