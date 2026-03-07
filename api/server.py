@@ -1404,7 +1404,9 @@ async def serve_uploaded_file(file_id: str, filename: str):
             file_bytes = bytes(raw_data)
 
         content_type = file_doc.get("content_type", "application/octet-stream")
-        original_name = file_doc.get("original_name", filename)
+        # Sanitize filename pour header HTTP (latin-1 safe)
+        raw_name = file_doc.get("original_name", filename)
+        original_name = raw_name.encode('ascii', 'replace').decode('ascii').replace('?', '_')
         file_size = len(file_bytes)
 
         logger.info(f"[FILE-SERVE] ✅ Servant {original_name}: {file_size} bytes, type={content_type}")
