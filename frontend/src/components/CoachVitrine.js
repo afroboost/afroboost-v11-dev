@@ -873,13 +873,15 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         {/* ============================================= */}
         {/* v17.5: Section Contenus Audio (audio_tracks enrichis + legacy audio_url) */}
         {(() => {
-          // Collecter toutes les pistes audio de tous les cours
+          // Collecter toutes les pistes audio visibles de tous les cours
           const allTracks = [];
           courses.forEach(course => {
             if (course.audio_tracks && course.audio_tracks.length > 0) {
-              course.audio_tracks.forEach(track => {
-                allTracks.push({ ...track, courseName: course.name, courseId: course.id });
-              });
+              course.audio_tracks
+                .filter(track => track.visible !== false)
+                .forEach(track => {
+                  allTracks.push({ ...track, courseName: course.name, courseId: course.id });
+                });
             } else if (course.audio_url) {
               // Legacy: cours avec audio_url simple
               allTracks.push({
@@ -918,7 +920,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                     isPreview={!!track.price && track.price > 0}
                     previewDuration={track.preview_duration || 30}
                     onBuyClick={track.price > 0 ? () => {
-                      setSelectedOffer({ name: track.title, price: track.price, id: track.courseId || track.id });
+                      setSelectedOffer({ name: track.title, price: track.price, id: track.id || track.courseId, type: 'audio', thumbnail: track.cover_url });
                       const el = document.getElementById('vitrine-booking-form');
                       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     } : undefined}

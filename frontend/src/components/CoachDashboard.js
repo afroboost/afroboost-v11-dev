@@ -747,7 +747,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           price: 0,
           preview_duration: 30,
           duration: null,
-          order: audioTracks.length
+          order: audioTracks.length,
+          visible: true  // En vente par défaut
         };
 
         setAudioTracks(prev => [...prev, newTrack]);
@@ -4322,7 +4323,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           <p style={{ color: '#fff', fontSize: '14px', fontWeight: 600, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {track.title}
                           </p>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px', flexWrap: 'wrap' }}>
                             {track.price > 0 ? (
                               <span style={{ fontSize: '11px', color: '#22c55e', fontWeight: 600 }}>{track.price} CHF</span>
                             ) : (
@@ -4330,6 +4331,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                             )}
                             <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)' }}>•</span>
                             <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>Preview {track.preview_duration}s</span>
+                            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)' }}>•</span>
+                            <span style={{
+                              fontSize: '10px', fontWeight: 700, padding: '1px 6px', borderRadius: '6px',
+                              background: track.visible !== false ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
+                              color: track.visible !== false ? '#22c55e' : '#ef4444',
+                              border: track.visible !== false ? '1px solid rgba(34,197,94,0.3)' : '1px solid rgba(239,68,68,0.3)'
+                            }}>
+                              {track.visible !== false ? 'En vente' : 'Masqué'}
+                            </span>
                           </div>
                         </div>
 
@@ -4387,6 +4397,23 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                               placeholder="Description de la piste..."
                             />
                           </div>
+                          {/* Cover URL input */}
+                          <div style={{ gridColumn: '1 / -1' }}>
+                            <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>
+                              Lien image de couverture (ou cliquez la miniature pour uploader)
+                            </label>
+                            <input
+                              type="url"
+                              value={track.cover_url || ''}
+                              onChange={(e) => updateTrackField(track.id, 'cover_url', e.target.value || null)}
+                              style={{
+                                width: '100%', padding: '8px 12px', borderRadius: '8px', fontSize: '13px',
+                                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                                color: '#fff', outline: 'none'
+                              }}
+                              placeholder="https://exemple.com/cover.jpg"
+                            />
+                          </div>
                           <div>
                             <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>Prix (CHF) — 0 = gratuit</label>
                             <input
@@ -4416,6 +4443,31 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                 color: '#fff', outline: 'none'
                               }}
                             />
+                          </div>
+                          {/* Toggle "En vente" */}
+                          <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '12px', paddingTop: '6px' }}>
+                            <div
+                              onClick={() => updateTrackField(track.id, 'visible', track.visible === false ? true : false)}
+                              style={{
+                                width: '44px', height: '24px', borderRadius: '12px', cursor: 'pointer',
+                                background: track.visible !== false
+                                  ? 'linear-gradient(135deg, #22c55e, #16a34a)'
+                                  : 'rgba(255,255,255,0.15)',
+                                position: 'relative', transition: 'all 0.3s ease',
+                                boxShadow: track.visible !== false ? '0 0 10px rgba(34,197,94,0.3)' : 'none'
+                              }}
+                            >
+                              <div style={{
+                                width: '18px', height: '18px', borderRadius: '50%', background: '#fff',
+                                position: 'absolute', top: '3px',
+                                left: track.visible !== false ? '23px' : '3px',
+                                transition: 'left 0.3s ease',
+                                boxShadow: '0 1px 3px rgba(0,0,0,0.3)'
+                              }} />
+                            </div>
+                            <span style={{ color: track.visible !== false ? '#22c55e' : 'rgba(255,255,255,0.4)', fontSize: '13px', fontWeight: 600 }}>
+                              {track.visible !== false ? 'En vente sur la vitrine' : 'Masqué (non visible)'}
+                            </span>
                           </div>
                         </div>
                       )}

@@ -62,7 +62,7 @@ const VitrineCheckout = ({
 
   if (selectedOffer && (!selectedBookings || selectedBookings.length === 0)) {
     items.push({
-      type: selectedOffer.isProduct ? 'product' : 'offer',
+      type: selectedOffer.type === 'audio' ? 'audio' : (selectedOffer.isProduct ? 'product' : 'offer'),
       id: selectedOffer.id || '',
       name: selectedOffer.name || 'Article',
       price: selectedOffer.price || 0,

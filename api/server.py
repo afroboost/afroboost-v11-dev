@@ -315,6 +315,7 @@ class AudioTrack(BaseModel):
     preview_duration: int = 30  # Durée preview en secondes
     duration: Optional[float] = None  # Durée totale en secondes
     order: int = 0
+    visible: bool = True  # En vente sur la vitrine
 
 class Course(BaseModel):
     model_config = ConfigDict(extra="ignore")
