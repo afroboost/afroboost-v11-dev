@@ -1,14 +1,69 @@
 /**
  * SubscriberForm.js - Formulaire d'identification abonné
- * 
+ *
  * Extrait de ChatWidget.js pour alléger le fichier principal.
  * Gère:
  * - La saisie des 4 champs (Nom, WhatsApp, Email, Code Promo)
  * - L'affichage des erreurs de validation
  * - L'état de chargement pendant la validation
+ * - Sauvegarde automatique des identifiants (localStorage)
+ *   → Clé: afroboost_subscriber_info
+ *   → Stocke UNIQUEMENT: name, whatsapp, email (JAMAIS le code promo)
  */
 
-import React, { memo } from 'react';
+import React, { memo, useState, useEffect, useCallback } from 'react';
+
+const STORAGE_KEY = 'afroboost_subscriber_info';
+
+/**
+ * Charge les données sauvegardées depuis localStorage
+ * @returns {object|null} {name, whatsapp, email} ou null
+ */
+const loadSavedInfo = () => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    // Validation: on accepte uniquement name, whatsapp, email
+    if (parsed && typeof parsed === 'object' && (parsed.name || parsed.whatsapp || parsed.email)) {
+      return {
+        name: parsed.name || '',
+        whatsapp: parsed.whatsapp || '',
+        email: parsed.email || ''
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Sauvegarde les infos dans localStorage (JAMAIS le code promo)
+ */
+const saveInfo = (formData) => {
+  try {
+    const toSave = {
+      name: formData.name || '',
+      whatsapp: formData.whatsapp || '',
+      email: formData.email || ''
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+  } catch {
+    // Silencieux si localStorage indisponible
+  }
+};
+
+/**
+ * Supprime les données sauvegardées
+ */
+const clearSavedInfo = () => {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Silencieux
+  }
+};
 
 /**
  * Formulaire d'identification pour les abonnés
@@ -19,17 +74,57 @@ import React, { memo } from 'react';
  * @param {string} error - Message d'erreur à afficher
  * @param {boolean} isLoading - État de chargement (validation en cours)
  */
-const SubscriberForm = ({ 
-  formData, 
-  setFormData, 
-  onSubmit, 
-  onCancel, 
-  error, 
-  isLoading 
+const SubscriberForm = ({
+  formData,
+  setFormData,
+  onSubmit,
+  onCancel,
+  error,
+  isLoading
 }) => {
+  // État du toggle "Mémoriser" — initialisé selon présence dans localStorage
+  const [rememberMe, setRememberMe] = useState(() => !!loadSavedInfo());
+
+  // Auto-remplissage au montage si données sauvegardées
+  useEffect(() => {
+    const saved = loadSavedInfo();
+    if (saved) {
+      setFormData(prev => ({
+        ...prev,
+        name: saved.name || prev.name,
+        whatsapp: saved.whatsapp || prev.whatsapp,
+        email: saved.email || prev.email
+        // code: JAMAIS pré-rempli
+      }));
+    }
+  }, [setFormData]);
+
+  // Wrapper soumission : sauvegarde ou supprime selon toggle
+  const handleSubmit = useCallback((e) => {
+    e.preventDefault();
+    if (rememberMe) {
+      saveInfo(formData);
+    } else {
+      clearSavedInfo();
+    }
+    // Appeler le onSubmit original (qui attend un event)
+    onSubmit(e);
+  }, [rememberMe, formData, onSubmit]);
+
+  // Toggle handler
+  const toggleRemember = useCallback(() => {
+    setRememberMe(prev => {
+      const next = !prev;
+      if (!next) {
+        clearSavedInfo();
+      }
+      return next;
+    });
+  }, []);
+
   return (
-    <form 
-      onSubmit={onSubmit}
+    <form
+      onSubmit={handleSubmit}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -47,20 +142,20 @@ const SubscriberForm = ({
           Accès à vos avantages et réservations rapides
         </p>
       </div>
-      
+
       {/* Message d'erreur */}
       {error && (
-        <div style={{ 
-          background: 'rgba(239, 68, 68, 0.2)', 
-          color: '#ef4444', 
-          padding: '8px 12px', 
+        <div style={{
+          background: 'rgba(239, 68, 68, 0.2)',
+          color: '#ef4444',
+          padding: '8px 12px',
           borderRadius: '8px',
           fontSize: '12px'
         }}>
           {error}
         </div>
       )}
-      
+
       {/* Champ Nom */}
       <div>
         <label className="block text-white text-xs mb-1" style={{ opacity: 0.7 }}>Nom complet *</label>
@@ -79,7 +174,7 @@ const SubscriberForm = ({
           data-testid="subscriber-name"
         />
       </div>
-      
+
       {/* Champ WhatsApp */}
       <div>
         <label className="block text-white text-xs mb-1" style={{ opacity: 0.7 }}>Numéro WhatsApp *</label>
@@ -98,7 +193,7 @@ const SubscriberForm = ({
           data-testid="subscriber-whatsapp"
         />
       </div>
-      
+
       {/* Champ Email */}
       <div>
         <label className="block text-white text-xs mb-1" style={{ opacity: 0.7 }}>Email *</label>
@@ -117,7 +212,7 @@ const SubscriberForm = ({
           data-testid="subscriber-email"
         />
       </div>
-      
+
       {/* Champ Code Promo */}
       <div>
         <label className="block text-white text-xs mb-1" style={{ opacity: 0.7 }}>Code Promo *</label>
@@ -139,7 +234,77 @@ const SubscriberForm = ({
           data-testid="subscriber-code"
         />
       </div>
-      
+
+      {/* Toggle "Mémoriser mes informations" */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          padding: '10px 12px',
+          background: rememberMe
+            ? 'rgba(147, 51, 234, 0.15)'
+            : 'rgba(255,255,255,0.05)',
+          borderRadius: '10px',
+          border: rememberMe
+            ? '1px solid rgba(147, 51, 234, 0.3)'
+            : '1px solid rgba(255,255,255,0.1)',
+          cursor: 'pointer',
+          transition: 'all 0.3s ease',
+          userSelect: 'none'
+        }}
+        onClick={toggleRemember}
+        data-testid="remember-toggle-container"
+      >
+        {/* Switch custom */}
+        <div style={{
+          position: 'relative',
+          width: '40px',
+          height: '22px',
+          flexShrink: 0,
+          background: rememberMe
+            ? 'linear-gradient(135deg, #9333ea, #6366f1)'
+            : 'rgba(255,255,255,0.2)',
+          borderRadius: '11px',
+          transition: 'background 0.3s ease',
+          boxShadow: rememberMe ? '0 0 8px rgba(147, 51, 234, 0.4)' : 'none'
+        }}>
+          <div style={{
+            position: 'absolute',
+            top: '2px',
+            left: rememberMe ? '20px' : '2px',
+            width: '18px',
+            height: '18px',
+            background: '#fff',
+            borderRadius: '50%',
+            transition: 'left 0.3s ease',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.3)'
+          }} />
+        </div>
+
+        {/* Label + description */}
+        <div style={{ flex: 1 }}>
+          <span style={{
+            color: rememberMe ? '#c084fc' : 'rgba(255,255,255,0.7)',
+            fontSize: '12px',
+            fontWeight: '500',
+            transition: 'color 0.3s ease'
+          }}>
+            Mémoriser mes informations
+          </span>
+          <p style={{
+            color: 'rgba(255,255,255,0.35)',
+            fontSize: '10px',
+            marginTop: '2px',
+            lineHeight: '1.3'
+          }}>
+            {rememberMe
+              ? '🔒 Nom, WhatsApp et Email sauvegardés sur cet appareil'
+              : 'Pré-remplir le formulaire à votre prochaine visite'}
+          </p>
+        </div>
+      </div>
+
       {/* Bouton de validation */}
       <button
         type="submit"
@@ -157,7 +322,7 @@ const SubscriberForm = ({
       >
         {isLoading ? '⏳ Validation...' : '💎 Valider mon abonnement'}
       </button>
-      
+
       {/* Bouton retour */}
       <button
         type="button"
