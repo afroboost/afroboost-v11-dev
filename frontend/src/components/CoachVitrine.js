@@ -515,6 +515,18 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 transform: 'translate(-50%, -50%)'
               }}
             />
+          ) : heroVideoUrl && (heroVideoUrl.match(/\.(jpg|jpeg|png|webp|gif)$/i) || currentHeroVideo?.type === 'image') ? (
+            <img
+              src={heroVideoUrl}
+              alt={displayName}
+              className="absolute inset-0 w-full h-full object-cover"
+              style={{ filter: 'brightness(0.75)' }}
+            />
+          ) : heroVideoUrl && heroVideoUrl.startsWith('/api/files/') ? (
+            <video autoPlay muted loop playsInline className="absolute inset-0 w-full h-full object-cover"
+              style={{ filter: 'brightness(0.7)' }}>
+              <source src={heroVideoUrl} />
+            </video>
           ) : (
             <div className="absolute inset-0"
               style={{ background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.5) 0%, rgba(217, 28, 210, 0.4) 100%)' }}>

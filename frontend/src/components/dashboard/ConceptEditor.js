@@ -46,27 +46,45 @@ const ConceptEditor = ({
     setConcept({ ...concept, heroVideos: videos, heroImageUrl: videos[0]?.url || '' });
   };
 
-  const handleVideoUpload = async (file, slotIndex) => {
-    if (!file || !isSuperAdmin) return;
+  const handleMediaUpload = async (file, slotIndex) => {
+    if (!file) return;
+    // Détecter le type automatiquement
+    const isImage = file.type.startsWith('image/');
+    const isVideo = file.type.startsWith('video/');
+    if (!isImage && !isVideo) {
+      alert('Format non supporté. Utilisez MP4, MOV, WEBM, JPG, PNG ou WEBP.');
+      return;
+    }
+    // Vérifier la taille
+    const maxMB = isVideo ? 15 : 5;
+    if (file.size > maxMB * 1024 * 1024) {
+      alert(`Fichier trop volumineux (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum: ${maxMB}MB.\nPour les vidéos volumineuses, utilisez un lien YouTube ou Vimeo.`);
+      return;
+    }
     setUploadingVideo(slotIndex);
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('asset_type', 'video');
+      formData.append('asset_type', isImage ? 'image' : 'video');
       const res = await fetch(`${API}/coach/upload-asset`, {
         method: 'POST',
         headers: { 'X-User-Email': coachEmail },
         body: formData
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `Erreur serveur (${res.status})`);
+      }
       const data = await res.json();
       if (data.url) {
         const videos = [...getHeroVideos()];
-        videos[slotIndex] = { url: data.url, type: 'upload', title: file.name.replace(/\.[^.]+$/, '') };
+        const mediaType = isImage ? 'image' : 'upload';
+        videos[slotIndex] = { url: data.url, type: mediaType, title: file.name.replace(/\.[^.]+$/, '') };
         setConcept({ ...concept, heroVideos: videos, heroImageUrl: videos[0]?.url || '' });
       }
     } catch (err) {
-      console.error('Erreur upload vidéo:', err);
-      alert('Erreur lors de l\'upload de la vidéo');
+      console.error('Erreur upload:', err);
+      alert(`Erreur: ${err.message}`);
     } finally {
       setUploadingVideo(null);
     }
@@ -282,7 +300,7 @@ const ConceptEditor = ({
           {/* v18: Multi-Vidéos Héro (3 max) */}
           <div className="mb-4">
             <div className="flex items-center justify-between mb-2">
-              <label className="text-white text-xs opacity-70">🎬 Vidéos Héro (max 3)</label>
+              <label className="text-white text-xs opacity-70">🎬 Médias Héro — vidéos ou images (max 3)</label>
               {getHeroVideos().length < 3 && (
                 <button
                   type="button"
@@ -335,29 +353,49 @@ const ConceptEditor = ({
                   placeholder="Lien YouTube ou Vimeo (ex: https://youtu.be/...)"
                   style={{ marginBottom: '6px' }}
                 />
-                {isSuperAdmin && (
-                  <div style={{ marginTop: '4px' }}>
+                <div style={{ marginTop: '4px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  {/* Upload image (tous) */}
+                  <label
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: uploadingVideo !== null ? 'wait' : 'pointer',
+                      background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)',
+                      padding: '4px 10px', borderRadius: '8px', fontSize: '11px', color: '#22c55e',
+                      opacity: uploadingVideo !== null ? 0.5 : 1
+                    }}
+                  >
+                    {uploadingVideo === idx ? '⏳ Upload...' : '🖼️ Upload image (JPG/PNG)'}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                      style={{ display: 'none' }}
+                      onChange={(e) => { if (e.target.files[0]) handleMediaUpload(e.target.files[0], idx); }}
+                      disabled={uploadingVideo !== null}
+                    />
+                  </label>
+                  {/* Upload vidéo (admin only) */}
+                  {isSuperAdmin && (
                     <label
                       style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer',
+                        display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: uploadingVideo !== null ? 'wait' : 'pointer',
                         background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)',
-                        padding: '4px 10px', borderRadius: '8px', fontSize: '11px', color: '#a78bfa'
+                        padding: '4px 10px', borderRadius: '8px', fontSize: '11px', color: '#a78bfa',
+                        opacity: uploadingVideo !== null ? 0.5 : 1
                       }}
                     >
-                      {uploadingVideo === idx ? '⏳ Upload...' : '📁 Upload fichier (MP4/MOV)'}
+                      {uploadingVideo === idx ? '⏳ Upload...' : '📁 Upload vidéo (MP4/MOV)'}
                       <input
                         type="file"
                         accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
                         style={{ display: 'none' }}
-                        onChange={(e) => { if (e.target.files[0]) handleVideoUpload(e.target.files[0], idx); }}
+                        onChange={(e) => { if (e.target.files[0]) handleMediaUpload(e.target.files[0], idx); }}
                         disabled={uploadingVideo !== null}
                       />
                     </label>
-                    <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', marginLeft: '6px' }}>
-                      Admin uniquement — max 15MB
-                    </span>
-                  </div>
-                )}
+                  )}
+                  <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)' }}>
+                    {isSuperAdmin ? 'Image 5MB / Vidéo 15MB' : 'Image max 5MB'}
+                  </span>
+                </div>
                 {video.url && (video.url.includes('youtu') || video.url.includes('vimeo')) && (
                   <div style={{ marginTop: '6px', borderRadius: '8px', overflow: 'hidden', maxWidth: '240px' }}>
                     <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0 }}>
