@@ -85,7 +85,7 @@ const CoursesManager = ({
       <h2 className="font-semibold text-white mb-6" style={{ fontSize: '20px' }}>{t('courses')}</h2>
 
       {/* Liste des cours avec scroll */}
-      <div style={{ maxHeight: '400px', overflowY: 'auto', paddingRight: '8px' }} className="custom-scrollbar">
+      <div style={{ maxHeight: '600px', overflowY: 'auto', paddingRight: '8px' }} className="custom-scrollbar">
         {courses.filter(c => !c.archived).map((course, idx) => (
           <div key={course.id} className="glass rounded-lg p-4 mb-4 relative">
             {/* Actions: Dupliquer + Archiver */}
@@ -263,7 +263,7 @@ const CoursesManager = ({
                   pointerEvents: 'none'
                 }} />
                 <span style={{ fontSize: '22px', position: 'relative', zIndex: 1 }}>🎵</span>
-                <span style={{ position: 'relative', zIndex: 1 }}>G\u00e9rer mon Studio Audio</span>
+                <span style={{ position: 'relative', zIndex: 1 }}>Gérer mon Studio Audio</span>
                 {getTrackCount(course) > 0 && (
                   <span style={{
                     position: 'relative',
