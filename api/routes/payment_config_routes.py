@@ -149,32 +149,61 @@ async def update_payment_config(request: Request, config: PaymentConfigUpdate):
 async def get_payment_status(coach_email: str):
     """Statut public : quelles méthodes sont actives (PAS les clés).
     Utilisé par la vitrine pour savoir quelles méthodes de paiement proposer."""
-    config = await db["partner_payment_config"].find_one({"coach_email": coach_email})
+    import os
 
-    if not config or not config.get("is_configured"):
-        return {
-            "is_configured": False,
-            "available_methods": [],
-            "stripe_publishable_key": None
-        }
+    # Super Admin : vérifier aussi les clés dans les variables d'environnement
+    SUPER_ADMIN_EMAILS = ["contact.artboost@gmail.com", "afroboost.bassi@gmail.com"]
+    is_admin = coach_email.lower().strip() in SUPER_ADMIN_EMAILS
+
+    config = await db["partner_payment_config"].find_one({"coach_email": coach_email})
 
     methods = []
     stripe_pk = None
 
-    if config.get("stripe_enabled") and config.get("stripe_secret_key"):
-        methods.append("card")
-        stripe_pk = config.get("stripe_publishable_key", "")
+    # Vérifier d'abord la config partenaire (partner_payment_config)
+    if config and config.get("is_configured"):
+        if config.get("stripe_enabled") and config.get("stripe_secret_key"):
+            methods.append("card")
+            stripe_pk = config.get("stripe_publishable_key", "")
+        if config.get("paypal_enabled") and config.get("paypal_client_id"):
+            methods.append("paypal")
+        if config.get("mobile_money_enabled") and config.get("cinetpay_api_key"):
+            methods.append("mobile_money")
 
-    if config.get("paypal_enabled") and config.get("paypal_client_id"):
-        methods.append("paypal")
+    # Super Admin fallback : si pas de config partenaire, utiliser les env vars
+    if is_admin and "card" not in methods:
+        env_stripe_key = os.environ.get("STRIPE_SECRET_KEY", "")
+        env_stripe_pk = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
+        if env_stripe_key:
+            methods.append("card")
+            stripe_pk = env_stripe_pk
 
-    if config.get("mobile_money_enabled") and config.get("cinetpay_api_key"):
-        methods.append("mobile_money")
+    if is_admin and "paypal" not in methods:
+        env_paypal = os.environ.get("PAYPAL_CLIENT_ID", "")
+        if env_paypal:
+            methods.append("paypal")
+
+    if is_admin and "mobile_money" not in methods:
+        env_cinetpay = os.environ.get("CINETPAY_API_KEY", "")
+        if env_cinetpay:
+            methods.append("mobile_money")
+
+    if not methods:
+        # Dernier fallback pour admin : vérifier les payment_links (ancien système)
+        if is_admin:
+            links = await db.payment_links.find_one({"id": "payment_links"})
+            if links and (links.get("stripe", "").strip() or links.get("paypal", "").strip() or links.get("twint", "").strip()):
+                # Admin a des liens de paiement configurés → marquer comme configuré
+                if links.get("stripe", "").strip():
+                    methods.append("card")
+                    stripe_pk = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
+                if links.get("paypal", "").strip():
+                    methods.append("paypal")
 
     return {
-        "is_configured": True,
+        "is_configured": len(methods) > 0,
         "available_methods": methods,
-        "stripe_publishable_key": stripe_pk  # Nécessaire côté client pour Stripe.js
+        "stripe_publishable_key": stripe_pk
     }
 
 

@@ -2254,7 +2254,11 @@ async def mark_campaign_sent(campaign_id: str, data: dict):
 async def get_payment_links(request: Request):
     user_email = request.headers.get('X-User-Email', '').lower().strip()
     is_admin = is_super_admin(user_email)  # v9.5.6
-    
+
+    # Si pas d'email (visiteur sur la vitrine App.js), charger les liens admin
+    if not user_email:
+        is_admin = True
+
     # ID de lien selon le coach
     link_id = "payment_links" if is_admin else f"payment_links_{user_email}"
     
