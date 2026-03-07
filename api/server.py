@@ -2904,34 +2904,52 @@ async def create_coach_checkout(request: Request):
         else:
             frontend_url = os.environ.get('FRONTEND_URL', 'https://afroboost.com')
         
-        # v9.2.5: URL de redirection post-paiement vers partner-dashboard
-        # v9.2.6: URL de production afroboost.com avec hash partner-dashboard
-        COACH_DASHBOARD_URL = "https://afroboost.com/#partner-dashboard"
-        
-        # Créer la session Stripe Checkout
-        checkout_session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
-            line_items=[{
-                "price": price_id,
-                "quantity": 1
-            }],
-            mode="payment",
-            # v9.2.5: success_url avec auth=success pour propulsion garantie
-            success_url=f"{COACH_DASHBOARD_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}&auth=success",
-            cancel_url="https://afroboost.com/#devenir-coach",
-            customer_email=email,
-            metadata={
-                "type": "coach_registration",
-                "pack_id": pack_id,
-                "pack_name": pack.get("name", ""),
-                "credits": str(pack.get("credits", 0)),
-                "customer_name": name,
-                "customer_email": email,
-                "customer_phone": phone,
-                "promo_code": promo_code
-            }
-        )
-        
+        # v15.5: URL de redirection dynamique (dev/prod)
+        referer = request.headers.get("Referer", "")
+        if referer:
+            from urllib.parse import urlparse
+            parsed = urlparse(referer)
+            frontend_url = f"{parsed.scheme}://{parsed.netloc}"
+        else:
+            frontend_url = os.environ.get('FRONTEND_URL', 'https://afroboost.com')
+
+        COACH_DASHBOARD_URL = f"{frontend_url}/#partner-dashboard"
+        CANCEL_URL = f"{frontend_url}/#devenir-coach"
+
+        # v15.5: Essayer avec TWINT d'abord, fallback card-only
+        methods_to_try = [["card", "twint"], ["card"]]
+        checkout_session = None
+        for methods in methods_to_try:
+            try:
+                checkout_session = stripe.checkout.Session.create(
+                    payment_method_types=methods,
+                    line_items=[{
+                        "price": price_id,
+                        "quantity": 1
+                    }],
+                    mode="payment",
+                    success_url=f"{COACH_DASHBOARD_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}&auth=success",
+                    cancel_url=CANCEL_URL,
+                    customer_email=email,
+                    metadata={
+                        "type": "coach_registration",
+                        "pack_id": pack_id,
+                        "pack_name": pack.get("name", ""),
+                        "credits": str(pack.get("credits", 0)),
+                        "customer_name": name,
+                        "customer_email": email,
+                        "customer_phone": phone,
+                        "promo_code": promo_code
+                    }
+                )
+                break
+            except Exception as twint_err:
+                logger.warning(f"[COACH-CHECKOUT] Methods {methods} failed: {twint_err}, trying next...")
+                continue
+
+        if not checkout_session:
+            raise Exception("Impossible de créer la session Stripe")
+
         logger.info(f"[COACH-CHECKOUT] Session créée pour {email}, pack={pack.get('name')}")
         return {"checkout_url": checkout_session.url, "session_id": checkout_session.id}
         

@@ -299,7 +299,13 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
       }
 
       // === CARTE BANCAIRE (Stripe) ===
-      if (paymentMethod === 'card' && selectedPack.stripe_price_id) {
+      if (paymentMethod === 'card') {
+        if (!selectedPack.stripe_price_id) {
+          setError('Ce pack n\'a pas de prix Stripe configuré. Contactez l\'administrateur.');
+          setSubmitting(false);
+          return;
+        }
+        console.log('[REGISTER] Création checkout Stripe pour pack:', selectedPack.name, 'price_id:', selectedPack.stripe_price_id);
         const response = await axios.post(`${API}/stripe/create-coach-checkout`, {
           price_id: selectedPack.stripe_price_id,
           pack_id: selectedPack.id,
@@ -309,6 +315,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
           promo_code: formData.promoCode
         });
 
+        console.log('[REGISTER] Réponse Stripe:', response.data);
         if (response.data.checkout_url) {
           // Sauvegarder les infos pour la redirection post-paiement
           localStorage.setItem('afroboost_pending_partner', JSON.stringify({
@@ -317,14 +324,22 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
           }));
           window.location.href = response.data.checkout_url;
           return;
+        } else {
+          setError('Erreur: pas d\'URL de paiement reçue. Réessayez.');
         }
       }
 
-      // Fallback : si pas de stripe_price_id et paymentMethod=card, inscription directe
-      setError('Configuration de paiement manquante. Contactez l\'administrateur.');
+      // Fallback
+      if (paymentMethod !== 'card' && paymentMethod !== 'mobile_money') {
+        setError('Méthode de paiement non reconnue.');
+      }
     } catch (err) {
       console.error('[REGISTER] Erreur:', err);
-      setError(err.response?.data?.detail || 'Erreur lors de l\'inscription');
+      const detail = err.response?.data?.detail;
+      const message = typeof detail === 'string' ? detail :
+        Array.isArray(detail) ? detail.map(d => d.msg || JSON.stringify(d)).join(', ') :
+        'Erreur lors de l\'inscription. Vérifiez votre connexion et réessayez.'
+      setError(message);
     } finally {
       setSubmitting(false);
     }
