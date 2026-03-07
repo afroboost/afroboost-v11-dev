@@ -1777,6 +1777,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       loadActiveConversations();
       loadAIConfig();
       loadAILogs();
+      // v16.4: Déclenche silencieusement le check des campagnes programmées
+      // (Vercel Hobby = cron 1x/jour seulement, donc on compense ici)
+      fetch(`${API}/cron/check-campaigns`).catch(() => {});
     }
   }, [tab]);
 
