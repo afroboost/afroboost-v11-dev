@@ -831,10 +831,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       const sortedTracks = [...audioTracks].sort((a, b) => a.order - b.order);
       const legacyPlaylist = sortedTracks.map(t => t.url);
 
-      // Envoyer seulement playlist + audio_tracks (pas tout le cours)
+      // Envoyer seulement playlist + audio_tracks avec auth header
       await axios.put(`${API}/courses/${selectedCourseForAudio.id}`, {
         playlist: legacyPlaylist,
         audio_tracks: sortedTracks
+      }, {
+        headers: { 'X-User-Email': coachUser?.email || '' }
       });
 
       setCourses(courses.map(c =>
