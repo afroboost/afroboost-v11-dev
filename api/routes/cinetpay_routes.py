@@ -8,10 +8,12 @@ import os
 import httpx
 import logging
 import uuid
-from datetime import datetime, timezone
+import hashlib
+import secrets
+from datetime import datetime, timezone, timedelta
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Request, Response
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +52,16 @@ class CinetPayCheckoutRequest(BaseModel):
 class CinetPayCoachCheckoutRequest(BaseModel):
     """Requête pour inscription partenaire via Mobile Money"""
     pack_id: str
-    customer_name: str
-    customer_email: str
-    customer_phone: str = ""
+    customer_name: str = Field(..., alias="name")
+    customer_email: str = Field(..., alias="email")
+    customer_phone: str = Field(default="", alias="phone")
     currency: str = "XOF"
     success_url: Optional[str] = None
     cancel_url: Optional[str] = None
+
+    class Config:
+        # Allow both naming conventions (snake_case and aliases)
+        populate_by_name = True
 
 
 class CinetPayCreditCheckoutRequest(BaseModel):
@@ -67,11 +73,27 @@ class CinetPayCreditCheckoutRequest(BaseModel):
     cancel_url: Optional[str] = None
 
 
+class RegisterFreePackRequest(BaseModel):
+    """Requête pour inscription gratuite (0 CHF packs)"""
+    email: str
+    name: str
+    phone: str = ""
+    pack_id: str
+    password: Optional[str] = None  # Optional: only create auth if provided
+
+
 # === Helper Functions ===
 
 def is_cinetpay_configured():
     """Vérifie que CinetPay est configuré"""
     return bool(CINETPAY_API_KEY and CINETPAY_SITE_ID)
+
+
+def hash_password(password: str) -> str:
+    """Hash password using PBKDF2 with SHA256 (same as auth_routes.py)"""
+    salt = secrets.token_hex(16)
+    hash_val = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
+    return f"{salt}:{hash_val.hex()}"
 
 
 async def create_cinetpay_payment(
@@ -169,7 +191,10 @@ async def create_cinetpay_checkout(request: CinetPayCheckoutRequest):
     Crée une session de paiement CinetPay (Mobile Money + Carte).
     """
     if not is_cinetpay_configured():
-        raise HTTPException(status_code=500, detail="CinetPay n'est pas configuré. Contactez l'administrateur.")
+        raise HTTPException(
+            status_code=503,
+            detail="Le service de paiement CinetPay n'est pas actuellement disponible. Veuillez réessayer plus tard ou contacter l'administrateur."
+        )
 
     transaction_id = f"AFR-{uuid.uuid4().hex[:12]}"
     frontend_url = os.environ.get('REACT_APP_FRONTEND_URL', 'https://afroboost.com')
@@ -230,7 +255,10 @@ async def create_cinetpay_coach_checkout(request: CinetPayCoachCheckoutRequest):
     Équivalent du create-coach-checkout Stripe mais via Mobile Money.
     """
     if not is_cinetpay_configured():
-        raise HTTPException(status_code=500, detail="CinetPay n'est pas configuré")
+        raise HTTPException(
+            status_code=503,
+            detail="Le service de paiement CinetPay n'est pas actuellement disponible. Veuillez réessayer plus tard ou contacter l'administrateur."
+        )
 
     # Récupérer le pack
     pack = await db.coach_packs.find_one({"id": request.pack_id})
@@ -304,7 +332,10 @@ async def create_cinetpay_credit_checkout(request: CinetPayCreditCheckoutRequest
     Crée un paiement CinetPay pour l'achat de crédits.
     """
     if not is_cinetpay_configured():
-        raise HTTPException(status_code=500, detail="CinetPay n'est pas configuré")
+        raise HTTPException(
+            status_code=503,
+            detail="Le service de paiement CinetPay n'est pas actuellement disponible. Veuillez réessayer plus tard ou contacter l'administrateur."
+        )
 
     pack = await db.coach_packs.find_one({"id": request.pack_id})
     if not pack:
@@ -363,13 +394,226 @@ async def create_cinetpay_credit_checkout(request: CinetPayCreditCheckoutRequest
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/register-free")
+async def register_free_pack(request: RegisterFreePackRequest, response: Response):
+    """
+    Enregistrement gratuit pour packs à 0 CHF.
+
+    Crée:
+    1. Un profil coach dans la collection 'coaches'
+    2. Si password est fourni: créer des credentials auth dans 'users_auth' avec PBKDF2-SHA256 (100k iterations)
+    3. Une session coach (localStorage-friendly)
+    4. Envoie des notifications emails (admin + nouveau partenaire via Resend)
+
+    Retourne: user info + session token
+    """
+    try:
+        email = request.email.lower().strip()
+        name = request.name.strip()
+        phone = request.phone.strip()
+        pack_id = request.pack_id.strip()
+        password = request.password
+
+        # === VALIDATION ===
+        if not email or '@' not in email:
+            raise HTTPException(status_code=400, detail="Email invalide")
+
+        if not name or len(name) < 2:
+            raise HTTPException(status_code=400, detail="Le nom doit contenir au moins 2 caractères")
+
+        if password and len(password) < 6:
+            raise HTTPException(status_code=400, detail="Le mot de passe doit contenir au moins 6 caractères")
+
+        # === VÉRIFIER LE PACK ===
+        pack = await db.coach_packs.find_one({"id": pack_id})
+        if not pack:
+            raise HTTPException(status_code=404, detail="Pack non trouvé")
+
+        # Vérifier que c'est un pack gratuit (0 CHF)
+        pack_price = pack.get("price", 0)
+        if pack_price > 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ce pack ne peut pas être enregistré gratuitement (prix: {pack_price} CHF)"
+            )
+
+        # === VÉRIFIER QUE L'EMAIL N'EXISTE PAS ===
+        existing_coach = await db.coaches.find_one({"email": email})
+        if existing_coach:
+            raise HTTPException(status_code=409, detail="Cet email est déjà enregistré comme partenaire")
+
+        existing_user = await db.users_auth.find_one({"email": email})
+        if existing_user:
+            raise HTTPException(status_code=409, detail="Cet email est déjà enregistré")
+
+        # === CRÉER LE PROFIL COACH ===
+        coach_id = str(uuid.uuid4())
+        credits = pack.get("credits", 0)
+
+        coach_profile = {
+            "id": coach_id,
+            "email": email,
+            "name": name,
+            "phone": phone,
+            "bio": "",
+            "photo_url": "",
+            "role": "coach",
+            "credits": credits,
+            "pack_id": pack_id,
+            "pack_name": pack.get("name", ""),
+            "stripe_customer_id": None,
+            "stripe_connect_id": None,
+            "is_active": True,
+            "payment_provider": "free",
+            "payment_method": "free_registration",
+            "platform_name": None,
+            "logo_url": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "last_login": datetime.now(timezone.utc).isoformat()
+        }
+
+        await db.coaches.insert_one(coach_profile)
+        logger.info(f"[CINETPAY_FREE] Coach créé: {email} avec pack {pack_id}")
+
+        user_id = None
+        session_token = None
+
+        # === CRÉER AUTH SI MOT DE PASSE FOURNI ===
+        if password:
+            user_id = f"coach_{uuid.uuid4().hex[:12]}"
+            hashed_password = hash_password(password)
+
+            await db.users_auth.insert_one({
+                "user_id": user_id,
+                "email": email,
+                "name": name,
+                "password_hash": hashed_password,
+                "auth_method": "email_password",
+                "is_coach": True,
+                "picture": "",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            })
+
+            logger.info(f"[CINETPAY_FREE] Auth credentials créés pour: {email}")
+        else:
+            # Sans password, générer un user_id pour la session
+            user_id = f"coach_{uuid.uuid4().hex[:12]}"
+
+        # === CRÉER LA SESSION ===
+        session_token = str(uuid.uuid4())
+        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+
+        await db.coach_sessions.insert_one({
+            "session_id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "email": email,
+            "name": name,
+            "session_token": session_token,
+            "expires_at": expires_at.isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+
+        # === DÉFINIR LE COOKIE ===
+        response.set_cookie(
+            key="coach_session_token",
+            value=session_token,
+            httponly=True,
+            secure=True,
+            samesite="none",
+            max_age=7 * 24 * 60 * 60,
+            path="/"
+        )
+
+        logger.info(f"[CINETPAY_FREE] Session créée pour: {email}")
+
+        # === ENVOYER LES EMAILS ===
+        try:
+            import resend
+            import asyncio
+
+            resend_api_key = os.environ.get('RESEND_API_KEY', '')
+            if resend_api_key:
+                resend.api_key = resend_api_key
+
+                # Email au Super Admin
+                admin_email = "contact.artboost@gmail.com"
+                await asyncio.to_thread(resend.Emails.send, {
+                    "from": "Afroboost <notifications@afroboosteur.com>",
+                    "to": [admin_email],
+                    "subject": f"🎉 Nouveau Partenaire Gratuit ! {name} ({email})",
+                    "html": f"""
+                    <div style="font-family:Arial,sans-serif;max-width:500px;margin:auto;padding:20px;background:#1a1a2e;color:white;border-radius:12px;">
+                        <h2 style="color:#D91CD2;">🎉 Nouveau Partenaire Afroboost (Inscription Gratuite)</h2>
+                        <p><strong>Nom:</strong> {name}</p>
+                        <p><strong>Email:</strong> {email}</p>
+                        <p><strong>Téléphone:</strong> {phone or 'N/A'}</p>
+                        <p><strong>Pack:</strong> {pack.get('name', 'N/A')}</p>
+                        <p><strong>Crédits:</strong> {credits}</p>
+                        <p><strong>Type d'inscription:</strong> Gratuit (0 CHF)</p>
+                        <p style="color:#4ade80;font-weight:bold;margin-top:20px;">Inscription confirmée ✅</p>
+                    </div>
+                    """
+                })
+
+                # Email au nouveau partenaire
+                await asyncio.to_thread(resend.Emails.send, {
+                    "from": "Afroboost <notifications@afroboosteur.com>",
+                    "to": [email],
+                    "subject": "🎊 Bienvenue Partenaire Afroboost !",
+                    "html": f"""
+                    <div style="font-family:Arial,sans-serif;max-width:500px;margin:auto;padding:20px;background:#1a1a2e;color:white;border-radius:12px;">
+                        <h2 style="color:#D91CD2;">Bienvenue {name} ! 🎊</h2>
+                        <p>Votre inscription comme Partenaire Afroboost est confirmée.</p>
+                        <p><strong>Pack:</strong> {pack.get('name', '')}</p>
+                        <p><strong>Crédits disponibles:</strong> {credits}</p>
+                        <p style="margin-top:20px;">
+                            <a href="https://afroboost.com/#partner-dashboard"
+                               style="display:inline-block;padding:12px 24px;background:linear-gradient(135deg,#D91CD2,#8b5cf6);color:white;text-decoration:none;border-radius:8px;font-weight:bold;">
+                                Accéder à mon Dashboard →
+                            </a>
+                        </p>
+                    </div>
+                    """
+                })
+
+                logger.info(f"[CINETPAY_FREE] Emails envoyés pour: {email}")
+        except Exception as email_err:
+            logger.error(f"[CINETPAY_FREE] Erreur envoi email: {email_err}")
+            # Continue même si l'email échoue
+
+        return {
+            "success": True,
+            "user": {
+                "user_id": user_id,
+                "email": email,
+                "name": name,
+                "picture": "",
+                "is_coach": True
+            },
+            "session_token": session_token,
+            "message": "Inscription gratuite réussie",
+            "redirect": "/#partner-dashboard"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[CINETPAY_FREE] Registration error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/status/{transaction_id}")
 async def get_cinetpay_status(transaction_id: str):
     """
     Vérifie le statut d'une transaction CinetPay.
     """
     if not is_cinetpay_configured():
-        raise HTTPException(status_code=500, detail="CinetPay n'est pas configuré")
+        raise HTTPException(
+            status_code=503,
+            detail="Le service de paiement CinetPay n'est pas actuellement disponible."
+        )
 
     # Vérifier en local d'abord
     local_tx = await db.cinetpay_transactions.find_one(

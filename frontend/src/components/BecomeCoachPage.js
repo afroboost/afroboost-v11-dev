@@ -50,11 +50,16 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
   // v11.0: Méthode de paiement (card = Stripe, mobile_money = CinetPay)
   const [paymentMethod, setPaymentMethod] = useState('card');
 
+  // v11.6: Mot de passe + CGU
+  const [showPassword, setShowPassword] = useState(false);
+  const [acceptedCGU, setAcceptedCGU] = useState(false);
+
   // Formulaire d'inscription (fallback si pas de Google)
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     phone: '',
+    password: '',
     promoCode: ''
   });
 
@@ -201,13 +206,29 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     // Utiliser les données Google si disponibles
     const email = googleUser?.email || formData.email;
     const name = googleUser?.name || formData.name;
-    
+
     if (!name || !email || !selectedPack) {
       setError('Veuillez remplir tous les champs obligatoires');
+      return;
+    }
+
+    // v11.6: Validation CGU obligatoire
+    if (!acceptedCGU) {
+      setError('Vous devez accepter les conditions générales d\'utilisation');
+      return;
+    }
+
+    // v11.6: Validation mot de passe (si pas Google et pack payant ou gratuit sans Google)
+    if (!googleUser && !formData.password) {
+      setError('Veuillez choisir un mot de passe');
+      return;
+    }
+    if (!googleUser && formData.password && formData.password.length < 6) {
+      setError('Le mot de passe doit contenir au moins 6 caractères');
       return;
     }
 
@@ -215,68 +236,92 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
     setError(null);
 
     try {
-      // v11.0: Paiement selon la méthode choisie
-      if (selectedPack.price > 0) {
+      // === CAS SPÉCIFIQUE 0 CHF : Inscription immédiate sans paiement ===
+      if (!selectedPack.price || selectedPack.price <= 0) {
+        const registerRes = await axios.post(`${API}/cinetpay/register-free`, {
+          email: email,
+          name: name,
+          phone: formData.phone,
+          pack_id: selectedPack.id,
+          password: googleUser ? undefined : formData.password
+        }, { withCredentials: true });
 
-        // === MOBILE MONEY (CinetPay) ===
-        if (paymentMethod === 'mobile_money') {
+        if (registerRes.data?.success) {
+          // Session active — stocker les infos partenaire
+          const user = registerRes.data.user;
+          localStorage.setItem('afroboost_coach_user', JSON.stringify(user));
+          localStorage.setItem('afroboost_coach_mode', 'true');
+          localStorage.setItem('redirect_to_dash', 'true');
+          localStorage.setItem('afroboost_redirect_message', '🎉 Bienvenue Partenaire ! Votre pack est activé.');
+
+          // Redirection directe vers le Dashboard sans relogin
+          window.location.hash = '#partner-dashboard';
+          window.location.reload();
+          onSuccess?.(registerRes.data);
+        }
+        return;
+      }
+
+      // v11.0: Paiement selon la méthode choisie (price > 0)
+
+      // === MOBILE MONEY (CinetPay) ===
+      if (paymentMethod === 'mobile_money') {
+        try {
           const response = await axios.post(`${API}/cinetpay/create-coach-checkout`, {
             pack_id: selectedPack.id,
-            email: email,
-            name: name,
-            phone: formData.phone,
-            promo_code: formData.promoCode,
-            price_chf: selectedPack.price,
-            price_xof: selectedPack.price_xof || null,
-            credits: selectedPack.credits,
-            pack_name: selectedPack.name
+            customer_email: email,
+            customer_name: name,
+            customer_phone: formData.phone
           });
 
           if (response.data.payment_url) {
+            // Sauvegarder les infos pour la redirection post-paiement
+            localStorage.setItem('afroboost_pending_partner', JSON.stringify({
+              email, name, phone: formData.phone, password: formData.password || '',
+              pack_id: selectedPack.id, transaction_id: response.data.transaction_id
+            }));
             window.location.href = response.data.payment_url;
             return;
           } else {
             setError("Erreur lors de la création du paiement Mobile Money");
-            setSubmitting(false);
-            return;
           }
-        }
-
-        // === CARTE BANCAIRE (Stripe) ===
-        if (paymentMethod === 'card' && selectedPack.stripe_price_id) {
-          const response = await axios.post(`${API}/stripe/create-coach-checkout`, {
-            price_id: selectedPack.stripe_price_id,
-            pack_id: selectedPack.id,
-            email: email,
-            name: name,
-            phone: formData.phone,
-            promo_code: formData.promoCode
-          });
-
-          if (response.data.checkout_url) {
-            window.location.href = response.data.checkout_url;
-            return;
+        } catch (mmErr) {
+          console.error('[MOBILE_MONEY] Erreur:', mmErr);
+          const errMsg = mmErr.response?.data?.detail || '';
+          if (mmErr.response?.status === 503 || errMsg.includes('pas configuré') || errMsg.includes('pas disponible')) {
+            setError('Le paiement Mobile Money est temporairement indisponible. Veuillez utiliser la Carte Bancaire ou réessayer plus tard.');
+          } else {
+            setError(errMsg || 'Erreur Mobile Money. Vérifiez votre connexion et réessayez.');
           }
+          setSubmitting(false);
+          return;
         }
       }
-      
-      // Pack gratuit ou sans Stripe - inscription directe
-      const registerRes = await axios.post(`${API}/coach/register`, {
-        email: email,
-        name: name,
-        phone: formData.phone,
-        pack_id: selectedPack.id,
-        credits: selectedPack.credits
-      });
-      
-      if (registerRes.data) {
-        // v9.2.7: Propulsion DIRECTE vers le dashboard après inscription gratuite
-        localStorage.setItem('redirect_to_dash', 'true');
-        localStorage.setItem('afroboost_redirect_message', '🎉 Bienvenue ! Votre pack est activé.');
-        window.location.hash = '#partner-dashboard';
-        window.location.reload();
-        onSuccess?.(registerRes.data);
+
+      // === CARTE BANCAIRE (Stripe) ===
+      if (paymentMethod === 'card' && selectedPack.stripe_price_id) {
+        const response = await axios.post(`${API}/stripe/create-coach-checkout`, {
+          price_id: selectedPack.stripe_price_id,
+          pack_id: selectedPack.id,
+          email: email,
+          name: name,
+          phone: formData.phone,
+          promo_code: formData.promoCode
+        });
+
+        if (response.data.checkout_url) {
+          // Sauvegarder les infos pour la redirection post-paiement
+          localStorage.setItem('afroboost_pending_partner', JSON.stringify({
+            email, name, phone: formData.phone, password: formData.password || '',
+            pack_id: selectedPack.id
+          }));
+          window.location.href = response.data.checkout_url;
+          return;
+        }
       }
+
+      // Fallback : si pas de stripe_price_id et paymentMethod=card, inscription directe
+      setError('Configuration de paiement manquante. Contactez l\'administrateur.');
     } catch (err) {
       console.error('[REGISTER] Erreur:', err);
       setError(err.response?.data?.detail || 'Erreur lors de l\'inscription');
@@ -501,6 +546,61 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                   </div>
                 </div>
 
+                {/* v11.6: Champ mot de passe (si pas de Google) */}
+                {!googleUser && (
+                  <div style={{ position: 'relative' }}>
+                    <label className="text-white/70 text-sm mb-1 block">Mot de passe *</label>
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      name="password"
+                      value={formData.password}
+                      onChange={handleInputChange}
+                      required
+                      minLength={6}
+                      placeholder="Minimum 6 caractères"
+                      className="w-full px-4 py-3 rounded-lg"
+                      style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', paddingRight: '48px' }}
+                      data-testid="coach-password-input"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      style={{
+                        position: 'absolute', right: '12px', top: '32px',
+                        background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)',
+                        cursor: 'pointer', fontSize: '14px'
+                      }}
+                    >
+                      {showPassword ? '🙈' : '👁️'}
+                    </button>
+                  </div>
+                )}
+
+                {/* v11.6: Case CGU obligatoire */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '8px 0' }}>
+                  <input
+                    type="checkbox"
+                    id="cgu-checkbox"
+                    checked={acceptedCGU}
+                    onChange={(e) => setAcceptedCGU(e.target.checked)}
+                    style={{ marginTop: '3px', accentColor: '#D91CD2', width: '18px', height: '18px', cursor: 'pointer' }}
+                    data-testid="cgu-checkbox"
+                  />
+                  <label htmlFor="cgu-checkbox" style={{ color: 'rgba(255,255,255,0.7)', fontSize: '13px', cursor: 'pointer' }}>
+                    J'accepte les{' '}
+                    <a
+                      href="/cgu"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: '#D91CD2', textDecoration: 'underline' }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      conditions générales d'utilisation
+                    </a>
+                    {' '}d'Afroboost *
+                  </label>
+                </div>
+
                 {error && (
                   <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#fca5a5', fontSize: '14px' }}>
                     {error}
@@ -541,7 +641,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
 
                 <button
                   type="submit"
-                  disabled={submitting || (!googleUser && (!formData.name || !formData.email))}
+                  disabled={submitting || !acceptedCGU || (!googleUser && (!formData.name || !formData.email || !formData.password))}
                   style={{
                     width: '100%',
                     padding: '16px',
@@ -551,7 +651,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                     fontSize: '18px',
                     border: 'none',
                     cursor: submitting ? 'wait' : 'pointer',
-                    opacity: (submitting || (!googleUser && (!formData.name || !formData.email))) ? 0.5 : 1,
+                    opacity: (submitting || !acceptedCGU || (!googleUser && (!formData.name || !formData.email || !formData.password))) ? 0.5 : 1,
                     background: paymentMethod === 'mobile_money'
                       ? 'linear-gradient(135deg, #F59E0B, #D97706)'
                       : 'linear-gradient(135deg, #D91CD2, #8b5cf6)',

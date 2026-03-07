@@ -68,7 +68,28 @@ const detectStripeSuccess = () => {
     localStorage.setItem('redirect_to_dash', 'true');
     localStorage.setItem('afroboost_redirect_intent', 'dashboard');
     localStorage.setItem('afroboost_redirect_message', '🎉 Paiement validé ! Bienvenue Partenaire');
-    
+
+    // v11.6: Auto-session partenaire après paiement (évite reconnexion)
+    try {
+      const pendingStr = localStorage.getItem('afroboost_pending_partner');
+      if (pendingStr) {
+        const pending = JSON.parse(pendingStr);
+        if (pending.email && pending.name) {
+          localStorage.setItem('afroboost_coach_user', JSON.stringify({
+            email: pending.email,
+            name: pending.name,
+            role: 'coach',
+            is_coach: true
+          }));
+          localStorage.setItem('afroboost_coach_mode', 'true');
+          console.log('[APP] 🔑 Session partenaire auto-créée:', pending.email);
+        }
+        localStorage.removeItem('afroboost_pending_partner');
+      }
+    } catch (e) {
+      console.error('[APP] Erreur auto-session:', e);
+    }
+
     // Nettoyer l'URL immédiatement
     const url = new URL(window.location.href);
     url.searchParams.delete('success');
@@ -80,7 +101,7 @@ const detectStripeSuccess = () => {
     url.searchParams.delete('welcome');
     url.hash = '#partner-dashboard';
     window.history.replaceState({}, '', url.pathname + url.hash);
-    
+
     return true;
   }
   return false;
