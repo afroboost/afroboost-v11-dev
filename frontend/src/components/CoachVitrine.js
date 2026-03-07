@@ -385,6 +385,16 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     return d.toLocaleDateString('fr-CH', { weekday: 'short', day: '2-digit', month: '2-digit' });
   };
 
+  // v18.4: Auto-rotation du carousel héro (8s par slide)
+  const heroSlidesCount = (coachConcept?.heroVideos || []).filter(v => v && v.url).length;
+  useEffect(() => {
+    if (heroSlidesCount <= 1) return;
+    const timer = setInterval(() => {
+      setActiveVideoIndex(prev => (prev + 1) % heroSlidesCount);
+    }, 8000);
+    return () => clearInterval(timer);
+  }, [heroSlidesCount]);
+
   // === LOADING — v14: fond noir simple, pas de violet ===
   if (loading) {
     return (
@@ -437,12 +447,22 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     return 'unknown';
   };
 
-  // v18: Multi-vidéos héro — source unique: heroVideos, fallback heroImageUrl seulement
+  // v18.4: Multi-vidéos héro — prioriser les médias uploadés (image/vidéo) avant YouTube
   const heroVideos = (() => {
     if (coachConcept?.heroVideos && coachConcept.heroVideos.length > 0) {
       const filtered = coachConcept.heroVideos.filter(v => v && v.url);
-      console.log('[VITRINE-HERO] heroVideos trouvées:', filtered.length, filtered.map(v => ({ url: v.url, type: v.type, detected: detectMediaType(v) })));
-      return filtered;
+      // v18.4: Réordonner — médias uploadés (image, vidéo) en premier, YouTube/Vimeo en dernier
+      const uploaded = filtered.filter(v => {
+        const t = detectMediaType(v);
+        return t === 'image' || t === 'video';
+      });
+      const external = filtered.filter(v => {
+        const t = detectMediaType(v);
+        return t !== 'image' && t !== 'video';
+      });
+      const reordered = [...uploaded, ...external];
+      console.log('[VITRINE-HERO] heroVideos triées:', reordered.length, reordered.map(v => ({ url: v.url, type: v.type, detected: detectMediaType(v) })));
+      return reordered;
     }
     if (coachConcept?.heroImageUrl) {
       console.log('[VITRINE-HERO] Fallback heroImageUrl:', coachConcept.heroImageUrl);
