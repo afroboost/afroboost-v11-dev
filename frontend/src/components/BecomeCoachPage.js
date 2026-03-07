@@ -5,6 +5,7 @@
  */
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
+import PaymentMethodSelector from "./PaymentMethodSelector";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -46,6 +47,9 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const hasProcessedRef = useRef(false);
   
+  // v11.0: Méthode de paiement (card = Stripe, mobile_money = CinetPay)
+  const [paymentMethod, setPaymentMethod] = useState('card');
+
   // Formulaire d'inscription (fallback si pas de Google)
   const [formData, setFormData] = useState({
     name: '',
@@ -211,20 +215,48 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
     setError(null);
 
     try {
-      // Si pack a un prix Stripe, rediriger vers Stripe Checkout
-      if (selectedPack.stripe_price_id && selectedPack.price > 0) {
-        const response = await axios.post(`${API}/stripe/create-coach-checkout`, {
-          price_id: selectedPack.stripe_price_id,
-          pack_id: selectedPack.id,
-          email: email,
-          name: name,
-          phone: formData.phone,
-          promo_code: formData.promoCode
-        });
-        
-        if (response.data.checkout_url) {
-          window.location.href = response.data.checkout_url;
-          return;
+      // v11.0: Paiement selon la méthode choisie
+      if (selectedPack.price > 0) {
+
+        // === MOBILE MONEY (CinetPay) ===
+        if (paymentMethod === 'mobile_money') {
+          const response = await axios.post(`${API}/cinetpay/create-coach-checkout`, {
+            pack_id: selectedPack.id,
+            email: email,
+            name: name,
+            phone: formData.phone,
+            promo_code: formData.promoCode,
+            price_chf: selectedPack.price,
+            price_xof: selectedPack.price_xof || null,
+            credits: selectedPack.credits,
+            pack_name: selectedPack.name
+          });
+
+          if (response.data.payment_url) {
+            window.location.href = response.data.payment_url;
+            return;
+          } else {
+            setError("Erreur lors de la création du paiement Mobile Money");
+            setSubmitting(false);
+            return;
+          }
+        }
+
+        // === CARTE BANCAIRE (Stripe) ===
+        if (paymentMethod === 'card' && selectedPack.stripe_price_id) {
+          const response = await axios.post(`${API}/stripe/create-coach-checkout`, {
+            price_id: selectedPack.stripe_price_id,
+            pack_id: selectedPack.id,
+            email: email,
+            name: name,
+            phone: formData.phone,
+            promo_code: formData.promoCode
+          });
+
+          if (response.data.checkout_url) {
+            window.location.href = response.data.checkout_url;
+            return;
+          }
         }
       }
       
@@ -470,25 +502,39 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                 </div>
 
                 {error && (
-                  <div className="p-3 rounded-lg bg-red-500/20 border border-red-500/50 text-red-300 text-sm">
+                  <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#fca5a5', fontSize: '14px' }}>
                     {error}
                   </div>
                 )}
 
+                {/* v11.0: Sélecteur de méthode de paiement */}
+                {selectedPack.price > 0 && (
+                  <PaymentMethodSelector
+                    selected={paymentMethod}
+                    onSelect={setPaymentMethod}
+                    priceChf={selectedPack.price}
+                    priceXof={selectedPack.price_xof}
+                    disabled={submitting}
+                  />
+                )}
+
                 {/* Récapitulatif */}
-                <div className="pt-4 border-t border-white/10">
-                  <div className="flex justify-between items-center mb-4">
-                    <span className="text-white/70">Pack sélectionné:</span>
-                    <span className="text-white font-semibold">{selectedPack.name}</span>
+                <div style={{ paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <span style={{ color: 'rgba(255,255,255,0.7)' }}>Pack sélectionné:</span>
+                    <span style={{ color: '#fff', fontWeight: '600' }}>{selectedPack.name}</span>
                   </div>
-                  <div className="flex justify-between items-center mb-4">
-                    <span className="text-white/70">Crédits inclus:</span>
-                    <span className="text-white font-semibold">{selectedPack.credits}</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <span style={{ color: 'rgba(255,255,255,0.7)' }}>Crédits inclus:</span>
+                    <span style={{ color: '#fff', fontWeight: '600' }}>{selectedPack.credits}</span>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-white text-lg">Total:</span>
-                    <span className="text-2xl font-bold" style={{ color: '#D91CD2' }}>
-                      {selectedPack.price} CHF
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: '#fff', fontSize: '18px' }}>Total:</span>
+                    <span style={{ fontSize: '24px', fontWeight: '700', color: '#D91CD2' }}>
+                      {paymentMethod === 'mobile_money'
+                        ? `${(selectedPack.price_xof || Math.round(selectedPack.price * 400)).toLocaleString('fr-FR')} FCFA`
+                        : `${selectedPack.price} CHF`
+                      }
                     </span>
                   </div>
                 </div>
@@ -496,11 +542,32 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                 <button
                   type="submit"
                   disabled={submitting || (!googleUser && (!formData.name || !formData.email))}
-                  className="w-full py-4 rounded-xl text-white font-bold text-lg transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{ background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)' }}
+                  style={{
+                    width: '100%',
+                    padding: '16px',
+                    borderRadius: '12px',
+                    color: '#fff',
+                    fontWeight: '700',
+                    fontSize: '18px',
+                    border: 'none',
+                    cursor: submitting ? 'wait' : 'pointer',
+                    opacity: (submitting || (!googleUser && (!formData.name || !formData.email))) ? 0.5 : 1,
+                    background: paymentMethod === 'mobile_money'
+                      ? 'linear-gradient(135deg, #F59E0B, #D97706)'
+                      : 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                    transition: 'all 0.2s',
+                    transform: 'scale(1)'
+                  }}
                   data-testid="submit-coach-registration"
                 >
-                  {submitting ? 'Traitement...' : selectedPack.price > 0 ? `Payer ${selectedPack.price} CHF` : 'S\'inscrire gratuitement'}
+                  {submitting
+                    ? 'Traitement...'
+                    : selectedPack.price > 0
+                      ? paymentMethod === 'mobile_money'
+                        ? `Payer via Mobile Money`
+                        : `Payer ${selectedPack.price} CHF`
+                      : 'S\'inscrire gratuitement'
+                  }
                 </button>
               </form>
             </div>

@@ -56,8 +56,9 @@ const detectStripeSuccess = () => {
   const urlParams = new URLSearchParams(window.location.search);
   const hash = window.location.hash;
   
-  const isSuccess = urlParams.get('success') === 'true' || 
+  const isSuccess = urlParams.get('success') === 'true' ||
                     urlParams.get('status') === 'success' ||
+                    urlParams.get('payment') === 'success' ||
                     hash.includes('success=true') ||
                     hash.includes('welcome=true');
   
@@ -72,6 +73,9 @@ const detectStripeSuccess = () => {
     const url = new URL(window.location.href);
     url.searchParams.delete('success');
     url.searchParams.delete('status');
+    url.searchParams.delete('payment');
+    url.searchParams.delete('provider');
+    url.searchParams.delete('tid');
     url.searchParams.delete('session_id');
     url.searchParams.delete('welcome');
     url.hash = '#partner-dashboard';
@@ -82,8 +86,25 @@ const detectStripeSuccess = () => {
   return false;
 };
 
+// v11.0: Détecter le scan QR (?qr=AFR-XXXXXX) pour auto-connecter l'abonné
+const detectQRSubscriber = () => {
+  const urlParams = new URLSearchParams(window.location.search);
+  const qrCode = urlParams.get('qr');
+  if (qrCode && qrCode.startsWith('AFR-')) {
+    console.log('[APP] 📱 QR Code détecté:', qrCode);
+    localStorage.setItem('afroboost_qr_subscriber', qrCode);
+    // Nettoyer l'URL
+    const url = new URL(window.location.href);
+    url.searchParams.delete('qr');
+    window.history.replaceState({}, '', url.pathname + (url.hash || ''));
+    return qrCode;
+  }
+  return null;
+};
+
 // Exécuter la détection immédiatement
 const INITIAL_REDIRECT_INTENT = detectStripeSuccess();
+const INITIAL_QR_CODE = detectQRSubscriber();
 
 // Translations
 const translations = {

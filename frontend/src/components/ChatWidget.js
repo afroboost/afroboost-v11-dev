@@ -1045,6 +1045,20 @@ export const ChatWidget = () => {
   const [subscriberFormData, setSubscriberFormData] = useState({ name: '', whatsapp: '', email: '', code: '' });
   const [validatingCode, setValidatingCode] = useState(false); // Loading pendant validation du code
   
+  // === v11.0: AUTO-CONNEXION QR CODE ABONNÉ ===
+  useEffect(() => {
+    const qrCode = localStorage.getItem('afroboost_qr_subscriber');
+    if (qrCode) {
+      localStorage.removeItem('afroboost_qr_subscriber');
+      console.log('[CHATWIDGET] 📱 QR Code abonné détecté:', qrCode);
+      // Auto-remplir le code et ouvrir le formulaire abonné
+      setSubscriberFormData(prev => ({ ...prev, code: qrCode }));
+      setShowSubscriberForm(true);
+      setIsFullscreen(true);
+      setIsOpen(true);
+    }
+  }, []);
+
   // === v8.9.9: VÉRIFICATION COACH INSCRIT ===
   // v9.3.0: Initialiser depuis localStorage pour persistance après reconnexion
   // v9.3.1: Aussi vérifier côté serveur pour synchronisation

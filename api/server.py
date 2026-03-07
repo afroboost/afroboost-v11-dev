@@ -2649,7 +2649,7 @@ async def stripe_webhook(request: Request):
                 logger.info(f"[PAYMENT] Code {new_code} cree pour {customer_email} ({sessions_count} seances)")
                 # v8.1: EMAIL AVEC QR CODE + CODE TEXTE
                 if RESEND_AVAILABLE and RESEND_API_KEY and customer_email:
-                    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=AFROBOOST:{new_code}&format=png"
+                    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://afroboost.com/?qr={new_code}&format=png"
                     html = f"""<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0a0a0a;"><div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:24px;text-align:center;"><h1 style="color:white;margin:0;font-size:22px;">Bienvenue chez Afroboost</h1></div><div style="padding:24px;color:#fff;"><p style="color:#a855f7;font-size:16px;line-height:1.6;">Merci pour ton achat et bienvenue dans la communaute Afroboost ! <span style="font-size:18px;">&#9889;</span><br><br>Ton energie va faire la difference. Tu trouveras ci-dessous ton code personnel et ton QR Code pour acceder a tes seances.</p><div style="background:rgba(147,51,234,0.15);border:1px solid rgba(147,51,234,0.3);border-radius:12px;padding:20px;margin:20px 0;text-align:center;"><p style="margin:0 0 8px;color:#888;">Ton code d'acces personnel</p><p style="margin:0;color:#d91cd2;font-size:28px;font-weight:bold;letter-spacing:3px;">{new_code}</p><p style="margin:12px 0 0;color:#888;">{sessions_count} seances incluses</p></div><div style="text-align:center;margin:30px 0;"><p style="color:#888;margin-bottom:16px;">Ton QR Code d'acces</p><img src="{qr_url}" alt="QR Code Afroboost" width="150" height="150" style="background:white;padding:10px;border-radius:8px;display:block;margin:0 auto;"/><p style="color:#a855f7;font-size:13px;margin-top:12px;">Presente ce QR Code a l'entree de ton cours.</p></div><div style="text-align:center;margin:30px 0;"><a href="https://afroboost.com" style="display:inline-block;background:#d91cd2;color:white;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;">Acceder a mon espace Afroboost</a></div><p style="color:#666;font-size:12px;text-align:center;margin-top:30px;">Conserve ce mail precieusement. A tres vite !</p></div></div>"""
                     try:
                         await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost <notifications@afroboosteur.com>", "to": [customer_email], "subject": f"Votre acces Afroboost - {new_code}", "html": html})
@@ -2665,6 +2665,65 @@ async def stripe_webhook(request: Request):
     except Exception as e:
         logger.error(f"Webhook error: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Webhook error: {str(e)}")
+
+# === ESPACE ABONNÉ — Lookup par code AFR-XXXXXX v11.0 ===
+@api_router.get("/subscriber/{code}")
+async def get_subscriber_by_code(code: str):
+    """
+    Récupère les infos d'un abonné via son code AFR-XXXXXX.
+    Retourne: séances restantes, historique, QR code URL.
+    """
+    try:
+        code_upper = code.upper().strip()
+        # Chercher dans discount_codes
+        discount = await db.discount_codes.find_one(
+            {"code": code_upper},
+            {"_id": 0}
+        )
+        if not discount:
+            raise HTTPException(status_code=404, detail="Code abonné introuvable")
+
+        # Infos de base
+        max_uses = discount.get("maxUses", 0)
+        used = discount.get("used", 0)
+        remaining = max(0, max_uses - used)
+        email = discount.get("assignedEmail", "")
+        is_active = discount.get("active", False) and remaining > 0
+
+        # QR Code URL
+        qr_data = f"https://afroboost.com/?qr={code_upper}"
+        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={qr_data}&format=png"
+
+        # Historique des validations (si collection existe)
+        validations = []
+        try:
+            validation_docs = await db.qr_validations.find(
+                {"code": code_upper},
+                {"_id": 0}
+            ).sort("validated_at", -1).to_list(50)
+            validations = validation_docs
+        except Exception:
+            pass
+
+        return {
+            "code": code_upper,
+            "email": email,
+            "name": discount.get("name", email.split("@")[0] if email else "Abonné"),
+            "sessions_total": max_uses,
+            "sessions_used": used,
+            "sessions_remaining": remaining,
+            "is_active": is_active,
+            "qr_code_url": qr_url,
+            "created_at": discount.get("created_at", ""),
+            "source": discount.get("source", ""),
+            "validations": validations
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[SUBSCRIBER] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # === STRIPE CHECKOUT POUR COACHS PARTENAIRES v8.9 ===
 @api_router.post("/stripe/create-coach-checkout")
