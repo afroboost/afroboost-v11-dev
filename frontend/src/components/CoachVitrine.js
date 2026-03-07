@@ -411,21 +411,36 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const displayName = coach.platform_name || coach.name || 'Coach';
   const initial = displayName.charAt(0).toUpperCase();
 
+  // v18.1: Résolution URL complète pour fichiers uploadés
+  const resolveMediaUrl = (url) => {
+    if (!url) return '';
+    // URLs relatives /api/files/... → préfixer avec BACKEND_URL si défini
+    if (url.startsWith('/api/files/')) {
+      const resolved = `${BACKEND_URL}${url}`;
+      console.log('[VITRINE-MEDIA] URL résolue:', url, '→', resolved);
+      return resolved;
+    }
+    return url;
+  };
+
   // v18: Multi-vidéos héro — source unique: heroVideos, fallback heroImageUrl seulement
   const heroVideos = (() => {
     // Priorité 1: heroVideos (nouveau système v18)
     if (coachConcept?.heroVideos && coachConcept.heroVideos.length > 0) {
-      return coachConcept.heroVideos.filter(v => v && v.url);
+      const filtered = coachConcept.heroVideos.filter(v => v && v.url);
+      console.log('[VITRINE-HERO] heroVideos trouvées:', filtered.length, filtered.map(v => ({ url: v.url, type: v.type })));
+      return filtered;
     }
     // Priorité 2: heroImageUrl uniquement (pas heroVideoUrl ni video_url qui sont des champs legacy pollués)
     if (coachConcept?.heroImageUrl) {
+      console.log('[VITRINE-HERO] Fallback heroImageUrl:', coachConcept.heroImageUrl);
       return [{ url: coachConcept.heroImageUrl, type: 'youtube' }];
     }
-    // Aucune vidéo configurée — pas de fallback sur heroVideoUrl/video_url
+    console.log('[VITRINE-HERO] Aucune vidéo configurée');
     return [];
   })();
   const currentHeroVideo = heroVideos[activeVideoIndex] || heroVideos[0] || null;
-  const heroVideoUrl = currentHeroVideo?.url || '';
+  const heroVideoUrl = resolveMediaUrl(currentHeroVideo?.url || '');
   const youtubeId = getYoutubeId(heroVideoUrl);
 
   // Déduplication des cours par nom
@@ -481,6 +496,19 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       {/* ============================================= */}
       <div className="relative w-full" style={{ height: '85vh', maxHeight: '85vh', background: '#000000' }}>
 
+        {/* v18.1: Loading spinner médias */}
+        {heroVideoUrl && (currentHeroVideo?.type === 'upload' || heroVideoUrl.includes('/api/files/')) && (
+          <div id="hero-media-loader" className="absolute inset-0 z-10 flex items-center justify-center"
+            style={{ background: 'rgba(0,0,0,0.85)' }}>
+            <div style={{
+              width: '48px', height: '48px', borderRadius: '50%',
+              border: '3px solid rgba(217,28,210,0.2)', borderTopColor: '#D91CD2',
+              animation: 'spin 0.8s linear infinite'
+            }} />
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          </div>
+        )}
+
         {/* Fond vidéo plein écran — autoplay natif */}
         <div className="absolute inset-0 overflow-hidden">
           {youtubeId ? (
@@ -499,11 +527,6 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 transform: 'translate(-50%, -50%)'
               }}
             />
-          ) : heroVideoUrl && heroVideoUrl.match(/\.(mp4|webm|mov)$/i) ? (
-            <video autoPlay muted loop playsInline className="absolute inset-0 w-full h-full object-cover"
-              style={{ filter: 'brightness(0.7)' }}>
-              <source src={heroVideoUrl} type="video/mp4" />
-            </video>
           ) : heroVideoUrl && heroVideoUrl.includes('vimeo.com') ? (
             <iframe
               className="absolute"
@@ -521,15 +544,41 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             />
           ) : heroVideoUrl && (heroVideoUrl.match(/\.(jpg|jpeg|png|webp|gif)$/i) || currentHeroVideo?.type === 'image') ? (
             <img
+              key={heroVideoUrl}
               src={heroVideoUrl}
               alt={displayName}
               className="absolute inset-0 w-full h-full object-cover"
               style={{ filter: 'brightness(0.75)' }}
+              onLoad={() => {
+                console.log('[VITRINE-MEDIA] ✅ Image chargée:', heroVideoUrl);
+                const loader = document.getElementById('hero-media-loader');
+                if (loader) loader.style.display = 'none';
+              }}
+              onError={(e) => {
+                console.error('[VITRINE-MEDIA] ❌ Erreur chargement image:', heroVideoUrl);
+                const loader = document.getElementById('hero-media-loader');
+                if (loader) loader.style.display = 'none';
+                e.target.style.display = 'none';
+              }}
             />
-          ) : heroVideoUrl && heroVideoUrl.startsWith('/api/files/') ? (
-            <video autoPlay muted loop playsInline className="absolute inset-0 w-full h-full object-cover"
-              style={{ filter: 'brightness(0.7)' }}>
-              <source src={heroVideoUrl} />
+          ) : heroVideoUrl && (heroVideoUrl.match(/\.(mp4|webm|mov)$/i) || currentHeroVideo?.type === 'upload' || heroVideoUrl.includes('/api/files/')) ? (
+            <video
+              key={heroVideoUrl}
+              autoPlay muted loop playsInline
+              className="absolute inset-0 w-full h-full object-cover"
+              style={{ filter: 'brightness(0.7)' }}
+              onLoadedData={() => {
+                console.log('[VITRINE-MEDIA] ✅ Vidéo chargée:', heroVideoUrl);
+                const loader = document.getElementById('hero-media-loader');
+                if (loader) loader.style.display = 'none';
+              }}
+              onError={(e) => {
+                console.error('[VITRINE-MEDIA] ❌ Erreur chargement vidéo:', heroVideoUrl, e.target.error);
+                const loader = document.getElementById('hero-media-loader');
+                if (loader) loader.style.display = 'none';
+              }}
+            >
+              <source src={heroVideoUrl} type={heroVideoUrl.match(/\.webm$/i) ? 'video/webm' : 'video/mp4'} />
             </video>
           ) : (
             <div className="absolute inset-0"

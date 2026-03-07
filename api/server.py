@@ -1343,28 +1343,99 @@ async def upload_coach_asset(
         logger.error(f"[COACH-UPLOAD] ❌ Erreur: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur upload: {str(e)}")
 
+# === v18.1: DIAGNOSTIC FICHIERS UPLOADÉS (doit être AVANT la route dynamique) ===
+@api_router.get("/files/check/{file_id}")
+async def check_uploaded_file(file_id: str):
+    """Diagnostic: vérifie si un fichier existe dans MongoDB sans le charger"""
+    try:
+        file_doc = await db.uploaded_files.find_one(
+            {"file_id": file_id},
+            {"file_id": 1, "filename": 1, "content_type": 1, "size": 1, "original_name": 1, "asset_type": 1, "created_at": 1, "coach_email": 1}
+        )
+        if not file_doc:
+            return {"exists": False, "file_id": file_id}
+
+        return {
+            "exists": True,
+            "file_id": file_doc.get("file_id"),
+            "filename": file_doc.get("filename"),
+            "original_name": file_doc.get("original_name"),
+            "content_type": file_doc.get("content_type"),
+            "size": file_doc.get("size"),
+            "asset_type": file_doc.get("asset_type"),
+            "created_at": str(file_doc.get("created_at", "")),
+            "coach_email": file_doc.get("coach_email")
+        }
+    except Exception as e:
+        return {"exists": False, "error": str(e)}
+
 # === v17.5: SERVING FICHIERS DEPUIS MONGODB ===
 @api_router.get("/files/{file_id}/{filename}")
 async def serve_uploaded_file(file_id: str, filename: str):
     """
     Sert un fichier uploadé depuis MongoDB.
+    v18.1: Ajout try/except robuste + StreamingResponse pour gros fichiers
     Cache-Control: 1 an (les fichiers sont immutables via leur ID unique)
     """
-    from fastapi.responses import Response
+    from fastapi.responses import Response, StreamingResponse
+    import io
 
-    file_doc = await db.uploaded_files.find_one({"file_id": file_id})
+    try:
+        logger.info(f"[FILE-SERVE] Requête fichier: file_id={file_id}, filename={filename}")
 
-    if not file_doc:
-        raise HTTPException(status_code=404, detail="Fichier non trouvé")
+        file_doc = await db.uploaded_files.find_one({"file_id": file_id})
 
-    return Response(
-        content=bytes(file_doc["data"]),
-        media_type=file_doc.get("content_type", "application/octet-stream"),
-        headers={
-            "Cache-Control": "public, max-age=31536000, immutable",
-            "Content-Disposition": f'inline; filename="{file_doc.get("original_name", filename)}"'
-        }
-    )
+        if not file_doc:
+            logger.warning(f"[FILE-SERVE] ❌ Fichier non trouvé: {file_id}")
+            raise HTTPException(status_code=404, detail="Fichier non trouvé")
+
+        # Extraire les données binaires
+        raw_data = file_doc.get("data")
+        if raw_data is None:
+            logger.error(f"[FILE-SERVE] ❌ Champ 'data' manquant pour {file_id}")
+            raise HTTPException(status_code=500, detail="Données fichier manquantes")
+
+        # Convertir BSON Binary en bytes de manière sûre
+        if hasattr(raw_data, 'read'):
+            file_bytes = raw_data.read()
+        elif isinstance(raw_data, bytes):
+            file_bytes = raw_data
+        else:
+            file_bytes = bytes(raw_data)
+
+        content_type = file_doc.get("content_type", "application/octet-stream")
+        original_name = file_doc.get("original_name", filename)
+        file_size = len(file_bytes)
+
+        logger.info(f"[FILE-SERVE] ✅ Servant {original_name}: {file_size} bytes, type={content_type}")
+
+        # Pour les fichiers > 3MB, utiliser StreamingResponse
+        if file_size > 3 * 1024 * 1024:
+            return StreamingResponse(
+                io.BytesIO(file_bytes),
+                media_type=content_type,
+                headers={
+                    "Cache-Control": "public, max-age=31536000, immutable",
+                    "Content-Disposition": f'inline; filename="{original_name}"',
+                    "Content-Length": str(file_size),
+                    "Accept-Ranges": "bytes"
+                }
+            )
+
+        return Response(
+            content=file_bytes,
+            media_type=content_type,
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "Content-Disposition": f'inline; filename="{original_name}"',
+                "Content-Length": str(file_size)
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[FILE-SERVE] ❌ Erreur servant {file_id}: {type(e).__name__}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur lecture fichier: {type(e).__name__}: {str(e)}")
 
 # === v9.3.1: VÉRIFICATION PARTENAIRE (CÔTÉ SERVEUR) ===
 @api_router.get("/check-partner/{email}")
