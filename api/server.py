@@ -3075,7 +3075,11 @@ async def get_credit_transactions(request: Request):
 async def get_concept(request: Request):
     user_email = request.headers.get('X-User-Email', '').lower().strip()
     is_admin = is_super_admin(user_email)  # v9.5.6
-    
+
+    # Si pas d'email (visiteur sur la vitrine App.js), charger le concept admin
+    if not user_email:
+        is_admin = True
+
     # Super Admin: concept global, Coach: concept personnel
     concept_id = "concept" if is_admin else f"concept_{user_email}"
     
