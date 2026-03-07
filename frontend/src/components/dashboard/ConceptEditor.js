@@ -396,6 +396,7 @@ const ConceptEditor = ({
                     Max 4MB — pour les vidéos, utilisez YouTube/Vimeo
                   </span>
                 </div>
+                {/* Aperçu YouTube/Vimeo */}
                 {video.url && (video.url.includes('youtu') || video.url.includes('vimeo')) && (
                   <div style={{ marginTop: '6px', borderRadius: '8px', overflow: 'hidden', maxWidth: '240px' }}>
                     <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0 }}>
@@ -407,9 +408,33 @@ const ConceptEditor = ({
                         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
                         allow="autoplay; encrypted-media"
                         allowFullScreen
-                        title={`Preview vidéo ${idx + 1}`}
+                        title={`Aperçu vidéo ${idx + 1}`}
                       />
                     </div>
+                  </div>
+                )}
+                {/* Aperçu fichier uploadé (vidéo MP4/MOV) */}
+                {video.url && video.url.startsWith('/api/files/') && video.type !== 'image' && (
+                  <div style={{ marginTop: '6px', borderRadius: '8px', overflow: 'hidden', maxWidth: '240px' }}>
+                    <video
+                      src={video.url}
+                      controls
+                      muted
+                      style={{ width: '100%', borderRadius: '8px', background: '#000' }}
+                    />
+                    <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', marginTop: '2px' }}>
+                      {video.title || 'Vidéo uploadée'}
+                    </p>
+                  </div>
+                )}
+                {/* Aperçu fichier uploadé (image) */}
+                {video.url && (video.type === 'image' || video.url.match(/\.(jpg|jpeg|png|webp|gif)$/i)) && (
+                  <div style={{ marginTop: '6px', borderRadius: '8px', overflow: 'hidden', maxWidth: '240px' }}>
+                    <img
+                      src={video.url}
+                      alt={video.title || 'Image héro'}
+                      style={{ width: '100%', borderRadius: '8px', objectFit: 'cover' }}
+                    />
                   </div>
                 )}
               </div>

@@ -411,13 +411,17 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const displayName = coach.platform_name || coach.name || 'Coach';
   const initial = displayName.charAt(0).toUpperCase();
 
-  // v18: Multi-vidéos héro avec fallback legacy
+  // v18: Multi-vidéos héro — source unique: heroVideos, fallback heroImageUrl seulement
   const heroVideos = (() => {
+    // Priorité 1: heroVideos (nouveau système v18)
     if (coachConcept?.heroVideos && coachConcept.heroVideos.length > 0) {
       return coachConcept.heroVideos.filter(v => v && v.url);
     }
-    const legacyUrl = coachConcept?.heroImageUrl || coachConcept?.heroVideoUrl || coach?.video_url;
-    if (legacyUrl) return [{ url: legacyUrl, type: 'youtube' }];
+    // Priorité 2: heroImageUrl uniquement (pas heroVideoUrl ni video_url qui sont des champs legacy pollués)
+    if (coachConcept?.heroImageUrl) {
+      return [{ url: coachConcept.heroImageUrl, type: 'youtube' }];
+    }
+    // Aucune vidéo configurée — pas de fallback sur heroVideoUrl/video_url
     return [];
   })();
   const currentHeroVideo = heroVideos[activeVideoIndex] || heroVideos[0] || null;
