@@ -41,6 +41,7 @@ from api.routes.auth_routes import auth_router, legacy_auth_router, init_auth_db
 from api.routes.promo_routes import promo_router, init_promo_db
 # v13.4: Import routes stripe
 from api.routes.stripe_routes import router as stripe_router, init_db as init_stripe_db
+from api.routes.cinetpay_routes import router as cinetpay_router, init_db as init_cinetpay_db
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -82,6 +83,8 @@ init_auth_db(db)
 init_promo_db(db)
 # v13.4: Initialiser la db pour stripe routes
 init_stripe_db(db)
+# v14.0: Initialiser la db pour CinetPay routes
+init_cinetpay_db(db)
 
 # Configure logging FIRST (needed for socketio)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -7290,6 +7293,10 @@ fastapi_app.include_router(promo_router, prefix="/api")
 # v13.4: Include Stripe routes (extracted)
 fastapi_app.include_router(stripe_router)
 init_stripe_db(db)
+
+# v14.0: Include CinetPay routes (Mobile Money)
+fastapi_app.include_router(cinetpay_router)
+init_cinetpay_db(db)
 
 fastapi_app.add_middleware(
     CORSMiddleware,
