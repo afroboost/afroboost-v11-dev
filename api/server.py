@@ -1240,29 +1240,25 @@ async def upload_user_photo(file: UploadFile = File(...), participant_id: str = 
         logger.error(f"[UPLOAD] ❌ Erreur traitement image: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur traitement image: {str(e)}")
 
-# === v9.3.1: UPLOAD ISOLÉ PAR COACH ===
+# === v17.5: UPLOAD ISOLÉ PAR COACH — MONGODB STORAGE (Vercel-compatible) ===
 @api_router.post("/coach/upload-asset")
 async def upload_coach_asset(
     request: Request,
-    file: UploadFile = File(...), 
+    file: UploadFile = File(...),
     asset_type: str = Form("image")  # "image", "video", "logo", "audio"
 ):
     """
-    Upload d'assets pour les coaches - ISOLÉ par coach_id
-    Les fichiers sont stockés dans /uploads/coaches/{coach_id}/
+    Upload d'assets pour les coaches - Stockage MongoDB (compatible Vercel read-only FS)
+    v17.5: Stocke les fichiers binaires dans MongoDB collection 'uploaded_files'
     """
-    from PIL import Image
     import io
     import uuid
-    import os
-    
+    import base64
+
     coach_email = request.headers.get('X-User-Email', '').lower().strip()
     if not coach_email:
         raise HTTPException(status_code=401, detail="Email coach requis")
-    
-    # Sanitize email pour nom de dossier (remplacer @ et . par _)
-    coach_folder = coach_email.replace('@', '_at_').replace('.', '_')
-    
+
     # Validation du type MIME
     allowed_types = {
         "image": ["image/jpeg", "image/png", "image/webp", "image/gif"],
@@ -1270,57 +1266,69 @@ async def upload_coach_asset(
         "logo": ["image/jpeg", "image/png", "image/webp", "image/svg+xml"],
         "audio": ["audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/aac", "audio/mp4"]
     }
-    
+
     if asset_type not in allowed_types:
         raise HTTPException(status_code=400, detail=f"Type d'asset invalide: {asset_type}")
-    
+
     if file.content_type not in allowed_types[asset_type]:
         raise HTTPException(status_code=400, detail=f"Type MIME non autorisé pour {asset_type}: {file.content_type}")
-    
+
     contents = await file.read()
-    
-    # Limite de taille selon le type
-    max_sizes = {"image": 5*1024*1024, "video": 50*1024*1024, "logo": 2*1024*1024, "audio": 20*1024*1024}
+
+    # Limite de taille: 15MB max pour MongoDB document storage
+    max_sizes = {"image": 5*1024*1024, "video": 15*1024*1024, "logo": 2*1024*1024, "audio": 15*1024*1024}
     if len(contents) > max_sizes.get(asset_type, 5*1024*1024):
         raise HTTPException(status_code=400, detail=f"Fichier trop volumineux (max {max_sizes[asset_type]//1024//1024}MB)")
-    
+
     try:
-        # v9.3.1: Dossier isolé par coach
-        upload_dir = f"/app/backend/uploads/coaches/{coach_folder}"
-        os.makedirs(upload_dir, exist_ok=True)
-        
         # Extension basée sur le type MIME
         ext_map = {
             "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif",
             "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov",
-            "image/svg+xml": ".svg"
+            "image/svg+xml": ".svg",
+            "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/wav": ".wav",
+            "audio/ogg": ".ogg", "audio/aac": ".aac", "audio/mp4": ".m4a"
         }
         ext = ext_map.get(file.content_type, ".bin")
-        
-        filename = f"{asset_type}_{uuid.uuid4().hex[:12]}{ext}"
-        filepath = os.path.join(upload_dir, filename)
-        
-        # Pour les images, optimiser
+
+        file_id = uuid.uuid4().hex[:16]
+        filename = f"{asset_type}_{file_id}{ext}"
+
+        # Pour les images, optimiser en mémoire
+        file_bytes = contents
         if asset_type in ["image", "logo"] and file.content_type.startswith("image/") and file.content_type != "image/svg+xml":
+            from PIL import Image
             img = Image.open(io.BytesIO(contents))
             if img.mode in ('RGBA', 'P'):
                 img = img.convert('RGB')
-            
-            # Redimensionner selon le type
             max_dim = 1920 if asset_type == "image" else 400
             img.thumbnail((max_dim, max_dim), Image.LANCZOS)
-            
-            img.save(filepath, "JPEG" if ext == ".jpg" else "PNG", quality=85)
-        else:
-            # Vidéos et SVG: sauvegarder tel quel
-            with open(filepath, 'wb') as f:
-                f.write(contents)
-        
-        # URL publique
-        asset_url = f"/api/uploads/coaches/{coach_folder}/{filename}"
-        
-        logger.info(f"[COACH-UPLOAD] ✅ Asset uploadé pour {coach_email}: {filename} ({asset_type})")
-        
+            buf = io.BytesIO()
+            img.save(buf, "JPEG" if ext == ".jpg" else "PNG", quality=85)
+            file_bytes = buf.getvalue()
+
+        # Stocker dans MongoDB
+        from bson.binary import Binary
+        file_doc = {
+            "file_id": file_id,
+            "filename": filename,
+            "original_name": file.filename,
+            "content_type": file.content_type,
+            "asset_type": asset_type,
+            "coach_email": coach_email,
+            "data": Binary(file_bytes),
+            "size": len(file_bytes),
+            "created_at": datetime.utcnow()
+        }
+
+        db = get_db()
+        await db.uploaded_files.insert_one(file_doc)
+
+        # URL publique via API endpoint
+        asset_url = f"/api/files/{file_id}/{filename}"
+
+        logger.info(f"[COACH-UPLOAD] ✅ Asset stocké MongoDB pour {coach_email}: {filename} ({asset_type}, {len(file_bytes)} bytes)")
+
         return {
             "success": True,
             "url": asset_url,
@@ -1328,10 +1336,34 @@ async def upload_coach_asset(
             "asset_type": asset_type,
             "coach_id": coach_email
         }
-        
+
     except Exception as e:
         logger.error(f"[COACH-UPLOAD] ❌ Erreur: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur upload: {str(e)}")
+
+# === v17.5: SERVING FICHIERS DEPUIS MONGODB ===
+@api_router.get("/files/{file_id}/{filename}")
+async def serve_uploaded_file(file_id: str, filename: str):
+    """
+    Sert un fichier uploadé depuis MongoDB.
+    Cache-Control: 1 an (les fichiers sont immutables via leur ID unique)
+    """
+    from fastapi.responses import Response
+
+    db = get_db()
+    file_doc = await db.uploaded_files.find_one({"file_id": file_id})
+
+    if not file_doc:
+        raise HTTPException(status_code=404, detail="Fichier non trouvé")
+
+    return Response(
+        content=bytes(file_doc["data"]),
+        media_type=file_doc.get("content_type", "application/octet-stream"),
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "Content-Disposition": f'inline; filename="{file_doc.get("original_name", filename)}"'
+        }
+    )
 
 # === v9.3.1: VÉRIFICATION PARTENAIRE (CÔTÉ SERVEUR) ===
 @api_router.get("/check-partner/{email}")
