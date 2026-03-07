@@ -421,12 +421,14 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const displayName = coach.platform_name || coach.name || 'Coach';
   const initial = displayName.charAt(0).toUpperCase();
 
-  // v18.2: Résolution URL complète pour fichiers uploadés
+  // v20: Résolution URL complète pour fichiers uploadés + CACHE-BUSTING
   const resolveMediaUrl = (url) => {
     if (!url) return '';
     if (url.startsWith('/api/files/')) {
-      const resolved = `${BACKEND_URL}${url}`;
-      console.log('[VITRINE-MEDIA] URL résolue:', url, '→', resolved);
+      // v20: Ajouter timestamp pour écraser le cache navigateur
+      const cacheBuster = `?t=${Date.now()}`;
+      const resolved = `${BACKEND_URL}${url}${cacheBuster}`;
+      console.log('[VITRINE-MEDIA] URL résolue (cache-bust):', url, '→', resolved);
       return resolved;
     }
     return url;
@@ -447,11 +449,18 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     return 'unknown';
   };
 
-  // v18.4: Multi-vidéos héro — prioriser les médias uploadés (image/vidéo) avant YouTube
+  // v20: Multi-vidéos héro — PRIORITÉ ABSOLUE aux médias uploadés
   const heroVideos = (() => {
     if (coachConcept?.heroVideos && coachConcept.heroVideos.length > 0) {
       const filtered = coachConcept.heroVideos.filter(v => v && v.url);
-      // v18.4: Réordonner — médias uploadés (image, vidéo) en premier, YouTube/Vimeo en dernier
+
+      // v20: LOGS DE DIAGNOSTIC — afficher exactement ce que l'API renvoie
+      console.log("MÉDIAS REÇUS POUR VITRINE:", coachConcept.heroVideos);
+      filtered.forEach((v, i) => {
+        console.log(`SOURCE SLOT ${i + 1}:`, v, '→ type détecté:', detectMediaType(v));
+      });
+
+      // v20: Réordonner — médias uploadés (image, vidéo) en PRIORITÉ ABSOLUE, YouTube/Vimeo en dernier
       const uploaded = filtered.filter(v => {
         const t = detectMediaType(v);
         return t === 'image' || t === 'video';
@@ -461,14 +470,20 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         return t !== 'image' && t !== 'video';
       });
       const reordered = [...uploaded, ...external];
-      console.log('[VITRINE-HERO] heroVideos triées:', reordered.length, reordered.map(v => ({ url: v.url, type: v.type, detected: detectMediaType(v) })));
+
+      // v20: Log détaillé de l'ordre final
+      console.log('[VITRINE-HERO] Ordre final carousel:', reordered.map((v, i) => `[${i}] ${detectMediaType(v)} → ${v.url}`));
+      if (reordered[0]) console.log("URL GÉNÉRÉE POUR SLOT 1:", resolveMediaUrl(reordered[0].url));
+      if (reordered[1]) console.log("URL GÉNÉRÉE POUR SLOT 2:", resolveMediaUrl(reordered[1].url));
+      if (reordered[2]) console.log("URL GÉNÉRÉE POUR SLOT 3:", resolveMediaUrl(reordered[2].url));
+
       return reordered;
     }
     if (coachConcept?.heroImageUrl) {
       console.log('[VITRINE-HERO] Fallback heroImageUrl:', coachConcept.heroImageUrl);
       return [{ url: coachConcept.heroImageUrl, type: 'youtube' }];
     }
-    console.log('[VITRINE-HERO] Aucune vidéo configurée');
+    console.log('[VITRINE-HERO] Aucune vidéo configurée — coachConcept:', coachConcept);
     return [];
   })();
   const currentHeroVideo = heroVideos[activeVideoIndex] || heroVideos[0] || null;

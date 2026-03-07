@@ -1070,18 +1070,31 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
 
 @api_router.delete("/offers/{offer_id}")
 async def delete_offer(offer_id: str, request: Request):
-    """Supprime une offre et nettoie les références dans les codes promo"""
-    # Sécurité : vérifier que l'utilisateur est authentifié
+    """v20: Supprime une offre avec vérification d'ownership + nettoyage codes promo"""
     require_auth(request)
+    user_email = request.headers.get("X-User-Email", "").lower().strip()
+
+    # v20: Vérifier que l'offre existe
+    offer = await db.offers.find_one({"id": offer_id})
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offre non trouvée")
+
+    # v20: Vérifier l'ownership — Super Admin peut tout supprimer, sinon uniquement ses propres offres
+    if not is_super_admin(user_email):
+        offer_owner = (offer.get("coach_id") or "").lower()
+        if offer_owner and offer_owner != user_email:
+            raise HTTPException(status_code=403, detail="Vous ne pouvez supprimer que vos propres offres")
+
     # 1. Supprimer l'offre
-    await db.offers.delete_one({"id": offer_id})
-    
-    # 2. Nettoyer les références dans les codes promo (retirer l'offre des 'courses'/articles autorisés)
+    result = await db.offers.delete_one({"id": offer_id})
+    logger.info(f"[DELETE-OFFER] {offer_id} supprimée par {user_email}, deleted_count={result.deleted_count}")
+
+    # 2. Nettoyer les références dans les codes promo
     await db.discount_codes.update_many(
         {"courses": offer_id},
         {"$pull": {"courses": offer_id}}
     )
-    
+
     return {"success": True, "message": "Offre supprimée et références nettoyées"}
 
 # --- Product Categories ---
