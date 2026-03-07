@@ -209,7 +209,7 @@ const CoursesManager = ({
                   data-testid={`course-visible-${course.id}`}
                 />
                 <span className="text-white text-xs opacity-50">
-                  {course.visible !== false ? '\uD83D\uDC41\uFE0F Visible' : '\uD83D\uDEAB Masqu\u00e9'}
+                  {course.visible !== false ? '👁️ Visible' : '🚫 Masqué'}
                 </span>
               </div>
             </div>
@@ -287,7 +287,7 @@ const CoursesManager = ({
       {courses.filter(c => c.archived).length > 0 && (
         <div className="mt-6 pt-6 border-t border-purple-500/30">
           <h3 className="text-white text-sm font-semibold mb-3 flex items-center gap-2">
-            <span>📁</span> Cours archiv\u00e9s ({courses.filter(c => c.archived).length})
+            <span>📁</span> Cours archivés ({courses.filter(c => c.archived).length})
           </h3>
           <div className="space-y-2">
             {courses.filter(c => c.archived).map(course => (

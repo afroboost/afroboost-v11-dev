@@ -844,7 +844,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           : c
       ));
 
-      alert(`Studio Audio sauvegard\u00e9 pour "${selectedCourseForAudio.name}" (${sortedTracks.length} pistes)`);
+      alert(`Studio Audio sauvegardé pour "${selectedCourseForAudio.name}" (${sortedTracks.length} pistes)`);
       setShowAudioModal(false);
     } catch (err) {
       console.error("Erreur sauvegarde studio:", err);
@@ -4250,7 +4250,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 <div>
                   <div style={{ fontSize: '42px', marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(217,28,210,0.5))' }}>🎶</div>
                   <p style={{ color: '#fff', fontWeight: 700, fontSize: '15px', marginBottom: '4px' }}>Glissez vos fichiers audio ici</p>
-                  <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>ou cliquez pour s\u00e9lectionner • MP3, WAV, OGG, AAC (max 20MB)</p>
+                  <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>ou cliquez pour sélectionner • MP3, WAV, OGG, AAC (max 20MB)</p>
                 </div>
               )}
             </div>
@@ -4342,7 +4342,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                               color: editingTrackId === track.id ? '#d91cd2' : 'rgba(255,255,255,0.5)',
                               cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px'
                             }}
-                            title="\u00c9diter"
+                            title="Éditer"
                           >✏️</button>
                           <button
                             onClick={(e) => { e.stopPropagation(); removeTrack(track.id); }}
@@ -4448,7 +4448,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 }}
                 data-testid="save-playlist-btn"
               >
-                {savingPlaylist ? '\u23f3 Sauvegarde...' : '\uD83D\uDCBE Sauvegarder le Studio'}
+                {savingPlaylist ? '⏳ Sauvegarde...' : '💾 Sauvegarder le Studio'}
               </button>
             </div>
           </div>
