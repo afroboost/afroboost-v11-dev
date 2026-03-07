@@ -562,33 +562,56 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
 
             // === YOUTUBE ===
             if (heroMediaType === 'youtube' && youtubeId) {
+              // v19: YouTube thumbnail fallback — iframe embed ne fonctionne pas pour les Shorts
+              // et certains vidéos ont l'embedding désactivé (Erreur 153)
+              // Solution: afficher la thumbnail YouTube en fond avec bouton play cliquable
+              const ytThumb = `https://img.youtube.com/vi/${youtubeId}/maxresdefault.jpg`;
+              const ytThumbHQ = `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg`;
+              const ytLink = `https://www.youtube.com/watch?v=${youtubeId}`;
               return (
                 <div className="absolute inset-0" key={`yt-wrap-${youtubeId}`}>
-                  <iframe
-                    key={`yt-${youtubeId}`}
-                    className="absolute"
-                    src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=1&loop=1&playlist=${youtubeId}&controls=0&showinfo=0&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`}
-                    title={displayName}
-                    frameBorder="0"
-                    allow="autoplay; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                    onLoad={(e) => {
-                      console.log('[VITRINE-MEDIA] YouTube iframe chargée:', youtubeId);
+                  {/* Thumbnail YouTube en fond — fonctionne toujours, même pour Shorts */}
+                  <img
+                    key={`yt-thumb-${youtubeId}`}
+                    src={ytThumb}
+                    alt={displayName}
+                    className="absolute inset-0 w-full h-full object-cover"
+                    style={{ filter: 'brightness(0.65)' }}
+                    onLoad={() => {
+                      console.log('[VITRINE-MEDIA] ✅ YouTube thumbnail chargée:', youtubeId);
                       const loader = document.getElementById('hero-media-loader');
                       if (loader) loader.style.display = 'none';
                     }}
-                    style={{
-                      pointerEvents: 'none', position: 'absolute',
-                      top: '50%', left: '50%',
-                      width: '177.78vh', height: '100vh',
-                      minWidth: '100%', minHeight: '56.25vw',
-                      transform: 'translate(-50%, -50%)'
+                    onError={(e) => {
+                      // Fallback vers HQ si maxres n'existe pas
+                      console.log('[VITRINE-MEDIA] maxresdefault indisponible, fallback hqdefault');
+                      e.target.src = ytThumbHQ;
                     }}
                   />
-                  {/* v18.3: Gradient fallback derrière l'iframe YouTube (visible si embed échoue/Erreur 153) */}
+                  {/* Bouton play centré — ouvre YouTube dans un nouvel onglet */}
+                  <a
+                    href={ytLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="absolute inset-0 flex items-center justify-center"
+                    style={{ zIndex: 5 }}
+                  >
+                    <div style={{
+                      width: '72px', height: '72px', borderRadius: '50%',
+                      background: 'rgba(217, 28, 210, 0.85)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      boxShadow: '0 0 30px rgba(217, 28, 210, 0.5)',
+                      transition: 'transform 0.2s ease'
+                    }}>
+                      <svg width="28" height="32" viewBox="0 0 28 32" fill="none">
+                        <path d="M28 16L0 32V0L28 16Z" fill="white"/>
+                      </svg>
+                    </div>
+                  </a>
+                  {/* Gradient overlay */}
                   <div className="absolute inset-0" style={{
-                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.6) 0%, rgba(217, 28, 210, 0.5) 50%, rgba(30, 0, 50, 0.9) 100%)',
-                    zIndex: -1
+                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(217, 28, 210, 0.1) 50%, rgba(30, 0, 50, 0.4) 100%)',
+                    zIndex: 1, pointerEvents: 'none'
                   }} />
                 </div>
               );
