@@ -11,6 +11,7 @@ import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
 import { copyToClipboard } from "../utils/clipboard";
+import VitrineCheckout from "./VitrineCheckout"; // v15.0
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -916,39 +917,23 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                     </div>
                   </div>
 
-                  {/* Liens paiement */}
-                  {(paymentConfig.stripe || paymentConfig.twint || paymentConfig.paypal) && (
-                    <div className="py-2">
-                      <div className="flex flex-wrap gap-2 justify-center">
-                        {paymentConfig.stripe && (
-                          <a href={paymentConfig.stripe} target="_blank" rel="noopener noreferrer"
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs"
-                            style={{ background: 'rgba(99, 91, 255, 0.2)', color: '#A5B4FC', border: '1px solid rgba(99, 91, 255, 0.3)' }}>
-                            Stripe
-                          </a>
-                        )}
-                        {paymentConfig.twint && (
-                          <a href={paymentConfig.twint} target="_blank" rel="noopener noreferrer"
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs"
-                            style={{ background: 'rgba(255,255,255,0.1)', color: '#E5E7EB', border: '1px solid rgba(255,255,255,0.2)' }}>
-                            TWINT
-                          </a>
-                        )}
-                        {paymentConfig.paypal && (
-                          <a href={paymentConfig.paypal} target="_blank" rel="noopener noreferrer"
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs"
-                            style={{ background: 'rgba(0, 112, 186, 0.2)', color: '#93C5FD', border: '1px solid rgba(0, 112, 186, 0.3)' }}>
-                            PayPal
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {!paymentConfig.stripe && !paymentConfig.twint && !paymentConfig.paypal && (
-                    <div className="text-center text-white/40 text-xs py-2">
-                      Réservez d'abord, le paiement sera confirmé par le coach
-                    </div>
+                  {/* v15.0: Checkout intégré multi-vendeurs (remplace les liens de paiement externes) */}
+                  {(selectedBookings.length > 0 || selectedOffer) && (
+                    <VitrineCheckout
+                      coachEmail={coach?.email || username}
+                      coachName={coach?.name || username}
+                      selectedBookings={selectedBookings}
+                      selectedOffer={selectedOffer}
+                      customerName={bookingForm.name}
+                      customerEmail={bookingForm.email}
+                      customerPhone={bookingForm.whatsapp}
+                      appliedDiscount={appliedDiscount}
+                      onSuccess={(data) => {
+                        setBookingSuccess(true);
+                        setSelectedBookings([]);
+                        setSelectedOffer(null);
+                      }}
+                    />
                   )}
 
                   {/* Bouton Confirmer */}

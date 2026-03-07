@@ -27,7 +27,7 @@ import CRMSection from "./coach/CRMSection"; // v9.2.0 Import CRM Section
 import { parseMediaUrl, getMediaThumbnail } from "../services/MediaParser"; // Media Parser
 import SuperAdminPanel from "./SuperAdminPanel"; // v8.9 Super Admin Panel
 // v13.5: Composants extraits pour alléger CoachDashboard
-import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab } from "./dashboard";
+import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab, PaymentConfigTab } from "./dashboard";
 import { copyToClipboard } from "../utils/clipboard"; // Utilitaire copier avec fallback mobile
 
 // v9.2.1: ErrorBoundary pour isoler les erreurs de composants
@@ -646,6 +646,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [offersSearch, setOffersSearch] = useState(''); // Recherche locale offres
   const [users, setUsers] = useState([]);
   const [paymentLinks, setPaymentLinks] = useState({ stripe: "", paypal: "", twint: "", coachWhatsapp: "", coachNotificationEmail: "", coachNotificationPhone: "" });
+  // v15.0: Config paiement multi-vendeurs
+  const [vendorPaymentConfig, setVendorPaymentConfig] = useState({});
   const [concept, setConcept] = useState({ appName: "Afroboost", description: "", heroImageUrl: "", logoUrl: "", faviconUrl: "", termsText: "", googleReviewsUrl: "", defaultLandingSection: "sessions", externalLink1Title: "", externalLink1Url: "", externalLink2Title: "", externalLink2Url: "", paymentTwint: false, paymentPaypal: false, paymentCreditCard: false, eventPosterEnabled: false, eventPosterMediaUrl: "" });
   const [discountCodes, setDiscountCodes] = useState([]);
   const [codesSearch, setCodesSearch] = useState(''); // Recherche locale codes promo
@@ -914,7 +916,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         
         setCourses(crs.data); setOffers(off.data); setUsers(usr.data);
         setPaymentLinks(lnk.data); setConcept(cpt.data); setDiscountCodes(cds.data);
-        
+
+        // v15.0: Charger la config paiement multi-vendeurs
+        try {
+          const pcRes = await axios.get(`${API}/api/payment-config`, headers);
+          setVendorPaymentConfig(pcRes.data || {});
+        } catch (pcErr) { console.warn('[PAYMENT-CONFIG] Load:', pcErr); }
+
         // === SANITIZE DATA: Nettoyer automatiquement les données fantômes ===
         try {
           const sanitizeResult = await axios.post(`${API}/sanitize-data`);
@@ -3942,9 +3950,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   ];
   
   // v13.0: Ajouter "Boutique" et "Mon Stripe" pour les coachs partenaires (pas Bassi)
-  const tabs = !isSuperAdmin 
-    ? [...baseTabs, { id: "boutique", label: "💎 Boutique" }, { id: "stripe", label: "💳 Mon Stripe" }]
-    : baseTabs;
+  // v15.0: Ajouter "Paiements" pour tous (config paiement multi-vendeurs)
+  const tabs = !isSuperAdmin
+    ? [...baseTabs, { id: "payments", label: "💳 Paiements" }, { id: "boutique", label: "💎 Boutique" }, { id: "stripe", label: "🔗 Mon Stripe" }]
+    : [...baseTabs, { id: "payments", label: "💳 Paiements" }];
 
   // v9.2.5: COMPOSANT DE SECOURS - Affiche le squelette du dashboard pendant le chargement
   // Garantit qu'on ne voit JAMAIS une page blanche
@@ -4873,6 +4882,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             loadingPacks={loadingPacks}
             purchasingPack={purchasingPack}
             onBuyPack={handleBuyPack}
+          />
+        )}
+
+        {/* ========== v15.0: ONGLET PAIEMENTS - Config multi-vendeurs ========== */}
+        {tab === "payments" && (
+          <PaymentConfigTab
+            paymentConfig={vendorPaymentConfig}
+            setPaymentConfig={setVendorPaymentConfig}
+            coachEmail={coachUser?.email}
           />
         )}
 

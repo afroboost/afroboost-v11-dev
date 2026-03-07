@@ -42,6 +42,9 @@ from api.routes.promo_routes import promo_router, init_promo_db
 # v13.4: Import routes stripe
 from api.routes.stripe_routes import router as stripe_router, init_db as init_stripe_db
 from api.routes.cinetpay_routes import router as cinetpay_router, init_db as init_cinetpay_db
+# v15.0: Import routes paiement multi-vendeurs
+from api.routes.payment_config_routes import router as payment_config_router, init_db as init_payment_config_db
+from api.routes.checkout_routes import router as checkout_router, init_db as init_checkout_db
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -7495,6 +7498,12 @@ init_stripe_db(db)
 # v14.0: Include CinetPay routes (Mobile Money)
 fastapi_app.include_router(cinetpay_router)
 init_cinetpay_db(db)
+
+# v15.0: Include multi-vendor payment routes
+fastapi_app.include_router(payment_config_router)
+init_payment_config_db(db)
+fastapi_app.include_router(checkout_router)
+init_checkout_db(db)
 
 fastapi_app.add_middleware(
     CORSMiddleware,
