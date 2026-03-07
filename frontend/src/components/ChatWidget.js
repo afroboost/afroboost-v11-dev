@@ -3122,12 +3122,13 @@ export const ChatWidget = () => {
           sender: msg.sender_name
         }));
         setMessages([
-          { type: 'ai', text: message },
+          { id: `welcome_${Date.now()}`, type: 'ai', text: message },
           ...restoredMessages
         ]);
         setLastMessageCount(chat_history.length + 1);
       } else {
         setMessages([{
+          id: `welcome_${Date.now()}`,
           type: 'ai',
           text: message
         }]);
@@ -3282,8 +3283,9 @@ export const ChatWidget = () => {
     
     const userMessage = inputMessage.trim();
     setInputMessage('');
-    // Ajouter le senderId pour identifier les messages de l'utilisateur actuel
-    setMessages(prev => [...prev, { type: 'user', text: userMessage, senderId: participantId }]);
+    // Ajouter le senderId + un ID temporaire pour identifier les messages de l'utilisateur actuel
+    const tempUserMsgId = `temp_user_${Date.now()}`;
+    setMessages(prev => [...prev, { id: tempUserMsgId, type: 'user', text: userMessage, senderId: participantId }]);
     setLastMessageCount(prev => prev + 1);
     setMessageCount(prev => prev + 1);
     setIsLoading(true);
@@ -3300,20 +3302,29 @@ export const ChatWidget = () => {
           link_token: currentLinkToken || undefined
         });
         
+        // v16.1: Mettre à jour l'ID temporaire du message user avec le vrai ID du serveur
+        if (response.data.user_message_id) {
+          setMessages(prev => prev.map(m =>
+            m.id === tempUserMsgId ? { ...m, id: response.data.user_message_id } : m
+          ));
+        }
+
         if (response.data.response) {
           // Jouer un son pour la réponse
           playSoundIfEnabled('message');
-          
-          setMessages(prev => [...prev, { 
-            type: 'ai', 
+
+          setMessages(prev => [...prev, {
+            id: response.data.ai_message_id || `ai_${Date.now()}`,
+            type: 'ai',
             text: response.data.response
           }]);
           setLastMessageCount(prev => prev + 1);
         } else if (!response.data.ai_active) {
           // IA désactivée - message en attente
-          setMessages(prev => [...prev, { 
-            type: 'ai', 
-            text: isCommunityMode 
+          setMessages(prev => [...prev, {
+            id: response.data.user_message_id ? `wait_${response.data.user_message_id}` : `wait_${Date.now()}`,
+            type: 'ai',
+            text: isCommunityMode
               ? "Message envoyé au groupe ! Les autres participants verront votre message."
               : "Message reçu ! Le coach vous répondra bientôt. 💬"
           }]);
@@ -3331,12 +3342,13 @@ export const ChatWidget = () => {
         
         playSoundIfEnabled('message');
         
-        setMessages(prev => [...prev, { 
-          type: 'ai', 
+        setMessages(prev => [...prev, {
+          id: `fallback_${Date.now()}`,
+          type: 'ai',
           text: response.data.response || "Désolé, je n'ai pas pu traiter votre message."
         }]);
       }
-      
+
       // === PROMPT NOTIFICATIONS PUSH après le premier message ===
       if (messageCount === 1 && participantId && !pushEnabled) {
         // Attendre un peu avant de demander (non intrusif)
@@ -3348,11 +3360,12 @@ export const ChatWidget = () => {
           }
         }, 2000);
       }
-      
+
     } catch (err) {
       console.error('Chat error:', err);
-      setMessages(prev => [...prev, { 
-        type: 'ai', 
+      setMessages(prev => [...prev, {
+        id: `error_${Date.now()}`,
+        type: 'ai',
         text: "Désolé, une erreur s'est produite. Veuillez réessayer."
       }]);
     } finally {
