@@ -56,10 +56,10 @@ const ConceptEditor = ({
       alert('Format non supporté. Utilisez MP4, MOV, WEBM, JPG, PNG ou WEBP.');
       return;
     }
-    // Vérifier la taille
-    const maxMB = isVideo ? 15 : 5;
+    // Vérifier la taille (Vercel limite à 4.5MB par requête)
+    const maxMB = 4;
     if (file.size > maxMB * 1024 * 1024) {
-      alert(`Fichier trop volumineux (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum: ${maxMB}MB.\nPour les vidéos volumineuses, utilisez un lien YouTube ou Vimeo.`);
+      alert(`Fichier trop volumineux (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum: ${maxMB}MB.\n\nPour les vidéos, utilisez un lien YouTube ou Vimeo.\nPour les images, réduisez la taille avant d'uploader.`);
       return;
     }
     setUploadingVideo(slotIndex);
@@ -393,7 +393,7 @@ const ConceptEditor = ({
                     </label>
                   )}
                   <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)' }}>
-                    {isSuperAdmin ? 'Image 5MB / Vidéo 15MB' : 'Image max 5MB'}
+                    Max 4MB — pour les vidéos, utilisez YouTube/Vimeo
                   </span>
                 </div>
                 {video.url && (video.url.includes('youtu') || video.url.includes('vimeo')) && (

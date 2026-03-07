@@ -257,28 +257,28 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           setFaqs(Array.isArray(faqRes.data) ? faqRes.data : []);
         } catch (e) {}
 
-        // Charger la vidéo du coach depuis /partners/active (source fiable)
+        // v18: Charger le concept complet (avec heroVideos) depuis l'API
         try {
-          const partnersRes = await axios.get(`${API}/partners/active`);
-          const coachEmail = (res.data.coach.email || username).toLowerCase();
-          const partnerData = partnersRes.data.find(p =>
-            p.email?.toLowerCase() === coachEmail ||
-            p.name?.toLowerCase() === username.toLowerCase() ||
-            p.platform_name?.toLowerCase() === username.toLowerCase()
-          );
-          if (partnerData) {
-            setCoachConcept({
-              heroImageUrl: partnerData.heroImageUrl || partnerData.video_url,
-              heroVideoUrl: partnerData.video_url
-            });
-          }
+          const conceptRes = await axios.get(`${API}/concept`, {
+            headers: { 'X-User-Email': res.data.coach.email || username }
+          });
+          setCoachConcept(conceptRes.data);
         } catch (e) {
-          // Fallback: essayer le concept direct
+          // Fallback: charger depuis /partners/active
           try {
-            const conceptRes = await axios.get(`${API}/concept`, {
-              headers: { 'X-User-Email': res.data.coach.email || username }
-            });
-            setCoachConcept(conceptRes.data);
+            const partnersRes = await axios.get(`${API}/partners/active`);
+            const coachEmail = (res.data.coach.email || username).toLowerCase();
+            const partnerData = partnersRes.data.find(p =>
+              p.email?.toLowerCase() === coachEmail ||
+              p.name?.toLowerCase() === username.toLowerCase() ||
+              p.platform_name?.toLowerCase() === username.toLowerCase()
+            );
+            if (partnerData) {
+              setCoachConcept({
+                heroImageUrl: partnerData.heroImageUrl || partnerData.video_url,
+                heroVideoUrl: partnerData.video_url
+              });
+            }
           } catch (e2) {}
         }
       } catch (err) {
