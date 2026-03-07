@@ -16,6 +16,22 @@ import React, { memo, useState, useEffect, useCallback } from 'react';
 const STORAGE_KEY = 'afroboost_subscriber_info';
 
 /**
+ * Teste si localStorage est réellement disponible et persistant
+ * @returns {boolean}
+ */
+const isLocalStorageAvailable = () => {
+  try {
+    const testKey = '__afroboost_ls_test__';
+    localStorage.setItem(testKey, 'ok');
+    const result = localStorage.getItem(testKey);
+    localStorage.removeItem(testKey);
+    return result === 'ok';
+  } catch {
+    return false;
+  }
+};
+
+/**
  * Charge les données sauvegardées depuis localStorage
  * @returns {object|null} {name, whatsapp, email} ou null
  */
@@ -24,7 +40,6 @@ const loadSavedInfo = () => {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    // Validation: on accepte uniquement name, whatsapp, email
     if (parsed && typeof parsed === 'object' && (parsed.name || parsed.whatsapp || parsed.email)) {
       return {
         name: parsed.name || '',
@@ -39,7 +54,8 @@ const loadSavedInfo = () => {
 };
 
 /**
- * Sauvegarde les infos dans localStorage (JAMAIS le code promo)
+ * Sauvegarde les infos dans localStorage avec vérification
+ * @returns {boolean} true si la sauvegarde a réussi
  */
 const saveInfo = (formData) => {
   try {
@@ -49,8 +65,12 @@ const saveInfo = (formData) => {
       email: formData.email || ''
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-  } catch {
-    // Silencieux si localStorage indisponible
+    // Vérification immédiate : relire pour confirmer
+    const verify = localStorage.getItem(STORAGE_KEY);
+    return verify !== null;
+  } catch (err) {
+    console.error('[SUBSCRIBER-FORM] localStorage ERREUR:', err);
+    return false;
   }
 };
 
@@ -84,12 +104,33 @@ const SubscriberForm = ({
 }) => {
   // Toggle "Mémoriser" — TOUJOURS ON par défaut
   const [rememberMe, setRememberMe] = useState(true);
-  // Ref pour accéder à rememberMe dans les handlers sans re-render
+  // Feedback visuel : 'saved', 'restored', 'error', 'ls-unavailable', null
+  const [saveStatus, setSaveStatus] = useState(null);
+  // Ref pour accéder à rememberMe dans les handlers
   const rememberRef = React.useRef(true);
   rememberRef.current = rememberMe;
+  // Ref pour le timer du feedback
+  const feedbackTimer = React.useRef(null);
 
-  // Auto-remplissage au montage si données sauvegardées
+  // Helper : afficher un feedback temporaire
+  const showFeedback = useCallback((status) => {
+    setSaveStatus(status);
+    if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
+    if (status !== 'ls-unavailable') {
+      feedbackTimer.current = setTimeout(() => setSaveStatus(null), 3000);
+    }
+  }, []);
+
+  // Diagnostic + auto-remplissage au montage
   useEffect(() => {
+    // 1. Tester si localStorage est disponible
+    const lsOk = isLocalStorageAvailable();
+    console.log('[SUBSCRIBER-FORM] localStorage disponible:', lsOk);
+    if (!lsOk) {
+      showFeedback('ls-unavailable');
+      return;
+    }
+    // 2. Charger les données sauvegardées
     const saved = loadSavedInfo();
     if (saved) {
       console.log('[SUBSCRIBER-FORM] Auto-fill from localStorage:', JSON.stringify(saved));
@@ -98,36 +139,37 @@ const SubscriberForm = ({
         name: saved.name || prev.name,
         whatsapp: saved.whatsapp || prev.whatsapp,
         email: saved.email || prev.email
-        // code: JAMAIS pré-rempli
       }));
+      showFeedback('restored');
     } else {
-      console.log('[SUBSCRIBER-FORM] No saved data found in localStorage');
+      console.log('[SUBSCRIBER-FORM] Aucune donnée sauvegardée trouvée');
     }
-  }, [setFormData]);
+  }, [setFormData, showFeedback]);
 
   /**
    * Handler de changement de champ — sauvegarde DIRECTE dans localStorage
-   * Pas de useEffect, pas de dépendances, pas de closures stales.
    */
   const handleFieldChange = useCallback((field, value) => {
     const updatedData = { ...formData, [field]: value };
     setFormData(updatedData);
-    // Sauvegarde directe et immédiate
+    // Sauvegarde directe et immédiate avec vérification
     if (rememberRef.current) {
-      saveInfo(updatedData);
-      console.log('[SUBSCRIBER-FORM] Direct save:', field, '→', value.substring(0, 20));
+      const success = saveInfo(updatedData);
+      if (success) {
+        showFeedback('saved');
+      } else {
+        showFeedback('error');
+      }
     }
-  }, [formData, setFormData]);
+  }, [formData, setFormData, showFeedback]);
 
   // Wrapper soumission
   const handleSubmit = useCallback((e) => {
     e.preventDefault();
     if (rememberMe) {
       saveInfo(formData);
-      console.log('[SUBSCRIBER-FORM] Save on submit');
     } else {
       clearSavedInfo();
-      console.log('[SUBSCRIBER-FORM] Clear on submit (toggle OFF)');
     }
     onSubmit(e);
   }, [rememberMe, formData, onSubmit]);
@@ -137,15 +179,15 @@ const SubscriberForm = ({
     setRememberMe(prev => {
       const next = !prev;
       if (next) {
-        saveInfo(formData);
-        console.log('[SUBSCRIBER-FORM] Toggle ON → saved');
+        const success = saveInfo(formData);
+        showFeedback(success ? 'saved' : 'error');
       } else {
         clearSavedInfo();
-        console.log('[SUBSCRIBER-FORM] Toggle OFF → cleared');
+        showFeedback(null);
       }
       return next;
     });
-  }, [formData]);
+  }, [formData, showFeedback]);
 
   return (
     <form
@@ -318,12 +360,25 @@ const SubscriberForm = ({
             Mémoriser mes informations
           </span>
           <p style={{
-            color: 'rgba(255,255,255,0.35)',
+            color: saveStatus === 'saved' ? '#4ade80'
+              : saveStatus === 'restored' ? '#60a5fa'
+              : saveStatus === 'error' ? '#f87171'
+              : saveStatus === 'ls-unavailable' ? '#fbbf24'
+              : 'rgba(255,255,255,0.35)',
             fontSize: '10px',
             marginTop: '2px',
-            lineHeight: '1.3'
+            lineHeight: '1.3',
+            transition: 'color 0.3s ease'
           }}>
-            {rememberMe
+            {saveStatus === 'saved'
+              ? '✅ Informations sauvegardées !'
+              : saveStatus === 'restored'
+              ? '✅ Informations restaurées depuis la mémoire'
+              : saveStatus === 'error'
+              ? '⚠️ Erreur de sauvegarde — navigation privée ?'
+              : saveStatus === 'ls-unavailable'
+              ? '⚠️ Stockage indisponible — navigation privée ou bloqué'
+              : rememberMe
               ? '🔒 Nom, WhatsApp et Email sauvegardés sur cet appareil'
               : 'Pré-remplir le formulaire à votre prochaine visite'}
           </p>
