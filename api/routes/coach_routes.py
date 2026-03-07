@@ -157,6 +157,50 @@ async def delete_coach(coach_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Coach non trouvé")
     return {"success": True, "deleted_id": coach_id}
 
+@coach_router.delete("/admin/partner-cleanup/{email}")
+async def cleanup_partner_data(email: str, request: Request):
+    """Supprime TOUTES les données d'un partenaire : concept, branding, fichiers, etc. (Super Admin)"""
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Super Admin requis")
+
+    email_clean = email.lower().strip()
+    email_sanitized = email_clean.replace("@", "_").replace(".", "_")
+    deleted = {}
+
+    # 1. Supprimer le concept du partenaire
+    r = await db.concept.delete_one({"id": f"concept_{email_clean}"})
+    deleted["concept"] = r.deleted_count
+    # Aussi essayer avec l'email sanitized
+    r2 = await db.concept.delete_one({"id": f"concept_{email_sanitized}"})
+    deleted["concept"] += r2.deleted_count
+
+    # 2. Supprimer le coach de la collection coaches
+    r = await db.coaches.delete_many({"email": email_clean})
+    deleted["coaches"] = r.deleted_count
+
+    # 3. Supprimer le branding
+    r = await db.branding.delete_many({"coach_id": email_clean})
+    deleted["branding"] = r.deleted_count
+
+    # 4. Supprimer les payment links
+    r = await db.payment_links.delete_many({"coach_id": email_clean})
+    deleted["payment_links"] = r.deleted_count
+
+    # 5. Supprimer les fichiers uploadés par ce coach
+    r = await db.uploaded_files.delete_many({"coach_email": email_clean})
+    deleted["uploaded_files"] = r.deleted_count
+
+    # 6. Supprimer les offres du coach
+    r = await db.offers.delete_many({"coach_id": email_clean})
+    deleted["offers"] = r.deleted_count
+
+    # 7. Supprimer les cours du coach
+    r = await db.courses.delete_many({"coach_id": email_clean})
+    deleted["courses"] = r.deleted_count
+
+    return {"success": True, "email": email_clean, "deleted": deleted}
+
 # === COACH PROFILE ===
 @coach_router.get("/coach/profile")
 async def get_coach_profile(request: Request):
