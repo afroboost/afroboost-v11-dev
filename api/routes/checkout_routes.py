@@ -189,23 +189,35 @@ async def create_checkout_session(req: CreateCheckoutRequest):
             if currency == "CHF":
                 payment_methods.append("twint")
 
-            session = stripe.checkout.Session.create(
-                payment_method_types=payment_methods,
-                line_items=line_items,
-                mode="payment",
-                success_url=success_url,
-                cancel_url=cancel_url,
-                customer_email=req.customer_email,
-                metadata={
-                    "transaction_id": transaction_id,
-                    "coach_email": req.coach_email,
-                    "customer_name": req.customer_name,
-                    "customer_phone": req.customer_phone,
-                    "items": json.dumps([i.dict() for i in req.items]),
-                    "discount_code": req.discount_code or "",
-                    "type": "vitrine_purchase"
-                }
-            )
+            # Essayer avec TWINT d'abord, fallback card-only si TWINT non activé
+            session = None
+            methods_to_try = [payment_methods, ["card"]] if len(payment_methods) > 1 else [payment_methods]
+            for methods in methods_to_try:
+                try:
+                    session = stripe.checkout.Session.create(
+                        payment_method_types=methods,
+                        line_items=line_items,
+                        mode="payment",
+                        success_url=success_url,
+                        cancel_url=cancel_url,
+                        customer_email=req.customer_email,
+                        metadata={
+                            "transaction_id": transaction_id,
+                            "coach_email": req.coach_email,
+                            "customer_name": req.customer_name,
+                            "customer_phone": req.customer_phone,
+                            "items": json.dumps([i.dict() for i in req.items]),
+                            "discount_code": req.discount_code or "",
+                            "type": "vitrine_purchase"
+                        }
+                    )
+                    break  # Succès, sortir de la boucle
+                except Exception as twint_err:
+                    logger.warning(f"[CHECKOUT] Stripe methods {methods} failed: {twint_err}, trying next...")
+                    continue
+
+            if not session:
+                raise Exception("Impossible de créer la session Stripe avec les méthodes disponibles")
 
             # Enregistrer la transaction
             await db["checkout_transactions"].insert_one({
