@@ -303,6 +303,19 @@ COACHES_UPLOADS_DIR = "/app/backend/uploads/coaches"
 
 # === MODELS ===
 
+class AudioTrack(BaseModel):
+    """v17.5: Piste audio enrichie pour le Studio Audio"""
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    url: str  # URL du fichier audio
+    title: str = "Sans titre"
+    cover_url: Optional[str] = None  # Pochette
+    description: Optional[str] = ""
+    price: float = 0.0  # 0 = gratuit
+    preview_duration: int = 30  # Durée preview en secondes
+    duration: Optional[float] = None  # Durée totale en secondes
+    order: int = 0
+
 class Course(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -314,7 +327,8 @@ class Course(BaseModel):
     mapsUrl: Optional[str] = ""
     visible: bool = True
     archived: bool = False  # Archive au lieu de supprimer
-    playlist: Optional[List[str]] = None  # Liste des URLs audio pour ce cours
+    playlist: Optional[List[str]] = None  # Legacy: URLs simples
+    audio_tracks: Optional[List[dict]] = None  # v17.5: Pistes audio enrichies (AudioTrack)
 
 class CourseCreate(BaseModel):
     name: str
@@ -324,7 +338,8 @@ class CourseCreate(BaseModel):
     mapsUrl: Optional[str] = ""
     visible: bool = True
     archived: bool = False
-    playlist: Optional[List[str]] = None  # Liste des URLs audio
+    playlist: Optional[List[str]] = None  # Legacy
+    audio_tracks: Optional[List[dict]] = None  # v17.5: Pistes audio enrichies
 
 class Offer(BaseModel):
     model_config = ConfigDict(extra="ignore")

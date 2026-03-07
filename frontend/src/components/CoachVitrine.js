@@ -871,34 +871,63 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         )}
 
         {/* ============================================= */}
-        {/* v17.4: Section Contenus Audio */}
-        {courses.filter(c => c.audio_url).length > 0 && (
-          <div className="mb-8 vitrine-fade-in" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
-            <h2 className="font-semibold text-white text-center mb-4" style={{ fontSize: '16px' }}>
-              🎵 Contenus Audio
-            </h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {courses.filter(c => c.audio_url).map(course => (
-                <AudioPlayer
-                  key={course.id || course.title}
-                  audioUrl={course.audio_url}
-                  previewUrl={course.audio_preview_url}
-                  title={course.title || course.name || 'Audio'}
-                  thumbnail={course.image || course.thumbnail}
-                  duration={course.audio_duration}
-                  price={course.audio_price}
-                  accentColor={brandAccent}
-                  isPreview={!!course.audio_price && course.audio_price > 0}
-                  onBuyClick={course.audio_price ? () => {
-                    setSelectedOffer({ name: course.title, price: course.audio_price, id: course.id });
-                    const el = document.getElementById('vitrine-booking-form');
-                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  } : undefined}
-                />
-              ))}
+        {/* v17.5: Section Contenus Audio (audio_tracks enrichis + legacy audio_url) */}
+        {(() => {
+          // Collecter toutes les pistes audio de tous les cours
+          const allTracks = [];
+          courses.forEach(course => {
+            if (course.audio_tracks && course.audio_tracks.length > 0) {
+              course.audio_tracks.forEach(track => {
+                allTracks.push({ ...track, courseName: course.name, courseId: course.id });
+              });
+            } else if (course.audio_url) {
+              // Legacy: cours avec audio_url simple
+              allTracks.push({
+                id: course.id,
+                url: course.audio_url,
+                title: course.title || course.name || 'Audio',
+                cover_url: course.image || course.thumbnail || null,
+                description: '',
+                price: course.audio_price || 0,
+                preview_duration: 30,
+                duration: course.audio_duration || null,
+                courseName: course.name,
+                courseId: course.id
+              });
+            }
+          });
+
+          if (allTracks.length === 0) return null;
+
+          return (
+            <div className="mb-8 vitrine-fade-in" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
+              <h2 className="font-semibold text-white text-center mb-4" style={{ fontSize: '16px' }}>
+                🎵 Contenus Audio
+              </h2>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {allTracks.map(track => (
+                  <AudioPlayer
+                    key={track.id}
+                    audioUrl={track.url}
+                    title={track.title}
+                    thumbnail={track.cover_url}
+                    duration={track.duration}
+                    price={track.price}
+                    description={track.description}
+                    accentColor={brandAccent}
+                    isPreview={!!track.price && track.price > 0}
+                    previewDuration={track.preview_duration || 30}
+                    onBuyClick={track.price > 0 ? () => {
+                      setSelectedOffer({ name: track.title, price: track.price, id: track.courseId || track.id });
+                      const el = document.getElementById('vitrine-booking-form');
+                      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    } : undefined}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* ÉTAPE 3: FORMULAIRE INLINE (pas de pop-up) */}
         {/* Apparaît quand session + offre sélectionnées */}

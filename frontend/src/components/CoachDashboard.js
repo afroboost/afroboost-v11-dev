@@ -682,79 +682,173 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [newEmojiName, setNewEmojiName] = useState("");
   const emojiInputRef = useRef(null);
 
-  // ========== AUDIO PLAYLIST STATE ==========
+  // ========== v17.5: STUDIO AUDIO STATE ==========
   const [showAudioModal, setShowAudioModal] = useState(false);
   const [selectedCourseForAudio, setSelectedCourseForAudio] = useState(null);
-  const [playlistUrls, setPlaylistUrls] = useState([]);
-  const [newAudioUrl, setNewAudioUrl] = useState("");
+  const [audioTracks, setAudioTracks] = useState([]);
   const [savingPlaylist, setSavingPlaylist] = useState(false);
+  const [uploadingAudio, setUploadingAudio] = useState(false);
+  const [editingTrackId, setEditingTrackId] = useState(null);
+  const [dragOverIndex, setDragOverIndex] = useState(null);
+  const [draggedTrackId, setDraggedTrackId] = useState(null);
+  const audioFileInputRef = useRef(null);
+  const audioCoverInputRef = useRef(null);
+  const [coverUploadTrackId, setCoverUploadTrackId] = useState(null);
 
-  // Ouvrir le modal de gestion audio pour un cours
+  // Ouvrir le Studio Audio pour un cours
   const openAudioModal = (course) => {
     setSelectedCourseForAudio(course);
-    setPlaylistUrls(course.playlist || []);
-    setNewAudioUrl("");
+    // Migration: convertir les anciennes playlist (string[]) en audio_tracks si nécessaire
+    if (course.audio_tracks && course.audio_tracks.length > 0) {
+      setAudioTracks(course.audio_tracks.map((t, i) => ({ ...t, order: t.order ?? i })));
+    } else if (course.playlist && course.playlist.length > 0) {
+      setAudioTracks(course.playlist.map((url, i) => ({
+        id: `legacy-${i}-${Date.now()}`,
+        url,
+        title: url.split('/').pop()?.split('.')[0] || `Piste ${i + 1}`,
+        cover_url: null,
+        description: '',
+        price: 0,
+        preview_duration: 30,
+        duration: null,
+        order: i
+      })));
+    } else {
+      setAudioTracks([]);
+    }
+    setEditingTrackId(null);
     setShowAudioModal(true);
   };
 
-  // Ajouter une URL à la playlist
-  const addAudioUrl = () => {
-    const url = newAudioUrl.trim();
-    if (!url) return;
-    
-    // Validation basique de l'URL
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      alert("Veuillez entrer une URL valide commençant par http:// ou https://");
-      return;
-    }
-    
-    // Vérifier si c'est un MP3 ou stream audio
-    const isAudioUrl = url.includes('.mp3') || url.includes('.wav') || url.includes('.ogg') || 
-                       url.includes('.m3u') || url.includes('.m3u8') || url.includes('stream') ||
-                       url.includes('audio') || url.includes('soundcloud') || url.includes('spotify');
-    
-    if (!isAudioUrl) {
-      if (!window.confirm("Cette URL ne semble pas être un fichier audio (MP3, WAV, etc.) ou un stream. Voulez-vous l'ajouter quand même ?")) {
-        return;
+  // Upload audio file via drag & drop ou click
+  const handleAudioFileUpload = async (files) => {
+    if (!files || files.length === 0) return;
+    setUploadingAudio(true);
+
+    for (const file of files) {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('asset_type', 'audio');
+
+        const res = await axios.post(`${API}/coach/upload-asset`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+            'X-User-Email': coachUser?.email || ''
+          }
+        });
+
+        const newTrack = {
+          id: `track-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+          url: res.data.url,
+          title: file.name.replace(/\.[^.]+$/, ''),
+          cover_url: null,
+          description: '',
+          price: 0,
+          preview_duration: 30,
+          duration: null,
+          order: audioTracks.length
+        };
+
+        setAudioTracks(prev => [...prev, newTrack]);
+      } catch (err) {
+        console.error("Erreur upload audio:", err);
+        alert(`Erreur upload "${file.name}": ${err.response?.data?.detail || err.message}`);
       }
     }
-    
-    if (playlistUrls.includes(url)) {
-      alert("Cette URL est déjà dans la playlist.");
-      return;
+    setUploadingAudio(false);
+  };
+
+  // Upload cover image pour une piste
+  const handleCoverUpload = async (file, trackId) => {
+    if (!file) return;
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('asset_type', 'image');
+
+      const res = await axios.post(`${API}/coach/upload-asset`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          'X-User-Email': coachUser?.email || ''
+        }
+      });
+
+      setAudioTracks(prev => prev.map(t =>
+        t.id === trackId ? { ...t, cover_url: res.data.url } : t
+      ));
+    } catch (err) {
+      console.error("Erreur upload cover:", err);
+      alert("Erreur upload de la pochette");
     }
-    
-    setPlaylistUrls([...playlistUrls, url]);
-    setNewAudioUrl("");
   };
 
-  // Supprimer une URL de la playlist
-  const removeAudioUrl = (urlToRemove) => {
-    setPlaylistUrls(playlistUrls.filter(url => url !== urlToRemove));
+  // Mettre à jour un champ d'une piste
+  const updateTrackField = (trackId, field, value) => {
+    setAudioTracks(prev => prev.map(t =>
+      t.id === trackId ? { ...t, [field]: value } : t
+    ));
   };
 
-  // Sauvegarder la playlist dans la base de données
-  const savePlaylist = async () => {
+  // Supprimer une piste
+  const removeTrack = (trackId) => {
+    setAudioTracks(prev => prev.filter(t => t.id !== trackId).map((t, i) => ({ ...t, order: i })));
+  };
+
+  // Drag & Drop réordonnement
+  const handleTrackDragStart = (e, trackId) => {
+    setDraggedTrackId(trackId);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleTrackDragOver = (e, index) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverIndex(index);
+  };
+
+  const handleTrackDrop = (e, targetIndex) => {
+    e.preventDefault();
+    if (!draggedTrackId) return;
+
+    const fromIndex = audioTracks.findIndex(t => t.id === draggedTrackId);
+    if (fromIndex === targetIndex) { setDragOverIndex(null); setDraggedTrackId(null); return; }
+
+    const updated = [...audioTracks];
+    const [moved] = updated.splice(fromIndex, 1);
+    updated.splice(targetIndex, 0, moved);
+    setAudioTracks(updated.map((t, i) => ({ ...t, order: i })));
+    setDragOverIndex(null);
+    setDraggedTrackId(null);
+  };
+
+  // Sauvegarder le Studio Audio
+  const saveAudioStudio = async () => {
     if (!selectedCourseForAudio) return;
-    
+
     setSavingPlaylist(true);
     try {
-      // Mettre à jour le cours avec la nouvelle playlist
-      const updatedCourse = { ...selectedCourseForAudio, playlist: playlistUrls };
+      const sortedTracks = [...audioTracks].sort((a, b) => a.order - b.order);
+      const legacyPlaylist = sortedTracks.map(t => t.url);
+
+      const updatedCourse = {
+        ...selectedCourseForAudio,
+        playlist: legacyPlaylist,
+        audio_tracks: sortedTracks
+      };
       await axios.put(`${API}/courses/${selectedCourseForAudio.id}`, updatedCourse);
-      
-      // Mettre à jour l'état local
-      setCourses(courses.map(c => 
-        c.id === selectedCourseForAudio.id 
-          ? { ...c, playlist: playlistUrls } 
+
+      setCourses(courses.map(c =>
+        c.id === selectedCourseForAudio.id
+          ? { ...c, playlist: legacyPlaylist, audio_tracks: sortedTracks }
           : c
       ));
-      
-      alert(`✅ Playlist sauvegardée pour "${selectedCourseForAudio.name}" (${playlistUrls.length} morceaux)`);
+
+      alert(`Studio Audio sauvegard\u00e9 pour "${selectedCourseForAudio.name}" (${sortedTracks.length} pistes)`);
       setShowAudioModal(false);
     } catch (err) {
-      console.error("Erreur sauvegarde playlist:", err);
-      alert("❌ Erreur lors de la sauvegarde de la playlist");
+      console.error("Erreur sauvegarde studio:", err);
+      alert("Erreur lors de la sauvegarde du Studio Audio");
     } finally {
       setSavingPlaylist(false);
     }
@@ -4063,131 +4157,300 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         />
       )}
 
-      {/* ========== MODAL GESTION AUDIO / PLAYLIST ========== */}
+      {/* ========== v17.5: STUDIO AUDIO MODAL ========== */}
       {showAudioModal && selectedCourseForAudio && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.8)' }}>
-          <div 
-            className="glass rounded-xl p-6 w-full max-w-lg max-h-[80vh] overflow-y-auto"
-            style={{ border: '1px solid rgba(217, 28, 210, 0.3)' }}
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.9)' }}>
+          <div
+            style={{
+              width: '100%',
+              maxWidth: '700px',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              borderRadius: '20px',
+              padding: '28px',
+              background: 'linear-gradient(180deg, rgba(15,5,25,0.95) 0%, rgba(5,0,15,0.98) 100%)',
+              border: '1px solid rgba(217,28,210,0.3)',
+              boxShadow: '0 0 60px rgba(217,28,210,0.15), 0 0 120px rgba(139,92,246,0.08)',
+              backdropFilter: 'blur(20px)',
+              position: 'relative',
+              overflow: 'hidden'
+            }}
+            className="custom-scrollbar"
           >
+            {/* Background glow */}
+            <div style={{
+              position: 'absolute', top: '-80px', right: '-80px', width: '250px', height: '250px',
+              borderRadius: '50%', background: 'radial-gradient(circle, rgba(217,28,210,0.12), transparent 70%)',
+              filter: 'blur(40px)', pointerEvents: 'none'
+            }} />
+            <div style={{
+              position: 'absolute', bottom: '-60px', left: '-60px', width: '200px', height: '200px',
+              borderRadius: '50%', background: 'radial-gradient(circle, rgba(139,92,246,0.1), transparent 70%)',
+              filter: 'blur(30px)', pointerEvents: 'none'
+            }} />
+
             {/* Header */}
-            <div className="flex justify-between items-start mb-6">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', position: 'relative', zIndex: 1 }}>
               <div>
-                <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                  🎵 Gérer la Playlist
+                <h2 style={{ fontSize: '22px', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '10px', margin: 0 }}>
+                  <span style={{ fontSize: '28px' }}>🎵</span> Studio Audio
                 </h2>
-                <p className="text-white/60 text-sm mt-1">
-                  Cours : <span className="text-purple-400">{selectedCourseForAudio.name}</span>
+                <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', margin: '4px 0 0 0' }}>
+                  Cours : <span style={{ color: '#d91cd2' }}>{selectedCourseForAudio.name}</span>
+                  {audioTracks.length > 0 && <span style={{ marginLeft: '8px', color: 'rgba(255,255,255,0.3)' }}>• {audioTracks.length} piste{audioTracks.length > 1 ? 's' : ''}</span>}
                 </p>
               </div>
-              <button 
+              <button
                 onClick={() => setShowAudioModal(false)}
-                className="p-2 rounded-lg hover:bg-white/10 transition-colors"
-                style={{ color: '#fff' }}
+                style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '10px', padding: '8px', cursor: 'pointer', color: '#fff' }}
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
-                </svg>
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
               </button>
             </div>
 
-            {/* Ajouter une URL */}
-            <div className="mb-6">
-              <label className="block text-white text-sm mb-2">Ajouter un morceau (URL MP3/Stream)</label>
-              <div className="flex gap-2">
-                <input
-                  type="url"
-                  value={newAudioUrl}
-                  onChange={(e) => setNewAudioUrl(e.target.value)}
-                  placeholder="https://example.com/music.mp3"
-                  className="flex-1 px-3 py-2 rounded-lg neon-input text-sm"
-                  onKeyPress={(e) => e.key === 'Enter' && addAudioUrl()}
-                  data-testid="audio-url-input"
-                />
-                <button
-                  onClick={addAudioUrl}
-                  className="px-4 py-2 rounded-lg font-semibold text-sm transition-all"
-                  style={{ 
-                    background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)',
-                    color: '#fff'
-                  }}
-                  data-testid="add-audio-btn"
-                >
-                  + Ajouter
-                </button>
-              </div>
-              <p className="text-white/40 text-xs mt-2">
-                Formats supportés : MP3, WAV, OGG, streams M3U/M3U8, Soundcloud, Spotify
-              </p>
-            </div>
-
-            {/* Liste de la playlist */}
-            <div className="mb-6">
-              <h3 className="text-white text-sm font-semibold mb-3">
-                Playlist ({playlistUrls.length} morceaux)
-              </h3>
-              
-              {playlistUrls.length === 0 ? (
-                <div className="p-4 rounded-lg text-center" style={{ background: 'rgba(255,255,255,0.05)' }}>
-                  <p className="text-white/40 text-sm">Aucun morceau dans la playlist</p>
-                  <p className="text-white/30 text-xs mt-1">Ajoutez des URLs ci-dessus</p>
+            {/* Drag & Drop Zone */}
+            <div
+              style={{
+                position: 'relative', zIndex: 1,
+                border: '2px dashed rgba(217,28,210,0.4)',
+                borderRadius: '16px',
+                padding: '28px',
+                textAlign: 'center',
+                marginBottom: '24px',
+                background: 'rgba(217,28,210,0.04)',
+                cursor: 'pointer',
+                transition: 'all 0.3s ease'
+              }}
+              onClick={() => audioFileInputRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'rgba(217,28,210,0.8)'; e.currentTarget.style.background = 'rgba(217,28,210,0.1)'; }}
+              onDragLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(217,28,210,0.4)'; e.currentTarget.style.background = 'rgba(217,28,210,0.04)'; }}
+              onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'rgba(217,28,210,0.4)'; e.currentTarget.style.background = 'rgba(217,28,210,0.04)'; handleAudioFileUpload(e.dataTransfer.files); }}
+            >
+              <input
+                ref={audioFileInputRef}
+                type="file"
+                accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/aac,.mp3,.wav,.ogg,.aac"
+                multiple
+                style={{ display: 'none' }}
+                onChange={(e) => handleAudioFileUpload(e.target.files)}
+              />
+              <input
+                ref={audioCoverInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                style={{ display: 'none' }}
+                onChange={(e) => { if (e.target.files[0] && coverUploadTrackId) { handleCoverUpload(e.target.files[0], coverUploadTrackId); } }}
+              />
+              {uploadingAudio ? (
+                <div>
+                  <div style={{ fontSize: '36px', marginBottom: '8px' }}>⏳</div>
+                  <p style={{ color: '#d91cd2', fontWeight: 600, fontSize: '14px' }}>Upload en cours...</p>
                 </div>
               ) : (
-                <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar">
-                  {playlistUrls.map((url, index) => (
-                    <div 
-                      key={index}
-                      className="flex items-center gap-3 p-3 rounded-lg group"
-                      style={{ background: 'rgba(255,255,255,0.05)' }}
+                <div>
+                  <div style={{ fontSize: '42px', marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(217,28,210,0.5))' }}>🎶</div>
+                  <p style={{ color: '#fff', fontWeight: 700, fontSize: '15px', marginBottom: '4px' }}>Glissez vos fichiers audio ici</p>
+                  <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>ou cliquez pour s\u00e9lectionner • MP3, WAV, OGG, AAC (max 20MB)</p>
+                </div>
+              )}
+            </div>
+
+            {/* Tracks List */}
+            <div style={{ position: 'relative', zIndex: 1 }}>
+              {audioTracks.length === 0 ? (
+                <div style={{ padding: '24px', borderRadius: '14px', textAlign: 'center', background: 'rgba(255,255,255,0.03)' }}>
+                  <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '13px' }}>Aucune piste audio</p>
+                  <p style={{ color: 'rgba(255,255,255,0.2)', fontSize: '11px', marginTop: '4px' }}>Glissez des fichiers MP3/WAV ci-dessus pour commencer</p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {audioTracks.sort((a, b) => a.order - b.order).map((track, index) => (
+                    <div
+                      key={track.id}
+                      draggable
+                      onDragStart={(e) => handleTrackDragStart(e, track.id)}
+                      onDragOver={(e) => handleTrackDragOver(e, index)}
+                      onDrop={(e) => handleTrackDrop(e, index)}
+                      onDragEnd={() => { setDragOverIndex(null); setDraggedTrackId(null); }}
+                      style={{
+                        borderRadius: '14px',
+                        padding: editingTrackId === track.id ? '16px' : '12px',
+                        background: dragOverIndex === index
+                          ? 'rgba(217,28,210,0.15)'
+                          : 'rgba(255,255,255,0.04)',
+                        border: dragOverIndex === index
+                          ? '1px solid rgba(217,28,210,0.5)'
+                          : '1px solid rgba(255,255,255,0.06)',
+                        transition: 'all 0.2s ease',
+                        cursor: 'grab',
+                        opacity: draggedTrackId === track.id ? 0.5 : 1
+                      }}
                     >
-                      <span className="text-purple-400 text-sm font-mono">#{index + 1}</span>
-                      <span className="flex-1 text-white text-sm truncate" title={url}>
-                        {url.length > 40 ? url.substring(0, 40) + '...' : url}
-                      </span>
-                      <button
-                        onClick={() => removeAudioUrl(url)}
-                        className="p-1 rounded hover:bg-red-500/30 transition-colors opacity-0 group-hover:opacity-100"
-                        style={{ color: '#ef4444' }}
-                        title="Supprimer ce morceau"
-                        data-testid={`remove-audio-${index}`}
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                        </svg>
-                      </button>
+                      {/* Track compact view */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        {/* Drag handle */}
+                        <div style={{ color: 'rgba(255,255,255,0.2)', cursor: 'grab', flexShrink: 0, fontSize: '16px' }}>⠿</div>
+
+                        {/* Cover thumbnail */}
+                        <div
+                          onClick={(e) => { e.stopPropagation(); setCoverUploadTrackId(track.id); audioCoverInputRef.current?.click(); }}
+                          style={{
+                            width: '52px', height: '52px', borderRadius: '10px', flexShrink: 0,
+                            background: track.cover_url ? `url(${track.cover_url}) center/cover` : 'linear-gradient(135deg, rgba(217,28,210,0.3), rgba(139,92,246,0.2))',
+                            border: '2px solid rgba(217,28,210,0.3)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            cursor: 'pointer', position: 'relative', overflow: 'hidden',
+                            boxShadow: '0 0 15px rgba(217,28,210,0.2)'
+                          }}
+                        >
+                          {!track.cover_url && <span style={{ fontSize: '20px' }}>🎵</span>}
+                          <div style={{
+                            position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            opacity: 0, transition: 'opacity 0.2s'
+                          }}
+                            onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.opacity = '0'; }}
+                          >
+                            <span style={{ fontSize: '14px' }}>📷</span>
+                          </div>
+                        </div>
+
+                        {/* Track info */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{ color: '#fff', fontSize: '14px', fontWeight: 600, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {track.title}
+                          </p>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                            {track.price > 0 ? (
+                              <span style={{ fontSize: '11px', color: '#22c55e', fontWeight: 600 }}>{track.price} CHF</span>
+                            ) : (
+                              <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>Gratuit</span>
+                            )}
+                            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)' }}>•</span>
+                            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>Preview {track.preview_duration}s</span>
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setEditingTrackId(editingTrackId === track.id ? null : track.id); }}
+                            style={{
+                              width: '32px', height: '32px', borderRadius: '8px', border: 'none',
+                              background: editingTrackId === track.id ? 'rgba(217,28,210,0.3)' : 'rgba(255,255,255,0.08)',
+                              color: editingTrackId === track.id ? '#d91cd2' : 'rgba(255,255,255,0.5)',
+                              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px'
+                            }}
+                            title="\u00c9diter"
+                          >✏️</button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); removeTrack(track.id); }}
+                            style={{
+                              width: '32px', height: '32px', borderRadius: '8px', border: 'none',
+                              background: 'rgba(239,68,68,0.1)', color: '#ef4444',
+                              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px'
+                            }}
+                            title="Supprimer"
+                          >🗑️</button>
+                        </div>
+                      </div>
+
+                      {/* Expanded edit form */}
+                      {editingTrackId === track.id && (
+                        <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                          <div style={{ gridColumn: '1 / -1' }}>
+                            <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>Titre</label>
+                            <input
+                              type="text"
+                              value={track.title}
+                              onChange={(e) => updateTrackField(track.id, 'title', e.target.value)}
+                              style={{
+                                width: '100%', padding: '8px 12px', borderRadius: '8px', fontSize: '13px',
+                                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                                color: '#fff', outline: 'none'
+                              }}
+                            />
+                          </div>
+                          <div style={{ gridColumn: '1 / -1' }}>
+                            <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>Description</label>
+                            <textarea
+                              value={track.description || ''}
+                              onChange={(e) => updateTrackField(track.id, 'description', e.target.value)}
+                              rows={2}
+                              style={{
+                                width: '100%', padding: '8px 12px', borderRadius: '8px', fontSize: '13px',
+                                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                                color: '#fff', outline: 'none', resize: 'vertical'
+                              }}
+                              placeholder="Description de la piste..."
+                            />
+                          </div>
+                          <div>
+                            <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>Prix (CHF) — 0 = gratuit</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.5"
+                              value={track.price}
+                              onChange={(e) => updateTrackField(track.id, 'price', parseFloat(e.target.value) || 0)}
+                              style={{
+                                width: '100%', padding: '8px 12px', borderRadius: '8px', fontSize: '13px',
+                                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                                color: '#fff', outline: 'none'
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>Preview (secondes)</label>
+                            <input
+                              type="number"
+                              min="5"
+                              max="120"
+                              value={track.preview_duration}
+                              onChange={(e) => updateTrackField(track.id, 'preview_duration', parseInt(e.target.value) || 30)}
+                              style={{
+                                width: '100%', padding: '8px 12px', borderRadius: '8px', fontSize: '13px',
+                                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                                color: '#fff', outline: 'none'
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
               )}
             </div>
 
-            {/* Boutons d'action */}
-            <div className="flex gap-3">
+            {/* Action buttons */}
+            <div style={{ display: 'flex', gap: '12px', marginTop: '24px', position: 'relative', zIndex: 1 }}>
               <button
                 onClick={() => setShowAudioModal(false)}
-                className="flex-1 py-3 rounded-lg glass text-white text-sm"
+                style={{
+                  flex: 1, padding: '14px', borderRadius: '12px', fontSize: '14px',
+                  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                  color: '#fff', cursor: 'pointer'
+                }}
               >
                 Annuler
               </button>
               <button
-                onClick={savePlaylist}
+                onClick={saveAudioStudio}
                 disabled={savingPlaylist}
-                className="flex-1 py-3 rounded-lg font-semibold text-sm transition-all"
-                style={{ 
+                style={{
+                  flex: 1, padding: '14px', borderRadius: '12px', fontSize: '14px', fontWeight: 700,
                   background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)',
-                  color: '#fff',
-                  opacity: savingPlaylist ? 0.7 : 1
+                  border: 'none', color: '#fff', cursor: 'pointer',
+                  opacity: savingPlaylist ? 0.7 : 1,
+                  boxShadow: '0 0 20px rgba(217,28,210,0.3)'
                 }}
                 data-testid="save-playlist-btn"
               >
-                {savingPlaylist ? '⏳ Sauvegarde...' : '💾 Sauvegarder'}
+                {savingPlaylist ? '\u23f3 Sauvegarde...' : '\uD83D\uDCBE Sauvegarder le Studio'}
               </button>
             </div>
-
-            {/* Info */}
-            <p className="text-white/30 text-xs text-center mt-4">
-              Les morceaux seront liés au cours "{selectedCourseForAudio.name}" (ID: {selectedCourseForAudio.id})
-            </p>
           </div>
         </div>
       )}
