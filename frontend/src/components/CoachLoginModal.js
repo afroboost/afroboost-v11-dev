@@ -53,11 +53,26 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
   const hasProcessedRef = useRef(false);
 
   // Email/Password form state
-  const [authMode, setAuthMode] = useState('choice'); // 'choice' | 'login' | 'register'
+  const [authMode, setAuthMode] = useState('choice'); // 'choice' | 'login' | 'register' | 'forgot' | 'reset'
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [resetToken, setResetToken] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+
+  // v11: Détecter le token de reset dans l'URL au chargement
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash.includes('reset-password') && hash.includes('token=')) {
+      const token = hash.split('token=')[1]?.split('&')[0];
+      if (token) {
+        setResetToken(token);
+        setAuthMode('reset');
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+    }
+  }, []);
 
   // Vérifier si déjà authentifié au chargement
   useEffect(() => {
@@ -197,11 +212,69 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
     }
   };
 
+  // Mot de passe oublié
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError("");
+    setSuccessMsg("");
+
+    try {
+      const response = await axios.post(`${API}/auth/forgot-password`,
+        { email },
+        { withCredentials: true }
+      );
+
+      if (response.data.success) {
+        setSuccessMsg("Un email de réinitialisation a été envoyé si ce compte existe.");
+      }
+    } catch (err) {
+      setError(err.response?.data?.detail || "Erreur lors de l'envoi");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Réinitialisation du mot de passe
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError("");
+    setSuccessMsg("");
+
+    if (newPassword.length < 6) {
+      setError("Le mot de passe doit contenir au moins 6 caractères");
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const response = await axios.post(`${API}/auth/reset-password`,
+        { token: resetToken, new_password: newPassword },
+        { withCredentials: true }
+      );
+
+      if (response.data.success) {
+        setSuccessMsg("Mot de passe modifié avec succès ! Vous pouvez vous connecter.");
+        setTimeout(() => {
+          resetForm();
+          setAuthMode('login');
+        }, 2000);
+      }
+    } catch (err) {
+      const msg = err.response?.data?.detail || "Lien expiré ou invalide";
+      setError(msg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Reset form
   const resetForm = () => {
     setEmail('');
     setName('');
     setPassword('');
+    setNewPassword('');
     setError('');
     setSuccessMsg('');
     setShowPassword(false);
@@ -409,7 +482,18 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
               {isLoading ? 'Connexion...' : 'Se connecter'}
             </button>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+            {/* Mot de passe oublié */}
+            <div style={{ textAlign: 'center', marginTop: '8px', marginBottom: '4px' }}>
+              <button
+                type="button"
+                onClick={() => { setError(''); setSuccessMsg(''); setAuthMode('forgot'); }}
+                style={{ background: 'none', border: 'none', color: '#f59e0b', fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' }}
+              >
+                Mot de passe oublié ?
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
               <button
                 type="button"
                 onClick={() => { resetForm(); setAuthMode('register'); }}
@@ -423,6 +507,98 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
                 style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: '12px', cursor: 'pointer' }}
               >
                 ← Retour
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* === MODE MOT DE PASSE OUBLIÉ === */}
+        {authMode === 'forgot' && (
+          <form onSubmit={handleForgotPassword}>
+            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', textAlign: 'center', marginBottom: '16px' }}>
+              Entrez votre email pour recevoir un lien de réinitialisation
+            </p>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={labelStyle}>Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="votre@email.com"
+                required
+                autoFocus
+                style={inputStyle}
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={isLoading}
+              style={{
+                ...primaryBtnStyle,
+                background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                color: 'white',
+                marginBottom: '10px'
+              }}
+            >
+              {isLoading ? 'Envoi...' : 'Envoyer le lien de réinitialisation'}
+            </button>
+            <div style={{ textAlign: 'center', marginTop: '8px' }}>
+              <button
+                type="button"
+                onClick={() => { resetForm(); setAuthMode('login'); }}
+                style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: '12px', cursor: 'pointer' }}
+              >
+                ← Retour à la connexion
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* === MODE RESET MOT DE PASSE === */}
+        {authMode === 'reset' && (
+          <form onSubmit={handleResetPassword}>
+            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', textAlign: 'center', marginBottom: '16px' }}>
+              Choisissez votre nouveau mot de passe
+            </p>
+            <div style={{ marginBottom: '16px', position: 'relative' }}>
+              <label style={labelStyle}>Nouveau mot de passe (min. 6 caractères)</label>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="••••••"
+                required
+                minLength={6}
+                autoFocus
+                style={{ ...inputStyle, paddingRight: '40px' }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                style={{ position: 'absolute', right: '10px', top: '28px', background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: '4px' }}
+              >
+                <EyeIcon open={showPassword} />
+              </button>
+            </div>
+            <button
+              type="submit"
+              disabled={isLoading}
+              style={{
+                ...primaryBtnStyle,
+                background: 'linear-gradient(135deg, #10b981, #059669)',
+                color: 'white',
+                marginBottom: '10px'
+              }}
+            >
+              {isLoading ? 'Modification...' : 'Modifier mon mot de passe'}
+            </button>
+            <div style={{ textAlign: 'center', marginTop: '8px' }}>
+              <button
+                type="button"
+                onClick={() => { resetForm(); setAuthMode('login'); }}
+                style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: '12px', cursor: 'pointer' }}
+              >
+                ← Retour à la connexion
               </button>
             </div>
           </form>

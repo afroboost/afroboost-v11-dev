@@ -1044,6 +1044,14 @@ export const ChatWidget = () => {
   const [showSubscriberForm, setShowSubscriberForm] = useState(false); // Afficher le formulaire abonné
   const [subscriberFormData, setSubscriberFormData] = useState({ name: '', whatsapp: '', email: '', code: '' });
   const [validatingCode, setValidatingCode] = useState(false); // Loading pendant validation du code
+
+  // === v11.6: RÉCUPÉRATION D'ACCÈS & MON PASS ===
+  const [showRecoverForm, setShowRecoverForm] = useState(false); // Formulaire "Retrouver mes accès"
+  const [recoverData, setRecoverData] = useState({ email: '', whatsapp: '' }); // Données de récupération
+  const [recoverLoading, setRecoverLoading] = useState(false);
+  const [recoverResult, setRecoverResult] = useState(null); // Résultat de la récupération {success, code, qr_code_url, ...}
+  const [recoverError, setRecoverError] = useState('');
+  const [showMonPass, setShowMonPass] = useState(false); // Affichage élargi du QR "Mon Pass"
   
   // === v11.0: AUTO-CONNEXION QR CODE ABONNÉ ===
   useEffect(() => {
@@ -1949,6 +1957,46 @@ export const ChatWidget = () => {
     }
   };
   
+  // === v11.6: RÉCUPÉRATION D'ACCÈS ABONNÉ ===
+  const handleRecoverAccess = async (e) => {
+    e.preventDefault();
+    setRecoverError('');
+    setRecoverResult(null);
+
+    const { email, whatsapp } = recoverData;
+    if (!email?.trim() && !whatsapp?.trim()) {
+      setRecoverError('Veuillez saisir votre email ou votre numéro WhatsApp');
+      return;
+    }
+
+    setRecoverLoading(true);
+    try {
+      const res = await axios.post(`${API}/subscriber/recover`, {
+        email: email.trim() || undefined,
+        whatsapp: whatsapp.trim() || undefined
+      });
+
+      if (res.data?.code) {
+        setRecoverResult({
+          success: true,
+          code: res.data.code,
+          qr_code_url: res.data.qr_code_url,
+          sessions_remaining: res.data.sessions_remaining,
+          offer_name: res.data.offer_name,
+          email_sent: res.data.email_sent
+        });
+        console.log('[RECOVER] Accès récupéré:', res.data.code);
+      } else {
+        setRecoverError('Aucun abonnement trouvé avec ces informations.');
+      }
+    } catch (err) {
+      const msg = err.response?.data?.detail || err.response?.data?.message || 'Erreur lors de la recherche. Réessayez.';
+      setRecoverError(msg);
+    } finally {
+      setRecoverLoading(false);
+    }
+  };
+
   // Charger les cours disponibles
   const loadAvailableCourses = useCallback(async () => {
     setLoadingCourses(true);
@@ -4248,6 +4296,219 @@ export const ChatWidget = () => {
                     error={error}
                     isLoading={validatingCode}
                   />
+                ) : showRecoverForm ? (
+                  /* === v11.6: FORMULAIRE RÉCUPÉRATION D'ACCÈS === */
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 'min-content' }}>
+                    <div style={{ textAlign: 'center', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '28px' }}>🔑</span>
+                      <p style={{ color: '#fff', fontSize: '14px', marginTop: '8px', fontWeight: '600' }}>
+                        Retrouver mes accès
+                      </p>
+                      <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', marginTop: '4px' }}>
+                        Entrez votre email ou WhatsApp pour récupérer votre code et QR Code
+                      </p>
+                    </div>
+
+                    {/* Résultat de récupération réussie */}
+                    {recoverResult?.success && (
+                      <div style={{
+                        background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.15), rgba(16, 185, 129, 0.1))',
+                        border: '1px solid rgba(34, 197, 94, 0.4)',
+                        borderRadius: '12px',
+                        padding: '16px',
+                        textAlign: 'center'
+                      }}>
+                        <span style={{ fontSize: '24px' }}>✅</span>
+                        <p style={{ color: '#22c55e', fontWeight: '700', fontSize: '14px', marginTop: '8px' }}>
+                          Accès retrouvé !
+                        </p>
+
+                        {/* Code abonné */}
+                        <div style={{
+                          background: 'rgba(147, 51, 234, 0.2)',
+                          border: '1px solid rgba(147, 51, 234, 0.4)',
+                          borderRadius: '8px',
+                          padding: '12px',
+                          marginTop: '12px'
+                        }}>
+                          <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                            Votre code abonné
+                          </p>
+                          <p style={{ color: '#D91CD2', fontSize: '22px', fontWeight: '800', letterSpacing: '3px', marginTop: '4px' }}>
+                            {recoverResult.code}
+                          </p>
+                          {recoverResult.offer_name && (
+                            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', marginTop: '4px' }}>
+                              {recoverResult.offer_name} — {recoverResult.sessions_remaining ?? '∞'} séance(s) restante(s)
+                            </p>
+                          )}
+                        </div>
+
+                        {/* QR Code */}
+                        {recoverResult.qr_code_url && (
+                          <div style={{ marginTop: '12px' }}>
+                            <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '11px', marginBottom: '8px' }}>
+                              Votre QR Code d'accès :
+                            </p>
+                            <img
+                              src={recoverResult.qr_code_url}
+                              alt="QR Code abonné"
+                              style={{
+                                width: '180px',
+                                height: '180px',
+                                borderRadius: '12px',
+                                background: '#fff',
+                                padding: '8px',
+                                margin: '0 auto',
+                                display: 'block'
+                              }}
+                            />
+                            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', marginTop: '8px' }}>
+                              Faites une capture d'écran pour le garder sur votre téléphone
+                            </p>
+                          </div>
+                        )}
+
+                        {recoverResult.email_sent && (
+                          <p style={{ color: '#22c55e', fontSize: '11px', marginTop: '8px' }}>
+                            Un email de rappel a aussi été envoyé
+                          </p>
+                        )}
+
+                        {/* Bouton pour s'identifier directement */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSubscriberFormData(prev => ({ ...prev, code: recoverResult.code }));
+                            setShowRecoverForm(false);
+                            setShowSubscriberForm(true);
+                            setRecoverResult(null);
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '12px',
+                            marginTop: '12px',
+                            borderRadius: '8px',
+                            background: 'linear-gradient(135deg, #9333ea, #6366f1)',
+                            color: '#fff',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontWeight: '600',
+                            fontSize: '13px'
+                          }}
+                        >
+                          S'identifier avec ce code
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Erreur de récupération */}
+                    {recoverError && (
+                      <div style={{
+                        background: 'rgba(239, 68, 68, 0.2)',
+                        color: '#ef4444',
+                        padding: '8px 12px',
+                        borderRadius: '8px',
+                        fontSize: '12px'
+                      }}>
+                        {recoverError}
+                      </div>
+                    )}
+
+                    {/* Formulaire de récupération */}
+                    {!recoverResult?.success && (
+                      <form onSubmit={handleRecoverAccess} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div>
+                          <label style={{ display: 'block', color: '#fff', fontSize: '12px', marginBottom: '4px', opacity: 0.7 }}>Email</label>
+                          <input
+                            type="email"
+                            value={recoverData.email}
+                            onChange={(e) => setRecoverData(prev => ({ ...prev, email: e.target.value }))}
+                            placeholder="votre@email.com"
+                            style={{
+                              width: '100%',
+                              padding: '10px 12px',
+                              borderRadius: '8px',
+                              background: 'rgba(255,255,255,0.1)',
+                              border: '1px solid rgba(255,255,255,0.2)',
+                              color: '#fff',
+                              fontSize: '14px',
+                              outline: 'none',
+                              boxSizing: 'border-box'
+                            }}
+                            data-testid="recover-email"
+                          />
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '0' }}>
+                          <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.2)' }} />
+                          <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px' }}>ou</span>
+                          <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.2)' }} />
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', color: '#fff', fontSize: '12px', marginBottom: '4px', opacity: 0.7 }}>Numéro WhatsApp</label>
+                          <input
+                            type="tel"
+                            value={recoverData.whatsapp}
+                            onChange={(e) => setRecoverData(prev => ({ ...prev, whatsapp: e.target.value }))}
+                            placeholder="+41 79 123 45 67"
+                            style={{
+                              width: '100%',
+                              padding: '10px 12px',
+                              borderRadius: '8px',
+                              background: 'rgba(255,255,255,0.1)',
+                              border: '1px solid rgba(255,255,255,0.2)',
+                              color: '#fff',
+                              fontSize: '14px',
+                              outline: 'none',
+                              boxSizing: 'border-box'
+                            }}
+                            data-testid="recover-whatsapp"
+                          />
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={recoverLoading}
+                          style={{
+                            width: '100%',
+                            padding: '12px',
+                            borderRadius: '8px',
+                            background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                            color: '#fff',
+                            border: 'none',
+                            cursor: recoverLoading ? 'wait' : 'pointer',
+                            fontWeight: '600',
+                            fontSize: '14px',
+                            opacity: recoverLoading ? 0.7 : 1,
+                            marginTop: '4px'
+                          }}
+                          data-testid="recover-submit"
+                        >
+                          {recoverLoading ? '⏳ Recherche...' : '🔍 Retrouver mes accès'}
+                        </button>
+                      </form>
+                    )}
+
+                    {/* Bouton retour */}
+                    <button
+                      type="button"
+                      onClick={() => { setShowRecoverForm(false); setRecoverError(''); setRecoverResult(null); }}
+                      style={{
+                        background: 'none',
+                        color: 'rgba(255,255,255,0.6)',
+                        border: 'none',
+                        cursor: 'pointer',
+                        textDecoration: 'underline',
+                        fontSize: '12px',
+                        padding: '4px'
+                      }}
+                      data-testid="recover-back"
+                    >
+                      ← Retour
+                    </button>
+                  </div>
                 ) : (
                   /* === FORMULAIRE VISITEUR CLASSIQUE (3 champs) === */
                   <form 
@@ -4373,7 +4634,26 @@ export const ChatWidget = () => {
                     >
                       S'identifier comme abonné
                     </button>
-                    
+
+                    {/* === v11.6: LIEN RETROUVER MES ACCÈS === */}
+                    <button
+                      type="button"
+                      onClick={() => { setShowRecoverForm(true); setRecoverError(''); setRecoverResult(null); setError(''); }}
+                      style={{
+                        background: 'none',
+                        color: '#f59e0b',
+                        border: 'none',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                        textDecoration: 'underline',
+                        padding: '2px 0',
+                        textAlign: 'center'
+                      }}
+                      data-testid="recover-access-link"
+                    >
+                      🔑 Code perdu ? Retrouver mes accès
+                    </button>
+
                     {/* Bouton Devenir Partenaire v9.1.6 - Dynamique selon statut */}
                     {/* v9.2.8: Masqué si partner_access_enabled = false (sauf si déjà partenaire) */}
                     {(platformSettings.partner_access_enabled || isRegisteredCoach || isCoachMode) && (
@@ -4855,8 +5135,76 @@ export const ChatWidget = () => {
                     </div>
                   </div>
                 )}
-                
-                <div 
+
+                {/* === v11.6: MON PASS - QR Code permanent pour abonné identifié === */}
+                {afroboostProfile?.code && (
+                  <div style={{ borderBottom: '1px solid rgba(217, 28, 210, 0.2)' }}>
+                    {/* Barre compacte cliquable "Mon Pass" */}
+                    <button
+                      onClick={() => setShowMonPass(prev => !prev)}
+                      style={{
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '8px 16px',
+                        background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.1), rgba(147, 51, 234, 0.08))',
+                        border: 'none',
+                        cursor: 'pointer',
+                        transition: 'background 0.2s'
+                      }}
+                      data-testid="mon-pass-toggle"
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '14px' }}>🎫</span>
+                        <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: '600' }}>Mon Pass</span>
+                        <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px' }}>
+                          {afroboostProfile.code}
+                        </span>
+                      </div>
+                      <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', transform: showMonPass ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }}>
+                        ▼
+                      </span>
+                    </button>
+
+                    {/* Contenu étendu du QR Code */}
+                    {showMonPass && (
+                      <div style={{
+                        padding: '16px',
+                        textAlign: 'center',
+                        background: 'rgba(0,0,0,0.2)',
+                        animation: 'fadeIn 0.3s ease'
+                      }}>
+                        <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '11px', marginBottom: '8px' }}>
+                          Présentez ce QR Code à l'entrée du cours
+                        </p>
+                        <img
+                          src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent('https://afroboost.com/?qr=' + afroboostProfile.code)}`}
+                          alt="QR Code Mon Pass"
+                          style={{
+                            width: '160px',
+                            height: '160px',
+                            borderRadius: '12px',
+                            background: '#fff',
+                            padding: '8px',
+                            margin: '0 auto',
+                            display: 'block',
+                            boxShadow: '0 4px 15px rgba(217, 28, 210, 0.3)'
+                          }}
+                          data-testid="mon-pass-qr"
+                        />
+                        <p style={{ color: '#D91CD2', fontSize: '16px', fontWeight: '800', letterSpacing: '2px', marginTop: '8px' }}>
+                          {afroboostProfile.code}
+                        </p>
+                        <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', marginTop: '4px' }}>
+                          Capturez l'écran pour garder votre pass
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div
                   style={{
                     flex: 1,
                     overflowY: 'auto',

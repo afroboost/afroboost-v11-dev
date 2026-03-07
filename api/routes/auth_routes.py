@@ -11,6 +11,21 @@ import httpx
 import hashlib
 import secrets
 import re
+import os
+import asyncio
+
+# Resend email
+try:
+    import resend
+    RESEND_AVAILABLE = True
+except ImportError:
+    RESEND_AVAILABLE = False
+
+RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
+if RESEND_AVAILABLE and RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
+
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://afroboost-v11-dev-pm7l.vercel.app')
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +73,11 @@ class LoginRequest(BaseModel):
 
 class ForgotPasswordRequest(BaseModel):
     email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
 
 
 # === PASSWORD HASHING HELPERS ===
@@ -555,6 +575,8 @@ async def forgot_password(user_data: ForgotPasswordRequest):
     """
     Demande de réinitialisation de mot de passe.
     Génère un token de réinitialisation valide 1 heure.
+    Envoie un email avec un lien de réinitialisation.
+    Rate limited: max 1 token par email dans les 2 dernières minutes.
     """
     try:
         # Valider l'email
@@ -562,6 +584,22 @@ async def forgot_password(user_data: ForgotPasswordRequest):
             raise HTTPException(status_code=400, detail="Format email invalide")
 
         email = user_data.email.lower().strip()
+
+        # RATE LIMITING: Vérifier s'il y a déjà un reset token pour cet email dans les 2 dernières minutes
+        two_minutes_ago = datetime.now(timezone.utc) - timedelta(minutes=2)
+        recent_reset = await _db.password_resets.find_one({
+            "email": email,
+            "created_at": {"$gte": two_minutes_ago.isoformat()},
+            "used": False
+        })
+
+        if recent_reset:
+            # Retourner succès sans créer un nouveau token (anti-spam)
+            logger.info(f"[AUTH] Forgot password rate limited for: {email}")
+            return {
+                "success": True,
+                "message": "Si cet email existe dans notre système, vous recevrez un lien de réinitialisation"
+            }
 
         # Trouver l'utilisateur
         user = await _db.users_auth.find_one({"email": email})
@@ -589,7 +627,39 @@ async def forgot_password(user_data: ForgotPasswordRequest):
 
         logger.info(f"[AUTH] Password reset token generated for: {email}")
 
-        # Note: Email sending can be implemented later
+        # Envoyer l'email avec lien de réinitialisation
+        reset_link = f"{FRONTEND_URL}/#reset-password?token={reset_token}"
+
+        if RESEND_AVAILABLE and RESEND_API_KEY:
+            try:
+                html_content = f"""
+                <div style="background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); padding: 40px 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; border-radius: 12px 12px 0 0;">
+                    <h1 style="color: #fff; margin: 0; font-size: 24px;">Réinitialiser votre mot de passe</h1>
+                </div>
+                <div style="background: #1f2937; padding: 40px 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #fff;">
+                    <p style="margin: 0 0 16px 0;">Bonjour,</p>
+                    <p style="margin: 0 0 24px 0; color: #d1d5db;">Vous avez demandé la réinitialisation de votre mot de passe Afroboost. Cliquez sur le bouton ci-dessous pour continuer.</p>
+                    <div style="text-align: center; margin: 32px 0;">
+                        <a href="{reset_link}" style="display: inline-block; background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); color: #fff; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600;">Réinitialiser mon mot de passe</a>
+                    </div>
+                    <p style="margin: 24px 0 8px 0; color: #9ca3af; font-size: 13px;">Ou copiez ce lien:</p>
+                    <p style="margin: 0 0 24px 0; word-break: break-all; color: #60a5fa; font-size: 12px;">{reset_link}</p>
+                    <p style="margin: 0 0 12px 0; color: #9ca3af; font-size: 12px;">Ce lien expire dans 1 heure.</p>
+                    <p style="margin: 0; color: #9ca3af; font-size: 12px;">Si vous n'avez pas demandé cette réinitialisation, ignorez cet email.</p>
+                </div>
+                """
+
+                await asyncio.to_thread(resend.Emails.send, {
+                    "from": "Afroboost <notifications@afroboosteur.com>",
+                    "to": [email],
+                    "subject": "Réinitialiser votre mot de passe Afroboost",
+                    "html": html_content
+                })
+                logger.info(f"[AUTH] Password reset email sent to: {email}")
+            except Exception as e:
+                logger.warning(f"[AUTH] Failed to send password reset email to {email}: {e}")
+                # Continue even if email fails - token is still valid
+
         return {
             "success": True,
             "message": "Si cet email existe dans notre système, vous recevrez un lien de réinitialisation"
@@ -599,6 +669,85 @@ async def forgot_password(user_data: ForgotPasswordRequest):
         raise
     except Exception as e:
         logger.error(f"Forgot password error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@auth_router.post("/reset-password")
+async def reset_password(user_data: ResetPasswordRequest):
+    """
+    Réinitialise le mot de passe avec un token valide.
+    Accepte le token généré par /forgot-password et le nouveau mot de passe.
+    """
+    try:
+        token = user_data.token.strip()
+        new_password = user_data.new_password
+
+        # Valider le mot de passe
+        if not new_password or len(new_password) < 6:
+            raise HTTPException(status_code=400, detail="Le mot de passe doit contenir au moins 6 caractères")
+
+        # Trouver le token
+        reset_record = await _db.password_resets.find_one({
+            "token": token,
+            "used": False
+        })
+
+        if not reset_record:
+            raise HTTPException(status_code=400, detail="Token invalide ou expiré")
+
+        # Vérifier l'expiration
+        expires_at = reset_record.get("expires_at")
+        if isinstance(expires_at, str):
+            expires_at = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        if expires_at < datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="Token expiré")
+
+        # Trouver l'utilisateur
+        email = reset_record.get("email")
+        user = await _db.users_auth.find_one({"email": email})
+
+        if not user:
+            raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
+
+        # Hasher le nouveau mot de passe
+        hashed_password = hash_password(new_password)
+
+        # Mettre à jour le mot de passe
+        await _db.users_auth.update_one(
+            {"email": email},
+            {
+                "$set": {
+                    "password_hash": hashed_password,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }
+            }
+        )
+
+        # Marquer le token comme utilisé
+        await _db.password_resets.update_one(
+            {"token": token},
+            {
+                "$set": {
+                    "used": True,
+                    "used_at": datetime.now(timezone.utc).isoformat()
+                }
+            }
+        )
+
+        logger.info(f"[AUTH] Password reset successful for: {email}")
+
+        return {
+            "success": True,
+            "message": "Mot de passe réinitialisé avec succès"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Reset password error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

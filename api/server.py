@@ -2725,6 +2725,145 @@ async def get_subscriber_by_code(code: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# === ESPACE ABONNÉ — Récupération d'accès par email ou WhatsApp v11.1 ===
+@api_router.post("/subscriber/recover")
+async def recover_subscriber_access(request: Request):
+    """
+    Retrouver ses accès abonné par email ou WhatsApp.
+    Renvoie le code + QR Code par email.
+    Rate limited: 3 requêtes max par email/10 minutes.
+    """
+    try:
+        body = await request.json()
+        email = body.get("email", "").lower().strip() if body.get("email") else ""
+        whatsapp = body.get("whatsapp", "").strip() if body.get("whatsapp") else ""
+
+        # Au moins un paramètre requis
+        if not email and not whatsapp:
+            raise HTTPException(status_code=400, detail="Email ou WhatsApp requis")
+
+        # RATE LIMITING: Vérifier les tentatives de récupération
+        ten_minutes_ago = datetime.now(timezone.utc) - timedelta(minutes=10)
+        attempt_key = email if email else f"whatsapp_{whatsapp}"
+
+        existing_attempts = await db.recovery_attempts.count_documents({
+            "key": attempt_key,
+            "created_at": {"$gte": ten_minutes_ago.isoformat()}
+        })
+
+        if existing_attempts >= 3:
+            raise HTTPException(status_code=429, detail="Trop de tentatives. Réessayez dans 10 minutes.")
+
+        # Enregistrer la tentative
+        await db.recovery_attempts.insert_one({
+            "key": attempt_key,
+            "email": email,
+            "whatsapp": whatsapp,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+
+        # Chercher le code abonné
+        discount = None
+        found_email = None
+
+        if email:
+            # Recherche directe par assignedEmail
+            discount = await db.discount_codes.find_one(
+                {"assignedEmail": email, "active": True},
+                {"_id": 0}
+            )
+            if discount:
+                found_email = email
+        else:
+            # Recherche par WhatsApp: trouver d'abord le participant chat
+            participant = await db.chat_participants.find_one(
+                {"whatsapp": whatsapp},
+                {"_id": 0}
+            )
+            if participant:
+                found_email = participant.get("email")
+                if found_email:
+                    # Chercher le code avec cet email
+                    discount = await db.discount_codes.find_one(
+                        {"assignedEmail": found_email, "active": True},
+                        {"_id": 0}
+                    )
+
+        if not discount or not found_email:
+            logger.info(f"[SUBSCRIBER-RECOVER] No active code found for email={email}, whatsapp={whatsapp}")
+            raise HTTPException(status_code=404, detail="Aucun code abonné actif trouvé")
+
+        # Infos du code
+        code = discount.get("code", "").upper()
+        max_uses = discount.get("maxUses", 0)
+        used = discount.get("used", 0)
+        remaining = max(0, max_uses - used)
+        name = discount.get("name", found_email.split("@")[0] if found_email else "Abonné")
+
+        # QR Code URL
+        qr_data = f"https://afroboost.com/?qr={code}"
+        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={qr_data}"
+
+        # Envoyer l'email avec code et QR code
+        if RESEND_AVAILABLE and RESEND_API_KEY:
+            try:
+                html_content = f"""
+                <div style="background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); padding: 40px 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; border-radius: 12px 12px 0 0;">
+                    <h1 style="color: #fff; margin: 0; font-size: 24px;">Vos accès Afroboost</h1>
+                </div>
+                <div style="background: #1f2937; padding: 40px 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #fff;">
+                    <p style="margin: 0 0 24px 0;">Bonjour {name},</p>
+                    <p style="margin: 0 0 24px 0; color: #d1d5db;">Voici votre code d'accès Afroboost et vos informations d'abonnement.</p>
+
+                    <div style="background: #111827; border-radius: 8px; padding: 24px; margin: 24px 0; border-left: 4px solid #a855f7;">
+                        <p style="margin: 0 0 12px 0; color: #9ca3af; font-size: 12px;">Votre code:</p>
+                        <p style="margin: 0; font-size: 28px; font-weight: bold; color: #60a5fa; font-family: 'Courier New', monospace;">{code}</p>
+                        <p style="margin: 16px 0 0 0; color: #9ca3af; font-size: 13px;">Séances restantes: <span style="color: #22c55e; font-weight: bold;">{remaining}/{max_uses}</span></p>
+                    </div>
+
+                    <p style="margin: 24px 0 16px 0; color: #9ca3af; font-size: 13px;">Scannez ce code QR pour accéder:</p>
+                    <div style="text-align: center; margin: 24px 0;">
+                        <img src="{qr_url}" alt="QR Code {code}" style="max-width: 200px; height: auto; border-radius: 8px; background: #fff; padding: 8px;">
+                    </div>
+
+                    <p style="margin: 24px 0 8px 0; color: #9ca3af; font-size: 12px;">Ou accédez directement en utilisant le lien:</p>
+                    <p style="margin: 0 0 24px 0; word-break: break-all; color: #60a5fa; font-size: 12px;">https://afroboost.com/?qr={code}</p>
+
+                    <div style="border-top: 1px solid #374151; padding-top: 16px; margin-top: 24px;">
+                        <p style="margin: 0; color: #9ca3af; font-size: 11px;">Questions? Contactez-nous sur WhatsApp ou par email.</p>
+                    </div>
+                </div>
+                """
+
+                await asyncio.to_thread(resend.Emails.send, {
+                    "from": "Afroboost <notifications@afroboosteur.com>",
+                    "to": [found_email],
+                    "subject": f"Votre code d'accès Afroboost - {code}",
+                    "html": html_content
+                })
+                logger.info(f"[SUBSCRIBER-RECOVER] Recovery email sent to {found_email}")
+            except Exception as e:
+                logger.warning(f"[SUBSCRIBER-RECOVER] Email send error: {e}")
+                # Continue anyway - code info will be returned
+
+        return {
+            "success": True,
+            "code": code,
+            "email": found_email,
+            "name": name,
+            "sessions_remaining": remaining,
+            "sessions_total": max_uses,
+            "qr_code_url": qr_url,
+            "sent_to_chat": False
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[SUBSCRIBER-RECOVER] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # === STRIPE CHECKOUT POUR COACHS PARTENAIRES v8.9 ===
 @api_router.post("/stripe/create-coach-checkout")
 async def create_coach_checkout(request: Request):
