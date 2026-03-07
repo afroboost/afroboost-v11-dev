@@ -114,7 +114,7 @@ const MediaMessage = ({
   // Parser le média (seulement si supporte)
   const mediaInfo = isUnsupportedFile ? null : parseMediaUrl(mediaUrl);
 
-  // Gérer le clic sur le CTA
+  // v16.4: Gérer le clic CTA — écosystème fermé, navigation in-app
   const handleCtaClick = useCallback((e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -122,7 +122,17 @@ const MediaMessage = ({
     if (cta?.type === 'RESERVER' && onReservationClick) {
       onReservationClick();
     } else if (cta?.url) {
-      window.open(cta.url, '_blank', 'noopener,noreferrer');
+      const url = cta.url;
+      // v16.4: Détecte si lien interne Afroboost → navigation in-app
+      const isInternal = url.includes('afroboost') || url.includes(window.location.host) || url.startsWith('/') || url.startsWith('/?');
+      if (isInternal) {
+        try {
+          const urlObj = new URL(url, window.location.origin);
+          window.location.href = urlObj.pathname + urlObj.search + urlObj.hash;
+        } catch { window.location.href = url; }
+      } else {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      }
     }
   }, [cta, onReservationClick]);
 
@@ -165,7 +175,7 @@ const MediaMessage = ({
           justifyContent: 'center'
         }}
       >
-        {/* YouTube - Miniature ou iframe */}
+        {/* v16.4: YouTube — Lecteur natif Afroboost, youtube-nocookie.com + overlay anti-sortie */}
         {mediaInfo.type === 'youtube' && (
           <>
             {!isPlaying ? (
@@ -186,35 +196,43 @@ const MediaMessage = ({
                 }}
                 data-testid="youtube-play-btn"
               >
+                {/* v16.4: Play button Afroboost — accent #D91CD2 */}
                 <div style={{
                   width: '64px',
                   height: '64px',
                   borderRadius: '50%',
-                  background: 'rgba(0,0,0,0.7)',
+                  background: 'rgba(217, 28, 210, 0.85)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   color: '#fff',
-                  transition: 'transform 0.2s, background 0.2s'
+                  boxShadow: '0 4px 24px rgba(217, 28, 210, 0.4)',
+                  transition: 'transform 0.2s'
                 }}>
                   <PlayIcon />
                 </div>
               </button>
             ) : (
-              <iframe
-                src={`${mediaInfo.embedUrl}&autoplay=1`}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  height: '100%',
-                  border: 'none'
-                }}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                title="YouTube Video"
-              />
+              <>
+                <iframe
+                  src={`https://www.youtube-nocookie.com/embed/${mediaInfo.videoId}?autoplay=1&mute=1&rel=0&playsinline=1&modestbranding=1&showinfo=0&iv_load_policy=3&fs=1`}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%',
+                    border: 'none'
+                  }}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                  allowFullScreen
+                  title="Afroboost Video"
+                />
+                {/* v16.4: Overlay haut — bloque logo YouTube cliquable */}
+                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '40px', zIndex: 2, cursor: 'default' }} />
+                {/* v16.4: Overlay bas-droite — bloque bouton "Regarder sur YouTube" */}
+                <div style={{ position: 'absolute', bottom: 0, right: 0, width: '140px', height: '36px', zIndex: 2, cursor: 'default' }} />
+              </>
             )}
           </>
         )}
@@ -312,19 +330,32 @@ const MediaMessage = ({
           />
         )}
 
-        {/* Vidéo directe — v16.3: Amélioration lecture multi-canal */}
+        {/* v16.4: Vidéo directe — Muted Autoplay + fullscreen 9:16 mobile */}
         {mediaInfo.type === 'video' && (
           <video
             src={mediaInfo.directUrl}
             controls
-            preload="metadata"
+            muted
+            autoPlay
+            loop
+            preload="auto"
             playsInline
-            controlsList="nodownload"
+            controlsList="nodownload nofullscreen noremoteplayback"
+            disablePictureInPicture
             style={{
               width: '100%',
-              maxHeight: isCompact ? '200px' : '320px',
+              maxHeight: isCompact ? '200px' : '400px',
               objectFit: 'contain',
-              background: '#000'
+              background: '#000',
+              aspectRatio: 'auto'
+            }}
+            onLoadedMetadata={(e) => {
+              // v16.4: Détecte vidéo portrait (9:16) → ajuste l'affichage
+              const v = e.target;
+              if (v.videoHeight > v.videoWidth) {
+                v.style.maxHeight = isCompact ? '280px' : '500px';
+                v.style.objectFit = 'contain';
+              }
             }}
           >
             <source src={mediaInfo.directUrl} type="video/mp4" />
@@ -410,7 +441,10 @@ const MediaMessage = ({
           >
             <CtaIcon />
             <span>{cta.text || ctaConfig.defaultText}</span>
-            <ExternalIcon />
+            {/* v16.4: Flèche in-app au lieu d'ExternalIcon — écosystème fermé */}
+            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
           </button>
         </div>
       )}

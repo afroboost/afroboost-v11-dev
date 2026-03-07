@@ -75,7 +75,7 @@ export const parseMediaUrl = (url) => {
         platform: 'youtube',
         videoId,
         directUrl: `https://www.youtube.com/watch?v=${videoId}`,
-        embedUrl: `https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1`,
+        embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?rel=0&modestbranding=1&showinfo=0&iv_load_policy=3`,
         thumbnailUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
         // Alternatives de miniatures
         thumbnails: {

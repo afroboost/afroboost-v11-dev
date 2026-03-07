@@ -153,11 +153,12 @@ const formatMessageTime = (dateStr) => {
 };
 
 // === COMPOSANTS MÉDIA INLINE ===
+// v16.4: Lecteur YouTube natif — youtube-nocookie.com + overlay anti-sortie
 const InlineYouTubePlayer = ({ videoId, thumbnailUrl }) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  
+
   return (
-    <div style={{ marginTop: '8px', borderRadius: '12px', overflow: 'hidden', maxWidth: '100%' }} data-testid="inline-youtube">
+    <div style={{ marginTop: '8px', borderRadius: '12px', overflow: 'hidden', maxWidth: '100%', position: 'relative', background: '#000' }} data-testid="inline-youtube">
       {!isPlaying ? (
         <button
           onClick={() => setIsPlaying(true)}
@@ -174,28 +175,37 @@ const InlineYouTubePlayer = ({ videoId, thumbnailUrl }) => {
           }}
           data-testid="youtube-thumbnail-btn"
         >
+          {/* v16.4: Play button Afroboost — fond noir + accent #D91CD2 */}
           <div style={{
             width: '56px',
             height: '56px',
             borderRadius: '50%',
-            background: 'rgba(0,0,0,0.75)',
+            background: 'rgba(217, 28, 210, 0.85)',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center'
+            justifyContent: 'center',
+            boxShadow: '0 4px 20px rgba(217, 28, 210, 0.4)',
+            transition: 'transform 0.2s'
           }}>
-            <svg width="24" height="24" fill="#fff" viewBox="0 0 24 24">
-              <polygon points="5 3 19 12 5 21 5 3"/>
+            <svg width="22" height="22" fill="#fff" viewBox="0 0 24 24">
+              <polygon points="6 3 20 12 6 21 6 3"/>
             </svg>
           </div>
         </button>
       ) : (
-        <iframe
-          src={`https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&rel=0&playsinline=1`}
-          style={{ width: '100%', aspectRatio: '16/9', border: 'none' }}
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen
-          title="YouTube Video"
-        />
+        <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9' }}>
+          <iframe
+            src={`https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=1&rel=0&playsinline=1&modestbranding=1&showinfo=0&iv_load_policy=3&disablekb=0&fs=1`}
+            style={{ width: '100%', height: '100%', border: 'none', position: 'absolute', top: 0, left: 0 }}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+            allowFullScreen
+            title="Afroboost Video"
+          />
+          {/* v16.4: Overlay transparent haut — bloque le logo YouTube cliquable */}
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '40px', zIndex: 2, cursor: 'default' }} />
+          {/* v16.4: Overlay transparent bas-droite — bloque le bouton YouTube */}
+          <div style={{ position: 'absolute', bottom: 0, right: 0, width: '120px', height: '30px', zIndex: 2, cursor: 'default' }} />
+        </div>
       )}
     </div>
   );
@@ -274,23 +284,38 @@ const InlineImage = ({ src }) => (
   />
 );
 
+// v16.4: CTA in-app — pas de redirection externe, écosystème fermé
 const InlineCtaButton = ({ label, url }) => {
   // Validation stricte : label ET url doivent être non-vides
   if (!label || !url || typeof label !== 'string' || typeof url !== 'string') return null;
   const trimmedLabel = label.trim();
   const trimmedUrl = url.trim();
   if (!trimmedLabel || !trimmedUrl) return null;
-  
+
   // Auto-ajout de https:// si manquant
-  const safeUrl = trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://') 
-    ? trimmedUrl 
+  const safeUrl = trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://')
+    ? trimmedUrl
     : `https://${trimmedUrl}`;
-  
+
+  // v16.4: Détecte si le lien pointe vers Afroboost (navigation in-app)
+  const isInternalLink = safeUrl.includes('afroboost') || safeUrl.includes(window.location.host) || safeUrl.startsWith('/') || safeUrl.startsWith('/?');
+
+  const handleClick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isInternalLink) {
+      // Navigation in-app — pas de nouvel onglet
+      const urlObj = new URL(safeUrl, window.location.origin);
+      window.location.href = urlObj.pathname + urlObj.search + urlObj.hash;
+    } else {
+      // Lien externe — ouvre dans un nouvel onglet (seul cas autorisé)
+      window.open(safeUrl, '_blank', 'noopener,noreferrer');
+    }
+  };
+
   return (
-    <a
-      href={safeUrl}
-      target="_blank"
-      rel="noopener noreferrer"
+    <button
+      onClick={handleClick}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -303,20 +328,21 @@ const InlineCtaButton = ({ label, url }) => {
         color: '#fff',
         fontWeight: '600',
         fontSize: '14px',
-        textDecoration: 'none',
+        border: 'none',
+        cursor: 'pointer',
+        width: '100%',
         transition: 'transform 0.2s, opacity 0.2s'
       }}
-      onMouseEnter={(e) => { e.target.style.transform = 'scale(1.02)'; e.target.style.opacity = '0.9'; }}
-      onMouseLeave={(e) => { e.target.style.transform = 'scale(1)'; e.target.style.opacity = '1'; }}
+      onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.02)'; e.currentTarget.style.opacity = '0.9'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.opacity = '1'; }}
       data-testid="inline-cta-button"
     >
       {trimmedLabel}
-      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-        <polyline points="15 3 21 3 21 9"/>
-        <line x1="10" y1="14" x2="21" y2="3"/>
+      {/* v16.4: Icône flèche in-app au lieu d'ExternalIcon */}
+      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+        <path d="M5 12h14M12 5l7 7-7 7"/>
       </svg>
-    </a>
+    </button>
   );
 };
 
@@ -2704,12 +2730,21 @@ export const ChatWidget = () => {
     
     // Récupération initiale au montage
     fetchLatestMessages(0, 'mount');
-    
+
+    // === v16.4: POLLING TEMPS RÉEL — Toutes les 5s quand chat visible ===
+    const POLL_INTERVAL = 5000; // 5 secondes
+    const pollRef = setInterval(() => {
+      if (document.visibilityState === 'visible' && navigator.onLine) {
+        fetchLatestMessages(0, 'poll');
+      }
+    }, POLL_INTERVAL);
+
     // Cleanup
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleFocus);
       window.removeEventListener('online', handleOnline);
+      clearInterval(pollRef);
       if (connection) {
         connection.removeEventListener('change', handleConnectionChange);
       }
@@ -3601,7 +3636,19 @@ export const ChatWidget = () => {
             transform: scale(1);
           }
         }
-        
+
+        /* v16.4: Animation slide-in fluide pour les messages */
+        @keyframes afroMsgSlideIn {
+          from {
+            opacity: 0;
+            transform: translateY(12px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
         /* Chat widget responsive - plus grand sur mobile */
         @media (max-width: 640px) {
           .chat-widget-window {
@@ -5305,17 +5352,25 @@ export const ChatWidget = () => {
                   )}
                   
                   {/* === MESSAGES: Affichés selon mode (privé ou groupe) === */}
+                  {/* v16.4: Animation slide-in + fade pour chaque message */}
                   {(chatMode === 'group' ? groupMessages : messages).map((msg, idx) => (
-                    <MemoizedMessageBubble 
-                      key={msg.id || idx} 
-                      msg={msg} 
-                      isUser={msg.type === 'user' && msg.senderId === participantId}
-                      onParticipantClick={startPrivateChat}
-                      isCommunity={chatMode === 'group'}
-                      currentUserId={participantId}
-                      profilePhotoUrl={profilePhoto}
-                      onReservationClick={() => setShowReservationPanel(true)}
-                    />
+                    <div
+                      key={msg.id || idx}
+                      style={{
+                        animation: 'afroMsgSlideIn 0.35s ease-out both',
+                        animationDelay: `${Math.min(idx * 0.03, 0.3)}s`
+                      }}
+                    >
+                      <MemoizedMessageBubble
+                        msg={msg}
+                        isUser={msg.type === 'user' && msg.senderId === participantId}
+                        onParticipantClick={startPrivateChat}
+                        isCommunity={chatMode === 'group'}
+                        currentUserId={participantId}
+                        profilePhotoUrl={profilePhoto}
+                        onReservationClick={() => setShowReservationPanel(true)}
+                      />
+                    </div>
                   ))}
                   
                   {/* === INDICATEUR DE SAISIE (Typing Indicator) === */}
