@@ -3232,11 +3232,20 @@ async def get_og_meta(username: str, request: Request):
     """v17.1: HTML OpenGraph pour crawlers (WhatsApp, Instagram, Facebook)"""
     from starlette.responses import HTMLResponse
 
-    # Trouver le coach par username
-    coach = await db.coaches.find_one(
-        {"$or": [{"username": username.lower()}, {"name": {"$regex": f"^{username}$", "$options": "i"}}]},
-        {"_id": 0}
-    )
+    # Trouver le coach — même logique que coach/vitrine
+    SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com']
+    if username.lower() in ["bassi", "afroboost"]:
+        coach = {"name": "Bassi - Afroboost", "email": "contact.artboost@gmail.com", "platform_name": "Afroboost"}
+    else:
+        coach = await db.coaches.find_one(
+            {"$or": [
+                {"username": username.lower()},
+                {"name": {"$regex": f"^{username}$", "$options": "i"}},
+                {"email": username.lower()},
+                {"id": username}
+            ]},
+            {"_id": 0}
+        )
 
     if not coach:
         return HTMLResponse("<html><head><title>Afroboost</title></head><body>Coach not found</body></html>", status_code=404)
@@ -3294,7 +3303,7 @@ async def get_sitemap():
 
     # Ajouter toutes les vitrines de coachs actifs
     coaches = await db.coaches.find(
-        {"active": {"$ne": False}},
+        {"is_active": {"$ne": False}},
         {"_id": 0, "username": 1, "name": 1}
     ).to_list(200)
 
