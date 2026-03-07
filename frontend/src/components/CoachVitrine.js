@@ -177,22 +177,22 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     setBookingLoading(true);
     try {
       // Envoyer une réservation par séance sélectionnée
+      const finalPrice = calculateFinalPrice();
+      const qty = selectedBookings.length;
       for (const booking of selectedBookings) {
         await axios.post(`${API}/reservations`, {
           userName: bookingForm.name,
           userEmail: bookingForm.email,
           userWhatsapp: bookingForm.whatsapp,
-          courseId: booking.course.id,
           courseName: booking.course.name || booking.course.title,
           courseTime: booking.course.time,
           datetime: booking.date.toISOString(),
+          offerName: selectedOffer?.name || 'Séance',
+          totalPrice: finalPrice / qty,
+          quantity: 1,
           coach_id: coach?.email || username,
           source: 'vitrine_partenaire',
-          selectedOffer: selectedOffer ? { id: selectedOffer.id, name: selectedOffer.name, price: selectedOffer.price } : null,
-          appliedDiscount: appliedDiscount ? {
-            id: appliedDiscount.id, code: appliedDiscount.code,
-            type: appliedDiscount.type, value: appliedDiscount.value
-          } : null
+          promoCode: appliedDiscount?.code || null
         });
       }
       if (appliedDiscount) {
@@ -203,7 +203,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       setSelectedBookings([]);
     } catch (err) {
       console.error('[BOOKING] Erreur:', err);
-      alert(err.response?.data?.detail || 'Erreur lors de la réservation');
+      const detail = err.response?.data?.detail;
+      const message = typeof detail === 'string' ? detail :
+        Array.isArray(detail) ? detail.map(d => d.msg || JSON.stringify(d)).join(', ') :
+        'Erreur lors de la réservation';
+      alert(message);
     } finally {
       setBookingLoading(false);
     }
