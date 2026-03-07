@@ -920,9 +920,9 @@ async def create_course(course: CourseCreate, request: Request):
     await db.courses.insert_one(course_obj.model_dump())
     return course_obj
 
-@api_router.put("/courses/{course_id}", response_model=Course)
+@api_router.put("/courses/{course_id}")
 async def update_course(course_id: str, course_update: dict, request: Request):
-    """Update a course - supports partial updates including playlist"""
+    """Update a course - supports partial updates including playlist and audio_tracks"""
     # Sécurité : vérifier que l'utilisateur est authentifié
     require_auth(request)
     # Récupérer le cours existant
