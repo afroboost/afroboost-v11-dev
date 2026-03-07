@@ -82,8 +82,8 @@ const SubscriberForm = ({
   error,
   isLoading
 }) => {
-  // État du toggle "Mémoriser" — initialisé selon présence dans localStorage
-  const [rememberMe, setRememberMe] = useState(() => !!loadSavedInfo());
+  // État du toggle "Mémoriser" — TOUJOURS ON par défaut pour sauvegarder automatiquement
+  const [rememberMe, setRememberMe] = useState(true);
 
   // Auto-remplissage au montage si données sauvegardées
   useEffect(() => {
