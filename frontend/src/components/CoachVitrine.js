@@ -411,10 +411,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const displayName = coach.platform_name || coach.name || 'Coach';
   const initial = displayName.charAt(0).toUpperCase();
 
-  // v18.1: Résolution URL complète pour fichiers uploadés
+  // v18.2: Résolution URL complète pour fichiers uploadés
   const resolveMediaUrl = (url) => {
     if (!url) return '';
-    // URLs relatives /api/files/... → préfixer avec BACKEND_URL si défini
     if (url.startsWith('/api/files/')) {
       const resolved = `${BACKEND_URL}${url}`;
       console.log('[VITRINE-MEDIA] URL résolue:', url, '→', resolved);
@@ -423,15 +422,28 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     return url;
   };
 
+  // v18.2: Détection intelligente du type réel de média
+  const detectMediaType = (video) => {
+    if (!video || !video.url) return 'unknown';
+    const url = video.url.toLowerCase();
+    // YouTube
+    if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
+    // Vimeo
+    if (url.includes('vimeo.com')) return 'vimeo';
+    // Image — par extension OU par type explicite
+    if (url.match(/\.(jpg|jpeg|png|webp|gif|svg)$/i) || video.type === 'image' || url.includes('/image_')) return 'image';
+    // Vidéo — par extension OU par type upload/video
+    if (url.match(/\.(mp4|webm|mov)$/i) || video.type === 'upload' || video.type === 'video' || url.includes('/video_') || url.includes('/api/files/')) return 'video';
+    return 'unknown';
+  };
+
   // v18: Multi-vidéos héro — source unique: heroVideos, fallback heroImageUrl seulement
   const heroVideos = (() => {
-    // Priorité 1: heroVideos (nouveau système v18)
     if (coachConcept?.heroVideos && coachConcept.heroVideos.length > 0) {
       const filtered = coachConcept.heroVideos.filter(v => v && v.url);
-      console.log('[VITRINE-HERO] heroVideos trouvées:', filtered.length, filtered.map(v => ({ url: v.url, type: v.type })));
+      console.log('[VITRINE-HERO] heroVideos trouvées:', filtered.length, filtered.map(v => ({ url: v.url, type: v.type, detected: detectMediaType(v) })));
       return filtered;
     }
-    // Priorité 2: heroImageUrl uniquement (pas heroVideoUrl ni video_url qui sont des champs legacy pollués)
     if (coachConcept?.heroImageUrl) {
       console.log('[VITRINE-HERO] Fallback heroImageUrl:', coachConcept.heroImageUrl);
       return [{ url: coachConcept.heroImageUrl, type: 'youtube' }];
@@ -441,6 +453,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   })();
   const currentHeroVideo = heroVideos[activeVideoIndex] || heroVideos[0] || null;
   const heroVideoUrl = resolveMediaUrl(currentHeroVideo?.url || '');
+  const heroMediaType = detectMediaType(currentHeroVideo);
   const youtubeId = getYoutubeId(heroVideoUrl);
 
   // Déduplication des cours par nom
@@ -496,8 +509,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       {/* ============================================= */}
       <div className="relative w-full" style={{ height: '85vh', maxHeight: '85vh', background: '#000000' }}>
 
-        {/* v18.1: Loading spinner médias */}
-        {heroVideoUrl && (currentHeroVideo?.type === 'upload' || heroVideoUrl.includes('/api/files/')) && (
+        {/* v18.2: Loading spinner médias uploadés */}
+        {heroVideoUrl && (heroMediaType === 'video' || heroMediaType === 'image') && heroVideoUrl.includes('/api/files') && (
           <div id="hero-media-loader" className="absolute inset-0 z-10 flex items-center justify-center"
             style={{ background: 'rgba(0,0,0,0.85)' }}>
             <div style={{
@@ -509,86 +522,119 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* Fond vidéo plein écran — autoplay natif */}
+        {/* v18.2: Fond média plein écran — autoplay total, switch dynamique img/video */}
         <div className="absolute inset-0 overflow-hidden">
-          {youtubeId ? (
-            <iframe
-              className="absolute"
-              src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=1&loop=1&playlist=${youtubeId}&controls=0&showinfo=0&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`}
-              title={displayName}
-              frameBorder="0"
-              allow="autoplay; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-              style={{
-                pointerEvents: 'none', position: 'absolute',
-                top: '50%', left: '50%',
-                width: '177.78vh', height: '100vh',
-                minWidth: '100%', minHeight: '56.25vw',
-                transform: 'translate(-50%, -50%)'
-              }}
-            />
-          ) : heroVideoUrl && heroVideoUrl.includes('vimeo.com') ? (
-            <iframe
-              className="absolute"
-              src={`https://player.vimeo.com/video/${heroVideoUrl.split('/').pop()}?autoplay=1&muted=1&loop=1&background=1`}
-              title={displayName}
-              frameBorder="0"
-              allow="autoplay; fullscreen"
-              style={{
-                pointerEvents: 'none', position: 'absolute',
-                top: '50%', left: '50%',
-                width: '177.78vh', height: '100vh',
-                minWidth: '100%', minHeight: '56.25vw',
-                transform: 'translate(-50%, -50%)'
-              }}
-            />
-          ) : heroVideoUrl && (heroVideoUrl.match(/\.(jpg|jpeg|png|webp|gif)$/i) || currentHeroVideo?.type === 'image') ? (
-            <img
-              key={heroVideoUrl}
-              src={heroVideoUrl}
-              alt={displayName}
-              className="absolute inset-0 w-full h-full object-cover"
-              style={{ filter: 'brightness(0.75)' }}
-              onLoad={() => {
-                console.log('[VITRINE-MEDIA] ✅ Image chargée:', heroVideoUrl);
-                const loader = document.getElementById('hero-media-loader');
-                if (loader) loader.style.display = 'none';
-              }}
-              onError={(e) => {
-                console.error('[VITRINE-MEDIA] ❌ Erreur chargement image:', heroVideoUrl);
-                const loader = document.getElementById('hero-media-loader');
-                if (loader) loader.style.display = 'none';
-                e.target.style.display = 'none';
-              }}
-            />
-          ) : heroVideoUrl && (heroVideoUrl.match(/\.(mp4|webm|mov)$/i) || currentHeroVideo?.type === 'upload' || heroVideoUrl.includes('/api/files/')) ? (
-            <video
-              key={heroVideoUrl}
-              autoPlay muted loop playsInline
-              className="absolute inset-0 w-full h-full object-cover"
-              style={{ filter: 'brightness(0.7)' }}
-              onLoadedData={() => {
-                console.log('[VITRINE-MEDIA] ✅ Vidéo chargée:', heroVideoUrl);
-                const loader = document.getElementById('hero-media-loader');
-                if (loader) loader.style.display = 'none';
-              }}
-              onError={(e) => {
-                console.error('[VITRINE-MEDIA] ❌ Erreur chargement vidéo:', heroVideoUrl, e.target.error);
-                const loader = document.getElementById('hero-media-loader');
-                if (loader) loader.style.display = 'none';
-              }}
-            >
-              <source src={heroVideoUrl} type={heroVideoUrl.match(/\.webm$/i) ? 'video/webm' : 'video/mp4'} />
-            </video>
-          ) : (
-            <div className="absolute inset-0"
-              style={{ background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.5) 0%, rgba(217, 28, 210, 0.4) 100%)' }}>
-              <div className="absolute inset-0 flex items-center justify-center"
-                style={{ background: 'radial-gradient(circle at 50% 50%, rgba(217, 28, 210, 0.3) 0%, transparent 70%)' }}>
-                <span className="text-5xl opacity-70">🎬</span>
+          {(() => {
+            // Log de validation finale
+            if (heroVideoUrl) {
+              console.log(`✅ Rendu Média Vitrine OK - Type: ${heroMediaType}, URL: ${heroVideoUrl}`);
+            }
+
+            // === YOUTUBE ===
+            if (heroMediaType === 'youtube' && youtubeId) {
+              return (
+                <iframe
+                  key={`yt-${youtubeId}`}
+                  className="absolute"
+                  src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=1&loop=1&playlist=${youtubeId}&controls=0&showinfo=0&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`}
+                  title={displayName}
+                  frameBorder="0"
+                  allow="autoplay; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  style={{
+                    pointerEvents: 'none', position: 'absolute',
+                    top: '50%', left: '50%',
+                    width: '177.78vh', height: '100vh',
+                    minWidth: '100%', minHeight: '56.25vw',
+                    transform: 'translate(-50%, -50%)'
+                  }}
+                />
+              );
+            }
+
+            // === VIMEO ===
+            if (heroMediaType === 'vimeo') {
+              return (
+                <iframe
+                  key={`vimeo-${heroVideoUrl}`}
+                  className="absolute"
+                  src={`https://player.vimeo.com/video/${heroVideoUrl.split('/').pop()}?autoplay=1&muted=1&loop=1&background=1`}
+                  title={displayName}
+                  frameBorder="0"
+                  allow="autoplay; fullscreen"
+                  style={{
+                    pointerEvents: 'none', position: 'absolute',
+                    top: '50%', left: '50%',
+                    width: '177.78vh', height: '100vh',
+                    minWidth: '100%', minHeight: '56.25vw',
+                    transform: 'translate(-50%, -50%)'
+                  }}
+                />
+              );
+            }
+
+            // === IMAGE (uploadée ou externe) ===
+            if (heroMediaType === 'image') {
+              return (
+                <img
+                  key={`img-${heroVideoUrl}`}
+                  src={heroVideoUrl}
+                  alt={displayName}
+                  className="absolute inset-0 w-full h-full object-cover"
+                  style={{ filter: 'brightness(0.75)' }}
+                  onLoad={() => {
+                    console.log('[VITRINE-MEDIA] ✅ Image chargée:', heroVideoUrl);
+                    const loader = document.getElementById('hero-media-loader');
+                    if (loader) loader.style.display = 'none';
+                  }}
+                  onError={(e) => {
+                    console.error('[VITRINE-MEDIA] ❌ Erreur chargement image:', heroVideoUrl);
+                    const loader = document.getElementById('hero-media-loader');
+                    if (loader) loader.style.display = 'none';
+                    e.target.style.display = 'none';
+                  }}
+                />
+              );
+            }
+
+            // === VIDEO (uploadée ou externe) — AUTOPLAY OBLIGATOIRE ===
+            if (heroMediaType === 'video') {
+              return (
+                <video
+                  key={`vid-${heroVideoUrl}`}
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  className="absolute inset-0 w-full h-full object-cover"
+                  style={{ filter: 'brightness(0.7)' }}
+                  onLoadedData={() => {
+                    console.log('[VITRINE-MEDIA] ✅ Vidéo autoplay chargée:', heroVideoUrl);
+                    const loader = document.getElementById('hero-media-loader');
+                    if (loader) loader.style.display = 'none';
+                  }}
+                  onError={(e) => {
+                    console.error('[VITRINE-MEDIA] ❌ Erreur chargement vidéo:', heroVideoUrl, e.target.error);
+                    const loader = document.getElementById('hero-media-loader');
+                    if (loader) loader.style.display = 'none';
+                  }}
+                >
+                  <source src={heroVideoUrl} type={heroVideoUrl.match(/\.webm$/i) ? 'video/webm' : 'video/mp4'} />
+                </video>
+              );
+            }
+
+            // === FALLBACK — gradient décoratif ===
+            return (
+              <div className="absolute inset-0"
+                style={{ background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.5) 0%, rgba(217, 28, 210, 0.4) 100%)' }}>
+                <div className="absolute inset-0 flex items-center justify-center"
+                  style={{ background: 'radial-gradient(circle at 50% 50%, rgba(217, 28, 210, 0.3) 0%, transparent 70%)' }}>
+                  <span className="text-5xl opacity-70">🎬</span>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Navigation dots multi-vidéos */}
