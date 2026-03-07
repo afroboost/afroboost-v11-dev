@@ -421,31 +421,35 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const displayName = coach.platform_name || coach.name || 'Coach';
   const initial = displayName.charAt(0).toUpperCase();
 
-  // v20: Résolution URL complète pour fichiers uploadés + CACHE-BUSTING
+  // v20.1: Résolution URL COMPLÈTE (origin + path) + CACHE-BUSTING
   const resolveMediaUrl = (url) => {
     if (!url) return '';
     if (url.startsWith('/api/files/')) {
-      // v20: Ajouter timestamp pour écraser le cache navigateur
+      // v20.1: Construire URL absolue — BACKEND_URL ou window.location.origin
+      const base = BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '');
       const cacheBuster = `?t=${Date.now()}`;
-      const resolved = `${BACKEND_URL}${url}${cacheBuster}`;
-      console.log('[VITRINE-MEDIA] URL résolue (cache-bust):', url, '→', resolved);
-      return resolved;
+      const finalUrl = `${base}${url}${cacheBuster}`;
+      console.warn('DEBUG MÉDIA URL:', finalUrl);
+      return finalUrl;
     }
     return url;
   };
 
-  // v18.2: Détection intelligente du type réel de média
+  // v20.1: Détection STRICTE du type réel de média — image TOUJOURS avant vidéo
   const detectMediaType = (video) => {
     if (!video || !video.url) return 'unknown';
     const url = video.url.toLowerCase();
-    // YouTube
+    // YouTube — priorité 1
     if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
     // Vimeo
     if (url.includes('vimeo.com')) return 'vimeo';
-    // Image — par extension OU par type explicite
-    if (url.match(/\.(jpg|jpeg|png|webp|gif|svg)$/i) || video.type === 'image' || url.includes('/image_')) return 'image';
-    // Vidéo — par extension OU par type upload/video
-    if (url.match(/\.(mp4|webm|mov)$/i) || video.type === 'upload' || video.type === 'video' || url.includes('/video_') || url.includes('/api/files/')) return 'video';
+    // v20.1: IMAGE — vérifier extension ET nom de fichier contenant /image_
+    // IMPORTANT: cette vérification DOIT être AVANT la vérification vidéo
+    if (url.match(/\.(jpg|jpeg|png|webp|gif|svg|bmp)(\?|$)/i) || video.type === 'image' || url.includes('/image_')) return 'image';
+    // VIDÉO — par extension OU par nom de fichier contenant /video_
+    if (url.match(/\.(mp4|webm|mov|avi|mkv)(\?|$)/i) || video.type === 'upload' || video.type === 'video' || url.includes('/video_')) return 'video';
+    // Fallback: si c'est un /api/files/ sans extension reconnue, traiter comme vidéo
+    if (url.includes('/api/files/')) return 'video';
     return 'unknown';
   };
 
@@ -653,13 +657,15 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               );
             }
 
-            // === IMAGE (uploadée ou externe) ===
+            // === IMAGE (uploadée ou externe) — v20.1 ===
             if (heroMediaType === 'image') {
+              console.warn('DEBUG MÉDIA URL (image):', heroVideoUrl);
               return (
                 <img
                   key={`img-${heroVideoUrl}`}
                   src={heroVideoUrl}
                   alt={displayName}
+                  crossOrigin="anonymous"
                   className="absolute inset-0 w-full h-full object-cover"
                   style={{ filter: 'brightness(0.75)' }}
                   onLoad={() => {
@@ -669,6 +675,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   }}
                   onError={(e) => {
                     console.error('[VITRINE-MEDIA] ❌ Erreur chargement image:', heroVideoUrl);
+                    console.warn('DEBUG MÉDIA URL (image ERREUR):', heroVideoUrl);
                     const loader = document.getElementById('hero-media-loader');
                     if (loader) loader.style.display = 'none';
                     e.target.style.display = 'none';
@@ -677,22 +684,38 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               );
             }
 
-            // === VIDEO (uploadée ou externe) — AUTOPLAY OBLIGATOIRE ===
+            // === VIDEO (uploadée ou externe) — v20.1 AUTOPLAY ANTI-ÉCRAN NOIR ===
             if (heroMediaType === 'video') {
               return (
                 <div className="absolute inset-0" key={`vid-wrap-${heroVideoUrl}`}>
                   <video
                     key={`vid-${heroVideoUrl}`}
                     src={heroVideoUrl}
-                    autoPlay
-                    muted
-                    loop
-                    playsInline
+                    autoPlay={true}
+                    muted={true}
+                    loop={true}
+                    playsInline={true}
                     preload="auto"
+                    crossOrigin="anonymous"
                     className="absolute inset-0 w-full h-full object-cover"
                     style={{ filter: 'brightness(0.7)' }}
+                    ref={(el) => {
+                      // v20.1: Attributs supplémentaires pour compatibilité mobile
+                      if (el) {
+                        el.setAttribute('webkit-playsinline', 'true');
+                        el.setAttribute('x5-video-player-type', 'h5');
+                        el.setAttribute('x5-video-player-fullscreen', 'false');
+                        // Force autoplay après montage DOM
+                        setTimeout(() => {
+                          if (el.paused) {
+                            el.muted = true;
+                            el.play().catch(() => {});
+                          }
+                        }, 100);
+                      }
+                    }}
                     onCanPlay={(e) => {
-                      console.log('[VITRINE-MEDIA] ✅ Vidéo prête, lancement autoplay:', heroVideoUrl);
+                      console.warn('DEBUG MÉDIA URL (video canplay):', heroVideoUrl);
                       const loader = document.getElementById('hero-media-loader');
                       if (loader) loader.style.display = 'none';
                       if (e.target.paused) {
