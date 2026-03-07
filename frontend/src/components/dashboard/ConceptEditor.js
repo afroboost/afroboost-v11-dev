@@ -25,10 +25,11 @@ const ConceptEditor = ({
     return [];
   };
 
-  const updateHeroVideo = (index, field, value) => {
+  const updateHeroVideo = (index, updates) => {
+    // updates = { url: '...', type: '...' } — on merge tout en un seul setConcept
     const videos = [...getHeroVideos()];
     if (videos[index]) {
-      videos[index] = { ...videos[index], [field]: value };
+      videos[index] = { ...videos[index], ...updates };
     }
     setConcept({ ...concept, heroVideos: videos, heroImageUrl: videos[0]?.url || '' });
   };
@@ -345,9 +346,8 @@ const ConceptEditor = ({
                     const url = e.target.value;
                     const isYT = url.includes('youtube.com') || url.includes('youtu.be');
                     const isVimeo = url.includes('vimeo.com');
-                    updateHeroVideo(idx, 'url', url);
-                    if (isYT) updateHeroVideo(idx, 'type', 'youtube');
-                    else if (isVimeo) updateHeroVideo(idx, 'type', 'vimeo');
+                    const type = isYT ? 'youtube' : isVimeo ? 'vimeo' : (video.type || 'link');
+                    updateHeroVideo(idx, { url, type });
                   }}
                   className="w-full px-3 py-2 rounded-lg neon-input text-sm"
                   placeholder="Lien YouTube ou Vimeo (ex: https://youtu.be/...)"
