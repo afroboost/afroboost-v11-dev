@@ -2330,6 +2330,35 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
+  // === v16.1: MODIFIER UN LIEN DE CHAT (titre + prompt) ===
+  const updateChatLink = async (linkId, data) => {
+    try {
+      const res = await axios.put(`${API}/chat/links/${linkId}`, data);
+      if (res.data.success) {
+        // Mettre à jour le state local
+        setChatLinks(prev => prev.map(l => {
+          if (l.id === linkId) {
+            return {
+              ...l,
+              title: data.title !== undefined ? data.title : l.title,
+              customPrompt: data.custom_prompt !== undefined ? data.custom_prompt : l.customPrompt,
+              custom_prompt: data.custom_prompt !== undefined ? data.custom_prompt : l.custom_prompt
+            };
+          }
+          return l;
+        }));
+        // Rafraîchir aussi les sessions
+        const sessionsRes = await axios.get(`${API}/chat/sessions`);
+        setChatSessions(sessionsRes.data);
+      }
+      return res.data;
+    } catch (err) {
+      console.error("Error updating chat link:", err);
+      alert("Erreur: " + (err.response?.data?.detail || err.message));
+      throw err;
+    }
+  };
+
   // === AJOUTER CONTACT MANUEL AU CRM (synchronisé avec codes promo) ===
   const addManualChatParticipant = async (name, email, whatsapp, source = 'manual_promo') => {
     try {
@@ -4846,6 +4875,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               copiedLinkId={copiedLinkId}
               copyLinkToClipboard={copyLinkToClipboard}
             deleteChatLink={deleteChatLink}
+            updateChatLink={updateChatLink}
             // Conversations
             enrichedConversations={enrichedConversations}
             selectedSession={selectedSession}

@@ -3,7 +3,7 @@
 // v16.0: Conversations groupées par lien + WhatsApp + toggle IA/Humain amélioré
 
 import React, { useRef, useCallback, memo, useMemo, useState } from 'react';
-import { ChevronDown, Trash2, Send, Copy, Check, ExternalLink, Phone } from 'lucide-react';
+import { ChevronDown, Trash2, Send, Copy, Check, ExternalLink, Phone, Edit2, Save, X } from 'lucide-react';
 
 // ====== COMPOSANT NOTIFICATION BANNER ======
 const NotificationBanner = memo(({ 
@@ -289,82 +289,157 @@ const CommunityCard = memo(({
 ));
 CommunityCard.displayName = 'CommunityCard';
 
-// ====== COMPOSANT LINK ITEM ======
-const LinkItem = memo(({ link, copiedLinkId, copyLinkToClipboard, deleteChatLink }) => {
-  const fullUrl = `${window.location.origin}/?link=${link.token}`;
-  
-  return (
-    <div 
-      className="flex items-center justify-between p-4 rounded-xl bg-black/30 border border-white/10"
-      data-testid={`link-item-${link.id}`}
-    >
-      <div className="flex-1 min-w-0">
-        <p className="text-white font-medium truncate">
-          {link.title || 'Lien sans titre'}
-        </p>
-        <p className="text-white/40 text-xs mt-1 truncate">{fullUrl}</p>
-        <div className="flex items-center gap-3 mt-2 text-xs text-white/60">
-          <span>📊 {link.usageCount || 0} utilisations</span>
-          <span>📅 {(() => {
-            try {
-              const d = new Date(link.createdAt);
-              return isNaN(d.getTime()) ? '—' : new Intl.DateTimeFormat('fr-CH', { dateStyle: 'short' }).format(d);
-            } catch { return '—'; }
-          })()}</span>
+// ====== COMPOSANT LINK ITEM (v16.1: édition prompt après création) ======
+const LinkItem = memo(({ link, copiedLinkId, copyLinkToClipboard, deleteChatLink, updateChatLink }) => {
+  const linkToken = link.link_token || link.token || '';
+  const customPrompt = link.custom_prompt || link.customPrompt || '';
+  const createdAt = link.created_at || link.createdAt || '';
+  const usageCount = link.participant_count || link.usageCount || 0;
+  const fullUrl = `${window.location.origin}/?link=${linkToken}`;
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(link.title || '');
+  const [editPrompt, setEditPrompt] = useState(customPrompt);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await updateChatLink(link.id, { title: editTitle, custom_prompt: editPrompt || null });
+      setIsEditing(false);
+    } catch (e) { console.error(e); }
+    setSaving(false);
+  };
+
+  if (isEditing) {
+    return (
+      <div className="p-4 rounded-xl border border-violet-500/50" style={{ background: 'rgba(139, 92, 246, 0.1)' }}>
+        <div className="space-y-3">
+          <div>
+            <label className="text-white/60 text-xs block mb-1">Titre du lien</label>
+            <input
+              value={editTitle}
+              onChange={e => setEditTitle(e.target.value)}
+              className="w-full p-2 rounded-lg bg-black/40 border border-white/20 text-white text-sm focus:border-violet-500 outline-none"
+              placeholder="Ex: Regime Camerounais"
+            />
+          </div>
+          <div>
+            <label className="text-white/60 text-xs block mb-1">Prompt IA personnalisé</label>
+            <textarea
+              value={editPrompt}
+              onChange={e => setEditPrompt(e.target.value)}
+              rows={4}
+              className="w-full p-2 rounded-lg bg-black/40 border border-white/20 text-white text-sm focus:border-violet-500 outline-none resize-none"
+              placeholder="Ex: Tu es un expert diététicien spécialisé en alimentation africaine..."
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setIsEditing(false)}
+              className="px-3 py-1.5 rounded-lg bg-white/10 text-white/70 text-sm hover:bg-white/20 flex items-center gap-1"
+            >
+              <X size={14} /> Annuler
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-3 py-1.5 rounded-lg bg-violet-600 text-white text-sm hover:bg-violet-700 flex items-center gap-1 disabled:opacity-50"
+            >
+              <Save size={14} /> {saving ? '...' : 'Sauvegarder'}
+            </button>
+          </div>
         </div>
       </div>
-      <div className="flex items-center gap-2 ml-4">
-        <button
-          onClick={() => copyLinkToClipboard(link.token)}
-          className="p-2 rounded-lg bg-violet-500/20 text-violet-400 hover:bg-violet-500/40 transition-colors"
-          title="Copier le lien"
-          data-testid={`copy-link-${link.id}`}
-        >
-          {copiedLinkId === link.id ? <Check size={18} /> : <Copy size={18} />}
-        </button>
-        <a
-          href={fullUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="p-2 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/40 transition-colors"
-          title="Ouvrir le lien"
-        >
-          <ExternalLink size={18} />
-        </a>
-        <button
-          onClick={() => deleteChatLink(link.id)}
-          className="p-2 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/40 transition-colors"
-          title="Supprimer le lien"
-          data-testid={`delete-link-${link.id}`}
-        >
-          <Trash2 size={18} />
-        </button>
+    );
+  }
+
+  return (
+    <div
+      className="p-4 rounded-xl bg-black/30 border border-white/10"
+      data-testid={`link-item-${link.id}`}
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex-1 min-w-0">
+          <p className="text-white font-medium truncate">
+            {link.title || 'Lien sans titre'}
+          </p>
+          <p className="text-white/40 text-xs mt-1 truncate">{fullUrl}</p>
+          <div className="flex items-center gap-3 mt-2 text-xs text-white/60">
+            <span>📊 {usageCount} utilisations</span>
+            <span>📅 {(() => {
+              try {
+                const d = new Date(createdAt);
+                return isNaN(d.getTime()) ? '—' : new Intl.DateTimeFormat('fr-CH', { dateStyle: 'short' }).format(d);
+              } catch { return '—'; }
+            })()}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 ml-4">
+          <button
+            onClick={() => { setEditTitle(link.title || ''); setEditPrompt(customPrompt); setIsEditing(true); }}
+            className="p-2 rounded-lg bg-amber-500/20 text-amber-400 hover:bg-amber-500/40 transition-colors"
+            title="Modifier le prompt"
+          >
+            <Edit2 size={18} />
+          </button>
+          <button
+            onClick={() => copyLinkToClipboard(linkToken)}
+            className="p-2 rounded-lg bg-violet-500/20 text-violet-400 hover:bg-violet-500/40 transition-colors"
+            title="Copier le lien"
+            data-testid={`copy-link-${link.id}`}
+          >
+            {copiedLinkId === link.id ? <Check size={18} /> : <Copy size={18} />}
+          </button>
+          <a
+            href={fullUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="p-2 rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/40 transition-colors"
+            title="Ouvrir le lien"
+          >
+            <ExternalLink size={18} />
+          </a>
+          <button
+            onClick={() => deleteChatLink(link.id)}
+            className="p-2 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/40 transition-colors"
+            title="Supprimer le lien"
+            data-testid={`delete-link-${link.id}`}
+          >
+            <Trash2 size={18} />
+          </button>
+        </div>
       </div>
+      {customPrompt && (
+        <div className="mt-2 p-2 rounded-lg bg-violet-500/10 border border-violet-500/20">
+          <p className="text-violet-300 text-xs truncate">🤖 {customPrompt}</p>
+        </div>
+      )}
     </div>
   );
 });
 LinkItem.displayName = 'LinkItem';
 
 // ====== COMPOSANT CHAT LINKS LIST ======
-const ChatLinksList = memo(({ chatLinks, copiedLinkId, copyLinkToClipboard, deleteChatLink }) => {
+const ChatLinksList = memo(({ chatLinks, copiedLinkId, copyLinkToClipboard, deleteChatLink, updateChatLink }) => {
   if (chatLinks.length === 0) return null;
-  
+
   return (
-    <div 
+    <div
       className="p-6 rounded-2xl"
       style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)' }}
     >
       <h3 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
         🔗 Liens actifs ({chatLinks.length})
       </h3>
-      <div className="space-y-3 max-h-[300px] overflow-y-auto">
+      <div className="space-y-3 max-h-[400px] overflow-y-auto">
         {chatLinks.map(link => (
-          <LinkItem 
+          <LinkItem
             key={link.id}
             link={link}
             copiedLinkId={copiedLinkId}
             copyLinkToClipboard={copyLinkToClipboard}
             deleteChatLink={deleteChatLink}
+            updateChatLink={updateChatLink}
           />
         ))}
       </div>
@@ -637,6 +712,7 @@ const CRMSection = ({
   copiedLinkId,
   copyLinkToClipboard,
   deleteChatLink,
+  updateChatLink,
   // Conversations
   enrichedConversations,
   selectedSession,
@@ -710,11 +786,12 @@ const CRMSection = ({
       />
       
       {/* Chat Links List */}
-      <ChatLinksList 
+      <ChatLinksList
         chatLinks={chatLinks}
         copiedLinkId={copiedLinkId}
         copyLinkToClipboard={copyLinkToClipboard}
         deleteChatLink={deleteChatLink}
+        updateChatLink={updateChatLink}
       />
       
       {/* Main Conversations Grid */}

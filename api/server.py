@@ -5801,7 +5801,7 @@ async def get_all_chat_links():
     """
     sessions = await db.chat_sessions.find(
         {"is_deleted": {"$ne": True}},
-        {"_id": 0, "id": 1, "link_token": 1, "title": 1, "mode": 1, "is_ai_active": 1, "created_at": 1, "participant_ids": 1}
+        {"_id": 0, "id": 1, "link_token": 1, "title": 1, "mode": 1, "is_ai_active": 1, "created_at": 1, "participant_ids": 1, "custom_prompt": 1}
     ).sort("created_at", -1).to_list(100)
     
     # Ajouter le nombre de participants pour chaque lien
@@ -5831,6 +5831,54 @@ async def delete_chat_link(link_id: str):
     
     logger.info(f"[DELETE] Lien {link_id} supprimé avec succès ✅")
     return {"success": True, "message": "Lien supprimé"}
+
+# v16.1: Endpoint pour modifier un lien de chat (titre + prompt)
+@api_router.put("/chat/links/{link_id}")
+async def update_chat_link(link_id: str, request: Request):
+    """
+    Met à jour le titre et/ou le custom_prompt d'un lien de chat existant.
+    Permet de modifier le prompt même après la création du lien.
+
+    Body:
+    {
+        "title": "Nouveau titre",           // Optionnel
+        "custom_prompt": "Nouveau prompt"    // Optionnel (null pour supprimer)
+    }
+    """
+    body = await request.json()
+    update_fields = {"updated_at": datetime.now(timezone.utc).isoformat()}
+
+    if "title" in body:
+        update_fields["title"] = body["title"].strip() if body["title"] else ""
+
+    if "custom_prompt" in body:
+        cp = body["custom_prompt"]
+        update_fields["custom_prompt"] = cp.strip() if cp and isinstance(cp, str) and cp.strip() else None
+
+    if len(update_fields) <= 1:  # Only updated_at
+        raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour")
+
+    result = await db.chat_sessions.update_one(
+        {"$or": [{"id": link_id}, {"link_token": link_id}], "is_deleted": {"$ne": True}},
+        {"$set": update_fields}
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Lien non trouvé")
+
+    # Récupérer le lien mis à jour
+    updated = await db.chat_sessions.find_one(
+        {"$or": [{"id": link_id}, {"link_token": link_id}]},
+        {"_id": 0}
+    )
+
+    logger.info(f"[CHAT-LINK] Lien {link_id} mis à jour: title={update_fields.get('title', '—')}, custom_prompt={'oui' if update_fields.get('custom_prompt') else 'non'}")
+
+    return {
+        "success": True,
+        "session": updated,
+        "message": "Lien mis à jour"
+    }
 
 # v14.3: Endpoint pour améliorer un prompt avec l'IA
 @api_router.post("/chat/enhance-prompt")
