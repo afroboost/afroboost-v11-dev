@@ -330,6 +330,7 @@ class Course(BaseModel):
     archived: bool = False  # Archive au lieu de supprimer
     playlist: Optional[List[str]] = None  # Legacy: URLs simples
     audio_tracks: Optional[List[dict]] = None  # v17.5: Pistes audio enrichies (AudioTrack)
+    coach_id: Optional[str] = None  # v19: Ownership — email du coach propriétaire
 
 class CourseCreate(BaseModel):
     name: str
@@ -341,6 +342,7 @@ class CourseCreate(BaseModel):
     archived: bool = False
     playlist: Optional[List[str]] = None  # Legacy
     audio_tracks: Optional[List[dict]] = None  # v17.5: Pistes audio enrichies
+    coach_id: Optional[str] = None  # v19: Ownership
 
 class Offer(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -360,6 +362,7 @@ class Offer(BaseModel):
     tva: float = 0.0  # TVA percentage
     shippingCost: float = 0.0  # Frais de port
     stock: int = -1  # -1 = unlimited
+    coach_id: Optional[str] = None  # v19: Ownership — email du coach propriétaire
 
 class OfferCreate(BaseModel):
     name: str
@@ -377,6 +380,7 @@ class OfferCreate(BaseModel):
     tva: float = 0.0
     shippingCost: float = 0.0
     stock: int = -1
+    coach_id: Optional[str] = None  # v19: Ownership
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -919,7 +923,12 @@ async def get_courses():
 async def create_course(course: CourseCreate, request: Request):
     # Sécurité : vérifier que l'utilisateur est authentifié
     require_auth(request)
-    course_obj = Course(**course.model_dump())
+    # v19: Auto-set coach_id depuis le header d'authentification
+    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    course_data = course.model_dump()
+    if user_email and not course_data.get("coach_id"):
+        course_data["coach_id"] = user_email
+    course_obj = Course(**course_data)
     await db.courses.insert_one(course_obj.model_dump())
     return course_obj
 
@@ -1042,7 +1051,12 @@ async def get_offers():
 async def create_offer(offer: OfferCreate, request: Request):
     # Sécurité : vérifier que l'utilisateur est authentifié
     require_auth(request)
-    offer_obj = Offer(**offer.model_dump())
+    # v19: Auto-set coach_id depuis le header d'authentification
+    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    offer_data = offer.model_dump()
+    if user_email and not offer_data.get("coach_id"):
+        offer_data["coach_id"] = user_email
+    offer_obj = Offer(**offer_data)
     await db.offers.insert_one(offer_obj.model_dump())
     return offer_obj
 
