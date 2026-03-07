@@ -533,22 +533,34 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             // === YOUTUBE ===
             if (heroMediaType === 'youtube' && youtubeId) {
               return (
-                <iframe
-                  key={`yt-${youtubeId}`}
-                  className="absolute"
-                  src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=1&loop=1&playlist=${youtubeId}&controls=0&showinfo=0&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`}
-                  title={displayName}
-                  frameBorder="0"
-                  allow="autoplay; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                  style={{
-                    pointerEvents: 'none', position: 'absolute',
-                    top: '50%', left: '50%',
-                    width: '177.78vh', height: '100vh',
-                    minWidth: '100%', minHeight: '56.25vw',
-                    transform: 'translate(-50%, -50%)'
-                  }}
-                />
+                <div className="absolute inset-0" key={`yt-wrap-${youtubeId}`}>
+                  <iframe
+                    key={`yt-${youtubeId}`}
+                    className="absolute"
+                    src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=1&loop=1&playlist=${youtubeId}&controls=0&showinfo=0&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`}
+                    title={displayName}
+                    frameBorder="0"
+                    allow="autoplay; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                    onLoad={(e) => {
+                      console.log('[VITRINE-MEDIA] YouTube iframe chargée:', youtubeId);
+                      const loader = document.getElementById('hero-media-loader');
+                      if (loader) loader.style.display = 'none';
+                    }}
+                    style={{
+                      pointerEvents: 'none', position: 'absolute',
+                      top: '50%', left: '50%',
+                      width: '177.78vh', height: '100vh',
+                      minWidth: '100%', minHeight: '56.25vw',
+                      transform: 'translate(-50%, -50%)'
+                    }}
+                  />
+                  {/* v18.3: Gradient fallback derrière l'iframe YouTube (visible si embed échoue/Erreur 153) */}
+                  <div className="absolute inset-0" style={{
+                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.6) 0%, rgba(217, 28, 210, 0.5) 50%, rgba(30, 0, 50, 0.9) 100%)',
+                    zIndex: -1
+                  }} />
+                </div>
               );
             }
 

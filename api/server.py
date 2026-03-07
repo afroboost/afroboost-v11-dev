@@ -1369,12 +1369,107 @@ async def check_uploaded_file(file_id: str):
     except Exception as e:
         return {"exists": False, "error": str(e)}
 
+# === v18.3: FASTSTART MP4 — déplace moov avant mdat pour streaming instantané ===
+def mp4_faststart(data: bytes) -> bytes:
+    """
+    Réorganise un MP4 pour placer l'atome moov AVANT mdat (faststart).
+    Permet au navigateur de commencer la lecture sans attendre le téléchargement complet.
+    Retourne les données originales si déjà faststart ou si le format n'est pas MP4.
+    """
+    import struct
+    try:
+        # Parse les atomes top-level
+        atoms = []
+        pos = 0
+        while pos < len(data) - 8:
+            size = struct.unpack('>I', data[pos:pos+4])[0]
+            atom_type = data[pos+4:pos+8].decode('ascii', errors='replace')
+            if size < 8:
+                break
+            if size == 1 and pos + 16 <= len(data):
+                size = struct.unpack('>Q', data[pos+8:pos+16])[0]
+            atoms.append({'type': atom_type, 'offset': pos, 'size': size})
+            pos += size
+            if pos > len(data):
+                break
+
+        # Trouver moov et mdat
+        moov = next((a for a in atoms if a['type'] == 'moov'), None)
+        mdat = next((a for a in atoms if a['type'] == 'mdat'), None)
+
+        if not moov or not mdat:
+            return data  # Pas un MP4 standard
+
+        # Déjà faststart ? (moov avant mdat)
+        if moov['offset'] < mdat['offset']:
+            logger.info("[FASTSTART] ✅ Déjà faststart")
+            return data
+
+        logger.info(f"[FASTSTART] 🔄 Réorganisation: moov@{moov['offset']} → avant mdat@{mdat['offset']}")
+
+        # Calculer le décalage: moov va être inséré avant mdat
+        moov_data = bytearray(data[moov['offset']:moov['offset'] + moov['size']])
+        moov_size = moov['size']
+
+        # Ajuster les offsets stco et co64 dans moov
+        # Les chunk offsets pointent dans mdat — ils doivent être décalés de +moov_size
+        def adjust_offsets(box_data, box_offset, parent_end):
+            """Parcourt récursivement moov pour ajuster stco/co64"""
+            pos = box_offset + 8  # Skip size + type
+            while pos < parent_end - 8:
+                child_size = struct.unpack('>I', box_data[pos:pos+4])[0]
+                child_type = box_data[pos+4:pos+8].decode('ascii', errors='replace')
+                if child_size < 8 or pos + child_size > parent_end:
+                    break
+
+                if child_type == 'stco':
+                    # stco: 4 bytes version/flags + 4 bytes count + 4 bytes per entry
+                    entry_count = struct.unpack('>I', box_data[pos+12:pos+16])[0]
+                    for i in range(entry_count):
+                        off = pos + 16 + i * 4
+                        if off + 4 <= parent_end:
+                            old_val = struct.unpack('>I', box_data[off:off+4])[0]
+                            struct.pack_into('>I', box_data, off, old_val + moov_size)
+
+                elif child_type == 'co64':
+                    entry_count = struct.unpack('>I', box_data[pos+12:pos+16])[0]
+                    for i in range(entry_count):
+                        off = pos + 16 + i * 8
+                        if off + 8 <= parent_end:
+                            old_val = struct.unpack('>Q', box_data[off:off+8])[0]
+                            struct.pack_into('>Q', box_data, off, old_val + moov_size)
+
+                elif child_type in ('trak', 'mdia', 'minf', 'stbl', 'edts', 'dinf'):
+                    adjust_offsets(box_data, pos, pos + child_size)
+
+                pos += child_size
+
+        adjust_offsets(moov_data, 0, moov_size)
+
+        # Reconstruire: [atoms avant mdat] + [moov ajusté] + [mdat] + [atoms après moov]
+        result = bytearray()
+        for a in atoms:
+            if a['type'] == 'mdat':
+                result.extend(moov_data)  # Insérer moov avant mdat
+                result.extend(data[a['offset']:a['offset'] + a['size']])
+            elif a['type'] == 'moov':
+                pass  # Skip — déjà inséré avant mdat
+            else:
+                result.extend(data[a['offset']:a['offset'] + a['size']])
+
+        logger.info(f"[FASTSTART] ✅ Réorganisé: {len(data)} → {len(result)} bytes")
+        return bytes(result)
+
+    except Exception as e:
+        logger.warning(f"[FASTSTART] ⚠️ Erreur faststart, retour original: {e}")
+        return data
+
 # === v17.5: SERVING FICHIERS DEPUIS MONGODB ===
 @api_router.get("/files/{file_id}/{filename}")
 async def serve_uploaded_file(file_id: str, filename: str):
     """
     Sert un fichier uploadé depuis MongoDB.
-    v18.1: Ajout try/except robuste + StreamingResponse pour gros fichiers
+    v18.3: Faststart MP4 automatique + StreamingResponse pour gros fichiers
     Cache-Control: 1 an (les fichiers sont immutables via leur ID unique)
     """
     from fastapi.responses import Response, StreamingResponse
@@ -1404,6 +1499,11 @@ async def serve_uploaded_file(file_id: str, filename: str):
             file_bytes = bytes(raw_data)
 
         content_type = file_doc.get("content_type", "application/octet-stream")
+
+        # v18.3: Faststart pour vidéos MP4 (moov avant mdat)
+        if content_type.startswith('video/') and len(file_bytes) < 50 * 1024 * 1024:
+            file_bytes = mp4_faststart(file_bytes)
+
         # Sanitize filename pour header HTTP (latin-1 safe)
         raw_name = file_doc.get("original_name", filename)
         original_name = raw_name.encode('ascii', 'replace').decode('ascii').replace('?', '_')
@@ -1430,7 +1530,8 @@ async def serve_uploaded_file(file_id: str, filename: str):
             headers={
                 "Cache-Control": "public, max-age=31536000, immutable",
                 "Content-Disposition": f'inline; filename="{original_name}"',
-                "Content-Length": str(file_size)
+                "Content-Length": str(file_size),
+                "Accept-Ranges": "bytes"
             }
         )
     except HTTPException:
