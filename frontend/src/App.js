@@ -3217,9 +3217,10 @@ function App() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    // Pour les produits physiques, pas besoin de cours/dates
+    // Pour les produits physiques et audios, pas besoin de cours/dates
     const isPhysicalProduct = selectedOffer?.isProduct || selectedOffer?.isPhysicalProduct;
-    if (!isPhysicalProduct && (!selectedCourse || selectedDates.length === 0)) return;
+    const isAudioPurchase = selectedOffer?.type === 'audio'; // v54: achat audio autonome
+    if (!isPhysicalProduct && !isAudioPurchase && (!selectedCourse || selectedDates.length === 0)) return;
     if (!selectedOffer || !hasAcceptedTerms) return;
 
     // Direct validation - private fields only
@@ -3282,8 +3283,8 @@ function App() {
       variantsText: variantsText || null, // Texte formaté des variantes
       selectedDates: selectedDates, // Toutes les dates sélectionnées
       selectedDatesText: selectedDatesText || null, // Texte formaté des dates
-      courseId: selectedCourse?.id || 'N/A', 
-      courseName: selectedCourse?.name || 'Produit physique',
+      courseId: selectedCourse?.id || 'N/A',
+      courseName: selectedCourse?.name || (isAudioPurchase ? 'Achat Audio' : 'Produit physique'),
       courseTime: selectedCourse?.time || '', 
       datetime: dt.toISOString(),
       offerId: selectedOffer.id, 
@@ -3295,7 +3296,8 @@ function App() {
       discountType: appliedDiscount?.type || null,
       discountValue: appliedDiscount?.value || null,
       appliedDiscount,
-      isProduct: isPhysicalProduct
+      isProduct: isPhysicalProduct,
+      isAudio: isAudioPurchase
     };
 
     // DYNAMISME DU BOUTON: Si total = 0 (100% gratuit), réservation directe sans paiement

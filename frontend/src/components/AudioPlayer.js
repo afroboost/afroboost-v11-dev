@@ -342,8 +342,9 @@ const AudioPlayer = ({
         {/* Description */}
         {description && (
           <p style={{
-            color: 'rgba(255,255,255,0.4)', fontSize: '11px', margin: '2px 0 4px 48px',
-            lineHeight: '1.3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+            color: 'rgba(255,255,255,0.5)', fontSize: '11px', margin: '2px 0 4px 48px',
+            lineHeight: '1.3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            maxWidth: 'calc(100% - 60px)', display: 'block'
           }}>
             {description}
           </p>
