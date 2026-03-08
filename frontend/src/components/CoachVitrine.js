@@ -79,6 +79,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   // Concept du coach (vidéo header)
   const [coachConcept, setCoachConcept] = useState(null);
 
+  // v29.2: Timestamp STABLE pour cache-busting — fixé au montage, ne change plus entre les rotations
+  const [cacheBusterTs] = useState(() => Date.now());
+
   // v17.0: Branding dynamique
   const [brandAccent, setBrandAccent] = useState('#D91CD2');
 
@@ -418,15 +421,12 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const displayName = coach.platform_name || coach.name || 'Coach';
   const initial = displayName.charAt(0).toUpperCase();
 
-  // v20.1: Résolution URL COMPLÈTE (origin + path) + CACHE-BUSTING
+  // v20.1: Résolution URL COMPLÈTE (origin + path) + CACHE-BUSTING STABLE
   const resolveMediaUrl = (url) => {
     if (!url) return '';
     if (url.startsWith('/api/files/')) {
-      // v20.1: Construire URL absolue — BACKEND_URL ou window.location.origin
       const base = BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '');
-      const cacheBuster = `?t=${Date.now()}`;
-      const finalUrl = `${base}${url}${cacheBuster}`;
-      console.warn('DEBUG MÉDIA URL:', finalUrl);
+      const finalUrl = `${base}${url}?v=${cacheBusterTs}`;
       return finalUrl;
     }
     return url;
