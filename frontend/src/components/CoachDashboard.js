@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback, Component } from "react";
 import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
+import lamejs from "lamejs";
 import {
   getWhatsAppConfig,
   saveWhatsAppConfig,
@@ -770,22 +771,93 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     setShowAudioModal(true);
   };
 
-  // v52: Upload audio — avec vérification taille (Vercel limit 4.5MB)
+  // v58: Compression audio côté client (MP3 128kbps mono) pour respecter limite Vercel 4.5MB
+  const compressAudioFile = async (file) => {
+    console.log(`[AUDIO] 🗜️ Compression de "${file.name}" (${(file.size / 1024 / 1024).toFixed(1)}MB)...`);
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const arrayBuffer = await file.arrayBuffer();
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+    // Mono, 128kbps — bon compromis taille/qualité
+    const channels = 1;
+    const sampleRate = audioBuffer.sampleRate;
+    const kbps = 128;
+    const mp3encoder = new lamejs.Mp3Encoder(channels, sampleRate, kbps);
+
+    // Mixer en mono si stéréo
+    let samples;
+    if (audioBuffer.numberOfChannels > 1) {
+      const left = audioBuffer.getChannelData(0);
+      const right = audioBuffer.getChannelData(1);
+      samples = new Float32Array(left.length);
+      for (let i = 0; i < left.length; i++) {
+        samples[i] = (left[i] + right[i]) / 2;
+      }
+    } else {
+      samples = audioBuffer.getChannelData(0);
+    }
+
+    // Float32 → Int16
+    const int16 = new Int16Array(samples.length);
+    for (let i = 0; i < samples.length; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+
+    // Encoder par blocs
+    const blockSize = 1152;
+    const mp3Data = [];
+    for (let i = 0; i < int16.length; i += blockSize) {
+      const chunk = int16.subarray(i, i + blockSize);
+      const mp3buf = mp3encoder.encodeBuffer(chunk);
+      if (mp3buf.length > 0) mp3Data.push(mp3buf);
+    }
+    const end = mp3encoder.flush();
+    if (end.length > 0) mp3Data.push(end);
+
+    audioContext.close();
+
+    const blob = new Blob(mp3Data, { type: 'audio/mp3' });
+    const compressed = new File([blob], file.name, { type: 'audio/mp3' });
+    console.log(`[AUDIO] ✅ Compressé: ${(compressed.size / 1024 / 1024).toFixed(1)}MB (${Math.round((1 - compressed.size / file.size) * 100)}% de réduction)`);
+    return compressed;
+  };
+
+  // v58: Upload audio — compression auto si > 3.5MB
   const handleAudioFileUpload = async (files) => {
     if (!files || files.length === 0) return;
     setUploadingAudio(true);
 
-    const MAX_AUDIO_SIZE = 4 * 1024 * 1024; // 4MB (Vercel body limit = 4.5MB, marge pour FormData)
+    const MAX_AUDIO_SIZE = 15 * 1024 * 1024; // 15MB max (comme indiqué dans la dropzone)
+    const COMPRESS_THRESHOLD = 3.5 * 1024 * 1024; // Compresser au-delà de 3.5MB
     for (const file of files) {
       try {
-        // v52: Vérification taille AVANT upload
+        // Vérification taille max
         if (file.size > MAX_AUDIO_SIZE) {
-          alert(`⚠️ Le fichier "${file.name}" fait ${(file.size / 1024 / 1024).toFixed(1)}MB.\nLimite Vercel : 4MB max.\nCompressez le fichier ou utilisez un MP3 plus petit.`);
+          alert(`⚠️ Le fichier "${file.name}" fait ${(file.size / 1024 / 1024).toFixed(1)}MB.\nMaximum : 15MB.\nUtilisez un fichier plus petit.`);
           continue;
         }
+
+        // v58: Compression auto si nécessaire
+        let fileToUpload = file;
+        if (file.size > COMPRESS_THRESHOLD) {
+          try {
+            alert(`🗜️ Le fichier "${file.name}" fait ${(file.size / 1024 / 1024).toFixed(1)}MB.\nCompression automatique en cours...\n(Qualité: 128kbps mono)`);
+            fileToUpload = await compressAudioFile(file);
+            if (fileToUpload.size > 4 * 1024 * 1024) {
+              alert(`⚠️ Même après compression, le fichier fait ${(fileToUpload.size / 1024 / 1024).toFixed(1)}MB (limite: 4MB).\nUtilisez un fichier plus court ou déjà compressé.`);
+              continue;
+            }
+          } catch (compErr) {
+            console.error("[AUDIO] Erreur compression:", compErr);
+            alert(`⚠️ Impossible de compresser "${file.name}".\nEssayez de compresser le fichier manuellement (128kbps) avant upload.`);
+            continue;
+          }
+        }
+
         // 1. Upload le fichier binaire
         const formData = new FormData();
-        formData.append('file', file);
+        formData.append('file', fileToUpload);
         formData.append('asset_type', 'audio');
 
         const uploadRes = await axios.post(`${API}/coach/upload-asset`, formData, {
