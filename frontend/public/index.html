@@ -26,7 +26,7 @@
         <!-- Additional SEO -->
         <meta name="keywords" content="afroboost, fitness, casque audio, danse, afrobeat, cardio, réservation, cours" />
         <meta name="author" content="Afroboost" />
-        <meta name="version" content="48.0" />
+        <meta name="version" content="50.0" />
         <meta name="robots" content="index, follow" />
         
         <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -211,31 +211,38 @@
                 mask_all_element_attributes: false
             });
         </script>
-        <!-- v48: Force reload si ancien bundle détecté -->
+        <!-- v50: Nuclear cache-bust — unregister old SW + force reload -->
         <script>
             (function() {
-                var REQUIRED_VERSION = 48;
-                var lastForce = sessionStorage.getItem('afroboost_v48_forced');
-                if (!lastForce) {
-                    var vMeta = document.querySelector('meta[name="version"]');
-                    var currentV = vMeta ? parseFloat(vMeta.content) : 0;
-                    if (currentV < REQUIRED_VERSION) {
-                        sessionStorage.setItem('afroboost_v48_forced', '1');
-                        window.location.reload(true);
-                    }
+                var REQUIRED_VERSION = 50;
+                var forceKey = 'afroboost_v50_forced';
+                // Step 1: Unregister ALL old service workers
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.getRegistrations().then(function(regs) {
+                        regs.forEach(function(r) { r.unregister(); });
+                    });
+                }
+                // Step 2: Clear ALL caches
+                if ('caches' in window) {
+                    caches.keys().then(function(names) {
+                        names.forEach(function(name) { caches.delete(name); });
+                    });
+                }
+                // Step 3: Force reload if not already forced this session
+                if (!sessionStorage.getItem(forceKey)) {
+                    sessionStorage.setItem(forceKey, '1');
+                    window.location.replace(window.location.href.split('?')[0] + '?_v=v50bust&t=' + Date.now());
                 }
             })();
         </script>
-        <!-- Service Worker V48 — Force update + cache bust -->
+        <!-- Service Worker V50 — Register fresh after nuclear purge -->
         <script>
             if ('serviceWorker' in navigator) {
                 window.addEventListener('load', function() {
-                    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+                    navigator.serviceWorker.register('/sw.js?v=50', { updateViaCache: 'none' })
                         .then(function(registration) {
-                            console.log('[V46] SW registered');
-                            // Force check for updates
+                            console.log('[V50] SW registered');
                             registration.update();
-                            // If new SW waiting, tell it to activate NOW
                             if (registration.waiting) {
                                 registration.waiting.postMessage({ type: 'SKIP_WAITING' });
                             }
@@ -243,18 +250,16 @@
                                 var newWorker = registration.installing;
                                 newWorker.addEventListener('statechange', function() {
                                     if (newWorker.state === 'activated') {
-                                        console.log('[V46] New SW activated — reloading');
-                                        window.location.reload();
+                                        console.log('[V50] New SW activated');
                                     }
                                 });
                             });
                         })
                         .catch(function(err) {
-                            console.log('SW registration failed:', err);
+                            console.log('[V50] SW registration failed:', err);
                         });
-                    // Detect controller change = new SW took over
                     navigator.serviceWorker.addEventListener('controllerchange', function() {
-                        console.log('[V46] Controller changed — force reload');
+                        console.log('[V50] Controller changed');
                     });
                 });
             }
