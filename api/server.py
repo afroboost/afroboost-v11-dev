@@ -1413,19 +1413,34 @@ async def create_audio_track(request: Request):
     logger.info(f"[AUDIO] ✅ Piste créée: {track_doc['title']} pour {email}")
     return {"success": True, "track": track_doc}
 
+class ReorderRequest(BaseModel):
+    """v48: Schéma Pydantic strict pour le reorder — empêche les erreurs de type"""
+    model_config = ConfigDict(extra="ignore")
+    track_ids: List[str] = Field(..., min_length=0, description="Liste ordonnée des IDs de pistes")
+
 @api_router.put("/audio-tracks/reorder")
 async def reorder_audio_tracks(request: Request):
-    """Réordonne les pistes audio — DOIT être AVANT {track_id} pour éviter conflit de route"""
+    """v48: Réordonne les pistes audio — DOIT être AVANT {track_id} pour éviter conflit de route"""
     email = require_auth(request)
-    body = await request.json()
-    track_ids = body.get("track_ids", [])
+    try:
+        body = await request.json()
+        reorder_data = ReorderRequest(**body)
+    except Exception as e:
+        logger.error(f"[AUDIO-REORDER] ❌ Validation error: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"Format invalide: {str(e)}")
 
+    track_ids = reorder_data.track_ids
+    updated = 0
     for i, tid in enumerate(track_ids):
-        await db.audio_tracks.update_one(
+        result = await db.audio_tracks.update_one(
             {"id": tid, "coach_email": email},
             {"$set": {"order": i}}
         )
-    return {"success": True, "reordered": len(track_ids)}
+        if result.modified_count > 0:
+            updated += 1
+
+    logger.info(f"[AUDIO-REORDER] ✅ {email} — {updated}/{len(track_ids)} pistes réordonnées")
+    return {"success": True, "reordered": len(track_ids), "updated": updated}
 
 @api_router.put("/audio-tracks/{track_id}")
 async def update_audio_track(track_id: str, request: Request):

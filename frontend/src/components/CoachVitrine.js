@@ -290,11 +290,33 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           setFaqs(Array.isArray(faqRes.data) ? faqRes.data : []);
         } catch (e) {}
 
-        // v44: Charger pistes audio autonomes
+        // v48: Charger pistes audio autonomes avec fallback + timeout
         try {
-          const audioRes = await axios.get(`${API}/public/audio-tracks/${encodeURIComponent(res.data.coach.email || username)}`);
-          setAudioTracks(audioRes.data.tracks || []);
-        } catch (e) { console.warn('[VITRINE-V44] Audio tracks load failed:', e.message); }
+          const audioController = new AbortController();
+          const audioTimeout = setTimeout(() => audioController.abort(), 5000); // 5s max
+          const audioRes = await axios.get(
+            `${API}/public/audio-tracks/${encodeURIComponent(res.data.coach.email || username)}`,
+            { signal: audioController.signal }
+          );
+          clearTimeout(audioTimeout);
+          const tracks = audioRes.data.tracks || [];
+          setAudioTracks(tracks);
+          // v48: Cache local pour fallback si l'API échoue la prochaine fois
+          if (tracks.length > 0) {
+            try { localStorage.setItem('afroboost_audio_cache_' + username, JSON.stringify(tracks)); } catch(ce) {}
+          }
+        } catch (e) {
+          console.warn('[VITRINE-V48] Audio API failed, trying cache fallback:', e.message);
+          // v48: Fallback — charger depuis le cache local
+          try {
+            const cached = localStorage.getItem('afroboost_audio_cache_' + username);
+            if (cached) {
+              const cachedTracks = JSON.parse(cached);
+              setAudioTracks(cachedTracks);
+              console.log('[VITRINE-V48] Loaded', cachedTracks.length, 'tracks from cache');
+            }
+          } catch (ce) {}
+        }
       } catch (err) {
         console.error('[VITRINE] Erreur:', err);
         setError(err.response?.data?.detail || 'Coach non trouvé');

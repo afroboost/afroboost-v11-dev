@@ -26,7 +26,7 @@
         <!-- Additional SEO -->
         <meta name="keywords" content="afroboost, fitness, casque audio, danse, afrobeat, cardio, réservation, cours" />
         <meta name="author" content="Afroboost" />
-        <meta name="version" content="46.0" />
+        <meta name="version" content="48.0" />
         <meta name="robots" content="index, follow" />
         
         <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -211,7 +211,22 @@
                 mask_all_element_attributes: false
             });
         </script>
-        <!-- Service Worker V46 — Force update + cache bust -->
+        <!-- v48: Force reload si ancien bundle détecté -->
+        <script>
+            (function() {
+                var REQUIRED_VERSION = 48;
+                var lastForce = sessionStorage.getItem('afroboost_v48_forced');
+                if (!lastForce) {
+                    var vMeta = document.querySelector('meta[name="version"]');
+                    var currentV = vMeta ? parseFloat(vMeta.content) : 0;
+                    if (currentV < REQUIRED_VERSION) {
+                        sessionStorage.setItem('afroboost_v48_forced', '1');
+                        window.location.reload(true);
+                    }
+                }
+            })();
+        </script>
+        <!-- Service Worker V48 — Force update + cache bust -->
         <script>
             if ('serviceWorker' in navigator) {
                 window.addEventListener('load', function() {
