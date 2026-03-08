@@ -14,6 +14,7 @@
 import React, { memo, useState, useEffect, useCallback } from 'react';
 
 const STORAGE_KEY = 'afroboost_subscriber_info';
+const PROFILE_KEY = 'afroboost_profile';
 
 /**
  * Teste si localStorage est réellement disponible et persistant
@@ -33,19 +34,37 @@ const isLocalStorageAvailable = () => {
 
 /**
  * Charge les données sauvegardées depuis localStorage
+ * Vérifie d'abord afroboost_subscriber_info, puis fallback sur afroboost_profile
  * @returns {object|null} {name, whatsapp, email} ou null
  */
 const loadSavedInfo = () => {
   try {
+    // Source 1 : Données du formulaire abonné
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && (parsed.name || parsed.whatsapp || parsed.email)) {
-      return {
-        name: parsed.name || '',
-        whatsapp: parsed.whatsapp || '',
-        email: parsed.email || ''
-      };
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        const name = (parsed.name || '').trim();
+        const whatsapp = (parsed.whatsapp || '').trim();
+        const email = (parsed.email || '').trim();
+        // Au moins un champ non-vide
+        if (name || whatsapp || email) {
+          return { name, whatsapp, email };
+        }
+      }
+    }
+    // Source 2 (fallback) : Profil abonné validé précédemment
+    const profileRaw = localStorage.getItem(PROFILE_KEY);
+    if (profileRaw) {
+      const profile = JSON.parse(profileRaw);
+      if (profile && typeof profile === 'object') {
+        const name = (profile.name || '').trim();
+        const whatsapp = (profile.whatsapp || '').trim();
+        const email = (profile.email || '').trim();
+        if (name || whatsapp || email) {
+          return { name, whatsapp, email };
+        }
+      }
     }
     return null;
   } catch {
@@ -55,15 +74,19 @@ const loadSavedInfo = () => {
 
 /**
  * Sauvegarde les infos dans localStorage avec vérification
+ * Ne sauvegarde PAS si tous les champs sont vides
  * @returns {boolean} true si la sauvegarde a réussi
  */
 const saveInfo = (formData) => {
   try {
-    const toSave = {
-      name: formData.name || '',
-      whatsapp: formData.whatsapp || '',
-      email: formData.email || ''
-    };
+    const name = (formData.name || '').trim();
+    const whatsapp = (formData.whatsapp || '').trim();
+    const email = (formData.email || '').trim();
+    // Ne pas sauvegarder si tous les champs sont vides
+    if (!name && !whatsapp && !email) {
+      return true; // Pas d'erreur, juste rien à sauvegarder
+    }
+    const toSave = { name, whatsapp, email };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
     // Vérification immédiate : relire pour confirmer
     const verify = localStorage.getItem(STORAGE_KEY);
@@ -130,7 +153,18 @@ const SubscriberForm = ({
       showFeedback('ls-unavailable');
       return;
     }
-    // 2. Charger les données sauvegardées
+    // 2. Nettoyer les données vides parasites
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && !(parsed.name || '').trim() && !(parsed.whatsapp || '').trim() && !(parsed.email || '').trim()) {
+          localStorage.removeItem(STORAGE_KEY);
+          console.log('[SUBSCRIBER-FORM] Nettoyage données vides parasites');
+        }
+      }
+    } catch { /* silencieux */ }
+    // 3. Charger les données sauvegardées (avec fallback profil)
     const saved = loadSavedInfo();
     if (saved) {
       console.log('[SUBSCRIBER-FORM] Auto-fill from localStorage:', JSON.stringify(saved));
@@ -310,11 +344,11 @@ const SubscriberForm = ({
           gap: '10px',
           padding: '10px 12px',
           background: rememberMe
-            ? 'rgba(147, 51, 234, 0.15)'
+            ? 'rgba(217, 28, 210, 0.15)'
             : 'rgba(255,255,255,0.05)',
           borderRadius: '10px',
           border: rememberMe
-            ? '1px solid rgba(147, 51, 234, 0.3)'
+            ? '1px solid rgba(217, 28, 210, 0.3)'
             : '1px solid rgba(255,255,255,0.1)',
           cursor: 'pointer',
           transition: 'all 0.3s ease',
@@ -330,11 +364,11 @@ const SubscriberForm = ({
           height: '22px',
           flexShrink: 0,
           background: rememberMe
-            ? 'linear-gradient(135deg, #9333ea, #6366f1)'
+            ? 'linear-gradient(135deg, #D91CD2, #9333ea)'
             : 'rgba(255,255,255,0.2)',
           borderRadius: '11px',
           transition: 'background 0.3s ease',
-          boxShadow: rememberMe ? '0 0 8px rgba(147, 51, 234, 0.4)' : 'none'
+          boxShadow: rememberMe ? '0 0 8px rgba(217, 28, 210, 0.4)' : 'none'
         }}>
           <div style={{
             position: 'absolute',
@@ -352,7 +386,7 @@ const SubscriberForm = ({
         {/* Label + description */}
         <div style={{ flex: 1 }}>
           <span style={{
-            color: rememberMe ? '#c084fc' : 'rgba(255,255,255,0.7)',
+            color: rememberMe ? '#D91CD2' : 'rgba(255,255,255,0.7)',
             fontSize: '12px',
             fontWeight: '500',
             transition: 'color 0.3s ease'
