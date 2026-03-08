@@ -3899,59 +3899,7 @@ function App() {
         </div>
       )}
 
-      {/* v33: SECTION AUDIO HOMEPAGE — Audios des cours visibles sous le Hero */}
-      {(() => {
-        const allAudioTracks = [];
-        courses.forEach(course => {
-          if (course.audio_tracks && course.audio_tracks.length > 0) {
-            course.audio_tracks
-              .filter(track => track.visible !== false && track.url)
-              .forEach(track => {
-                allAudioTracks.push({ ...track, courseName: course.name, courseId: course.id });
-              });
-          }
-        });
-        console.log('[V33-AUDIO] Homepage audio tracks:', allAudioTracks.length, allAudioTracks.map(t => `${t.title} (${t.price || 0} CHF)`));
-        if (allAudioTracks.length === 0) return null;
-        return (
-          <div
-            style={{
-              background: 'rgba(10, 10, 20, 0.95)',
-              borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-              padding: '16px 24px'
-            }}
-          >
-            <div className="max-w-4xl mx-auto">
-              <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>🎵</span> Contenus Audio
-              </h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {allAudioTracks.map((track, idx) => (
-                  <AudioPlayer
-                    key={track.id || `audio-${idx}`}
-                    audioUrl={track.url?.startsWith('/api/') ? `${API.replace('/api', '')}${track.url}` : track.url}
-                    title={track.title || 'Audio'}
-                    thumbnail={track.cover_url}
-                    price={track.price}
-                    isPreview={!!track.price && track.price > 0}
-                    previewDuration={track.preview_duration || 30}
-                    onBuyClick={track.price > 0 ? () => {
-                      console.log('[V33-AUDIO] Achat audio:', track.title, track.price, 'CHF');
-                      handleSelectOffer({
-                        name: track.title,
-                        price: track.price,
-                        id: track.id || track.courseId,
-                        type: 'audio',
-                        thumbnail: track.cover_url
-                      });
-                    } : undefined}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {/* v35: SECTION AUDIO déplacée vers le Shop — voir plus bas */}
 
       {/* v15: BARRE DE NAVIGATION STICKY - Sections claires */}
       <div
@@ -4333,6 +4281,68 @@ function App() {
             />
           </div>
         )}
+
+        {/* v35: SECTION AUDIO SHOP — Magasin de musique dans le Shop */}
+        {(() => {
+          const allAudioTracks = [];
+          courses.forEach(course => {
+            if (course.audio_tracks && course.audio_tracks.length > 0) {
+              course.audio_tracks
+                .filter(track => track.visible !== false && track.url)
+                .forEach(track => {
+                  allAudioTracks.push({ ...track, courseName: course.name, courseId: course.id });
+                });
+            }
+          });
+          if (allAudioTracks.length === 0) return null;
+          return (
+            <div id="audio-shop-section" className="mb-8 fade-in-section" style={{ paddingTop: '10px' }}>
+              {/* Header Audio Shop */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                <div>
+                  <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '22px' }}>🎧</span> Audio Shop
+                  </h2>
+                  <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', fontWeight: 300, marginTop: '2px' }}>
+                    Musiques & contenus audio exclusifs
+                  </p>
+                </div>
+                <span style={{
+                  fontSize: '11px', padding: '4px 10px', borderRadius: '20px',
+                  background: 'rgba(217,28,210,0.12)', border: '1px solid rgba(217,28,210,0.25)',
+                  color: 'rgba(217,28,210,0.9)'
+                }}>
+                  🎵 {allAudioTracks.length} titre{allAudioTracks.length > 1 ? 's' : ''}
+                </span>
+              </div>
+              {/* Audio Cards Grid */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {allAudioTracks.map((track, idx) => (
+                  <AudioPlayer
+                    key={track.id || `audio-shop-${idx}`}
+                    audioUrl={track.url?.startsWith('/api/') ? `${API.replace('/api', '')}${track.url}` : track.url}
+                    title={track.title || 'Audio'}
+                    thumbnail={track.cover_url}
+                    description={track.description}
+                    price={track.price}
+                    isPreview={!!track.price && track.price > 0}
+                    previewDuration={track.preview_duration || 30}
+                    onBuyClick={track.price > 0 ? () => {
+                      console.log('[V35-AUDIO] Achat audio:', track.title, track.price, 'CHF');
+                      handleSelectOffer({
+                        name: track.title,
+                        price: track.price,
+                        id: track.id || track.courseId,
+                        type: 'audio',
+                        thumbnail: track.cover_url
+                      });
+                    } : undefined}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Bouton Voir les avis Google - affiché si configuré par le coach */}
         {selectedOffer && concept.googleReviewsUrl && (

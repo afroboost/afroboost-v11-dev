@@ -13,7 +13,9 @@ const ConceptEditor = ({
   API,
   t,
   isSuperAdmin = false,
-  coachEmail = ''
+  coachEmail = '',
+  courses = [],
+  setCourses
 }) => {
   const [aiLegalLoading, setAiLegalLoading] = React.useState(false);
   const [uploadingVideo, setUploadingVideo] = React.useState(null); // slot index being uploaded
@@ -911,6 +913,116 @@ const ConceptEditor = ({
             </div>
           </div>
         )}
+
+        {/* v35: MASTER CONTROL SUPER ADMIN — Gestion centralisée des audios */}
+        {isSuperAdmin && (() => {
+          const allAudioTracks = [];
+          courses.forEach((course, cIdx) => {
+            if (course.audio_tracks && course.audio_tracks.length > 0) {
+              course.audio_tracks.forEach((track, tIdx) => {
+                allAudioTracks.push({ ...track, courseIndex: cIdx, trackIndex: tIdx, courseName: course.name, courseId: course.id || course._id });
+              });
+            }
+          });
+          if (allAudioTracks.length === 0) return null;
+
+          const toggleAudioVisible = (courseIdx, trackIdx) => {
+            if (!setCourses) return;
+            setCourses(prev => prev.map((c, ci) => {
+              if (ci !== courseIdx) return c;
+              const newTracks = [...(c.audio_tracks || [])];
+              newTracks[trackIdx] = { ...newTracks[trackIdx], visible: newTracks[trackIdx].visible === false ? true : false };
+              return { ...c, audio_tracks: newTracks };
+            }));
+          };
+
+          const deleteAudioTrack = (courseIdx, trackIdx, title) => {
+            if (!setCourses) return;
+            if (!window.confirm(`Supprimer l'audio "${title}" ?`)) return;
+            setCourses(prev => prev.map((c, ci) => {
+              if (ci !== courseIdx) return c;
+              const newTracks = [...(c.audio_tracks || [])];
+              newTracks.splice(trackIdx, 1);
+              return { ...c, audio_tracks: newTracks };
+            }));
+          };
+
+          return (
+            <div className="border border-orange-500/30 rounded-lg p-4 bg-orange-900/10" style={{ marginBottom: '16px' }}>
+              <h3 className="text-orange-400 font-semibold mb-4">🎧 Master Control — Gestion Audios</h3>
+              <p className="text-white/40 text-xs mb-3">Actions admin sur tous les audios du site. ({allAudioTracks.length} piste{allAudioTracks.length > 1 ? 's' : ''})</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {allAudioTracks.map((track, idx) => (
+                  <div key={`${track.courseId}-${track.id || idx}`} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '8px 12px', borderRadius: '8px',
+                    background: track.visible === false ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.04)',
+                    border: `1px solid ${track.visible === false ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.08)'}`
+                  }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '16px' }}>{track.cover_url ? '🖼️' : '🎵'}</span>
+                        <span style={{ color: '#fff', fontSize: '12px', fontWeight: 600 }}>{track.title || 'Sans titre'}</span>
+                        {(track.price || 0) > 0 ? (
+                          <span style={{ color: '#22c55e', fontSize: '11px', fontWeight: 600 }}>💎 {track.price} CHF</span>
+                        ) : (
+                          <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px' }}>Gratuit</span>
+                        )}
+                        {track.visible === false && (
+                          <span style={{ color: '#ef4444', fontSize: '10px' }}>🚫 MASQUÉ</span>
+                        )}
+                      </div>
+                      <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px' }}>
+                        Cours: {track.courseName || 'Inconnu'}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '4px', marginLeft: '8px' }}>
+                      {/* Toggle visible */}
+                      <button
+                        type="button"
+                        onClick={() => toggleAudioVisible(track.courseIndex, track.trackIndex)}
+                        style={{
+                          background: track.visible === false ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
+                          border: `1px solid ${track.visible === false ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                          color: track.visible === false ? '#22c55e' : '#ef4444',
+                          fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
+                        }}
+                        title={track.visible === false ? 'Rendre visible' : 'Masquer'}
+                      >
+                        {track.visible === false ? '👁️' : '🚫'}
+                      </button>
+                      {/* Copier le lien */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const baseUrl = window.location.origin;
+                          const url = track.url?.startsWith('/api/') ? `${baseUrl}${track.url}` : (track.url || '');
+                          navigator.clipboard.writeText(url);
+                          alert('Lien audio copié !');
+                        }}
+                        style={{
+                          background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)',
+                          color: '#a78bfa', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
+                        }}
+                        title="Copier le lien"
+                      >🔗</button>
+                      {/* Supprimer */}
+                      <button
+                        type="button"
+                        onClick={() => deleteAudioTrack(track.courseIndex, track.trackIndex, track.title || 'Sans titre')}
+                        style={{
+                          background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
+                          color: '#ef4444', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
+                        }}
+                        title="Supprimer"
+                      >🗑️</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Indicateur auto-save */}
         <div className="p-3 rounded-lg" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.2)' }}>

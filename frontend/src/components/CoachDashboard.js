@@ -4914,6 +4914,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               t={t}
               isSuperAdmin={isSuperAdmin}
               coachEmail={safeCoachUser?.email || ''}
+              courses={courses}
+              setCourses={setCourses}
             />
             <BrandingManager
               API={API}
