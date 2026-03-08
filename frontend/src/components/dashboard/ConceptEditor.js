@@ -9,7 +9,7 @@
  *   - 'settings': Affiche couleurs, paramètres généraux, liens, logos paiement, affiche événement
  *   - 'all': Affiche tout (rétro-compatible)
  */
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { LandingSectionSelector } from '../SearchBar';
 
 const ConceptEditor = ({
@@ -27,6 +27,23 @@ const ConceptEditor = ({
 }) => {
   const [aiLegalLoading, setAiLegalLoading] = React.useState(false);
   const [uploadingVideo, setUploadingVideo] = React.useState(null); // slot index being uploaded
+
+  // v46: State pour pistes audio autonomes (collection audio_tracks)
+  const [masterAudioTracks, setMasterAudioTracks] = useState([]);
+  useEffect(() => {
+    if (section !== 'audio' && section !== 'all') return;
+    if (!isSuperAdmin || !coachEmail || !API) return;
+    const loadMasterAudio = async () => {
+      try {
+        const res = await fetch(`${API}/audio-tracks`, { headers: { 'X-User-Email': coachEmail } });
+        if (res.ok) {
+          const data = await res.json();
+          setMasterAudioTracks(data.tracks || []);
+        }
+      } catch (e) { console.warn('[ConceptEditor] Audio tracks load failed:', e.message); }
+    };
+    loadMasterAudio();
+  }, [section, isSuperAdmin, coachEmail, API]);
 
   // Helper: get heroVideos array (with migration from legacy heroImageUrl)
   const getHeroVideos = () => {
@@ -940,46 +957,41 @@ const ConceptEditor = ({
           </div>
         )}
 
-        {/* v35: MASTER CONTROL SUPER ADMIN — Gestion centralisée des audios — v36: section audio */}
-        {showAudio && isSuperAdmin && (() => {
-          const allAudioTracks = [];
-          courses.forEach((course, cIdx) => {
-            if (course.audio_tracks && course.audio_tracks.length > 0) {
-              course.audio_tracks.forEach((track, tIdx) => {
-                allAudioTracks.push({ ...track, courseIndex: cIdx, trackIndex: tIdx, courseName: course.name, courseId: course.id || course._id });
+        {/* v46: MASTER CONTROL SUPER ADMIN — Gestion centralisée des audios — SOURCE: collection audio_tracks */}
+        {showAudio && isSuperAdmin && masterAudioTracks.length > 0 && (() => {
+          const toggleAudioVisible = async (trackId, currentVisible) => {
+            try {
+              const res = await fetch(`${API}/audio-tracks/${trackId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail },
+                body: JSON.stringify({ visible: !currentVisible })
               });
-            }
-          });
-          if (allAudioTracks.length === 0) return null;
-
-          const toggleAudioVisible = (courseIdx, trackIdx) => {
-            if (!setCourses) return;
-            setCourses(prev => prev.map((c, ci) => {
-              if (ci !== courseIdx) return c;
-              const newTracks = [...(c.audio_tracks || [])];
-              newTracks[trackIdx] = { ...newTracks[trackIdx], visible: newTracks[trackIdx].visible === false ? true : false };
-              return { ...c, audio_tracks: newTracks };
-            }));
+              if (res.ok) {
+                setMasterAudioTracks(prev => prev.map(t => t.id === trackId ? { ...t, visible: !currentVisible } : t));
+              }
+            } catch (e) { console.error('[MasterControl] Toggle visible error:', e); }
           };
 
-          const deleteAudioTrack = (courseIdx, trackIdx, title) => {
-            if (!setCourses) return;
+          const deleteAudioTrack = async (trackId, title) => {
             if (!window.confirm(`Supprimer l'audio "${title}" ?`)) return;
-            setCourses(prev => prev.map((c, ci) => {
-              if (ci !== courseIdx) return c;
-              const newTracks = [...(c.audio_tracks || [])];
-              newTracks.splice(trackIdx, 1);
-              return { ...c, audio_tracks: newTracks };
-            }));
+            try {
+              const res = await fetch(`${API}/audio-tracks/${trackId}`, {
+                method: 'DELETE',
+                headers: { 'X-User-Email': coachEmail }
+              });
+              if (res.ok) {
+                setMasterAudioTracks(prev => prev.filter(t => t.id !== trackId));
+              }
+            } catch (e) { console.error('[MasterControl] Delete error:', e); }
           };
 
           return (
             <div className="border border-orange-500/30 rounded-lg p-4 bg-orange-900/10" style={{ marginBottom: '16px' }}>
               <h3 className="text-orange-400 font-semibold mb-4">🎧 Master Control — Gestion Audios</h3>
-              <p className="text-white/40 text-xs mb-3">Actions admin sur tous les audios du site. ({allAudioTracks.length} piste{allAudioTracks.length > 1 ? 's' : ''})</p>
+              <p className="text-white/40 text-xs mb-3">Actions admin sur tous les audios autonomes. ({masterAudioTracks.length} piste{masterAudioTracks.length > 1 ? 's' : ''})</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {allAudioTracks.map((track, idx) => (
-                  <div key={`${track.courseId}-${track.id || idx}`} style={{
+                {masterAudioTracks.map((track, idx) => (
+                  <div key={track.id || idx} style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     padding: '8px 12px', borderRadius: '8px',
                     background: track.visible === false ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.04)',
@@ -999,14 +1011,14 @@ const ConceptEditor = ({
                         )}
                       </div>
                       <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px' }}>
-                        Cours: {track.courseName || 'Inconnu'}
+                        Collection audio_tracks • order: {track.order}
                       </span>
                     </div>
                     <div style={{ display: 'flex', gap: '4px', marginLeft: '8px' }}>
                       {/* Toggle visible */}
                       <button
                         type="button"
-                        onClick={() => toggleAudioVisible(track.courseIndex, track.trackIndex)}
+                        onClick={() => toggleAudioVisible(track.id, track.visible !== false)}
                         style={{
                           background: track.visible === false ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
                           border: `1px solid ${track.visible === false ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
@@ -1035,7 +1047,7 @@ const ConceptEditor = ({
                       {/* Supprimer */}
                       <button
                         type="button"
-                        onClick={() => deleteAudioTrack(track.courseIndex, track.trackIndex, track.title || 'Sans titre')}
+                        onClick={() => deleteAudioTrack(track.id, track.title || 'Sans titre')}
                         style={{
                           background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
                           color: '#ef4444', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
