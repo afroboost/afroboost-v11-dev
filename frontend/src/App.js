@@ -3130,17 +3130,24 @@ function App() {
 
   // Sélection d'offre avec smooth scroll vers le formulaire "Vos informations"
   const handleSelectOffer = (offer) => {
+    // v56: Toggle — si la même offre est déjà sélectionnée, on la désélectionne (ferme le formulaire)
+    if (selectedOffer && offer && selectedOffer.id === offer.id && selectedOffer.name === offer.name) {
+      setSelectedOffer(null);
+      setSelectedVariants({});
+      return;
+    }
+
     setSelectedOffer(offer);
     // Réinitialiser les variantes quand une nouvelle offre est sélectionnée
     setSelectedVariants({});
-    
+
     // Smooth scroll vers la section "Vos informations" après un court délai
     // pour laisser le temps au DOM de se mettre à jour
     setTimeout(() => {
       const formSection = document.getElementById('user-info-section');
       if (formSection) {
-        formSection.scrollIntoView({ 
-          behavior: 'smooth', 
+        formSection.scrollIntoView({
+          behavior: 'smooth',
           block: 'start'
         });
       }

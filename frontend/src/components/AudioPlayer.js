@@ -226,32 +226,7 @@ const AudioPlayer = ({
             {maxPreviewTime}s
           </span>
         )}
-        {/* Price badge - v55: cliquable pour acheter */}
-        {price > 0 && (
-          <span
-            onClick={(e) => { e.stopPropagation(); if (onBuyClick) onBuyClick(); }}
-            style={{
-            position: 'absolute',
-            bottom: '-5px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            fontSize: '10px',
-            padding: '2px 8px',
-            borderRadius: '6px',
-            background: 'rgba(34,197,94,0.9)',
-            color: '#fff',
-            fontWeight: 700,
-            whiteSpace: 'nowrap',
-            boxShadow: '0 2px 8px rgba(34,197,94,0.3)',
-            cursor: onBuyClick ? 'pointer' : 'default',
-            transition: 'transform 0.2s, box-shadow 0.2s'
-          }}
-            onMouseEnter={(e) => { if (onBuyClick) { e.currentTarget.style.transform = 'translateX(-50%) scale(1.1)'; e.currentTarget.style.boxShadow = '0 2px 12px rgba(34,197,94,0.6)'; }}}
-            onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateX(-50%)'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(34,197,94,0.3)'; }}
-          >
-            🛒 {price} CHF
-          </span>
-        )}
+        {/* v56: badge prix miniature supprime — le bouton achat dans le player suffit */}
         {isFree && (
           <span style={{
             position: 'absolute',
