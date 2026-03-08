@@ -714,6 +714,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const audioCoverInputRef = useRef(null);
   const [coverUploadTrackId, setCoverUploadTrackId] = useState(null);
 
+  // v42: Auto-sélection du premier cours pour le Studio Audio au chargement
+  useEffect(() => {
+    if (courses.length > 0 && !selectedCourseForAudio) {
+      openAudioModal(courses[0]);
+      setShowAudioModal(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courses]);
+
   // Ouvrir le Studio Audio pour un cours
   const openAudioModal = (course) => {
     setSelectedCourseForAudio(course);
@@ -4289,7 +4298,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 <div>
                   <div style={{ fontSize: '42px', marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(217,28,210,0.5))' }}>🎶</div>
                   <p style={{ color: '#fff', fontWeight: 700, fontSize: '15px', marginBottom: '4px' }}>Glissez vos fichiers audio ici</p>
-                  <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>ou cliquez pour sélectionner • MP3, WAV, OGG, AAC (max 20MB)</p>
+                  <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>ou cliquez pour sélectionner • MP3, WAV, OGG, AAC (max 15MB)</p>
                 </div>
               )}
             </div>
@@ -5128,7 +5137,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           <div>
                             <div style={{ fontSize: '42px', marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(217,28,210,0.5))' }}>🎶</div>
                             <p style={{ color: '#fff', fontWeight: 700, fontSize: '15px', marginBottom: '4px' }}>Glissez vos fichiers audio ici</p>
-                            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: 0 }}>ou cliquez pour sélectionner • MP3, WAV, OGG, AAC (max 20MB)</p>
+                            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: 0 }}>ou cliquez pour sélectionner • MP3, WAV, OGG, AAC (max 15MB)</p>
                           </div>
                         )}
                       </div>

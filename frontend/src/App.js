@@ -51,8 +51,8 @@ const isSuperAdminEmail = (email) => {
   return SUPER_ADMIN_EMAILS.some(a => e === a.toLowerCase()) || e.endsWith('@afroboost.com');
 };
 
-// v41: Clé de persistance admin
-const ADMIN_AUTH_TOKEN_KEY = 'afroboost_auth_token';
+// v42: Clé de persistance admin — ne jamais supprimer lors du logout
+const ADMIN_AUTH_TOKEN_KEY = 'afroboost_admin_persist';
 
 // v9.2.4: DÉTECTION IMMÉDIATE PROPULSION STRIPE (avant tout rendu) - MÉMOIRE MORTE
 // Cette logique s'exécute AVANT React pour capturer l'intention de redirection
