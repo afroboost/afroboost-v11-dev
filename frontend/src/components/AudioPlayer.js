@@ -226,9 +226,11 @@ const AudioPlayer = ({
             {maxPreviewTime}s
           </span>
         )}
-        {/* Price badge */}
+        {/* Price badge - v55: cliquable pour acheter */}
         {price > 0 && (
-          <span style={{
+          <span
+            onClick={(e) => { e.stopPropagation(); if (onBuyClick) onBuyClick(); }}
+            style={{
             position: 'absolute',
             bottom: '-5px',
             left: '50%',
@@ -240,9 +242,14 @@ const AudioPlayer = ({
             color: '#fff',
             fontWeight: 700,
             whiteSpace: 'nowrap',
-            boxShadow: '0 2px 8px rgba(34,197,94,0.3)'
-          }}>
-            💎 {price} CHF
+            boxShadow: '0 2px 8px rgba(34,197,94,0.3)',
+            cursor: onBuyClick ? 'pointer' : 'default',
+            transition: 'transform 0.2s, box-shadow 0.2s'
+          }}
+            onMouseEnter={(e) => { if (onBuyClick) { e.currentTarget.style.transform = 'translateX(-50%) scale(1.1)'; e.currentTarget.style.boxShadow = '0 2px 12px rgba(34,197,94,0.6)'; }}}
+            onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateX(-50%)'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(34,197,94,0.3)'; }}
+          >
+            🛒 {price} CHF
           </span>
         )}
         {isFree && (
@@ -324,6 +331,23 @@ const AudioPlayer = ({
             </div>
           </div>
 
+          {/* v55: Bouton Acheter toujours visible pour tracks payantes */}
+          {price > 0 && onBuyClick && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onBuyClick(); }}
+              title={`Acheter ${price} CHF`}
+              style={{
+                padding: '6px 14px', borderRadius: '8px', border: 'none',
+                background: `linear-gradient(135deg, ${accentColor}, #8b5cf6)`,
+                color: '#fff', fontWeight: 700, fontSize: '11px',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px',
+                flexShrink: 0, transition: 'all 0.2s',
+                boxShadow: `0 0 12px ${accentColor}40`
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+            >🛒 {price} CHF</button>
+          )}
           {/* Download button for free tracks */}
           {isFree && audioUrl && (
             <button
