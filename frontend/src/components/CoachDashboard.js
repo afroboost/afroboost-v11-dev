@@ -770,13 +770,19 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     setShowAudioModal(true);
   };
 
-  // v44: Upload audio — crée la piste dans l'API directement
+  // v52: Upload audio — avec vérification taille (Vercel limit 4.5MB)
   const handleAudioFileUpload = async (files) => {
     if (!files || files.length === 0) return;
     setUploadingAudio(true);
 
+    const MAX_AUDIO_SIZE = 4 * 1024 * 1024; // 4MB (Vercel body limit = 4.5MB, marge pour FormData)
     for (const file of files) {
       try {
+        // v52: Vérification taille AVANT upload
+        if (file.size > MAX_AUDIO_SIZE) {
+          alert(`⚠️ Le fichier "${file.name}" fait ${(file.size / 1024 / 1024).toFixed(1)}MB.\nLimite Vercel : 4MB max.\nCompressez le fichier ou utilisez un MP3 plus petit.`);
+          continue;
+        }
         // 1. Upload le fichier binaire
         const formData = new FormData();
         formData.append('file', file);

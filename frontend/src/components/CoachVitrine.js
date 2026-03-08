@@ -290,30 +290,39 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           setFaqs(Array.isArray(faqRes.data) ? faqRes.data : []);
         } catch (e) {}
 
-        // v48: Charger pistes audio autonomes avec fallback + timeout
-        try {
-          const audioController = new AbortController();
-          const audioTimeout = setTimeout(() => audioController.abort(), 5000); // 5s max
-          const audioRes = await axios.get(
-            `${API}/public/audio-tracks/${encodeURIComponent(res.data.coach.email || username)}`,
-            { signal: audioController.signal }
-          );
-          clearTimeout(audioTimeout);
-          const tracks = audioRes.data.tracks || [];
-          setAudioTracks(tracks);
-          // v48: Cache local pour fallback si l'API échoue la prochaine fois
-          if (tracks.length > 0) {
-            try { localStorage.setItem('afroboost_audio_cache_' + username, JSON.stringify(tracks)); } catch(ce) {}
+        // v52: Charger pistes audio — timeout 15s + retry + fallback cache
+        const audioEmail = encodeURIComponent(res.data.coach.email || username);
+        const audioUrl = `${API}/public/audio-tracks/${audioEmail}`;
+        let audioLoaded = false;
+        for (let attempt = 1; attempt <= 2 && !audioLoaded; attempt++) {
+          try {
+            const audioController = new AbortController();
+            const audioTimeout = setTimeout(() => audioController.abort(), 15000); // 15s (Vercel cold start)
+            console.log('[VITRINE-V52] Audio fetch attempt', attempt, audioUrl);
+            const audioRes = await axios.get(audioUrl, { signal: audioController.signal });
+            clearTimeout(audioTimeout);
+            const tracks = audioRes.data.tracks || [];
+            console.log('[VITRINE-V52] Audio loaded:', tracks.length, 'tracks');
+            setAudioTracks(tracks);
+            audioLoaded = true;
+            if (tracks.length > 0) {
+              try { localStorage.setItem('afroboost_audio_cache_' + username, JSON.stringify(tracks)); } catch(ce) {}
+            }
+          } catch (e) {
+            console.warn('[VITRINE-V52] Audio attempt', attempt, 'failed:', e.message);
+            if (attempt < 2) {
+              await new Promise(r => setTimeout(r, 1000)); // Wait 1s before retry
+            }
           }
-        } catch (e) {
-          console.warn('[VITRINE-V48] Audio API failed, trying cache fallback:', e.message);
-          // v48: Fallback — charger depuis le cache local
+        }
+        if (!audioLoaded) {
+          // Fallback — charger depuis le cache local
           try {
             const cached = localStorage.getItem('afroboost_audio_cache_' + username);
             if (cached) {
               const cachedTracks = JSON.parse(cached);
               setAudioTracks(cachedTracks);
-              console.log('[VITRINE-V48] Loaded', cachedTracks.length, 'tracks from cache');
+              console.log('[VITRINE-V52] Loaded', cachedTracks.length, 'tracks from cache fallback');
             }
           } catch (ce) {}
         }
