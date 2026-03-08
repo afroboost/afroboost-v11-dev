@@ -1,5 +1,5 @@
 /**
- * AudioPlayer Component v35
+ * AudioPlayer Component v57
  * Lecteur audio premium style Spotify + Glassmorphism
  * - Large thumbnail avec glow neon (pochette)
  * - Barre de progression fluide
@@ -8,6 +8,7 @@
  * - Bouton Télécharger pour audios gratuits
  * - Description affichée
  * - Continue quand on change d'onglet (pas de pause auto)
+ * - v57: Sélection multiple (checkbox), modale miniature
  */
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 
@@ -22,7 +23,11 @@ const AudioPlayer = ({
   accentColor = '#D91CD2',
   isPreview = false,
   previewDuration = 30,
-  onBuyClick
+  onBuyClick,
+  selectable = false,
+  isSelected = false,
+  onToggleSelect,
+  onThumbnailClick
 }) => {
   const audioRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -130,13 +135,35 @@ const AudioPlayer = ({
         background: previewEnded ? 'rgba(217,28,210,0.06)' : 'rgba(10,5,20,0.6)',
         backdropFilter: 'blur(16px)',
         WebkitBackdropFilter: 'blur(16px)',
-        border: `1px solid ${previewEnded ? 'rgba(217,28,210,0.3)' : isHovered ? `${accentColor}50` : 'rgba(255,255,255,0.06)'}`,
+        border: `1px solid ${isSelected ? accentColor : previewEnded ? 'rgba(217,28,210,0.3)' : isHovered ? `${accentColor}50` : 'rgba(255,255,255,0.06)'}`,
         position: 'relative',
         overflow: 'hidden',
         transition: 'all 0.3s ease',
         boxShadow: isHovered ? `0 0 30px ${accentColor}20` : 'none'
       }}
     >
+      {/* v57: Checkbox de sélection multiple */}
+      {selectable && price > 0 && (
+        <div
+          onClick={(e) => { e.stopPropagation(); if (onToggleSelect) onToggleSelect(); }}
+          style={{
+            position: 'absolute', top: '10px', left: '10px', zIndex: 10,
+            width: '24px', height: '24px', borderRadius: '6px',
+            background: isSelected ? `linear-gradient(135deg, ${accentColor}, #8b5cf6)` : 'rgba(255,255,255,0.1)',
+            border: isSelected ? 'none' : '2px solid rgba(255,255,255,0.3)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', transition: 'all 0.2s',
+            boxShadow: isSelected ? `0 0 12px ${accentColor}50` : 'none'
+          }}
+        >
+          {isSelected && (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          )}
+        </div>
+      )}
+
       {/* Glow effect */}
       <div style={{
         position: 'absolute',
@@ -175,12 +202,23 @@ const AudioPlayer = ({
           cursor: 'pointer',
           position: 'relative'
         }}
-          onClick={togglePlay}
+          onClick={(e) => {
+            if (onThumbnailClick) { e.stopPropagation(); onThumbnailClick(); }
+            else { togglePlay(); }
+          }}
         >
           {thumbnail ? (
             <img src={thumbnail} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
           ) : (
             <span style={{ fontSize: '32px', filter: `drop-shadow(0 0 8px ${accentColor})` }}>🎵</span>
+          )}
+          {/* v57: Loupe zoom sur hover si onThumbnailClick */}
+          {onThumbnailClick && (
+            <div style={{
+              position: 'absolute', bottom: '2px', right: '2px',
+              background: 'rgba(0,0,0,0.6)', borderRadius: '4px', padding: '2px 4px',
+              fontSize: '10px', pointerEvents: 'none'
+            }}>🔍</div>
           )}
           {/* Play overlay */}
           <div style={{

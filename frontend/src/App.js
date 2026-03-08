@@ -2098,6 +2098,8 @@ function App() {
   const [offers, setOffers] = useState([]);
   const [users, setUsers] = useState([]);
   const [studioAudioTracks, setStudioAudioTracks] = useState([]); // v53: pistes audio autonomes (Studio Audio)
+  const [selectedAudioTracks, setSelectedAudioTracks] = useState([]); // v57: sélection multiple audio
+  const [audioLightbox, setAudioLightbox] = useState(null); // v57: modale miniature audio {track}
   const [paymentLinks, setPaymentLinks] = useState({ stripe: "", paypal: "", twint: "", coachWhatsapp: "" });
   const [concept, setConcept] = useState({ appName: "Afroboost", description: "", heroImageUrl: "", logoUrl: "", faviconUrl: "", termsText: "", googleReviewsUrl: "", defaultLandingSection: "sessions", externalLink1Title: "", externalLink1Url: "", externalLink2Title: "", externalLink2Url: "", paymentTwint: false, paymentPaypal: false, paymentCreditCard: false, eventPosterEnabled: false, eventPosterMediaUrl: "" });
   const [showEventPoster, setShowEventPoster] = useState(false);
@@ -4336,10 +4338,9 @@ function App() {
           </div>
         )}
 
-        {/* v53: SECTION AUDIO SHOP — Fusionne tracks des cours + Studio Audio autonomes */}
+        {/* v57: SECTION AUDIO SHOP — Sélection multiple, prix dégressif, scroll, modale */}
         {(() => {
           const allAudioTracks = [];
-          // v35: tracks intégrées aux cours
           courses.forEach(course => {
             if (course.audio_tracks && course.audio_tracks.length > 0) {
               course.audio_tracks
@@ -4349,16 +4350,62 @@ function App() {
                 });
             }
           });
-          // v53: tracks autonomes du Studio Audio (collection audio_tracks)
           if (studioAudioTracks && studioAudioTracks.length > 0) {
             studioAudioTracks.forEach(track => {
-              // Éviter les doublons (même id)
               if (!allAudioTracks.find(t => t.id === track.id)) {
                 allAudioTracks.push(track);
               }
             });
           }
           if (allAudioTracks.length === 0) return null;
+
+          // v57: Prix dégressif — plus on achète, plus c'est avantageux
+          const paidTracks = allAudioTracks.filter(t => t.price && t.price > 0);
+          const selectedPaidTracks = selectedAudioTracks.filter(id => paidTracks.find(t => (t.id || t.courseId) === id));
+          const selectedCount = selectedPaidTracks.length;
+
+          const calcBundlePrice = (ids) => {
+            let total = 0;
+            ids.forEach(id => {
+              const t = paidTracks.find(tr => (tr.id || tr.courseId) === id);
+              if (t) total += t.price;
+            });
+            // Réduction: 2 titres = -25%, 3+ titres = -40%
+            if (ids.length >= 3) return Math.round(total * 0.6 * 100) / 100;
+            if (ids.length === 2) return Math.round(total * 0.75 * 100) / 100;
+            return total;
+          };
+
+          const bundlePrice = calcBundlePrice(selectedPaidTracks);
+          const fullPrice = selectedPaidTracks.reduce((sum, id) => {
+            const t = paidTracks.find(tr => (tr.id || tr.courseId) === id);
+            return sum + (t ? t.price : 0);
+          }, 0);
+
+          const toggleTrackSelect = (trackId) => {
+            setSelectedAudioTracks(prev =>
+              prev.includes(trackId) ? prev.filter(id => id !== trackId) : [...prev, trackId]
+            );
+          };
+
+          const handleBuyBundle = () => {
+            const names = selectedPaidTracks.map(id => {
+              const t = paidTracks.find(tr => (tr.id || tr.courseId) === id);
+              return t ? t.title : '';
+            }).filter(Boolean).join(' + ');
+            console.log('[V57-AUDIO] Achat groupé:', selectedCount, 'titres,', bundlePrice, 'CHF');
+            handleSelectOffer({
+              name: selectedCount === 1 ? names : `Playlist (${selectedCount} titres)`,
+              price: bundlePrice,
+              id: selectedPaidTracks.join('_'),
+              type: 'audio',
+              audioTrackIds: selectedPaidTracks,
+              thumbnail: null
+            });
+          };
+
+          const useScroll = allAudioTracks.length > 3;
+
           return (
             <div id="audio-shop-section" className="mb-8 fade-in-section" style={{ paddingTop: '10px' }}>
               {/* Header Audio Shop */}
@@ -4379,34 +4426,180 @@ function App() {
                   🎵 {allAudioTracks.length} titre{allAudioTracks.length > 1 ? 's' : ''}
                 </span>
               </div>
-              {/* Audio Cards Grid */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {allAudioTracks.map((track, idx) => (
-                  <AudioPlayer
-                    key={track.id || `audio-shop-${idx}`}
-                    audioUrl={track.url?.startsWith('/api/') ? `${API.replace('/api', '')}${track.url}` : track.url}
-                    title={track.title || 'Audio'}
-                    thumbnail={track.cover_url}
-                    description={track.description}
-                    price={track.price}
-                    isPreview={!!track.price && track.price > 0}
-                    previewDuration={track.preview_duration || 30}
-                    onBuyClick={track.price > 0 ? () => {
-                      console.log('[V35-AUDIO] Achat audio:', track.title, track.price, 'CHF');
-                      handleSelectOffer({
-                        name: track.title,
-                        price: track.price,
-                        id: track.id || track.courseId,
-                        type: 'audio',
-                        thumbnail: track.cover_url
-                      });
-                    } : undefined}
-                  />
-                ))}
+
+              {/* v57: Info prix dégressif */}
+              {paidTracks.length >= 2 && (
+                <div style={{
+                  padding: '8px 14px', borderRadius: '10px', marginBottom: '12px',
+                  background: 'linear-gradient(135deg, rgba(34,197,94,0.1), rgba(217,28,210,0.08))',
+                  border: '1px solid rgba(34,197,94,0.2)',
+                  display: 'flex', alignItems: 'center', gap: '8px'
+                }}>
+                  <span style={{ fontSize: '16px' }}>💰</span>
+                  <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: '11px' }}>
+                    Sélectionnez plusieurs titres pour un prix réduit : <strong style={{ color: '#22c55e' }}>-25% dès 2 titres, -40% dès 3 titres</strong>
+                  </span>
+                </div>
+              )}
+
+              {/* Audio Cards — scroll si +3 tracks */}
+              <div style={{
+                display: 'flex', flexDirection: 'column', gap: '12px',
+                ...(useScroll ? {
+                  maxHeight: '380px', overflowY: 'auto',
+                  paddingRight: '4px',
+                  scrollbarWidth: 'thin',
+                  scrollbarColor: 'rgba(217,28,210,0.3) transparent'
+                } : {})
+              }}>
+                {allAudioTracks.map((track, idx) => {
+                  const trackId = track.id || track.courseId;
+                  return (
+                    <AudioPlayer
+                      key={trackId || `audio-shop-${idx}`}
+                      audioUrl={track.url?.startsWith('/api/') ? `${API.replace('/api', '')}${track.url}` : track.url}
+                      title={track.title || 'Audio'}
+                      thumbnail={track.cover_url}
+                      description={track.description}
+                      price={track.price}
+                      isPreview={!!track.price && track.price > 0}
+                      previewDuration={track.preview_duration || 30}
+                      selectable={paidTracks.length >= 2}
+                      isSelected={selectedAudioTracks.includes(trackId)}
+                      onToggleSelect={() => toggleTrackSelect(trackId)}
+                      onThumbnailClick={(track.cover_url || track.description) ? () => setAudioLightbox(track) : undefined}
+                      onBuyClick={track.price > 0 ? () => {
+                        console.log('[V57-AUDIO] Achat audio:', track.title, track.price, 'CHF');
+                        handleSelectOffer({
+                          name: track.title,
+                          price: track.price,
+                          id: trackId,
+                          type: 'audio',
+                          thumbnail: track.cover_url
+                        });
+                      } : undefined}
+                    />
+                  );
+                })}
               </div>
+
+              {/* v57: Bouton achat groupé — visible si au moins 2 sélectionnés */}
+              {selectedCount >= 2 && (
+                <div style={{
+                  marginTop: '16px', padding: '16px', borderRadius: '14px',
+                  background: 'linear-gradient(135deg, rgba(217,28,210,0.12), rgba(139,92,246,0.1))',
+                  border: '1px solid rgba(217,28,210,0.3)',
+                  textAlign: 'center'
+                }}>
+                  <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                    <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', textDecoration: 'line-through' }}>
+                      {fullPrice} CHF
+                    </span>
+                    <span style={{ color: '#22c55e', fontSize: '16px', fontWeight: 700 }}>
+                      {bundlePrice} CHF
+                    </span>
+                    <span style={{
+                      fontSize: '10px', padding: '2px 8px', borderRadius: '10px',
+                      background: 'rgba(34,197,94,0.2)', color: '#22c55e', fontWeight: 600
+                    }}>
+                      -{Math.round((1 - bundlePrice / fullPrice) * 100)}%
+                    </span>
+                  </div>
+                  <button
+                    onClick={handleBuyBundle}
+                    style={{
+                      width: '100%', padding: '12px 20px', borderRadius: '12px',
+                      background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                      color: '#fff', fontWeight: 700, fontSize: '14px',
+                      border: 'none', cursor: 'pointer',
+                      boxShadow: '0 0 20px rgba(217,28,210,0.3)',
+                      transition: 'transform 0.2s'
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.02)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                  >
+                    🛒 Acheter la sélection ({selectedCount} titres) — {bundlePrice} CHF
+                  </button>
+                </div>
+              )}
             </div>
           );
         })()}
+
+        {/* v57: MODALE LIGHTBOX AUDIO — miniature + description complète */}
+        {audioLightbox && (
+          <div
+            onClick={() => setAudioLightbox(null)}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 9999,
+              background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              padding: '20px', cursor: 'pointer'
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                maxWidth: '400px', width: '100%', borderRadius: '20px',
+                background: 'rgba(20,10,30,0.95)', border: '1px solid rgba(217,28,210,0.3)',
+                padding: '24px', cursor: 'default', position: 'relative',
+                boxShadow: '0 0 40px rgba(217,28,210,0.2)'
+              }}
+            >
+              {/* Bouton fermer */}
+              <button
+                onClick={() => setAudioLightbox(null)}
+                style={{
+                  position: 'absolute', top: '12px', right: '12px',
+                  width: '32px', height: '32px', borderRadius: '50%',
+                  background: 'rgba(255,255,255,0.1)', border: 'none',
+                  color: '#fff', fontSize: '16px', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}
+              >✕</button>
+              {/* Image grande */}
+              {audioLightbox.cover_url ? (
+                <img
+                  src={audioLightbox.cover_url}
+                  alt={audioLightbox.title}
+                  style={{
+                    width: '100%', borderRadius: '14px', marginBottom: '16px',
+                    boxShadow: '0 0 30px rgba(217,28,210,0.3)'
+                  }}
+                />
+              ) : (
+                <div style={{
+                  width: '100%', height: '200px', borderRadius: '14px', marginBottom: '16px',
+                  background: 'linear-gradient(135deg, rgba(217,28,210,0.3), rgba(139,92,246,0.2))',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '60px'
+                }}>🎵</div>
+              )}
+              <h3 style={{ color: '#fff', fontSize: '18px', fontWeight: 700, margin: '0 0 8px 0' }}>
+                {audioLightbox.title}
+              </h3>
+              {audioLightbox.price > 0 && (
+                <span style={{
+                  display: 'inline-block', padding: '4px 12px', borderRadius: '8px',
+                  background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                  color: '#fff', fontWeight: 700, fontSize: '13px', marginBottom: '12px'
+                }}>
+                  {audioLightbox.price} CHF
+                </span>
+              )}
+              {audioLightbox.description && (
+                <p style={{
+                  color: 'rgba(255,255,255,0.7)', fontSize: '13px', lineHeight: '1.5',
+                  margin: '12px 0 0 0', whiteSpace: 'pre-wrap'
+                }}>
+                  {audioLightbox.description}
+                </p>
+              )}
+              <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px', marginTop: '12px' }}>
+                Aperçu limité à 30 secondes
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Bouton Voir les avis Google - affiché si configuré par le coach */}
         {selectedOffer && concept.googleReviewsUrl && (

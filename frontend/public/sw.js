@@ -1,7 +1,7 @@
-// Service Worker Afroboost V56 — Nuclear cache-bust + Push Notifications
+// Service Worker Afroboost V57 — Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v56';
+const CACHE_NAME = 'afroboost-v57';
 
 // Installation — skip waiting pour activer immédiatement
 self.addEventListener('install', (event) => {
