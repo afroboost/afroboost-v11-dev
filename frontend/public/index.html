@@ -26,7 +26,7 @@
         <!-- Additional SEO -->
         <meta name="keywords" content="afroboost, fitness, casque audio, danse, afrobeat, cardio, réservation, cours" />
         <meta name="author" content="Afroboost" />
-        <meta name="version" content="50.0" />
+        <meta name="version" content="51.0" />
         <meta name="robots" content="index, follow" />
         
         <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -211,55 +211,59 @@
                 mask_all_element_attributes: false
             });
         </script>
-        <!-- v50: Nuclear cache-bust — unregister old SW + force reload -->
+        <!-- v51: NUCLEAR CACHE PURGE — Étape 1: Détruire TOUT ancien cache/SW -->
         <script>
             (function() {
-                var REQUIRED_VERSION = 50;
-                var forceKey = 'afroboost_v50_forced';
-                // Step 1: Unregister ALL old service workers
+                var V = 51;
+                var forceKey = 'afroboost_v' + V + '_forced';
+                // 1. Unregister ALL Service Workers (kills old cached HTML interception)
                 if ('serviceWorker' in navigator) {
                     navigator.serviceWorker.getRegistrations().then(function(regs) {
-                        regs.forEach(function(r) { r.unregister(); });
+                        regs.forEach(function(r) {
+                            console.log('[V51] Unregistering SW:', r.scope);
+                            r.unregister();
+                        });
                     });
                 }
-                // Step 2: Clear ALL caches
+                // 2. Delete ALL Cache Storage entries
                 if ('caches' in window) {
                     caches.keys().then(function(names) {
-                        names.forEach(function(name) { caches.delete(name); });
+                        names.forEach(function(name) {
+                            console.log('[V51] Deleting cache:', name);
+                            caches.delete(name);
+                        });
                     });
                 }
-                // Step 3: Force reload if not already forced this session
+                // 3. Force ONE hard reload per session if not done yet
                 if (!sessionStorage.getItem(forceKey)) {
                     sessionStorage.setItem(forceKey, '1');
-                    window.location.replace(window.location.href.split('?')[0] + '?_v=v50bust&t=' + Date.now());
+                    // Use cache-busting URL to bypass ALL levels of cache
+                    var cleanUrl = window.location.pathname;
+                    window.location.replace(cleanUrl + '?_v=v51&t=' + Date.now());
+                    return; // Stop execution — page will reload
                 }
             })();
         </script>
-        <!-- Service Worker V50 — Register fresh after nuclear purge -->
+        <!-- v51: Étape 2: Re-register SW V51 proprement (APRÈS purge) -->
         <script>
             if ('serviceWorker' in navigator) {
                 window.addEventListener('load', function() {
-                    navigator.serviceWorker.register('/sw.js?v=50', { updateViaCache: 'none' })
-                        .then(function(registration) {
-                            console.log('[V50] SW registered');
-                            registration.update();
-                            if (registration.waiting) {
-                                registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-                            }
-                            registration.addEventListener('updatefound', function() {
-                                var newWorker = registration.installing;
-                                newWorker.addEventListener('statechange', function() {
-                                    if (newWorker.state === 'activated') {
-                                        console.log('[V50] New SW activated');
-                                    }
+                    // Register with version query to force fresh fetch
+                    navigator.serviceWorker.register('/sw.js?v=51', { updateViaCache: 'none' })
+                        .then(function(reg) {
+                            console.log('[V51] SW registered, scope:', reg.scope);
+                            reg.update();
+                            if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+                            reg.addEventListener('updatefound', function() {
+                                var nw = reg.installing;
+                                if (nw) nw.addEventListener('statechange', function() {
+                                    if (nw.state === 'activated') console.log('[V51] New SW activated');
                                 });
                             });
                         })
-                        .catch(function(err) {
-                            console.log('[V50] SW registration failed:', err);
-                        });
+                        .catch(function(e) { console.log('[V51] SW fail:', e); });
                     navigator.serviceWorker.addEventListener('controllerchange', function() {
-                        console.log('[V50] Controller changed');
+                        console.log('[V51] Controller changed — SW update complete');
                     });
                 });
             }
