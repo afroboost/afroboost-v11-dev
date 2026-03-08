@@ -845,7 +845,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  // Drag & Drop réordonnement
+  // Drag & Drop réordonnement (Desktop)
   const handleTrackDragStart = (e, trackId) => {
     setDraggedTrackId(trackId);
     e.dataTransfer.effectAllowed = 'move';
@@ -866,6 +866,43 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     setAudioTracks(updated.map((t, i) => ({ ...t, order: i })));
     setDragOverIndex(null);
     setDraggedTrackId(null);
+  };
+
+  // v46: Touch Drag & Drop (Mobile/Tablette)
+  const touchStartRef = useRef(null);
+  const touchTrackIdRef = useRef(null);
+  const handleTrackTouchStart = (e, trackId) => {
+    touchTrackIdRef.current = trackId;
+    touchStartRef.current = { y: e.touches[0].clientY };
+    setDraggedTrackId(trackId);
+  };
+  const handleTrackTouchMove = (e, trackListEl) => {
+    if (!touchTrackIdRef.current || !trackListEl) return;
+    e.preventDefault(); // empêche le scroll pendant le drag
+    const touchY = e.touches[0].clientY;
+    const children = Array.from(trackListEl.children);
+    for (let i = 0; i < children.length; i++) {
+      const rect = children[i].getBoundingClientRect();
+      if (touchY >= rect.top && touchY <= rect.bottom) {
+        setDragOverIndex(i);
+        break;
+      }
+    }
+  };
+  const handleTrackTouchEnd = () => {
+    if (!touchTrackIdRef.current || dragOverIndex === null) {
+      setDragOverIndex(null); setDraggedTrackId(null); touchTrackIdRef.current = null;
+      return;
+    }
+    const sorted = [...audioTracks].sort((a, b) => a.order - b.order);
+    const fromIndex = sorted.findIndex(t => t.id === touchTrackIdRef.current);
+    if (fromIndex !== -1 && fromIndex !== dragOverIndex) {
+      const updated = [...sorted];
+      const [moved] = updated.splice(fromIndex, 1);
+      updated.splice(dragOverIndex, 0, moved);
+      setAudioTracks(updated.map((t, i) => ({ ...t, order: i })));
+    }
+    setDragOverIndex(null); setDraggedTrackId(null); touchTrackIdRef.current = null;
   };
 
   // v44: Sauvegarder = ré-ordonner toutes les pistes dans l'API
@@ -4312,7 +4349,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   <p style={{ color: 'rgba(255,255,255,0.2)', fontSize: '11px', marginTop: '4px' }}>Glissez des fichiers MP3/WAV ci-dessus pour commencer</p>
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div ref={el => window._audioListRef1 = el} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {audioTracks.sort((a, b) => a.order - b.order).map((track, index) => (
                     <div
                       key={track.id}
@@ -4320,6 +4357,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                       onDragStart={(e) => handleTrackDragStart(e, track.id)}
                       onDragOver={(e) => handleTrackDragOver(e, index)}
                       onDrop={(e) => handleTrackDrop(e, index)}
+                      onTouchStart={(e) => handleTrackTouchStart(e, track.id)}
+                      onTouchMove={(e) => handleTrackTouchMove(e, window._audioListRef1)}
+                      onTouchEnd={handleTrackTouchEnd}
                       onDragEnd={() => { setDragOverIndex(null); setDraggedTrackId(null); }}
                       style={{
                         borderRadius: '14px',
@@ -4337,8 +4377,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     >
                       {/* Track compact view */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        {/* Drag handle */}
-                        <div style={{ color: 'rgba(255,255,255,0.2)', cursor: 'grab', flexShrink: 0, fontSize: '16px' }}>⠿</div>
+                        {/* Reorder buttons (touch-friendly) + drag handle */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flexShrink: 0 }}>
+                          <button onClick={(e) => { e.stopPropagation(); if (index === 0) return; const sorted = [...audioTracks].sort((a,b) => a.order - b.order); const updated = [...sorted]; const [moved] = updated.splice(index, 1); updated.splice(index - 1, 0, moved); setAudioTracks(updated.map((t, i) => ({ ...t, order: i }))); }}
+                            style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index === 0 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index === 0 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>▲</button>
+                          <button onClick={(e) => { e.stopPropagation(); const sorted = [...audioTracks].sort((a,b) => a.order - b.order); if (index >= sorted.length - 1) return; const updated = [...sorted]; const [moved] = updated.splice(index, 1); updated.splice(index + 1, 0, moved); setAudioTracks(updated.map((t, i) => ({ ...t, order: i }))); }}
+                            style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index >= audioTracks.length - 1 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index >= audioTracks.length - 1 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index >= audioTracks.length - 1 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>▼</button>
+                        </div>
 
                         {/* Cover thumbnail */}
                         <div
@@ -5131,7 +5176,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                             <p style={{ color: 'rgba(255,255,255,0.2)', fontSize: '11px', marginTop: '4px' }}>Glissez des fichiers MP3/WAV ci-dessus pour commencer</p>
                           </div>
                         ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <div ref={el => window._audioListRef2 = el} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                             {audioTracks.sort((a, b) => a.order - b.order).map((track, index) => (
                               <div
                                 key={track.id}
@@ -5139,6 +5184,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                 onDragStart={(e) => handleTrackDragStart(e, track.id)}
                                 onDragOver={(e) => handleTrackDragOver(e, index)}
                                 onDrop={(e) => handleTrackDrop(e, index)}
+                                onTouchStart={(e) => handleTrackTouchStart(e, track.id)}
+                                onTouchMove={(e) => handleTrackTouchMove(e, window._audioListRef2)}
+                                onTouchEnd={handleTrackTouchEnd}
                                 onDragEnd={() => { setDragOverIndex(null); setDraggedTrackId(null); }}
                                 style={{
                                   borderRadius: '14px',
@@ -5151,7 +5199,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                 }}
                               >
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                  <div style={{ color: 'rgba(255,255,255,0.2)', cursor: 'grab', flexShrink: 0, fontSize: '16px' }}>⠿</div>
+                                  {/* v46: Reorder buttons (touch-friendly) */}
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flexShrink: 0 }}>
+                                    <button onClick={(e) => { e.stopPropagation(); if (index === 0) return; const sorted = [...audioTracks].sort((a,b) => a.order - b.order); const updated = [...sorted]; const [moved] = updated.splice(index, 1); updated.splice(index - 1, 0, moved); setAudioTracks(updated.map((t, i) => ({ ...t, order: i }))); }}
+                                      style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index === 0 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index === 0 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>▲</button>
+                                    <button onClick={(e) => { e.stopPropagation(); const sorted = [...audioTracks].sort((a,b) => a.order - b.order); if (index >= sorted.length - 1) return; const updated = [...sorted]; const [moved] = updated.splice(index, 1); updated.splice(index + 1, 0, moved); setAudioTracks(updated.map((t, i) => ({ ...t, order: i }))); }}
+                                      style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index >= audioTracks.length - 1 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index >= audioTracks.length - 1 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index >= audioTracks.length - 1 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>▼</button>
+                                  </div>
                                   <div
                                     onClick={(e) => { e.stopPropagation(); setCoverUploadTrackId(track.id); audioCoverInputRef.current?.click(); }}
                                     style={{

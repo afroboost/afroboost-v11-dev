@@ -1,24 +1,68 @@
-// Service Worker pour les notifications push Afroboost
-// Ce fichier doit etre a la racine du domaine (public/)
+// Service Worker Afroboost V46 — Cache-busting + Push Notifications
+// IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v1';
+const CACHE_NAME = 'afroboost-v46';
 
-// Installation du Service Worker
+// Installation — skip waiting pour activer immédiatement
 self.addEventListener('install', (event) => {
-  console.log('[SW] Service Worker installe');
+  console.log('[SW] V46 installe — skip waiting');
   self.skipWaiting();
 });
 
-// Activation
+// Activation — supprime TOUS les anciens caches
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Service Worker active');
-  event.waitUntil(clients.claim());
+  console.log('[SW] V46 active — nettoyage caches');
+  event.waitUntil(
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames
+          .filter((name) => name !== CACHE_NAME)
+          .map((name) => {
+            console.log('[SW] Suppression ancien cache:', name);
+            return caches.delete(name);
+          })
+      );
+    }).then(() => clients.claim())
+  );
+});
+
+// Fetch — network-first pour HTML, cache-first pour static assets
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+
+  // API calls — toujours réseau
+  if (url.pathname.startsWith('/api/')) return;
+
+  // HTML pages — toujours réseau (force reload)
+  if (event.request.mode === 'navigate' || event.request.headers.get('accept')?.includes('text/html')) {
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Static assets (JS/CSS avec hash) — cache-first
+  if (url.pathname.startsWith('/static/')) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        if (cached) return cached;
+        return fetch(event.request).then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        });
+      })
+    );
+    return;
+  }
 });
 
 // Reception des notifications push
 self.addEventListener('push', (event) => {
   console.log('[SW] Notification push recue');
-  
+
   let data = {
     title: 'Afroboost',
     body: 'Nouveau message de votre coach',
@@ -26,7 +70,7 @@ self.addEventListener('push', (event) => {
     badge: '/logo192.png',
     data: { url: '/' }
   };
-  
+
   if (event.data) {
     try {
       const payload = event.data.json();
@@ -38,14 +82,11 @@ self.addEventListener('push', (event) => {
         data: payload.data || { url: '/' }
       };
     } catch (e) {
-      // Si pas JSON, utiliser le texte brut
       const text = event.data.text();
-      if (text) {
-        data.body = text;
-      }
+      if (text) data.body = text;
     }
   }
-  
+
   const options = {
     body: data.body,
     icon: data.icon,
@@ -57,43 +98,34 @@ self.addEventListener('push', (event) => {
     silent: false,
     data: data.data
   };
-  
-  // Android: priority high pour reveiller l'ecran
+
   if ('actions' in Notification.prototype) {
     options.actions = [];
   }
-  
+
   event.waitUntil(
     self.registration.showNotification(data.title, options)
   );
 });
 
-// Clic sur la notification - Ouvre/focus l'app
+// Clic sur la notification
 self.addEventListener('notificationclick', (event) => {
-  console.log('[SW] Clic sur notification');
-  
   event.notification.close();
-  
   const urlToOpen = event.notification.data?.url || '/';
-  
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true })
       .then((clientList) => {
-        // Si une fenetre est deja ouverte, la focus
         for (const client of clientList) {
           if (client.url.includes(self.location.origin) && 'focus' in client) {
             return client.focus();
           }
         }
-        // Sinon, ouvrir une nouvelle fenetre
-        if (clients.openWindow) {
-          return clients.openWindow(urlToOpen);
-        }
+        if (clients.openWindow) return clients.openWindow(urlToOpen);
       })
   );
 });
 
-// Fermeture de la notification
+// Fermeture notification
 self.addEventListener('notificationclose', (event) => {
   console.log('[SW] Notification fermee');
 });
@@ -101,7 +133,6 @@ self.addEventListener('notificationclose', (event) => {
 // Message du client
 self.addEventListener('message', (event) => {
   console.log('[SW] Message recu:', event.data);
-  
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }

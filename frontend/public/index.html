@@ -26,6 +26,7 @@
         <!-- Additional SEO -->
         <meta name="keywords" content="afroboost, fitness, casque audio, danse, afrobeat, cardio, réservation, cours" />
         <meta name="author" content="Afroboost" />
+        <meta name="version" content="46.0" />
         <meta name="robots" content="index, follow" />
         
         <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -210,17 +211,36 @@
                 mask_all_element_attributes: false
             });
         </script>
-        <!-- Service Worker Registration for PWA -->
+        <!-- Service Worker V46 — Force update + cache bust -->
         <script>
             if ('serviceWorker' in navigator) {
                 window.addEventListener('load', function() {
-                    navigator.serviceWorker.register('/sw.js')
+                    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
                         .then(function(registration) {
-                            console.log('ServiceWorker registration successful');
+                            console.log('[V46] SW registered');
+                            // Force check for updates
+                            registration.update();
+                            // If new SW waiting, tell it to activate NOW
+                            if (registration.waiting) {
+                                registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+                            }
+                            registration.addEventListener('updatefound', function() {
+                                var newWorker = registration.installing;
+                                newWorker.addEventListener('statechange', function() {
+                                    if (newWorker.state === 'activated') {
+                                        console.log('[V46] New SW activated — reloading');
+                                        window.location.reload();
+                                    }
+                                });
+                            });
                         })
                         .catch(function(err) {
-                            console.log('ServiceWorker registration failed: ', err);
+                            console.log('SW registration failed:', err);
                         });
+                    // Detect controller change = new SW took over
+                    navigator.serviceWorker.addEventListener('controllerchange', function() {
+                        console.log('[V46] Controller changed — force reload');
+                    });
                 });
             }
         </script>
