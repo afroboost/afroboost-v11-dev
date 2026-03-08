@@ -239,6 +239,28 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         setOffers(coachOffers.length === 0 ? DEFAULT_STARTER_OFFERS : coachOffers);
         setCourses(res.data.courses || []);
 
+        // v29: Le concept (heroVideos, couleurs, etc.) est maintenant inclus directement dans la réponse vitrine
+        if (res.data.concept) {
+          setCoachConcept(res.data.concept);
+          console.warn('[VITRINE-V29] ✅ Concept chargé depuis vitrine API — heroVideos:', res.data.concept.heroVideos?.length || 0,
+            'URLs:', (res.data.concept.heroVideos || []).map(v => v?.url).filter(Boolean));
+        } else {
+          console.warn('[VITRINE-V29] ⚠️ Pas de concept dans la réponse vitrine, tentative fallback...');
+          // Fallback: charger le concept séparément (compatibilité)
+          const coachEmail = res.data.coach.email || username;
+          try {
+            const conceptRes = await axios.get(`${API}/concept`, {
+              headers: { 'X-User-Email': coachEmail }
+            });
+            if (conceptRes.data) {
+              setCoachConcept(conceptRes.data);
+              console.warn('[VITRINE-V29] ✅ Concept fallback chargé:', conceptRes.data.heroVideos?.length || 0);
+            }
+          } catch (e) {
+            console.warn('[VITRINE-V29] ❌ Fallback concept échoué:', e.message);
+          }
+        }
+
         // Charger paiement
         try {
           const paymentRes = await axios.get(`${API}/payment-links/${encodeURIComponent(res.data.coach.email || username)}`);
@@ -256,47 +278,6 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           const faqRes = await axios.get(`${API}/coach/faqs/${encodeURIComponent(res.data.coach.email || username)}`);
           setFaqs(Array.isArray(faqRes.data) ? faqRes.data : []);
         } catch (e) {}
-
-        // v20.2: Charger le concept — ADMIN != PARTENAIRE
-        // Super Admin: concept_id="concept", Partenaire: concept_id="concept_{email}"
-        const coachEmail = res.data.coach.email || username;
-        const isSuperAdmin = ['bassi', 'afroboost', 'contact.artboost@gmail.com', 'afroboost.bassi@gmail.com']
-          .includes((username || '').toLowerCase()) ||
-          ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com']
-          .includes((coachEmail || '').toLowerCase());
-
-        let conceptLoaded = false;
-        // Tentative 1: avec X-User-Email (charge le bon concept_id)
-        try {
-          const conceptRes = await axios.get(`${API}/concept`, {
-            headers: { 'X-User-Email': coachEmail }
-          });
-          if (conceptRes.data) {
-            setCoachConcept(conceptRes.data);
-            conceptLoaded = true;
-            console.warn('[VITRINE-CONCEPT] ✅ Concept chargé via header:', coachEmail, 'heroVideos:', conceptRes.data.heroVideos?.length || 0);
-          }
-        } catch (e) {
-          console.warn('[VITRINE-CONCEPT] ❌ Erreur chargement concept avec header:', e.message);
-        }
-
-        // Tentative 2 (Super Admin uniquement): sans header → API retourne concept admin par défaut
-        if (!conceptLoaded && isSuperAdmin) {
-          try {
-            const conceptRes2 = await axios.get(`${API}/concept`);
-            if (conceptRes2.data) {
-              setCoachConcept(conceptRes2.data);
-              conceptLoaded = true;
-              console.warn('[VITRINE-CONCEPT] ✅ Concept admin chargé (fallback sans header):', conceptRes2.data.heroVideos?.length || 0);
-            }
-          } catch (e2) {
-            console.warn('[VITRINE-CONCEPT] ❌ Fallback admin échoué:', e2.message);
-          }
-        }
-
-        if (!conceptLoaded) {
-          console.warn('[VITRINE-CONCEPT] ⚠️ Aucun concept trouvé pour:', username, coachEmail);
-        }
       } catch (err) {
         console.error('[VITRINE] Erreur:', err);
         setError(err.response?.data?.detail || 'Coach non trouvé');

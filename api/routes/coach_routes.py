@@ -412,10 +412,11 @@ async def get_public_coach_profile(coach_id: str):
 @coach_router.get("/coach/vitrine/{username}")
 @coach_router.get("/partner/vitrine/{username}")
 async def get_coach_vitrine(username: str):
-    """Vitrine publique d'un partenaire (coach/vendeur) - v9.1.8: supporte /coach/ et /partner/"""
+    """Vitrine publique d'un partenaire (coach/vendeur) - v29: inclut concept + heroVideos directement"""
     # v19: Isolation stricte des données par coach_id
-    if username.lower() in ["bassi", "afroboost", SUPER_ADMIN_EMAIL.lower()]:
-        coach = {"id": "bassi", "name": "Bassi - Afroboost", "email": SUPER_ADMIN_EMAIL, "photo_url": None, "bio": "Coach Afroboost - Fitness & Bien-être", "platform_name": "Afroboost", "logo_url": None}
+    is_admin_vitrine = username.lower() in ["bassi", "afroboost", SUPER_ADMIN_EMAIL.lower()]
+    if is_admin_vitrine:
+        coach = {"id": "bassi", "name": "Bassi - Afroboost", "email": SUPER_ADMIN_EMAIL, "photo_url": None, "bio": "Coach Afroboost - Fitness & Bien-être", "platform_name": "Afroboost", "logo_url": None, "is_active": True}
         # Super Admin: match son coach_id OU les données legacy sans coach_id
         coach_filter = {"$or": [
             {"coach_id": DEFAULT_COACH_ID},
@@ -424,6 +425,8 @@ async def get_coach_vitrine(username: str):
             {"coach_id": None},
             {"coach_id": ""}
         ]}
+        # v29: Charger le concept admin directement (concept_id="concept")
+        concept_id = "concept"
     else:
         coach = await db.coaches.find_one({"$or": [{"name": {"$regex": f"^{username}$", "$options": "i"}}, {"email": username.lower()}, {"id": username}], "is_active": True}, {"_id": 0, "id": 1, "name": 1, "photo_url": 1, "bio": 1, "email": 1, "platform_name": 1, "logo_url": 1})
         if not coach:
@@ -431,9 +434,35 @@ async def get_coach_vitrine(username: str):
         coach_email = coach.get("email", "").lower()
         # Partenaire: match UNIQUEMENT son coach_id — PAS de fallback global
         coach_filter = {"coach_id": coach_email}
+        # v29: Concept personnel du partenaire
+        concept_id = f"concept_{coach_email}"
     offers = await db.offers.find(coach_filter, {"_id": 0}).to_list(20)
     courses = await db.courses.find(coach_filter, {"_id": 0}).to_list(20)
-    return {"coach": coach, "offers": offers, "courses": courses, "courses_count": len(courses), "offers_count": len(offers)}
+    # v29: Charger le concept (heroVideos, appName, couleurs, etc.) côté serveur
+    concept = await db.concept.find_one({"id": concept_id}, {"_id": 0})
+    concept_data = {}
+    if concept:
+        concept_data = {
+            "heroVideos": concept.get("heroVideos", []),
+            "heroImageUrl": concept.get("heroImageUrl", ""),
+            "appName": concept.get("appName", ""),
+            "description": concept.get("description", ""),
+            "primaryColor": concept.get("primaryColor", "#D91CD2"),
+            "secondaryColor": concept.get("secondaryColor", "#8b5cf6"),
+            "backgroundColor": concept.get("backgroundColor", "#000000"),
+            "glowColor": concept.get("glowColor", ""),
+            "logoUrl": concept.get("logoUrl", ""),
+            "eventPosterEnabled": concept.get("eventPosterEnabled", False),
+            "eventPosterMediaUrl": concept.get("eventPosterMediaUrl", ""),
+            "defaultLandingSection": concept.get("defaultLandingSection", "sessions"),
+            "googleReviewsUrl": concept.get("googleReviewsUrl", ""),
+            "externalLink1Title": concept.get("externalLink1Title", ""),
+            "externalLink1Url": concept.get("externalLink1Url", ""),
+            "externalLink2Title": concept.get("externalLink2Title", ""),
+            "externalLink2Url": concept.get("externalLink2Url", ""),
+        }
+    logger.info(f"[VITRINE-V29] {username} → concept_id={concept_id}, heroVideos={len(concept_data.get('heroVideos', []))}, offers={len(offers)}, courses={len(courses)}")
+    return {"coach": coach, "offers": offers, "courses": courses, "courses_count": len(courses), "offers_count": len(offers), "concept": concept_data}
 
 # === STRIPE CONNECT ===
 @coach_router.post("/coach/stripe-connect/onboard")
