@@ -1,5 +1,5 @@
 /**
- * CoachVitrine - Vitrine publique d'un coach v14.0 INLINE BOOKING
+ * CoachVitrine - Vitrine publique d'un coach v29.3 STABLE CACHE-BUSTER
  * Route: /coach/[username]
  * Layout IDENTIQUE à la page d'accueil :
  *   - Hero 85vh avec YouTube Lite Facade (thumbnail + play)
