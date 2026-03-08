@@ -2097,6 +2097,7 @@ function App() {
   const [courses, setCourses] = useState([]);
   const [offers, setOffers] = useState([]);
   const [users, setUsers] = useState([]);
+  const [studioAudioTracks, setStudioAudioTracks] = useState([]); // v53: pistes audio autonomes (Studio Audio)
   const [paymentLinks, setPaymentLinks] = useState({ stripe: "", paypal: "", twint: "", coachWhatsapp: "" });
   const [concept, setConcept] = useState({ appName: "Afroboost", description: "", heroImageUrl: "", logoUrl: "", faviconUrl: "", termsText: "", googleReviewsUrl: "", defaultLandingSection: "sessions", externalLink1Title: "", externalLink1Url: "", externalLink2Title: "", externalLink2Url: "", paymentTwint: false, paymentPaypal: false, paymentCreditCard: false, eventPosterEnabled: false, eventPosterMediaUrl: "" });
   const [showEventPoster, setShowEventPoster] = useState(false);
@@ -2839,6 +2840,17 @@ function App() {
       }
 
       console.log(`📦 Cache: ${cachedCourses ? '✓' : '↓'}courses ${cachedOffers ? '✓' : '↓'}offers ${cachedConcept ? '✓' : '↓'}concept`);
+
+      // v53: Charger les pistes audio autonomes (Studio Audio) du super admin
+      try {
+        const ownerEmail = SUPER_ADMIN_EMAILS[0]; // contact.artboost@gmail.com
+        const audioRes = await axios.get(`${API}/public/audio-tracks/${encodeURIComponent(ownerEmail)}`);
+        const tracks = audioRes.data?.tracks || [];
+        setStudioAudioTracks(tracks);
+        console.log('[V53] Studio audio tracks loaded:', tracks.length);
+      } catch (audioErr) {
+        console.warn('[V53] Studio audio tracks fetch failed:', audioErr.message);
+      }
 
     } catch (err) { console.error("Error:", err); }
   }, [isCacheValid]);
@@ -4315,9 +4327,10 @@ function App() {
           </div>
         )}
 
-        {/* v35: SECTION AUDIO SHOP — Magasin de musique dans le Shop */}
+        {/* v53: SECTION AUDIO SHOP — Fusionne tracks des cours + Studio Audio autonomes */}
         {(() => {
           const allAudioTracks = [];
+          // v35: tracks intégrées aux cours
           courses.forEach(course => {
             if (course.audio_tracks && course.audio_tracks.length > 0) {
               course.audio_tracks
@@ -4327,6 +4340,15 @@ function App() {
                 });
             }
           });
+          // v53: tracks autonomes du Studio Audio (collection audio_tracks)
+          if (studioAudioTracks && studioAudioTracks.length > 0) {
+            studioAudioTracks.forEach(track => {
+              // Éviter les doublons (même id)
+              if (!allAudioTracks.find(t => t.id === track.id)) {
+                allAudioTracks.push(track);
+              }
+            });
+          }
           if (allAudioTracks.length === 0) return null;
           return (
             <div id="audio-shop-section" className="mb-8 fade-in-section" style={{ paddingTop: '10px' }}>

@@ -1,17 +1,17 @@
-// Service Worker Afroboost V52 — Nuclear cache-bust + Push Notifications
+// Service Worker Afroboost V53 — Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v52';
+const CACHE_NAME = 'afroboost-v53';
 
 // Installation — skip waiting pour activer immédiatement
 self.addEventListener('install', (event) => {
-  console.log('[SW] V52 installe — skip waiting');
+  console.log('[SW] V53 installe — skip waiting');
   self.skipWaiting();
 });
 
 // Activation — supprime TOUS les anciens caches (nuclear purge)
 self.addEventListener('activate', (event) => {
-  console.log('[SW] V52 active — nuclear purge caches');
+  console.log('[SW] V53 active — nuclear purge caches');
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
