@@ -1366,7 +1366,8 @@ async def upload_coach_asset(
     allowed_types = {
         "image": ["image/jpeg", "image/png", "image/webp", "image/gif"],
         "video": ["video/mp4", "video/webm", "video/quicktime"],
-        "logo": ["image/jpeg", "image/png", "image/webp", "image/svg+xml"]
+        "logo": ["image/jpeg", "image/png", "image/webp", "image/svg+xml"],
+        "audio": ["audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/aac", "audio/x-wav", "audio/x-m4a", "audio/mp4"]
     }
     
     if asset_type not in allowed_types:
@@ -1378,7 +1379,7 @@ async def upload_coach_asset(
     contents = await file.read()
     
     # Limite de taille selon le type
-    max_sizes = {"image": 5*1024*1024, "video": 50*1024*1024, "logo": 2*1024*1024}
+    max_sizes = {"image": 5*1024*1024, "video": 50*1024*1024, "logo": 2*1024*1024, "audio": 20*1024*1024}
     if len(contents) > max_sizes.get(asset_type, 5*1024*1024):
         raise HTTPException(status_code=400, detail=f"Fichier trop volumineux (max {max_sizes[asset_type]//1024//1024}MB)")
     
@@ -1391,7 +1392,9 @@ async def upload_coach_asset(
         ext_map = {
             "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif",
             "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov",
-            "image/svg+xml": ".svg"
+            "image/svg+xml": ".svg",
+            "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav",
+            "audio/ogg": ".ogg", "audio/aac": ".aac", "audio/x-m4a": ".m4a", "audio/mp4": ".m4a"
         }
         ext = ext_map.get(file.content_type, ".bin")
         
@@ -1410,7 +1413,7 @@ async def upload_coach_asset(
             
             img.save(filepath, "JPEG" if ext == ".jpg" else "PNG", quality=85)
         else:
-            # Vidéos et SVG: sauvegarder tel quel
+            # Vidéos, SVG et Audio: sauvegarder tel quel
             with open(filepath, 'wb') as f:
                 f.write(contents)
         

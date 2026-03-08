@@ -43,13 +43,16 @@ const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail
 const ADMIN_EMAIL = 'contact.artboost@gmail.com'; // Legacy
 const APP_VERSION = '2.0.0';
 
-// v9.5.6: Helper pour vérifier si un email est Super Admin
+// v9.5.6 + v41: Helper pour vérifier si un email est Super Admin
+// Inclut les emails @afroboost.com + la whitelist
 const isSuperAdminEmail = (email) => {
   if (!email) return false;
-  return SUPER_ADMIN_EMAILS.some(adminEmail => 
-    email.toLowerCase().trim() === adminEmail.toLowerCase()
-  );
+  const e = email.toLowerCase().trim();
+  return SUPER_ADMIN_EMAILS.some(a => e === a.toLowerCase()) || e.endsWith('@afroboost.com');
 };
+
+// v41: Clé de persistance admin
+const ADMIN_AUTH_TOKEN_KEY = 'afroboost_auth_token';
 
 // v9.2.4: DÉTECTION IMMÉDIATE PROPULSION STRIPE (avant tout rendu) - MÉMOIRE MORTE
 // Cette logique s'exécute AVANT React pour capturer l'intention de redirection
@@ -2025,6 +2028,17 @@ function App() {
         console.log('[APP] ✅ Session coach restaurée');
         return true;
       }
+      // v41: Fallback — restauration automatique via token admin persistant
+      const adminToken = localStorage.getItem(ADMIN_AUTH_TOKEN_KEY);
+      if (adminToken) {
+        const parsed = JSON.parse(adminToken);
+        if (parsed?.email && isSuperAdminEmail(parsed.email)) {
+          localStorage.setItem('afroboost_coach_mode', 'true');
+          localStorage.setItem('afroboost_coach_user', JSON.stringify(parsed));
+          console.log('[APP] 🔑 Session admin auto-restaurée via token persistant:', parsed.email);
+          return true;
+        }
+      }
     } catch (e) {}
     return false;
   });
@@ -2035,6 +2049,14 @@ function App() {
         const user = JSON.parse(savedCoachUser);
         console.log('[APP] ✅ Utilisateur coach restauré:', user?.email);
         return user;
+      }
+      // v41: Fallback — restauration via token admin
+      const adminToken = localStorage.getItem(ADMIN_AUTH_TOKEN_KEY);
+      if (adminToken) {
+        const parsed = JSON.parse(adminToken);
+        if (parsed?.email && isSuperAdminEmail(parsed.email)) {
+          return parsed;
+        }
       }
     } catch (e) {}
     return null;
@@ -3438,6 +3460,17 @@ function App() {
     // Persister la session coach
     localStorage.setItem('afroboost_coach_mode', 'true');
     localStorage.setItem('afroboost_coach_user', JSON.stringify(userData));
+
+    // v41: Mémorisation persistante Super Admin / @afroboost.com
+    if (userData?.email && isSuperAdminEmail(userData.email)) {
+      localStorage.setItem(ADMIN_AUTH_TOKEN_KEY, JSON.stringify({
+        email: userData.email,
+        name: userData.name,
+        user_id: userData.user_id,
+        savedAt: new Date().toISOString()
+      }));
+      console.log('[APP] 🔑 Token admin persistant sauvegardé pour', userData.email);
+    }
     
     setCoachUser(userData);
     setCoachMode(true);
