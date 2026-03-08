@@ -395,6 +395,29 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     return () => clearInterval(timer);
   }, [heroSlidesCount]);
 
+  // v29.4: PRELOAD vidéos en arrière-plan pour chargement instantané au switch
+  useEffect(() => {
+    if (!coachConcept?.heroVideos) return;
+    const base = BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+    const links = [];
+    coachConcept.heroVideos.forEach(v => {
+      if (!v || !v.url) return;
+      const url = v.url.toLowerCase();
+      const isVideo = url.match(/\.(mp4|webm|mov)(\?|$)/i) || v.type === 'upload' || url.includes('/video_');
+      if (isVideo && v.url.startsWith('/api/files/')) {
+        const fullUrl = `${base}${v.url}?v=${cacheBusterTs}`;
+        const link = document.createElement('link');
+        link.rel = 'preload';
+        link.as = 'video';
+        link.href = fullUrl;
+        document.head.appendChild(link);
+        links.push(link);
+        console.log('[V29.4] Preload vidéo:', fullUrl);
+      }
+    });
+    return () => links.forEach(l => { try { document.head.removeChild(l); } catch(e) {} });
+  }, [coachConcept, cacheBusterTs]);
+
   // === LOADING — v14: fond noir simple, pas de violet ===
   if (loading) {
     return (
@@ -421,16 +444,16 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const displayName = coach.platform_name || coach.name || 'Coach';
   const initial = displayName.charAt(0).toUpperCase();
 
-  // v20.1: Résolution URL COMPLÈTE (origin + path) + CACHE-BUSTING STABLE
+  // v29.4: Résolution URL COMPLÈTE — cache-buster STABLE (fixé au montage)
   const resolveMediaUrl = (url) => {
     if (!url) return '';
     if (url.startsWith('/api/files/')) {
       const base = BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '');
-      const finalUrl = `${base}${url}?v=${cacheBusterTs}`;
-      return finalUrl;
+      return `${base}${url}?v=${cacheBusterTs}`;
     }
     return url;
   };
+  console.log('[VITRINE-V29.4] resolveMediaUrl stable — cacheBusterTs:', cacheBusterTs);
 
   // v20.1: Détection STRICTE du type réel de média — image TOUJOURS avant vidéo
   const detectMediaType = (video) => {
@@ -451,44 +474,27 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   };
 
   // v20: Multi-vidéos héro — PRIORITÉ ABSOLUE aux médias uploadés
+  // v29.4: heroVideos — tri uploadés en priorité, URLs résolues stables
   const heroVideos = (() => {
     if (coachConcept?.heroVideos && coachConcept.heroVideos.length > 0) {
       const filtered = coachConcept.heroVideos.filter(v => v && v.url);
-
-      // v20: LOGS DE DIAGNOSTIC — afficher exactement ce que l'API renvoie
-      console.log("MÉDIAS REÇUS POUR VITRINE:", coachConcept.heroVideos);
-      filtered.forEach((v, i) => {
-        console.log(`SOURCE SLOT ${i + 1}:`, v, '→ type détecté:', detectMediaType(v));
-      });
-
-      // v20: Réordonner — médias uploadés (image, vidéo) en PRIORITÉ ABSOLUE, YouTube/Vimeo en dernier
-      const uploaded = filtered.filter(v => {
-        const t = detectMediaType(v);
-        return t === 'image' || t === 'video';
-      });
-      const external = filtered.filter(v => {
-        const t = detectMediaType(v);
-        return t !== 'image' && t !== 'video';
-      });
+      const uploaded = filtered.filter(v => { const t = detectMediaType(v); return t === 'image' || t === 'video'; });
+      const external = filtered.filter(v => { const t = detectMediaType(v); return t !== 'image' && t !== 'video'; });
       const reordered = [...uploaded, ...external];
-
-      // v20: Log détaillé de l'ordre final
-      console.log('[VITRINE-HERO] Ordre final carousel:', reordered.map((v, i) => `[${i}] ${detectMediaType(v)} → ${v.url}`));
-      if (reordered[0]) console.log("URL GÉNÉRÉE POUR SLOT 1:", resolveMediaUrl(reordered[0].url));
-      if (reordered[1]) console.log("URL GÉNÉRÉE POUR SLOT 2:", resolveMediaUrl(reordered[1].url));
-      if (reordered[2]) console.log("URL GÉNÉRÉE POUR SLOT 3:", resolveMediaUrl(reordered[2].url));
-
+      console.log('[V29.4-HERO] Carousel:', reordered.map((v, i) => `[${i}] ${detectMediaType(v)} → ${resolveMediaUrl(v.url)}`));
       return reordered;
     }
     if (coachConcept?.heroImageUrl) {
-      console.log('[VITRINE-HERO] Fallback heroImageUrl:', coachConcept.heroImageUrl);
       return [{ url: coachConcept.heroImageUrl, type: 'youtube' }];
     }
-    console.log('[VITRINE-HERO] Aucune vidéo configurée — coachConcept:', coachConcept);
     return [];
   })();
+
+  // v29.4: Pré-résolution STABLE des URLs — calculée une seule fois par changement de concept
+  const heroResolvedUrls = heroVideos.map(v => resolveMediaUrl(v.url));
+
   const currentHeroVideo = heroVideos[activeVideoIndex] || heroVideos[0] || null;
-  const heroVideoUrl = resolveMediaUrl(currentHeroVideo?.url || '');
+  const heroVideoUrl = heroResolvedUrls[activeVideoIndex] || heroResolvedUrls[0] || '';
   const heroMediaType = detectMediaType(currentHeroVideo);
   const youtubeId = getYoutubeId(heroVideoUrl);
 
@@ -656,7 +662,6 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
 
             // === IMAGE (uploadée ou externe) — v20.1 ===
             if (heroMediaType === 'image') {
-              console.warn('DEBUG MÉDIA URL (image):', heroVideoUrl);
               return (
                 <img
                   key={`img-${heroVideoUrl}`}
@@ -671,7 +676,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   }}
                   onError={(e) => {
                     console.error('[VITRINE-MEDIA] ❌ Erreur chargement image:', heroVideoUrl);
-                    console.warn('DEBUG MÉDIA URL (image ERREUR):', heroVideoUrl);
+                    console.error('[V29.4] Image load error:', heroVideoUrl);
                     const loader = document.getElementById('hero-media-loader');
                     if (loader) loader.style.display = 'none';
                     e.target.style.display = 'none';
@@ -680,37 +685,47 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               );
             }
 
-            // === VIDEO (uploadée ou externe) — v20.1 AUTOPLAY ANTI-ÉCRAN NOIR ===
+            // === VIDEO (uploadée ou externe) — v29.4 AUTOPLAY ROBUSTE ===
             if (heroMediaType === 'video') {
               return (
-                <div className="absolute inset-0" key={`vid-wrap-${heroVideoUrl}`}>
+                <div className="absolute inset-0" key={`vid-wrap-${activeVideoIndex}`}>
                   <video
-                    key={`vid-${heroVideoUrl}`}
-                    src={heroVideoUrl}
-                    autoPlay={true}
-                    muted={true}
-                    loop={true}
-                    playsInline={true}
+                    key={`vid-${activeVideoIndex}`}
+                    autoPlay
+                    muted
+                    loop
+                    playsInline
                     preload="auto"
                     className="absolute inset-0 w-full h-full object-cover"
                     style={{ filter: 'brightness(0.7)' }}
                     ref={(el) => {
-                      // v20.1: Attributs supplémentaires pour compatibilité mobile
                       if (el) {
+                        // v29.4: Attributs mobile
                         el.setAttribute('webkit-playsinline', 'true');
                         el.setAttribute('x5-video-player-type', 'h5');
                         el.setAttribute('x5-video-player-fullscreen', 'false');
-                        // Force autoplay après montage DOM
-                        setTimeout(() => {
-                          if (el.paused) {
-                            el.muted = true;
-                            el.play().catch(() => {});
-                          }
-                        }, 100);
+                        // v29.4: Charger la source et forcer play
+                        if (el.src !== heroVideoUrl) {
+                          el.src = heroVideoUrl;
+                          el.load();
+                        }
+                        // Force play avec retry progressif
+                        const tryPlay = (attempt) => {
+                          if (attempt > 5) return;
+                          setTimeout(() => {
+                            if (el.paused && el.readyState >= 2) {
+                              el.muted = true;
+                              el.play().catch(() => tryPlay(attempt + 1));
+                            } else if (el.paused) {
+                              tryPlay(attempt + 1);
+                            }
+                          }, attempt * 200);
+                        };
+                        tryPlay(0);
                       }
                     }}
                     onCanPlay={(e) => {
-                      console.warn('DEBUG MÉDIA URL (video canplay):', heroVideoUrl);
+                      console.log('[V29.4] Video canplay:', heroVideoUrl);
                       const loader = document.getElementById('hero-media-loader');
                       if (loader) loader.style.display = 'none';
                       if (e.target.paused) {
@@ -719,17 +734,17 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       }
                     }}
                     onLoadedData={() => {
-                      console.log('[VITRINE-MEDIA] ✅ Vidéo autoplay chargée:', heroVideoUrl);
+                      console.log('[V29.4] Video loaded:', heroVideoUrl);
                       const loader = document.getElementById('hero-media-loader');
                       if (loader) loader.style.display = 'none';
                     }}
                     onError={(e) => {
-                      console.error('[VITRINE-MEDIA] ❌ Erreur chargement vidéo:', heroVideoUrl, e.target.error);
+                      console.error('[V29.4] Video error:', heroVideoUrl, e.target.error);
                       const loader = document.getElementById('hero-media-loader');
                       if (loader) loader.style.display = 'none';
                     }}
                   />
-                  {/* v18.3: Gradient fallback derrière la vidéo (visible si vidéo ne charge pas) */}
+                  {/* Gradient fallback derrière la vidéo */}
                   <div className="absolute inset-0" style={{
                     background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.6) 0%, rgba(217, 28, 210, 0.5) 50%, rgba(30, 0, 50, 0.9) 100%)',
                     zIndex: -1
