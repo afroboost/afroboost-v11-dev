@@ -474,15 +474,12 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   };
 
   // v20: Multi-vidéos héro — PRIORITÉ ABSOLUE aux médias uploadés
-  // v29.4: heroVideos — tri uploadés en priorité, URLs résolues stables
+  // v32: Respecter l'ordre MANUEL défini dans le Dashboard (plus de tri automatique)
   const heroVideos = (() => {
     if (coachConcept?.heroVideos && coachConcept.heroVideos.length > 0) {
       const filtered = coachConcept.heroVideos.filter(v => v && v.url);
-      const uploaded = filtered.filter(v => { const t = detectMediaType(v); return t === 'image' || t === 'video'; });
-      const external = filtered.filter(v => { const t = detectMediaType(v); return t !== 'image' && t !== 'video'; });
-      const reordered = [...uploaded, ...external];
-      console.log('[V29.4-HERO] Carousel:', reordered.map((v, i) => `[${i}] ${detectMediaType(v)} → ${resolveMediaUrl(v.url)}`));
-      return reordered;
+      console.log('[V32-HERO] Carousel ordre manuel:', filtered.map((v, i) => `[${i}] ${detectMediaType(v)} → ${resolveMediaUrl(v.url)}`));
+      return filtered;
     }
     if (coachConcept?.heroImageUrl) {
       return [{ url: coachConcept.heroImageUrl, type: 'youtube' }];

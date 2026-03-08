@@ -1,5 +1,5 @@
 /**
- * ConceptEditor Component v13.4
+ * ConceptEditor Component v32 — Positionnement manuel des médias
  * Éditeur de concept/personnalisation - Extrait de CoachDashboard.js
  */
 import React from 'react';
@@ -44,6 +44,16 @@ const ConceptEditor = ({
   const removeHeroVideo = (index) => {
     const videos = [...getHeroVideos()];
     videos.splice(index, 1);
+    setConcept({ ...concept, heroVideos: videos, heroImageUrl: videos[0]?.url || '' });
+  };
+
+  // v32: Déplacer un média vers la gauche ou la droite
+  const moveHeroVideo = (index, direction) => {
+    const videos = [...getHeroVideos()];
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= videos.length) return;
+    // Swap
+    [videos[index], videos[newIndex]] = [videos[newIndex], videos[index]];
     setConcept({ ...concept, heroVideos: videos, heroImageUrl: videos[0]?.url || '' });
   };
 
@@ -332,7 +342,42 @@ const ConceptEditor = ({
                 borderRadius: '10px', padding: '12px', marginBottom: '8px'
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: 600 }}>Vidéo {idx + 1}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: 600 }}>Vidéo {idx + 1}</span>
+                    {/* v32: Boutons de positionnement manuel */}
+                    {getHeroVideos().length > 1 && (
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        <button
+                          type="button"
+                          onClick={() => moveHeroVideo(idx, -1)}
+                          disabled={idx === 0}
+                          style={{
+                            background: idx === 0 ? 'rgba(255,255,255,0.05)' : 'rgba(217,28,210,0.15)',
+                            border: `1px solid ${idx === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(217,28,210,0.4)'}`,
+                            color: idx === 0 ? 'rgba(255,255,255,0.2)' : '#D91CD2',
+                            fontSize: '13px', padding: '1px 8px', borderRadius: '6px',
+                            cursor: idx === 0 ? 'not-allowed' : 'pointer', fontWeight: 700,
+                            transition: 'all 0.2s ease'
+                          }}
+                          title="Déplacer vers la gauche"
+                        >◀</button>
+                        <button
+                          type="button"
+                          onClick={() => moveHeroVideo(idx, 1)}
+                          disabled={idx === getHeroVideos().length - 1}
+                          style={{
+                            background: idx === getHeroVideos().length - 1 ? 'rgba(255,255,255,0.05)' : 'rgba(217,28,210,0.15)',
+                            border: `1px solid ${idx === getHeroVideos().length - 1 ? 'rgba(255,255,255,0.1)' : 'rgba(217,28,210,0.4)'}`,
+                            color: idx === getHeroVideos().length - 1 ? 'rgba(255,255,255,0.2)' : '#D91CD2',
+                            fontSize: '13px', padding: '1px 8px', borderRadius: '6px',
+                            cursor: idx === getHeroVideos().length - 1 ? 'not-allowed' : 'pointer', fontWeight: 700,
+                            transition: 'all 0.2s ease'
+                          }}
+                          title="Déplacer vers la droite"
+                        >▶</button>
+                      </div>
+                    )}
+                  </div>
                   <button
                     type="button"
                     onClick={() => removeHeroVideo(idx)}

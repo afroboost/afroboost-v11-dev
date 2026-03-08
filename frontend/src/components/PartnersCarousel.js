@@ -129,13 +129,10 @@ const resolveHeroUrl = (url, cacheBuster) => {
   return url;
 };
 
-// v31: Trier heroVideos — uploaded d'abord, puis external (YouTube, etc.)
-const sortHeroVideos = (heroVideos) => {
+// v32: Respecter l'ordre MANUEL défini dans le Dashboard (plus de tri automatique)
+const getHeroVideosOrdered = (heroVideos) => {
   if (!heroVideos || heroVideos.length === 0) return [];
-  const filtered = heroVideos.filter(v => v && v.url);
-  const uploaded = filtered.filter(v => { const t = detectHeroMediaType(v); return t === 'image' || t === 'video'; });
-  const external = filtered.filter(v => { const t = detectHeroMediaType(v); return t !== 'image' && t !== 'video'; });
-  return [...uploaded, ...external];
+  return heroVideos.filter(v => v && v.url);
 };
 
 const getMediaInfo = (videoUrl) => {
@@ -172,7 +169,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   const [activeHeroIdx, setActiveHeroIdx] = useState(0);
   const [cacheBusterTs] = useState(() => Date.now());
 
-  const heroVideosSorted = useMemo(() => sortHeroVideos(partner.heroVideos || []), [partner.heroVideos]);
+  // v32: Utiliser l'ordre de la BDD tel quel (pas de tri automatique)
+  const heroVideosSorted = useMemo(() => getHeroVideosOrdered(partner.heroVideos || []), [partner.heroVideos]);
   const heroSlidesCount = heroVideosSorted.length;
 
   // v31: Auto-rotation toutes les 8s quand il y a plusieurs slots
