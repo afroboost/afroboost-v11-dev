@@ -611,16 +611,21 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [tab, setTab] = useState(() => {
     try {
       const savedTab = localStorage.getItem(COACH_TAB_KEY);
-      // v9.2.9: Migration "payments" → "page-vente" et ajout du nouvel onglet
+      // v36: Migration — "concept" et "courses" redirigent vers "offers"
       if (savedTab && ['reservations', 'concept', 'courses', 'offers', 'payments', 'page-vente', 'codes', 'campaigns', 'articles', 'media', 'conversations'].includes(savedTab)) {
-        const migratedTab = savedTab === 'payments' ? 'page-vente' : savedTab;
+        const migratedTab = savedTab === 'payments' ? 'page-vente'
+          : (savedTab === 'concept' || savedTab === 'courses') ? 'offers'
+          : savedTab;
         console.log('[COACH] ✅ Onglet restauré:', migratedTab);
         return migratedTab;
       }
     } catch (e) {}
     return "reservations";
   });
-  
+
+  // v36: Sous-onglet du HUB "Gestion" (ex-Offres)
+  const [offersSubTab, setOffersSubTab] = useState('cours');
+
   // === PARTAGE COACH ===
   const [linkCopied, setLinkCopied] = useState(false);
   
@@ -4066,11 +4071,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // L'indicateur requiresCredits est supprimé - seul le filtrage coach_id sépare les données
   // v13: Campagnes accessible à tous (CreditsGate bloque si 0 crédits)
   // v13.0: Ajout "Boutique" pour achat de crédits
+  // v36: "Concept & Visuel" et "Cours" supprimés — intégrés dans le HUB "Offres"
   const baseTabs = [
     { id: "reservations", label: t('reservations') },
-    { id: "concept", label: t('conceptVisual') },
-    { id: "courses", label: t('courses') },
-    { id: "offers", label: t('offers') },
+    { id: "offers", label: "🎛️ Gestion" },
     { id: "page-vente", label: "🏪 Ma Page" },
     { id: "codes", label: t('promoCodes') },
     // v18: Contacts centralisés avec sync Google
@@ -4120,7 +4124,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         
         {/* Onglets squelette */}
         <div className="flex flex-wrap gap-2 mb-6">
-          {['Réservations', 'Concept & Visuel', 'Cours', 'Offres', 'Paiements', 'Codes promo', 'Campagnes', 'Conversations'].map((tabName, i) => (
+          {['Réservations', '🎛️ Gestion', '🏪 Ma Page', 'Codes promo', 'Contacts', 'Campagnes', 'Conversations'].map((tabName, i) => (
             <div 
               key={i}
               className="px-4 py-2 rounded-lg text-white/60 text-sm"
@@ -4902,61 +4906,149 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           />
         )}
 
-        {/* v13.4: Concept Tab - Composant extrait */}
-        {tab === "concept" && (
-          <>
-            <ConceptEditor
-              concept={concept}
-              setConcept={setConcept}
-              conceptSaveStatus={conceptSaveStatus}
-              saveConcept={saveConcept}
-              API={API}
-              t={t}
-              isSuperAdmin={isSuperAdmin}
-              coachEmail={safeCoachUser?.email || ''}
-              courses={courses}
-              setCourses={setCourses}
-            />
-            <BrandingManager
-              API={API}
-              coachEmail={safeCoachUser?.email}
-              t={t}
-            />
-          </>
-        )}
-
-        {/* v13.4: Courses Tab - Composant extrait */}
-        {tab === "courses" && (
-          <CoursesManager
-            courses={courses}
-            setCourses={setCourses}
-            newCourse={newCourse}
-            setNewCourse={setNewCourse}
-            updateCourse={updateCourse}
-            openAudioModal={openAudioModal}
-            lang={lang}
-            t={t}
-          />
-        )}
-
-        {/* v13.4: Offers Tab - Composant extrait */}
+        {/* v36: HUB GESTION — Centre de commande unifié avec sous-onglets 2x2 */}
         {tab === "offers" && (
-          <OffersManager
-            offers={offers}
-            setOffers={setOffers}
-            newOffer={newOffer}
-            setNewOffer={setNewOffer}
-            offersSearch={offersSearch}
-            setOffersSearch={setOffersSearch}
-            editingOfferId={editingOfferId}
-            addOffer={addOffer}
-            updateOffer={updateOffer}
-            deleteOffer={deleteOffer}
-            startEditOffer={startEditOffer}
-            cancelEditOffer={cancelEditOffer}
-            API={API}
-            t={t}
-          />
+          <>
+            {/* Grille 2x2 de navigation mobile-first */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, 1fr)',
+              gap: '10px',
+              marginBottom: '16px'
+            }}>
+              {[
+                { id: 'cours', icon: '💃', label: 'Cours & Offres' },
+                { id: 'audio', icon: '🎧', label: 'Audio' },
+                { id: 'video-hero', icon: '🎬', label: 'Vidéo Hero' },
+                { id: 'settings', icon: '⚙️', label: 'Paramètres' }
+              ].map(sub => (
+                <button
+                  key={sub.id}
+                  onClick={() => setOffersSubTab(sub.id)}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    padding: '14px 8px',
+                    borderRadius: '14px',
+                    border: offersSubTab === sub.id
+                      ? '2px solid rgba(217,28,210,0.7)'
+                      : '1px solid rgba(255,255,255,0.1)',
+                    background: offersSubTab === sub.id
+                      ? 'linear-gradient(135deg, rgba(217,28,210,0.18), rgba(139,92,246,0.12))'
+                      : 'rgba(255,255,255,0.04)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    transform: offersSubTab === sub.id ? 'scale(1.02)' : 'scale(1)',
+                    minHeight: '72px'
+                  }}
+                >
+                  <span style={{ fontSize: '24px' }}>{sub.icon}</span>
+                  <span style={{
+                    color: offersSubTab === sub.id ? '#D91CD2' : 'rgba(255,255,255,0.7)',
+                    fontSize: '12px',
+                    fontWeight: offersSubTab === sub.id ? 700 : 500,
+                    textAlign: 'center',
+                    lineHeight: '1.2'
+                  }}>{sub.label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Sous-onglet: 💃 Cours & Offres */}
+            {offersSubTab === 'cours' && (
+              <>
+                <CoursesManager
+                  courses={courses}
+                  setCourses={setCourses}
+                  newCourse={newCourse}
+                  setNewCourse={setNewCourse}
+                  updateCourse={updateCourse}
+                  openAudioModal={openAudioModal}
+                  lang={lang}
+                  t={t}
+                />
+                <div style={{ marginTop: '16px' }}>
+                  <OffersManager
+                    offers={offers}
+                    setOffers={setOffers}
+                    newOffer={newOffer}
+                    setNewOffer={setNewOffer}
+                    offersSearch={offersSearch}
+                    setOffersSearch={setOffersSearch}
+                    editingOfferId={editingOfferId}
+                    addOffer={addOffer}
+                    updateOffer={updateOffer}
+                    deleteOffer={deleteOffer}
+                    startEditOffer={startEditOffer}
+                    cancelEditOffer={cancelEditOffer}
+                    API={API}
+                    t={t}
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Sous-onglet: 🎧 Audio */}
+            {offersSubTab === 'audio' && (
+              <ConceptEditor
+                concept={concept}
+                setConcept={setConcept}
+                conceptSaveStatus={conceptSaveStatus}
+                saveConcept={saveConcept}
+                API={API}
+                t={t}
+                isSuperAdmin={isSuperAdmin}
+                coachEmail={safeCoachUser?.email || ''}
+                courses={courses}
+                setCourses={setCourses}
+                section="audio"
+              />
+            )}
+
+            {/* Sous-onglet: 🎬 Vidéo Hero */}
+            {offersSubTab === 'video-hero' && (
+              <ConceptEditor
+                concept={concept}
+                setConcept={setConcept}
+                conceptSaveStatus={conceptSaveStatus}
+                saveConcept={saveConcept}
+                API={API}
+                t={t}
+                isSuperAdmin={isSuperAdmin}
+                coachEmail={safeCoachUser?.email || ''}
+                courses={courses}
+                setCourses={setCourses}
+                section="video-hero"
+              />
+            )}
+
+            {/* Sous-onglet: ⚙️ Paramètres */}
+            {offersSubTab === 'settings' && (
+              <>
+                <ConceptEditor
+                  concept={concept}
+                  setConcept={setConcept}
+                  conceptSaveStatus={conceptSaveStatus}
+                  saveConcept={saveConcept}
+                  API={API}
+                  t={t}
+                  isSuperAdmin={isSuperAdmin}
+                  coachEmail={safeCoachUser?.email || ''}
+                  courses={courses}
+                  setCourses={setCourses}
+                  section="settings"
+                />
+                <BrandingManager
+                  API={API}
+                  coachEmail={safeCoachUser?.email}
+                  t={t}
+                />
+              </>
+            )}
+          </>
         )}
 
         {/* v13.5: Ma Page de Vente - Composant extrait */}

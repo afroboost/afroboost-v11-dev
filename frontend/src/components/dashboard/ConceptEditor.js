@@ -1,6 +1,13 @@
 /**
- * ConceptEditor Component v32 — Positionnement manuel des médias
+ * ConceptEditor Component v36 — HUB centralisé avec sections filtrables
  * Éditeur de concept/personnalisation - Extrait de CoachDashboard.js
+ *
+ * Props:
+ *   section: 'video-hero' | 'audio' | 'settings' | 'all' (default: 'all')
+ *   - 'video-hero': Affiche les 3 slots média héro + Master Control Vidéos
+ *   - 'audio': Affiche le Master Control Audio
+ *   - 'settings': Affiche couleurs, paramètres généraux, liens, logos paiement, affiche événement
+ *   - 'all': Affiche tout (rétro-compatible)
  */
 import React from 'react';
 import { LandingSectionSelector } from '../SearchBar';
@@ -15,7 +22,8 @@ const ConceptEditor = ({
   isSuperAdmin = false,
   coachEmail = '',
   courses = [],
-  setCourses
+  setCourses,
+  section = 'all'
 }) => {
   const [aiLegalLoading, setAiLegalLoading] = React.useState(false);
   const [uploadingVideo, setUploadingVideo] = React.useState(null); // slot index being uploaded
@@ -123,11 +131,22 @@ const ConceptEditor = ({
       setAiLegalLoading(false);
     }
   };
+  // v36: Déterminer quelles sections afficher
+  const showVideoHero = section === 'all' || section === 'video-hero';
+  const showAudio = section === 'all' || section === 'audio';
+  const showSettings = section === 'all' || section === 'settings';
+
+  // v36: Titres dynamiques par section
+  const sectionTitle = section === 'video-hero' ? '🎬 Vidéo Hero'
+    : section === 'audio' ? '🎧 Audio'
+    : section === 'settings' ? '⚙️ Paramètres'
+    : t('conceptVisual');
+
   return (
     <div className="card-gradient rounded-xl p-6">
       {/* Indicateur de sauvegarde automatique */}
       <div className="flex items-center justify-between mb-6">
-        <h2 className="font-semibold text-white" style={{ fontSize: '20px' }}>{t('conceptVisual')}</h2>
+        <h2 className="font-semibold text-white" style={{ fontSize: '20px' }}>{sectionTitle}</h2>
         {conceptSaveStatus && (
           <span 
             className="px-3 py-1 rounded-full text-xs font-medium flex items-center gap-2"
@@ -149,8 +168,8 @@ const ConceptEditor = ({
       </div>
       
       <div className="space-y-4">
-        {/* PERSONNALISATION DES COULEURS */}
-        <div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+        {/* PERSONNALISATION DES COULEURS — v36: section settings */}
+        {showSettings && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-purple-400 font-semibold">🎨 Personnalisation des couleurs</h3>
             <button
@@ -282,34 +301,38 @@ const ConceptEditor = ({
               </div>
             </div>
           </div>
-        </div>
+        </div>)}
 
-        {/* PARAMÈTRES GÉNÉRAUX */}
-        <div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+        {/* v36: PARAMÈTRES GÉNÉRAUX (sans Hero vidéos) — section settings */}
+        {showSettings && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <h3 className="text-purple-400 font-semibold mb-4">⚙️ Paramètres généraux</h3>
-          
+
           {/* Nom de l'application */}
           <div className="mb-4">
             <label className="block mb-1 text-white text-xs opacity-70">{t('appName')}</label>
-            <input 
-              type="text" 
-              value={concept.appName} 
+            <input
+              type="text"
+              value={concept.appName}
               onChange={(e) => setConcept({ ...concept, appName: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg neon-input text-sm" 
+              className="w-full px-3 py-2 rounded-lg neon-input text-sm"
             />
           </div>
-          
+
           {/* Description */}
           <div className="mb-4">
             <label className="block mb-1 text-white text-xs opacity-70">{t('description')}</label>
-            <textarea 
-              value={concept.description} 
+            <textarea
+              value={concept.description}
               onChange={(e) => setConcept({ ...concept, description: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg neon-input text-sm" 
+              className="w-full px-3 py-2 rounded-lg neon-input text-sm"
               rows={3}
             />
           </div>
-          
+        </div>)}
+
+        {/* v36: VIDÉOS HÉRO (3 max) — section video-hero — extrait du bloc Paramètres */}
+        {showVideoHero && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+          <h3 className="text-purple-400 font-semibold mb-4">🎬 Médias Héro — vidéos ou images (max 3)</h3>
           {/* v18: Multi-Vidéos Héro (3 max) */}
           <div className="mb-4">
             <div className="flex items-center justify-between mb-2">
@@ -549,7 +572,11 @@ const ConceptEditor = ({
               </div>
             ))}
           </div>
-          
+        </div>)}
+
+        {/* v36: BRANDING & IDENTITÉ — section settings */}
+        {showSettings && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+          <h3 className="text-purple-400 font-semibold mb-4">🏷️ Branding & Identité</h3>
           {/* Logo URL */}
           <div className="mb-4">
             <label className="block mb-1 text-white text-xs opacity-70">{t('logoUrl')}</label>
@@ -627,18 +654,18 @@ const ConceptEditor = ({
               </div>
             )}
           </div>
-        </div>
+        </div>)}
 
-        {/* Section d'atterrissage */}
-        <div className="border-t border-purple-500/30 pt-6">
-          <LandingSectionSelector 
+        {/* Section d'atterrissage — v36: section settings */}
+        {showSettings && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+          <LandingSectionSelector
             value={concept.defaultLandingSection || 'sessions'}
             onChange={(value) => setConcept({ ...concept, defaultLandingSection: value })}
           />
-        </div>
+        </div>)}
 
-        {/* Liens Externes */}
-        <div className="border-t border-purple-500/30 pt-6">
+        {/* Liens Externes — v36: section settings */}
+        {showSettings && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <h3 className="text-white text-sm font-semibold mb-4">🔗 Liens Externes (affichés en bas de page)</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div>
@@ -688,10 +715,10 @@ const ConceptEditor = ({
               />
             </div>
           </div>
-        </div>
+        </div>)}
 
-        {/* Logos de paiement */}
-        <div className="border-t border-purple-500/30 pt-6">
+        {/* Logos de paiement — v36: section settings */}
+        {showSettings && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <h3 className="text-white text-sm font-semibold mb-4">💳 Logos de paiement</h3>
           <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,0.4)' }}>
             Activez les logos qui s'afficheront dans le pied de page.
@@ -750,10 +777,10 @@ const ConceptEditor = ({
               </button>
             </div>
           </div>
-        </div>
+        </div>)}
 
-        {/* Affiche Événement */}
-        <div className="border-t border-purple-500/30 pt-6">
+        {/* Affiche Événement — v36: section settings */}
+        {showSettings && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <h3 className="text-white text-sm font-semibold mb-4">🎉 Affiche Événement (Popup d'accueil)</h3>
           <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,0.4)' }}>
             Affichez une image ou vidéo en popup dès l'arrivée des visiteurs.
@@ -829,10 +856,10 @@ const ConceptEditor = ({
               )}
             </div>
           )}
-        </div>
+        </div>)}
 
-        {/* v34: MASTER CONTROL SUPER ADMIN — Gestion centralisée des vidéos */}
-        {isSuperAdmin && getHeroVideos().length > 0 && (
+        {/* v34: MASTER CONTROL SUPER ADMIN — Gestion centralisée des vidéos — v36: section video-hero */}
+        {showVideoHero && isSuperAdmin && getHeroVideos().length > 0 && (
           <div className="border border-red-500/30 rounded-lg p-4 bg-red-900/10">
             <h3 className="text-red-400 font-semibold mb-4">🛡️ Master Control — Gestion Vidéos</h3>
             <p className="text-white/40 text-xs mb-3">Actions admin sur toutes les vidéos héro configurées.</p>
@@ -914,8 +941,8 @@ const ConceptEditor = ({
           </div>
         )}
 
-        {/* v35: MASTER CONTROL SUPER ADMIN — Gestion centralisée des audios */}
-        {isSuperAdmin && (() => {
+        {/* v35: MASTER CONTROL SUPER ADMIN — Gestion centralisée des audios — v36: section audio */}
+        {showAudio && isSuperAdmin && (() => {
           const allAudioTracks = [];
           courses.forEach((course, cIdx) => {
             if (course.audio_tracks && course.audio_tracks.length > 0) {
