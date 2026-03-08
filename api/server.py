@@ -1370,6 +1370,102 @@ async def upload_coach_asset(
         logger.error(f"[COACH-UPLOAD] ❌ Erreur: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur upload: {str(e)}")
 
+# === v44: CRUD PISTES AUDIO AUTONOMES (indépendant des cours) ===
+# Collection MongoDB: audio_tracks — chaque piste est un document indépendant
+
+@api_router.get("/audio-tracks")
+async def list_audio_tracks(request: Request):
+    """Liste toutes les pistes audio d'un coach"""
+    email = require_auth(request)
+    tracks = await db.audio_tracks.find(
+        {"coach_email": email},
+        {"_id": 0}
+    ).sort("order", 1).to_list(500)
+    return {"tracks": tracks, "count": len(tracks)}
+
+@api_router.post("/audio-tracks")
+async def create_audio_track(request: Request):
+    """Crée une nouvelle piste audio"""
+    email = require_auth(request)
+    body = await request.json()
+
+    track_id = f"track-{uuid.uuid4().hex[:12]}"
+    # Compter les pistes existantes pour l'ordre
+    count = await db.audio_tracks.count_documents({"coach_email": email})
+
+    track_doc = {
+        "id": track_id,
+        "coach_email": email,
+        "url": body.get("url", ""),
+        "title": body.get("title", "Sans titre"),
+        "cover_url": body.get("cover_url"),
+        "description": body.get("description", ""),
+        "price": float(body.get("price", 0)),
+        "preview_duration": int(body.get("preview_duration", 30)),
+        "duration": body.get("duration"),
+        "order": body.get("order", count),
+        "visible": body.get("visible", True),
+        "created_at": datetime.utcnow().isoformat()
+    }
+
+    await db.audio_tracks.insert_one(track_doc)
+    del track_doc["_id"]  # Remove MongoDB _id before returning
+    logger.info(f"[AUDIO] ✅ Piste créée: {track_doc['title']} pour {email}")
+    return {"success": True, "track": track_doc}
+
+@api_router.put("/audio-tracks/{track_id}")
+async def update_audio_track(track_id: str, request: Request):
+    """Met à jour une piste audio (titre, prix, visible, etc.)"""
+    email = require_auth(request)
+    body = await request.json()
+
+    existing = await db.audio_tracks.find_one({"id": track_id, "coach_email": email})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Piste non trouvée")
+
+    update_data = {k: v for k, v in body.items() if v is not None and k not in ("id", "coach_email", "_id")}
+    if "price" in update_data:
+        update_data["price"] = float(update_data["price"])
+
+    await db.audio_tracks.update_one({"id": track_id}, {"$set": update_data})
+    updated = await db.audio_tracks.find_one({"id": track_id}, {"_id": 0})
+    logger.info(f"[AUDIO] ✏️ Piste modifiée: {track_id} — champs: {list(update_data.keys())}")
+    return {"success": True, "track": updated}
+
+@api_router.delete("/audio-tracks/{track_id}")
+async def delete_audio_track(track_id: str, request: Request):
+    """Supprime une piste audio"""
+    email = require_auth(request)
+    result = await db.audio_tracks.delete_one({"id": track_id, "coach_email": email})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Piste non trouvée")
+    logger.info(f"[AUDIO] 🗑️ Piste supprimée: {track_id} par {email}")
+    return {"success": True, "deleted": track_id}
+
+@api_router.put("/audio-tracks/reorder")
+async def reorder_audio_tracks(request: Request):
+    """Réordonne les pistes audio"""
+    email = require_auth(request)
+    body = await request.json()
+    track_ids = body.get("track_ids", [])
+
+    for i, tid in enumerate(track_ids):
+        await db.audio_tracks.update_one(
+            {"id": tid, "coach_email": email},
+            {"$set": {"order": i}}
+        )
+    return {"success": True, "reordered": len(track_ids)}
+
+# === v44: PISTES AUDIO PUBLIQUES (pour la vitrine) ===
+@api_router.get("/public/audio-tracks/{coach_email}")
+async def get_public_audio_tracks(coach_email: str):
+    """Liste les pistes audio visibles d'un coach (pour la vitrine publique)"""
+    tracks = await db.audio_tracks.find(
+        {"coach_email": coach_email.lower().strip(), "visible": True},
+        {"_id": 0, "coach_email": 0}
+    ).sort("order", 1).to_list(100)
+    return {"tracks": tracks, "count": len(tracks)}
+
 # === v18.1: DIAGNOSTIC FICHIERS UPLOADÉS (doit être AVANT la route dynamique) ===
 @api_router.get("/files/check/{file_id}")
 async def check_uploaded_file(file_id: str):

@@ -85,6 +85,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   // v17.0: Branding dynamique
   const [brandAccent, setBrandAccent] = useState('#D91CD2');
 
+  // v44: Pistes audio autonomes (indépendantes des cours)
+  const [audioTracks, setAudioTracks] = useState([]);
+
   // v17.2: FAQ
   const [faqs, setFaqs] = useState([]);
   const [openFaqId, setOpenFaqId] = useState(null);
@@ -286,6 +289,12 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           const faqRes = await axios.get(`${API}/coach/faqs/${encodeURIComponent(res.data.coach.email || username)}`);
           setFaqs(Array.isArray(faqRes.data) ? faqRes.data : []);
         } catch (e) {}
+
+        // v44: Charger pistes audio autonomes
+        try {
+          const audioRes = await axios.get(`${API}/public/audio-tracks/${encodeURIComponent(res.data.coach.email || username)}`);
+          setAudioTracks(audioRes.data.tracks || []);
+        } catch (e) { console.warn('[VITRINE-V44] Audio tracks load failed:', e.message); }
       } catch (err) {
         console.error('[VITRINE] Erreur:', err);
         setError(err.response?.data?.detail || 'Coach non trouvé');
@@ -1230,65 +1239,35 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         )}
 
         {/* ============================================= */}
-        {/* v17.5: Section Contenus Audio (audio_tracks enrichis + legacy audio_url) */}
-        {(() => {
-          // Collecter toutes les pistes audio visibles de tous les cours
-          const allTracks = [];
-          courses.forEach(course => {
-            if (course.audio_tracks && course.audio_tracks.length > 0) {
-              course.audio_tracks
-                .filter(track => track.visible !== false)
-                .forEach(track => {
-                  allTracks.push({ ...track, courseName: course.name, courseId: course.id });
-                });
-            } else if (course.audio_url) {
-              // Legacy: cours avec audio_url simple
-              allTracks.push({
-                id: course.id,
-                url: course.audio_url,
-                title: course.title || course.name || 'Audio',
-                cover_url: course.image || course.thumbnail || null,
-                description: '',
-                price: course.audio_price || 0,
-                preview_duration: 30,
-                duration: course.audio_duration || null,
-                courseName: course.name,
-                courseId: course.id
-              });
-            }
-          });
-
-          if (allTracks.length === 0) return null;
-
-          return (
-            <div className="mb-8 vitrine-fade-in" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
-              <h2 className="font-semibold text-white text-center mb-4" style={{ fontSize: '16px' }}>
-                🎵 Contenus Audio
-              </h2>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {allTracks.map(track => (
-                  <AudioPlayer
-                    key={track.id}
-                    audioUrl={track.url}
-                    title={track.title}
-                    thumbnail={track.cover_url}
-                    duration={track.duration}
-                    price={track.price}
-                    description={track.description}
-                    accentColor={brandAccent}
-                    isPreview={!!track.price && track.price > 0}
-                    previewDuration={track.preview_duration || 30}
-                    onBuyClick={track.price > 0 ? () => {
-                      setSelectedOffer({ name: track.title, price: track.price, id: track.id || track.courseId, type: 'audio', thumbnail: track.cover_url });
-                      const el = document.getElementById('vitrine-booking-form');
-                      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    } : undefined}
-                  />
-                ))}
-              </div>
+        {/* v44: Section Contenus Audio — pistes autonomes depuis /api/public/audio-tracks */}
+        {audioTracks.length > 0 && (
+          <div className="mb-8 vitrine-fade-in" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
+            <h2 className="font-semibold text-white text-center mb-4" style={{ fontSize: '16px' }}>
+              🎵 Contenus Audio
+            </h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {audioTracks.map(track => (
+                <AudioPlayer
+                  key={track.id}
+                  audioUrl={track.url}
+                  title={track.title}
+                  thumbnail={track.cover_url}
+                  duration={track.duration}
+                  price={track.price}
+                  description={track.description}
+                  accentColor={brandAccent}
+                  isPreview={!!track.price && track.price > 0}
+                  previewDuration={track.preview_duration || 30}
+                  onBuyClick={track.price > 0 ? () => {
+                    setSelectedOffer({ name: track.title, price: track.price, id: track.id, type: 'audio', thumbnail: track.cover_url });
+                    const el = document.getElementById('vitrine-booking-form');
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  } : undefined}
+                />
+              ))}
             </div>
-          );
-        })()}
+          </div>
+        )}
 
         {/* ÉTAPE 3: FORMULAIRE INLINE (pas de pop-up) */}
         {/* Apparaît quand session + offre sélectionnées */}

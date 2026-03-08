@@ -701,9 +701,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [newEmojiName, setNewEmojiName] = useState("");
   const emojiInputRef = useRef(null);
 
-  // ========== v17.5: STUDIO AUDIO STATE ==========
+  // ========== v44: STUDIO AUDIO AUTONOME — indépendant des cours ==========
   const [showAudioModal, setShowAudioModal] = useState(false);
-  const [selectedCourseForAudio, setSelectedCourseForAudio] = useState(null);
+  const [selectedCourseForAudio, setSelectedCourseForAudio] = useState(null); // legacy compat
   const [audioTracks, setAudioTracks] = useState([]);
   const [savingPlaylist, setSavingPlaylist] = useState(false);
   const [uploadingAudio, setUploadingAudio] = useState(false);
@@ -713,73 +713,62 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const audioFileInputRef = useRef(null);
   const audioCoverInputRef = useRef(null);
   const [coverUploadTrackId, setCoverUploadTrackId] = useState(null);
+  const [audioLoaded, setAudioLoaded] = useState(false);
 
-  // v42: Auto-sélection du premier cours pour le Studio Audio au chargement
+  // v44: Chargement automatique des pistes audio depuis l'API autonome
+  const authHeaders = { 'X-User-Email': coachUser?.email || '' };
+  const loadAudioTracks = async () => {
+    try {
+      const res = await axios.get(`${API}/audio-tracks`, { headers: authHeaders });
+      setAudioTracks(res.data.tracks || []);
+      setAudioLoaded(true);
+      console.log(`[AUDIO] ✅ ${res.data.count} pistes chargées`);
+    } catch (err) {
+      console.error("[AUDIO] Erreur chargement:", err);
+      setAudioLoaded(true); // Marquer comme chargé même en erreur
+    }
+  };
+
   useEffect(() => {
-    if (courses.length > 0 && !selectedCourseForAudio) {
-      openAudioModal(courses[0]);
-      setShowAudioModal(false);
+    if (coachUser?.email && !audioLoaded) {
+      loadAudioTracks();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courses]);
+  }, [coachUser?.email]);
 
-  // Ouvrir le Studio Audio pour un cours
+  // Legacy compat — openAudioModal kept for modal version
   const openAudioModal = (course) => {
     setSelectedCourseForAudio(course);
-    // Migration: convertir les anciennes playlist (string[]) en audio_tracks si nécessaire
-    if (course.audio_tracks && course.audio_tracks.length > 0) {
-      setAudioTracks(course.audio_tracks.map((t, i) => ({ ...t, order: t.order ?? i })));
-    } else if (course.playlist && course.playlist.length > 0) {
-      setAudioTracks(course.playlist.map((url, i) => ({
-        id: `legacy-${i}-${Date.now()}`,
-        url,
-        title: url.split('/').pop()?.split('.')[0] || `Piste ${i + 1}`,
-        cover_url: null,
-        description: '',
-        price: 0,
-        preview_duration: 30,
-        duration: null,
-        order: i
-      })));
-    } else {
-      setAudioTracks([]);
-    }
-    setEditingTrackId(null);
     setShowAudioModal(true);
   };
 
-  // Upload audio file via drag & drop ou click
+  // v44: Upload audio — crée la piste dans l'API directement
   const handleAudioFileUpload = async (files) => {
     if (!files || files.length === 0) return;
     setUploadingAudio(true);
 
     for (const file of files) {
       try {
+        // 1. Upload le fichier binaire
         const formData = new FormData();
         formData.append('file', file);
         formData.append('asset_type', 'audio');
 
-        const res = await axios.post(`${API}/coach/upload-asset`, formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-            'X-User-Email': coachUser?.email || ''
-          }
+        const uploadRes = await axios.post(`${API}/coach/upload-asset`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data', ...authHeaders }
         });
 
-        const newTrack = {
-          id: `track-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-          url: res.data.url,
+        // 2. Créer la piste dans la collection audio_tracks
+        const trackRes = await axios.post(`${API}/audio-tracks`, {
+          url: uploadRes.data.url,
           title: file.name.replace(/\.[^.]+$/, ''),
-          cover_url: null,
-          description: '',
           price: 0,
           preview_duration: 30,
-          duration: null,
-          order: audioTracks.length,
-          visible: true  // En vente par défaut
-        };
+          visible: true
+        }, { headers: authHeaders });
 
-        setAudioTracks(prev => [...prev, newTrack]);
+        setAudioTracks(prev => [...prev, trackRes.data.track]);
+        console.log(`[AUDIO] ✅ Piste créée: ${trackRes.data.track.title}`);
       } catch (err) {
         console.error("Erreur upload audio:", err);
         alert(`Erreur upload "${file.name}": ${err.response?.data?.detail || err.message}`);
@@ -795,33 +784,37 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('asset_type', 'image');
-
       const res = await axios.post(`${API}/coach/upload-asset`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-          'X-User-Email': coachUser?.email || ''
-        }
+        headers: { 'Content-Type': 'multipart/form-data', ...authHeaders }
       });
-
-      setAudioTracks(prev => prev.map(t =>
-        t.id === trackId ? { ...t, cover_url: res.data.url } : t
-      ));
+      // Mettre à jour localement ET dans l'API
+      await axios.put(`${API}/audio-tracks/${trackId}`, { cover_url: res.data.url }, { headers: authHeaders });
+      setAudioTracks(prev => prev.map(t => t.id === trackId ? { ...t, cover_url: res.data.url } : t));
     } catch (err) {
       console.error("Erreur upload cover:", err);
       alert("Erreur upload de la pochette");
     }
   };
 
-  // Mettre à jour un champ d'une piste
-  const updateTrackField = (trackId, field, value) => {
-    setAudioTracks(prev => prev.map(t =>
-      t.id === trackId ? { ...t, [field]: value } : t
-    ));
+  // v44: Mettre à jour un champ — sauvegarde immédiate dans l'API
+  const updateTrackField = async (trackId, field, value) => {
+    setAudioTracks(prev => prev.map(t => t.id === trackId ? { ...t, [field]: value } : t));
+    try {
+      await axios.put(`${API}/audio-tracks/${trackId}`, { [field]: value }, { headers: authHeaders });
+    } catch (err) {
+      console.error(`[AUDIO] Erreur maj ${field}:`, err);
+    }
   };
 
-  // Supprimer une piste
-  const removeTrack = (trackId) => {
+  // v44: Supprimer une piste — suppression immédiate dans l'API
+  const removeTrack = async (trackId) => {
     setAudioTracks(prev => prev.filter(t => t.id !== trackId).map((t, i) => ({ ...t, order: i })));
+    try {
+      await axios.delete(`${API}/audio-tracks/${trackId}`, { headers: authHeaders });
+      console.log(`[AUDIO] 🗑️ Piste supprimée: ${trackId}`);
+    } catch (err) {
+      console.error("[AUDIO] Erreur suppression:", err);
+    }
   };
 
   // Drag & Drop réordonnement
@@ -829,20 +822,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     setDraggedTrackId(trackId);
     e.dataTransfer.effectAllowed = 'move';
   };
-
   const handleTrackDragOver = (e, index) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     setDragOverIndex(index);
   };
-
   const handleTrackDrop = (e, targetIndex) => {
     e.preventDefault();
     if (!draggedTrackId) return;
-
     const fromIndex = audioTracks.findIndex(t => t.id === draggedTrackId);
     if (fromIndex === targetIndex) { setDragOverIndex(null); setDraggedTrackId(null); return; }
-
     const updated = [...audioTracks];
     const [moved] = updated.splice(fromIndex, 1);
     updated.splice(targetIndex, 0, moved);
@@ -851,31 +840,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     setDraggedTrackId(null);
   };
 
-  // Sauvegarder le Studio Audio
+  // v44: Sauvegarder = ré-ordonner toutes les pistes dans l'API
   const saveAudioStudio = async () => {
-    if (!selectedCourseForAudio) return;
-
     setSavingPlaylist(true);
     try {
       const sortedTracks = [...audioTracks].sort((a, b) => a.order - b.order);
-      const legacyPlaylist = sortedTracks.map(t => t.url);
-
-      // Envoyer seulement playlist + audio_tracks avec auth header
-      await axios.put(`${API}/courses/${selectedCourseForAudio.id}`, {
-        playlist: legacyPlaylist,
-        audio_tracks: sortedTracks
-      }, {
-        headers: { 'X-User-Email': coachUser?.email || '' }
-      });
-
-      setCourses(courses.map(c =>
-        c.id === selectedCourseForAudio.id
-          ? { ...c, playlist: legacyPlaylist, audio_tracks: sortedTracks }
-          : c
-      ));
-
-      alert(`Studio Audio sauvegardé pour "${selectedCourseForAudio.name}" (${sortedTracks.length} pistes)`);
-      setShowAudioModal(false);
+      await axios.put(`${API}/audio-tracks/reorder`, {
+        track_ids: sortedTracks.map(t => t.id)
+      }, { headers: authHeaders });
+      alert(`✅ Studio Audio sauvegardé (${sortedTracks.length} pistes)`);
     } catch (err) {
       console.error("Erreur sauvegarde studio:", err);
       alert("Erreur lors de la sauvegarde du Studio Audio");
@@ -5064,39 +5037,19 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     filter: 'blur(30px)', pointerEvents: 'none'
                   }} />
 
-                  {/* Header + Course selector */}
+                  {/* v44: Header autonome — plus de sélecteur de cours */}
                   <div style={{ position: 'relative', zIndex: 1, marginBottom: '16px' }}>
-                    <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '10px', margin: '0 0 12px 0' }}>
+                    <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '10px', margin: '0 0 4px 0' }}>
                       <span style={{ fontSize: '26px' }}>🎵</span> Studio Audio
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'rgba(217,28,210,0.7)', background: 'rgba(217,28,210,0.1)', padding: '2px 8px', borderRadius: '8px' }}>
+                        {audioTracks.length} piste{audioTracks.length !== 1 ? 's' : ''}
+                      </span>
                     </h2>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                      <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', whiteSpace: 'nowrap' }}>Cours :</label>
-                      <select
-                        value={selectedCourseForAudio?.id || ''}
-                        onChange={(e) => {
-                          const course = courses.find(c => c.id === e.target.value);
-                          if (course) openAudioModal(course);
-                          setShowAudioModal(false);
-                        }}
-                        style={{
-                          flex: 1, minWidth: '180px', padding: '8px 12px', borderRadius: '10px', fontSize: '13px',
-                          background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(217,28,210,0.3)',
-                          color: '#d91cd2', fontWeight: 600, outline: 'none', cursor: 'pointer',
-                          appearance: 'auto'
-                        }}
-                      >
-                        {courses.map(c => (
-                          <option key={c.id} value={c.id} style={{ background: '#1a0a2e', color: '#fff' }}>
-                            {c.name} ({(c.audio_tracks?.length || c.playlist?.length || 0)} piste{(c.audio_tracks?.length || c.playlist?.length || 0) > 1 ? 's' : ''})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: 0 }}>Gérez vos pistes audio indépendamment • Vente & téléchargement sur votre vitrine</p>
                   </div>
 
-                  {/* Upload Zone */}
-                  {selectedCourseForAudio && (
-                    <div style={{ position: 'relative', zIndex: 1 }}>
+                  {/* Upload Zone — v44: toujours visible */}
+                  <div style={{ position: 'relative', zIndex: 1 }}>
                       <div
                         style={{
                           border: '2px dashed rgba(217,28,210,0.4)',
@@ -5146,7 +5099,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                       <div>
                         {audioTracks.length === 0 ? (
                           <div style={{ padding: '24px', borderRadius: '14px', textAlign: 'center', background: 'rgba(255,255,255,0.03)' }}>
-                            <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '13px', margin: 0 }}>Aucune piste audio pour ce cours</p>
+                            <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '13px', margin: 0 }}>Aucune piste audio</p>
                             <p style={{ color: 'rgba(255,255,255,0.2)', fontSize: '11px', marginTop: '4px' }}>Glissez des fichiers MP3/WAV ci-dessus pour commencer</p>
                           </div>
                         ) : (
@@ -5279,7 +5232,6 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         </button>
                       </div>
                     </div>
-                  )}
                 </div>
 
                 {/* Master Control Audio (SuperAdmin) */}
