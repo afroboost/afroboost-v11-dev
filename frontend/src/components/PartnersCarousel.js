@@ -98,7 +98,13 @@ const getVimeoId = (url) => {
 
 const isDirectVideoFile = (url) => {
   if (!url) return false;
-  return /\.(mp4|webm|mov|avi|m4v)(\?|$)/i.test(url);
+  return /\.(mp4|webm|mov|avi|m4v)(\?|$)/i.test(url) || (url.includes('/api/files/') && url.includes('/video_'));
+};
+
+// v29: Détection images uploadées via /api/files/
+const isDirectImageFile = (url) => {
+  if (!url) return false;
+  return /\.(jpg|jpeg|png|webp|gif|svg|bmp)(\?|$)/i.test(url) || (url.includes('/api/files/') && url.includes('/image_'));
 };
 
 const getMediaInfo = (videoUrl) => {
@@ -106,14 +112,18 @@ const getMediaInfo = (videoUrl) => {
   const youtubeId = getYoutubeId(url);
   const vimeoId = getVimeoId(url);
   const isDirectVideo = isDirectVideoFile(url);
-  
+  const isDirectImage = isDirectImageFile(url);
+  // v29: /api/files/ sans extension reconnue → traiter comme vidéo par défaut
+  const isApiFile = url.includes('/api/files/') && !isDirectImage;
+
   return {
     url,
     youtubeId,
     vimeoId,
-    isDirectVideo,
-    hasValidMedia: !!(youtubeId || vimeoId || isDirectVideo),
-    isFallback: !videoUrl || (!youtubeId && !vimeoId && !isDirectVideo)
+    isDirectVideo: isDirectVideo || isApiFile,
+    isDirectImage,
+    hasValidMedia: !!(youtubeId || vimeoId || isDirectVideo || isDirectImage || isApiFile),
+    isFallback: !videoUrl || (!youtubeId && !vimeoId && !isDirectVideo && !isDirectImage && !isApiFile)
   };
 };
 
@@ -127,7 +137,10 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   const clickCount = useRef(0);
   const clickTimer = useRef(null);
   
-  const videoUrl = partner.video_url || partner.heroImageUrl;
+  // v29: Utiliser heroVideos[0] en priorité (système multi-slots), fallback sur video_url legacy
+  const heroVideosArr = partner.heroVideos || [];
+  const firstHeroUrl = heroVideosArr.length > 0 && heroVideosArr[0]?.url ? heroVideosArr[0].url : '';
+  const videoUrl = firstHeroUrl || partner.video_url || partner.heroImageUrl;
   const mediaInfo = useMemo(() => getMediaInfo(videoUrl), [videoUrl]);
   const activeMedia = hasError ? getMediaInfo(DEFAULT_VIDEO_URL) : mediaInfo;
   
@@ -332,6 +345,15 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                     onError={() => setHasError(true)}
                   />
                 </div>
+              ) : activeMedia.isDirectImage ? (
+                /* v29: IMAGE uploadée — afficher en plein écran */
+                <img
+                  src={activeMedia.url.startsWith('/api/') ? `${BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '')}${activeMedia.url}` : activeMedia.url}
+                  alt={displayName}
+                  className="absolute inset-0 w-full h-full object-cover"
+                  style={{ filter: 'brightness(0.75)' }}
+                  onError={() => setHasError(true)}
+                />
               ) : activeMedia.isDirectVideo ? (
                 <video
                   ref={videoRef}
@@ -343,7 +365,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                   onError={() => setHasError(true)}
                   preload="metadata"
                 >
-                  <source src={activeMedia.url} type="video/mp4" />
+                  <source src={activeMedia.url.startsWith('/api/') ? `${BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '')}${activeMedia.url}` : activeMedia.url} type="video/mp4" />
                 </video>
               ) : (
                 <div

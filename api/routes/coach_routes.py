@@ -348,23 +348,36 @@ async def get_active_partners():
         partners_with_videos = []
         seen_emails = set()  # v9.6.6: Track des emails pour éviter les doublons
         
-        # Ajouter Bassi (Super Admin) en premier s'il a une vidéo configurée
-        # v9.4.7: Collection "concept" (singulier) - id "concept" pour le principal
-        bassi_concept = await db.concept.find_one({"id": "concept"}, {"_id": 0, "heroImageUrl": 1, "heroVideoUrl": 1})
-        if bassi_concept and (bassi_concept.get("heroImageUrl") or bassi_concept.get("heroVideoUrl")):
-            bassi_data = {
-                "id": "bassi_main",  # v9.6.6: ID unique
-                "name": "Bassi - Afroboost",
-                "email": SUPER_ADMIN_EMAIL,
-                "platform_name": "Afroboost",
-                "photo_url": None,
-                "logo_url": None,
-                "bio": "Coach Afroboost - Fitness & Bien-être",
-                "video_url": bassi_concept.get("heroVideoUrl") or bassi_concept.get("heroImageUrl"),
-                "heroImageUrl": bassi_concept.get("heroImageUrl")
-            }
-            partners_with_videos.append(bassi_data)
-            seen_emails.add(SUPER_ADMIN_EMAIL.lower())  # v9.6.6: Marquer comme vu
+        # v29: Ajouter Bassi (Super Admin) en premier — lire heroVideos[] en priorité
+        bassi_concept = await db.concept.find_one({"id": "concept"}, {"_id": 0, "heroImageUrl": 1, "heroVideoUrl": 1, "heroVideos": 1})
+        # v29: Extraire la première URL de heroVideos[] (le vrai système multi-slots)
+        bassi_hero_videos = (bassi_concept or {}).get("heroVideos", [])
+        bassi_first_url = ""
+        bassi_all_videos = []
+        for hv in bassi_hero_videos:
+            if hv and hv.get("url"):
+                if not bassi_first_url:
+                    bassi_first_url = hv["url"]
+                bassi_all_videos.append(hv)
+        # Fallback: anciens champs legacy
+        bassi_video_url = bassi_first_url or (bassi_concept or {}).get("heroVideoUrl") or (bassi_concept or {}).get("heroImageUrl") or ""
+        bassi_image_url = (bassi_concept or {}).get("heroImageUrl") or ""
+        # Toujours ajouter Bassi même sans vidéo (il est le Super Admin)
+        bassi_data = {
+            "id": "bassi_main",
+            "name": "Bassi - Afroboost",
+            "email": SUPER_ADMIN_EMAIL,
+            "platform_name": "Afroboost",
+            "photo_url": None,
+            "logo_url": None,
+            "bio": "Coach Afroboost - Fitness & Bien-être",
+            "video_url": bassi_video_url,
+            "heroImageUrl": bassi_image_url,
+            "heroVideos": bassi_all_videos  # v29: Passer le tableau complet
+        }
+        partners_with_videos.append(bassi_data)
+        seen_emails.add(SUPER_ADMIN_EMAIL.lower())
+        logger.info(f"[PARTNERS-V29] Bassi ajouté: video_url={bassi_video_url}, heroVideos={len(bassi_all_videos)}")
         
         # Pour chaque coach, récupérer son concept (vidéo) - v9.6.6: Skip si déjà vu
         for coach in coaches:
@@ -378,17 +391,25 @@ async def get_active_partners():
             partner_data = dict(coach)
             partner_data["id"] = partner_data.get("id") or f"coach_{coach_email.replace('@', '_').replace('.', '_')}"  # v9.6.6: ID unique
             
-            # Chercher le concept du coach pour avoir la vidéo
-            # v9.4.7: Collection "concept" (singulier) pas "concepts"
-            concept_id = f"concept_{coach_email.replace('@', '_').replace('.', '_')}"
+            # v29: Chercher le concept du coach — heroVideos[] en priorité
+            concept_id = f"concept_{coach_email}"
             concept = await db.concept.find_one(
                 {"$or": [{"id": concept_id}, {"coach_id": coach_email}]},
-                {"_id": 0, "heroImageUrl": 1, "heroVideoUrl": 1}
+                {"_id": 0, "heroImageUrl": 1, "heroVideoUrl": 1, "heroVideos": 1}
             )
-            
+
             if concept:
-                partner_data["video_url"] = concept.get("heroVideoUrl") or concept.get("heroImageUrl")
+                coach_hero_videos = concept.get("heroVideos", [])
+                coach_first_url = ""
+                coach_all_videos = []
+                for hv in coach_hero_videos:
+                    if hv and hv.get("url"):
+                        if not coach_first_url:
+                            coach_first_url = hv["url"]
+                        coach_all_videos.append(hv)
+                partner_data["video_url"] = coach_first_url or concept.get("heroVideoUrl") or concept.get("heroImageUrl")
                 partner_data["heroImageUrl"] = concept.get("heroImageUrl")
+                partner_data["heroVideos"] = coach_all_videos  # v29: Passer le tableau complet
             
             # Inclure même sans vidéo (affichera placeholder)
             partners_with_videos.append(partner_data)
