@@ -1413,6 +1413,20 @@ async def create_audio_track(request: Request):
     logger.info(f"[AUDIO] ✅ Piste créée: {track_doc['title']} pour {email}")
     return {"success": True, "track": track_doc}
 
+@api_router.put("/audio-tracks/reorder")
+async def reorder_audio_tracks(request: Request):
+    """Réordonne les pistes audio — DOIT être AVANT {track_id} pour éviter conflit de route"""
+    email = require_auth(request)
+    body = await request.json()
+    track_ids = body.get("track_ids", [])
+
+    for i, tid in enumerate(track_ids):
+        await db.audio_tracks.update_one(
+            {"id": tid, "coach_email": email},
+            {"$set": {"order": i}}
+        )
+    return {"success": True, "reordered": len(track_ids)}
+
 @api_router.put("/audio-tracks/{track_id}")
 async def update_audio_track(track_id: str, request: Request):
     """Met à jour une piste audio (titre, prix, visible, etc.)"""
@@ -1441,20 +1455,6 @@ async def delete_audio_track(track_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Piste non trouvée")
     logger.info(f"[AUDIO] 🗑️ Piste supprimée: {track_id} par {email}")
     return {"success": True, "deleted": track_id}
-
-@api_router.put("/audio-tracks/reorder")
-async def reorder_audio_tracks(request: Request):
-    """Réordonne les pistes audio"""
-    email = require_auth(request)
-    body = await request.json()
-    track_ids = body.get("track_ids", [])
-
-    for i, tid in enumerate(track_ids):
-        await db.audio_tracks.update_one(
-            {"id": tid, "coach_email": email},
-            {"$set": {"order": i}}
-        )
-    return {"success": True, "reordered": len(track_ids)}
 
 # === v44: PISTES AUDIO PUBLIQUES (pour la vitrine) ===
 @api_router.get("/public/audio-tracks/{coach_email}")
