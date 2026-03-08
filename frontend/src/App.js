@@ -31,6 +31,7 @@ import SuperAdminPanel from "./components/SuperAdminPanel";
 import { CoachSearchModal } from "./components/CoachSearch";
 import CoachVitrine from "./components/CoachVitrine";
 import PartnersCarousel from "./components/PartnersCarousel";
+import AudioPlayer from "./components/AudioPlayer";
 import { useDataCache, invalidateCache } from "./hooks/useDataCache";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
@@ -3893,6 +3894,60 @@ function App() {
           />
         </div>
       )}
+
+      {/* v33: SECTION AUDIO HOMEPAGE — Audios des cours visibles sous le Hero */}
+      {(() => {
+        const allAudioTracks = [];
+        courses.forEach(course => {
+          if (course.audio_tracks && course.audio_tracks.length > 0) {
+            course.audio_tracks
+              .filter(track => track.visible !== false && track.url)
+              .forEach(track => {
+                allAudioTracks.push({ ...track, courseName: course.name, courseId: course.id });
+              });
+          }
+        });
+        console.log('[V33-AUDIO] Homepage audio tracks:', allAudioTracks.length, allAudioTracks.map(t => `${t.title} (${t.price || 0} CHF)`));
+        if (allAudioTracks.length === 0) return null;
+        return (
+          <div
+            style={{
+              background: 'rgba(10, 10, 20, 0.95)',
+              borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+              padding: '16px 24px'
+            }}
+          >
+            <div className="max-w-4xl mx-auto">
+              <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>🎵</span> Contenus Audio
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {allAudioTracks.map((track, idx) => (
+                  <AudioPlayer
+                    key={track.id || `audio-${idx}`}
+                    audioUrl={track.url?.startsWith('/api/') ? `${API.replace('/api', '')}${track.url}` : track.url}
+                    title={track.title || 'Audio'}
+                    thumbnail={track.cover_url}
+                    price={track.price}
+                    isPreview={!!track.price && track.price > 0}
+                    previewDuration={track.preview_duration || 30}
+                    onBuyClick={track.price > 0 ? () => {
+                      console.log('[V33-AUDIO] Achat audio:', track.title, track.price, 'CHF');
+                      handleSelectOffer({
+                        name: track.title,
+                        price: track.price,
+                        id: track.id || track.courseId,
+                        type: 'audio',
+                        thumbnail: track.cover_url
+                      });
+                    } : undefined}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* v15: BARRE DE NAVIGATION STICKY - Sections claires */}
       <div
