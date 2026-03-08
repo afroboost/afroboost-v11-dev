@@ -1370,6 +1370,98 @@ async def upload_coach_asset(
         logger.error(f"[COACH-UPLOAD] ❌ Erreur: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur upload: {str(e)}")
 
+# === v58: Upload en chunks pour fichiers > 4MB (contourne limite Vercel 4.5MB body) ===
+@api_router.post("/coach/upload-chunk")
+async def upload_chunk(
+    request: Request,
+    file: UploadFile = File(...),
+    upload_id: str = Form(...),
+    chunk_index: int = Form(...),
+    total_chunks: int = Form(...),
+    original_name: str = Form("audio.mp3"),
+    content_type: str = Form("audio/mpeg"),
+    asset_type: str = Form("audio")
+):
+    """Upload un chunk de fichier. Quand tous les chunks sont reçus, assemble et stocke."""
+    import uuid
+    from bson.binary import Binary
+
+    coach_email = request.headers.get('X-User-Email', '').lower().strip()
+    if not coach_email:
+        raise HTTPException(status_code=401, detail="Email coach requis")
+
+    contents = await file.read()
+    logger.info(f"[CHUNK-UPLOAD] Chunk {chunk_index + 1}/{total_chunks} pour {upload_id} ({len(contents)} bytes)")
+
+    # Stocker le chunk
+    await db.upload_chunks.update_one(
+        {"upload_id": upload_id, "chunk_index": chunk_index},
+        {"$set": {
+            "upload_id": upload_id,
+            "chunk_index": chunk_index,
+            "total_chunks": total_chunks,
+            "data": Binary(contents),
+            "coach_email": coach_email,
+            "original_name": original_name,
+            "content_type": content_type,
+            "asset_type": asset_type,
+            "created_at": datetime.utcnow()
+        }},
+        upsert=True
+    )
+
+    # Vérifier si tous les chunks sont arrivés
+    received = await db.upload_chunks.count_documents({"upload_id": upload_id})
+    if received < total_chunks:
+        return {"success": True, "status": "chunk_received", "received": received, "total": total_chunks}
+
+    # Tous les chunks reçus — assembler le fichier
+    chunks = await db.upload_chunks.find(
+        {"upload_id": upload_id}
+    ).sort("chunk_index", 1).to_list(length=total_chunks)
+
+    file_bytes = b""
+    for chunk in chunks:
+        file_bytes += bytes(chunk["data"])
+
+    # Nettoyer les chunks
+    await db.upload_chunks.delete_many({"upload_id": upload_id})
+
+    # Stocker le fichier assemblé (même logique que upload-asset)
+    ext_map = {
+        "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/wav": ".wav",
+        "audio/ogg": ".ogg", "audio/aac": ".aac", "audio/mp4": ".m4a",
+        "image/jpeg": ".jpg", "image/png": ".png", "video/mp4": ".mp4"
+    }
+    ext = ext_map.get(content_type, ".bin")
+    file_id = uuid.uuid4().hex[:16]
+    filename = f"{asset_type}_{file_id}{ext}"
+
+    file_doc = {
+        "file_id": file_id,
+        "filename": filename,
+        "original_name": original_name,
+        "content_type": content_type,
+        "asset_type": asset_type,
+        "coach_email": coach_email,
+        "data": Binary(file_bytes),
+        "size": len(file_bytes),
+        "created_at": datetime.utcnow()
+    }
+    await db.uploaded_files.insert_one(file_doc)
+
+    asset_url = f"/api/files/{file_id}/{filename}"
+    logger.info(f"[CHUNK-UPLOAD] ✅ Fichier assemblé: {filename} ({len(file_bytes)} bytes, {total_chunks} chunks)")
+
+    return {
+        "success": True,
+        "status": "complete",
+        "url": asset_url,
+        "filename": filename,
+        "asset_type": asset_type,
+        "size": len(file_bytes)
+    }
+
 # === v44: CRUD PISTES AUDIO AUTONOMES (indépendant des cours) ===
 # Collection MongoDB: audio_tracks — chaque piste est un document indépendant
 

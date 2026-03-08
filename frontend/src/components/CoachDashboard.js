@@ -6,7 +6,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback, Component } from "react";
 import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
-import lamejs from "lamejs";
 import {
   getWhatsAppConfig,
   saveWhatsAppConfig,
@@ -771,102 +770,79 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     setShowAudioModal(true);
   };
 
-  // v58: Compression audio côté client (MP3 128kbps mono) pour respecter limite Vercel 4.5MB
-  const compressAudioFile = async (file) => {
-    console.log(`[AUDIO] 🗜️ Compression de "${file.name}" (${(file.size / 1024 / 1024).toFixed(1)}MB)...`);
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const arrayBuffer = await file.arrayBuffer();
-    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+  // v58: Upload en chunks pour gros fichiers (contourne limite Vercel 4.5MB)
+  const uploadFileInChunks = async (file) => {
+    const CHUNK_SIZE = 3 * 1024 * 1024; // 3MB par chunk
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    const uploadId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
 
-    // Mono, 128kbps — bon compromis taille/qualité
-    const channels = 1;
-    const sampleRate = audioBuffer.sampleRate;
-    const kbps = 128;
-    const mp3encoder = new lamejs.Mp3Encoder(channels, sampleRate, kbps);
+    console.log(`[AUDIO] 📦 Upload en ${totalChunks} chunks pour "${file.name}" (${(file.size / 1024 / 1024).toFixed(1)}MB)`);
 
-    // Mixer en mono si stéréo
-    let samples;
-    if (audioBuffer.numberOfChannels > 1) {
-      const left = audioBuffer.getChannelData(0);
-      const right = audioBuffer.getChannelData(1);
-      samples = new Float32Array(left.length);
-      for (let i = 0; i < left.length; i++) {
-        samples[i] = (left[i] + right[i]) / 2;
+    let finalUrl = null;
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const chunk = file.slice(start, end);
+
+      const formData = new FormData();
+      formData.append('file', chunk, `chunk_${i}`);
+      formData.append('upload_id', uploadId);
+      formData.append('chunk_index', i.toString());
+      formData.append('total_chunks', totalChunks.toString());
+      formData.append('original_name', file.name);
+      formData.append('content_type', file.type || 'audio/mpeg');
+      formData.append('asset_type', 'audio');
+
+      console.log(`[AUDIO] ⬆️ Chunk ${i + 1}/${totalChunks} (${((end - start) / 1024 / 1024).toFixed(1)}MB)`);
+      const res = await axios.post(`${API}/coach/upload-chunk`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data', ...authHeaders }
+      });
+
+      if (res.data.url) {
+        finalUrl = res.data.url;
+        console.log(`[AUDIO] ✅ Fichier assemblé: ${finalUrl}`);
       }
-    } else {
-      samples = audioBuffer.getChannelData(0);
     }
-
-    // Float32 → Int16
-    const int16 = new Int16Array(samples.length);
-    for (let i = 0; i < samples.length; i++) {
-      const s = Math.max(-1, Math.min(1, samples[i]));
-      int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-    }
-
-    // Encoder par blocs
-    const blockSize = 1152;
-    const mp3Data = [];
-    for (let i = 0; i < int16.length; i += blockSize) {
-      const chunk = int16.subarray(i, i + blockSize);
-      const mp3buf = mp3encoder.encodeBuffer(chunk);
-      if (mp3buf.length > 0) mp3Data.push(mp3buf);
-    }
-    const end = mp3encoder.flush();
-    if (end.length > 0) mp3Data.push(end);
-
-    audioContext.close();
-
-    const blob = new Blob(mp3Data, { type: 'audio/mp3' });
-    const compressed = new File([blob], file.name, { type: 'audio/mp3' });
-    console.log(`[AUDIO] ✅ Compressé: ${(compressed.size / 1024 / 1024).toFixed(1)}MB (${Math.round((1 - compressed.size / file.size) * 100)}% de réduction)`);
-    return compressed;
+    return finalUrl;
   };
 
-  // v58: Upload audio — compression auto si > 3.5MB
+  // v58: Upload audio — chunked pour gros fichiers
   const handleAudioFileUpload = async (files) => {
     if (!files || files.length === 0) return;
     setUploadingAudio(true);
 
-    const MAX_AUDIO_SIZE = 15 * 1024 * 1024; // 15MB max (comme indiqué dans la dropzone)
-    const COMPRESS_THRESHOLD = 3.5 * 1024 * 1024; // Compresser au-delà de 3.5MB
+    const MAX_AUDIO_SIZE = 15 * 1024 * 1024; // 15MB max
+    const CHUNK_THRESHOLD = 3.5 * 1024 * 1024; // Chunked au-delà de 3.5MB
     for (const file of files) {
       try {
-        // Vérification taille max
         if (file.size > MAX_AUDIO_SIZE) {
-          alert(`⚠️ Le fichier "${file.name}" fait ${(file.size / 1024 / 1024).toFixed(1)}MB.\nMaximum : 15MB.\nUtilisez un fichier plus petit.`);
+          alert(`⚠️ Le fichier "${file.name}" fait ${(file.size / 1024 / 1024).toFixed(1)}MB.\nMaximum : 15MB.`);
           continue;
         }
 
-        // v58: Compression auto si nécessaire
-        let fileToUpload = file;
-        if (file.size > COMPRESS_THRESHOLD) {
-          try {
-            alert(`🗜️ Le fichier "${file.name}" fait ${(file.size / 1024 / 1024).toFixed(1)}MB.\nCompression automatique en cours...\n(Qualité: 128kbps mono)`);
-            fileToUpload = await compressAudioFile(file);
-            if (fileToUpload.size > 4 * 1024 * 1024) {
-              alert(`⚠️ Même après compression, le fichier fait ${(fileToUpload.size / 1024 / 1024).toFixed(1)}MB (limite: 4MB).\nUtilisez un fichier plus court ou déjà compressé.`);
-              continue;
-            }
-          } catch (compErr) {
-            console.error("[AUDIO] Erreur compression:", compErr);
-            alert(`⚠️ Impossible de compresser "${file.name}".\nEssayez de compresser le fichier manuellement (128kbps) avant upload.`);
+        let uploadUrl;
+        if (file.size > CHUNK_THRESHOLD) {
+          // v58: Upload en chunks pour les gros fichiers
+          console.log(`[AUDIO] Fichier > 3.5MB, upload en chunks...`);
+          uploadUrl = await uploadFileInChunks(file);
+          if (!uploadUrl) {
+            alert(`⚠️ Erreur lors de l'upload de "${file.name}". Réessayez.`);
             continue;
           }
+        } else {
+          // Upload normal pour les petits fichiers
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('asset_type', 'audio');
+          const uploadRes = await axios.post(`${API}/coach/upload-asset`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data', ...authHeaders }
+          });
+          uploadUrl = uploadRes.data.url;
         }
-
-        // 1. Upload le fichier binaire
-        const formData = new FormData();
-        formData.append('file', fileToUpload);
-        formData.append('asset_type', 'audio');
-
-        const uploadRes = await axios.post(`${API}/coach/upload-asset`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data', ...authHeaders }
-        });
 
         // 2. Créer la piste dans la collection audio_tracks
         const trackRes = await axios.post(`${API}/audio-tracks`, {
-          url: uploadRes.data.url,
+          url: uploadUrl,
           title: file.name.replace(/\.[^.]+$/, ''),
           price: 0,
           preview_duration: 30,
