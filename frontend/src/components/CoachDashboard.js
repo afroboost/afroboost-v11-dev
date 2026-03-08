@@ -623,19 +623,19 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     return "reservations";
   });
 
-  // v36: Sous-onglet du HUB "Gestion" (ex-Offres)
-  const [offersSubTab, setOffersSubTab] = useState('cours');
+  // v37.2: Sous-onglet du HUB "Gestion" — 4 sections centralisées
+  const [offersSubTab, setOffersSubTab] = useState('contenus');
 
-  // v37: Auto-scroll + auto-load audio course on sub-tab change
+  // v37.2: Auto-scroll + auto-load audio course on sub-tab change
   const handleSubTabChange = (subTabId) => {
     setOffersSubTab(subTabId);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    // Auto-load first course tracks when switching to audio tab
-    if (subTabId === 'audio' && courses.length > 0) {
+    // Auto-load first course tracks when switching to contenus (audio section)
+    if (subTabId === 'contenus' && courses.length > 0) {
       const course = selectedCourseForAudio || courses[0];
       if (!selectedCourseForAudio) {
         openAudioModal(course);
-        setShowAudioModal(false); // Don't show modal, we render inline
+        setShowAudioModal(false);
       }
     }
   };
@@ -4080,29 +4080,20 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     } catch (err) { console.error("Error updating tracking:", err); }
   };
 
-  // v8.9.5: Tabs dynamiques avec "Mon Stripe" pour les coachs (pas Bassi)
-  // v9.1.3: DASHBOARD JUMEAU - Tous les coaches ont FULL ACCESS (même interface que Bassi)
-  // L'indicateur requiresCredits est supprimé - seul le filtrage coach_id sépare les données
-  // v13: Campagnes accessible à tous (CreditsGate bloque si 0 crédits)
-  // v13.0: Ajout "Boutique" pour achat de crédits
-  // v36: "Concept & Visuel" et "Cours" supprimés — intégrés dans le HUB "Offres"
+  // v37.2: "Ma Page" et "Paiements" supprimés — centralisés dans le HUB Gestion
   const baseTabs = [
     { id: "reservations", label: t('reservations') },
     { id: "offers", label: "🎛️ Gestion" },
-    { id: "page-vente", label: "🏪 Ma Page" },
     { id: "codes", label: t('promoCodes') },
-    // v18: Contacts centralisés avec sync Google
     { id: "contacts", label: "📇 Contacts" },
-    // v13: Campagnes visible pour tous — accès contrôlé par CreditsGate
     { id: "campaigns", label: "📢 Campagnes" },
     { id: "conversations", label: unreadCount > 0 ? `💬 Conversations (${unreadCount})` : "💬 Conversations" }
   ];
-  
-  // v13.0: Ajouter "Boutique" et "Mon Stripe" pour les coachs partenaires (pas Bassi)
-  // v15.0: Ajouter "Paiements" pour tous (config paiement multi-vendeurs)
+
+  // v37.2: Boutique et Stripe pour coachs partenaires uniquement
   const tabs = !isSuperAdmin
-    ? [...baseTabs, { id: "payments", label: "💳 Paiements" }, { id: "boutique", label: "💎 Boutique" }, { id: "stripe", label: "🔗 Mon Stripe" }]
-    : [...baseTabs, { id: "payments", label: "💳 Paiements" }];
+    ? [...baseTabs, { id: "boutique", label: "💎 Boutique" }, { id: "stripe", label: "🔗 Mon Stripe" }]
+    : [...baseTabs];
 
   // v9.2.5: COMPOSANT DE SECOURS - Affiche le squelette du dashboard pendant le chargement
   // Garantit qu'on ne voit JAMAIS une page blanche
@@ -4934,10 +4925,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 const totalAudioTracks = courses.reduce((acc, c) => acc + (c.audio_tracks?.length || c.playlist?.length || 0), 0);
                 const totalVideos = (concept?.heroVideos || []).filter(v => v && (v.url || v.file_id)).length;
                 return [
-                  { id: 'cours', icon: '💃', label: 'Cours & Offres', badge: courses.length + (offers?.length || 0) },
-                  { id: 'audio', icon: '🎧', label: 'Audio', badge: totalAudioTracks },
+                  { id: 'contenus', icon: '💃', label: 'Contenus', badge: courses.length + (offers?.length || 0) + totalAudioTracks },
                   { id: 'video-hero', icon: '🎬', label: 'Vidéo Hero', badge: totalVideos },
-                  { id: 'settings', icon: '⚙️', label: 'Paramètres', badge: 0 }
+                  { id: 'vitrine', icon: '🖼️', label: 'Ma Vitrine', badge: 0 },
+                  { id: 'boutique-hub', icon: '💳', label: 'Boutique & Paiements', badge: 0 }
                 ];
               })().map(sub => (
                 <button
@@ -4987,8 +4978,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               ))}
             </div>
 
-            {/* Sous-onglet: 💃 Cours & Offres */}
-            {offersSubTab === 'cours' && (
+            {/* v37.2: Sous-onglet: 💃 Contenus — Cours + Offres + Audio Upload + Master Control Audio */}
+            {offersSubTab === 'contenus' && (
               <>
                 <CoursesManager
                   courses={courses}
@@ -5019,13 +5010,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     t={t}
                   />
                 </div>
-              </>
-            )}
 
-            {/* v37: Sous-onglet: 🎧 Audio — Studio Upload + Master Control */}
-            {offersSubTab === 'audio' && (
-              <>
-                {/* === AUDIO STUDIO INLINE === */}
+                {/* v37.2: Audio Studio inline dans Contenus */}
                 <div style={{
                   borderRadius: '16px',
                   padding: '20px',
@@ -5277,7 +5263,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               </>
             )}
 
-            {/* Sous-onglet: 🎬 Vidéo Hero */}
+            {/* v37.2: Sous-onglet: 🎬 Vidéo Hero */}
             {offersSubTab === 'video-hero' && (
               <ConceptEditor
                 concept={concept}
@@ -5294,8 +5280,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               />
             )}
 
-            {/* Sous-onglet: ⚙️ Paramètres */}
-            {offersSubTab === 'settings' && (
+            {/* v37.2: Sous-onglet: 🖼️ Ma Vitrine */}
+            {offersSubTab === 'vitrine' && (
               <>
                 <ConceptEditor
                   concept={concept}
@@ -5308,43 +5294,63 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   coachEmail={safeCoachUser?.email || ''}
                   courses={courses}
                   setCourses={setCourses}
-                  section="settings"
+                  section="vitrine"
                 />
                 <BrandingManager
                   API={API}
                   coachEmail={safeCoachUser?.email}
                   t={t}
                 />
+                <PageVenteTab
+                  coachVitrineUrl={coachVitrineUrl}
+                  linkCopied={linkCopied}
+                  onCopyLink={handleCoachShareLink}
+                  paymentLinks={paymentLinks}
+                  setPaymentLinks={setPaymentLinks}
+                  paymentSaveStatus={paymentSaveStatus}
+                  t={t}
+                />
+                <SEOManager
+                  API={API}
+                  coachEmail={safeCoachUser?.email}
+                  coachUsername={coachUsername}
+                  t={t}
+                />
+                <FAQManager
+                  API={API}
+                  coachEmail={safeCoachUser?.email}
+                  t={t}
+                />
+              </>
+            )}
+
+            {/* v37.2: Sous-onglet: 💳 Boutique & Paiements */}
+            {offersSubTab === 'boutique-hub' && (
+              <>
+                <ConceptEditor
+                  concept={concept}
+                  setConcept={setConcept}
+                  conceptSaveStatus={conceptSaveStatus}
+                  saveConcept={saveConcept}
+                  API={API}
+                  t={t}
+                  isSuperAdmin={isSuperAdmin}
+                  coachEmail={safeCoachUser?.email || ''}
+                  courses={courses}
+                  setCourses={setCourses}
+                  section="boutique"
+                />
+                <PaymentConfigTab
+                  paymentConfig={vendorPaymentConfig}
+                  setPaymentConfig={setVendorPaymentConfig}
+                  coachEmail={coachUser?.email}
+                />
               </>
             )}
           </>
         )}
 
-        {/* v13.5: Ma Page de Vente - Composant extrait */}
-        {tab === "page-vente" && (
-          <>
-            <PageVenteTab
-              coachVitrineUrl={coachVitrineUrl}
-              linkCopied={linkCopied}
-              onCopyLink={handleCoachShareLink}
-              paymentLinks={paymentLinks}
-              setPaymentLinks={setPaymentLinks}
-              paymentSaveStatus={paymentSaveStatus}
-              t={t}
-            />
-            <SEOManager
-              API={API}
-              coachEmail={safeCoachUser?.email}
-              coachUsername={coachUsername}
-              t={t}
-            />
-            <FAQManager
-              API={API}
-              coachEmail={safeCoachUser?.email}
-              t={t}
-            />
-          </>
-        )}
+        {/* v37.2: "Ma Page" supprimé — centralisé dans HUB > Ma Vitrine */}
 
         {/* v13.8: Promo Codes Tab - RESTAURATION COMPLÈTE */}
         {tab === "codes" && (
@@ -5634,14 +5640,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           />
         )}
 
-        {/* ========== v15.0: ONGLET PAIEMENTS - Config multi-vendeurs ========== */}
-        {tab === "payments" && (
-          <PaymentConfigTab
-            paymentConfig={vendorPaymentConfig}
-            setPaymentConfig={setVendorPaymentConfig}
-            coachEmail={coachUser?.email}
-          />
-        )}
+        {/* v37.2: Onglet "Paiements" supprimé — centralisé dans HUB > Boutique & Paiements */}
 
         {/* ========== v13.2: ONGLET STRIPE - Composant extrait ========== */}
         {tab === "stripe" && !isSuperAdmin && (

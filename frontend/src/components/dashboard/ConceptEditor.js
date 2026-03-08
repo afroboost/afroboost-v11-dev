@@ -131,15 +131,19 @@ const ConceptEditor = ({
       setAiLegalLoading(false);
     }
   };
-  // v36: Déterminer quelles sections afficher
+  // v37.2: Déterminer quelles sections afficher
   const showVideoHero = section === 'all' || section === 'video-hero';
   const showAudio = section === 'all' || section === 'audio';
   const showSettings = section === 'all' || section === 'settings';
+  const showVitrine = section === 'all' || section === 'settings' || section === 'vitrine';
+  const showBoutique = section === 'all' || section === 'settings' || section === 'boutique';
 
-  // v36: Titres dynamiques par section
+  // v37.2: Titres dynamiques par section
   const sectionTitle = section === 'video-hero' ? '🎬 Vidéo Hero'
     : section === 'audio' ? '🎧 Audio'
     : section === 'settings' ? '⚙️ Paramètres'
+    : section === 'vitrine' ? '🖼️ Ma Vitrine'
+    : section === 'boutique' ? '💳 Boutique & Paiements'
     : t('conceptVisual');
 
   return (
@@ -168,8 +172,8 @@ const ConceptEditor = ({
       </div>
       
       <div className="space-y-4">
-        {/* PERSONNALISATION DES COULEURS — v36: section settings */}
-        {showSettings && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+        {/* PERSONNALISATION DES COULEURS — v37.2: section vitrine */}
+        {showVitrine && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-purple-400 font-semibold">🎨 Personnalisation des couleurs</h3>
             <button
@@ -303,8 +307,8 @@ const ConceptEditor = ({
           </div>
         </div>)}
 
-        {/* v36: PARAMÈTRES GÉNÉRAUX (sans Hero vidéos) — section settings */}
-        {showSettings && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+        {/* v37.2: PARAMÈTRES GÉNÉRAUX (sans Hero vidéos) — section vitrine */}
+        {showVitrine && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <h3 className="text-purple-400 font-semibold mb-4">⚙️ Paramètres généraux</h3>
 
           {/* Nom de l'application */}
@@ -574,33 +578,36 @@ const ConceptEditor = ({
           </div>
         </div>)}
 
-        {/* v36: BRANDING & IDENTITÉ — section settings */}
-        {showSettings && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+        {/* v37.2: BRANDING & IDENTITÉ (Logo, Favicon) — section vitrine */}
+        {showVitrine && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <h3 className="text-purple-400 font-semibold mb-4">🏷️ Branding & Identité</h3>
           {/* Logo URL */}
           <div className="mb-4">
             <label className="block mb-1 text-white text-xs opacity-70">{t('logoUrl')}</label>
-            <input 
-              type="url" 
-              value={concept.logoUrl || ''} 
+            <input
+              type="url"
+              value={concept.logoUrl || ''}
               onChange={(e) => setConcept({ ...concept, logoUrl: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg neon-input text-sm" 
+              className="w-full px-3 py-2 rounded-lg neon-input text-sm"
               placeholder="https://..."
             />
           </div>
-          
           {/* Favicon URL */}
           <div className="mb-4">
             <label className="block mb-1 text-white text-xs opacity-70">Favicon URL</label>
-            <input 
-              type="url" 
-              value={concept.faviconUrl || ''} 
+            <input
+              type="url"
+              value={concept.faviconUrl || ''}
               onChange={(e) => setConcept({ ...concept, faviconUrl: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg neon-input text-sm" 
+              className="w-full px-3 py-2 rounded-lg neon-input text-sm"
               placeholder="https://..."
             />
           </div>
-          
+        </div>)}
+
+        {/* v37.2: CGV & GOOGLE REVIEWS — section boutique */}
+        {showBoutique && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+          <h3 className="text-purple-400 font-semibold mb-4">📋 Conditions & Avis</h3>
           {/* Conditions générales */}
           <div className="mb-4">
             <div className="flex items-center justify-between mb-1">
@@ -629,43 +636,35 @@ const ConceptEditor = ({
               rows={4}
             />
           </div>
-          
           {/* Lien Google Reviews */}
           <div className="mb-4">
             <label className="block mb-1 text-white text-xs opacity-70">Lien Google Reviews</label>
-            <input 
-              type="url" 
-              value={concept.googleReviewsUrl || ''} 
+            <input
+              type="url"
+              value={concept.googleReviewsUrl || ''}
               onChange={(e) => setConcept({ ...concept, googleReviewsUrl: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg neon-input text-sm" 
+              className="w-full px-3 py-2 rounded-lg neon-input text-sm"
               placeholder="https://g.page/..."
               data-testid="google-reviews-url"
             />
             {concept.googleReviewsUrl && (
               <div className="mt-2">
-                <a 
-                  href={concept.googleReviewsUrl} 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
-                  className="text-xs text-pink-400 hover:text-pink-300 underline"
-                >
-                  Tester le lien
-                </a>
+                <a href={concept.googleReviewsUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-pink-400 hover:text-pink-300 underline">Tester le lien</a>
               </div>
             )}
           </div>
         </div>)}
 
-        {/* Section d'atterrissage — v36: section settings */}
-        {showSettings && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+        {/* Section d'atterrissage — v37.2: section boutique */}
+        {showBoutique && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <LandingSectionSelector
             value={concept.defaultLandingSection || 'sessions'}
             onChange={(value) => setConcept({ ...concept, defaultLandingSection: value })}
           />
         </div>)}
 
-        {/* Liens Externes — v36: section settings */}
-        {showSettings && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+        {/* Liens Externes — v37.2: section vitrine */}
+        {showVitrine && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <h3 className="text-white text-sm font-semibold mb-4">🔗 Liens Externes (affichés en bas de page)</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div>
@@ -717,8 +716,8 @@ const ConceptEditor = ({
           </div>
         </div>)}
 
-        {/* Logos de paiement — v36: section settings */}
-        {showSettings && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+        {/* Logos de paiement — v37.2: section boutique */}
+        {showBoutique && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <h3 className="text-white text-sm font-semibold mb-4">💳 Logos de paiement</h3>
           <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,0.4)' }}>
             Activez les logos qui s'afficheront dans le pied de page.
@@ -779,8 +778,8 @@ const ConceptEditor = ({
           </div>
         </div>)}
 
-        {/* Affiche Événement — v36: section settings */}
-        {showSettings && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+        {/* Affiche Événement — v37.2: section vitrine */}
+        {showVitrine && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <h3 className="text-white text-sm font-semibold mb-4">🎉 Affiche Événement (Popup d'accueil)</h3>
           <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,0.4)' }}>
             Affichez une image ou vidéo en popup dès l'arrivée des visiteurs.
