@@ -630,14 +630,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const handleSubTabChange = (subTabId) => {
     setOffersSubTab(subTabId);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    // Auto-load first course tracks when switching to contenus (audio section)
-    if (subTabId === 'contenus' && courses.length > 0) {
-      const course = selectedCourseForAudio || courses[0];
-      if (!selectedCourseForAudio) {
-        openAudioModal(course);
-        setShowAudioModal(false);
-      }
-    }
+    // v44: Plus besoin d'auto-select cours — Studio Audio est autonome
   };
 
   // === PARTAGE COACH ===
@@ -720,21 +713,56 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const loadAudioTracks = async () => {
     try {
       const res = await axios.get(`${API}/audio-tracks`, { headers: authHeaders });
-      setAudioTracks(res.data.tracks || []);
+      const apiTracks = res.data.tracks || [];
+
+      // v44: Migration automatique — si l'API est vide mais des cours ont des audio_tracks legacy, migrer
+      if (apiTracks.length === 0 && courses.length > 0) {
+        const legacyTracks = [];
+        courses.forEach(course => {
+          if (course.audio_tracks && course.audio_tracks.length > 0) {
+            course.audio_tracks.forEach(t => legacyTracks.push(t));
+          }
+        });
+        if (legacyTracks.length > 0) {
+          console.log(`[AUDIO] 🔄 Migration de ${legacyTracks.length} pistes legacy...`);
+          const migrated = [];
+          for (const t of legacyTracks) {
+            try {
+              const createRes = await axios.post(`${API}/audio-tracks`, {
+                url: t.url || '', title: t.title || 'Sans titre',
+                cover_url: t.cover_url || null, description: t.description || '',
+                price: parseFloat(t.price) || 0, preview_duration: parseInt(t.preview_duration) || 30,
+                duration: t.duration || null, visible: t.visible !== false,
+                order: migrated.length
+              }, { headers: { 'Content-Type': 'application/json', ...authHeaders } });
+              migrated.push(createRes.data.track);
+              console.log(`[AUDIO] ✅ Migré: ${t.title}`);
+            } catch (migErr) {
+              console.error(`[AUDIO] ❌ Erreur migration ${t.title}:`, migErr);
+            }
+          }
+          setAudioTracks(migrated);
+          setAudioLoaded(true);
+          console.log(`[AUDIO] 🎉 Migration terminée: ${migrated.length}/${legacyTracks.length}`);
+          return;
+        }
+      }
+
+      setAudioTracks(apiTracks);
       setAudioLoaded(true);
       console.log(`[AUDIO] ✅ ${res.data.count} pistes chargées`);
     } catch (err) {
       console.error("[AUDIO] Erreur chargement:", err);
-      setAudioLoaded(true); // Marquer comme chargé même en erreur
+      setAudioLoaded(true);
     }
   };
 
   useEffect(() => {
-    if (coachUser?.email && !audioLoaded) {
+    if (coachUser?.email && !audioLoaded && courses.length >= 0) {
       loadAudioTracks();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [coachUser?.email]);
+  }, [coachUser?.email, courses.length]);
 
   // Legacy compat — openAudioModal kept for modal version
   const openAudioModal = (course) => {
