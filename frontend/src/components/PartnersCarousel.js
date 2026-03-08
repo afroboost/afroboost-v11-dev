@@ -1,10 +1,10 @@
 /**
- * PartnersCarousel - Flux vertical Reels v9.5.2 LOGIQUE D'ACCÈS ET FLUX RÉPARÉ
+ * PartnersCarousel - Flux vertical Reels v31 FUSION ACCUEIL = VITRINE
  * - Logo Afroboost en haut au centre (position absolue)
  * - Icône recherche en haut à droite
  * - 1 Clic = Play/Pause, Double-clic = Vitrine
+ * - v31: Carousel multi-slots heroVideos avec auto-rotation (miroir CoachVitrine)
  * - Lazy loading optimisé (vidéos chargent quand visibles)
- * - Espace noir supprimé, vidéo 16:9 centrée optimalement
  * - Event listeners nettoyés pour éviter conflits
  */
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
@@ -107,6 +107,37 @@ const isDirectImageFile = (url) => {
   return /\.(jpg|jpeg|png|webp|gif|svg|bmp)(\?|$)/i.test(url) || (url.includes('/api/files/') && url.includes('/image_'));
 };
 
+// v31: Détection STRICTE du type de média (copié de CoachVitrine)
+const detectHeroMediaType = (video) => {
+  if (!video || !video.url) return 'unknown';
+  const url = video.url.toLowerCase();
+  if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
+  if (url.includes('vimeo.com')) return 'vimeo';
+  if (url.match(/\.(jpg|jpeg|png|webp|gif|svg|bmp)(\?|$)/i) || video.type === 'image' || url.includes('/image_')) return 'image';
+  if (url.match(/\.(mp4|webm|mov|avi|mkv)(\?|$)/i) || video.type === 'upload' || video.type === 'video' || url.includes('/video_')) return 'video';
+  if (url.includes('/api/files/')) return 'video';
+  return 'unknown';
+};
+
+// v31: Résoudre URL complète pour /api/files/
+const resolveHeroUrl = (url, cacheBuster) => {
+  if (!url) return '';
+  if (url.startsWith('/api/files/')) {
+    const base = BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+    return `${base}${url}?v=${cacheBuster}`;
+  }
+  return url;
+};
+
+// v31: Trier heroVideos — uploaded d'abord, puis external (YouTube, etc.)
+const sortHeroVideos = (heroVideos) => {
+  if (!heroVideos || heroVideos.length === 0) return [];
+  const filtered = heroVideos.filter(v => v && v.url);
+  const uploaded = filtered.filter(v => { const t = detectHeroMediaType(v); return t === 'image' || t === 'video'; });
+  const external = filtered.filter(v => { const t = detectHeroMediaType(v); return t !== 'image' && t !== 'video'; });
+  return [...uploaded, ...external];
+};
+
 const getMediaInfo = (videoUrl) => {
   const url = videoUrl || DEFAULT_VIDEO_URL;
   const youtubeId = getYoutubeId(url);
@@ -132,17 +163,42 @@ const getMediaInfo = (videoUrl) => {
 const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onNavigate, isPaused, onTogglePause, isVisible, maintenanceMode = false, isSuperAdmin = false }) => {
   const videoRef = useRef(null);
   const [hasError, setHasError] = useState(false);
-  const [ytPlaying, setYtPlaying] = useState(false); // v12: YouTube Lite - afficher iframe seulement après clic
+  const [ytPlaying, setYtPlaying] = useState(false);
   const lastClickTime = useRef(0);
   const clickCount = useRef(0);
   const clickTimer = useRef(null);
-  
-  // v29: Utiliser heroVideos[0] en priorité (système multi-slots), fallback sur video_url legacy
+
+  // v31: Carousel multi-slots — utiliser TOUS les heroVideos (pas juste [0])
+  const [activeHeroIdx, setActiveHeroIdx] = useState(0);
+  const [cacheBusterTs] = useState(() => Date.now());
+
+  const heroVideosSorted = useMemo(() => sortHeroVideos(partner.heroVideos || []), [partner.heroVideos]);
+  const heroSlidesCount = heroVideosSorted.length;
+
+  // v31: Auto-rotation toutes les 8s quand il y a plusieurs slots
+  useEffect(() => {
+    if (heroSlidesCount <= 1 || !isVisible) return;
+    const timer = setInterval(() => {
+      setActiveHeroIdx(prev => (prev + 1) % heroSlidesCount);
+    }, 8000);
+    return () => clearInterval(timer);
+  }, [heroSlidesCount, isVisible]);
+
+  // v31: Résoudre le média courant du carousel
+  const currentHero = heroVideosSorted[activeHeroIdx] || heroVideosSorted[0] || null;
+  const currentHeroType = detectHeroMediaType(currentHero);
+  const currentHeroUrl = resolveHeroUrl(currentHero?.url || '', cacheBusterTs);
+  const currentYoutubeId = getYoutubeId(currentHeroUrl);
+
+  // Fallback: si pas de heroVideos, utiliser l'ancien système mono-média
   const heroVideosArr = partner.heroVideos || [];
   const firstHeroUrl = heroVideosArr.length > 0 && heroVideosArr[0]?.url ? heroVideosArr[0].url : '';
   const videoUrl = firstHeroUrl || partner.video_url || partner.heroImageUrl;
   const mediaInfo = useMemo(() => getMediaInfo(videoUrl), [videoUrl]);
   const activeMedia = hasError ? getMediaInfo(DEFAULT_VIDEO_URL) : mediaInfo;
+
+  // v31: Décider quel système de rendu utiliser
+  const useMultiSlotCarousel = heroSlidesCount > 0;
   
   const initial = (partner.name || partner.platform_name || 'P').charAt(0).toUpperCase();
   const displayName = partner.platform_name || partner.name || 'Partenaire';
@@ -256,7 +312,155 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
         >
           {shouldLoadVideo ? (
             <>
-              {activeMedia.youtubeId ? (
+              {/* === v31: MULTI-SLOT HERO CAROUSEL === */}
+              {useMultiSlotCarousel ? (
+                <div className="absolute inset-0">
+                  {/* Rendu du média courant */}
+                  {currentHeroType === 'image' ? (
+                    <img
+                      key={`hero-img-${activeHeroIdx}`}
+                      src={currentHeroUrl}
+                      alt={displayName}
+                      className="absolute inset-0 w-full h-full object-cover"
+                      style={{ filter: 'brightness(0.75)' }}
+                      onError={() => setActiveHeroIdx(prev => (prev + 1) % heroSlidesCount)}
+                    />
+                  ) : currentHeroType === 'video' ? (
+                    <div className="absolute inset-0" key={`hero-vid-wrap-${activeHeroIdx}`}>
+                      {/* v31: Gradient fallback visible par défaut */}
+                      <div id={`hero-fb-${activeHeroIdx}`} className="absolute inset-0" style={{
+                        background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.7) 0%, rgba(217, 28, 210, 0.5) 50%, rgba(30, 0, 50, 0.95) 100%)',
+                        zIndex: 2, transition: 'opacity 0.5s ease'
+                      }}>
+                        <div className="absolute inset-0 flex items-center justify-center flex-col gap-3">
+                          <div style={{
+                            width: '64px', height: '64px', borderRadius: '50%',
+                            background: 'rgba(217, 28, 210, 0.7)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            boxShadow: '0 0 25px rgba(217, 28, 210, 0.4)'
+                          }}>
+                            <svg width="22" height="26" viewBox="0 0 28 32" fill="none">
+                              <path d="M28 16L0 32V0L28 16Z" fill="white"/>
+                            </svg>
+                          </div>
+                          <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem' }}>Chargement vidéo...</span>
+                        </div>
+                      </div>
+                      <video
+                        key={`hero-vid-${activeHeroIdx}`}
+                        autoPlay muted loop playsInline preload="auto"
+                        className="absolute inset-0 w-full h-full object-cover"
+                        style={{ filter: 'brightness(0.7)', zIndex: 1 }}
+                        ref={(el) => {
+                          if (el) {
+                            el.setAttribute('webkit-playsinline', 'true');
+                            el.setAttribute('x5-video-player-type', 'h5');
+                            if (el.src !== currentHeroUrl) { el.src = currentHeroUrl; el.load(); }
+                            const tryPlay = (attempt) => {
+                              if (attempt > 8) return;
+                              setTimeout(() => {
+                                if (el.paused && el.readyState >= 2) {
+                                  el.muted = true;
+                                  el.play().then(() => {
+                                    const fb = document.getElementById(`hero-fb-${activeHeroIdx}`);
+                                    if (fb) { fb.style.opacity = '0'; fb.style.pointerEvents = 'none'; }
+                                  }).catch(() => tryPlay(attempt + 1));
+                                } else if (el.paused) { tryPlay(attempt + 1); }
+                              }, attempt * 300);
+                            };
+                            tryPlay(0);
+                          }
+                        }}
+                        onCanPlay={(e) => {
+                          if (e.target.paused) { e.target.muted = true; e.target.play().catch(() => {}); }
+                          const fb = document.getElementById(`hero-fb-${activeHeroIdx}`);
+                          if (fb) { fb.style.opacity = '0'; fb.style.pointerEvents = 'none'; }
+                        }}
+                        onError={() => console.error('[V31] Video error slot', activeHeroIdx)}
+                      />
+                    </div>
+                  ) : currentHeroType === 'youtube' && currentYoutubeId ? (
+                    <div className="absolute inset-0 overflow-hidden">
+                      {!ytPlaying ? (
+                        <>
+                          <img
+                            src={`https://img.youtube.com/vi/${currentYoutubeId}/0.jpg`}
+                            alt={displayName}
+                            className="absolute inset-0 w-full h-full object-cover"
+                            style={{ filter: 'brightness(0.85)' }}
+                            onError={(e) => { e.target.src = `https://img.youtube.com/vi/${currentYoutubeId}/hqdefault.jpg`; }}
+                          />
+                          <div
+                            className="absolute inset-0 flex items-center justify-center cursor-pointer"
+                            onClick={(e) => { e.stopPropagation(); setYtPlaying(true); }}
+                          >
+                            <div
+                              className="w-20 h-20 rounded-full flex items-center justify-center transition-transform hover:scale-110"
+                              style={{
+                                background: 'rgba(217, 28, 210, 0.85)',
+                                boxShadow: '0 0 30px rgba(217, 28, 210, 0.6), 0 0 60px rgba(217, 28, 210, 0.3)',
+                                backdropFilter: 'blur(4px)'
+                              }}
+                            >
+                              <svg width="36" height="36" viewBox="0 0 24 24" fill="white">
+                                <polygon points="6 3 20 12 6 21 6 3" />
+                              </svg>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <iframe
+                          className="absolute"
+                          src={`https://www.youtube.com/embed/${currentYoutubeId}?autoplay=1&mute=1&loop=1&playlist=${currentYoutubeId}&controls=1&showinfo=0&rel=0&modestbranding=1&playsinline=1`}
+                          title={displayName}
+                          frameBorder="0"
+                          allow="autoplay; encrypted-media; gyroscope; picture-in-picture"
+                          allowFullScreen
+                          style={{
+                            pointerEvents: 'auto',
+                            position: 'absolute', top: '50%', left: '50%',
+                            width: '56.25vh', height: '100vh',
+                            minWidth: '100%', minHeight: '177.78vw',
+                            transform: 'translate(-50%, -50%)'
+                          }}
+                          onError={() => setYtPlaying(false)}
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    /* Fallback: gradient avec nom du coach */
+                    <div className="absolute inset-0" style={{
+                      background: 'linear-gradient(180deg, #0a0a1a 0%, #1a0a2e 50%, #0a0a1a 100%)'
+                    }}>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center px-8 text-center">
+                        <div className="w-24 h-24 rounded-full flex items-center justify-center text-3xl font-bold mb-4"
+                          style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #8b5cf6 100%)', color: 'white' }}
+                        >{initial}</div>
+                        <h2 className="text-white text-2xl font-bold mb-2">{displayName}</h2>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* v31: Dots navigation */}
+                  {heroSlidesCount > 1 && (
+                    <div className="absolute bottom-20 left-0 right-0 flex justify-center items-center gap-2 z-10">
+                      {heroVideosSorted.map((_, idx) => (
+                        <div
+                          key={idx}
+                          onClick={(e) => { e.stopPropagation(); setActiveHeroIdx(idx); setYtPlaying(false); }}
+                          style={{
+                            width: activeHeroIdx === idx ? '24px' : '10px', height: '10px',
+                            borderRadius: '5px', cursor: 'pointer',
+                            background: activeHeroIdx === idx ? '#D91CD2' : 'rgba(255,255,255,0.4)',
+                            boxShadow: activeHeroIdx === idx ? '0 0 10px rgba(217,28,210,0.6)' : 'none',
+                            transition: 'all 0.3s ease'
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : activeMedia.youtubeId ? (
                 <div className="absolute inset-0 overflow-hidden">
                   {/* v12: YouTube Lite Facade - Thumbnail d'abord, iframe au clic */}
                   {!ytPlaying ? (
