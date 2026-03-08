@@ -696,14 +696,19 @@ const ConversationItem = memo(({
   loadSessionMessages,
   setSessionMode,
   deleteChatSession,
-  isSuperAdmin
+  isSuperAdmin,
+  bulkMode,
+  bulkSelected,
+  toggleBulkSelect
 }) => {
   const isSelected = selectedSession?.id === session.id;
   const hasUnread = session.unreadCount > 0;
+  const isBulkChecked = bulkSelected?.has(session.id);
 
   return (
     <div
       onClick={() => {
+        if (bulkMode) { toggleBulkSelect(session.id); return; }
         setSelectedSession(session);
         loadSessionMessages(session.id);
       }}
@@ -712,14 +717,30 @@ const ConversationItem = memo(({
         borderRadius: '12px',
         cursor: 'pointer',
         transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-        background: isSelected ? 'rgba(217, 28, 210, 0.1)' : 'transparent',
-        borderLeft: isSelected ? '2px solid #D91CD2' : '2px solid transparent',
+        background: isBulkChecked ? 'rgba(239,68,68,0.08)' : isSelected ? 'rgba(217, 28, 210, 0.1)' : 'transparent',
+        borderLeft: isBulkChecked ? '2px solid #ef4444' : isSelected ? '2px solid #D91CD2' : '2px solid transparent',
       }}
-      onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
-      onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
+      onMouseEnter={(e) => { if (!isSelected && !isBulkChecked) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+      onMouseLeave={(e) => { if (!isSelected && !isBulkChecked) e.currentTarget.style.background = isBulkChecked ? 'rgba(239,68,68,0.08)' : 'transparent'; }}
       data-testid={`conversation-${session.id}`}
     >
       <div style={{ display: 'flex', alignItems: 'start', justifyContent: 'space-between', gap: '10px' }}>
+        {/* v38: Checkbox bulk select */}
+        {bulkMode && (
+          <div
+            onClick={(e) => { e.stopPropagation(); toggleBulkSelect(session.id); }}
+            style={{
+              width: '22px', height: '22px', minWidth: '22px', borderRadius: '6px',
+              border: isBulkChecked ? '2px solid #ef4444' : '2px solid rgba(255,255,255,0.2)',
+              background: isBulkChecked ? '#ef4444' : 'transparent',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', transition: 'all 0.2s ease', marginTop: '2px',
+              boxShadow: isBulkChecked ? '0 0 8px rgba(239,68,68,0.4)' : 'none'
+            }}
+          >
+            {isBulkChecked && <Check size={14} style={{ color: '#fff', strokeWidth: 3 }} />}
+          </div>
+        )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {/* Mode indicator — petit dot */}
@@ -841,7 +862,10 @@ const GroupedConversationList = memo(({
   deleteChatSession,
   isSuperAdmin,
   conversationsHasMore,
-  conversationsLoading
+  conversationsLoading,
+  bulkMode,
+  bulkSelected,
+  toggleBulkSelect
 }) => {
   const [collapsedGroups, setCollapsedGroups] = useState({});
 
@@ -938,6 +962,9 @@ const GroupedConversationList = memo(({
                       setSessionMode={setSessionMode}
                       deleteChatSession={deleteChatSession}
                       isSuperAdmin={isSuperAdmin}
+                      bulkMode={bulkMode}
+                      bulkSelected={bulkSelected}
+                      toggleBulkSelect={toggleBulkSelect}
                     />
                   ))}
                 </div>
@@ -993,6 +1020,7 @@ const CRMSection = ({
   loadSessionMessages,
   setSessionMode,
   deleteChatSession,
+  bulkDeleteChatSessions,
   conversationsLoading,
   conversationsHasMore,
   handleConversationsScroll,
@@ -1010,6 +1038,47 @@ const CRMSection = ({
   isSuperAdmin,
   API_URL
 }) => {
+  // v38: Bulk selection state
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkSelected, setBulkSelected] = useState(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  const toggleBulkSelect = useCallback((sessionId) => {
+    setBulkSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      return next;
+    });
+  }, []);
+
+  const selectAllConversations = useCallback(() => {
+    if (bulkSelected.size === enrichedConversations.length) {
+      setBulkSelected(new Set());
+    } else {
+      setBulkSelected(new Set(enrichedConversations.map(c => c.id)));
+    }
+  }, [enrichedConversations, bulkSelected.size]);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (bulkSelected.size === 0) return;
+    if (!window.confirm(`⚠️ Supprimer ${bulkSelected.size} conversation${bulkSelected.size > 1 ? 's' : ''} ?\n\nCette action est irréversible.`)) return;
+    setBulkDeleting(true);
+    try {
+      await bulkDeleteChatSessions([...bulkSelected]);
+      setBulkSelected(new Set());
+      setBulkMode(false);
+    } catch (err) {
+      console.error('Bulk delete error:', err);
+    }
+    setBulkDeleting(false);
+  }, [bulkSelected, bulkDeleteChatSessions]);
+
+  const exitBulkMode = useCallback(() => {
+    setBulkMode(false);
+    setBulkSelected(new Set());
+  }, []);
+
   return (
     <div style={{ background: '#000000', borderRadius: '20px', overflow: 'hidden' }}>
       {/* Banner Permission */}
@@ -1103,19 +1172,88 @@ const CRMSection = ({
                   {enrichedConversations.length}
                 </span>
               </div>
-              <button
-                onClick={() => loadConversations(true)}
-                disabled={conversationsLoading}
-                style={{
-                  ...iconBtn('rgba(255,255,255,0.3)'),
-                  width: '28px', height: '28px',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = '#D91CD2'; e.currentTarget.style.boxShadow = GLOW.violetSoft; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.3)'; e.currentTarget.style.boxShadow = 'none'; }}
-              >
-                {conversationsLoading ? <span style={{ fontSize: '12px' }}>⏳</span> : <RefreshCw size={14} />}
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                {/* v38: Toggle bulk mode */}
+                <button
+                  onClick={() => bulkMode ? exitBulkMode() : setBulkMode(true)}
+                  style={{
+                    ...iconBtn(bulkMode ? '#ef4444' : 'rgba(255,255,255,0.3)'),
+                    width: '28px', height: '28px',
+                    background: bulkMode ? 'rgba(239,68,68,0.1)' : 'transparent',
+                    borderRadius: '8px',
+                  }}
+                  title={bulkMode ? 'Annuler la sélection' : 'Sélection multiple'}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = bulkMode ? '#ef4444' : '#D91CD2'; e.currentTarget.style.boxShadow = bulkMode ? GLOW.red : GLOW.violetSoft; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = bulkMode ? '#ef4444' : 'rgba(255,255,255,0.3)'; e.currentTarget.style.boxShadow = 'none'; }}
+                >
+                  {bulkMode ? <X size={14} /> : <Trash2 size={14} />}
+                </button>
+                <button
+                  onClick={() => loadConversations(true)}
+                  disabled={conversationsLoading}
+                  style={{
+                    ...iconBtn('rgba(255,255,255,0.3)'),
+                    width: '28px', height: '28px',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = '#D91CD2'; e.currentTarget.style.boxShadow = GLOW.violetSoft; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.3)'; e.currentTarget.style.boxShadow = 'none'; }}
+                >
+                  {conversationsLoading ? <span style={{ fontSize: '12px' }}>⏳</span> : <RefreshCw size={14} />}
+                </button>
+              </div>
             </div>
+
+            {/* v38: Bulk selection bar */}
+            {bulkMode && (
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '10px 14px', marginBottom: '12px', borderRadius: '12px',
+                background: 'linear-gradient(135deg, rgba(239,68,68,0.08), rgba(217,28,210,0.06))',
+                border: '1px solid rgba(239,68,68,0.15)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  {/* Master checkbox */}
+                  <div
+                    onClick={selectAllConversations}
+                    style={{
+                      width: '22px', height: '22px', minWidth: '22px', borderRadius: '6px',
+                      border: bulkSelected.size === enrichedConversations.length && enrichedConversations.length > 0
+                        ? '2px solid #D91CD2' : '2px solid rgba(255,255,255,0.25)',
+                      background: bulkSelected.size === enrichedConversations.length && enrichedConversations.length > 0
+                        ? '#D91CD2' : bulkSelected.size > 0 ? 'rgba(217,28,210,0.3)' : 'transparent',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer', transition: 'all 0.2s ease',
+                    }}
+                  >
+                    {bulkSelected.size > 0 && <Check size={14} style={{ color: '#fff', strokeWidth: 3 }} />}
+                  </div>
+                  <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '12px', fontWeight: 500 }}>
+                    {bulkSelected.size === 0 ? 'Tout sélectionner' : `${bulkSelected.size} sélectionnée${bulkSelected.size > 1 ? 's' : ''}`}
+                  </span>
+                </div>
+                {bulkSelected.size > 0 && (
+                  <button
+                    onClick={handleBulkDelete}
+                    disabled={bulkDeleting}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                      padding: '8px 16px', borderRadius: '10px', border: 'none',
+                      background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
+                      color: '#fff', fontSize: '12px', fontWeight: 700,
+                      cursor: bulkDeleting ? 'wait' : 'pointer',
+                      opacity: bulkDeleting ? 0.7 : 1,
+                      boxShadow: '0 0 12px rgba(239,68,68,0.3)',
+                      transition: 'all 0.2s ease',
+                    }}
+                    onMouseEnter={(e) => { if (!bulkDeleting) e.currentTarget.style.boxShadow = '0 0 20px rgba(239,68,68,0.5)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 0 12px rgba(239,68,68,0.3)'; }}
+                  >
+                    <Trash2 size={13} />
+                    {bulkDeleting ? 'Suppression...' : `Supprimer (${bulkSelected.size})`}
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Search — borderless */}
             <div style={{ position: 'relative', marginBottom: '16px' }}>
@@ -1155,6 +1293,9 @@ const CRMSection = ({
               isSuperAdmin={isSuperAdmin}
               conversationsHasMore={conversationsHasMore}
               conversationsLoading={conversationsLoading}
+              bulkMode={bulkMode}
+              bulkSelected={bulkSelected}
+              toggleBulkSelect={toggleBulkSelect}
             />
           </div>
 

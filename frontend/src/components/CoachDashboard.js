@@ -2417,6 +2417,33 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
+  // === v38: SUPPRESSION GROUPÉE DE SESSIONS ===
+  const bulkDeleteChatSessions = async (sessionIds) => {
+    try {
+      console.log('BULK_DELETE: Suppression de', sessionIds.length, 'conversations...');
+      // Exécuter toutes les suppressions en parallèle
+      await Promise.all(sessionIds.map(id => axios.put(`${API}/chat/sessions/${id}`, { is_deleted: true })));
+
+      // Mettre à jour tous les states
+      const idsSet = new Set(sessionIds);
+      setChatSessions(prev => prev.filter(s => !idsSet.has(s.id) && !idsSet.has(s._id)));
+      setEnrichedConversations(prev => prev.filter(c => !idsSet.has(c.id) && !idsSet.has(c._id)));
+      setChatLinks(prev => prev.filter(l => !idsSet.has(l.id) && !idsSet.has(l._id)));
+
+      // Désélectionner si la session sélectionnée est dans la liste
+      if (selectedSession && (idsSet.has(selectedSession.id) || idsSet.has(selectedSession._id))) {
+        setSelectedSession(null);
+        setSessionMessages([]);
+      }
+
+      console.log('BULK_DELETE: Suppression groupée terminée ✅', sessionIds.length, 'conversations supprimées');
+    } catch (err) {
+      console.error('BULK_DELETE: ERREUR:', err);
+      alert("Erreur lors de la suppression groupée: " + (err.message || 'Erreur inconnue'));
+      throw err;
+    }
+  };
+
   // === SUPPRESSION LIEN DE CHAT ===
   const deleteChatLink = async (linkId) => {
     if (!window.confirm("⚠️ Supprimer ce lien de partage ?\n\nLe lien ne sera plus accessible. Cette action est irréversible.")) return;
@@ -5608,6 +5635,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             loadSessionMessages={loadSessionMessages}
             setSessionMode={setSessionMode}
             deleteChatSession={deleteChatSession}
+            bulkDeleteChatSessions={bulkDeleteChatSessions}
             conversationsLoading={conversationsLoading}
             conversationsHasMore={conversationsHasMore}
             handleConversationsScroll={handleConversationsScroll}
