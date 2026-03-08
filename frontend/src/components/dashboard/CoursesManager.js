@@ -15,6 +15,7 @@ const CoursesManager = ({
   setNewCourse,
   updateCourse,
   openAudioModal,
+  hideAudioButton = false,
   lang,
   t
 }) => {
@@ -215,7 +216,7 @@ const CoursesManager = ({
             </div>
 
             {/* === v17.5: Bouton Studio Audio GLOW === */}
-            <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid rgba(217,28,210,0.15)' }}>
+            {!hideAudioButton && <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid rgba(217,28,210,0.15)' }}>
               <button
                 onClick={() => openAudioModal(course)}
                 data-testid={`audio-course-${course.id}`}
@@ -278,7 +279,7 @@ const CoursesManager = ({
                   </span>
                 )}
               </button>
-            </div>
+            </div>}
           </div>
         ))}
       </div>

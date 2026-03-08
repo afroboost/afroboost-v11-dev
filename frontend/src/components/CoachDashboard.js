@@ -4967,6 +4967,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   setNewCourse={setNewCourse}
                   updateCourse={updateCourse}
                   openAudioModal={openAudioModal}
+                  hideAudioButton={true}
                   lang={lang}
                   t={t}
                 />
