@@ -685,10 +685,29 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               );
             }
 
-            // === VIDEO (uploadée ou externe) — v29.4 AUTOPLAY ROBUSTE ===
+            // === VIDEO (uploadée ou externe) — v29.5 AUTOPLAY + FALLBACK VISUEL ===
             if (heroMediaType === 'video') {
               return (
                 <div className="absolute inset-0" key={`vid-wrap-${activeVideoIndex}`}>
+                  {/* v29.5: Gradient VISIBLE par défaut — se cache quand la vidéo charge */}
+                  <div id={`vid-fallback-${activeVideoIndex}`} className="absolute inset-0" style={{
+                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.7) 0%, rgba(217, 28, 210, 0.5) 50%, rgba(30, 0, 50, 0.95) 100%)',
+                    zIndex: 2, transition: 'opacity 0.5s ease'
+                  }}>
+                    <div className="absolute inset-0 flex items-center justify-center flex-col gap-3">
+                      <div style={{
+                        width: '64px', height: '64px', borderRadius: '50%',
+                        background: 'rgba(217, 28, 210, 0.7)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        boxShadow: '0 0 25px rgba(217, 28, 210, 0.4)'
+                      }}>
+                        <svg width="22" height="26" viewBox="0 0 28 32" fill="none">
+                          <path d="M28 16L0 32V0L28 16Z" fill="white"/>
+                        </svg>
+                      </div>
+                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem' }}>Chargement vidéo...</span>
+                    </div>
+                  </div>
                   <video
                     key={`vid-${activeVideoIndex}`}
                     autoPlay
@@ -697,62 +716,46 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                     playsInline
                     preload="auto"
                     className="absolute inset-0 w-full h-full object-cover"
-                    style={{ filter: 'brightness(0.7)' }}
+                    style={{ filter: 'brightness(0.7)', zIndex: 1 }}
                     ref={(el) => {
                       if (el) {
-                        // v29.4: Attributs mobile
                         el.setAttribute('webkit-playsinline', 'true');
                         el.setAttribute('x5-video-player-type', 'h5');
-                        el.setAttribute('x5-video-player-fullscreen', 'false');
-                        // v29.4: Charger la source et forcer play
                         if (el.src !== heroVideoUrl) {
                           el.src = heroVideoUrl;
                           el.load();
                         }
-                        // Force play avec retry progressif
                         const tryPlay = (attempt) => {
-                          if (attempt > 5) return;
+                          if (attempt > 8) return;
                           setTimeout(() => {
                             if (el.paused && el.readyState >= 2) {
                               el.muted = true;
-                              el.play().catch(() => tryPlay(attempt + 1));
+                              el.play().then(() => {
+                                const fb = document.getElementById(`vid-fallback-${activeVideoIndex}`);
+                                if (fb) { fb.style.opacity = '0'; fb.style.pointerEvents = 'none'; }
+                              }).catch(() => tryPlay(attempt + 1));
                             } else if (el.paused) {
                               tryPlay(attempt + 1);
                             }
-                          }, attempt * 200);
+                          }, attempt * 300);
                         };
                         tryPlay(0);
                       }
                     }}
                     onCanPlay={(e) => {
-                      console.log('[V29.4] Video canplay:', heroVideoUrl);
+                      console.log('[V29.5] Video canplay');
                       const loader = document.getElementById('hero-media-loader');
                       if (loader) loader.style.display = 'none';
-                      if (e.target.paused) {
-                        e.target.muted = true;
-                        e.target.play().catch(() => {});
-                      }
-                    }}
-                    onLoadedData={() => {
-                      console.log('[V29.4] Video loaded:', heroVideoUrl);
-                      const loader = document.getElementById('hero-media-loader');
-                      if (loader) loader.style.display = 'none';
+                      if (e.target.paused) { e.target.muted = true; e.target.play().catch(() => {}); }
+                      const fb = document.getElementById(`vid-fallback-${activeVideoIndex}`);
+                      if (fb) { fb.style.opacity = '0'; fb.style.pointerEvents = 'none'; }
                     }}
                     onError={(e) => {
-                      console.error('[V29.4] Video error:', heroVideoUrl, e.target.error);
+                      console.error('[V29.5] Video error:', e.target.error);
                       const loader = document.getElementById('hero-media-loader');
                       if (loader) loader.style.display = 'none';
                     }}
                   />
-                  {/* Gradient fallback derrière la vidéo */}
-                  <div className="absolute inset-0" style={{
-                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.6) 0%, rgba(217, 28, 210, 0.5) 50%, rgba(30, 0, 50, 0.9) 100%)',
-                    zIndex: -1
-                  }}>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <span style={{ fontSize: '4rem', opacity: 0.3 }}>🎬</span>
-                    </div>
-                  </div>
                 </div>
               );
             }
