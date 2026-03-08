@@ -356,17 +356,44 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                 />
               ) : activeMedia.isDirectVideo ? (
                 <video
-                  ref={videoRef}
-                  autoPlay={!isPaused}
+                  ref={(el) => {
+                    videoRef.current = el;
+                    if (el) {
+                      el.setAttribute('webkit-playsinline', 'true');
+                      el.setAttribute('x5-video-player-type', 'h5');
+                      el.setAttribute('x5-video-player-fullscreen', 'false');
+                      // v29.2: Force autoplay après montage DOM (Samsung Ultra 24 fix)
+                      setTimeout(() => {
+                        if (el.paused && !isPaused) {
+                          el.muted = true;
+                          el.play().catch(() => {});
+                        }
+                      }, 150);
+                    }
+                  }}
+                  autoPlay={true}
                   loop
-                  muted={isMuted}
+                  muted={true}
                   playsInline
                   className="absolute inset-0 w-full h-full object-cover"
                   onError={() => setHasError(true)}
-                  preload="metadata"
-                >
-                  <source src={activeMedia.url.startsWith('/api/') ? `${BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '')}${activeMedia.url}` : activeMedia.url} type="video/mp4" />
-                </video>
+                  preload="auto"
+                  style={{ filter: 'brightness(0.8)' }}
+                  src={activeMedia.url.startsWith('/api/') ? `${BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '')}${activeMedia.url}` : activeMedia.url}
+                  onCanPlay={(e) => {
+                    if (e.target.paused && !isPaused) {
+                      e.target.muted = true;
+                      e.target.play().catch(() => {});
+                    }
+                  }}
+                  onLoadedData={(e) => {
+                    console.log('[CAROUSEL-MEDIA] ✅ Vidéo chargée:', activeMedia.url);
+                    if (e.target.paused && !isPaused) {
+                      e.target.muted = true;
+                      e.target.play().catch(() => {});
+                    }
+                  }}
+                />
               ) : (
                 <div
                   className="absolute inset-0"
