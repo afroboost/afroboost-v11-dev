@@ -130,9 +130,10 @@ const resolveHeroUrl = (url, cacheBuster) => {
 };
 
 // v32: Respecter l'ordre MANUEL défini dans le Dashboard (plus de tri automatique)
+// v34: Filtrer les vidéos marquées is_visible: false
 const getHeroVideosOrdered = (heroVideos) => {
   if (!heroVideos || heroVideos.length === 0) return [];
-  return heroVideos.filter(v => v && v.url);
+  return heroVideos.filter(v => v && v.url && v.is_visible !== false);
 };
 
 const getMediaInfo = (videoUrl) => {
@@ -157,7 +158,8 @@ const getMediaInfo = (videoUrl) => {
 
 // === COMPOSANT VIDEO CARD v9.5.7 avec mode maintenance ===
 // v11.7: Ajout isSuperAdminVideo pour désactiver double-clic
-const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onNavigate, isPaused, onTogglePause, isVisible, maintenanceMode = false, isSuperAdmin = false }) => {
+// v34: Ajout preview 30s + overlay achat pour vidéos premium
+const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onNavigate, isPaused, onTogglePause, isVisible, maintenanceMode = false, isSuperAdmin = false, onBuyVideo }) => {
   const videoRef = useRef(null);
   const [hasError, setHasError] = useState(false);
   const [ytPlaying, setYtPlaying] = useState(false);
@@ -168,6 +170,11 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   // v31: Carousel multi-slots — utiliser TOUS les heroVideos (pas juste [0])
   const [activeHeroIdx, setActiveHeroIdx] = useState(0);
   const [cacheBusterTs] = useState(() => Date.now());
+
+  // v34: Preview 30s — overlay achat pour vidéos premium
+  const [showPreviewOverlay, setShowPreviewOverlay] = useState(false);
+  const ytTimerRef = useRef(null);
+  const PREVIEW_DURATION = 30; // secondes
 
   // v32: Utiliser l'ordre de la BDD tel quel (pas de tri automatique)
   const heroVideosSorted = useMemo(() => getHeroVideosOrdered(partner.heroVideos || []), [partner.heroVideos]);
@@ -187,6 +194,39 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   const currentHeroType = detectHeroMediaType(currentHero);
   const currentHeroUrl = resolveHeroUrl(currentHero?.url || '', cacheBusterTs);
   const currentYoutubeId = getYoutubeId(currentHeroUrl);
+
+  // v34: Vérifier si la vidéo courante est premium (a un prix > 0)
+  const currentHeroPrice = currentHero?.price || 0;
+  const isCurrentHeroPremium = currentHeroPrice > 0;
+
+  // v34: Handler timeupdate pour vidéos <video> — bloque à 30s si premium
+  const handleVideoTimeUpdate = useCallback((e) => {
+    if (!isCurrentHeroPremium) return;
+    if (e.target.currentTime >= PREVIEW_DURATION) {
+      e.target.pause();
+      e.target.currentTime = 0;
+      setShowPreviewOverlay(true);
+      console.log('[V34-PREVIEW] ⏱️ Limite 30s atteinte, overlay affiché');
+    }
+  }, [isCurrentHeroPremium]);
+
+  // v34: Timer YouTube — bloque après 30s si premium
+  useEffect(() => {
+    if (ytTimerRef.current) { clearTimeout(ytTimerRef.current); ytTimerRef.current = null; }
+    if (ytPlaying && isCurrentHeroPremium) {
+      ytTimerRef.current = setTimeout(() => {
+        setYtPlaying(false);
+        setShowPreviewOverlay(true);
+        console.log('[V34-PREVIEW] ⏱️ YouTube: limite 30s atteinte');
+      }, PREVIEW_DURATION * 1000);
+    }
+    return () => { if (ytTimerRef.current) clearTimeout(ytTimerRef.current); };
+  }, [ytPlaying, isCurrentHeroPremium]);
+
+  // v34: Reset overlay quand on change de slot
+  useEffect(() => {
+    setShowPreviewOverlay(false);
+  }, [activeHeroIdx]);
 
   // Fallback: si pas de heroVideos, utiliser l'ancien système mono-média
   const heroVideosArr = partner.heroVideos || [];
@@ -346,9 +386,10 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                       </div>
                       <video
                         key={`hero-vid-${activeHeroIdx}`}
-                        autoPlay muted loop playsInline preload="auto"
+                        autoPlay muted loop={!isCurrentHeroPremium} playsInline preload="auto"
                         className="absolute inset-0 w-full h-full object-cover"
                         style={{ filter: 'brightness(0.7)', zIndex: 1 }}
+                        onTimeUpdate={handleVideoTimeUpdate}
                         ref={(el) => {
                           if (el) {
                             el.setAttribute('webkit-playsinline', 'true');
@@ -455,6 +496,82 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                           }}
                         />
                       ))}
+                    </div>
+                  )}
+
+                  {/* v34: Badge prix si vidéo premium */}
+                  {isCurrentHeroPremium && !showPreviewOverlay && (
+                    <div className="absolute top-16 right-3 z-10" style={{
+                      background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                      padding: '4px 12px', borderRadius: '20px',
+                      boxShadow: '0 0 15px rgba(217,28,210,0.4)',
+                      fontSize: '12px', fontWeight: 700, color: '#fff'
+                    }}>
+                      💎 {currentHeroPrice} CHF
+                    </div>
+                  )}
+
+                  {/* v34: Overlay achat — affiché après 30s de preview */}
+                  {showPreviewOverlay && isCurrentHeroPremium && (
+                    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center"
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        background: 'rgba(0,0,0,0.85)',
+                        backdropFilter: 'blur(12px)',
+                        WebkitBackdropFilter: 'blur(12px)'
+                      }}
+                    >
+                      <div style={{
+                        width: '80px', height: '80px', borderRadius: '50%',
+                        background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        boxShadow: '0 0 40px rgba(217,28,210,0.5)',
+                        marginBottom: '20px'
+                      }}>
+                        <svg width="36" height="36" viewBox="0 0 24 24" fill="white">
+                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+                        </svg>
+                      </div>
+                      <h3 style={{ color: '#fff', fontSize: '20px', fontWeight: 700, marginBottom: '8px', textAlign: 'center' }}>
+                        Aperçu terminé
+                      </h3>
+                      <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '14px', marginBottom: '20px', textAlign: 'center', maxWidth: '280px' }}>
+                        {currentHero?.description || 'Achetez la version complète pour continuer la lecture'}
+                      </p>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          console.log('[V34-PREVIEW] Clic achat vidéo:', currentHero?.title || 'Vidéo', currentHeroPrice, 'CHF');
+                          if (onBuyVideo) onBuyVideo({
+                            name: currentHero?.title || `Vidéo ${displayName}`,
+                            price: currentHeroPrice,
+                            id: currentHero?.id || `hero-${activeHeroIdx}`,
+                            type: 'video',
+                            thumbnail: currentHero?.thumbnail || ''
+                          });
+                        }}
+                        style={{
+                          background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                          color: '#fff', border: 'none', padding: '14px 32px',
+                          borderRadius: '30px', fontSize: '16px', fontWeight: 700,
+                          cursor: 'pointer', boxShadow: '0 0 25px rgba(217,28,210,0.5)',
+                          transition: 'transform 0.2s ease'
+                        }}
+                        onMouseOver={(e) => e.target.style.transform = 'scale(1.05)'}
+                        onMouseOut={(e) => e.target.style.transform = 'scale(1)'}
+                      >
+                        Acheter — {currentHeroPrice} CHF
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setShowPreviewOverlay(false); }}
+                        style={{
+                          background: 'transparent', color: 'rgba(255,255,255,0.4)',
+                          border: 'none', padding: '10px 20px', marginTop: '12px',
+                          fontSize: '13px', cursor: 'pointer'
+                        }}
+                      >
+                        Revoir l'aperçu
+                      </button>
                     </div>
                   )}
                 </div>
@@ -861,7 +978,7 @@ const GlobeIcon = () => (
 );
 
 // === COMPOSANT PRINCIPAL v9.7.2 - Vitrine Unique + Son global unique ===
-const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, isSuperAdmin = false, lang = 'fr', onLangChange, currentVitrineEmail = null }) => {
+const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, isSuperAdmin = false, lang = 'fr', onLangChange, currentVitrineEmail = null, onBuyVideo }) => {
   // v9.6.8: État pour sélecteur de langue
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [globalMuted, setGlobalMuted] = useState(true); // Son global muté par défaut
@@ -1313,6 +1430,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
                   isVisible={Math.abs(index - activeIndex) <= 1}
                   maintenanceMode={maintenanceMode}
                   isSuperAdmin={isSuperAdmin}
+                  onBuyVideo={onBuyVideo}
                 />
               </div>
             );

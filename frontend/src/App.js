@@ -3870,6 +3870,10 @@ function App() {
           lang={lang}
           onLangChange={setLang}
           currentVitrineEmail={null}
+          onBuyVideo={(videoOffer) => {
+            console.log('[V34-BUY] Achat vidéo depuis carousel:', videoOffer);
+            handleSelectOffer(videoOffer);
+          }}
         />
       </div>
 

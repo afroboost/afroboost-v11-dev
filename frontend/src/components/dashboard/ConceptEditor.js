@@ -441,6 +441,68 @@ const ConceptEditor = ({
                     Max 4MB — pour les vidéos, utilisez YouTube/Vimeo
                   </span>
                 </div>
+                {/* v34: Champs Vidéo Premium — Prix, Description, Miniature */}
+                <div style={{
+                  marginTop: '8px', padding: '10px', borderRadius: '8px',
+                  background: 'rgba(217,28,210,0.05)', border: '1px solid rgba(217,28,210,0.15)'
+                }}>
+                  <p style={{ color: '#D91CD2', fontSize: '11px', fontWeight: 600, marginBottom: '6px' }}>💎 Options Vidéo Premium</p>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                    <div style={{ flex: '0 0 100px' }}>
+                      <label style={{ display: 'block', color: 'rgba(255,255,255,0.5)', fontSize: '10px', marginBottom: '2px' }}>Prix (CHF)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={video.price || ''}
+                        onChange={(e) => updateHeroVideo(idx, { price: parseFloat(e.target.value) || 0 })}
+                        className="w-full px-2 py-1.5 rounded-lg neon-input text-sm"
+                        placeholder="0"
+                        style={{ maxWidth: '100px' }}
+                      />
+                    </div>
+                    <div style={{ flex: '1', minWidth: '150px' }}>
+                      <label style={{ display: 'block', color: 'rgba(255,255,255,0.5)', fontSize: '10px', marginBottom: '2px' }}>Description</label>
+                      <input
+                        type="text"
+                        value={video.description || ''}
+                        onChange={(e) => updateHeroVideo(idx, { description: e.target.value })}
+                        className="w-full px-2 py-1.5 rounded-lg neon-input text-sm"
+                        placeholder="ex: Masterclass Cardio"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', color: 'rgba(255,255,255,0.5)', fontSize: '10px', marginBottom: '2px' }}>Miniature personnalisée (URL)</label>
+                    <input
+                      type="url"
+                      value={video.thumbnail || ''}
+                      onChange={(e) => updateHeroVideo(idx, { thumbnail: e.target.value })}
+                      className="w-full px-2 py-1.5 rounded-lg neon-input text-sm"
+                      placeholder="https://... (optionnel)"
+                    />
+                  </div>
+                  {/* v34: Toggle visibilité */}
+                  <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={video.is_visible !== false}
+                        onChange={(e) => updateHeroVideo(idx, { is_visible: e.target.checked })}
+                        style={{ accentColor: '#D91CD2' }}
+                      />
+                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px' }}>
+                        {video.is_visible !== false ? '👁️ Visible' : '🚫 Masquée'}
+                      </span>
+                    </label>
+                    {(video.price || 0) > 0 && (
+                      <span style={{ fontSize: '10px', color: '#D91CD2', fontWeight: 600 }}>
+                        ⏱️ Preview 30s activée
+                      </span>
+                    )}
+                  </div>
+                </div>
+
                 {/* Aperçu YouTube/Vimeo */}
                 {video.url && (video.url.includes('youtu') || video.url.includes('vimeo')) && (
                   <div style={{ marginTop: '6px', borderRadius: '8px', overflow: 'hidden', maxWidth: '240px' }}>
@@ -766,6 +828,89 @@ const ConceptEditor = ({
             </div>
           )}
         </div>
+
+        {/* v34: MASTER CONTROL SUPER ADMIN — Gestion centralisée des vidéos */}
+        {isSuperAdmin && getHeroVideos().length > 0 && (
+          <div className="border border-red-500/30 rounded-lg p-4 bg-red-900/10">
+            <h3 className="text-red-400 font-semibold mb-4">🛡️ Master Control — Gestion Vidéos</h3>
+            <p className="text-white/40 text-xs mb-3">Actions admin sur toutes les vidéos héro configurées.</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {getHeroVideos().map((video, idx) => (
+                <div key={idx} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '8px 12px', borderRadius: '8px',
+                  background: video.is_visible === false ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${video.is_visible === false ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.08)'}`
+                }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ color: '#D91CD2', fontSize: '11px', fontWeight: 600 }}>#{idx + 1}</span>
+                      <span style={{ color: '#fff', fontSize: '12px' }}>{video.title || video.description || 'Sans titre'}</span>
+                      {(video.price || 0) > 0 && (
+                        <span style={{ color: '#22c55e', fontSize: '11px', fontWeight: 600 }}>{video.price} CHF</span>
+                      )}
+                      {video.is_visible === false && (
+                        <span style={{ color: '#ef4444', fontSize: '10px' }}>🚫 MASQUÉE</span>
+                      )}
+                    </div>
+                    <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px', wordBreak: 'break-all' }}>
+                      {video.url?.substring(0, 60)}{video.url?.length > 60 ? '...' : ''}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '4px', marginLeft: '8px' }}>
+                    {/* Toggle invisible */}
+                    <button
+                      type="button"
+                      onClick={() => updateHeroVideo(idx, { is_visible: video.is_visible === false ? true : false })}
+                      style={{
+                        background: video.is_visible === false ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
+                        border: `1px solid ${video.is_visible === false ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                        color: video.is_visible === false ? '#22c55e' : '#ef4444',
+                        fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
+                      }}
+                      title={video.is_visible === false ? 'Rendre visible' : 'Masquer'}
+                    >
+                      {video.is_visible === false ? '👁️' : '🚫'}
+                    </button>
+                    {/* Copier le lien */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const baseUrl = window.location.origin;
+                        const videoLink = `${baseUrl}/video/${encodeURIComponent(video.url || '')}`;
+                        navigator.clipboard.writeText(video.url?.startsWith('/api/') ? `${baseUrl}${video.url}` : (video.url || ''));
+                        alert('Lien copié !');
+                      }}
+                      style={{
+                        background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)',
+                        color: '#a78bfa', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
+                      }}
+                      title="Copier le lien direct"
+                    >
+                      🔗
+                    </button>
+                    {/* Supprimer */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm(`Supprimer la vidéo #${idx + 1} "${video.title || 'Sans titre'}" ?`)) {
+                          removeHeroVideo(idx);
+                        }
+                      }}
+                      style={{
+                        background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
+                        color: '#ef4444', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
+                      }}
+                      title="Supprimer"
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Indicateur auto-save */}
         <div className="p-3 rounded-lg" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.2)' }}>

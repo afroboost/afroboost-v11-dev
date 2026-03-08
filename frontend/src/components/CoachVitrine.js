@@ -7,7 +7,7 @@
  *   - Sous le hero : Cours/Sessions → Offres → Formulaire INLINE (pas de pop-up)
  *   - QR + Partage en haut à droite sur toutes les pages
  */
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
 import { copyToClipboard } from "../utils/clipboard";
@@ -91,6 +91,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
 
   // v18: Multi-vidéos héro
   const [activeVideoIndex, setActiveVideoIndex] = useState(0);
+
+  // v34: Preview 30s pour vidéos premium
+  const [showVideoPreviewOverlay, setShowVideoPreviewOverlay] = useState(false);
+  const ytPreviewTimerRef = useRef(null);
+  const PREVIEW_LIMIT = 30; // secondes
 
   // v17: INLINE booking multi-séances (tableau de { course, date })
   const [selectedBookings, setSelectedBookings] = useState([]); // [{ course, date }, ...]
@@ -418,6 +423,26 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     return () => links.forEach(l => { try { document.head.removeChild(l); } catch(e) {} });
   }, [coachConcept, cacheBusterTs]);
 
+  // v34: Preview 30s hooks (MUST be before early returns)
+  const previewCurrentVideo = coachConcept?.heroVideos?.[activeVideoIndex] || null;
+  const previewPrice = previewCurrentVideo?.price || 0;
+  const previewIsPremium = previewPrice > 0;
+
+  const handleHeroTimeUpdate = useCallback((e) => {
+    if (!previewIsPremium) return;
+    if (e.target.currentTime >= PREVIEW_LIMIT) {
+      e.target.pause();
+      e.target.currentTime = 0;
+      setShowVideoPreviewOverlay(true);
+      console.log('[V34-VITRINE] ⏱️ Limite 30s atteinte');
+    }
+  }, [previewIsPremium]);
+
+  useEffect(() => {
+    setShowVideoPreviewOverlay(false);
+    if (ytPreviewTimerRef.current) { clearTimeout(ytPreviewTimerRef.current); ytPreviewTimerRef.current = null; }
+  }, [activeVideoIndex]);
+
   // === LOADING — v14: fond noir simple, pas de violet ===
   if (loading) {
     return (
@@ -477,7 +502,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   // v32: Respecter l'ordre MANUEL défini dans le Dashboard (plus de tri automatique)
   const heroVideos = (() => {
     if (coachConcept?.heroVideos && coachConcept.heroVideos.length > 0) {
-      const filtered = coachConcept.heroVideos.filter(v => v && v.url);
+      // v34: Filtrer les vidéos masquées (is_visible: false)
+      const filtered = coachConcept.heroVideos.filter(v => v && v.url && v.is_visible !== false);
       console.log('[V32-HERO] Carousel ordre manuel:', filtered.map((v, i) => `[${i}] ${detectMediaType(v)} → ${resolveMediaUrl(v.url)}`));
       return filtered;
     }
@@ -494,6 +520,10 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const heroVideoUrl = heroResolvedUrls[activeVideoIndex] || heroResolvedUrls[0] || '';
   const heroMediaType = detectMediaType(currentHeroVideo);
   const youtubeId = getYoutubeId(heroVideoUrl);
+
+  // v34: Déterminer si la vidéo courante est premium (uses pre-computed values from before early returns)
+  const currentVideoPrice = currentHeroVideo?.price || 0;
+  const isVideoPremium = currentVideoPrice > 0;
 
   // Déduplication des cours par nom
   const uniqueCourses = (() => {
@@ -709,11 +739,12 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                     key={`vid-${activeVideoIndex}`}
                     autoPlay
                     muted
-                    loop
+                    loop={!isVideoPremium}
                     playsInline
                     preload="auto"
                     className="absolute inset-0 w-full h-full object-cover"
                     style={{ filter: 'brightness(0.7)', zIndex: 1 }}
+                    onTimeUpdate={handleHeroTimeUpdate}
                     ref={(el) => {
                       if (el) {
                         el.setAttribute('webkit-playsinline', 'true');
@@ -786,6 +817,76 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 }}
               />
             ))}
+          </div>
+        )}
+
+        {/* v34: Badge prix si vidéo premium */}
+        {isVideoPremium && !showVideoPreviewOverlay && (
+          <div className="absolute z-20" style={{
+            top: '60px', right: '16px',
+            background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+            padding: '4px 12px', borderRadius: '20px',
+            boxShadow: '0 0 15px rgba(217,28,210,0.4)',
+            fontSize: '12px', fontWeight: 700, color: '#fff'
+          }}>
+            💎 {currentVideoPrice} CHF
+          </div>
+        )}
+
+        {/* v34: Overlay achat vidéo premium — après 30s */}
+        {showVideoPreviewOverlay && isVideoPremium && (
+          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center"
+            style={{
+              background: 'rgba(0,0,0,0.85)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)'
+            }}
+          >
+            <div style={{
+              width: '80px', height: '80px', borderRadius: '50%',
+              background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 0 40px rgba(217,28,210,0.5)',
+              marginBottom: '20px'
+            }}>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="white">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+              </svg>
+            </div>
+            <h3 style={{ color: '#fff', fontSize: '20px', fontWeight: 700, marginBottom: '8px' }}>Aperçu terminé</h3>
+            <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '14px', marginBottom: '20px', textAlign: 'center', maxWidth: '280px' }}>
+              {currentHeroVideo?.description || 'Achetez la version complète pour continuer'}
+            </p>
+            <button
+              onClick={() => {
+                console.log('[V34-VITRINE] Achat vidéo:', currentHeroVideo?.title, currentVideoPrice, 'CHF');
+                setSelectedOffer({
+                  name: currentHeroVideo?.title || `Vidéo ${displayName}`,
+                  price: currentVideoPrice,
+                  id: currentHeroVideo?.id || `hero-${activeVideoIndex}`,
+                  type: 'video',
+                  thumbnail: currentHeroVideo?.thumbnail || ''
+                });
+              }}
+              style={{
+                background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                color: '#fff', border: 'none', padding: '14px 32px',
+                borderRadius: '30px', fontSize: '16px', fontWeight: 700,
+                cursor: 'pointer', boxShadow: '0 0 25px rgba(217,28,210,0.5)'
+              }}
+            >
+              Acheter — {currentVideoPrice} CHF
+            </button>
+            <button
+              onClick={() => setShowVideoPreviewOverlay(false)}
+              style={{
+                background: 'transparent', color: 'rgba(255,255,255,0.4)',
+                border: 'none', padding: '10px 20px', marginTop: '12px',
+                fontSize: '13px', cursor: 'pointer'
+              }}
+            >
+              Revoir l'aperçu
+            </button>
           </div>
         )}
 
