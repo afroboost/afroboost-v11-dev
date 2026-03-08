@@ -1527,9 +1527,10 @@ async def serve_uploaded_file(file_id: str, filename: str):
 
         content_type = file_doc.get("content_type", "application/octet-stream")
 
-        # v18.3: Faststart pour vidéos MP4 (moov avant mdat)
-        if content_type.startswith('video/') and len(file_bytes) < 50 * 1024 * 1024:
-            file_bytes = mp4_faststart(file_bytes)
+        # v29.4: mp4_faststart DÉSACTIVÉ — corrompait les fichiers MP4
+        # Le moov atom est généralement déjà en position correcte pour les vidéos modernes
+        # if content_type.startswith('video/') and len(file_bytes) < 50 * 1024 * 1024:
+        #     file_bytes = mp4_faststart(file_bytes)
 
         # Sanitize filename pour header HTTP (latin-1 safe)
         raw_name = file_doc.get("original_name", filename)
