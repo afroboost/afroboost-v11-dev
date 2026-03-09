@@ -5062,7 +5062,7 @@ export const ChatWidget = () => {
                           }}
                         >
                           <div style={{ color: '#fff', fontSize: '13px', fontWeight: '500' }}>
-                            {session.title || `Session ${session.id.slice(0, 8)}`}
+                            {session.title || `Session ${(session.id || 'unknown').slice(0, 8)}`}
                           </div>
                           <div style={{ color: '#888', fontSize: '11px', marginTop: '4px' }}>
                             {session.mode === 'human' ? 'Mode Humain' : session.mode === 'community' ? 'Communauté' : 'IA'}
@@ -5096,7 +5096,7 @@ export const ChatWidget = () => {
                         ← Retour
                       </button>
                       <span style={{ color: '#fff', fontSize: '12px' }}>
-                        {selectedCoachSession.title || `Session ${selectedCoachSession.id.slice(0, 8)}`}
+                        {selectedCoachSession.title || `Session ${(selectedCoachSession.id || 'unknown').slice(0, 8)}`}
                       </span>
                     </div>
 
