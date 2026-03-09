@@ -3990,11 +3990,12 @@ export const ChatWidget = () => {
                         right: '0',
                         background: '#1a1a1a',
                         borderRadius: '8px',
-                        border: '1px solid rgba(255,255,255,0.1)',
+                        border: 'none',
                         overflow: 'hidden',
                         minWidth: '180px',
                         zIndex: 100,
-                        boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
+                        boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
+                        borderRadius: '12px'
                       }}
                     >
                       {/* Upload Photo de profil */}
@@ -4033,105 +4034,98 @@ export const ChatWidget = () => {
                           />
                         )}
                       </label>
-                      
-                      <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }} />
-                      
-                      {/* v81: Bouton dynamique — Dashboard si coach/admin, Devenir Partenaire si abonné simple */}
+
+                      <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
+
+                      {/* v83: Bouton unique — Dashboard si coach/admin, Devenir Partenaire si abonné (redirige vers BecomeCoachPage) */}
                       {(isRegisteredCoach || isCoachMode) ? (
-                        <>
-                          <button
-                            onClick={() => {
-                              window.location.hash = '#partner-dashboard';
-                              setShowUserMenu(false);
-                            }}
-                            style={{
-                              width: '100%',
-                              padding: '10px 14px',
-                              textAlign: 'left',
-                              fontSize: '12px',
-                              color: '#D91CD2',
-                              background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.15), rgba(139, 92, 246, 0.15))',
-                              border: 'none',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '10px',
-                              fontWeight: '600'
-                            }}
-                            className="hover:bg-white/10"
-                            data-testid="access-dashboard-btn"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                              <rect x="3" y="3" width="7" height="7"></rect>
-                              <rect x="14" y="3" width="7" height="7"></rect>
-                              <rect x="14" y="14" width="7" height="7"></rect>
-                              <rect x="3" y="14" width="7" height="7"></rect>
-                            </svg>
-                            Accéder à mon Dashboard
-                          </button>
-                          <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }} />
-                        </>
+                        <button
+                          onClick={() => {
+                            window.location.hash = '#partner-dashboard';
+                            setShowUserMenu(false);
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '10px 14px',
+                            textAlign: 'left',
+                            fontSize: '12px',
+                            color: '#D91CD2',
+                            background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.15), rgba(139, 92, 246, 0.15))',
+                            border: 'none',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            fontWeight: '600'
+                          }}
+                          className="hover:bg-white/10"
+                          data-testid="access-dashboard-btn"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="3" y="3" width="7" height="7"></rect>
+                            <rect x="14" y="3" width="7" height="7"></rect>
+                            <rect x="14" y="14" width="7" height="7"></rect>
+                            <rect x="3" y="14" width="7" height="7"></rect>
+                          </svg>
+                          Mon Dashboard
+                        </button>
                       ) : (
-                        <>
-                          <button
-                            onClick={() => {
-                              window.open('https://wa.me/33767aborost?text=Bonjour%2C%20je%20souhaite%20devenir%20partenaire%20Afroboost%20!', '_blank');
-                              setShowUserMenu(false);
-                            }}
-                            style={{
-                              width: '100%',
-                              padding: '10px 14px',
-                              textAlign: 'left',
-                              fontSize: '12px',
-                              color: '#fff',
-                              background: 'linear-gradient(135deg, rgba(147, 51, 234, 0.3), rgba(217, 28, 210, 0.3))',
-                              border: 'none',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '10px',
-                              fontWeight: '600'
-                            }}
-                            className="hover:bg-white/10"
-                            data-testid="become-partner-user-menu-btn"
-                          >
-                            <span>✨</span>
-                            Devenir Partenaire
-                          </button>
-                          <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }} />
-                        </>
+                        <button
+                          onClick={() => {
+                            window.dispatchEvent(new CustomEvent('openBecomeCoach'));
+                            setShowUserMenu(false);
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '10px 14px',
+                            textAlign: 'left',
+                            fontSize: '12px',
+                            color: '#D91CD2',
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            fontWeight: '600'
+                          }}
+                          className="hover:bg-white/10"
+                          data-testid="become-partner-user-menu-btn"
+                        >
+                          <span>✨</span>
+                          Devenir Partenaire
+                        </button>
                       )}
                       
                       {/* Mode Visiteur - seulement si abonné */}
                       {afroboostProfile?.code && (
-                        <>
-                          <button
-                            onClick={() => { handleVisitorMode(); setShowUserMenu(false); }}
-                            style={{
-                              width: '100%',
-                              padding: '10px 14px',
-                              textAlign: 'left',
-                              fontSize: '12px',
-                              color: '#fff',
-                              background: 'none',
-                              border: 'none',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '10px'
-                            }}
-                            className="hover:bg-white/10"
-                            data-testid="visitor-mode-btn"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                              <circle cx="12" cy="12" r="3"></circle>
-                            </svg>
-                            Mode Visiteur
-                          </button>
-                          <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }} />
-                        </>
+                        <button
+                          onClick={() => { handleVisitorMode(); setShowUserMenu(false); }}
+                          style={{
+                            width: '100%',
+                            padding: '10px 14px',
+                            textAlign: 'left',
+                            fontSize: '12px',
+                            color: '#fff',
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px'
+                          }}
+                          className="hover:bg-white/10"
+                          data-testid="visitor-mode-btn"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                          </svg>
+                          Mode Visiteur
+                        </button>
                       )}
+
+                      <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
                       
                       {/* Toggle Son (icône haut-parleur filaire) */}
                       <button
@@ -4193,8 +4187,6 @@ export const ChatWidget = () => {
                         {silenceAutoEnabled ? 'Silence Auto (actif)' : `Silence Auto (${getSilenceHoursLabel()})`}
                       </button>
                       
-                      <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }} />
-                      
                       {/* Rafraîchir */}
                       <button
                         onClick={() => { window.location.reload(); }}
@@ -4203,7 +4195,7 @@ export const ChatWidget = () => {
                           padding: '10px 14px',
                           textAlign: 'left',
                           fontSize: '12px',
-                          color: '#fff',
+                          color: 'rgba(255,255,255,0.5)',
                           background: 'none',
                           border: 'none',
                           cursor: 'pointer',
@@ -4219,9 +4211,8 @@ export const ChatWidget = () => {
                         </svg>
                         Rafraîchir
                       </button>
-                      
-                      {/* v82: Doublon "Devenir Partenaire" supprimé ici — gardé uniquement dans le user menu */}
-                      <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }} />
+
+                      <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
 
                       {/* Bouton Déconnexion */}
                       <button
@@ -5326,6 +5317,33 @@ export const ChatWidget = () => {
                       </div>
                     )}
                   </div>
+                )}
+
+                {/* v83: Bannière "Devenir Partenaire" visible en haut du chat pour visiteurs et abonnés simples */}
+                {step === 'chat' && !isCoachMode && !isRegisteredCoach && (
+                  <button
+                    onClick={() => window.dispatchEvent(new CustomEvent('openBecomeCoach'))}
+                    style={{
+                      width: '100%',
+                      padding: '10px 16px',
+                      background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.15), rgba(139, 92, 246, 0.15))',
+                      border: 'none',
+                      borderBottom: '1px solid rgba(217, 28, 210, 0.2)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      flexShrink: 0
+                    }}
+                    data-testid="become-partner-banner"
+                  >
+                    <span style={{ fontSize: '14px' }}>✨</span>
+                    <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: '600' }}>Devenir Partenaire</span>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="2" strokeLinecap="round">
+                      <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                  </button>
                 )}
 
                 <div

@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 — Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v82';
-// V82: Fix doublon Devenir Partenaire, zoom photo Portal + pointerEvents, z-index 99999999
+const CACHE_NAME = 'afroboost-v83';
+// V83: Devenir Partenaire unifié (1 seul bouton, redirection BecomeCoachPage), bannière visiteur, menu épuré
 
 // Installation — skip waiting pour activer immédiatement
 self.addEventListener('install', (event) => {
