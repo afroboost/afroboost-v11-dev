@@ -4037,8 +4037,8 @@ export const ChatWidget = () => {
 
                       <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
 
-                      {/* v83: Bouton unique — Dashboard si coach/admin, Devenir Partenaire si abonné (redirige vers BecomeCoachPage) */}
-                      {(isRegisteredCoach || isCoachMode) ? (
+                      {/* v84: Dashboard uniquement en Mode Coach, sinon Devenir Partenaire pour tous (abonnés + visiteurs) */}
+                      {isCoachMode ? (
                         <button
                           onClick={() => {
                             window.location.hash = '#partner-dashboard';
@@ -4768,17 +4768,14 @@ export const ChatWidget = () => {
                       🔑 Code perdu ? Retrouver mes accès
                     </button>
 
-                    {/* Bouton Devenir Partenaire v9.1.6 - Dynamique selon statut */}
-                    {/* v9.2.8: Masqué si partner_access_enabled = false (sauf si déjà partenaire) */}
-                    {(platformSettings.partner_access_enabled || isRegisteredCoach || isCoachMode) && (
+                    {/* v84: Bouton Devenir Partenaire — Dashboard si Mode Coach actif, sinon Devenir Partenaire */}
+                    {(platformSettings.partner_access_enabled || isCoachMode) && (
                     <button
                       type="button"
                       onClick={() => {
-                        if (isRegisteredCoach || isCoachMode) {
-                          // Partenaire inscrit: Rediriger vers le dashboard
+                        if (isCoachMode) {
                           window.location.hash = '#coach-dashboard';
                         } else {
-                          // Visiteur: Ouvrir la page Devenir Partenaire
                           window.dispatchEvent(new CustomEvent('openBecomeCoach'));
                         }
                       }}
@@ -4788,16 +4785,16 @@ export const ChatWidget = () => {
                         padding: '10px',
                         marginTop: '8px',
                         borderRadius: '8px',
-                        background: (isRegisteredCoach || isCoachMode) 
-                          ? 'linear-gradient(135deg, rgba(217, 28, 210, 0.3), rgba(139, 92, 246, 0.3))' 
+                        background: isCoachMode
+                          ? 'linear-gradient(135deg, rgba(217, 28, 210, 0.3), rgba(139, 92, 246, 0.3))'
                           : 'transparent',
                         color: '#D91CD2',
                         border: '1px solid rgba(217, 28, 210, 0.4)',
                         cursor: 'pointer'
                       }}
-                      data-testid={isRegisteredCoach || isCoachMode ? "partner-dashboard-btn" : "become-partner-chat-btn"}
+                      data-testid={isCoachMode ? "partner-dashboard-btn" : "become-partner-chat-btn"}
                     >
-                      {(isRegisteredCoach || isCoachMode) ? '🏠 Mon Espace Partenaire' : 'Devenir Partenaire'}
+                      {isCoachMode ? '🏠 Mon Espace Partenaire' : '✨ Devenir Partenaire'}
                     </button>
                     )}
                     
@@ -5204,16 +5201,16 @@ export const ChatWidget = () => {
                   </div>
                 )}
                 
-                {/* === v11.4: BLOC INFO ABONNEMENT (Offre + Solde + Validité) === */}
+                {/* === v84: BLOC INFO ABONNEMENT épuré (Offre + Solde + Validité) === */}
                 {afroboostProfile?.subscription && (
-                  <div 
+                  <div
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      padding: '10px 16px',
-                      background: 'linear-gradient(135deg, rgba(147, 51, 234, 0.2), rgba(217, 28, 210, 0.15))',
-                      borderBottom: '1px solid rgba(217, 28, 210, 0.3)'
+                      padding: '8px 16px',
+                      background: 'rgba(217, 28, 210, 0.08)',
+                      borderBottom: '1px solid rgba(217, 28, 210, 0.1)'
                     }}
                     data-testid="subscription-info-bar"
                   >
@@ -5251,9 +5248,9 @@ export const ChatWidget = () => {
                   </div>
                 )}
 
-                {/* === v11.6: MON PASS - QR Code permanent pour abonné identifié === */}
+                {/* === v84: MON PASS épuré - QR Code permanent pour abonné identifié === */}
                 {afroboostProfile?.code && (
-                  <div style={{ borderBottom: '1px solid rgba(217, 28, 210, 0.2)' }}>
+                  <div style={{ borderBottom: '1px solid rgba(217, 28, 210, 0.1)' }}>
                     {/* Barre compacte cliquable "Mon Pass" */}
                     <button
                       onClick={() => setShowMonPass(prev => !prev)}
@@ -5262,8 +5259,8 @@ export const ChatWidget = () => {
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        padding: '8px 16px',
-                        background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.1), rgba(147, 51, 234, 0.08))',
+                        padding: '6px 16px',
+                        background: 'rgba(217, 28, 210, 0.05)',
                         border: 'none',
                         cursor: 'pointer',
                         transition: 'background 0.2s'
@@ -5319,8 +5316,8 @@ export const ChatWidget = () => {
                   </div>
                 )}
 
-                {/* v83: Bannière "Devenir Partenaire" visible en haut du chat pour visiteurs et abonnés simples */}
-                {step === 'chat' && !isCoachMode && !isRegisteredCoach && (
+                {/* v84: Bannière "Devenir Partenaire" visible en haut du chat pour tous sauf Mode Coach */}
+                {step === 'chat' && !isCoachMode && (
                   <button
                     onClick={() => window.dispatchEvent(new CustomEvent('openBecomeCoach'))}
                     style={{
