@@ -2087,7 +2087,11 @@ function App() {
   const [userRole, setUserRole] = useState(null); // 'super_admin', 'coach', 'user'
   const [showCoachSearch, setShowCoachSearch] = useState(false); // v8.9.4: Modal recherche coach
   const [showCoachVitrine, setShowCoachVitrine] = useState(null); // v8.9.6: Username du coach pour vitrine
-  
+
+  // v71: Social Proof — Commentaires flottants sur homepage
+  const [socialComments, setSocialComments] = useState([]);
+  const [visibleComment, setVisibleComment] = useState(0);
+
   // === v9.2.8: PLATFORM SETTINGS - Contrôles globaux ===
   const [platformSettings, setPlatformSettings] = useState({
     partner_access_enabled: true,
@@ -2512,6 +2516,28 @@ function App() {
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
+
+  // v71: Charger les commentaires Social Proof pour la homepage
+  useEffect(() => {
+    const fetchSocialComments = async () => {
+      try {
+        const res = await axios.get(`${API}/comments?coach_id=${encodeURIComponent(SUPER_ADMIN_EMAILS[0])}`);
+        if (res.data?.comments && res.data.comments.length > 0) {
+          setSocialComments(res.data.comments);
+        }
+      } catch (e) {}
+    };
+    fetchSocialComments();
+  }, []);
+
+  // v71: Rotation des commentaires Social Proof (toutes les 4s)
+  useEffect(() => {
+    if (socialComments.length <= 1) return;
+    const timer = setInterval(() => {
+      setVisibleComment(prev => (prev + 1) % socialComments.length);
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [socialComments.length]);
 
   const t = useCallback((key) => translations[lang][key] || key, [lang]);
 
@@ -3987,6 +4013,49 @@ function App() {
             handleSelectOffer(videoOffer);
           }}
         />
+        {/* v71: Social Proof Overlay — Commentaires flottants sur le Hero homepage */}
+        {socialComments.length > 0 && (
+          <div style={{
+            position: 'absolute', bottom: '140px', left: '16px', right: '70px', zIndex: 15,
+            pointerEvents: 'none'
+          }}>
+            {socialComments.slice(0, 5).map((comment, idx) => (
+              <div key={comment.id || idx} style={{
+                position: 'absolute', bottom: 0, left: 0, right: 0,
+                opacity: idx === visibleComment % Math.min(socialComments.length, 5) ? 1 : 0,
+                transform: idx === visibleComment % Math.min(socialComments.length, 5) ? 'translateY(0)' : 'translateY(10px)',
+                transition: 'all 0.6s ease-in-out',
+                background: 'rgba(0, 0, 0, 0.65)',
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
+                border: '1px solid rgba(217, 28, 210, 0.35)',
+                borderRadius: '14px',
+                padding: '10px 14px',
+                maxWidth: '320px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <div style={{
+                    width: '28px', height: '28px', borderRadius: '50%',
+                    background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '12px', fontWeight: 700, color: '#fff', flexShrink: 0
+                  }}>
+                    {(comment.user_name || '?')[0].toUpperCase()}
+                  </div>
+                  <span style={{ color: '#fff', fontSize: '12px', fontWeight: 600 }}>
+                    {comment.user_name}
+                  </span>
+                  <span style={{ color: '#D91CD2', fontSize: '11px', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                    ❤️ {comment.likes || 0}
+                  </span>
+                </div>
+                <p style={{ color: 'rgba(255,255,255,0.9)', fontSize: '12px', lineHeight: 1.4, margin: 0 }}>
+                  {comment.text}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* v14: VITRINE COACH OVERLAY - Transition instantanée, pas d'écran de chargement violet */}
@@ -4955,43 +5024,50 @@ function App() {
           </div>
         )}
 
-        {/* v16: Section Témoignages / Avis clients */}
+        {/* v71: Section Témoignages / Avis clients — DYNAMIQUE avec commentaires IA */}
         <div className="mb-8 fade-in-section" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
           <h2 className="font-semibold text-white text-center mb-6" style={{ fontSize: '18px' }}>
             Ce que disent nos clients
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Témoignage 1 */}
-            <div className="rounded-xl p-5"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-              <div className="flex items-center gap-1 mb-2">
-                {[1,2,3,4,5].map(i => (
-                  <svg key={i} width="14" height="14" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
-                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                  </svg>
-                ))}
+            {(socialComments.length > 0 ? socialComments.slice(0, 6) : [
+              { id: 'static1', user_name: 'Sarah M.', text: "L'ambiance est incroyable ! Le concept casques audio rend la session unique. Je reviens chaque semaine.", likes: 42 },
+              { id: 'static2', user_name: 'Kevin L.', text: "Cours de danse top ! Le coach est super motivant. Parfait pour se défouler après le travail.", likes: 38 }
+            ]).map((comment) => (
+              <div key={comment.id} className="rounded-xl p-5"
+                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                  <div style={{
+                    width: '28px', height: '28px', borderRadius: '50%',
+                    background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '12px', fontWeight: 700, color: '#fff', flexShrink: 0
+                  }}>
+                    {(comment.user_name || '?')[0].toUpperCase()}
+                  </div>
+                  <span style={{ color: '#fff', fontSize: '13px', fontWeight: 600 }}>{comment.user_name}</span>
+                  <span style={{ color: '#D91CD2', fontSize: '11px', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                    ❤️ {comment.likes || 0}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 mb-2">
+                  {[1,2,3,4,5].map(i => (
+                    <svg key={i} width="14" height="14" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
+                      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                    </svg>
+                  ))}
+                </div>
+                <p className="text-white/70 text-sm leading-relaxed italic mb-1">
+                  "{comment.text}"
+                </p>
               </div>
-              <p className="text-white/70 text-sm leading-relaxed italic mb-3">
-                "L'ambiance est incroyable ! Le concept casques audio rend la session unique. Je reviens chaque semaine."
-              </p>
-              <p className="text-white/40 text-xs">— Sarah M.</p>
-            </div>
-            {/* Témoignage 2 */}
-            <div className="rounded-xl p-5"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-              <div className="flex items-center gap-1 mb-2">
-                {[1,2,3,4,5].map(i => (
-                  <svg key={i} width="14" height="14" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
-                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                  </svg>
-                ))}
-              </div>
-              <p className="text-white/70 text-sm leading-relaxed italic mb-3">
-                "Cours de danse top ! Le coach est super motivant. Parfait pour se défouler après le travail."
-              </p>
-              <p className="text-white/40 text-xs">— Kevin L.</p>
-            </div>
+            ))}
           </div>
+          {socialComments.length > 6 && (
+            <p style={{ textAlign: 'center', color: 'rgba(217,28,210,0.6)', fontSize: '12px', marginTop: '12px' }}>
+              + {socialComments.length - 6} autres avis
+            </p>
+          )}
           {/* Lien avis Google si configuré */}
           {concept.googleReviewsUrl && (
             <div className="text-center mt-4">
