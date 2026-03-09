@@ -373,6 +373,7 @@ class Offer(BaseModel):
     last_prolonged_date: Optional[str] = None  # date dernière prolongation
 
 class OfferCreate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     name: str
     price: float
     thumbnail: Optional[str] = ""
