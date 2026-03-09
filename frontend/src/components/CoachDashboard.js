@@ -1723,30 +1723,52 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const addOffer = async (e) => {
     e.preventDefault();
     if (!newOffer.name) return;
+    console.log("[V61] addOffer called, raw newOffer:", JSON.stringify({duration_value: newOffer.duration_value, duration_unit: newOffer.duration_unit, is_auto_prolong: newOffer.is_auto_prolong}));
     try {
       // Filtrer les images non vides
-      const filteredImages = newOffer.images.filter(url => url && url.trim());
+      const filteredImages = (newOffer.images || []).filter(url => url && url.trim());
+      // v61: Blindage total — conversion explicite, jamais de string vide
+      const dv = newOffer.duration_value;
+      const cleanDurationValue = (dv !== null && dv !== undefined && dv !== '' && !isNaN(parseInt(dv, 10))) ? parseInt(dv, 10) : null;
+      const cleanDurationUnit = (newOffer.duration_unit && newOffer.duration_unit !== '') ? newOffer.duration_unit : null;
       const offerData = {
-        ...newOffer,
+        name: newOffer.name,
+        price: parseFloat(newOffer.price) || 0,
+        visible: newOffer.visible !== false,
+        description: newOffer.description || "",
+        keywords: newOffer.keywords || "",
         images: filteredImages,
         thumbnail: filteredImages[0] || "",
-        // v60: Nettoyer les champs durée — envoyer null si vide (Pydantic attend Optional[int])
-        duration_value: newOffer.duration_value ? parseInt(newOffer.duration_value) : null,
-        duration_unit: newOffer.duration_unit || null,
+        category: newOffer.category || "service",
+        isProduct: newOffer.isProduct || false,
+        variants: newOffer.variants || null,
+        tva: parseFloat(newOffer.tva) || 0,
+        shippingCost: parseFloat(newOffer.shippingCost) || 0,
+        stock: parseInt(newOffer.stock) || -1,
+        duration_value: cleanDurationValue,
+        duration_unit: cleanDurationUnit,
         is_auto_prolong: newOffer.is_auto_prolong !== false
       };
+      console.log("[V61] Sending offerData:", JSON.stringify(offerData));
 
+      let resultMsg = '';
       if (editingOfferId) {
-        // Mode édition : mettre à jour
         await axios.put(`${API}/offers/${editingOfferId}`, offerData);
         setOffers(prevOffers => prevOffers.map(o => o.id === editingOfferId ? { ...o, ...offerData } : o));
         setEditingOfferId(null);
+        resultMsg = `✅ Offre "${offerData.name}" modifiée`;
       } else {
-        // Mode ajout : créer nouvelle offre
         const response = await axios.post(`${API}/offers`, offerData);
         setOffers(prevOffers => [...prevOffers, response.data]);
+        resultMsg = `✅ Offre "${offerData.name}" créée`;
       }
-      
+      // v61: Feedback durée
+      if (cleanDurationValue && cleanDurationUnit) {
+        const unitLabel = cleanDurationUnit === 'days' ? 'jour(s)' : cleanDurationUnit === 'weeks' ? 'semaine(s)' : 'mois';
+        resultMsg += ` avec durée : ${cleanDurationValue} ${unitLabel}`;
+      }
+      alert(resultMsg);
+
       // Reset formulaire
       setNewOffer({
         name: "", price: 0, visible: true, description: "",
@@ -1755,8 +1777,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         duration_value: '', duration_unit: '', is_auto_prolong: true
       });
     } catch (err) {
-      console.error("Erreur offre:", err);
-      alert("Erreur lors de l'opération");
+      console.error("[V61] Erreur offre:", err);
+      // v61: Afficher l'erreur RÉELLE du serveur
+      const serverMsg = err?.response?.data?.detail || err?.response?.data?.message || err?.message || "Erreur inconnue";
+      alert(`❌ Erreur: ${typeof serverMsg === 'string' ? serverMsg : JSON.stringify(serverMsg)}`);
     }
   };
 

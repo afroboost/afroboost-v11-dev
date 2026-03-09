@@ -8,7 +8,7 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from typing import List, Optional, Union
 import uuid
 from datetime import datetime, timezone, timedelta
 import stripe
@@ -390,10 +390,10 @@ class OfferCreate(BaseModel):
     shippingCost: float = 0.0
     stock: int = -1
     coach_id: Optional[str] = None  # v19: Ownership
-    # v59: Durée de validité
-    duration_value: Optional[int] = None
+    # v61: Durée de validité — accepte int ou string pour tolérance frontend
+    duration_value: Optional[Union[int, str]] = None
     duration_unit: Optional[str] = None
-    is_auto_prolong: bool = True
+    is_auto_prolong: Union[bool, str] = True
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -1079,7 +1079,21 @@ async def create_offer(offer: OfferCreate, request: Request):
     require_auth(request)
     user_email = request.headers.get("X-User-Email", "").lower().strip()
     offer_data = offer.model_dump()
-    print(f"[V60 DEBUG] POST /offers duration_value={offer_data.get('duration_value')} duration_unit={offer_data.get('duration_unit')} is_auto_prolong={offer_data.get('is_auto_prolong')}")
+    # v61: Blindage conversion durée — accepte string, int, vide, null
+    raw_dv = offer_data.get("duration_value")
+    if raw_dv is not None and raw_dv != "" and raw_dv is not False:
+        try:
+            offer_data["duration_value"] = int(raw_dv)
+        except (ValueError, TypeError):
+            offer_data["duration_value"] = None
+    else:
+        offer_data["duration_value"] = None
+    if not offer_data.get("duration_unit") or offer_data["duration_unit"] == "":
+        offer_data["duration_unit"] = None
+    # Normaliser is_auto_prolong
+    iap = offer_data.get("is_auto_prolong")
+    offer_data["is_auto_prolong"] = iap not in (False, "false", "0", 0, None)
+    print(f"[V61 DEBUG] POST /offers duration_value={offer_data.get('duration_value')} duration_unit={offer_data.get('duration_unit')} is_auto_prolong={offer_data.get('is_auto_prolong')}")
     if user_email and not offer_data.get("coach_id"):
         offer_data["coach_id"] = user_email
     # v59: Calculer expiration si durée définie
@@ -1095,7 +1109,20 @@ async def create_offer(offer: OfferCreate, request: Request):
 async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
     require_auth(request)
     update_data = offer.model_dump()
-    print(f"[V60 DEBUG] PUT /offers/{offer_id} duration_value={update_data.get('duration_value')} duration_unit={update_data.get('duration_unit')} is_auto_prolong={update_data.get('is_auto_prolong')}")
+    # v61: Blindage conversion durée
+    raw_dv = update_data.get("duration_value")
+    if raw_dv is not None and raw_dv != "" and raw_dv is not False:
+        try:
+            update_data["duration_value"] = int(raw_dv)
+        except (ValueError, TypeError):
+            update_data["duration_value"] = None
+    else:
+        update_data["duration_value"] = None
+    if not update_data.get("duration_unit") or update_data["duration_unit"] == "":
+        update_data["duration_unit"] = None
+    iap = update_data.get("is_auto_prolong")
+    update_data["is_auto_prolong"] = iap not in (False, "false", "0", 0, None)
+    print(f"[V61 DEBUG] PUT /offers/{offer_id} duration_value={update_data.get('duration_value')} duration_unit={update_data.get('duration_unit')}")
     # v59: Recalculer expiration si durée modifiée
     if update_data.get("duration_value") and update_data.get("duration_unit"):
         existing = await db.offers.find_one({"id": offer_id}, {"_id": 0})
