@@ -8906,7 +8906,34 @@ async def send_prolongation_email(coach_email: str, offer_name: str):
     except Exception as e:
         logger.error(f"[EXPIRY] ❌ Email prolongation échoué: {e}")
 
-# === v59: CRON — Vérification expirations offres ===
+async def send_expired_no_credits_email(coach_email: str, offer_name: str):
+    """V69: Email quand offre expire et coach n'a plus de crédits pour prolonger"""
+    if not RESEND_API_KEY:
+        return
+    first_name = coach_email.split('@')[0].capitalize()
+    subject = f"❌ Offre \"{offer_name}\" expirée — crédits insuffisants"
+    html = f"""<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+<div style="background:#111;border-radius:10px;overflow:hidden;">
+<div style="background:linear-gradient(135deg,#ef4444,#991b1b);padding:16px;text-align:center;">
+<span style="color:#fff;font-size:20px;font-weight:bold;">Afroboost</span></div>
+<div style="padding:20px;color:#fff;">
+<p>Salut {first_name},</p>
+<p>Votre offre <strong style="color:#ef4444;">"{offer_name}"</strong> a expiré et <strong>n'a pas pu être renouvelée</strong> car vous n'avez plus de crédits.</p>
+<p>Rechargez vos crédits pour réactiver vos offres.</p>
+<div style="text-align:center;margin:20px 0;">
+<a href="https://afroboost-v11-dev-pm7l.vercel.app/#partner-dashboard" style="display:inline-block;padding:12px 28px;background:#D91CD2;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Recharger mes crédits</a>
+</div></div>
+<div style="padding:10px;text-align:center;color:#666;font-size:11px;border-top:1px solid #333;">© 2026 Afroboost</div>
+</div></div>"""
+    try:
+        import resend as resend_lib
+        resend_lib.api_key = RESEND_API_KEY
+        resend_lib.Emails.send({"from": "Afroboost <notifications@afroboosteur.com>", "to": coach_email, "subject": subject, "html": html})
+        logger.info(f"[EXPIRY] ✅ Email offre expirée (pas de crédits) envoyé à {coach_email}")
+    except Exception as e:
+        logger.error(f"[EXPIRY] ❌ Email expirée échoué: {e}")
+
+# === v69: CRON — Vérification expirations offres (avec crédits) ===
 @api_router.get("/admin/check-expirations")
 async def check_expirations(request: Request):
     """Cron quotidien : rappels J-7 + prolongation auto J-0 des offres avec durée."""
@@ -8924,6 +8951,7 @@ async def check_expirations(request: Request):
     offers = await db.offers.find({"duration_value": {"$exists": True, "$ne": None}}).to_list(500)
     reminded = 0
     prolonged = 0
+    expired_no_credits = 0
     errors = []
 
     for offer in offers:
@@ -8946,24 +8974,74 @@ async def check_expirations(request: Request):
                 await db.offers.update_one({"id": offer_id}, {"$set": {"last_reminded_date": now.isoformat()}})
                 reminded += 1
 
-            # J-0 : prolongation auto
+            # J-0 : prolongation auto (v69: Super Admin gratuit, partenaires = 1 crédit)
             elif days_left <= 0 and offer.get("is_auto_prolong", True) and not offer.get("last_prolonged_date"):
                 dv = offer.get("duration_value")
                 du = offer.get("duration_unit")
-                new_exp = calculate_expiration_date(now.isoformat(), dv, du)
-                await db.offers.update_one({"id": offer_id}, {"$set": {
-                    "expiration_date": new_exp,
-                    "last_prolonged_date": now.isoformat(),
-                    "last_reminded_date": None
-                }})
-                await send_prolongation_email(coach_email, offer_name)
-                prolonged += 1
+                # V69: Vérifier crédits pour les partenaires (Super Admin = gratuit)
+                if is_super_admin(coach_email):
+                    can_prolong = True
+                else:
+                    credit_check = await check_credits(coach_email, 1)
+                    can_prolong = credit_check.get("has_credits", False)
+
+                if can_prolong:
+                    new_exp = calculate_expiration_date(now.isoformat(), dv, du)
+                    await db.offers.update_one({"id": offer_id}, {"$set": {
+                        "expiration_date": new_exp,
+                        "last_prolonged_date": now.isoformat(),
+                        "last_reminded_date": None
+                    }})
+                    # V69: Déduire 1 crédit pour les partenaires
+                    if not is_super_admin(coach_email):
+                        await deduct_credit(coach_email, f"prolongation_offre_{offer_name}", 1)
+                    await send_prolongation_email(coach_email, offer_name)
+                    prolonged += 1
+                else:
+                    # V69: Pas de crédits → offre expire, email d'alerte
+                    await db.offers.update_one({"id": offer_id}, {"$set": {
+                        "last_prolonged_date": now.isoformat(),
+                        "expired_no_credits": True
+                    }})
+                    await send_expired_no_credits_email(coach_email, offer_name)
+                    expired_no_credits += 1
         except Exception as e:
             errors.append({"offer": offer.get("id"), "error": str(e)})
             logger.error(f"[CRON-EXPIRY] ❌ {e}")
 
-    logger.info(f"[CRON-EXPIRY] ✅ {len(offers)} offres vérifiées, {reminded} rappels, {prolonged} prolongations")
-    return {"success": True, "checked": len(offers), "reminded": reminded, "prolonged": prolonged, "errors": errors}
+    logger.info(f"[CRON-EXPIRY] ✅ {len(offers)} offres vérifiées, {reminded} rappels, {prolonged} prolongations, {expired_no_credits} expirées sans crédits")
+    return {"success": True, "checked": len(offers), "reminded": reminded, "prolonged": prolonged, "expired_no_credits": expired_no_credits, "errors": errors}
+
+# === v69: Endpoint — Prochaine expiration ===
+@api_router.get("/offers/next-expiration")
+async def get_next_expiration(request: Request):
+    """Retourne la prochaine date d'expiration d'offre pour le dashboard."""
+    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not user_email:
+        raise HTTPException(status_code=401, detail="Email requis")
+    now = datetime.now(timezone.utc)
+    # Super Admin voit toutes les offres, partenaire seulement les siennes
+    query = {"expiration_date": {"$exists": True, "$ne": None}}
+    if not is_super_admin(user_email):
+        query["coach_id"] = user_email
+    offers = await db.offers.find(query, {"_id": 0, "id": 1, "name": 1, "expiration_date": 1, "coach_id": 1, "is_auto_prolong": 1}).to_list(200)
+    # Trier par date d'expiration la plus proche dans le futur
+    upcoming = []
+    for o in offers:
+        exp_str = o.get("expiration_date")
+        if not exp_str:
+            continue
+        try:
+            exp = datetime.fromisoformat(exp_str.replace('Z', '+00:00'))
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            days_left = (exp - now).days
+            if days_left >= 0:
+                upcoming.append({"id": o["id"], "name": o.get("name", "?"), "expiration_date": exp_str, "days_left": days_left, "coach_id": o.get("coach_id", ""), "is_auto_prolong": o.get("is_auto_prolong", True)})
+        except:
+            continue
+    upcoming.sort(key=lambda x: x["days_left"])
+    return {"next": upcoming[0] if upcoming else None, "total_with_expiration": len(upcoming), "upcoming": upcoming[:5]}
 
 # === SCHEDULER HEALTH ENDPOINTS ===
 @api_router.get("/scheduler/status")

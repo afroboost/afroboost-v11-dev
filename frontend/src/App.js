@@ -17,7 +17,7 @@ axios.interceptors.request.use((config) => {
   }
   return config;
 });
-console.log("V68 ACTIVÉE - ÉTANCHÉITÉ MULTI-TENANT & PRIVILÈGES ADMIN");
+console.log("🚀 V69 : Système de validité automatique activé");
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import html2canvas from "html2canvas";

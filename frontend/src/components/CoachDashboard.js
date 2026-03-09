@@ -657,6 +657,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [courses, setCourses] = useState([]);
   const [offers, setOffers] = useState([]);
   const [offersSearch, setOffersSearch] = useState(''); // Recherche locale offres
+  const [nextExpiration, setNextExpiration] = useState(null); // v69: prochaine expiration
   const [users, setUsers] = useState([]);
   const [paymentLinks, setPaymentLinks] = useState({ stripe: "", paypal: "", twint: "", coachWhatsapp: "", coachNotificationEmail: "", coachNotificationPhone: "" });
   // v15.0: Config paiement multi-vendeurs
@@ -1134,6 +1135,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         
         setCourses(crs.data); setOffers(off.data); setUsers(usr.data);
         setPaymentLinks(lnk.data); setConcept(cpt.data); setDiscountCodes(cds.data);
+
+        // v69: Charger prochaine expiration d'offre
+        try {
+          const expRes = await axios.get(`${API}/offers/next-expiration`, headers);
+          setNextExpiration(expRes.data);
+        } catch (expErr) { console.warn('[V69] Next expiration:', expErr); }
 
         // v15.0: Charger la config paiement multi-vendeurs
         try {
@@ -5184,6 +5191,59 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   lang={lang}
                   t={t}
                 />
+                {/* v69: Indicateur prochaine expiration automatique */}
+                {nextExpiration?.next && (
+                  <div style={{
+                    margin: '16px 0 0 0',
+                    padding: '12px 16px',
+                    borderRadius: '12px',
+                    background: nextExpiration.next.days_left <= 3
+                      ? 'rgba(239,68,68,0.12)'
+                      : nextExpiration.next.days_left <= 7
+                        ? 'rgba(245,158,11,0.12)'
+                        : 'rgba(34,197,94,0.08)',
+                    border: `1px solid ${
+                      nextExpiration.next.days_left <= 3
+                        ? 'rgba(239,68,68,0.4)'
+                        : nextExpiration.next.days_left <= 7
+                          ? 'rgba(245,158,11,0.4)'
+                          : 'rgba(34,197,94,0.3)'
+                    }`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    flexWrap: 'wrap'
+                  }}>
+                    <span style={{ fontSize: '18px' }}>
+                      {nextExpiration.next.days_left <= 3 ? '🔴' : nextExpiration.next.days_left <= 7 ? '🟡' : '🟢'}
+                    </span>
+                    <div style={{ flex: 1, minWidth: '200px' }}>
+                      <div style={{ color: '#fff', fontSize: '13px', fontWeight: 600 }}>
+                        Prochaine expiration : <span style={{ color: '#D91CD2' }}>{nextExpiration.next.name}</span>
+                      </div>
+                      <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', marginTop: '2px' }}>
+                        {nextExpiration.next.days_left === 0
+                          ? "Expire aujourd'hui"
+                          : `Dans ${nextExpiration.next.days_left} jour${nextExpiration.next.days_left > 1 ? 's' : ''}`}
+                        {' • '}
+                        {new Date(nextExpiration.next.expiration_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        {nextExpiration.next.is_auto_prolong ? ' • ♻️ Auto-renouvellement' : ' • ⏹️ Pas de renouvellement'}
+                      </div>
+                    </div>
+                    <div style={{
+                      padding: '4px 10px',
+                      borderRadius: '8px',
+                      background: 'rgba(217,28,210,0.15)',
+                      border: '1px solid rgba(217,28,210,0.3)',
+                      color: '#D91CD2',
+                      fontSize: '11px',
+                      fontWeight: 700
+                    }}>
+                      {nextExpiration.total_with_expiration} offre{nextExpiration.total_with_expiration > 1 ? 's' : ''} avec validité
+                    </div>
+                  </div>
+                )}
+
                 <div style={{ marginTop: '16px' }}>
                   <OffersManager
                     offers={offers}
