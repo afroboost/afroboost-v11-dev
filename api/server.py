@@ -1078,6 +1078,7 @@ async def create_offer(offer: OfferCreate, request: Request):
     require_auth(request)
     user_email = request.headers.get("X-User-Email", "").lower().strip()
     offer_data = offer.model_dump()
+    print(f"[V60 DEBUG] POST /offers duration_value={offer_data.get('duration_value')} duration_unit={offer_data.get('duration_unit')} is_auto_prolong={offer_data.get('is_auto_prolong')}")
     if user_email and not offer_data.get("coach_id"):
         offer_data["coach_id"] = user_email
     # v59: Calculer expiration si durée définie
@@ -1093,6 +1094,7 @@ async def create_offer(offer: OfferCreate, request: Request):
 async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
     require_auth(request)
     update_data = offer.model_dump()
+    print(f"[V60 DEBUG] PUT /offers/{offer_id} duration_value={update_data.get('duration_value')} duration_unit={update_data.get('duration_unit')} is_auto_prolong={update_data.get('is_auto_prolong')}")
     # v59: Recalculer expiration si durée modifiée
     if update_data.get("duration_value") and update_data.get("duration_unit"):
         existing = await db.offers.find_one({"id": offer_id}, {"_id": 0})

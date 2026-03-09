@@ -211,7 +211,60 @@ const OffersManager = ({
             <input type="number" placeholder="30" value={newOffer.price} onChange={e => setNewOffer({ ...newOffer, price: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-3 rounded-lg neon-input text-sm" />
           </div>
         </div>
-        
+
+        {/* === DURÉE DE VALIDITÉ (NOUVEAU) === */}
+        <div style={{ marginTop: '14px', padding: '14px', borderRadius: '10px', border: '2px solid #D91CD2', background: 'rgba(217, 28, 210, 0.08)', boxShadow: '0 0 12px rgba(217, 28, 210, 0.25)' }}>
+          <p style={{ fontSize: '14px', color: '#D91CD2', marginBottom: '12px', fontWeight: 'bold' }}>⏱ DURÉE DE VALIDITÉ (NOUVEAU)</p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+            <div>
+              <label style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', display: 'block', marginBottom: '4px' }}>Durée</label>
+              <input
+                type="number"
+                min="1"
+                placeholder="Ex: 2"
+                value={newOffer.duration_value || ''}
+                onChange={e => setNewOffer({ ...newOffer, duration_value: parseInt(e.target.value) || '' })}
+                className="w-full px-3 py-3 rounded-lg neon-input text-sm"
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', display: 'block', marginBottom: '4px' }}>Unité</label>
+              <select
+                value={newOffer.duration_unit || ''}
+                onChange={e => setNewOffer({ ...newOffer, duration_unit: e.target.value || null })}
+                className="w-full px-3 py-3 rounded-lg neon-input text-sm"
+              >
+                <option value="">Sans limite</option>
+                <option value="days">Jours</option>
+                <option value="weeks">Semaines</option>
+                <option value="months">Mois</option>
+              </select>
+            </div>
+          </div>
+          {newOffer.duration_value && newOffer.duration_unit && (
+            <div style={{ marginTop: '10px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#fff', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={newOffer.is_auto_prolong !== false}
+                  onChange={e => setNewOffer({ ...newOffer, is_auto_prolong: e.target.checked })}
+                  style={{ width: '18px', height: '18px', accentColor: '#D91CD2' }}
+                />
+                Prolonger automatiquement à l'expiration
+              </label>
+              <p style={{ fontSize: '11px', color: '#D91CD2', marginTop: '6px', opacity: 0.8 }}>
+                📅 Valide pendant {newOffer.duration_value} {newOffer.duration_unit === 'days' ? 'jour(s)' : newOffer.duration_unit === 'weeks' ? 'semaine(s)' : 'mois'}
+                {newOffer.is_auto_prolong !== false ? ' • Auto-prolongation activée' : ' • Expire sans renouvellement'}
+              </p>
+            </div>
+          )}
+          {!newOffer.duration_value && !newOffer.duration_unit && (
+            <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: '6px' }}>
+              Laissez vide = offre sans limite de durée (illimitée)
+            </p>
+          )}
+        </div>
+
         {/* 5 Champs d'images */}
         <div className="mt-4">
           <label className="text-xs text-white opacity-60 mb-2 block">📷 Images (max 5 URLs)</label>
@@ -310,54 +363,6 @@ const OffersManager = ({
             />
             Visible
           </label>
-        </div>
-
-        {/* Durée de validité */}
-        <div style={{ marginTop: '12px', padding: '12px', borderRadius: '8px', border: '1px solid rgba(139, 92, 246, 0.3)', background: 'rgba(139, 92, 246, 0.05)' }}>
-          <p style={{ fontSize: '12px', color: '#a78bfa', marginBottom: '10px' }}>⏱ Durée de validité</p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-            <div>
-              <label style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', display: 'block', marginBottom: '4px' }}>Durée</label>
-              <input
-                type="number"
-                min="1"
-                placeholder="Ex: 2"
-                value={newOffer.duration_value || ''}
-                onChange={e => setNewOffer({ ...newOffer, duration_value: parseInt(e.target.value) || '' })}
-                className="w-full px-3 py-3 rounded-lg neon-input text-sm"
-              />
-            </div>
-            <div>
-              <label style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', display: 'block', marginBottom: '4px' }}>Unité</label>
-              <select
-                value={newOffer.duration_unit || ''}
-                onChange={e => setNewOffer({ ...newOffer, duration_unit: e.target.value || null })}
-                className="w-full px-3 py-3 rounded-lg neon-input text-sm"
-              >
-                <option value="">Sans limite</option>
-                <option value="days">Jours</option>
-                <option value="weeks">Semaines</option>
-                <option value="months">Mois</option>
-              </select>
-            </div>
-          </div>
-          {newOffer.duration_value && newOffer.duration_unit && (
-            <div style={{ marginTop: '8px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#fff', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={newOffer.is_auto_prolong !== false}
-                  onChange={e => setNewOffer({ ...newOffer, is_auto_prolong: e.target.checked })}
-                  style={{ width: '18px', height: '18px' }}
-                />
-                Prolonger automatiquement à l'expiration
-              </label>
-              <p style={{ fontSize: '11px', color: 'rgba(139, 92, 246, 0.7)', marginTop: '6px' }}>
-                📅 Valide pendant {newOffer.duration_value} {newOffer.duration_unit === 'days' ? 'jour(s)' : newOffer.duration_unit === 'weeks' ? 'semaine(s)' : 'mois'}
-                {newOffer.is_auto_prolong !== false ? ' • Auto-prolongation activée' : ' • Expire sans renouvellement'}
-              </p>
-            </div>
-          )}
         </div>
 
         {/* E-Commerce Fields */}
