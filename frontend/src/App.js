@@ -5217,14 +5217,29 @@ function App() {
                       );
                     })()}
                     <div style={{ flex: 1 }}>
-                      {/* Nom + étoiles */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {/* Nom + badge vérifié + étoiles dynamiques */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                         <span style={{ color: '#0f0f0f', fontSize: '13px', fontWeight: 600 }}>
                           {comment.user_name}
                         </span>
+                        {/* v86: Badge "Vérifié" pour les avis réels post-session */}
+                        {comment.is_verified && (
+                          <span style={{
+                            background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                            color: '#fff',
+                            fontSize: '9px',
+                            fontWeight: 700,
+                            padding: '2px 6px',
+                            borderRadius: '8px',
+                            letterSpacing: '0.3px'
+                          }}>✓ Vérifié</span>
+                        )}
                         <div style={{ display: 'flex', gap: '1px' }}>
                           {[1,2,3,4,5].map(i => (
-                            <svg key={i} width="10" height="10" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
+                            <svg key={i} width="10" height="10" viewBox="0 0 24 24"
+                              fill={i <= (comment.rating || 5) ? '#D91CD2' : '#ddd'}
+                              stroke="none"
+                            >
                               <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
                             </svg>
                           ))}
