@@ -5033,10 +5033,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           {/* Bouton Vue Visiteur - Ouvre la vitrine publique dans un nouvel onglet */}
           <button
             onClick={() => {
-              // v63: Déterminer le username/slug pour la vitrine publique
-              const coachName = (safeCoachUser?.name || '').toLowerCase().split(' ')[0].trim();
-              const coachSlug = safeCoachUser?.username || coachName || safeCoachUser?.email?.split('@')[0] || 'bassi';
-              const vitrineUrl = `${window.location.origin}/coach/${coachSlug}?t=${Date.now()}`;
+              // v63: Utiliser coachVitrineUrl (déjà calculé correctement)
+              const vitrineUrl = (coachVitrineUrl || `${window.location.origin}/coach/bassi`) + `?t=${Date.now()}`;
               console.log('[V63] Vue Visiteur → ', vitrineUrl);
               window.open(vitrineUrl, '_blank');
             }}
