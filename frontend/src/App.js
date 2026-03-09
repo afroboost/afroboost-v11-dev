@@ -17,7 +17,7 @@ axios.interceptors.request.use((config) => {
   }
   return config;
 });
-console.log("V67 ACTIVÉE - VERROUILLAGE DÉFINITIF 1 SUPER ADMIN = 1 VITRINE HOMEPAGE");
+console.log("V68 ACTIVÉE - ÉTANCHÉITÉ MULTI-TENANT & PRIVILÈGES ADMIN");
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import html2canvas from "html2canvas";

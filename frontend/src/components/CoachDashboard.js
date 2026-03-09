@@ -4270,19 +4270,31 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               <span className="text-white/60 text-sm">
                 Connecté en tant que <span className="text-purple-400">{displayEmail}</span>
               </span>
-              {/* Badge par défaut */}
-              <span 
-                className="ml-2 px-3 py-1 rounded-full text-sm font-bold"
+              {/* v68: Badge MODE SUPER ADMIN / COMPTE PARTENAIRE */}
+              <span
+                className="ml-2 px-3 py-1 rounded-full text-xs font-bold tracking-wide"
                 style={{
-                  background: isSuperAdmin 
-                    ? 'linear-gradient(135deg, rgba(217,28,210,0.3), rgba(139,92,246,0.3))' 
-                    : 'rgba(239,68,68,0.25)',
-                  color: isSuperAdmin ? '#D91CD2' : '#ef4444',
-                  border: `2px solid ${isSuperAdmin ? 'rgba(217,28,210,0.6)' : 'rgba(239,68,68,0.6)'}`
+                  background: isSuperAdmin
+                    ? 'linear-gradient(135deg, rgba(217,28,210,0.3), rgba(139,92,246,0.3))'
+                    : 'rgba(255,255,255,0.08)',
+                  color: isSuperAdmin ? '#D91CD2' : '#a78bfa',
+                  border: `1px solid ${isSuperAdmin ? 'rgba(217,28,210,0.6)' : 'rgba(167,139,250,0.3)'}`
                 }}
               >
-                {isSuperAdmin ? '👑 Crédits Illimités' : '💰 Solde : 0 Crédit'}
+                {isSuperAdmin ? '👑 SUPER ADMIN : ACCÈS ILLIMITÉ' : 'COMPTE PARTENAIRE'}
               </span>
+              {!isSuperAdmin && (
+                <span
+                  className="px-2 py-1 rounded-full text-xs font-bold"
+                  style={{
+                    background: coachCredits > 0 ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.2)',
+                    color: coachCredits > 0 ? '#22c55e' : '#ef4444',
+                    border: `1px solid ${coachCredits > 0 ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`
+                  }}
+                >
+                  Crédits : {coachCredits}
+                </span>
+              )}
             </div>
           </div>
         </div>

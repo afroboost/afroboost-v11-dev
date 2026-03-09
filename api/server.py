@@ -3937,20 +3937,19 @@ async def check_duplicate_contacts(request: Request):
     existing_phones = set()
     existing_emails = set()
 
+    # v68: Isolation multi-tenant — ne chercher les doublons que dans les contacts du coach
+    coach_filter = {} if is_super_admin(coach_email) else {"coach_id": coach_email}
+
     if phones:
-        cursor = db.chat_participants.find(
-            {"phone": {"$in": phones}},
-            {"_id": 0, "phone": 1}
-        )
+        phone_query = {**coach_filter, "phone": {"$in": phones}}
+        cursor = db.chat_participants.find(phone_query, {"_id": 0, "phone": 1})
         async for doc in cursor:
             if doc.get("phone"):
                 existing_phones.add(doc["phone"])
 
     if emails:
-        cursor = db.chat_participants.find(
-            {"email": {"$in": emails}},
-            {"_id": 0, "email": 1}
-        )
+        email_query = {**coach_filter, "email": {"$in": emails}}
+        cursor = db.chat_participants.find(email_query, {"_id": 0, "email": 1})
         async for doc in cursor:
             if doc.get("email"):
                 existing_emails.add(doc["email"].lower())
@@ -5210,45 +5209,66 @@ async def test_ai_response(data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- Leads Routes (Widget IA) ---
+# v68: ISOLATION MULTI-TENANT — chaque lead est lié à un coach_id
 @api_router.get("/leads")
-async def get_leads():
-    """Récupère tous les leads capturés via le widget IA"""
-    leads = await db.leads.find({}, {"_id": 0}).sort("createdAt", -1).to_list(500)
+async def get_leads(request: Request):
+    """Récupère les leads capturés via le widget IA — filtré par coach_id"""
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not caller_email:
+        raise HTTPException(status_code=401, detail="Email requis")
+
+    # v68: Super Admin voit TOUS les leads, partenaire voit les siens
+    if is_super_admin(caller_email):
+        leads = await db.leads.find({}, {"_id": 0}).sort("createdAt", -1).to_list(500)
+    else:
+        leads = await db.leads.find(
+            {"coach_id": caller_email}, {"_id": 0}
+        ).sort("createdAt", -1).to_list(500)
     return leads
 
 @api_router.post("/leads")
-async def create_lead(lead: Lead):
+async def create_lead(request: Request, lead: Lead):
     """Enregistre un nouveau lead depuis le widget IA"""
     from datetime import datetime, timezone
-    
+
+    # v68: Récupérer le coach_id depuis le header ou le referer
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    # Si pas de header (widget public), utiliser DEFAULT_COACH_ID
+    coach_id = caller_email if caller_email else DEFAULT_COACH_ID
+
     lead_data = lead.model_dump()
     lead_data["id"] = f"lead_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{lead.whatsapp[-4:]}"
     lead_data["createdAt"] = datetime.now(timezone.utc).isoformat()
-    
-    # Vérifier si le lead existe déjà (même email ou WhatsApp)
-    existing = await db.leads.find_one({
-        "$or": [
-            {"email": lead.email},
-            {"whatsapp": lead.whatsapp}
-        ]
-    })
-    
+    lead_data["coach_id"] = coach_id  # v68: Association au coach
+
+    # Vérifier si le lead existe déjà (même email ou WhatsApp) POUR CE COACH
+    dup_filter = {"coach_id": coach_id, "$or": [{"email": lead.email}, {"whatsapp": lead.whatsapp}]}
+    existing = await db.leads.find_one(dup_filter)
+
     if existing:
-        # Mettre à jour le lead existant
         await db.leads.update_one(
             {"id": existing["id"]},
             {"$set": {"firstName": lead.firstName, "updatedAt": lead_data["createdAt"]}}
         )
         existing["firstName"] = lead.firstName
         return {**existing, "_id": None}
-    
+
     await db.leads.insert_one(lead_data)
     return {k: v for k, v in lead_data.items() if k != "_id"}
 
 @api_router.delete("/leads/{lead_id}")
-async def delete_lead(lead_id: str):
-    """Supprime un lead"""
-    result = await db.leads.delete_one({"id": lead_id})
+async def delete_lead(lead_id: str, request: Request):
+    """Supprime un lead — vérifie l'ownership"""
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not caller_email:
+        raise HTTPException(status_code=401, detail="Email requis")
+
+    # v68: Super Admin peut supprimer n'importe quel lead, partenaire seulement les siens
+    if is_super_admin(caller_email):
+        result = await db.leads.delete_one({"id": lead_id})
+    else:
+        result = await db.leads.delete_one({"id": lead_id, "coach_id": caller_email})
+
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Lead not found")
     return {"success": True}
