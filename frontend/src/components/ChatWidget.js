@@ -351,7 +351,7 @@ const InlineCtaButton = ({ label, url }) => {
  * Affiche le nom de l'expéditeur au-dessus de chaque bulle
  * Couleurs: Violet (#8B5CF6) pour le Coach, Gris foncé pour les membres/IA
  */
-const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUserId, profilePhotoUrl, onReservationClick }) => {
+const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUserId, profilePhotoUrl, onReservationClick, onZoomPhoto }) => {
   // v10.4: Fallback robuste pour texte (content, text, body - jamais vide)
   const messageText = msg.content || msg.text || msg.body || '';
   const htmlContent = parseMessageContent(messageText);
@@ -599,38 +599,43 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
   
   // Récupérer l'avatar (photo ou initiale)
   const getAvatar = () => {
-    // Si c'est un message de l'utilisateur actuel avec une photo
+    // v75: Si c'est un message de l'utilisateur actuel avec une photo — cliquable pour zoom
     if (isUser && profilePhotoUrl) {
       return (
-        <img 
-          src={profilePhotoUrl} 
+        <img
+          src={profilePhotoUrl}
           alt="avatar"
+          onClick={(e) => { e.stopPropagation(); onZoomPhoto && onZoomPhoto(profilePhotoUrl); }}
           style={{
             width: '24px',
             height: '24px',
             borderRadius: '50%',
             objectFit: 'cover',
-            border: '1px solid rgba(255,255,255,0.2)'
+            border: '2px solid #D91CD2',
+            cursor: 'pointer'
           }}
         />
       );
     }
-    // Avatar par défaut (initiale)
+    // v75: Avatar d'un autre membre avec photo — cliquable pour zoom
     if (msg.senderPhotoUrl) {
       return (
-        <img 
-          src={msg.senderPhotoUrl} 
+        <img
+          src={msg.senderPhotoUrl}
           alt="avatar"
+          onClick={(e) => { e.stopPropagation(); onZoomPhoto && onZoomPhoto(msg.senderPhotoUrl); }}
           style={{
             width: '24px',
             height: '24px',
             borderRadius: '50%',
             objectFit: 'cover',
-            border: '1px solid rgba(255,255,255,0.2)'
+            border: '2px solid #D91CD2',
+            cursor: 'pointer'
           }}
         />
       );
     }
+    // Pas de photo = pas de zoom (initiale sur fond violet reste statique)
     return null;
   };
   
@@ -1165,11 +1170,12 @@ export const ChatWidget = () => {
   });
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   
-  // === MODALE RECADRAGE PHOTO ===
-  const [showCropModal, setShowCropModal] = useState(false);
-  const [cropImageSrc, setCropImageSrc] = useState(null);
-  const [cropPosition, setCropPosition] = useState({ x: 0, y: 0, scale: 1 });
+  // === v75: ZOOM PHOTO PROFIL (remplace l'ancien crop modal) ===
+  const [showCropModal, setShowCropModal] = useState(false); // kept for compatibility
+  const [cropImageSrc, setCropImageSrc] = useState(null); // kept for compatibility
+  const [cropPosition, setCropPosition] = useState({ x: 0, y: 0, scale: 1 }); // kept for compatibility
   const cropCanvasRef = useRef(null);
+  const [zoomedChatPhoto, setZoomedChatPhoto] = useState(null); // v75: zoom photo au clic
   
   // === MENU UTILISATEUR (Partage + Mode Visiteur) ===
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -1460,110 +1466,108 @@ export const ChatWidget = () => {
     });
   };
   
-  // === OUVRIR MODALE DE RECADRAGE ===
+  // === v75: UPLOAD PHOTO SIMPLIFIÉ — Auto-centrage, pas de crop manuel ===
   const handlePhotoSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
+
     if (!file.type.startsWith('image/')) {
       alert('Veuillez sélectionner une image');
       return;
     }
-    
-    // Lire l'image et ouvrir la modale de recadrage
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setCropImageSrc(event.target.result);
-      setCropPosition({ x: 0, y: 0, scale: 1 });
-      setShowCropModal(true);
-    };
-    reader.readAsDataURL(file);
+
+    // v75: Upload direct sans crop modal — le backend auto-centre à 200x200
+    handleDirectUpload(file);
   };
-  
-  // === RECADRER ET UPLOADER LA PHOTO ===
-  const handleCropAndUpload = async () => {
-    if (!cropImageSrc) return;
-    
+
+  // === v75: UPLOAD DIRECT SANS CROP — Auto-centrage côté backend ===
+  const handleDirectUpload = async (file) => {
     setUploadingPhoto(true);
-    setShowCropModal(false);
-    
+
     try {
-      // Créer le canvas de recadrage circulaire
+      // Créer canvas pour centrer automatiquement en carré
       const canvas = document.createElement('canvas');
       const size = 200;
       canvas.width = size;
       canvas.height = size;
       const ctx = canvas.getContext('2d');
-      
+
       // Charger l'image
       const img = new Image();
       await new Promise((resolve, reject) => {
         img.onload = resolve;
         img.onerror = reject;
-        img.src = cropImageSrc;
+        img.src = URL.createObjectURL(file);
       });
-      
-      // Calculer les dimensions de recadrage
+
+      // Auto-centrage : crop carré au centre de l'image
       const minDim = Math.min(img.width, img.height);
-      const scale = cropPosition.scale;
-      const cropSize = minDim / scale;
-      const offsetX = ((img.width - cropSize) / 2) + (cropPosition.x * img.width / 200);
-      const offsetY = ((img.height - cropSize) / 2) + (cropPosition.y * img.height / 200);
-      
-      // Dessiner l'image recadrée dans un cercle
+      const offsetX = (img.width - minDim) / 2;
+      const offsetY = (img.height - minDim) / 2;
+
+      // Dessiner dans un cercle
       ctx.beginPath();
       ctx.arc(size/2, size/2, size/2, 0, Math.PI * 2);
       ctx.closePath();
       ctx.clip();
-      
-      ctx.drawImage(
-        img, 
-        Math.max(0, offsetX), 
-        Math.max(0, offsetY), 
-        cropSize, 
-        cropSize,
-        0, 0, size, size
-      );
-      
+
+      ctx.drawImage(img, offsetX, offsetY, minDim, minDim, 0, 0, size, size);
+
       // Convertir en blob
       const blob = await new Promise((resolve) => {
         canvas.toBlob(resolve, 'image/jpeg', 0.85);
       });
-      
+
       const compressedFile = new File([blob], 'profile.jpg', { type: 'image/jpeg' });
-      console.log('[PHOTO] Recadrage terminé:', Math.round(compressedFile.size / 1024), 'KB');
-      
-      // Upload vers le NOUVEAU endpoint qui sauvegarde en DB
+      console.log('[PHOTO] v75 Auto-centrage terminé:', Math.round(compressedFile.size / 1024), 'KB');
+
+      // Upload vers l'endpoint MongoDB
       const formData = new FormData();
       formData.append('file', compressedFile);
       formData.append('participant_id', participantId || 'guest');
-      
+
       const res = await axios.post(`${API}/users/upload-photo`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      
+
       if (res.data?.success && res.data?.url) {
         const photoUrl = res.data.url;
         setProfilePhoto(photoUrl);
-        
+
         // === MISE À JOUR DU PROFIL LOCAL (sync avec DB) ===
         const profile = getStoredProfile() || {};
         profile.photoUrl = photoUrl;
         localStorage.setItem(AFROBOOST_PROFILE_KEY, JSON.stringify(profile));
         setAfroboostProfile(profile);
-        
+
         // === ÉMETTRE LA MISE À JOUR D'AVATAR EN TEMPS RÉEL ===
         emitAvatarUpdate(photoUrl);
-        
-        console.log('[PHOTO] Photo uploadée et sauvegardée en DB:', photoUrl, res.data.db_updated);
+
+        console.log('[PHOTO] v75 Photo uploadée MongoDB:', photoUrl, res.data.db_updated);
       }
     } catch (err) {
       console.error('[PHOTO] Erreur:', err);
       alert('Erreur lors de l\'upload');
     } finally {
       setUploadingPhoto(false);
-      setCropImageSrc(null);
     }
+  };
+
+  // === LEGACY: handleCropAndUpload kept for compatibility ===
+  const handleCropAndUpload = async () => {
+    // v75: Redirige vers l'upload direct si appelé
+    if (cropImageSrc) {
+      try {
+        const response = await fetch(cropImageSrc);
+        const blob = await response.blob();
+        const file = new File([blob], 'profile.jpg', { type: 'image/jpeg' });
+        await handleDirectUpload(file);
+      } catch (err) {
+        console.error('[PHOTO] Legacy crop fallback error:', err);
+      }
+    }
+    setCropImageSrc(null);
+    setShowCropModal(false);
   };
   
   // === UPLOAD PHOTO DE PROFIL (legacy - rediriger vers crop) ===
@@ -5107,11 +5111,12 @@ export const ChatWidget = () => {
                       gap: '8px' 
                     }}>
                       {messages.map((msg, idx) => (
-                        <MemoizedMessageBubble 
-                          key={msg.id || idx} 
-                          msg={msg} 
+                        <MemoizedMessageBubble
+                          key={msg.id || idx}
+                          msg={msg}
                           isUser={msg.type === 'coach'}
                           onReservationClick={() => {}}
+                          onZoomPhoto={(url) => setZoomedChatPhoto(url)}
                         />
                       ))}
                       <div ref={messagesEndRef} />
@@ -5369,6 +5374,7 @@ export const ChatWidget = () => {
                         currentUserId={participantId}
                         profilePhotoUrl={profilePhoto}
                         onReservationClick={() => setShowReservationPanel(true)}
+                        onZoomPhoto={(url) => setZoomedChatPhoto(url)}
                       />
                     </div>
                   ))}
@@ -5684,8 +5690,8 @@ export const ChatWidget = () => {
         isMainChatOpen={isOpen}
       />
       
-      {/* === MODALE RECADRAGE PHOTO DE PROFIL === */}
-      {showCropModal && cropImageSrc && (
+      {/* === v75: MODAL ZOOM PHOTO DE PROFIL DANS LE CHAT === */}
+      {zoomedChatPhoto && (
         <div
           style={{
             position: 'fixed',
@@ -5693,165 +5699,40 @@ export const ChatWidget = () => {
             left: 0,
             right: 0,
             bottom: 0,
-            background: 'rgba(0,0,0,0.9)',
+            background: 'rgba(0,0,0,0.85)',
             zIndex: 10000,
             display: 'flex',
-            flexDirection: 'column',
             alignItems: 'center',
-            justifyContent: 'center',
-            padding: '20px'
+            justifyContent: 'center'
           }}
-          data-testid="crop-modal"
+          onClick={() => setZoomedChatPhoto(null)}
+          data-testid="zoom-photo-modal"
         >
-          {/* Header minimaliste */}
-          <div style={{ 
-            color: '#fff', 
-            fontSize: '14px', 
-            marginBottom: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-              <circle cx="8.5" cy="8.5" r="1.5"></circle>
-              <polyline points="21 15 16 10 5 21"></polyline>
-            </svg>
-            Centrer votre visage
-          </div>
-          
-          {/* Zone de prévisualisation circulaire */}
           <div style={{
-            width: '200px',
-            height: '200px',
+            width: '260px',
+            height: '260px',
             borderRadius: '50%',
             overflow: 'hidden',
-            border: '2px solid rgba(255,255,255,0.3)',
-            position: 'relative',
-            background: '#1a1a1a'
+            border: '3px solid #D91CD2',
+            boxShadow: '0 0 30px rgba(217, 28, 210, 0.5), 0 0 60px rgba(217, 28, 210, 0.2)',
+            animation: 'v75ZoomIn 0.25s ease-out'
           }}>
             <img
-              src={cropImageSrc}
-              alt="Aperçu"
-              style={{
-                position: 'absolute',
-                width: `${100 * cropPosition.scale}%`,
-                height: 'auto',
-                minHeight: `${100 * cropPosition.scale}%`,
-                objectFit: 'cover',
-                left: `${50 - (50 * cropPosition.scale) + cropPosition.x}%`,
-                top: `${50 - (50 * cropPosition.scale) + cropPosition.y}%`,
-                transform: 'translate(0, 0)',
-                cursor: 'move'
-              }}
-              draggable={false}
+              src={zoomedChatPhoto}
+              alt="Photo profil"
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             />
-          </div>
-          
-          {/* Contrôle de zoom */}
-          <div style={{ 
-            marginTop: '20px', 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '12px',
-            color: '#888',
-            fontSize: '12px'
-          }}>
-            <span>-</span>
-            <input
-              type="range"
-              min="1"
-              max="3"
-              step="0.1"
-              value={cropPosition.scale}
-              onChange={(e) => setCropPosition(prev => ({ ...prev, scale: parseFloat(e.target.value) }))}
-              style={{
-                width: '150px',
-                accentColor: '#9333ea'
-              }}
-            />
-            <span>+</span>
-          </div>
-          
-          {/* Boutons de position */}
-          <div style={{ 
-            marginTop: '16px', 
-            display: 'flex', 
-            gap: '8px' 
-          }}>
-            <button
-              onClick={() => setCropPosition(prev => ({ ...prev, y: prev.y - 5 }))}
-              style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '4px', padding: '8px', color: '#fff', cursor: 'pointer' }}
-            >↑</button>
-          </div>
-          <div style={{ 
-            display: 'flex', 
-            gap: '8px' 
-          }}>
-            <button
-              onClick={() => setCropPosition(prev => ({ ...prev, x: prev.x - 5 }))}
-              style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '4px', padding: '8px', color: '#fff', cursor: 'pointer' }}
-            >←</button>
-            <button
-              onClick={() => setCropPosition({ x: 0, y: 0, scale: 1 })}
-              style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '4px', padding: '8px', color: '#888', cursor: 'pointer', fontSize: '10px' }}
-            >Reset</button>
-            <button
-              onClick={() => setCropPosition(prev => ({ ...prev, x: prev.x + 5 }))}
-              style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '4px', padding: '8px', color: '#fff', cursor: 'pointer' }}
-            >→</button>
-          </div>
-          <div style={{ 
-            display: 'flex', 
-            gap: '8px' 
-          }}>
-            <button
-              onClick={() => setCropPosition(prev => ({ ...prev, y: prev.y + 5 }))}
-              style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '4px', padding: '8px', color: '#fff', cursor: 'pointer' }}
-            >↓</button>
-          </div>
-          
-          {/* Boutons d'action */}
-          <div style={{ 
-            marginTop: '24px', 
-            display: 'flex', 
-            gap: '12px' 
-          }}>
-            <button
-              onClick={() => { setShowCropModal(false); setCropImageSrc(null); }}
-              style={{
-                background: 'none',
-                border: '1px solid rgba(255,255,255,0.3)',
-                borderRadius: '8px',
-                padding: '10px 24px',
-                color: '#fff',
-                cursor: 'pointer',
-                fontSize: '12px'
-              }}
-            >
-              Annuler
-            </button>
-            <button
-              onClick={handleCropAndUpload}
-              disabled={uploadingPhoto}
-              style={{
-                background: 'linear-gradient(135deg, #9333ea, #6366f1)',
-                border: 'none',
-                borderRadius: '8px',
-                padding: '10px 24px',
-                color: '#fff',
-                cursor: uploadingPhoto ? 'wait' : 'pointer',
-                fontSize: '12px',
-                fontWeight: '600',
-                opacity: uploadingPhoto ? 0.7 : 1
-              }}
-              data-testid="crop-confirm-btn"
-            >
-              {uploadingPhoto ? '⏳ Upload...' : '✓ Valider'}
-            </button>
           </div>
         </div>
       )}
+
+      {/* v75: CSS animation pour zoom photo */}
+      <style>{`
+        @keyframes v75ZoomIn {
+          from { transform: scale(0.5); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
+      `}</style>
     </>
   );
 };
