@@ -313,25 +313,33 @@ const MediaDisplay = ({ url, className }) => {
 const COACH_TAB_KEY = 'afroboost_coach_tab';
 const COACH_SESSION_KEY = 'afroboost_coach_session';
 
-// === v78: Composant liste des 5 derniers commentaires avec contrôles individuels + feedback visuel ===
+// === v79: Composant Social Boost — liste commentaires + formulaire ajout + toast + feedback UX ===
 const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
   const [comments, setComments] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
   const [likedIds, setLikedIds] = React.useState({});
+  const [toast, setToast] = React.useState('');
+  // v79: Formulaire ajout manuel
+  const [showAddForm, setShowAddForm] = React.useState(false);
+  const [newName, setNewName] = React.useState('');
+  const [newText, setNewText] = React.useState('');
+  const [newPhotoUrl, setNewPhotoUrl] = React.useState('');
+  const [adding, setAdding] = React.useState(false);
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2500); };
 
   const fetchComments = React.useCallback(async () => {
     setLoading(true);
     try {
       const res = await axios.get(`${API}/comments?coach_id=${encodeURIComponent(coachEmail || '')}`);
       setComments((res.data?.comments || []).slice(0, 5));
-    } catch (e) { console.error('[V78] Fetch comments error:', e); }
+    } catch (e) { console.error('[V79] Fetch comments error:', e); }
     finally { setLoading(false); }
   }, [API, coachEmail, axios]);
 
   React.useEffect(() => { fetchComments(); }, [fetchComments]);
 
-  // Listen for refresh events from Boost button
   React.useEffect(() => {
     const el = document.getElementById('social-boost-comments-list');
     if (!el) return;
@@ -340,29 +348,30 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
     return () => el.removeEventListener('refresh', handler);
   }, [fetchComments]);
 
+  // v79: Like avec disable + spinner + toast
   const handleLike = async (commentId) => {
-    // v78: Optimistic update + visual feedback immédiat
     setComments(prev => prev.map(c => c.id === commentId ? { ...c, likes: (c.likes || 0) + 1 } : c));
-    setLikedIds(prev => ({ ...prev, [commentId]: true }));
+    setLikedIds(prev => ({ ...prev, [commentId]: 'loading' }));
     try {
       await axios.post(`${API}/comments/${commentId}/like`);
-      console.log('[V78] Like +1 OK:', commentId);
+      setLikedIds(prev => ({ ...prev, [commentId]: 'done' }));
+      showToast('✅ Like +1 enregistré');
+      console.log('[V79] Like +1 OK:', commentId);
     } catch (e) {
-      // Rollback on error
       setComments(prev => prev.map(c => c.id === commentId ? { ...c, likes: (c.likes || 0) - 1 } : c));
-      alert('❌ Erreur like');
+      showToast('❌ Erreur like');
     }
-    // Reset animation after 1s
-    setTimeout(() => setLikedIds(prev => ({ ...prev, [commentId]: false })), 1000);
+    setTimeout(() => setLikedIds(prev => ({ ...prev, [commentId]: false })), 1200);
   };
 
+  // v79: Refresh avec toast
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
       const res = await axios.get(`${API}/comments?coach_id=${encodeURIComponent(coachEmail || '')}`);
       setComments((res.data?.comments || []).slice(0, 5));
-      console.log('[V78] Refresh OK');
-    } catch (e) { console.error('[V78] Refresh error:', e); }
+      showToast('✅ Commentaires mis à jour');
+    } catch (e) { showToast('❌ Erreur rafraîchissement'); }
     finally { setRefreshing(false); }
   };
 
@@ -373,7 +382,8 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
         headers: { 'X-User-Email': coachEmail }
       });
       setComments(prev => prev.filter(c => c.id !== commentId));
-    } catch (e) { alert('❌ Erreur suppression'); }
+      showToast('✅ Commentaire supprimé');
+    } catch (e) { showToast('❌ Erreur suppression'); }
   };
 
   const handlePhoto = async (commentId) => {
@@ -384,7 +394,33 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
         headers: { 'X-User-Email': coachEmail, 'Content-Type': 'application/json' }
       });
       setComments(prev => prev.map(c => c.id === commentId ? { ...c, profile_photo: url } : c));
-    } catch (e) { alert('❌ Erreur photo'); }
+      showToast('✅ Photo mise à jour');
+    } catch (e) { showToast('❌ Erreur photo'); }
+  };
+
+  // v79: Ajout manuel de commentaire
+  const handleAddComment = async () => {
+    if (!newName.trim() || !newText.trim()) return;
+    setAdding(true);
+    try {
+      const res = await axios.post(`${API}/admin/comments/add`, {
+        user_name: newName.trim(),
+        text: newText.trim(),
+        profile_photo: newPhotoUrl.trim() || '',
+        coach_id: coachEmail
+      }, { headers: { 'X-User-Email': coachEmail, 'Content-Type': 'application/json' } });
+      if (res.data?.comment) {
+        setComments(prev => [res.data.comment, ...prev].slice(0, 5));
+      }
+      setNewName(''); setNewText(''); setNewPhotoUrl('');
+      setShowAddForm(false);
+      showToast('✅ Commentaire ajouté');
+      console.log('[V79] Commentaire manuel ajouté');
+    } catch (e) {
+      const msg = e.response?.data?.detail || 'Erreur ajout';
+      showToast('❌ ' + msg);
+    }
+    finally { setAdding(false); }
   };
 
   if (loading && comments.length === 0) return (
@@ -393,36 +429,120 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
     </div>
   );
 
-  if (comments.length === 0) return (
-    <div id="social-boost-comments-list" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', marginTop: '12px' }}>
-      Aucun commentaire. Cliquez sur "Booster" pour en générer.
-    </div>
-  );
-
   return (
     <div id="social-boost-comments-list" style={{ marginTop: '14px' }}>
       <style>{`
-        @keyframes v78LikePulse {
+        @keyframes v79LikePulse {
           0% { transform: scale(1); }
           30% { transform: scale(1.5); }
           60% { transform: scale(0.9); }
           100% { transform: scale(1); }
         }
-        @keyframes v78RefreshSpin {
+        @keyframes v79RefreshSpin {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
         }
-        @keyframes v78LikeFlash {
+        @keyframes v79LikeFlash {
           0% { color: #D91CD2; }
           50% { color: #00ff88; font-size: 14px; }
           100% { color: #D91CD2; }
         }
+        @keyframes v79ToastIn {
+          from { transform: translateY(20px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+        @keyframes v79Spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
       `}</style>
-      <div style={{ color: '#D91CD2', fontSize: '12px', fontWeight: 600, marginBottom: '8px' }}>
-        5 derniers commentaires :
+
+      {/* v79: Toast notification */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: '80px', left: '50%', transform: 'translateX(-50%)',
+          background: toast.startsWith('✅') ? 'rgba(0,200,100,0.95)' : 'rgba(220,40,40,0.95)',
+          color: '#fff', padding: '10px 22px', borderRadius: '20px', fontSize: '13px',
+          fontWeight: 600, zIndex: 999999, boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+          animation: 'v79ToastIn 0.3s ease', whiteSpace: 'nowrap'
+        }}>{toast}</div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+        <div style={{ color: '#D91CD2', fontSize: '12px', fontWeight: 600 }}>
+          5 derniers commentaires :
+        </div>
+        {/* v79: Bouton + Ajouter commentaire */}
+        <button onClick={() => setShowAddForm(!showAddForm)}
+          style={{
+            background: showAddForm ? 'rgba(217,28,210,0.3)' : 'rgba(217,28,210,0.1)',
+            border: '1px solid rgba(217,28,210,0.4)', borderRadius: '6px',
+            color: '#D91CD2', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+            padding: '4px 10px'
+          }}>
+          {showAddForm ? '✕ Fermer' : '＋ Ajouter'}
+        </button>
       </div>
-      {comments.map((c) => {
-        const justLiked = likedIds[c.id];
+
+      {/* v79: Formulaire d'ajout manuel */}
+      {showAddForm && (
+        <div style={{
+          background: 'rgba(217,28,210,0.06)', border: '1px solid rgba(217,28,210,0.2)',
+          borderRadius: '10px', padding: '12px', marginBottom: '10px'
+        }}>
+          <div style={{ fontSize: '12px', color: '#D91CD2', fontWeight: 600, marginBottom: '8px' }}>
+            Nouveau commentaire manuel
+          </div>
+          <input value={newName} onChange={e => setNewName(e.target.value)}
+            placeholder="Nom de l'utilisateur (ex: Marie D.)"
+            style={{
+              width: '100%', padding: '8px 10px', marginBottom: '6px', borderRadius: '6px',
+              border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.06)',
+              color: '#fff', fontSize: '12px', outline: 'none', boxSizing: 'border-box'
+            }} />
+          <textarea value={newText} onChange={e => setNewText(e.target.value)}
+            placeholder="Texte du commentaire..."
+            rows={2}
+            style={{
+              width: '100%', padding: '8px 10px', marginBottom: '6px', borderRadius: '6px',
+              border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.06)',
+              color: '#fff', fontSize: '12px', outline: 'none', resize: 'vertical',
+              boxSizing: 'border-box', fontFamily: 'inherit'
+            }} />
+          <input value={newPhotoUrl} onChange={e => setNewPhotoUrl(e.target.value)}
+            placeholder="URL photo de profil (optionnel — DiceBear si vide)"
+            style={{
+              width: '100%', padding: '8px 10px', marginBottom: '8px', borderRadius: '6px',
+              border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.06)',
+              color: '#fff', fontSize: '11px', outline: 'none', boxSizing: 'border-box'
+            }} />
+          <button onClick={handleAddComment}
+            disabled={adding || !newName.trim() || !newText.trim()}
+            style={{
+              background: adding ? 'rgba(150,150,150,0.3)' : 'linear-gradient(135deg, #D91CD2, #8B5CF6)',
+              border: 'none', borderRadius: '8px', color: '#fff', fontSize: '13px',
+              fontWeight: 600, padding: '10px 20px', cursor: adding ? 'wait' : 'pointer',
+              opacity: (!newName.trim() || !newText.trim()) ? 0.5 : 1,
+              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
+            }}>
+            {adding ? (
+              <>
+                <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTop: '2px solid #fff', borderRadius: '50%', animation: 'v79Spin 0.8s linear infinite' }}></span>
+                Ajout en cours...
+              </>
+            ) : '✅ Ajouter ce commentaire'}
+          </button>
+        </div>
+      )}
+
+      {comments.length === 0 && !showAddForm ? (
+        <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>
+          Aucun commentaire. Cliquez sur "Booster" ou "＋ Ajouter" pour en créer.
+        </div>
+      ) : comments.map((c) => {
+        const likeState = likedIds[c.id]; // false | 'loading' | 'done'
+        const justLiked = likeState === 'done';
+        const isLiking = likeState === 'loading';
         return (
         <div key={c.id} style={{
           display: 'flex', alignItems: 'center', gap: '10px',
@@ -450,28 +570,31 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
               {c.text}
             </div>
           </div>
-          {/* Likes count — animated on change */}
+          {/* Likes count */}
           <span style={{
             color: justLiked ? '#00ff88' : '#D91CD2',
             fontSize: justLiked ? '14px' : '12px',
             fontWeight: 700, minWidth: '35px', textAlign: 'center',
             transition: 'all 0.3s ease',
-            animation: justLiked ? 'v78LikeFlash 0.6s ease' : 'none'
+            animation: justLiked ? 'v79LikeFlash 0.6s ease' : 'none'
           }}>
             {c.likes || 0}
           </span>
-          {/* v78: Like button — BIGGER touch target + pulse animation */}
+          {/* v79: Like button — disabled pendant loading + spinner */}
           <button onClick={() => handleLike(c.id)} title="+1 Like"
+            disabled={!!isLiking}
             style={{
-              background: justLiked ? 'rgba(217,28,210,0.2)' : 'none',
-              border: justLiked ? '1px solid #D91CD2' : '1px solid transparent',
-              borderRadius: '8px', cursor: 'pointer', fontSize: '18px',
+              background: (justLiked || isLiking) ? 'rgba(217,28,210,0.2)' : 'none',
+              border: (justLiked || isLiking) ? '1px solid #D91CD2' : '1px solid transparent',
+              borderRadius: '8px', cursor: isLiking ? 'wait' : 'pointer', fontSize: '18px',
               padding: '6px 10px', minWidth: '44px', minHeight: '36px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              animation: justLiked ? 'v78LikePulse 0.5s ease' : 'none',
-              transition: 'all 0.2s ease'
+              animation: justLiked ? 'v79LikePulse 0.5s ease' : 'none',
+              transition: 'all 0.2s ease', opacity: isLiking ? 0.6 : 1
             }}>
-            ❤️
+            {isLiking ? (
+              <span style={{ display: 'inline-block', width: '16px', height: '16px', border: '2px solid rgba(217,28,210,0.3)', borderTop: '2px solid #D91CD2', borderRadius: '50%', animation: 'v79Spin 0.7s linear infinite' }}></span>
+            ) : '❤️'}
           </button>
           {/* Photo button */}
           <button onClick={() => handlePhoto(c.id)} title="Ajouter photo"
@@ -496,7 +619,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
         </div>
         );
       })}
-      {/* v78: Refresh button — bigger, visible, loading state */}
+      {/* v79: Refresh button */}
       <button onClick={handleRefresh} disabled={refreshing}
         style={{
           background: refreshing ? 'rgba(217,28,210,0.15)' : 'rgba(217,28,210,0.08)',
@@ -510,7 +633,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
         }}>
         <span style={{
           display: 'inline-block',
-          animation: refreshing ? 'v78RefreshSpin 1s linear infinite' : 'none'
+          animation: refreshing ? 'v79RefreshSpin 1s linear infinite' : 'none'
         }}>🔄</span>
         {refreshing ? 'Rafraîchissement...' : 'Rafraîchir les commentaires'}
       </button>

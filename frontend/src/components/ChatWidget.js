@@ -5671,7 +5671,7 @@ export const ChatWidget = () => {
         isMainChatOpen={isOpen}
       />
       
-      {/* === v76: MODAL ZOOM PHOTO DE PROFIL — PLEIN ÉCRAN PREMIUM === */}
+      {/* === v79: MODAL ZOOM PHOTO DE PROFIL — z-index 2000000 + backdrop blur === */}
       {zoomedChatPhoto && (
         <div
           style={{
@@ -5680,8 +5680,10 @@ export const ChatWidget = () => {
             left: 0,
             width: '100vw',
             height: '100vh',
-            background: 'rgba(0,0,0,0.92)',
-            zIndex: 1000000,
+            background: 'rgba(0,0,0,0.88)',
+            backdropFilter: 'blur(5px)',
+            WebkitBackdropFilter: 'blur(5px)',
+            zIndex: 2000000,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -5690,7 +5692,7 @@ export const ChatWidget = () => {
           onClick={() => setZoomedChatPhoto(null)}
           data-testid="zoom-photo-modal"
         >
-          {/* v77: Bouton Fermer (X) visible en haut à droite */}
+          {/* v79: Bouton Fermer (X) visible en haut à droite */}
           <button
             onClick={(e) => { e.stopPropagation(); setZoomedChatPhoto(null); }}
             style={{
@@ -5706,7 +5708,7 @@ export const ChatWidget = () => {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              zIndex: 1000001
+              zIndex: 2000001
             }}
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">

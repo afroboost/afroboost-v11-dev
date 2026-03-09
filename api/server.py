@@ -9136,6 +9136,41 @@ async def delete_single_comment(comment_id: str, request: Request):
     logger.info(f"[V77] Commentaire {comment_id} supprimé par {user_email}")
     return {"success": True, "comment_id": comment_id}
 
+@api_router.post("/admin/comments/add")
+async def add_manual_comment(request: Request):
+    """V79: Ajoute un commentaire manuellement (Super Admin uniquement)."""
+    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not is_super_admin(user_email):
+        raise HTTPException(status_code=403, detail="Réservé au Super Admin")
+    body = await request.json()
+    user_name = body.get("user_name", "").strip()
+    text = body.get("text", "").strip()
+    profile_photo = body.get("profile_photo", "").strip()
+    if not user_name or not text:
+        raise HTTPException(status_code=400, detail="user_name et text requis")
+    # Anti-doublon: vérifie si un commentaire identique existe déjà (même nom + même texte)
+    existing = await db.comments.find_one({"user_name": user_name, "text": text, "is_visible": True})
+    if existing:
+        raise HTTPException(status_code=409, detail="Ce commentaire existe déjà")
+    now = _datetime.datetime.utcnow()
+    avatar_seed = f"{user_name.replace(' ', '')}{now.strftime('%H%M%S')}"
+    comment = {
+        "id": f"manual_{now.strftime('%Y%m%d%H%M%S')}_{_random.randint(100,999)}",
+        "user_name": user_name,
+        "text": text,
+        "profile_photo": profile_photo or f"https://api.dicebear.com/7.x/avataaars/svg?seed={avatar_seed}&backgroundColor=D91CD2",
+        "likes": _random.randint(1, 20),
+        "rating": 5,
+        "is_ai": False,
+        "is_visible": True,
+        "coach_id": body.get("coach_id", user_email),
+        "created_at": now.isoformat()
+    }
+    await db.comments.insert_one(comment)
+    comment.pop("_id", None)
+    logger.info(f"[V79] Commentaire manuel ajouté par {user_email}: {user_name}")
+    return {"success": True, "comment": comment}
+
 @api_router.post("/admin/comments/{comment_id}/photo")
 async def update_comment_photo(comment_id: str, request: Request):
     """V77: Met à jour la photo de profil d'un commentaire (Super Admin uniquement)."""

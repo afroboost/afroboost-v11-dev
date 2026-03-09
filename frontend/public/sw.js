@@ -1,7 +1,8 @@
 // Service Worker Afroboost V57 — Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v78';
+const CACHE_NAME = 'afroboost-v79';
+// V79: Fix Social Boost formulaire ajout + Zoom z-index 2000000 + toast UX
 
 // Installation — skip waiting pour activer immédiatement
 self.addEventListener('install', (event) => {
