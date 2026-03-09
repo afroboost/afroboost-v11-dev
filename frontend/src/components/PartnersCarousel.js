@@ -159,7 +159,7 @@ const getMediaInfo = (videoUrl) => {
 // === COMPOSANT VIDEO CARD v9.5.7 avec mode maintenance ===
 // v11.7: Ajout isSuperAdminVideo pour désactiver double-clic
 // v34: Ajout preview 30s + overlay achat pour vidéos premium
-const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onNavigate, isPaused, onTogglePause, isVisible, maintenanceMode = false, isSuperAdmin = false, onBuyVideo, socialCommentsCount = 0, onShowComments }) => {
+const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onNavigate, isPaused, onTogglePause, isVisible, maintenanceMode = false, isSuperAdmin = false, onBuyVideo, socialCommentsCount = 0, onShowComments, pageLikesCount = 0, likeAnimating = false }) => {
   const videoRef = useRef(null);
   const [hasError, setHasError] = useState(false);
   const [ytPlaying, setYtPlaying] = useState(false);
@@ -832,31 +832,33 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
             </button>
           )}
 
-          {/* v10.3: Bouton Like avec GLOW VIOLET */}
+          {/* v80: Bouton Like avec compteur réel + animation */}
           <button
             onClick={(e) => {
               e.stopPropagation();
-              if (!isBlocked) onLike();
+              onLike();
             }}
-            className="flex flex-col items-center transition-all hover:scale-110 active:scale-95"
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: 0, transition: 'transform 0.2s ease' }}
             data-testid={`like-btn-${partner.id || partner.email}`}
           >
-            <div 
-              className="w-11 h-11 rounded-full flex items-center justify-center transition-all"
+            <div
               style={{
+                width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
                 background: isLiked ? 'rgba(217, 28, 210, 0.3)' : 'rgba(0,0,0,0.4)',
                 backdropFilter: 'blur(4px)',
-                boxShadow: isLiked ? '0 0 20px rgba(217, 28, 210, 0.8), 0 0 40px rgba(217, 28, 210, 0.4)' : 'none'
+                boxShadow: isLiked ? '0 0 20px rgba(217, 28, 210, 0.8), 0 0 40px rgba(217, 28, 210, 0.4)' : 'none',
+                transform: likeAnimating ? 'scale(1.3)' : 'scale(1)',
+                transition: 'all 0.3s ease'
               }}
             >
-              <svg 
-                width="24" 
-                height="24" 
-                viewBox="0 0 24 24" 
-                fill={isLiked ? '#D91CD2' : 'none'} 
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill={isLiked ? '#D91CD2' : 'none'}
                 stroke={isLiked ? '#D91CD2' : 'white'}
-                strokeWidth="2" 
-                strokeLinecap="round" 
+                strokeWidth="2"
+                strokeLinecap="round"
                 strokeLinejoin="round"
                 style={{
                   filter: isLiked ? 'drop-shadow(0 0 8px #D91CD2)' : 'none',
@@ -866,14 +868,16 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
               </svg>
             </div>
-            <span 
-              className="text-xs mt-1 font-medium"
-              style={{ 
+            <span
+              style={{
+                fontSize: '12px', fontWeight: 600, marginTop: '4px',
                 color: isLiked ? '#D91CD2' : 'white',
-                textShadow: isLiked ? '0 0 10px rgba(217, 28, 210, 0.8)' : '0 1px 3px rgba(0,0,0,0.9)'
+                textShadow: isLiked ? '0 0 10px rgba(217, 28, 210, 0.8)' : '0 1px 3px rgba(0,0,0,0.9)',
+                transition: 'all 0.3s ease',
+                transform: likeAnimating ? 'scale(1.2)' : 'scale(1)'
               }}
             >
-              {isLiked ? '1' : '0'}
+              {pageLikesCount}
             </span>
           </button>
           
@@ -1025,6 +1029,9 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
   const [mutedStates, setMutedStates] = useState({});
   const [likedStates, setLikedStates] = useState({});
   const [pausedStates, setPausedStates] = useState({});
+  // v80: Compteur de likes réel via API
+  const [pageLikesCount, setPageLikesCount] = useState(0);
+  const [likeAnimating, setLikeAnimating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const sliderRef = useRef(null);
@@ -1118,7 +1125,18 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
     };
     fetchPartners();
   }, []);
-  
+
+  // v80: Charger le compteur de likes depuis l'API
+  useEffect(() => {
+    const fetchPageLikes = async () => {
+      try {
+        const res = await axios.get(`${API}/page-likes?coach_email=contact.artboost@gmail.com`);
+        setPageLikesCount(res.data?.count || 0);
+      } catch (e) { console.error('[V80] Fetch page likes error:', e); }
+    };
+    fetchPageLikes();
+  }, []);
+
   // v9.5.2: Nettoyage des timeouts
   useEffect(() => {
     return () => {
@@ -1133,12 +1151,22 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
   }, []);
   
   const handleToggleLike = useCallback((partnerId) => {
+    // v80: Incrémenter le compteur via API + animation
+    setPageLikesCount(prev => prev + 1);
+    setLikeAnimating(true);
+    setTimeout(() => setLikeAnimating(false), 600);
+    // Marquer comme liké localement
     setLikedStates(prev => {
-      const newState = { ...prev, [partnerId]: !prev[partnerId] };
+      const newState = { ...prev, [partnerId]: true };
       localStorage.setItem('afroboost_partner_likes', JSON.stringify(newState));
       return newState;
     });
-  }, []);
+    // Appel API async (fire & forget)
+    const partnerEmail = partners.find(p => (p.id || p.email) === partnerId)?.email || 'contact.artboost@gmail.com';
+    axios.post(`${API}/page-like`, { coach_email: partnerEmail }).then(res => {
+      if (res.data?.count) setPageLikesCount(res.data.count);
+    }).catch(e => console.error('[V80] Page like error:', e));
+  }, [partners]);
   
   const handleTogglePause = useCallback((partnerId) => {
     setPausedStates(prev => ({ ...prev, [partnerId]: !prev[partnerId] }));
@@ -1459,6 +1487,8 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
                   onToggleMute={() => setGlobalMuted(!globalMuted)}
                   isLiked={likedStates[partner.id || partner.email] || false}
                   onLike={() => handleToggleLike(partner.id || partner.email)}
+                  pageLikesCount={pageLikesCount}
+                  likeAnimating={likeAnimating}
                   isPaused={pausedStates[partner.id || partner.email] || false}
                   onTogglePause={() => handleTogglePause(partner.id || partner.email)}
                   onNavigate={handleNavigate}

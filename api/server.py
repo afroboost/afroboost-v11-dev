@@ -9187,6 +9187,33 @@ async def update_comment_photo(comment_id: str, request: Request):
     logger.info(f"[V77] Photo commentaire {comment_id} mise à jour par {user_email}")
     return {"success": True, "comment_id": comment_id, "photo_url": photo_url}
 
+# === v80: Page Like — Compteur de likes pour la page coach (visiteurs) ===
+@api_router.post("/page-like")
+async def page_like(request: Request):
+    """V80: Incrémente le compteur de likes de la page coach. Public (pas besoin d'être admin)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    coach_email = (body.get("coach_email", "") or "").strip().lower()
+    if not coach_email:
+        coach_email = "contact.artboost@gmail.com"  # Default Super Admin
+    # Upsert: incrémenter le compteur de likes
+    result = await db.page_likes.find_one_and_update(
+        {"coach_email": coach_email},
+        {"$inc": {"count": 1}},
+        upsert=True,
+        return_document=True
+    )
+    new_count = result.get("count", 1) if result else 1
+    return {"success": True, "count": new_count}
+
+@api_router.get("/page-likes")
+async def get_page_likes(coach_email: str = "contact.artboost@gmail.com"):
+    """V80: Récupère le compteur de likes de la page coach."""
+    doc = await db.page_likes.find_one({"coach_email": coach_email.lower().strip()})
+    return {"count": doc.get("count", 0) if doc else 0}
+
 # === v71: CRON — Notification chat post-cours (24h après) ===
 @api_router.get("/cron/post-course-feedback")
 async def cron_post_course_feedback(request: Request):
