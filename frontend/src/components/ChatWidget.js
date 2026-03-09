@@ -1189,6 +1189,7 @@ export const ChatWidget = () => {
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewSubmitted, setReviewSubmitted] = useState(false);
   const [reviewSessionId, setReviewSessionId] = useState('');
+  const [reviewRequestVisible, setReviewRequestVisible] = useState(false); // v86 fix: indépendant du state messages
   
   // === MENU UTILISATEUR (Partage + Mode Visiteur) ===
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -2112,39 +2113,35 @@ export const ChatWidget = () => {
   }, []);
 
   // === v86: DÉCLENCHEUR AUTOMATIQUE AVIS POST-SESSION ===
-  // Vérifie côté frontend si l'abonné a une réservation terminée (heure passée)
-  // et injecte un message système "review_request" s'il n'a pas encore été affiché
+  // Utilise reviewRequestVisible (state indépendant) pour éviter l'écrasement par reloadOnOpen/polling
   useEffect(() => {
-    if (!afroboostProfile?.code || step !== 'chat' || reviewSubmitted) return;
+    if (!afroboostProfile?.code || step !== 'chat' || reviewSubmitted || reviewRequestVisible) return;
     const checkKey = `afroboost_review_shown_${afroboostProfile.code}`;
     const alreadyShown = sessionStorage.getItem(checkKey);
     if (alreadyShown) return;
 
     // Délai pour ne pas interrompre le chargement initial
     const timer = setTimeout(() => {
-      // Chercher les réservations terminées (message système backend ou déclenchement local)
-      const hasReviewRequest = messages.some(m => m.type === 'review_request');
-      if (hasReviewRequest) return;
-
       // Vérifier si l'abonné a un abonnement actif (proxy pour "a assisté à un cours")
       if (afroboostProfile.subscription?.remaining_sessions !== undefined) {
-        const reviewMsg = {
-          id: `review_request_${Date.now()}`,
-          type: 'review_request',
-          sender: 'system',
-          sender_name: 'Afroboost',
-          text: `🔥 Bravo pour ta session Afroboost ${afroboostProfile.name || ''} ! Comment as-tu trouvé le cours ?`,
-          timestamp: new Date().toISOString(),
-          is_system: true
-        };
-        setMessages(prev => [...prev, reviewMsg]);
+        setReviewRequestVisible(true);
         sessionStorage.setItem(checkKey, 'true');
-        console.log('[V86] Message review_request injecté');
+        console.log('[V86] Review request card activé (indépendant du state messages)');
       }
     }, 5000);
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [afroboostProfile?.code, step, messages.length]);
+  }, [afroboostProfile?.code, step, reviewSubmitted, reviewRequestVisible]);
+
+  // === v86: Détecter les review_request du cron backend dans les messages API ===
+  useEffect(() => {
+    if (reviewRequestVisible || reviewSubmitted) return;
+    const hasBackendReview = messages.some(m => m.type === 'review_request');
+    if (hasBackendReview) {
+      setReviewRequestVisible(true);
+      console.log('[V86] Review request détecté depuis backend cron');
+    }
+  }, [messages.length, reviewRequestVisible, reviewSubmitted]);
 
   // Enregistrer le Service Worker au montage
   useEffect(() => {
@@ -5455,7 +5452,7 @@ export const ChatWidget = () => {
                   
                   {/* === MESSAGES: Affichés selon mode (privé ou groupe) === */}
                   {/* v16.4: Animation slide-in + fade pour chaque message */}
-                  {(chatMode === 'group' ? groupMessages : messages).map((msg, idx) => (
+                  {(chatMode === 'group' ? groupMessages : messages).filter(m => m.type !== 'review_request').map((msg, idx) => (
                     <div
                       key={msg.id || idx}
                       style={{
@@ -5463,66 +5460,16 @@ export const ChatWidget = () => {
                         animationDelay: `${Math.min(idx * 0.03, 0.3)}s`
                       }}
                     >
-                      {/* v86: Message spécial review_request avec bouton "Laisser un avis" */}
-                      {msg.type === 'review_request' ? (
-                        <div style={{
-                          alignSelf: 'flex-start',
-                          maxWidth: '320px',
-                          background: 'rgba(217, 28, 210, 0.1)',
-                          borderRadius: '16px',
-                          padding: '16px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '10px'
-                        }}>
-                          <div style={{ fontSize: '11px', fontWeight: 600, color: '#D91CD2', marginBottom: '2px' }}>
-                            Afroboost
-                          </div>
-                          <p style={{ color: '#fff', fontSize: '13px', lineHeight: 1.5, margin: 0 }}>
-                            {msg.text || msg.content || '🔥 Bravo pour ta session ! Comment as-tu trouvé le cours ?'}
-                          </p>
-                          {!reviewSubmitted ? (
-                            <button
-                              onClick={() => {
-                                setReviewSessionId(msg.reservation_id || msg.session_id || '');
-                                setShowReviewForm(true);
-                              }}
-                              style={{
-                                background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
-                                border: 'none',
-                                borderRadius: '20px',
-                                padding: '10px 20px',
-                                color: '#fff',
-                                fontSize: '13px',
-                                fontWeight: 700,
-                                cursor: 'pointer',
-                                alignSelf: 'flex-start',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '6px'
-                              }}
-                              data-testid="leave-review-btn"
-                            >
-                              ⭐ Laisser un avis
-                            </button>
-                          ) : (
-                            <div style={{ color: '#22c55e', fontSize: '12px', fontWeight: 600 }}>
-                              ✅ Avis envoyé — Merci !
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <MemoizedMessageBubble
-                          msg={msg}
-                          isUser={msg.type === 'user' && msg.senderId === participantId}
-                          onParticipantClick={startPrivateChat}
-                          isCommunity={chatMode === 'group'}
-                          currentUserId={participantId}
-                          profilePhotoUrl={profilePhoto}
-                          onReservationClick={() => setShowReservationPanel(true)}
-                          onZoomPhoto={(url) => setZoomedChatPhoto(url)}
-                        />
-                      )}
+                      <MemoizedMessageBubble
+                        msg={msg}
+                        isUser={msg.type === 'user' && msg.senderId === participantId}
+                        onParticipantClick={startPrivateChat}
+                        isCommunity={chatMode === 'group'}
+                        currentUserId={participantId}
+                        profilePhotoUrl={profilePhoto}
+                        onReservationClick={() => setShowReservationPanel(true)}
+                        onZoomPhoto={(url) => setZoomedChatPhoto(url)}
+                      />
                     </div>
                   ))}
                   
@@ -5567,6 +5514,51 @@ export const ChatWidget = () => {
                     </div>
                   )}
                   
+                  {/* === v86 fix: CARTE REVIEW_REQUEST — rendue hors du messages.map pour éviter écrasement par polling === */}
+                  {reviewRequestVisible && !reviewSubmitted && !showReviewForm && (
+                    <div style={{
+                      alignSelf: 'flex-start',
+                      maxWidth: '320px',
+                      background: 'rgba(217, 28, 210, 0.1)',
+                      borderRadius: '16px',
+                      padding: '16px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                      animation: 'afroMsgSlideIn 0.3s ease-out'
+                    }}>
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: '#D91CD2', marginBottom: '2px' }}>
+                        Afroboost
+                      </div>
+                      <p style={{ color: '#fff', fontSize: '13px', lineHeight: 1.5, margin: 0 }}>
+                        {'🔥 Bravo pour ta session Afroboost ' + (afroboostProfile?.name || '') + ' ! Comment as-tu trouvé le cours ?'}
+                      </p>
+                      <button
+                        onClick={() => {
+                          setReviewSessionId('');
+                          setShowReviewForm(true);
+                        }}
+                        style={{
+                          background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                          border: 'none',
+                          borderRadius: '20px',
+                          padding: '10px 20px',
+                          color: '#fff',
+                          fontSize: '13px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          alignSelf: 'flex-start',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px'
+                        }}
+                        data-testid="leave-review-btn"
+                      >
+                        ⭐ Laisser un avis
+                      </button>
+                    </div>
+                  )}
+
                   {/* === v86: FORMULAIRE AVIS INLINE — Stars + Texte === */}
                   {showReviewForm && !reviewSubmitted && (
                     <div style={{
