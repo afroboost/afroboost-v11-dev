@@ -669,10 +669,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [selectedBeneficiaries, setSelectedBeneficiaries] = useState([]); // Multi-select pour bénéficiaires
   const [editingCode, setEditingCode] = useState(null); // Pour l'édition individuelle des codes
   const [newCourse, setNewCourse] = useState({ name: "", weekday: 0, time: "18:30", locationName: "", mapsUrl: "" });
-  const [newOffer, setNewOffer] = useState({ 
+  const [newOffer, setNewOffer] = useState({
     name: "", price: 0, visible: true, description: "", keywords: "",
     images: ["", "", "", "", ""], // 5 champs d'images
-    category: "service", isProduct: false, variants: null, tva: 0, shippingCost: 0, stock: -1
+    category: "service", isProduct: false, variants: null, tva: 0, shippingCost: 0, stock: -1,
+    duration_value: '', duration_unit: '', is_auto_prolong: true
   });
   const [editingOfferId, setEditingOfferId] = useState(null); // Pour mode édition
   const fileInputRef = useRef(null);
@@ -1728,7 +1729,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       const offerData = {
         ...newOffer,
         images: filteredImages,
-        thumbnail: filteredImages[0] || "" // Première image comme thumbnail
+        thumbnail: filteredImages[0] || "",
+        // v60: Nettoyer les champs durée — envoyer null si vide (Pydantic attend Optional[int])
+        duration_value: newOffer.duration_value ? parseInt(newOffer.duration_value) : null,
+        duration_unit: newOffer.duration_unit || null,
+        is_auto_prolong: newOffer.is_auto_prolong !== false
       };
 
       if (editingOfferId) {
@@ -1743,10 +1748,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       }
       
       // Reset formulaire
-      setNewOffer({ 
+      setNewOffer({
         name: "", price: 0, visible: true, description: "",
         images: ["", "", "", "", ""],
-        category: "service", isProduct: false, variants: null, tva: 0, shippingCost: 0, stock: -1 
+        category: "service", isProduct: false, variants: null, tva: 0, shippingCost: 0, stock: -1,
+        duration_value: '', duration_unit: '', is_auto_prolong: true
       });
     } catch (err) {
       console.error("Erreur offre:", err);
