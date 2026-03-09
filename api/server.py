@@ -8934,7 +8934,7 @@ async def send_expired_no_credits_email(coach_email: str, offer_name: str):
     if not RESEND_API_KEY:
         return
     first_name = coach_email.split('@')[0].capitalize()
-    subject = f"🚨 Offre \"{offer_name}\" expirée — Action requise"
+    subject = f"⚠️ Votre offre \"{offer_name}\" a expiré — Rechargez vos crédits"
     body = f"""<div style="padding:24px;color:#fff;">
 <p style="font-size:16px;margin:0 0 12px;">Salut <strong>{first_name}</strong>,</p>
 <div style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);border-radius:10px;padding:14px 16px;margin:12px 0;text-align:center;">
