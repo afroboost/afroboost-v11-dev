@@ -3758,8 +3758,11 @@ async def get_og_meta(username: str, request: Request):
 
     # Trouver le coach — même logique que coach/vitrine
     SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com']
-    # v64: Ajouter "artboost" comme alias reconnu
-    if username.lower() in ["bassi", "afroboost", "artboost"]:
+    # v65: Redirection 301 pour "artboost" → "bassi"
+    if username.lower() == "artboost":
+        from starlette.responses import RedirectResponse as RR
+        return RR(url="/api/og/bassi", status_code=301)
+    if username.lower() in ["bassi", "afroboost"]:
         coach = {"name": "Bassi - Afroboost", "email": "contact.artboost@gmail.com", "platform_name": "Afroboost"}
     else:
         coach = await db.coaches.find_one(

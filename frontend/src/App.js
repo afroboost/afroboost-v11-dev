@@ -17,7 +17,7 @@ axios.interceptors.request.use((config) => {
   }
   return config;
 });
-console.log("V64 ACTIVÉE - UNIFICATION BASSI/ADMIN");
+console.log("V65 ACTIVÉE - FUSION DONNÉES BASSI");
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import html2canvas from "html2canvas";

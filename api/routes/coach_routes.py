@@ -1,5 +1,6 @@
 # coach_routes.py - Routes coach et admin v9.5.6
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timezone
@@ -434,9 +435,11 @@ async def get_public_coach_profile(coach_id: str):
 @coach_router.get("/partner/vitrine/{username}")
 async def get_coach_vitrine(username: str):
     """Vitrine publique d'un partenaire (coach/vendeur) - v29: inclut concept + heroVideos directement"""
+    # v65: Redirection 301 — "artboost" n'est plus un alias, on redirige vers bassi
+    if username.lower() == "artboost":
+        return RedirectResponse(url="/api/coach/vitrine/bassi", status_code=301)
     # v19: Isolation stricte des données par coach_id
-    # v64: Ajouter "artboost" comme alias reconnu (anti-confusion slug)
-    is_admin_vitrine = username.lower() in ["bassi", "afroboost", "artboost", SUPER_ADMIN_EMAIL.lower()]
+    is_admin_vitrine = username.lower() in ["bassi", "afroboost", SUPER_ADMIN_EMAIL.lower()]
     if is_admin_vitrine:
         coach = {"id": "bassi", "name": "Bassi - Afroboost", "email": SUPER_ADMIN_EMAIL, "photo_url": None, "bio": "Coach Afroboost - Fitness & Bien-être", "platform_name": "Afroboost", "logo_url": None, "is_active": True}
         # Super Admin: match son coach_id OU les données legacy sans coach_id
@@ -569,3 +572,107 @@ async def migrate_ownership(request: Request):
     results["uploaded_files"] = r3.modified_count
     logger.info(f"[MIGRATION-OWNERSHIP] {results}")
     return {"success": True, "migrated": results}
+
+
+# === V65: FUSION ARTBOOST → BASSI ===
+@coach_router.post("/admin/merge-artboost")
+async def merge_artboost_to_bassi(request: Request):
+    """V65: Fusionne TOUTES les données liées au slug 'artboost' vers le profil bassi (Super Admin).
+    - Réattribue offers, courses, audio_tracks, uploaded_files dont le coach_id contient 'artboost'
+    - Supprime le document 'artboost' de la collection coaches s'il existe
+    - Fusionne le concept 'concept_artboost' ou 'concept_contact.artboost@gmail.com' vers 'concept'
+    """
+    # Vérif auth Super Admin
+    email = request.headers.get("X-User-Email", "").lower().strip()
+    if not is_super_admin(email):
+        raise HTTPException(status_code=403, detail="Accès réservé au Super Admin")
+
+    results = {"offers": 0, "courses": 0, "audio_tracks": 0, "uploaded_files": 0, "coaches_deleted": 0, "concepts_merged": 0}
+
+    # 1. Patterns à fusionner: tout ce qui est lié à "artboost" mais pas au bon coach_id
+    artboost_patterns = [
+        "artboost",
+        "contact.artboost",
+        "contact.artboost@gmail.com"
+    ]
+    target_coach_id = SUPER_ADMIN_EMAIL.lower()  # "contact.artboost@gmail.com"
+
+    # 2. Réattribuer les offres
+    for pattern in artboost_patterns:
+        r = await db.offers.update_many(
+            {"coach_id": pattern, "coach_id": {"$nin": [target_coach_id, DEFAULT_COACH_ID, None, ""]}},
+            {"$set": {"coach_id": target_coach_id}}
+        )
+        results["offers"] += r.modified_count
+
+    # Aussi: offres sans coach_id → les rattacher à l'admin
+    r = await db.offers.update_many(
+        {"$or": [{"coach_id": {"$exists": False}}, {"coach_id": None}, {"coach_id": ""}]},
+        {"$set": {"coach_id": target_coach_id}}
+    )
+    results["offers"] += r.modified_count
+
+    # 3. Réattribuer les cours
+    for pattern in artboost_patterns:
+        r = await db.courses.update_many(
+            {"coach_id": pattern},
+            {"$set": {"coach_id": target_coach_id}}
+        )
+        results["courses"] += r.modified_count
+
+    r = await db.courses.update_many(
+        {"$or": [{"coach_id": {"$exists": False}}, {"coach_id": None}, {"coach_id": ""}]},
+        {"$set": {"coach_id": target_coach_id}}
+    )
+    results["courses"] += r.modified_count
+
+    # 4. Réattribuer les audio tracks
+    for pattern in artboost_patterns:
+        r = await db.audio_tracks.update_many(
+            {"coach_email": pattern},
+            {"$set": {"coach_email": target_coach_id}}
+        )
+        results["audio_tracks"] += r.modified_count
+
+    # 5. Réattribuer les fichiers uploadés
+    for pattern in artboost_patterns:
+        r = await db.uploaded_files.update_many(
+            {"coach_email": pattern},
+            {"$set": {"coach_email": target_coach_id}}
+        )
+        results["uploaded_files"] += r.modified_count
+
+    # 6. Supprimer les doublons dans la collection coaches
+    # Chercher tout document avec name/email/id contenant "artboost" (sauf l'email admin principal)
+    deleted = await db.coaches.delete_many({
+        "$or": [
+            {"id": {"$regex": "artboost", "$options": "i"}},
+            {"name": {"$regex": "^artboost$", "$options": "i"}},
+        ]
+    })
+    results["coaches_deleted"] = deleted.deleted_count
+
+    # 7. Fusionner les concepts personnels vers le concept admin
+    # Si un concept "concept_contact.artboost@gmail.com" ou "concept_artboost" existe,
+    # copier ses heroVideos vers le concept admin "concept" s'il est vide
+    admin_concept = await db.concept.find_one({"id": "concept"})
+    admin_has_videos = admin_concept and admin_concept.get("heroVideos") and len(admin_concept.get("heroVideos", [])) > 0
+
+    if not admin_has_videos:
+        for cid in ["concept_contact.artboost@gmail.com", "concept_artboost"]:
+            alt = await db.concept.find_one({"id": cid})
+            if alt and alt.get("heroVideos") and len(alt.get("heroVideos", [])) > 0:
+                await db.concept.update_one(
+                    {"id": "concept"},
+                    {"$set": {"heroVideos": alt["heroVideos"]}},
+                    upsert=True
+                )
+                results["concepts_merged"] += 1
+                logger.info(f"[MERGE-V65] Copied heroVideos from {cid} to concept admin")
+                break
+
+    # Nettoyer les concepts orphelins
+    await db.concept.delete_many({"id": {"$in": ["concept_artboost"]}})
+
+    logger.info(f"[MERGE-V65] Fusion terminée: {results}")
+    return {"success": True, "message": "Fusion artboost → bassi terminée", "results": results}
