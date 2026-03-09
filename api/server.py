@@ -9152,7 +9152,7 @@ async def add_manual_comment(request: Request):
     existing = await db.comments.find_one({"user_name": user_name, "text": text, "is_visible": True})
     if existing:
         raise HTTPException(status_code=409, detail="Ce commentaire existe déjà")
-    now = _datetime.datetime.utcnow()
+    now = datetime.utcnow()
     avatar_seed = f"{user_name.replace(' ', '')}{now.strftime('%H%M%S')}"
     comment = {
         "id": f"manual_{now.strftime('%Y%m%d%H%M%S')}_{_random.randint(100,999)}",
