@@ -1,18 +1,18 @@
-// Service Worker Afroboost V57 — Nuclear cache-bust + Push Notifications
+// Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
 const CACHE_NAME = 'afroboost-v87';
-// V87: Campagnes Multicanal & Chat Temps Réel — timezone fix, son notification, anti-doublon
+// V87: Campagnes Multicanal & Chat Temps RÃ©el â timezone fix, son notification, anti-doublon
 
-// Installation — skip waiting pour activer immédiatement
+// Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {
-  console.log('[SW] V54 installe — skip waiting');
+  console.log('[SW] V54 installe â skip waiting');
   self.skipWaiting();
 });
 
-// Activation — supprime TOUS les anciens caches (nuclear purge)
+// Activation â supprime TOUS les anciens caches (nuclear purge)
 self.addEventListener('activate', (event) => {
-  console.log('[SW] V54 active — nuclear purge caches');
+  console.log('[SW] V54 active â nuclear purge caches');
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
@@ -27,14 +27,14 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch — network-first pour HTML, cache-first pour static assets
+// Fetch â network-first pour HTML, cache-first pour static assets
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // API calls — toujours réseau
+  // API calls â toujours rÃ©seau
   if (url.pathname.startsWith('/api/')) return;
 
-  // HTML pages — toujours réseau (force reload)
+  // HTML pages â toujours rÃ©seau (force reload)
   if (event.request.mode === 'navigate' || event.request.headers.get('accept')?.includes('text/html')) {
     event.respondWith(
       fetch(event.request).catch(() => caches.match(event.request))
@@ -42,7 +42,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets (JS/CSS avec hash) — cache-first
+  // Static assets (JS/CSS avec hash) â cache-first
   if (url.pathname.startsWith('/static/')) {
     event.respondWith(
       caches.match(event.request).then((cached) => {
@@ -138,4 +138,4 @@ self.addEventListener('message', (event) => {
     self.skipWaiting();
   }
 });
-// V87 deploy trigger
+// V87 deploy trigger — API commit
