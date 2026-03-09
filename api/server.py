@@ -9120,6 +9120,34 @@ async def clear_comments(request: Request):
     logger.info(f"[V71] {result.deleted_count} commentaires IA supprimés par {user_email}")
     return {"success": True, "deleted": result.deleted_count}
 
+@api_router.delete("/admin/comments/{comment_id}")
+async def delete_single_comment(comment_id: str, request: Request):
+    """V77: Supprime un commentaire individuel (Super Admin uniquement)."""
+    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not is_super_admin(user_email):
+        raise HTTPException(status_code=403, detail="Réservé au Super Admin")
+    result = await db.comments.delete_one({"id": comment_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Commentaire non trouvé")
+    logger.info(f"[V77] Commentaire {comment_id} supprimé par {user_email}")
+    return {"success": True, "comment_id": comment_id}
+
+@api_router.post("/admin/comments/{comment_id}/photo")
+async def update_comment_photo(comment_id: str, request: Request):
+    """V77: Met à jour la photo de profil d'un commentaire (Super Admin uniquement)."""
+    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not is_super_admin(user_email):
+        raise HTTPException(status_code=403, detail="Réservé au Super Admin")
+    body = await request.json()
+    photo_url = body.get("photo_url", "")
+    if not photo_url:
+        raise HTTPException(status_code=400, detail="photo_url requis")
+    result = await db.comments.update_one({"id": comment_id}, {"$set": {"profile_photo": photo_url}})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Commentaire non trouvé")
+    logger.info(f"[V77] Photo commentaire {comment_id} mise à jour par {user_email}")
+    return {"success": True, "comment_id": comment_id, "photo_url": photo_url}
+
 # === v71: CRON — Notification chat post-cours (24h après) ===
 @api_router.get("/cron/post-course-feedback")
 async def cron_post_course_feedback(request: Request):

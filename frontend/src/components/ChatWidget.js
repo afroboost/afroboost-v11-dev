@@ -5681,7 +5681,7 @@ export const ChatWidget = () => {
             width: '100vw',
             height: '100vh',
             background: 'rgba(0,0,0,0.92)',
-            zIndex: 999999,
+            zIndex: 1000000,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -5690,7 +5690,7 @@ export const ChatWidget = () => {
           onClick={() => setZoomedChatPhoto(null)}
           data-testid="zoom-photo-modal"
         >
-          {/* Bouton Fermer (X) visible en haut à droite */}
+          {/* v77: Bouton Fermer (X) visible en haut à droite */}
           <button
             onClick={(e) => { e.stopPropagation(); setZoomedChatPhoto(null); }}
             style={{
@@ -5706,14 +5706,14 @@ export const ChatWidget = () => {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              zIndex: 1000000
+              zIndex: 1000001
             }}
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
           </button>
-          {/* Photo circulaire avec bordure violet néon */}
+          {/* v77: Photo circulaire avec bordure violet néon épaisse */}
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
@@ -5721,8 +5721,8 @@ export const ChatWidget = () => {
               height: 'min(70vw, 280px)',
               borderRadius: '50%',
               overflow: 'hidden',
-              border: '3px solid #D91CD2',
-              boxShadow: '0 0 30px rgba(217,28,210,0.5), 0 0 60px rgba(217,28,210,0.2)',
+              border: '5px solid #D91CD2',
+              boxShadow: '0 0 40px rgba(217,28,210,0.6), 0 0 80px rgba(217,28,210,0.3), 0 0 120px rgba(217,28,210,0.1)',
               animation: 'v76ZoomIn 0.25s ease-out'
             }}
           >

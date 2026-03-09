@@ -313,6 +313,132 @@ const MediaDisplay = ({ url, className }) => {
 const COACH_TAB_KEY = 'afroboost_coach_tab';
 const COACH_SESSION_KEY = 'afroboost_coach_session';
 
+// === v77: Composant liste des 5 derniers commentaires avec contrôles individuels ===
+const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
+  const [comments, setComments] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+
+  const fetchComments = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get(`${API}/comments?coach_id=${encodeURIComponent(coachEmail || '')}`);
+      setComments((res.data?.comments || []).slice(0, 5));
+    } catch (e) { console.error('[V77] Fetch comments error:', e); }
+    finally { setLoading(false); }
+  }, [API, coachEmail, axios]);
+
+  React.useEffect(() => { fetchComments(); }, [fetchComments]);
+
+  // Listen for refresh events from Boost button
+  React.useEffect(() => {
+    const el = document.getElementById('social-boost-comments-list');
+    if (!el) return;
+    const handler = () => fetchComments();
+    el.addEventListener('refresh', handler);
+    return () => el.removeEventListener('refresh', handler);
+  }, [fetchComments]);
+
+  const handleLike = async (commentId) => {
+    try {
+      await axios.post(`${API}/comments/${commentId}/like`);
+      setComments(prev => prev.map(c => c.id === commentId ? { ...c, likes: (c.likes || 0) + 1 } : c));
+    } catch (e) { alert('❌ Erreur like'); }
+  };
+
+  const handleDelete = async (commentId) => {
+    if (!window.confirm('Supprimer ce commentaire ?')) return;
+    try {
+      await axios.delete(`${API}/admin/comments/${commentId}`, {
+        headers: { 'X-User-Email': coachEmail }
+      });
+      setComments(prev => prev.filter(c => c.id !== commentId));
+    } catch (e) { alert('❌ Erreur suppression'); }
+  };
+
+  const handlePhoto = async (commentId) => {
+    const url = prompt('URL de la photo de profil (ex: /api/files/xxx/photo.jpg) :');
+    if (!url) return;
+    try {
+      await axios.post(`${API}/admin/comments/${commentId}/photo`, { photo_url: url }, {
+        headers: { 'X-User-Email': coachEmail, 'Content-Type': 'application/json' }
+      });
+      setComments(prev => prev.map(c => c.id === commentId ? { ...c, profile_photo: url } : c));
+    } catch (e) { alert('❌ Erreur photo'); }
+  };
+
+  if (loading && comments.length === 0) return (
+    <div id="social-boost-comments-list" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', marginTop: '12px' }}>
+      Chargement des commentaires...
+    </div>
+  );
+
+  if (comments.length === 0) return (
+    <div id="social-boost-comments-list" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', marginTop: '12px' }}>
+      Aucun commentaire. Cliquez sur "Booster" pour en générer.
+    </div>
+  );
+
+  return (
+    <div id="social-boost-comments-list" style={{ marginTop: '14px' }}>
+      <div style={{ color: '#D91CD2', fontSize: '12px', fontWeight: 600, marginBottom: '8px' }}>
+        5 derniers commentaires :
+      </div>
+      {comments.map((c) => (
+        <div key={c.id} style={{
+          display: 'flex', alignItems: 'center', gap: '10px',
+          padding: '8px 10px', marginBottom: '6px',
+          background: 'rgba(255,255,255,0.04)', borderRadius: '10px',
+          border: '1px solid rgba(255,255,255,0.06)'
+        }}>
+          {/* Avatar */}
+          {c.profile_photo ? (
+            <img src={c.profile_photo} alt="" style={{
+              width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover',
+              border: '2px solid #D91CD2', flexShrink: 0
+            }} />
+          ) : (
+            <div style={{
+              width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
+              background: '#D91CD2', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '12px', fontWeight: 700, color: '#fff'
+            }}>{(c.user_name || '?')[0].toUpperCase()}</div>
+          )}
+          {/* Content */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: '#fff', fontSize: '12px', fontWeight: 600 }}>{c.user_name}</div>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {c.text}
+            </div>
+          </div>
+          {/* Likes count */}
+          <span style={{ color: '#D91CD2', fontSize: '11px', fontWeight: 600, minWidth: '30px', textAlign: 'center' }}>
+            {c.likes || 0}
+          </span>
+          {/* Action buttons */}
+          <button onClick={() => handleLike(c.id)} title="+1 Like"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '2px 4px' }}>
+            ❤️
+          </button>
+          <button onClick={() => handlePhoto(c.id)} title="Ajouter photo"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '2px 4px' }}>
+            📸
+          </button>
+          <button onClick={() => handleDelete(c.id)} title="Supprimer"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '2px 4px' }}>
+            🗑️
+          </button>
+        </div>
+      ))}
+      <button onClick={fetchComments} style={{
+        background: 'none', border: 'none', color: '#D91CD2', fontSize: '11px',
+        cursor: 'pointer', marginTop: '4px', textDecoration: 'underline'
+      }}>
+        🔄 Rafraîchir
+      </button>
+    </div>
+  );
+};
+
 const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // v9.2.5: Protection ABSOLUE contre les erreurs - Valeurs par défaut GARANTIES
   const safeCoachUser = coachUser || {};
@@ -5261,22 +5387,44 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                       }}>ADMIN</span>
                     </div>
                     <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                      {/* v77: Bouton Boost avec feedback visuel */}
                       <button
-                        onClick={async () => {
+                        id="boost-social-btn"
+                        onClick={async (e) => {
+                          const btn = e.currentTarget;
+                          btn.disabled = true;
+                          btn.textContent = '⏳ Génération en cours... (Patientez)';
+                          btn.style.opacity = '0.6';
+                          btn.style.cursor = 'not-allowed';
                           try {
                             const res = await axios.post(`${API}/admin/generate-social-proof`, { count: 50 }, {
                               headers: { 'X-User-Email': coachUser?.email }
                             });
-                            alert(`✅ ${res.data.count} commentaires générés !`);
-                          } catch (e) {
-                            alert('❌ Erreur: ' + (e.response?.data?.detail || e.message));
+                            alert(`✅ 50 avis générés avec succès !`);
+                            // Refresh la liste des derniers commentaires
+                            try {
+                              const commRes = await axios.get(`${API}/comments?coach_id=${encodeURIComponent(coachUser?.email || '')}`);
+                              const el = document.getElementById('social-boost-comments-list');
+                              if (el && commRes.data?.comments) {
+                                el.dataset.comments = JSON.stringify(commRes.data.comments.slice(0, 5));
+                                el.dispatchEvent(new Event('refresh'));
+                              }
+                            } catch(er) {}
+                          } catch (e2) {
+                            alert('❌ Erreur: ' + (e2.response?.data?.detail || e2.message));
+                          } finally {
+                            btn.disabled = false;
+                            btn.textContent = '🚀 Booster la Preuve Sociale (50 avis IA)';
+                            btn.style.opacity = '1';
+                            btn.style.cursor = 'pointer';
                           }
                         }}
                         style={{
                           background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
                           color: '#fff', border: 'none', padding: '10px 18px',
                           borderRadius: '12px', fontSize: '13px', fontWeight: 600,
-                          cursor: 'pointer', boxShadow: '0 0 15px rgba(217,28,210,0.3)'
+                          cursor: 'pointer', boxShadow: '0 0 15px rgba(217,28,210,0.3)',
+                          transition: 'opacity 0.2s'
                         }}
                       >
                         🚀 Booster la Preuve Sociale (50 avis IA)
@@ -5323,6 +5471,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         🗑️ Reset
                       </button>
                     </div>
+
+                    {/* v77: Liste des 5 derniers commentaires avec contrôles individuels */}
+                    <SocialBoostCommentsList API={API} coachEmail={coachUser?.email} axios={axios} />
+
                     <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px', marginTop: '10px', margin: '10px 0 0 0' }}>
                       Les commentaires générés s'affichent sur le Hero et la section Avis de votre vitrine.
                     </p>
