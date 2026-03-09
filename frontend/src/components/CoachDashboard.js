@@ -5030,22 +5030,31 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             </button>
           ))}
           
-          {/* Bouton Vue Visiteur - Toggle mode apercu */}
+          {/* Bouton Vue Visiteur - Ouvre la vitrine publique dans un nouvel onglet */}
           <button
-            onClick={toggleVisitorPreview}
+            onClick={() => {
+              // v63: Déterminer le username/slug pour la vitrine publique
+              const coachName = (safeCoachUser?.name || '').toLowerCase().split(' ')[0].trim();
+              const coachSlug = safeCoachUser?.username || coachName || safeCoachUser?.email?.split('@')[0] || 'bassi';
+              const vitrineUrl = `${window.location.origin}/coach/${coachSlug}?t=${Date.now()}`;
+              console.log('[V63] Vue Visiteur → ', vitrineUrl);
+              window.open(vitrineUrl, '_blank');
+            }}
             className="ml-auto px-3 py-2 rounded-lg text-xs sm:text-sm flex items-center gap-2 flex-shrink-0"
             style={{
-              background: isVisitorPreviewActive ? 'rgba(147, 51, 234, 0.3)' : 'rgba(255,255,255,0.1)',
-              border: isVisitorPreviewActive ? '1px solid rgba(147, 51, 234, 0.5)' : '1px solid rgba(255,255,255,0.2)',
-              color: isVisitorPreviewActive ? '#a855f7' : 'white'
+              background: 'rgba(255,255,255,0.1)',
+              border: '1px solid rgba(255,255,255,0.2)',
+              color: 'white'
             }}
+            title="Voir ma vitrine publique"
             data-testid="coach-visitor-preview-toggle"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"></path>
+              <polyline points="15 3 21 3 21 9"></polyline>
+              <line x1="10" y1="14" x2="21" y2="3"></line>
             </svg>
-            {isVisitorPreviewActive ? 'Apercu actif' : 'Vue Visiteur'}
+            Vue Visiteur
           </button>
         </div>
 

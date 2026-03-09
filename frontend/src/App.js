@@ -17,7 +17,7 @@ axios.interceptors.request.use((config) => {
   }
   return config;
 });
-console.log("V62 ACTIVÉE - SYNC DURÉE OK - AUTH INTERCEPTOR GLOBAL");
+console.log("V63 ACTIVÉE - VUE VISITEUR NOUVEL ONGLET");
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import html2canvas from "html2canvas";

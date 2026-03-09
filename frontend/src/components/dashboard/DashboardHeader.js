@@ -24,10 +24,11 @@ const StarIcon = () => (
   </svg>
 );
 
-const EyeIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-    <circle cx="12" cy="12" r="3"></circle>
+const ExternalLinkIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+    <polyline points="15 3 21 3 21 9"></polyline>
+    <line x1="10" y1="14" x2="21" y2="3"></line>
   </svg>
 );
 
@@ -206,20 +207,27 @@ const DashboardHeader = ({
           </button>
         ))}
         
-        {/* Bouton Vue Visiteur */}
+        {/* Bouton Vue Visiteur — V63: ouvre la vitrine dans un nouvel onglet */}
         <button
-          onClick={onToggleVisitorPreview}
+          onClick={() => {
+            const coachName = (coachUser?.name || '').toLowerCase().split(' ')[0].trim();
+            const coachSlug = coachUser?.username || coachName || coachUser?.email?.split('@')[0] || 'coach';
+            const vitrineUrl = `${window.location.origin}/coach/${coachSlug}?t=${Date.now()}`;
+            console.log('[V63] DashboardHeader Vue Visiteur →', vitrineUrl);
+            window.open(vitrineUrl, '_blank');
+          }}
           className="ml-auto px-3 py-2 rounded-lg text-xs sm:text-sm flex items-center gap-2 flex-shrink-0"
           style={{
-            background: isVisitorPreviewActive ? 'rgba(147, 51, 234, 0.2)' : 'rgba(255,255,255,0.03)',
+            background: 'rgba(255,255,255,0.03)',
             border: 'none',
-            borderBottom: isVisitorPreviewActive ? '1px solid rgba(147, 51, 234, 0.4)' : '1px solid rgba(255,255,255,0.05)',
-            color: isVisitorPreviewActive ? '#a855f7' : 'white'
+            borderBottom: '1px solid rgba(255,255,255,0.05)',
+            color: 'white'
           }}
+          title="Voir ma vitrine publique"
           data-testid="coach-visitor-preview-toggle"
         >
-          <EyeIcon />
-          <span className="hidden sm:inline">{isVisitorPreviewActive ? 'Mode Visiteur' : 'Aperçu'}</span>
+          <ExternalLinkIcon />
+          <span className="hidden sm:inline">Vue Visiteur</span>
         </button>
       </div>
     </>
