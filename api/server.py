@@ -8987,6 +8987,178 @@ async def test_expiry_email(request: Request):
     logger.info(f"[V70-TEST] 3 emails de test envoyés à {test_email}")
     return {"success": True, "message": f"3 emails de test envoyés à {test_email}", "results": results}
 
+# =====================================================
+# === v71: SOCIAL BOOST — Commentaires & Social Proof ===
+# =====================================================
+
+import random as _random
+
+# Banque de commentaires IA Afroboost
+_AI_COMMENTS_BANK = [
+    {"user_name": "Sarah M.", "text": "Énergie incroyable ! Je n'ai jamais autant transpiré en m'amusant 🔥"},
+    {"user_name": "Kevin D.", "text": "Le meilleur cours de ma vie, ambiance de folie !"},
+    {"user_name": "Aminata K.", "text": "Je suis devenue accro, 3 cours par semaine maintenant 💃"},
+    {"user_name": "Lucas T.", "text": "Mon cardio a explosé depuis que j'ai commencé Afroboost"},
+    {"user_name": "Fatou B.", "text": "L'énergie du coach est contagieuse, on ne peut pas rester immobile !"},
+    {"user_name": "Marie-Claire P.", "text": "J'ai perdu 5kg en 2 mois grâce aux sessions Afroboost 🎉"},
+    {"user_name": "Djibril S.", "text": "Cours au casque = zéro distraction, 100% dans le mood !"},
+    {"user_name": "Julie R.", "text": "Même mon mari s'y est mis, c'est dire ! 😂"},
+    {"user_name": "Oumar N.", "text": "La meilleure découverte fitness de 2026, sans hésiter"},
+    {"user_name": "Chloé V.", "text": "Ambiance incroyable, on se sent comme en festival 🎶"},
+    {"user_name": "Ismaël G.", "text": "Le concept casque audio change tout, on est dans sa bulle !"},
+    {"user_name": "Nadia F.", "text": "Les chorés sont accessibles même pour les débutants 🙌"},
+    {"user_name": "Thomas H.", "text": "600 calories brûlées par session, c'est validé par ma montre !"},
+    {"user_name": "Aïcha L.", "text": "Mon moment préféré de la semaine, je recommande à 200% 💜"},
+    {"user_name": "Pierre-Antoine M.", "text": "Le meilleur investissement santé que j'ai fait cette année"},
+    {"user_name": "Binta D.", "text": "On transpire, on rigole, on danse... que demander de plus ?"},
+    {"user_name": "Romain C.", "text": "J'ai emmené toute mon équipe, team building parfait !"},
+    {"user_name": "Yasmine E.", "text": "Coach au top, playlist au top, résultats au top ⭐"},
+    {"user_name": "Michel B.", "text": "À 55 ans je fais Afroboost et j'adore, jamais trop tard !"},
+    {"user_name": "Kadiatou T.", "text": "La communauté Afroboost est tellement bienveillante 🤗"},
+    {"user_name": "Antoine W.", "text": "Meilleur défouloir après une journée de bureau"},
+    {"user_name": "Mariama S.", "text": "Ma fille de 12 ans adore aussi, c'est familial !"},
+    {"user_name": "David L.", "text": "Le son dans le casque, les vibrations, l'énergie du groupe... magique"},
+    {"user_name": "Sophie A.", "text": "J'ai essayé plein de sports, rien ne m'a autant motivée 💪"},
+    {"user_name": "Moussa K.", "text": "Chaque session est différente, on ne s'ennuie jamais !"},
+]
+
+@api_router.post("/admin/generate-social-proof")
+async def generate_social_proof(request: Request):
+    """V71: Génère des commentaires IA (Super Admin uniquement). count=10 par défaut, max 50."""
+    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not is_super_admin(user_email):
+        raise HTTPException(status_code=403, detail="Réservé au Super Admin")
+
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    count = min(int(body.get("count", 10)), 50)
+
+    now = datetime.now(timezone.utc)
+    generated = []
+
+    # Sélectionne des commentaires aléatoires de la banque
+    pool = list(_AI_COMMENTS_BANK)
+    _random.shuffle(pool)
+    selected = pool[:count] if count <= len(pool) else (pool * (count // len(pool) + 1))[:count]
+
+    for i, tpl in enumerate(selected):
+        comment = {
+            "id": f"ai_{now.strftime('%Y%m%d%H%M%S')}_{i}",
+            "user_name": tpl["user_name"],
+            "text": tpl["text"],
+            "likes": _random.randint(3, 85),
+            "is_ai": True,
+            "is_visible": True,
+            "coach_id": user_email,
+            "created_at": (now - timedelta(days=_random.randint(0, 60), hours=_random.randint(0, 23))).isoformat()
+        }
+        await db.comments.insert_one(comment)
+        generated.append(comment)
+
+    logger.info(f"[V71] {count} commentaires IA générés par {user_email}")
+    return {"success": True, "count": count, "comments": [{k: v for k, v in c.items() if k != "_id"} for c in generated]}
+
+@api_router.get("/comments")
+async def get_comments(request: Request):
+    """V71: Récupère les commentaires visibles (public)."""
+    coach_id = request.query_params.get("coach_id", "").lower().strip()
+    query = {"is_visible": True}
+    if coach_id:
+        query["coach_id"] = coach_id
+
+    comments = await db.comments.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return {"comments": comments, "total": len(comments)}
+
+@api_router.post("/comments/{comment_id}/like")
+async def like_comment(comment_id: str):
+    """V71: Ajoute un like à un commentaire."""
+    result = await db.comments.update_one({"id": comment_id}, {"$inc": {"likes": 1}})
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Commentaire non trouvé")
+    return {"success": True, "comment_id": comment_id}
+
+@api_router.post("/admin/boost-likes")
+async def boost_likes(request: Request):
+    """V71: Ajoute des likes en masse (Super Admin uniquement)."""
+    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not is_super_admin(user_email):
+        raise HTTPException(status_code=403, detail="Réservé au Super Admin")
+
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    boost_amount = min(int(body.get("amount", 100)), 500)
+
+    # Boost tous les commentaires visibles avec un montant aléatoire
+    comments = await db.comments.find({"is_visible": True}, {"id": 1}).to_list(500)
+    boosted = 0
+    for c in comments:
+        add = _random.randint(int(boost_amount * 0.3), boost_amount)
+        await db.comments.update_one({"id": c["id"]}, {"$inc": {"likes": add}})
+        boosted += 1
+
+    logger.info(f"[V71] Boost +{boost_amount} likes sur {boosted} commentaires par {user_email}")
+    return {"success": True, "boosted_comments": boosted, "boost_amount": boost_amount}
+
+@api_router.delete("/admin/comments")
+async def clear_comments(request: Request):
+    """V71: Supprime tous les commentaires IA (Super Admin uniquement)."""
+    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not is_super_admin(user_email):
+        raise HTTPException(status_code=403, detail="Réservé au Super Admin")
+
+    result = await db.comments.delete_many({"is_ai": True})
+    logger.info(f"[V71] {result.deleted_count} commentaires IA supprimés par {user_email}")
+    return {"success": True, "deleted": result.deleted_count}
+
+# === v71: CRON — Notification chat post-cours (24h après) ===
+@api_router.get("/cron/post-course-feedback")
+async def cron_post_course_feedback(request: Request):
+    """V71: Envoie un message chat automatique 24h après un cours réservé pour demander un avis."""
+    auth_header = request.headers.get("Authorization", "")
+    cron_secret = os.environ.get("CRON_SECRET", "")
+    if cron_secret and auth_header != f"Bearer {cron_secret}":
+        raise HTTPException(status_code=401, detail="Non autorisé")
+
+    now = datetime.now(timezone.utc)
+    target_time = now - timedelta(hours=24)
+
+    # Cherche les réservations de cours terminés il y a ~24h (fenêtre de 2h)
+    window_start = (target_time - timedelta(hours=1)).isoformat()
+    window_end = (target_time + timedelta(hours=1)).isoformat()
+
+    reservations = await db.reservations.find({
+        "status": "confirmed",
+        "date": {"$gte": window_start, "$lte": window_end},
+        "feedback_sent": {"$ne": True}
+    }).to_list(100)
+
+    sent = 0
+    for res in reservations:
+        participant_name = res.get("name", res.get("participant_name", ""))
+        coach_id = res.get("coach_id", "")
+        session_id = res.get("session_id", "")
+
+        if not participant_name or not coach_id:
+            continue
+
+        # Envoie un message dans le chat privé
+        feedback_msg = {
+            "id": f"feedback_{now.strftime('%Y%m%d%H%M%S')}_{sent}",
+            "session_id": session_id or coach_id,
+            "sender": "system",
+            "sender_name": "Afroboost",
+            "text": f"Salut {participant_name} ! 👋 Comment as-tu trouvé ton cours Afroboost ? Laisse un commentaire ici pour qu'il s'affiche sur le site ! Ton avis compte énormément pour nous 💜",
+            "type": "feedback_request",
+            "timestamp": now.isoformat(),
+            "is_system": True
+        }
+        await db.messages.insert_one(feedback_msg)
+
+        # Marque la réservation pour ne pas renvoyer
+        await db.reservations.update_one({"_id": res["_id"]}, {"$set": {"feedback_sent": True}})
+        sent += 1
+
+    logger.info(f"[V71-CRON] {sent} demandes d'avis envoyées")
+    return {"success": True, "feedback_requests_sent": sent}
+
 # === v69: CRON — Vérification expirations offres (avec crédits) ===
 @api_router.get("/admin/check-expirations")
 async def check_expirations(request: Request):

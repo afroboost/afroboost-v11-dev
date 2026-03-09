@@ -17,7 +17,7 @@ axios.interceptors.request.use((config) => {
   }
   return config;
 });
-console.log("🚀 V70 : Système de test d'emails prêt");
+console.log("🚀 V71 : Social Boost — Commentaires IA & Social Proof activé");
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import html2canvas from "html2canvas";

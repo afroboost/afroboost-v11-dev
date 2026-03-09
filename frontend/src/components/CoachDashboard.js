@@ -5244,6 +5244,91 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   </div>
                 )}
 
+                {/* v71: SOCIAL BOOST — Panneau Admin (Super Admin uniquement) */}
+                {isSuperAdmin && (
+                  <div style={{
+                    marginTop: '16px', marginBottom: '16px',
+                    borderRadius: '16px', padding: '20px',
+                    background: 'linear-gradient(135deg, rgba(217,28,210,0.08) 0%, rgba(139,92,246,0.08) 100%)',
+                    border: '1px solid rgba(217,28,210,0.2)'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+                      <span style={{ fontSize: '20px' }}>💬</span>
+                      <h3 style={{ color: '#fff', fontSize: '15px', fontWeight: 700, margin: 0 }}>Social Boost</h3>
+                      <span style={{
+                        background: 'rgba(217,28,210,0.2)', color: '#D91CD2',
+                        fontSize: '10px', padding: '2px 8px', borderRadius: '10px', fontWeight: 600
+                      }}>ADMIN</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const res = await axios.post(`${API}/admin/generate-social-proof`, { count: 50 }, {
+                              headers: { 'X-User-Email': coachUser?.email }
+                            });
+                            alert(`✅ ${res.data.count} commentaires générés !`);
+                          } catch (e) {
+                            alert('❌ Erreur: ' + (e.response?.data?.detail || e.message));
+                          }
+                        }}
+                        style={{
+                          background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                          color: '#fff', border: 'none', padding: '10px 18px',
+                          borderRadius: '12px', fontSize: '13px', fontWeight: 600,
+                          cursor: 'pointer', boxShadow: '0 0 15px rgba(217,28,210,0.3)'
+                        }}
+                      >
+                        🤖 Générer 50 Commentaires IA
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const res = await axios.post(`${API}/admin/boost-likes`, { amount: 100 }, {
+                              headers: { 'X-User-Email': coachUser?.email }
+                            });
+                            alert(`✅ +100 likes ajoutés sur ${res.data.boosted_comments} commentaires !`);
+                          } catch (e) {
+                            alert('❌ Erreur: ' + (e.response?.data?.detail || e.message));
+                          }
+                        }}
+                        style={{
+                          background: 'rgba(255,255,255,0.08)',
+                          color: '#fff', border: '1px solid rgba(217,28,210,0.3)',
+                          padding: '10px 18px', borderRadius: '12px',
+                          fontSize: '13px', fontWeight: 600, cursor: 'pointer'
+                        }}
+                      >
+                        ❤️ +100 Likes
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!window.confirm('Supprimer tous les commentaires IA ?')) return;
+                          try {
+                            const res = await axios.delete(`${API}/admin/comments`, {
+                              headers: { 'X-User-Email': coachUser?.email }
+                            });
+                            alert(`🗑️ ${res.data.deleted} commentaires IA supprimés`);
+                          } catch (e) {
+                            alert('❌ Erreur: ' + (e.response?.data?.detail || e.message));
+                          }
+                        }}
+                        style={{
+                          background: 'rgba(239,68,68,0.1)',
+                          color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)',
+                          padding: '10px 18px', borderRadius: '12px',
+                          fontSize: '13px', fontWeight: 600, cursor: 'pointer'
+                        }}
+                      >
+                        🗑️ Reset
+                      </button>
+                    </div>
+                    <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px', marginTop: '10px', margin: '10px 0 0 0' }}>
+                      Les commentaires générés s'affichent sur le Hero et la section Avis de votre vitrine.
+                    </p>
+                  </div>
+                )}
+
                 <div style={{ marginTop: '16px' }}>
                   <OffersManager
                     offers={offers}
