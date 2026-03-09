@@ -9187,6 +9187,59 @@ async def update_comment_photo(comment_id: str, request: Request):
     logger.info(f"[V77] Photo commentaire {comment_id} mise à jour par {user_email}")
     return {"success": True, "comment_id": comment_id, "photo_url": photo_url}
 
+# === v86: POST /api/reviews — Avis post-session soumis par un abonné identifié ===
+@api_router.post("/reviews")
+async def submit_review(request: Request):
+    """V86: Un abonné identifié soumet un avis après une session. Anti-spam: 1 avis par session."""
+    body = await request.json()
+    participant_code = (body.get("participant_code", "") or "").strip()
+    participant_name = (body.get("participant_name", "") or "").strip()
+    text = (body.get("text", "") or "").strip()
+    rating = int(body.get("rating", 5))
+    profile_photo = (body.get("profile_photo", "") or "").strip()
+    coach_id = (body.get("coach_id", "") or "").strip().lower() or "contact.artboost@gmail.com"
+    session_id = (body.get("session_id", "") or "").strip()
+
+    if not participant_code or not text:
+        raise HTTPException(status_code=400, detail="participant_code et text requis")
+    if rating < 1 or rating > 5:
+        rating = 5
+
+    # Anti-spam: 1 seul avis par abonné par session (ou 1 avis global si pas de session_id)
+    spam_query = {"participant_code": participant_code, "is_review": True}
+    if session_id:
+        spam_query["session_id"] = session_id
+    existing = await db.comments.find_one(spam_query)
+    if existing:
+        raise HTTPException(status_code=409, detail="Vous avez déjà laissé un avis pour cette session")
+
+    now = datetime.now(timezone.utc)
+    # Fallback avatar DiceBear si pas de photo
+    if not profile_photo:
+        avatar_seed = f"{participant_name.replace(' ', '')}{participant_code}{now.strftime('%H%M%S')}"
+        profile_photo = f"https://api.dicebear.com/7.x/avataaars/svg?seed={avatar_seed}&backgroundColor=D91CD2"
+
+    comment = {
+        "id": f"review_{now.strftime('%Y%m%d%H%M%S')}_{_random.randint(100,999)}",
+        "user_name": participant_name or f"Abonné {participant_code[:4]}",
+        "text": text,
+        "profile_photo": profile_photo,
+        "rating": rating,
+        "likes": 0,
+        "is_ai": False,
+        "is_review": True,
+        "is_verified": True,
+        "is_visible": True,
+        "participant_code": participant_code,
+        "session_id": session_id,
+        "coach_id": coach_id,
+        "created_at": now.isoformat()
+    }
+    await db.comments.insert_one(comment)
+    comment.pop("_id", None)
+    logger.info(f"[V86] Avis post-session soumis par {participant_name} (code: {participant_code})")
+    return {"success": True, "comment": comment}
+
 # === v80: Page Like — Compteur de likes pour la page coach (visiteurs) ===
 @api_router.post("/page-like")
 async def page_like(request: Request):
@@ -9245,14 +9298,15 @@ async def cron_post_course_feedback(request: Request):
         if not participant_name or not coach_id:
             continue
 
-        # Envoie un message dans le chat privé
+        # v86: Envoie un message dans le chat privé avec type review_request (bouton interactif)
         feedback_msg = {
             "id": f"feedback_{now.strftime('%Y%m%d%H%M%S')}_{sent}",
             "session_id": session_id or coach_id,
             "sender": "system",
             "sender_name": "Afroboost",
-            "text": f"Salut {participant_name} ! 👋 Comment as-tu trouvé ton cours Afroboost ? Laisse un commentaire ici pour qu'il s'affiche sur le site ! Ton avis compte énormément pour nous 💜",
-            "type": "feedback_request",
+            "text": f"🔥 Bravo pour ta session Afroboost {participant_name} ! Comment as-tu trouvé le cours ?",
+            "type": "review_request",
+            "reservation_id": str(res.get("_id", "")),
             "timestamp": now.isoformat(),
             "is_system": True
         }

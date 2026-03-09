@@ -1181,6 +1181,14 @@ export const ChatWidget = () => {
   
   // === v76: ZOOM PHOTO PROFIL (crop supprimé définitivement) ===
   const [zoomedChatPhoto, setZoomedChatPhoto] = useState(null);
+
+  // === v86: FORMULAIRE AVIS POST-SESSION ===
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewText, setReviewText] = useState('');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewSubmitted, setReviewSubmitted] = useState(false);
+  const [reviewSessionId, setReviewSessionId] = useState('');
   
   // === MENU UTILISATEUR (Partage + Mode Visiteur) ===
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -2102,6 +2110,41 @@ export const ChatWidget = () => {
     window.addEventListener('afroboost:visitorPreview', handleVisitorPreviewToggle);
     return () => window.removeEventListener('afroboost:visitorPreview', handleVisitorPreviewToggle);
   }, []);
+
+  // === v86: DÉCLENCHEUR AUTOMATIQUE AVIS POST-SESSION ===
+  // Vérifie côté frontend si l'abonné a une réservation terminée (heure passée)
+  // et injecte un message système "review_request" s'il n'a pas encore été affiché
+  useEffect(() => {
+    if (!afroboostProfile?.code || step !== 'chat' || reviewSubmitted) return;
+    const checkKey = `afroboost_review_shown_${afroboostProfile.code}`;
+    const alreadyShown = sessionStorage.getItem(checkKey);
+    if (alreadyShown) return;
+
+    // Délai pour ne pas interrompre le chargement initial
+    const timer = setTimeout(() => {
+      // Chercher les réservations terminées (message système backend ou déclenchement local)
+      const hasReviewRequest = messages.some(m => m.type === 'review_request');
+      if (hasReviewRequest) return;
+
+      // Vérifier si l'abonné a un abonnement actif (proxy pour "a assisté à un cours")
+      if (afroboostProfile.subscription?.remaining_sessions !== undefined) {
+        const reviewMsg = {
+          id: `review_request_${Date.now()}`,
+          type: 'review_request',
+          sender: 'system',
+          sender_name: 'Afroboost',
+          text: `🔥 Bravo pour ta session Afroboost ${afroboostProfile.name || ''} ! Comment as-tu trouvé le cours ?`,
+          timestamp: new Date().toISOString(),
+          is_system: true
+        };
+        setMessages(prev => [...prev, reviewMsg]);
+        sessionStorage.setItem(checkKey, 'true');
+        console.log('[V86] Message review_request injecté');
+      }
+    }, 5000);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [afroboostProfile?.code, step, messages.length]);
 
   // Enregistrer le Service Worker au montage
   useEffect(() => {
@@ -3315,6 +3358,54 @@ export const ChatWidget = () => {
     if (isReturningClient && step === 'form') {
       handleReturningClientStart();
     }
+  };
+
+  // === v86: Soumettre un avis post-session ===
+  const handleSubmitReview = async () => {
+    if (!reviewText.trim() || reviewSubmitting) return;
+    setReviewSubmitting(true);
+    try {
+      const res = await fetch(`${API}/reviews`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          participant_code: afroboostProfile?.code || '',
+          participant_name: afroboostProfile?.name || leadData?.firstName || 'Abonné',
+          text: reviewText.trim(),
+          rating: reviewRating,
+          profile_photo: profilePhoto || '',
+          coach_id: sessionData?.coach_id || 'contact.artboost@gmail.com',
+          session_id: reviewSessionId
+        })
+      });
+      if (res.ok) {
+        setReviewSubmitted(true);
+        setShowReviewForm(false);
+        setReviewText('');
+        setReviewRating(5);
+        // Ajouter un message de confirmation dans le chat
+        setMessages(prev => [...prev, {
+          id: `review_confirm_${Date.now()}`,
+          type: 'bot',
+          text: '✅ Merci pour ton avis ! Il est maintenant visible sur la page Afroboost 💜',
+          timestamp: new Date().toISOString()
+        }]);
+        console.log('[V86] Avis soumis avec succès');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setMessages(prev => [...prev, {
+          id: `review_error_${Date.now()}`,
+          type: 'bot',
+          text: err.detail === 'Vous avez déjà laissé un avis pour cette session'
+            ? '⚠️ Tu as déjà laissé un avis pour cette session !'
+            : '⚠️ Erreur lors de l\'envoi de ton avis. Réessaie !',
+          timestamp: new Date().toISOString()
+        }]);
+      }
+    } catch (e) {
+      console.error('[V86] Erreur soumission avis:', e);
+    }
+    setReviewSubmitting(false);
   };
 
   // Envoyer un message au chat avec contexte de session
@@ -5372,16 +5463,66 @@ export const ChatWidget = () => {
                         animationDelay: `${Math.min(idx * 0.03, 0.3)}s`
                       }}
                     >
-                      <MemoizedMessageBubble
-                        msg={msg}
-                        isUser={msg.type === 'user' && msg.senderId === participantId}
-                        onParticipantClick={startPrivateChat}
-                        isCommunity={chatMode === 'group'}
-                        currentUserId={participantId}
-                        profilePhotoUrl={profilePhoto}
-                        onReservationClick={() => setShowReservationPanel(true)}
-                        onZoomPhoto={(url) => setZoomedChatPhoto(url)}
-                      />
+                      {/* v86: Message spécial review_request avec bouton "Laisser un avis" */}
+                      {msg.type === 'review_request' ? (
+                        <div style={{
+                          alignSelf: 'flex-start',
+                          maxWidth: '320px',
+                          background: 'rgba(217, 28, 210, 0.1)',
+                          borderRadius: '16px',
+                          padding: '16px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '10px'
+                        }}>
+                          <div style={{ fontSize: '11px', fontWeight: 600, color: '#D91CD2', marginBottom: '2px' }}>
+                            Afroboost
+                          </div>
+                          <p style={{ color: '#fff', fontSize: '13px', lineHeight: 1.5, margin: 0 }}>
+                            {msg.text || msg.content || '🔥 Bravo pour ta session ! Comment as-tu trouvé le cours ?'}
+                          </p>
+                          {!reviewSubmitted ? (
+                            <button
+                              onClick={() => {
+                                setReviewSessionId(msg.reservation_id || msg.session_id || '');
+                                setShowReviewForm(true);
+                              }}
+                              style={{
+                                background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                                border: 'none',
+                                borderRadius: '20px',
+                                padding: '10px 20px',
+                                color: '#fff',
+                                fontSize: '13px',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                alignSelf: 'flex-start',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px'
+                              }}
+                              data-testid="leave-review-btn"
+                            >
+                              ⭐ Laisser un avis
+                            </button>
+                          ) : (
+                            <div style={{ color: '#22c55e', fontSize: '12px', fontWeight: 600 }}>
+                              ✅ Avis envoyé — Merci !
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <MemoizedMessageBubble
+                          msg={msg}
+                          isUser={msg.type === 'user' && msg.senderId === participantId}
+                          onParticipantClick={startPrivateChat}
+                          isCommunity={chatMode === 'group'}
+                          currentUserId={participantId}
+                          profilePhotoUrl={profilePhoto}
+                          onReservationClick={() => setShowReservationPanel(true)}
+                          onZoomPhoto={(url) => setZoomedChatPhoto(url)}
+                        />
+                      )}
                     </div>
                   ))}
                   
@@ -5426,9 +5567,102 @@ export const ChatWidget = () => {
                     </div>
                   )}
                   
+                  {/* === v86: FORMULAIRE AVIS INLINE — Stars + Texte === */}
+                  {showReviewForm && !reviewSubmitted && (
+                    <div style={{
+                      background: 'rgba(217, 28, 210, 0.08)',
+                      borderRadius: '16px',
+                      padding: '16px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px',
+                      animation: 'afroMsgSlideIn 0.3s ease-out'
+                    }}
+                    data-testid="review-form-inline"
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#D91CD2', fontSize: '13px', fontWeight: 700 }}>⭐ Ton avis</span>
+                        <button
+                          onClick={() => setShowReviewForm(false)}
+                          style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: '16px' }}
+                        >✕</button>
+                      </div>
+
+                      {/* Étoiles */}
+                      <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                        {[1,2,3,4,5].map(star => (
+                          <button
+                            key={star}
+                            onClick={() => setReviewRating(star)}
+                            style={{
+                              background: 'none', border: 'none', cursor: 'pointer', padding: '4px',
+                              transform: star <= reviewRating ? 'scale(1.2)' : 'scale(1)',
+                              transition: 'transform 0.15s ease'
+                            }}
+                          >
+                            <svg width="28" height="28" viewBox="0 0 24 24"
+                              fill={star <= reviewRating ? '#D91CD2' : 'rgba(255,255,255,0.15)'}
+                              stroke="none"
+                            >
+                              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                            </svg>
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Zone de texte */}
+                      <textarea
+                        value={reviewText}
+                        onChange={(e) => setReviewText(e.target.value)}
+                        placeholder="Qu'as-tu pensé du cours ? (ex: Super ambiance, j'ai adoré !)"
+                        maxLength={500}
+                        style={{
+                          width: '100%',
+                          minHeight: '60px',
+                          background: 'rgba(255,255,255,0.05)',
+                          border: 'none',
+                          borderRadius: '12px',
+                          padding: '10px 12px',
+                          color: '#fff',
+                          fontSize: '13px',
+                          resize: 'vertical',
+                          outline: 'none',
+                          fontFamily: 'inherit'
+                        }}
+                      />
+
+                      {/* Bouton envoyer */}
+                      <button
+                        onClick={handleSubmitReview}
+                        disabled={!reviewText.trim() || reviewSubmitting}
+                        style={{
+                          background: reviewText.trim()
+                            ? 'linear-gradient(135deg, #D91CD2, #8b5cf6)'
+                            : 'rgba(255,255,255,0.1)',
+                          border: 'none',
+                          borderRadius: '20px',
+                          padding: '10px 20px',
+                          color: '#fff',
+                          fontSize: '13px',
+                          fontWeight: 700,
+                          cursor: reviewText.trim() ? 'pointer' : 'not-allowed',
+                          opacity: reviewText.trim() ? 1 : 0.5,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          alignSelf: 'center'
+                        }}
+                        data-testid="submit-review-btn"
+                      >
+                        {reviewSubmitting ? '⏳ Envoi...' : '💜 Publier mon avis'}
+                      </button>
+                    </div>
+                  )}
+
                   <div ref={messagesEndRef} />
                 </div>
-                
+
                 {/* === v9.3.7: PANNEAU DE RÉSERVATION - Visible pour TOUS, par-dessus le chat === */}
                 {showReservationPanel && (
                   <div 
