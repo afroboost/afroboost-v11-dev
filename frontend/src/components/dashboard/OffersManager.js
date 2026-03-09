@@ -311,7 +311,55 @@ const OffersManager = ({
             Visible
           </label>
         </div>
-        
+
+        {/* Durée de validité */}
+        <div style={{ marginTop: '12px', padding: '12px', borderRadius: '8px', border: '1px solid rgba(139, 92, 246, 0.3)', background: 'rgba(139, 92, 246, 0.05)' }}>
+          <p style={{ fontSize: '12px', color: '#a78bfa', marginBottom: '10px' }}>⏱ Durée de validité</p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+            <div>
+              <label style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', display: 'block', marginBottom: '4px' }}>Durée</label>
+              <input
+                type="number"
+                min="1"
+                placeholder="Ex: 2"
+                value={newOffer.duration_value || ''}
+                onChange={e => setNewOffer({ ...newOffer, duration_value: parseInt(e.target.value) || '' })}
+                className="w-full px-3 py-3 rounded-lg neon-input text-sm"
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', display: 'block', marginBottom: '4px' }}>Unité</label>
+              <select
+                value={newOffer.duration_unit || ''}
+                onChange={e => setNewOffer({ ...newOffer, duration_unit: e.target.value || null })}
+                className="w-full px-3 py-3 rounded-lg neon-input text-sm"
+              >
+                <option value="">Sans limite</option>
+                <option value="days">Jours</option>
+                <option value="weeks">Semaines</option>
+                <option value="months">Mois</option>
+              </select>
+            </div>
+          </div>
+          {newOffer.duration_value && newOffer.duration_unit && (
+            <div style={{ marginTop: '8px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#fff', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={newOffer.is_auto_prolong !== false}
+                  onChange={e => setNewOffer({ ...newOffer, is_auto_prolong: e.target.checked })}
+                  style={{ width: '18px', height: '18px' }}
+                />
+                Prolonger automatiquement à l'expiration
+              </label>
+              <p style={{ fontSize: '11px', color: 'rgba(139, 92, 246, 0.7)', marginTop: '6px' }}>
+                📅 Valide pendant {newOffer.duration_value} {newOffer.duration_unit === 'days' ? 'jour(s)' : newOffer.duration_unit === 'weeks' ? 'semaine(s)' : 'mois'}
+                {newOffer.is_auto_prolong !== false ? ' • Auto-prolongation activée' : ' • Expire sans renouvellement'}
+              </p>
+            </div>
+          )}
+        </div>
+
         {/* E-Commerce Fields */}
         {newOffer.isProduct && (
           <div className="mt-3 p-3 rounded-lg border border-purple-500/30">

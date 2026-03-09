@@ -363,6 +363,14 @@ class Offer(BaseModel):
     shippingCost: float = 0.0  # Frais de port
     stock: int = -1  # -1 = unlimited
     coach_id: Optional[str] = None  # v19: Ownership — email du coach propriétaire
+    # v59: Durée de validité & prolongation automatique
+    duration_value: Optional[int] = None  # ex: 2 (nombre)
+    duration_unit: Optional[str] = None   # "days", "weeks", "months"
+    is_auto_prolong: bool = True          # prolongation automatique à l'expiration
+    created_at: Optional[str] = None      # ISO datetime de création
+    expiration_date: Optional[str] = None # ISO datetime d'expiration calculée
+    last_reminded_date: Optional[str] = None   # date dernier rappel J-7
+    last_prolonged_date: Optional[str] = None  # date dernière prolongation
 
 class OfferCreate(BaseModel):
     name: str
@@ -381,6 +389,10 @@ class OfferCreate(BaseModel):
     shippingCost: float = 0.0
     stock: int = -1
     coach_id: Optional[str] = None  # v19: Ownership
+    # v59: Durée de validité
+    duration_value: Optional[int] = None
+    duration_unit: Optional[str] = None
+    is_auto_prolong: bool = True
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -1033,6 +1045,20 @@ async def purge_archived_courses(request: Request):
         "purgedIds": archived_ids
     }
 
+# --- v59: Helper calcul date expiration ---
+def calculate_expiration_date(from_date_str: str, duration_value: int, duration_unit: str) -> str:
+    """Calcule la date d'expiration à partir d'une date + durée"""
+    from_date = datetime.fromisoformat(from_date_str.replace('Z', '+00:00')) if isinstance(from_date_str, str) else from_date_str
+    if duration_unit == "months":
+        delta = timedelta(days=duration_value * 30)
+    elif duration_unit == "weeks":
+        delta = timedelta(weeks=duration_value)
+    elif duration_unit == "days":
+        delta = timedelta(days=duration_value)
+    else:
+        return None
+    return (from_date + delta).isoformat()
+
 # --- Offers ---
 @api_router.get("/offers", response_model=List[Offer])
 async def get_offers():
@@ -1049,22 +1075,37 @@ async def get_offers():
 
 @api_router.post("/offers", response_model=Offer)
 async def create_offer(offer: OfferCreate, request: Request):
-    # Sécurité : vérifier que l'utilisateur est authentifié
     require_auth(request)
-    # v19: Auto-set coach_id depuis le header d'authentification
     user_email = request.headers.get("X-User-Email", "").lower().strip()
     offer_data = offer.model_dump()
     if user_email and not offer_data.get("coach_id"):
         offer_data["coach_id"] = user_email
+    # v59: Calculer expiration si durée définie
+    now_iso = datetime.utcnow().isoformat()
+    offer_data["created_at"] = now_iso
+    if offer_data.get("duration_value") and offer_data.get("duration_unit"):
+        offer_data["expiration_date"] = calculate_expiration_date(now_iso, offer_data["duration_value"], offer_data["duration_unit"])
     offer_obj = Offer(**offer_data)
     await db.offers.insert_one(offer_obj.model_dump())
     return offer_obj
 
 @api_router.put("/offers/{offer_id}", response_model=Offer)
 async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
-    # Sécurité : vérifier que l'utilisateur est authentifié
     require_auth(request)
-    await db.offers.update_one({"id": offer_id}, {"$set": offer.model_dump()})
+    update_data = offer.model_dump()
+    # v59: Recalculer expiration si durée modifiée
+    if update_data.get("duration_value") and update_data.get("duration_unit"):
+        existing = await db.offers.find_one({"id": offer_id}, {"_id": 0})
+        created_at = (existing or {}).get("created_at") or datetime.utcnow().isoformat()
+        update_data["created_at"] = created_at
+        update_data["expiration_date"] = calculate_expiration_date(created_at, update_data["duration_value"], update_data["duration_unit"])
+        # Reset rappels si durée changée
+        if existing and (existing.get("duration_value") != update_data["duration_value"] or existing.get("duration_unit") != update_data["duration_unit"]):
+            update_data["last_reminded_date"] = None
+            update_data["last_prolonged_date"] = None
+    else:
+        update_data["expiration_date"] = None
+    await db.offers.update_one({"id": offer_id}, {"$set": update_data})
     updated = await db.offers.find_one({"id": offer_id}, {"_id": 0})
     return updated
 
@@ -8754,6 +8795,121 @@ async def cron_check_campaigns(request: Request):
         "errors": errors,
         "stuck_fixed": stuck_fixed
     }
+
+# === v59: EMAILS EXPIRATION OFFRES ===
+async def send_expiry_reminder_email(coach_email: str, offer_name: str, days_remaining: int):
+    """Envoie email J-7 rappel expiration"""
+    if not RESEND_API_KEY:
+        logger.warning(f"[EXPIRY] Resend non configuré, email ignoré pour {coach_email}")
+        return
+    first_name = coach_email.split('@')[0].capitalize()
+    subject = f"⚠️ Votre offre \"{offer_name}\" expire dans {days_remaining} jours"
+    html = f"""<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+<div style="background:#111;border-radius:10px;overflow:hidden;">
+<div style="background:linear-gradient(135deg,#9333EA,#D91CD2);padding:16px;text-align:center;">
+<span style="color:#fff;font-size:20px;font-weight:bold;">Afroboost</span></div>
+<div style="padding:20px;color:#fff;">
+<p>Salut {first_name},</p>
+<p>Votre offre <strong style="color:#D91CD2;">"{offer_name}"</strong> expire dans <strong>{days_remaining} jours</strong>.</p>
+<p>Si la prolongation automatique est activée, votre offre sera renouvelée automatiquement.</p>
+<div style="text-align:center;margin:20px 0;">
+<a href="https://afroboost-v11-dev-pm7l.vercel.app/#partner-dashboard" style="display:inline-block;padding:12px 28px;background:#D91CD2;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Gérer mes offres</a>
+</div></div>
+<div style="padding:10px;text-align:center;color:#666;font-size:11px;border-top:1px solid #333;">© 2026 Afroboost</div>
+</div></div>"""
+    try:
+        import resend as resend_lib
+        resend_lib.api_key = RESEND_API_KEY
+        resend_lib.Emails.send({"from": "Afroboost <notifications@afroboosteur.com>", "to": coach_email, "subject": subject, "html": html})
+        logger.info(f"[EXPIRY] ✅ Rappel J-{days_remaining} envoyé à {coach_email}")
+    except Exception as e:
+        logger.error(f"[EXPIRY] ❌ Email J-{days_remaining} échoué: {e}")
+
+async def send_prolongation_email(coach_email: str, offer_name: str):
+    """Envoie email J-0 prolongation automatique"""
+    if not RESEND_API_KEY:
+        return
+    first_name = coach_email.split('@')[0].capitalize()
+    subject = f"✅ Offre \"{offer_name}\" prolongée automatiquement"
+    html = f"""<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+<div style="background:#111;border-radius:10px;overflow:hidden;">
+<div style="background:linear-gradient(135deg,#9333EA,#D91CD2);padding:16px;text-align:center;">
+<span style="color:#fff;font-size:20px;font-weight:bold;">Afroboost</span></div>
+<div style="padding:20px;color:#fff;">
+<p>Salut {first_name},</p>
+<p>Votre offre <strong style="color:#10b981;">"{offer_name}"</strong> a été automatiquement prolongée.</p>
+<p style="color:#f59e0b;font-weight:bold;">⚠️ Non remboursable — cette prolongation ne peut pas être annulée.</p>
+<div style="text-align:center;margin:20px 0;">
+<a href="https://afroboost-v11-dev-pm7l.vercel.app/#partner-dashboard" style="display:inline-block;padding:12px 28px;background:#D91CD2;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Voir mes offres</a>
+</div></div>
+<div style="padding:10px;text-align:center;color:#666;font-size:11px;border-top:1px solid #333;">© 2026 Afroboost</div>
+</div></div>"""
+    try:
+        import resend as resend_lib
+        resend_lib.api_key = RESEND_API_KEY
+        resend_lib.Emails.send({"from": "Afroboost <notifications@afroboosteur.com>", "to": coach_email, "subject": subject, "html": html})
+        logger.info(f"[EXPIRY] ✅ Email prolongation envoyé à {coach_email}")
+    except Exception as e:
+        logger.error(f"[EXPIRY] ❌ Email prolongation échoué: {e}")
+
+# === v59: CRON — Vérification expirations offres ===
+@api_router.get("/admin/check-expirations")
+async def check_expirations(request: Request):
+    """Cron quotidien : rappels J-7 + prolongation auto J-0 des offres avec durée."""
+    auth_header = request.headers.get("Authorization", "")
+    user_email = request.headers.get("X-User-Email", "").lower()
+    cron_secret = os.environ.get("CRON_SECRET", "")
+    is_vercel_cron = auth_header == f"Bearer {cron_secret}" if cron_secret else False
+    is_admin = is_super_admin(user_email)
+    if not is_vercel_cron and not is_admin and not cron_secret:
+        pass  # dev local OK
+    elif not is_vercel_cron and not is_admin:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    now = datetime.now(timezone.utc)
+    offers = await db.offers.find({"duration_value": {"$exists": True, "$ne": None}}).to_list(500)
+    reminded = 0
+    prolonged = 0
+    errors = []
+
+    for offer in offers:
+        try:
+            offer_id = offer.get("id")
+            offer_name = offer.get("name", "?")
+            coach_email = offer.get("coach_id", "")
+            exp_str = offer.get("expiration_date")
+            if not exp_str or not coach_email:
+                continue
+            expiry = datetime.fromisoformat(exp_str.replace('Z', '+00:00'))
+            if expiry.tzinfo is None:
+                from datetime import timezone as tz
+                expiry = expiry.replace(tzinfo=tz.utc)
+            days_left = (expiry - now).days
+
+            # J-7 : rappel (1 seule fois)
+            if 0 < days_left <= 7 and not offer.get("last_reminded_date"):
+                await send_expiry_reminder_email(coach_email, offer_name, days_left)
+                await db.offers.update_one({"id": offer_id}, {"$set": {"last_reminded_date": now.isoformat()}})
+                reminded += 1
+
+            # J-0 : prolongation auto
+            elif days_left <= 0 and offer.get("is_auto_prolong", True) and not offer.get("last_prolonged_date"):
+                dv = offer.get("duration_value")
+                du = offer.get("duration_unit")
+                new_exp = calculate_expiration_date(now.isoformat(), dv, du)
+                await db.offers.update_one({"id": offer_id}, {"$set": {
+                    "expiration_date": new_exp,
+                    "last_prolonged_date": now.isoformat(),
+                    "last_reminded_date": None
+                }})
+                await send_prolongation_email(coach_email, offer_name)
+                prolonged += 1
+        except Exception as e:
+            errors.append({"offer": offer.get("id"), "error": str(e)})
+            logger.error(f"[CRON-EXPIRY] ❌ {e}")
+
+    logger.info(f"[CRON-EXPIRY] ✅ {len(offers)} offres vérifiées, {reminded} rappels, {prolonged} prolongations")
+    return {"success": True, "checked": len(offers), "reminded": reminded, "prolonged": prolonged, "errors": errors}
 
 # === SCHEDULER HEALTH ENDPOINTS ===
 @api_router.get("/scheduler/status")

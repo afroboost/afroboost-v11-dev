@@ -312,6 +312,23 @@ export const OfferCardSlider = ({ offer, selected, onClick }) => {
             {offer.isProduct && offer.shippingCost > 0 && (
               <p className="text-xs text-white opacity-50 mt-1">+ CHF {offer.shippingCost} frais de port</p>
             )}
+            {offer.duration_value && offer.duration_unit && (
+              <div style={{
+                marginTop: '8px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '3px 10px',
+                borderRadius: '20px',
+                background: 'rgba(139, 92, 246, 0.15)',
+                border: '1px solid rgba(139, 92, 246, 0.4)',
+                fontSize: '11px',
+                color: '#a78bfa'
+              }}>
+                <span>⏱</span>
+                <span>Valable {offer.duration_value} {offer.duration_unit === 'days' ? 'jour(s)' : offer.duration_unit === 'weeks' ? 'semaine(s)' : 'mois'}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>

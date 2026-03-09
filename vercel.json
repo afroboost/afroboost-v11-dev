@@ -6,6 +6,10 @@
     {
       "path": "/api/cron/check-campaigns",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/admin/check-expirations",
+      "schedule": "0 8 * * *"
     }
   ],
   "functions": {

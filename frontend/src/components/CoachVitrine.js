@@ -1197,6 +1197,12 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                         <span className="text-xl font-bold" style={{ color: '#d91cd2' }}>
                           {offer.price === 0 ? 'Offert' : `CHF ${offer.price}.-`}
                         </span>
+                        {offer.duration_value && offer.duration_unit && (
+                          <div style={{ marginTop: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 8px', borderRadius: '20px', background: 'rgba(139, 92, 246, 0.15)', border: '1px solid rgba(139, 92, 246, 0.4)', fontSize: '11px', color: '#a78bfa' }}>
+                            <span>⏱</span>
+                            <span>Valable {offer.duration_value} {offer.duration_unit === 'days' ? 'jour(s)' : offer.duration_unit === 'weeks' ? 'semaine(s)' : 'mois'}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1256,6 +1262,12 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                             <span className="text-xl font-bold" style={{ color: '#d91cd2' }}>
                               {offer.price === 0 ? 'Offert' : `CHF ${offer.price}.-`}
                             </span>
+                            {offer.duration_value && offer.duration_unit && (
+                              <div style={{ marginTop: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 8px', borderRadius: '20px', background: 'rgba(139, 92, 246, 0.15)', border: '1px solid rgba(139, 92, 246, 0.4)', fontSize: '11px', color: '#a78bfa' }}>
+                                <span>⏱</span>
+                                <span>Valable {offer.duration_value} {offer.duration_unit === 'days' ? 'jour(s)' : offer.duration_unit === 'weeks' ? 'semaine(s)' : 'mois'}</span>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
