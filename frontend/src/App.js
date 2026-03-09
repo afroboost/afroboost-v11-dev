@@ -2091,6 +2091,7 @@ function App() {
   // v72: Social Proof — Icône interactive + panneau commentaires
   const [socialComments, setSocialComments] = useState([]);
   const [showCommentsPanel, setShowCommentsPanel] = useState(false);
+  const [zoomedPhoto, setZoomedPhoto] = useState(null); // v74: Zoom photo profil
 
   // === v9.2.8: PLATFORM SETTINGS - Contrôles globaux ===
   const [platformSettings, setPlatformSettings] = useState({
@@ -4004,29 +4005,29 @@ function App() {
             handleSelectOffer(videoOffer);
           }}
         />
-        {/* v73: Icône AVIS Glow Afroboost — violet néon + pulse doux */}
+        {/* v74: Icône AVIS Glow Afroboost — taille réduite, position ajustée */}
         {socialComments.length > 0 && (
           <button
             onClick={() => setShowCommentsPanel(true)}
             style={{
-              position: 'absolute', bottom: '200px', right: '16px', zIndex: 20,
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
+              position: 'absolute', bottom: '220px', right: '10px', zIndex: 20,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px',
               background: 'none', border: 'none', cursor: 'pointer', padding: 0
             }}
           >
             <div style={{
-              width: '48px', height: '48px', borderRadius: '50%',
+              width: '40px', height: '40px', borderRadius: '50%',
               background: 'rgba(217, 28, 210, 0.25)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 0 18px rgba(217, 28, 210, 0.5), 0 0 40px rgba(217, 28, 210, 0.2)',
+              boxShadow: '0 0 14px rgba(217, 28, 210, 0.5), 0 0 30px rgba(217, 28, 210, 0.2)',
               animation: 'v73GlowPulse 2.5s ease-in-out infinite'
             }}>
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
               </svg>
             </div>
             <span style={{
-              color: '#fff', fontSize: '14px', fontWeight: 800,
+              color: '#fff', fontSize: '13px', fontWeight: 800,
               textShadow: '0 1px 4px rgba(0,0,0,0.95), 0 0 8px rgba(217,28,210,0.4)',
               lineHeight: 1
             }}>
@@ -5221,15 +5222,32 @@ function App() {
                   borderBottom: '1px solid #f0f0f0'
                 }}>
                   <div style={{ display: 'flex', gap: '12px' }}>
-                    {/* Avatar rond coloré */}
-                    <div style={{
-                      width: '36px', height: '36px', borderRadius: '50%',
-                      background: '#D91CD2',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: '14px', fontWeight: 700, color: '#fff', flexShrink: 0
-                    }}>
-                      {(comment.user_name || '?')[0].toUpperCase()}
-                    </div>
+                    {/* v74: Avatar — cliquable si photo réelle, sinon initiale */}
+                    {comment.profile_photo ? (
+                      <div
+                        onClick={() => setZoomedPhoto(comment.profile_photo)}
+                        style={{
+                          width: '36px', height: '36px', borderRadius: '50%',
+                          overflow: 'hidden', cursor: 'pointer', flexShrink: 0,
+                          border: '2px solid #D91CD2'
+                        }}
+                      >
+                        <img
+                          src={comment.profile_photo}
+                          alt={comment.user_name}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                      </div>
+                    ) : (
+                      <div style={{
+                        width: '36px', height: '36px', borderRadius: '50%',
+                        background: '#D91CD2',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '14px', fontWeight: 700, color: '#fff', flexShrink: 0
+                      }}>
+                        {(comment.user_name || '?')[0].toUpperCase()}
+                      </div>
+                    )}
                     <div style={{ flex: 1 }}>
                       {/* Nom + étoiles */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -5284,15 +5302,45 @@ function App() {
         </div>
       )}
 
-      {/* v73: CSS Animations — slide-up + Glow Pulse Afroboost */}
+      {/* v74: Modal zoom photo profil */}
+      {zoomedPhoto && (
+        <div
+          className="fixed inset-0 z-50"
+          style={{
+            background: 'rgba(0,0,0,0.85)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }}
+          onClick={() => setZoomedPhoto(null)}
+        >
+          <div style={{
+            width: '260px', height: '260px', borderRadius: '50%',
+            overflow: 'hidden',
+            border: '3px solid #D91CD2',
+            boxShadow: '0 0 30px rgba(217,28,210,0.5)',
+            animation: 'v74ZoomIn 0.25s ease-out'
+          }}>
+            <img
+              src={zoomedPhoto}
+              alt="Photo profil"
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* v74: CSS Animations — slide-up + Glow Pulse + Zoom */}
       <style>{`
         @keyframes v72slideUp {
           from { transform: translateY(100%); }
           to { transform: translateY(0); }
         }
         @keyframes v73GlowPulse {
-          0%, 100% { transform: scale(1); box-shadow: 0 0 18px rgba(217,28,210,0.5), 0 0 40px rgba(217,28,210,0.2); }
-          50% { transform: scale(1.08); box-shadow: 0 0 25px rgba(217,28,210,0.7), 0 0 55px rgba(217,28,210,0.3); }
+          0%, 100% { transform: scale(1); box-shadow: 0 0 14px rgba(217,28,210,0.5), 0 0 30px rgba(217,28,210,0.2); }
+          50% { transform: scale(1.06); box-shadow: 0 0 20px rgba(217,28,210,0.6), 0 0 45px rgba(217,28,210,0.25); }
+        }
+        @keyframes v74ZoomIn {
+          from { transform: scale(0.5); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
         }
       `}</style>
     </div>
