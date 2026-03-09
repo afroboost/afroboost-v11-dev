@@ -945,7 +945,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           <button
             onClick={() => setShowCommentsPanel(true)}
             style={{
-              position: 'absolute', bottom: '100px', right: '16px', zIndex: 20,
+              position: 'absolute', bottom: '200px', right: '16px', zIndex: 20,
               display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px',
               background: 'none', border: 'none', cursor: 'pointer', padding: 0
             }}
