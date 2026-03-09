@@ -424,10 +424,10 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
         <div
           style={{
             background: 'linear-gradient(135deg, rgba(20, 10, 30, 0.95) 0%, rgba(30, 15, 45, 0.95) 100%)',
-            border: '2px solid #D91CD2',
-            borderRadius: '16px',
+            border: '1px solid rgba(217, 28, 210, 0.5)',
+            borderRadius: '20px',
             padding: '16px',
-            boxShadow: '0 0 20px rgba(217, 28, 210, 0.3), 0 0 40px rgba(217, 28, 210, 0.1)',
+            boxShadow: '0 0 15px rgba(217, 28, 210, 0.15)',
             position: 'relative'
           }}
         >
@@ -694,11 +694,13 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
   
   // === MESSAGE STANDARD (sans média) ===
   
+  // v81: MESSAGE STANDARD ÉPURÉ — Bulles adaptatives style WhatsApp
   return (
     <div
       style={{
         alignSelf: isUser ? 'flex-end' : 'flex-start',
-        maxWidth: '85%',
+        maxWidth: '75%',
+        width: 'fit-content',
         display: 'flex',
         flexDirection: isUser ? 'row-reverse' : 'row',
         gap: '8px',
@@ -707,8 +709,8 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
     >
       {/* Avatar rond si disponible */}
       {getAvatar()}
-      
-      <div style={{ flex: 1 }}>
+
+      <div style={{ width: 'fit-content', maxWidth: '100%' }}>
         {/* NOM AU-DESSUS DE LA BULLE - Toujours visible pour les messages reçus */}
         {!isUser && (
           <div
@@ -759,12 +761,13 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             background: getBubbleBackground(),
             color: '#fff',
             padding: '10px 14px',
-            borderRadius: isUser 
-              ? '16px 16px 4px 16px' 
-              : '16px 16px 16px 4px',
+            borderRadius: isUser
+              ? '20px 20px 6px 20px'
+              : '20px 20px 20px 6px',
             fontSize: '13px',
-            lineHeight: '1.4',
-            border: isCoachMessage && !isUser ? '1px solid rgba(251, 191, 36, 0.4)' : 'none'
+            lineHeight: '1.5',
+            border: 'none',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
           }}
         >
           {/* Rendu du texte avec liens cliquables */}
@@ -4031,13 +4034,13 @@ export const ChatWidget = () => {
                       
                       <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }} />
                       
-                      {/* v9.2.6: Bouton Accéder au Dashboard - si partenaire inscrit (a acheté un pack) */}
-                      {(isRegisteredCoach || isCoachMode) && (
+                      {/* v81: Bouton dynamique — Dashboard si coach/admin, Devenir Partenaire si abonné simple */}
+                      {(isRegisteredCoach || isCoachMode) ? (
                         <>
                           <button
-                            onClick={() => { 
-                              window.location.hash = '#partner-dashboard'; 
-                              setShowUserMenu(false); 
+                            onClick={() => {
+                              window.location.hash = '#partner-dashboard';
+                              setShowUserMenu(false);
                             }}
                             style={{
                               width: '100%',
@@ -4063,6 +4066,35 @@ export const ChatWidget = () => {
                               <rect x="3" y="14" width="7" height="7"></rect>
                             </svg>
                             Accéder à mon Dashboard
+                          </button>
+                          <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }} />
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => {
+                              window.open('https://wa.me/33767aborost?text=Bonjour%2C%20je%20souhaite%20devenir%20partenaire%20Afroboost%20!', '_blank');
+                              setShowUserMenu(false);
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '10px 14px',
+                              textAlign: 'left',
+                              fontSize: '12px',
+                              color: '#fff',
+                              background: 'linear-gradient(135deg, rgba(147, 51, 234, 0.3), rgba(217, 28, 210, 0.3))',
+                              border: 'none',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '10px',
+                              fontWeight: '600'
+                            }}
+                            className="hover:bg-white/10"
+                            data-testid="become-partner-user-menu-btn"
+                          >
+                            <span>✨</span>
+                            Devenir Partenaire
                           </button>
                           <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }} />
                         </>
@@ -4188,30 +4220,58 @@ export const ChatWidget = () => {
                       
                       <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }} />
                       
-                      {/* v9.6.0: Bouton Mon Dashboard */}
-                      <button
-                        onClick={() => {
-                          window.location.assign(window.location.origin + '/#coach-dashboard');
-                        }}
-                        style={{
-                          width: '100%',
-                          padding: '10px 14px',
-                          textAlign: 'left',
-                          fontSize: '12px',
-                          color: '#D91CD2',
-                          background: 'none',
-                          border: 'none',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '10px'
-                        }}
-                        className="hover:bg-white/10"
-                        data-testid="goto-dashboard-btn"
-                      >
-                        <span>⚙️</span>
-                        Mon Dashboard
-                      </button>
+                      {/* v81: Bouton dynamique — Dashboard pour coach/admin, Devenir Partenaire pour abonnés */}
+                      {(isRegisteredCoach || isCoachMode) ? (
+                        <button
+                          onClick={() => {
+                            window.location.assign(window.location.origin + '/#coach-dashboard');
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '10px 14px',
+                            textAlign: 'left',
+                            fontSize: '12px',
+                            color: '#D91CD2',
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px'
+                          }}
+                          className="hover:bg-white/10"
+                          data-testid="goto-dashboard-btn"
+                        >
+                          <span>⚙️</span>
+                          Mon Dashboard
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            window.open('https://wa.me/33767aborost?text=Bonjour%2C%20je%20souhaite%20devenir%20partenaire%20Afroboost%20!', '_blank');
+                            setShowMenu(false);
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '10px 14px',
+                            textAlign: 'left',
+                            fontSize: '12px',
+                            color: '#fff',
+                            background: 'linear-gradient(135deg, rgba(147, 51, 234, 0.3), rgba(217, 28, 210, 0.3))',
+                            border: 'none',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            fontWeight: '600'
+                          }}
+                          className="hover:bg-white/10"
+                          data-testid="become-partner-menu-btn"
+                        >
+                          <span>✨</span>
+                          Devenir Partenaire
+                        </button>
+                      )}
                       
                       <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }} />
                       
@@ -5512,20 +5572,22 @@ export const ChatWidget = () => {
                   </div>
                 )}
                 
-                {/* Input message - Mobile optimized with safe-area + z-index élevé */}
-                <div 
+                {/* v81: Input message - Borderless moderne, Mobile optimized */}
+                <div
                   style={{
-                    padding: '12px',
-                    paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))',
-                    borderTop: '1px solid rgba(255,255,255,0.1)',
+                    padding: '10px 12px',
+                    paddingBottom: 'max(10px, env(safe-area-inset-bottom, 10px))',
+                    borderTop: 'none',
                     display: 'flex',
-                    alignItems: 'center', /* Alignement vertical centré */
+                    alignItems: 'center',
                     gap: '8px',
                     flexShrink: 0,
-                    position: 'sticky', /* Sticky pour rester visible */
+                    position: 'sticky',
                     bottom: 0,
-                    zIndex: 9999, /* Z-index très élevé pour passer devant tout */
-                    background: 'rgba(0,0,0,0.98)' /* Fond opaque */
+                    zIndex: 9999,
+                    background: 'rgba(15,10,20,0.95)',
+                    backdropFilter: 'blur(10px)',
+                    WebkitBackdropFilter: 'blur(10px)'
                   }}
                   data-testid="chat-input-bar"
                 >
@@ -5604,13 +5666,13 @@ export const ChatWidget = () => {
                     placeholder="Écrivez votre message..."
                     style={{
                       flex: 1,
-                      minWidth: 0, /* Permet au flex de réduire */
-                      background: 'rgba(255,255,255,0.1)',
-                      border: '1px solid rgba(255,255,255,0.2)',
+                      minWidth: 0,
+                      background: 'rgba(255,255,255,0.08)',
+                      border: 'none',
                       borderRadius: '24px',
                       color: '#fff',
                       outline: 'none',
-                      fontSize: '16px', /* FIX ZOOM SAFARI iOS */
+                      fontSize: '16px',
                       padding: '10px 16px',
                       lineHeight: '1.2'
                     }}
@@ -5683,7 +5745,7 @@ export const ChatWidget = () => {
             background: 'rgba(0,0,0,0.88)',
             backdropFilter: 'blur(5px)',
             WebkitBackdropFilter: 'blur(5px)',
-            zIndex: 2000000,
+            zIndex: 9999999,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -5708,7 +5770,7 @@ export const ChatWidget = () => {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              zIndex: 2000001
+              zIndex: 10000000
             }}
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
