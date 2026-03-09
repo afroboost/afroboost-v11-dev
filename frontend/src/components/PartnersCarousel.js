@@ -159,7 +159,7 @@ const getMediaInfo = (videoUrl) => {
 // === COMPOSANT VIDEO CARD v9.5.7 avec mode maintenance ===
 // v11.7: Ajout isSuperAdminVideo pour désactiver double-clic
 // v34: Ajout preview 30s + overlay achat pour vidéos premium
-const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onNavigate, isPaused, onTogglePause, isVisible, maintenanceMode = false, isSuperAdmin = false, onBuyVideo }) => {
+const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onNavigate, isPaused, onTogglePause, isVisible, maintenanceMode = false, isSuperAdmin = false, onBuyVideo, socialCommentsCount = 0, onShowComments }) => {
   const videoRef = useRef(null);
   const [hasError, setHasError] = useState(false);
   const [ytPlaying, setYtPlaying] = useState(false);
@@ -797,6 +797,41 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
           className="absolute right-3 bottom-28 flex flex-col items-center gap-5"
           data-testid="reels-action-bar"
         >
+          {/* v75: Bouton Avis/Commentaires — même taille que Like et Réserver */}
+          {socialCommentsCount > 0 && onShowComments && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onShowComments();
+              }}
+              className="flex flex-col items-center transition-all hover:scale-110 active:scale-95"
+              data-testid="comments-btn"
+            >
+              <div
+                className="w-11 h-11 rounded-full flex items-center justify-center"
+                style={{
+                  background: 'rgba(217, 28, 210, 0.25)',
+                  backdropFilter: 'blur(4px)',
+                  boxShadow: '0 0 14px rgba(217, 28, 210, 0.5), 0 0 30px rgba(217, 28, 210, 0.2)',
+                  animation: 'v73GlowPulse 2.5s ease-in-out infinite'
+                }}
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+              </div>
+              <span
+                className="text-xs mt-1 font-medium"
+                style={{
+                  color: '#D91CD2',
+                  textShadow: '0 0 10px rgba(217, 28, 210, 0.8)'
+                }}
+              >
+                {socialCommentsCount}
+              </span>
+            </button>
+          )}
+
           {/* v10.3: Bouton Like avec GLOW VIOLET */}
           <button
             onClick={(e) => {
@@ -978,7 +1013,7 @@ const GlobeIcon = () => (
 );
 
 // === COMPOSANT PRINCIPAL v9.7.2 - Vitrine Unique + Son global unique ===
-const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, isSuperAdmin = false, lang = 'fr', onLangChange, currentVitrineEmail = null, onBuyVideo }) => {
+const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, isSuperAdmin = false, lang = 'fr', onLangChange, currentVitrineEmail = null, onBuyVideo, socialCommentsCount = 0, onShowComments }) => {
   // v9.6.8: État pour sélecteur de langue
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [globalMuted, setGlobalMuted] = useState(true); // Son global muté par défaut
@@ -1431,6 +1466,8 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
                   maintenanceMode={maintenanceMode}
                   isSuperAdmin={isSuperAdmin}
                   onBuyVideo={onBuyVideo}
+                  socialCommentsCount={socialCommentsCount}
+                  onShowComments={onShowComments}
                 />
               </div>
             );

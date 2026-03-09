@@ -1261,54 +1261,66 @@ async def delete_user(user_id: str):
 @api_router.post("/users/upload-photo")
 async def upload_user_photo(file: UploadFile = File(...), participant_id: str = Form(...)):
     """
-    MOTEUR D'UPLOAD RÉEL - Sauvegarde physique + DB
+    v75: MOTEUR D'UPLOAD PHOTO PROFIL — Stockage MongoDB (compatible Vercel)
     1. Reçoit l'image via UploadFile
     2. Redimensionne à 200x200 max
-    3. Sauvegarde dans /app/backend/uploads/profiles/
-    4. Met à jour photo_url dans la collection 'users' ET 'chat_participants'
-    5. Retourne l'URL pour synchronisation
+    3. Sauvegarde dans MongoDB collection 'uploaded_files' (pas le filesystem éphémère)
+    4. Met à jour photo_url dans 'users' ET 'chat_participants'
+    5. Retourne l'URL /api/files/{file_id}/{filename} pour synchronisation
     """
     from PIL import Image
     import io
     import uuid
-    import os
-    
+    from bson.binary import Binary
+
     # Validation du type MIME
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Type de fichier non supporté. Envoyez une image.")
-    
+
     # Lire le contenu du fichier
     contents = await file.read()
-    
+
     # Vérifier la taille (max 2MB)
     if len(contents) > 2 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Fichier trop volumineux (max 2MB)")
-    
+
     try:
         # Ouvrir et traiter l'image
         img = Image.open(io.BytesIO(contents))
-        
+
         # Convertir en RGB si nécessaire (RGBA, P modes)
         if img.mode in ('RGBA', 'P'):
             img = img.convert('RGB')
-        
+
         # Redimensionner à max 200x200 en conservant les proportions
         img.thumbnail((200, 200), Image.LANCZOS)
-        
-        # Créer le dossier s'il n'existe pas
-        upload_dir = "/app/backend/uploads/profiles"
-        os.makedirs(upload_dir, exist_ok=True)
-        
-        # Générer un nom de fichier unique
-        filename = f"{participant_id}_{uuid.uuid4().hex[:8]}.jpg"
-        filepath = os.path.join(upload_dir, filename)
-        
-        # Sauvegarder l'image PHYSIQUEMENT sur le serveur
-        img.save(filepath, "JPEG", quality=85)
-        
-        # URL relative pour accès via l'API
-        photo_url = f"/api/uploads/profiles/{filename}"
-        
+
+        # Sauvegarder en mémoire (pas sur le filesystem Vercel éphémère)
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=85)
+        file_bytes = buf.getvalue()
+
+        # Générer un identifiant unique pour MongoDB
+        file_id = uuid.uuid4().hex[:16]
+        filename = f"profile_{participant_id}_{file_id}.jpg"
+
+        # Stocker dans MongoDB (comme coach/upload-asset)
+        file_doc = {
+            "file_id": file_id,
+            "filename": filename,
+            "original_name": file.filename or "profile.jpg",
+            "content_type": "image/jpeg",
+            "asset_type": "profile_photo",
+            "participant_id": participant_id,
+            "data": Binary(file_bytes),
+            "size": len(file_bytes),
+            "created_at": datetime.utcnow()
+        }
+        await db.uploaded_files.insert_one(file_doc)
+
+        # URL publique via le endpoint /api/files/ existant
+        photo_url = f"/api/files/{file_id}/{filename}"
+
         # === MISE À JOUR BASE DE DONNÉES ===
         # 1. Mettre à jour dans la collection 'users' (par participant_id OU email)
         update_result_users = await db.users.update_one(
@@ -1316,16 +1328,16 @@ async def upload_user_photo(file: UploadFile = File(...), participant_id: str = 
             {"$set": {"photo_url": photo_url, "photoUrl": photo_url}},
             upsert=False
         )
-        
+
         # 2. Mettre à jour dans 'chat_participants' si existe
         update_result_participants = await db.chat_participants.update_one(
             {"id": participant_id},
             {"$set": {"photo_url": photo_url, "photoUrl": photo_url}},
             upsert=False
         )
-        
-        logger.info(f"[UPLOAD] ✅ Photo uploadée: {filename} | users={update_result_users.modified_count}, participants={update_result_participants.modified_count}")
-        
+
+        logger.info(f"[UPLOAD] ✅ v75 Photo profil MongoDB: {filename} ({len(file_bytes)} bytes) | users={update_result_users.modified_count}, participants={update_result_participants.modified_count}")
+
         return {
             "success": True,
             "url": photo_url,
@@ -1336,7 +1348,7 @@ async def upload_user_photo(file: UploadFile = File(...), participant_id: str = 
                 "participants": update_result_participants.modified_count
             }
         }
-        
+
     except Exception as e:
         logger.error(f"[UPLOAD] ❌ Erreur traitement image: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur traitement image: {str(e)}")

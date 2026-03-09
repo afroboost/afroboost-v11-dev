@@ -4004,37 +4004,10 @@ function App() {
             console.log('[V34-BUY] Achat vidéo depuis carousel:', videoOffer);
             handleSelectOffer(videoOffer);
           }}
+          socialCommentsCount={socialComments.length}
+          onShowComments={() => setShowCommentsPanel(true)}
         />
-        {/* v74: Icône AVIS Glow Afroboost — taille réduite, position ajustée */}
-        {socialComments.length > 0 && (
-          <button
-            onClick={() => setShowCommentsPanel(true)}
-            style={{
-              position: 'absolute', bottom: '220px', right: '10px', zIndex: 20,
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px',
-              background: 'none', border: 'none', cursor: 'pointer', padding: 0
-            }}
-          >
-            <div style={{
-              width: '40px', height: '40px', borderRadius: '50%',
-              background: 'rgba(217, 28, 210, 0.25)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 0 14px rgba(217, 28, 210, 0.5), 0 0 30px rgba(217, 28, 210, 0.2)',
-              animation: 'v73GlowPulse 2.5s ease-in-out infinite'
-            }}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-              </svg>
-            </div>
-            <span style={{
-              color: '#fff', fontSize: '13px', fontWeight: 800,
-              textShadow: '0 1px 4px rgba(0,0,0,0.95), 0 0 8px rgba(217,28,210,0.4)',
-              lineHeight: 1
-            }}>
-              {socialComments.length}
-            </span>
-          </button>
-        )}
+        {/* v75: Icône AVIS intégrée dans la barre d'actions PartnersCarousel */}
       </div>
 
       {/* v14: VITRINE COACH OVERLAY - Transition instantanée, pas d'écran de chargement violet */}
