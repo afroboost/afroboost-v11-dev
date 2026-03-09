@@ -2642,14 +2642,16 @@ async def launch_campaign(campaign_id: str):
                         elif any(media_url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
                             media_html = f'<div style="padding:0;"><img src="{media_url}" alt="Média" style="width:100%;max-height:300px;object-fit:cover;" /></div>'
                         elif 'youtube.com' in media_url or 'youtu.be' in media_url:
-                            # Extraire l'ID YouTube (watch, embed, shorts, youtu.be)
+                            # v87: Extraire l'ID YouTube — lien redirige vers l'app Afroboost
                             import re as re_yt
                             yt_match = re_yt.search(r'(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})', media_url)
                             yt_id = yt_match.group(1) if yt_match else None
+                            # v87: Lien CTA vers l'app Afroboost au lieu de YouTube
+                            app_url = "https://afroboost-v11-dev-pm7l.vercel.app"
                             if yt_id:
-                                media_html = f'<div style="padding:0;text-align:center;"><a href="{media_url}" style="text-decoration:none;"><img src="https://img.youtube.com/vi/{yt_id}/hqdefault.jpg" alt="Vidéo" style="width:100%;max-height:300px;object-fit:cover;border-radius:4px;" /><div style="padding:8px;color:#9333EA;font-size:13px;font-weight:bold;">▶ Voir la vidéo YouTube</div></a></div>'
+                                media_html = f'<div style="padding:0;text-align:center;"><a href="{app_url}" style="text-decoration:none;"><img src="https://img.youtube.com/vi/{yt_id}/hqdefault.jpg" alt="Vidéo" style="width:100%;max-height:300px;object-fit:cover;border-radius:4px;" /><div style="padding:8px;color:#9333EA;font-size:13px;font-weight:bold;">▶ Voir sur Afroboost</div></a></div>'
                             else:
-                                media_html = f'<div style="padding:10px 20px;text-align:center;"><a href="{media_url}" style="color:#9333EA;font-size:13px;">▶ Voir la vidéo YouTube</a></div>'
+                                media_html = f'<div style="padding:10px 20px;text-align:center;"><a href="{app_url}" style="color:#9333EA;font-size:13px;">▶ Voir sur Afroboost</a></div>'
 
                     html_content = f"""<!DOCTYPE html>
 <html lang="fr">
@@ -8781,13 +8783,32 @@ async def send_push_to_participant(request: Request):
         "email_sent": email_sent,
         "participant_id": participant_id
     }
-# === v13: CRON ENDPOINT — Vérifie et lance les campagnes programmées ===
+# === v87: CRON ENDPOINT — Vérifie et lance les campagnes programmées ===
+# v87: Helper pour parser scheduledAt (gère Z, +00:00, et naïf)
+def _parse_scheduled_at(scheduled_at_str: str) -> datetime:
+    """Parse un scheduledAt ISO string vers un datetime UTC aware."""
+    if not scheduled_at_str:
+        return None
+    try:
+        s = scheduled_at_str.strip()
+        # Gérer le suffix Z (JavaScript toISOString())
+        if s.endswith('Z'):
+            s = s[:-1] + '+00:00'
+        dt = datetime.fromisoformat(s)
+        # Si naïf (pas de timezone), on assume UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
 @api_router.get("/cron/check-campaigns")
 async def cron_check_campaigns(request: Request):
     """
     Vercel Cron job: vérifie les campagnes 'scheduled' dont scheduledAt <= now.
     Lance automatiquement chaque campagne due.
     Protégé par header Vercel CRON_SECRET ou Super Admin.
+    v87: Comparaison datetime robuste (gère Z et +00:00).
     """
     # Vérification sécurité (Vercel cron envoie Authorization: Bearer <CRON_SECRET>)
     auth_header = request.headers.get("Authorization", "")
@@ -8801,13 +8822,20 @@ async def cron_check_campaigns(request: Request):
     if not is_vercel_cron and not is_admin and not is_local_dev:
         raise HTTPException(status_code=401, detail="Unauthorized - Cron access only")
 
-    now = datetime.now(timezone.utc).isoformat()
+    now_dt = datetime.now(timezone.utc)
+    now = now_dt.isoformat()
 
-    # Trouver les campagnes programmées dont l'heure est passée
-    due_campaigns = await db.campaigns.find({
+    # v87: Récupérer TOUTES les campagnes scheduled, comparer en datetime (pas string)
+    all_scheduled = await db.campaigns.find({
         "status": "scheduled",
-        "scheduledAt": {"$lte": now}
-    }).to_list(50)
+        "scheduledAt": {"$exists": True, "$ne": None}
+    }).to_list(200)
+
+    due_campaigns = []
+    for campaign in all_scheduled:
+        scheduled_dt = _parse_scheduled_at(campaign.get("scheduledAt", ""))
+        if scheduled_dt and scheduled_dt <= now_dt:
+            due_campaigns.append(campaign)
 
     launched = []
     errors = []
@@ -8830,11 +8858,13 @@ async def cron_check_campaigns(request: Request):
             )
 
     # Nettoyer les campagnes bloquées en "sending" depuis plus de 10 minutes
-    ten_minutes_ago = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
-    stuck_campaigns = await db.campaigns.find({
-        "status": "sending",
-        "updatedAt": {"$lte": ten_minutes_ago}
-    }).to_list(50)
+    ten_minutes_ago = now_dt - timedelta(minutes=10)
+    all_sending = await db.campaigns.find({"status": "sending"}).to_list(50)
+    stuck_campaigns = []
+    for sc in all_sending:
+        updated_dt = _parse_scheduled_at(sc.get("updatedAt", ""))
+        if updated_dt and updated_dt <= ten_minutes_ago:
+            stuck_campaigns.append(sc)
 
     stuck_fixed = 0
     for stuck in stuck_campaigns:

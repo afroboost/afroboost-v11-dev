@@ -58,6 +58,8 @@ export default function CampaignModal({
   const [step, setStep] = useState(1);
   const [aiSuggestions, setAiSuggestions] = useState([]);
   const [aiSuggestionsLoading, setAiSuggestionsLoading] = useState(false);
+  // v87: Anti-doublon bouton Programmer/Créer
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // v18: Unified contacts system
   const [allContacts, setAllContacts] = useState([]);
@@ -901,15 +903,21 @@ export default function CampaignModal({
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
               <button type="button"
-                disabled={!canCreate}
-                onClick={(e) => { if (canCreate) { createCampaign(e); onClose(); } }}
+                disabled={!canCreate || isSubmitting}
+                onClick={async (e) => {
+                  if (canCreate && !isSubmitting) {
+                    setIsSubmitting(true);
+                    try { await createCampaign(e); } finally { setIsSubmitting(false); }
+                    onClose();
+                  }
+                }}
                 style={{
                   padding: '10px 24px', borderRadius: '8px', border: 'none', fontSize: '13px', fontWeight: 600,
-                  cursor: canCreate ? 'pointer' : 'not-allowed',
-                  background: canCreate ? 'linear-gradient(135deg, #22c55e, #16a34a)' : 'rgba(107,114,128,0.3)',
-                  color: '#fff', opacity: canCreate ? 1 : 0.5
+                  cursor: (canCreate && !isSubmitting) ? 'pointer' : 'not-allowed',
+                  background: isSubmitting ? 'rgba(107,114,128,0.5)' : canCreate ? 'linear-gradient(135deg, #22c55e, #16a34a)' : 'rgba(107,114,128,0.3)',
+                  color: '#fff', opacity: (canCreate && !isSubmitting) ? 1 : 0.5
                 }}>
-                {editingCampaignId ? '💾 Enregistrer' : canCreate ? `🚀 Créer (${selectedRecipients?.length || 0} dest.)` : '🔒 Crédits insuffisants'}
+                {isSubmitting ? '⏳ Envoi en cours...' : editingCampaignId ? '💾 Enregistrer' : canCreate ? `🚀 Créer (${selectedRecipients?.length || 0} dest.)` : '🔒 Crédits insuffisants'}
               </button>
               {!canCreate && (
                 <span style={{ fontSize: '10px', color: '#ef4444' }}>Rechargez votre pack</span>

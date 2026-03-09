@@ -2361,9 +2361,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       loadActiveConversations();
       loadAIConfig();
       loadAILogs();
-      // v16.4: Déclenche silencieusement le check des campagnes programmées
-      // (Vercel Hobby = cron 1x/jour seulement, donc on compense ici)
-      fetch(`${API}/cron/check-campaigns`).catch(() => {});
+      // v87: Déclenche le check des campagnes programmées puis toutes les 60s
+      // (Vercel Hobby = cron limité, donc on compense avec polling frontend)
+      const triggerCheck = () => {
+        fetch(`${API}/cron/check-campaigns`).then(() => loadCampaigns()).catch(() => {});
+      };
+      triggerCheck();
+      const campaignCheckInterval = setInterval(triggerCheck, 60000); // 60s
+      return () => clearInterval(campaignCheckInterval);
     }
   }, [tab]);
 

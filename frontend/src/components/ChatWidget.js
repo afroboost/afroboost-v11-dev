@@ -2664,12 +2664,22 @@ export const ChatWidget = () => {
             });
             if (newMsgs.length > 0) {
               console.log(`[RAMASSER] ${newMsgs.length} NOUVEAUX messages ajoutes`);
+              // v87: Son notification pour les nouveaux messages (campagne ou coach)
+              const hasCampaignMsg = newMsgs.some(m =>
+                (m.sender_id && m.sender_id.startsWith('coach-campaign')) || m.campaign_id
+              );
+              const hasCoachMsg = newMsgs.some(m => m.sender_type === 'coach');
+              if (hasCampaignMsg || hasCoachMsg) {
+                try { playSoundIfEnabled('coach'); } catch(e) {}
+              } else {
+                try { playSoundIfEnabled('message'); } catch(e) {}
+              }
               return [...prev, ...newMsgs].sort((a, b) => (a.created_at || '0').localeCompare(b.created_at || '0'));
             }
             return prev;
           });
         }
-        
+
         setIsSyncing(false);
         
       } catch (err) {
@@ -2761,8 +2771,8 @@ export const ChatWidget = () => {
     // Récupération initiale au montage
     fetchLatestMessages(0, 'mount');
 
-    // === v16.4: POLLING TEMPS RÉEL — Toutes les 5s quand chat visible ===
-    const POLL_INTERVAL = 5000; // 5 secondes
+    // === v87: POLLING TEMPS RÉEL — Toutes les 3s quand chat visible (plus réactif) ===
+    const POLL_INTERVAL = 3000; // v87: 3 secondes pour chat "live"
     const pollRef = setInterval(() => {
       if (document.visibilityState === 'visible' && navigator.onLine) {
         fetchLatestMessages(0, 'poll');
