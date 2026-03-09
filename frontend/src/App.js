@@ -4004,28 +4004,30 @@ function App() {
             handleSelectOffer(videoOffer);
           }}
         />
-        {/* v72.1: Icône AVIS style YouTube — propre, visible, cliquable */}
+        {/* v73: Icône AVIS Glow Afroboost — violet néon + pulse doux */}
         {socialComments.length > 0 && (
           <button
             onClick={() => setShowCommentsPanel(true)}
             style={{
               position: 'absolute', bottom: '200px', right: '16px', zIndex: 20,
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
               background: 'none', border: 'none', cursor: 'pointer', padding: 0
             }}
           >
             <div style={{
-              width: '44px', height: '44px', borderRadius: '50%',
-              background: 'rgba(0, 0, 0, 0.55)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center'
+              width: '48px', height: '48px', borderRadius: '50%',
+              background: 'rgba(217, 28, 210, 0.25)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 0 18px rgba(217, 28, 210, 0.5), 0 0 40px rgba(217, 28, 210, 0.2)',
+              animation: 'v73GlowPulse 2.5s ease-in-out infinite'
             }}>
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="#fff" stroke="none">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
               </svg>
             </div>
             <span style={{
-              color: '#fff', fontSize: '12px', fontWeight: 700,
-              textShadow: '0 1px 3px rgba(0,0,0,0.9)',
+              color: '#fff', fontSize: '14px', fontWeight: 800,
+              textShadow: '0 1px 4px rgba(0,0,0,0.95), 0 0 8px rgba(217,28,210,0.4)',
               lineHeight: 1
             }}>
               {socialComments.length}
@@ -5000,74 +5002,7 @@ function App() {
           </div>
         )}
 
-        {/* v71: Section Témoignages / Avis clients — DYNAMIQUE avec commentaires IA */}
-        <div className="mb-8 fade-in-section" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
-          <h2 className="font-semibold text-white text-center mb-6" style={{ fontSize: '18px' }}>
-            Ce que disent nos clients
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {(socialComments.length > 0 ? socialComments.slice(0, 6) : [
-              { id: 'static1', user_name: 'Sarah M.', text: "L'ambiance est incroyable ! Le concept casques audio rend la session unique. Je reviens chaque semaine.", likes: 42 },
-              { id: 'static2', user_name: 'Kevin L.', text: "Cours de danse top ! Le coach est super motivant. Parfait pour se défouler après le travail.", likes: 38 }
-            ]).map((comment) => (
-              <div key={comment.id} className="rounded-xl p-5"
-                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                  <div style={{
-                    width: '28px', height: '28px', borderRadius: '50%',
-                    background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: '12px', fontWeight: 700, color: '#fff', flexShrink: 0
-                  }}>
-                    {(comment.user_name || '?')[0].toUpperCase()}
-                  </div>
-                  <span style={{ color: '#fff', fontSize: '13px', fontWeight: 600 }}>{comment.user_name}</span>
-                  <span style={{ color: '#D91CD2', fontSize: '11px', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                    ❤️ {comment.likes || 0}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 mb-2">
-                  {[1,2,3,4,5].map(i => (
-                    <svg key={i} width="14" height="14" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
-                      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                    </svg>
-                  ))}
-                </div>
-                <p className="text-white/70 text-sm leading-relaxed italic mb-1">
-                  "{comment.text}"
-                </p>
-              </div>
-            ))}
-          </div>
-          {socialComments.length > 6 && (
-            <button
-              onClick={() => setShowCommentsPanel(true)}
-              style={{
-                display: 'block', margin: '12px auto 0', background: 'none', border: 'none', cursor: 'pointer',
-                color: '#D91CD2', fontSize: '13px', fontWeight: 600, padding: '8px 16px',
-                borderRadius: '8px', transition: 'background 0.2s'
-              }}
-            >
-              Voir les {socialComments.length} avis →
-            </button>
-          )}
-          {/* Lien avis Google si configuré */}
-          {concept.googleReviewsUrl && (
-            <div className="text-center mt-4">
-              <a href={concept.googleReviewsUrl} target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 text-sm transition-colors hover:text-pink-400"
-                style={{ color: 'rgba(217, 28, 210, 0.8)' }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                </svg>
-                Voir tous les avis Google
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-                </svg>
-              </a>
-            </div>
-          )}
-        </div>
+        {/* v73: Section "Ce que disent nos clients" SUPPRIMÉE — tout passe par l'icône Glow du Hero */}
 
         {/* v15: Footer amélioré avec réseaux sociaux + infos utiles */}
         <footer className="mt-12 mb-8 text-center" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
@@ -5349,11 +5284,15 @@ function App() {
         </div>
       )}
 
-      {/* v72.1: CSS Animation panneau slide-up YouTube */}
+      {/* v73: CSS Animations — slide-up + Glow Pulse Afroboost */}
       <style>{`
         @keyframes v72slideUp {
           from { transform: translateY(100%); }
           to { transform: translateY(0); }
+        }
+        @keyframes v73GlowPulse {
+          0%, 100% { transform: scale(1); box-shadow: 0 0 18px rgba(217,28,210,0.5), 0 0 40px rgba(217,28,210,0.2); }
+          50% { transform: scale(1.08); box-shadow: 0 0 25px rgba(217,28,210,0.7), 0 0 55px rgba(217,28,210,0.3); }
         }
       `}</style>
     </div>

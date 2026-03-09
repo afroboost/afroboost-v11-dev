@@ -5279,7 +5279,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           cursor: 'pointer', boxShadow: '0 0 15px rgba(217,28,210,0.3)'
                         }}
                       >
-                        🤖 Générer 50 Commentaires IA
+                        🚀 Booster la Preuve Sociale (50 avis IA)
                       </button>
                       <button
                         onClick={async () => {

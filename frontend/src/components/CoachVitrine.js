@@ -940,28 +940,30 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* v72.1: Icône AVIS style YouTube — propre, visible, cliquable */}
+        {/* v73: Icône AVIS Glow Afroboost — violet néon + pulse doux */}
         {socialComments.length > 0 && (
           <button
             onClick={() => setShowCommentsPanel(true)}
             style={{
               position: 'absolute', bottom: '200px', right: '16px', zIndex: 20,
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
               background: 'none', border: 'none', cursor: 'pointer', padding: 0
             }}
           >
             <div style={{
-              width: '44px', height: '44px', borderRadius: '50%',
-              background: 'rgba(0, 0, 0, 0.55)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center'
+              width: '48px', height: '48px', borderRadius: '50%',
+              background: 'rgba(217, 28, 210, 0.25)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 0 18px rgba(217, 28, 210, 0.5), 0 0 40px rgba(217, 28, 210, 0.2)',
+              animation: 'v73GlowPulse 2.5s ease-in-out infinite'
             }}>
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="#fff" stroke="none">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
               </svg>
             </div>
             <span style={{
-              color: '#fff', fontSize: '12px', fontWeight: 700,
-              textShadow: '0 1px 3px rgba(0,0,0,0.9)',
+              color: '#fff', fontSize: '14px', fontWeight: 800,
+              textShadow: '0 1px 4px rgba(0,0,0,0.95), 0 0 8px rgba(217,28,210,0.4)',
               lineHeight: 1
             }}>
               {socialComments.length}
@@ -1523,61 +1525,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* v72: Section Avis Clients — Aperçu + bouton pour ouvrir le panneau */}
-        <div className="mb-8 vitrine-fade-in" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
-          <h2 className="font-semibold text-white text-center mb-4" style={{ fontSize: '16px' }}>
-            Ce que disent nos clients
-          </h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {(socialComments.length > 0 ? socialComments.slice(0, 3) : [
-              { id: 'default', user_name: 'Client vérifié', text: 'Super expérience, le coach est top !', likes: 12 }
-            ]).map((comment, idx) => (
-              <div key={comment.id || idx} className="rounded-xl" style={{
-                padding: '14px 16px',
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(217, 28, 210, 0.12)'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                  <div style={{
-                    width: '32px', height: '32px', borderRadius: '50%',
-                    background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: '13px', fontWeight: 700, color: '#fff', flexShrink: 0
-                  }}>
-                    {(comment.user_name || '?').charAt(0).toUpperCase()}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <span style={{ color: '#fff', fontSize: '13px', fontWeight: 600 }}>{comment.user_name}</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '2px', marginTop: '2px' }}>
-                      {[1,2,3,4,5].map(i => (
-                        <svg key={i} width="10" height="10" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
-                          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                        </svg>
-                      ))}
-                    </div>
-                  </div>
-                  <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                    ❤️ {comment.likes || 0}
-                  </span>
-                </div>
-                <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '13px', lineHeight: '1.5', margin: 0 }}>
-                  "{comment.text}"
-                </p>
-              </div>
-            ))}
-          </div>
-          {socialComments.length > 3 && (
-            <button
-              onClick={() => setShowCommentsPanel(true)}
-              style={{
-                display: 'block', margin: '12px auto 0', background: 'none', border: 'none', cursor: 'pointer',
-                color: '#D91CD2', fontSize: '13px', fontWeight: 600, padding: '8px 16px'
-              }}
-            >
-              Voir les {socialComments.length} avis →
-            </button>
-          )}
-        </div>
+        {/* v73: Section "Ce que disent nos clients" SUPPRIMÉE — tout passe par l'icône Glow du Hero */}
 
         {/* v72.1: Panneau commentaires style YouTube — slide-up depuis le bas */}
         {showCommentsPanel && (
@@ -1691,11 +1639,15 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* v72.1: CSS Animation panneau slide-up YouTube */}
+        {/* v73: CSS Animations — slide-up + Glow Pulse Afroboost */}
         <style>{`
           @keyframes v72slideUp {
             from { transform: translateY(100%); }
             to { transform: translateY(0); }
+          }
+          @keyframes v73GlowPulse {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 18px rgba(217,28,210,0.5), 0 0 40px rgba(217,28,210,0.2); }
+            50% { transform: scale(1.08); box-shadow: 0 0 25px rgba(217,28,210,0.7), 0 0 55px rgba(217,28,210,0.3); }
           }
         `}</style>
 
