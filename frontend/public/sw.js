@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 — Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v84';
-// V84: Devenir Partenaire visible pour abonnés (condition isCoachMode only), bannière visiteur, interface épurée
+const CACHE_NAME = 'afroboost-v85';
+// V85: Design minimaliste & CTA Top-Page — zéro bordures, fond noir pur, zoom photo amélioré
 
 // Installation — skip waiting pour activer immédiatement
 self.addEventListener('install', (event) => {

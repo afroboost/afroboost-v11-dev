@@ -4027,10 +4027,12 @@ export const ChatWidget = () => {
                         </svg>
                         {uploadingPhoto ? 'Upload...' : 'Photo de profil'}
                         {profilePhoto && (
-                          <img 
-                            src={profilePhoto} 
-                            alt="" 
-                            style={{ width: '20px', height: '20px', borderRadius: '50%', marginLeft: 'auto' }}
+                          <img
+                            id="profile-avatar-zoom"
+                            src={profilePhoto}
+                            alt=""
+                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); setZoomedChatPhoto(profilePhoto); }}
+                            style={{ width: '20px', height: '20px', borderRadius: '50%', marginLeft: 'auto', cursor: 'pointer', padding: '10px', margin: '-10px', marginLeft: 'auto', boxSizing: 'content-box' }}
                           />
                         )}
                       </label>
@@ -5151,16 +5153,15 @@ export const ChatWidget = () => {
             {/* Zone de chat */}
             {step === 'chat' && (
               <>
-                {/* Indicateur mode non-IA */}
+                {/* v85: Indicateur mode non-IA — sans bordure */}
                 {sessionData && !sessionData.is_ai_active && (
-                  <div 
+                  <div
                     style={{
                       background: isCommunityMode ? 'rgba(139, 92, 246, 0.2)' : 'rgba(234, 179, 8, 0.2)',
                       padding: '8px 16px',
                       textAlign: 'center',
                       fontSize: '11px',
-                      color: isCommunityMode ? '#a78bfa' : '#fbbf24',
-                      borderBottom: '1px solid rgba(255,255,255,0.1)'
+                      color: isCommunityMode ? '#a78bfa' : '#fbbf24'
                     }}
                   >
                     {isCommunityMode 
@@ -5171,14 +5172,41 @@ export const ChatWidget = () => {
                   </div>
                 )}
 
+                {/* v85: CTA "Devenir Partenaire" TOUT EN HAUT — au-dessus de tout (tabs, abo, pass) */}
+                {!isCoachMode && (
+                  <button
+                    onClick={() => window.dispatchEvent(new CustomEvent('openBecomeCoach'))}
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.2), rgba(139, 92, 246, 0.2))',
+                      border: 'none',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      flexShrink: 0
+                    }}
+                    data-testid="become-partner-banner"
+                  >
+                    <span style={{ fontSize: '14px' }}>✨</span>
+                    <span style={{ color: '#D91CD2', fontSize: '13px', fontWeight: '700', letterSpacing: '0.3px' }}>Devenir Partenaire</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="2.5" strokeLinecap="round">
+                      <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                  </button>
+                )}
+
                 {/* Messages Container - SMOOTH SCROLL: overflow-anchor none pour stabilité mobile */}
-                
+
                 {/* v8.6: Onglets Privé / Groupe */}
+                {/* v85: Onglets sans bordure — fond noir pur, séparation par gap */}
                 {afroboostProfile?.code && (
                   <div style={{
                     display: 'flex',
-                    borderBottom: '1px solid rgba(255,255,255,0.1)',
-                    padding: '0 16px'
+                    padding: '0 16px',
+                    background: '#000000'
                   }}>
                     <button
                       onClick={() => { setChatMode('private'); }}
@@ -5201,7 +5229,7 @@ export const ChatWidget = () => {
                   </div>
                 )}
                 
-                {/* === v84: BLOC INFO ABONNEMENT épuré (Offre + Solde + Validité) === */}
+                {/* === v85: BLOC INFO ABONNEMENT — fond ultra-discret, ZERO bordure === */}
                 {afroboostProfile?.subscription && (
                   <div
                     style={{
@@ -5209,8 +5237,7 @@ export const ChatWidget = () => {
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       padding: '8px 16px',
-                      background: 'rgba(217, 28, 210, 0.08)',
-                      borderBottom: '1px solid rgba(217, 28, 210, 0.1)'
+                      background: 'rgba(255, 255, 255, 0.03)'
                     }}
                     data-testid="subscription-info-bar"
                   >
@@ -5248,9 +5275,9 @@ export const ChatWidget = () => {
                   </div>
                 )}
 
-                {/* === v84: MON PASS épuré - QR Code permanent pour abonné identifié === */}
+                {/* === v85: MON PASS — fond ultra-discret, ZERO bordure === */}
                 {afroboostProfile?.code && (
-                  <div style={{ borderBottom: '1px solid rgba(217, 28, 210, 0.1)' }}>
+                  <div style={{ background: '#000000' }}>
                     {/* Barre compacte cliquable "Mon Pass" */}
                     <button
                       onClick={() => setShowMonPass(prev => !prev)}
@@ -5260,7 +5287,7 @@ export const ChatWidget = () => {
                         alignItems: 'center',
                         justifyContent: 'space-between',
                         padding: '6px 16px',
-                        background: 'rgba(217, 28, 210, 0.05)',
+                        background: 'rgba(255, 255, 255, 0.03)',
                         border: 'none',
                         cursor: 'pointer',
                         transition: 'background 0.2s'
@@ -5316,32 +5343,7 @@ export const ChatWidget = () => {
                   </div>
                 )}
 
-                {/* v84: Bannière "Devenir Partenaire" visible en haut du chat pour tous sauf Mode Coach */}
-                {step === 'chat' && !isCoachMode && (
-                  <button
-                    onClick={() => window.dispatchEvent(new CustomEvent('openBecomeCoach'))}
-                    style={{
-                      width: '100%',
-                      padding: '10px 16px',
-                      background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.15), rgba(139, 92, 246, 0.15))',
-                      border: 'none',
-                      borderBottom: '1px solid rgba(217, 28, 210, 0.2)',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      flexShrink: 0
-                    }}
-                    data-testid="become-partner-banner"
-                  >
-                    <span style={{ fontSize: '14px' }}>✨</span>
-                    <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: '600' }}>Devenir Partenaire</span>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="2" strokeLinecap="round">
-                      <polyline points="9 18 15 12 9 6"></polyline>
-                    </svg>
-                  </button>
-                )}
+                {/* v85: Banner supprimé ici — déplacé tout en haut (avant les onglets) */}
 
                 <div
                   style={{
@@ -5696,7 +5698,7 @@ export const ChatWidget = () => {
         isMainChatOpen={isOpen}
       />
       
-      {/* === v82: MODAL ZOOM PHOTO — Portal sur document.body + z-index 99999999 === */}
+      {/* === v85: MODAL ZOOM PHOTO — Portal sur document.body + z-index 10000000 === */}
       {zoomedChatPhoto && ReactDOM.createPortal(
         <div
           style={{
@@ -5708,7 +5710,7 @@ export const ChatWidget = () => {
             background: 'rgba(0,0,0,0.88)',
             backdropFilter: 'blur(5px)',
             WebkitBackdropFilter: 'blur(5px)',
-            zIndex: 99999999,
+            zIndex: 10000000,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -5734,7 +5736,7 @@ export const ChatWidget = () => {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              zIndex: 100000000
+              zIndex: 10000001
             }}
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
