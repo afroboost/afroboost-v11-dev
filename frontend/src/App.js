@@ -1,6 +1,23 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import "@/App.css";
 import axios from "axios";
+
+// v62: Intercepteur global — injecte X-User-Email sur TOUTES les requêtes axios
+axios.interceptors.request.use((config) => {
+  if (!config.headers['X-User-Email']) {
+    try {
+      const saved = localStorage.getItem('afroboost_coach_user');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed?.email) {
+          config.headers['X-User-Email'] = parsed.email;
+        }
+      }
+    } catch (e) { /* ignore */ }
+  }
+  return config;
+});
+console.log("V62 ACTIVÉE - SYNC DURÉE OK - AUTH INTERCEPTOR GLOBAL");
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import html2canvas from "html2canvas";
