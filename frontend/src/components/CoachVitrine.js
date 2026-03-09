@@ -100,9 +100,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const ytPreviewTimerRef = useRef(null);
   const PREVIEW_LIMIT = 30; // secondes
 
-  // v71: Social Proof — Commentaires flottants
+  // v72: Social Proof — Icône interactive + panneau commentaires
   const [socialComments, setSocialComments] = useState([]);
-  const [visibleComment, setVisibleComment] = useState(0);
+  const [showCommentsPanel, setShowCommentsPanel] = useState(false);
 
   // v17: INLINE booking multi-séances (tableau de { course, date })
   const [selectedBookings, setSelectedBookings] = useState([]); // [{ course, date }, ...]
@@ -492,15 +492,6 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     setShowVideoPreviewOverlay(false);
     if (ytPreviewTimerRef.current) { clearTimeout(ytPreviewTimerRef.current); ytPreviewTimerRef.current = null; }
   }, [activeVideoIndex]);
-
-  // v71: Rotation des commentaires Social Proof sur le Hero (toutes les 4s)
-  useEffect(() => {
-    if (socialComments.length <= 1) return;
-    const timer = setInterval(() => {
-      setVisibleComment(prev => (prev + 1) % socialComments.length);
-    }, 4000);
-    return () => clearInterval(timer);
-  }, [socialComments.length]);
 
   // === LOADING — v14: fond noir simple, pas de violet ===
   if (loading) {
@@ -949,43 +940,37 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* v71: Social Proof Overlay — Commentaires flottants sur le Hero */}
+        {/* v72: Icône Social Proof interactive — Style YouTube/TikTok */}
         {socialComments.length > 0 && (
-          <div className="absolute z-15 pointer-events-none" style={{
-            bottom: '140px', left: '16px', right: '70px', zIndex: 15
-          }}>
-            {socialComments.slice(0, 5).map((comment, idx) => (
-              <div key={comment.id || idx} style={{
-                position: 'absolute', bottom: 0, left: 0, right: 0,
-                opacity: idx === visibleComment % Math.min(socialComments.length, 5) ? 1 : 0,
-                transform: idx === visibleComment % Math.min(socialComments.length, 5) ? 'translateY(0)' : 'translateY(10px)',
-                transition: 'all 0.6s ease-in-out',
-                background: 'rgba(0, 0, 0, 0.65)',
-                backdropFilter: 'blur(12px)',
-                WebkitBackdropFilter: 'blur(12px)',
-                border: '1px solid rgba(217, 28, 210, 0.35)',
-                borderRadius: '14px',
-                padding: '10px 14px',
-                maxWidth: '320px'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                  <div style={{
-                    width: '28px', height: '28px', borderRadius: '50%',
-                    background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: '12px', fontWeight: 700, color: '#fff', flexShrink: 0
-                  }}>
-                    {(comment.user_name || '?').charAt(0).toUpperCase()}
-                  </div>
-                  <span style={{ color: '#fff', fontSize: '12px', fontWeight: 600 }}>{comment.user_name}</span>
-                  <span style={{ color: '#D91CD2', fontSize: '11px', marginLeft: 'auto' }}>❤️ {comment.likes || 0}</span>
-                </div>
-                <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '12px', lineHeight: '1.4', margin: 0 }}>
-                  {comment.text}
-                </p>
-              </div>
-            ))}
-          </div>
+          <button
+            onClick={() => setShowCommentsPanel(true)}
+            style={{
+              position: 'absolute', bottom: '100px', right: '16px', zIndex: 20,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
+              background: 'none', border: 'none', cursor: 'pointer', padding: 0
+            }}
+          >
+            <div style={{
+              width: '48px', height: '48px', borderRadius: '50%',
+              background: 'rgba(0, 0, 0, 0.5)',
+              backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 0 20px rgba(217, 28, 210, 0.4), 0 0 40px rgba(217, 28, 210, 0.15)',
+              border: '1.5px solid rgba(217, 28, 210, 0.5)',
+              animation: 'v72pulse 2s ease-in-out infinite'
+            }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+            </div>
+            <span style={{
+              color: '#fff', fontSize: '11px', fontWeight: 600,
+              textShadow: '0 1px 4px rgba(0,0,0,0.8)',
+              lineHeight: 1
+            }}>
+              {socialComments.length} avis
+            </span>
+          </button>
         )}
 
         {/* Gradient overlay bas */}
@@ -1542,20 +1527,19 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* v71: Section Avis Clients — Commentaires dynamiques Social Proof */}
+        {/* v72: Section Avis Clients — Aperçu + bouton pour ouvrir le panneau */}
         <div className="mb-8 vitrine-fade-in" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
           <h2 className="font-semibold text-white text-center mb-4" style={{ fontSize: '16px' }}>
             Ce que disent nos clients
           </h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {(socialComments.length > 0 ? socialComments.slice(0, 6) : [
+            {(socialComments.length > 0 ? socialComments.slice(0, 3) : [
               { id: 'default', user_name: 'Client vérifié', text: 'Super expérience, le coach est top !', likes: 12 }
             ]).map((comment, idx) => (
               <div key={comment.id || idx} className="rounded-xl" style={{
                 padding: '14px 16px',
                 background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(217, 28, 210, 0.12)',
-                transition: 'border-color 0.3s ease'
+                border: '1px solid rgba(217, 28, 210, 0.12)'
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
                   <div style={{
@@ -1586,14 +1570,146 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               </div>
             ))}
           </div>
-          {socialComments.length > 6 && (
-            <div style={{ textAlign: 'center', marginTop: '12px' }}>
-              <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>
-                + {socialComments.length - 6} autres avis
-              </span>
-            </div>
+          {socialComments.length > 3 && (
+            <button
+              onClick={() => setShowCommentsPanel(true)}
+              style={{
+                display: 'block', margin: '12px auto 0', background: 'none', border: 'none', cursor: 'pointer',
+                color: '#D91CD2', fontSize: '13px', fontWeight: 600, padding: '8px 16px'
+              }}
+            >
+              Voir les {socialComments.length} avis →
+            </button>
           )}
         </div>
+
+        {/* v72: Panneau latéral des commentaires Social Proof */}
+        {showCommentsPanel && (
+          <div
+            className="fixed inset-0 z-50"
+            style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
+            onClick={() => setShowCommentsPanel(false)}
+          >
+            <div
+              style={{
+                position: 'absolute', top: 0, right: 0, bottom: 0,
+                width: '100%', maxWidth: '420px',
+                background: 'linear-gradient(180deg, #0a0a14 0%, #12061a 100%)',
+                overflowY: 'auto', WebkitOverflowScrolling: 'touch',
+                animation: 'v72slideIn 0.3s ease-out'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{
+                position: 'sticky', top: 0, zIndex: 10,
+                padding: '16px 20px',
+                background: 'rgba(10, 10, 20, 0.95)',
+                backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+                borderBottom: '1px solid rgba(217, 28, 210, 0.2)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                  </svg>
+                  <span style={{ color: '#fff', fontSize: '16px', fontWeight: 700 }}>
+                    {socialComments.length} avis clients
+                  </span>
+                </div>
+                <button
+                  onClick={() => setShowCommentsPanel(false)}
+                  style={{
+                    width: '36px', height: '36px', borderRadius: '50%',
+                    background: 'rgba(255,255,255,0.08)', border: 'none', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                  }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
+              <div style={{ padding: '16px 20px 8px' }}>
+                <button
+                  onClick={() => { setShowCommentsPanel(false); }}
+                  style={{
+                    width: '100%', padding: '12px 16px', borderRadius: '12px',
+                    background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                    border: 'none', cursor: 'pointer',
+                    color: '#fff', fontSize: '14px', fontWeight: 600,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
+                  }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                  </svg>
+                  Laisser mon avis
+                </button>
+              </div>
+              <div style={{ padding: '8px 20px 100px' }}>
+                {socialComments.map((comment) => (
+                  <div key={comment.id} style={{
+                    padding: '14px 0',
+                    borderBottom: '1px solid rgba(255,255,255,0.06)'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                      <div style={{
+                        width: '36px', height: '36px', borderRadius: '50%',
+                        background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '14px', fontWeight: 700, color: '#fff', flexShrink: 0
+                      }}>
+                        {(comment.user_name || '?')[0].toUpperCase()}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <span style={{ color: '#fff', fontSize: '14px', fontWeight: 600 }}>{comment.user_name}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '2px', marginTop: '2px' }}>
+                          {[1,2,3,4,5].map(i => (
+                            <svg key={i} width="11" height="11" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
+                              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                            </svg>
+                          ))}
+                        </div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await axios.post(`${API}/comments/${comment.id}/like`);
+                            setSocialComments(prev => prev.map(c =>
+                              c.id === comment.id ? { ...c, likes: (c.likes || 0) + 1 } : c
+                            ));
+                          } catch (e) {}
+                        }}
+                        style={{
+                          background: 'none', border: 'none', cursor: 'pointer',
+                          color: 'rgba(255,255,255,0.6)', fontSize: '13px',
+                          display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px'
+                        }}
+                      >
+                        <span>❤️</span> {comment.likes || 0}
+                      </button>
+                    </div>
+                    <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: '13px', lineHeight: 1.6, margin: 0, paddingLeft: '46px' }}>
+                      {comment.text}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* v72: CSS Animations */}
+        <style>{`
+          @keyframes v72pulse {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(217,28,210,0.4), 0 0 40px rgba(217,28,210,0.15); }
+            50% { transform: scale(1.08); box-shadow: 0 0 28px rgba(217,28,210,0.6), 0 0 56px rgba(217,28,210,0.25); }
+          }
+          @keyframes v72slideIn {
+            from { transform: translateX(100%); }
+            to { transform: translateX(0); }
+          }
+        `}</style>
 
         {/* v17.2: Section FAQ Accordéon */}
         {faqs.length > 0 && (
