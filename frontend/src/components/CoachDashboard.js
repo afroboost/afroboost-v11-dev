@@ -1752,13 +1752,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       console.log("[V61] Sending offerData:", JSON.stringify(offerData));
 
       let resultMsg = '';
+      const headers = { 'X-User-Email': coachUser?.email || '' };
       if (editingOfferId) {
-        await axios.put(`${API}/offers/${editingOfferId}`, offerData);
+        await axios.put(`${API}/offers/${editingOfferId}`, offerData, { headers });
         setOffers(prevOffers => prevOffers.map(o => o.id === editingOfferId ? { ...o, ...offerData } : o));
         setEditingOfferId(null);
         resultMsg = `✅ Offre "${offerData.name}" modifiée`;
       } else {
-        const response = await axios.post(`${API}/offers`, offerData);
+        const response = await axios.post(`${API}/offers`, offerData, { headers });
         setOffers(prevOffers => [...prevOffers, response.data]);
         resultMsg = `✅ Offre "${offerData.name}" créée`;
       }
