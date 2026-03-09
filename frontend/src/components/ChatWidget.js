@@ -597,42 +597,46 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
     return '#2D2D2D';
   };
   
-  // Récupérer l'avatar (photo ou initiale)
+  // v76: Récupérer l'avatar — photos cliquables pour zoom plein écran
   const getAvatar = () => {
-    // v75: Si c'est un message de l'utilisateur actuel avec une photo — cliquable pour zoom
-    if (isUser && profilePhotoUrl) {
+    // Déterminer l'URL photo à afficher
+    const photoUrl = (isUser && profilePhotoUrl) ? profilePhotoUrl : (msg.senderPhotoUrl || null);
+
+    if (photoUrl) {
       return (
-        <img
-          src={profilePhotoUrl}
-          alt="avatar"
-          onClick={(e) => { e.stopPropagation(); onZoomPhoto && onZoomPhoto(profilePhotoUrl); }}
-          style={{
-            width: '24px',
-            height: '24px',
-            borderRadius: '50%',
-            objectFit: 'cover',
-            border: '2px solid #D91CD2',
-            cursor: 'pointer'
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            console.log('[V76] Zoom photo cliqué:', photoUrl);
+            if (onZoomPhoto) onZoomPhoto(photoUrl);
           }}
-        />
-      );
-    }
-    // v75: Avatar d'un autre membre avec photo — cliquable pour zoom
-    if (msg.senderPhotoUrl) {
-      return (
-        <img
-          src={msg.senderPhotoUrl}
-          alt="avatar"
-          onClick={(e) => { e.stopPropagation(); onZoomPhoto && onZoomPhoto(msg.senderPhotoUrl); }}
           style={{
-            width: '24px',
-            height: '24px',
+            width: '32px',
+            height: '32px',
+            minWidth: '32px',
             borderRadius: '50%',
-            objectFit: 'cover',
+            overflow: 'hidden',
             border: '2px solid #D91CD2',
-            cursor: 'pointer'
+            cursor: 'pointer',
+            flexShrink: 0,
+            WebkitTapHighlightColor: 'transparent',
+            position: 'relative',
+            zIndex: 5
           }}
-        />
+        >
+          <img
+            src={photoUrl}
+            alt="avatar"
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: 'block',
+              pointerEvents: 'none'
+            }}
+          />
+        </div>
       );
     }
     // Pas de photo = pas de zoom (initiale sur fond violet reste statique)
@@ -1170,12 +1174,8 @@ export const ChatWidget = () => {
   });
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   
-  // === v75: ZOOM PHOTO PROFIL (remplace l'ancien crop modal) ===
-  const [showCropModal, setShowCropModal] = useState(false); // kept for compatibility
-  const [cropImageSrc, setCropImageSrc] = useState(null); // kept for compatibility
-  const [cropPosition, setCropPosition] = useState({ x: 0, y: 0, scale: 1 }); // kept for compatibility
-  const cropCanvasRef = useRef(null);
-  const [zoomedChatPhoto, setZoomedChatPhoto] = useState(null); // v75: zoom photo au clic
+  // === v76: ZOOM PHOTO PROFIL (crop supprimé définitivement) ===
+  const [zoomedChatPhoto, setZoomedChatPhoto] = useState(null);
   
   // === MENU UTILISATEUR (Partage + Mode Visiteur) ===
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -1553,27 +1553,8 @@ export const ChatWidget = () => {
     }
   };
 
-  // === LEGACY: handleCropAndUpload kept for compatibility ===
-  const handleCropAndUpload = async () => {
-    // v75: Redirige vers l'upload direct si appelé
-    if (cropImageSrc) {
-      try {
-        const response = await fetch(cropImageSrc);
-        const blob = await response.blob();
-        const file = new File([blob], 'profile.jpg', { type: 'image/jpeg' });
-        await handleDirectUpload(file);
-      } catch (err) {
-        console.error('[PHOTO] Legacy crop fallback error:', err);
-      }
-    }
-    setCropImageSrc(null);
-    setShowCropModal(false);
-  };
-  
-  // === UPLOAD PHOTO DE PROFIL (legacy - rediriger vers crop) ===
-  const handlePhotoUpload = async (e) => {
-    handlePhotoSelect(e);
-  };
+  // v76: Upload simplifié — alias pour compatibilité
+  const handlePhotoUpload = (e) => handlePhotoSelect(e);
   
   // === RESTAURER DM ACTIVE APRÈS F5 ===
   useEffect(() => {
@@ -5690,45 +5671,73 @@ export const ChatWidget = () => {
         isMainChatOpen={isOpen}
       />
       
-      {/* === v75: MODAL ZOOM PHOTO DE PROFIL DANS LE CHAT === */}
+      {/* === v76: MODAL ZOOM PHOTO DE PROFIL — PLEIN ÉCRAN PREMIUM === */}
       {zoomedChatPhoto && (
         <div
           style={{
             position: 'fixed',
             top: 0,
             left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0,0,0,0.85)',
-            zIndex: 10000,
+            width: '100vw',
+            height: '100vh',
+            background: 'rgba(0,0,0,0.92)',
+            zIndex: 999999,
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center'
+            justifyContent: 'center',
+            cursor: 'pointer'
           }}
           onClick={() => setZoomedChatPhoto(null)}
           data-testid="zoom-photo-modal"
         >
-          <div style={{
-            width: '260px',
-            height: '260px',
-            borderRadius: '50%',
-            overflow: 'hidden',
-            border: '3px solid #D91CD2',
-            boxShadow: '0 0 30px rgba(217, 28, 210, 0.5), 0 0 60px rgba(217, 28, 210, 0.2)',
-            animation: 'v75ZoomIn 0.25s ease-out'
-          }}>
+          {/* Bouton Fermer (X) visible en haut à droite */}
+          <button
+            onClick={(e) => { e.stopPropagation(); setZoomedChatPhoto(null); }}
+            style={{
+              position: 'absolute',
+              top: '20px',
+              right: '20px',
+              width: '44px',
+              height: '44px',
+              borderRadius: '50%',
+              background: 'rgba(255,255,255,0.15)',
+              border: '2px solid rgba(255,255,255,0.3)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1000000
+            }}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+          {/* Photo circulaire avec bordure violet néon */}
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 'min(70vw, 280px)',
+              height: 'min(70vw, 280px)',
+              borderRadius: '50%',
+              overflow: 'hidden',
+              border: '3px solid #D91CD2',
+              boxShadow: '0 0 30px rgba(217,28,210,0.5), 0 0 60px rgba(217,28,210,0.2)',
+              animation: 'v76ZoomIn 0.25s ease-out'
+            }}
+          >
             <img
               src={zoomedChatPhoto}
               alt="Photo profil"
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
             />
           </div>
         </div>
       )}
 
-      {/* v75: CSS animation pour zoom photo */}
+      {/* v76: CSS animation pour zoom photo */}
       <style>{`
-        @keyframes v75ZoomIn {
+        @keyframes v76ZoomIn {
           from { transform: scale(0.5); opacity: 0; }
           to { transform: scale(1); opacity: 1; }
         }

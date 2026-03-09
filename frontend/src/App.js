@@ -5275,27 +5275,47 @@ function App() {
         </div>
       )}
 
-      {/* v74: Modal zoom photo profil */}
+      {/* v76: Modal zoom photo profil — PLEIN ÉCRAN PREMIUM (z-index max) */}
       {zoomedPhoto && (
         <div
-          className="fixed inset-0 z-50"
           style={{
-            background: 'rgba(0,0,0,0.85)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center'
+            position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+            background: 'rgba(0,0,0,0.92)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 999999,
+            cursor: 'pointer'
           }}
           onClick={() => setZoomedPhoto(null)}
         >
-          <div style={{
-            width: '260px', height: '260px', borderRadius: '50%',
-            overflow: 'hidden',
-            border: '3px solid #D91CD2',
-            boxShadow: '0 0 30px rgba(217,28,210,0.5)',
-            animation: 'v74ZoomIn 0.25s ease-out'
-          }}>
+          {/* Bouton Fermer (X) */}
+          <button
+            onClick={(e) => { e.stopPropagation(); setZoomedPhoto(null); }}
+            style={{
+              position: 'absolute', top: '20px', right: '20px',
+              width: '44px', height: '44px', borderRadius: '50%',
+              background: 'rgba(255,255,255,0.15)', border: '2px solid rgba(255,255,255,0.3)',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              zIndex: 1000000
+            }}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+          {/* Photo circulaire avec bordure violet néon */}
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 'min(70vw, 280px)', height: 'min(70vw, 280px)', borderRadius: '50%',
+              overflow: 'hidden', border: '3px solid #D91CD2',
+              boxShadow: '0 0 30px rgba(217,28,210,0.5), 0 0 60px rgba(217,28,210,0.2)',
+              animation: 'v76ZoomIn 0.25s ease-out'
+            }}
+          >
             <img
               src={zoomedPhoto}
               alt="Photo profil"
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
             />
           </div>
         </div>
@@ -5312,6 +5332,10 @@ function App() {
           50% { transform: scale(1.06); box-shadow: 0 0 20px rgba(217,28,210,0.6), 0 0 45px rgba(217,28,210,0.25); }
         }
         @keyframes v74ZoomIn {
+          from { transform: scale(0.5); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
+        @keyframes v76ZoomIn {
           from { transform: scale(0.5); opacity: 0; }
           to { transform: scale(1); opacity: 1; }
         }
