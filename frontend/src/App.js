@@ -17,7 +17,7 @@ axios.interceptors.request.use((config) => {
   }
   return config;
 });
-console.log("🚀 V69 : Système de validité automatique activé");
+console.log("🚀 V70 : Système de test d'emails prêt");
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import html2canvas from "html2canvas";

@@ -8850,27 +8850,47 @@ async def cron_check_campaigns(request: Request):
         "stuck_fixed": stuck_fixed
     }
 
-# === v59: EMAILS EXPIRATION OFFRES ===
+# === v70: EMAILS EXPIRATION OFFRES — Design Afroboost Premium ===
+def _email_wrapper(header_gradient: str, body_html: str) -> str:
+    """V70: Template email Afroboost unifié avec design premium"""
+    return f"""<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:520px;margin:0 auto;background:#0a0a0a;">
+<div style="background:#111;border-radius:16px;overflow:hidden;border:1px solid rgba(217,28,210,0.2);">
+<div style="background:{header_gradient};padding:24px;text-align:center;">
+<div style="font-size:28px;margin-bottom:4px;">💃</div>
+<span style="color:#fff;font-size:22px;font-weight:800;letter-spacing:1px;">AFROBOOST</span>
+<div style="color:rgba(255,255,255,0.7);font-size:11px;margin-top:4px;letter-spacing:2px;">MOVE • GROOVE • BOOST</div>
+</div>
+{body_html}
+<div style="padding:16px;text-align:center;border-top:1px solid rgba(255,255,255,0.08);">
+<div style="color:#666;font-size:11px;">© 2026 Afroboost — Tous droits réservés</div>
+<div style="margin-top:6px;">
+<a href="https://afroboost-v11-dev-pm7l.vercel.app" style="color:#D91CD2;font-size:11px;text-decoration:none;">afroboost.com</a>
+</div>
+</div>
+</div></div>"""
+
 async def send_expiry_reminder_email(coach_email: str, offer_name: str, days_remaining: int):
-    """Envoie email J-7 rappel expiration"""
+    """V70: Email J-7 rappel expiration — design Afroboost premium"""
     if not RESEND_API_KEY:
         logger.warning(f"[EXPIRY] Resend non configuré, email ignoré pour {coach_email}")
         return
     first_name = coach_email.split('@')[0].capitalize()
-    subject = f"⚠️ Votre offre \"{offer_name}\" expire dans {days_remaining} jours"
-    html = f"""<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
-<div style="background:#111;border-radius:10px;overflow:hidden;">
-<div style="background:linear-gradient(135deg,#9333EA,#D91CD2);padding:16px;text-align:center;">
-<span style="color:#fff;font-size:20px;font-weight:bold;">Afroboost</span></div>
-<div style="padding:20px;color:#fff;">
-<p>Salut {first_name},</p>
-<p>Votre offre <strong style="color:#D91CD2;">"{offer_name}"</strong> expire dans <strong>{days_remaining} jours</strong>.</p>
-<p>Si la prolongation automatique est activée, votre offre sera renouvelée automatiquement.</p>
+    subject = f"⏰ Plus que {days_remaining} jours — votre offre \"{offer_name}\" arrive à échéance"
+    urgency_bar = f"""<div style="background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.4);border-radius:10px;padding:12px 16px;margin:16px 0;text-align:center;">
+<span style="color:#f59e0b;font-size:24px;font-weight:800;">{days_remaining}</span>
+<span style="color:#f59e0b;font-size:13px;font-weight:600;margin-left:6px;">jour{"s" if days_remaining > 1 else ""} restant{"s" if days_remaining > 1 else ""}</span>
+</div>"""
+    body = f"""<div style="padding:24px;color:#fff;">
+<p style="font-size:16px;margin:0 0 12px;">Salut <strong>{first_name}</strong> 👋</p>
+<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:0 0 8px;">Votre offre <strong style="color:#D91CD2;">"{offer_name}"</strong> arrive bientôt à expiration.</p>
+{urgency_bar}
+<p style="color:rgba(255,255,255,0.7);line-height:1.6;font-size:14px;margin:0 0 8px;">🔄 Si la <strong style="color:#fff;">prolongation automatique</strong> est activée, votre offre sera renouvelée sans action de votre part.</p>
+<p style="color:rgba(255,255,255,0.7);line-height:1.6;font-size:14px;margin:0 0 20px;">Sinon, pensez à la renouveler manuellement depuis votre tableau de bord.</p>
 <div style="text-align:center;margin:20px 0;">
-<a href="https://afroboost-v11-dev-pm7l.vercel.app/#partner-dashboard" style="display:inline-block;padding:12px 28px;background:#D91CD2;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Gérer mes offres</a>
-</div></div>
-<div style="padding:10px;text-align:center;color:#666;font-size:11px;border-top:1px solid #333;">© 2026 Afroboost</div>
-</div></div>"""
+<a href="https://afroboost-v11-dev-pm7l.vercel.app/#partner-dashboard" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#9333EA,#D91CD2);color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.5px;">Gérer mes offres →</a>
+</div>
+</div>"""
+    html = _email_wrapper("linear-gradient(135deg,#9333EA,#D91CD2)", body)
     try:
         import resend as resend_lib
         resend_lib.api_key = RESEND_API_KEY
@@ -8880,24 +8900,27 @@ async def send_expiry_reminder_email(coach_email: str, offer_name: str, days_rem
         logger.error(f"[EXPIRY] ❌ Email J-{days_remaining} échoué: {e}")
 
 async def send_prolongation_email(coach_email: str, offer_name: str):
-    """Envoie email J-0 prolongation automatique"""
+    """V70: Email J-0 prolongation automatique — avec mention légale non remboursable"""
     if not RESEND_API_KEY:
         return
     first_name = coach_email.split('@')[0].capitalize()
-    subject = f"✅ Offre \"{offer_name}\" prolongée automatiquement"
-    html = f"""<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
-<div style="background:#111;border-radius:10px;overflow:hidden;">
-<div style="background:linear-gradient(135deg,#9333EA,#D91CD2);padding:16px;text-align:center;">
-<span style="color:#fff;font-size:20px;font-weight:bold;">Afroboost</span></div>
-<div style="padding:20px;color:#fff;">
-<p>Salut {first_name},</p>
-<p>Votre offre <strong style="color:#10b981;">"{offer_name}"</strong> a été automatiquement prolongée.</p>
-<p style="color:#f59e0b;font-weight:bold;">⚠️ Non remboursable — cette prolongation ne peut pas être annulée.</p>
+    subject = f"✅ C'est fait ! Votre offre \"{offer_name}\" a été prolongée"
+    body = f"""<div style="padding:24px;color:#fff;">
+<p style="font-size:16px;margin:0 0 12px;">Salut <strong>{first_name}</strong> 👋</p>
+<div style="background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.4);border-radius:10px;padding:14px 16px;margin:12px 0;text-align:center;">
+<span style="font-size:22px;">✅</span>
+<span style="color:#10b981;font-size:15px;font-weight:700;margin-left:8px;">Prolongation effectuée avec succès</span>
+</div>
+<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:12px 0 8px;">Votre offre <strong style="color:#D91CD2;">"{offer_name}"</strong> a été automatiquement renouvelée. Vos clients peuvent continuer à en profiter !</p>
+<div style="background:rgba(245,158,11,0.1);border-left:3px solid #f59e0b;padding:10px 14px;margin:16px 0;border-radius:0 8px 8px 0;">
+<p style="color:#f59e0b;font-size:12px;font-weight:700;margin:0 0 4px;">⚖️ MENTION LÉGALE</p>
+<p style="color:rgba(255,255,255,0.7);font-size:12px;margin:0;line-height:1.5;">Conformément aux conditions générales d'utilisation de la plateforme Afroboost, cette prolongation automatique est <strong style="color:#f59e0b;">définitive et non remboursable</strong>. En activant le renouvellement automatique, vous avez accepté ces conditions. Pour désactiver le renouvellement futur, rendez-vous dans votre tableau de bord.</p>
+</div>
 <div style="text-align:center;margin:20px 0;">
-<a href="https://afroboost-v11-dev-pm7l.vercel.app/#partner-dashboard" style="display:inline-block;padding:12px 28px;background:#D91CD2;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Voir mes offres</a>
-</div></div>
-<div style="padding:10px;text-align:center;color:#666;font-size:11px;border-top:1px solid #333;">© 2026 Afroboost</div>
-</div></div>"""
+<a href="https://afroboost-v11-dev-pm7l.vercel.app/#partner-dashboard" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#9333EA,#D91CD2);color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.5px;">Voir mes offres →</a>
+</div>
+</div>"""
+    html = _email_wrapper("linear-gradient(135deg,#059669,#10b981)", body)
     try:
         import resend as resend_lib
         resend_lib.api_key = RESEND_API_KEY
@@ -8907,24 +8930,24 @@ async def send_prolongation_email(coach_email: str, offer_name: str):
         logger.error(f"[EXPIRY] ❌ Email prolongation échoué: {e}")
 
 async def send_expired_no_credits_email(coach_email: str, offer_name: str):
-    """V69: Email quand offre expire et coach n'a plus de crédits pour prolonger"""
+    """V70: Email quand offre expire sans crédits — alerte urgente"""
     if not RESEND_API_KEY:
         return
     first_name = coach_email.split('@')[0].capitalize()
-    subject = f"❌ Offre \"{offer_name}\" expirée — crédits insuffisants"
-    html = f"""<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
-<div style="background:#111;border-radius:10px;overflow:hidden;">
-<div style="background:linear-gradient(135deg,#ef4444,#991b1b);padding:16px;text-align:center;">
-<span style="color:#fff;font-size:20px;font-weight:bold;">Afroboost</span></div>
-<div style="padding:20px;color:#fff;">
-<p>Salut {first_name},</p>
-<p>Votre offre <strong style="color:#ef4444;">"{offer_name}"</strong> a expiré et <strong>n'a pas pu être renouvelée</strong> car vous n'avez plus de crédits.</p>
-<p>Rechargez vos crédits pour réactiver vos offres.</p>
+    subject = f"🚨 Offre \"{offer_name}\" expirée — Action requise"
+    body = f"""<div style="padding:24px;color:#fff;">
+<p style="font-size:16px;margin:0 0 12px;">Salut <strong>{first_name}</strong>,</p>
+<div style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);border-radius:10px;padding:14px 16px;margin:12px 0;text-align:center;">
+<span style="font-size:22px;">❌</span>
+<span style="color:#ef4444;font-size:15px;font-weight:700;margin-left:8px;">Offre expirée — renouvellement impossible</span>
+</div>
+<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:12px 0 8px;">Votre offre <strong style="color:#ef4444;">"{offer_name}"</strong> a expiré et <strong>n'a pas pu être renouvelée</strong> car votre solde de crédits est insuffisant.</p>
+<p style="color:rgba(255,255,255,0.7);line-height:1.6;font-size:14px;margin:0 0 8px;">Vos clients ne peuvent plus voir cette offre. Rechargez vos crédits pour la réactiver immédiatement.</p>
 <div style="text-align:center;margin:20px 0;">
-<a href="https://afroboost-v11-dev-pm7l.vercel.app/#partner-dashboard" style="display:inline-block;padding:12px 28px;background:#D91CD2;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Recharger mes crédits</a>
-</div></div>
-<div style="padding:10px;text-align:center;color:#666;font-size:11px;border-top:1px solid #333;">© 2026 Afroboost</div>
-</div></div>"""
+<a href="https://afroboost-v11-dev-pm7l.vercel.app/#partner-dashboard" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.5px;">Recharger mes crédits →</a>
+</div>
+</div>"""
+    html = _email_wrapper("linear-gradient(135deg,#dc2626,#ef4444)", body)
     try:
         import resend as resend_lib
         resend_lib.api_key = RESEND_API_KEY
@@ -8932,6 +8955,37 @@ async def send_expired_no_credits_email(coach_email: str, offer_name: str):
         logger.info(f"[EXPIRY] ✅ Email offre expirée (pas de crédits) envoyé à {coach_email}")
     except Exception as e:
         logger.error(f"[EXPIRY] ❌ Email expirée échoué: {e}")
+
+# === v70: ENDPOINT DE TEST EMAILS EXPIRATION (Super Admin only) ===
+@api_router.post("/admin/test-expiry-email")
+async def test_expiry_email(request: Request):
+    """V70: Envoie les 3 types d'emails de test au Super Admin. Ne touche PAS aux données réelles."""
+    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not is_super_admin(user_email):
+        raise HTTPException(status_code=403, detail="Réservé au Super Admin")
+    test_email = SUPER_ADMIN_EMAIL  # contact.artboost@gmail.com
+    test_offer = "Session Afroboost Xtrem (TEST)"
+    results = []
+    # Email 1: Rappel J-7
+    try:
+        await send_expiry_reminder_email(test_email, test_offer, 7)
+        results.append({"type": "J-7 Rappel", "status": "sent", "to": test_email})
+    except Exception as e:
+        results.append({"type": "J-7 Rappel", "status": "error", "error": str(e)})
+    # Email 2: Prolongation J-0
+    try:
+        await send_prolongation_email(test_email, test_offer)
+        results.append({"type": "J-0 Prolongation", "status": "sent", "to": test_email})
+    except Exception as e:
+        results.append({"type": "J-0 Prolongation", "status": "error", "error": str(e)})
+    # Email 3: Expirée sans crédits
+    try:
+        await send_expired_no_credits_email(test_email, test_offer)
+        results.append({"type": "Expirée sans crédits", "status": "sent", "to": test_email})
+    except Exception as e:
+        results.append({"type": "Expirée sans crédits", "status": "error", "error": str(e)})
+    logger.info(f"[V70-TEST] 3 emails de test envoyés à {test_email}")
+    return {"success": True, "message": f"3 emails de test envoyés à {test_email}", "results": results}
 
 # === v69: CRON — Vérification expirations offres (avec crédits) ===
 @api_router.get("/admin/check-expirations")
