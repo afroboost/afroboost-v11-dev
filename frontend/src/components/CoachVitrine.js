@@ -940,35 +940,31 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* v72: Icône Social Proof interactive — Style YouTube/TikTok */}
+        {/* v72.1: Icône AVIS style YouTube — propre, visible, cliquable */}
         {socialComments.length > 0 && (
           <button
             onClick={() => setShowCommentsPanel(true)}
             style={{
               position: 'absolute', bottom: '100px', right: '16px', zIndex: 20,
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px',
               background: 'none', border: 'none', cursor: 'pointer', padding: 0
             }}
           >
             <div style={{
-              width: '48px', height: '48px', borderRadius: '50%',
-              background: 'rgba(0, 0, 0, 0.5)',
-              backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 0 20px rgba(217, 28, 210, 0.4), 0 0 40px rgba(217, 28, 210, 0.15)',
-              border: '1.5px solid rgba(217, 28, 210, 0.5)',
-              animation: 'v72pulse 2s ease-in-out infinite'
+              width: '44px', height: '44px', borderRadius: '50%',
+              background: 'rgba(0, 0, 0, 0.55)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center'
             }}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="#fff" stroke="none">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
               </svg>
             </div>
             <span style={{
-              color: '#fff', fontSize: '11px', fontWeight: 600,
-              textShadow: '0 1px 4px rgba(0,0,0,0.8)',
+              color: '#fff', fontSize: '12px', fontWeight: 700,
+              textShadow: '0 1px 3px rgba(0,0,0,0.9)',
               lineHeight: 1
             }}>
-              {socialComments.length} avis
+              {socialComments.length}
             </span>
           </button>
         )}
@@ -1583,115 +1579,111 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           )}
         </div>
 
-        {/* v72: Panneau latéral des commentaires Social Proof */}
+        {/* v72.1: Panneau commentaires style YouTube — slide-up depuis le bas */}
         {showCommentsPanel && (
           <div
             className="fixed inset-0 z-50"
-            style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
+            style={{ background: 'rgba(0,0,0,0.5)' }}
             onClick={() => setShowCommentsPanel(false)}
           >
             <div
               style={{
-                position: 'absolute', top: 0, right: 0, bottom: 0,
-                width: '100%', maxWidth: '420px',
-                background: 'linear-gradient(180deg, #0a0a14 0%, #12061a 100%)',
+                position: 'absolute', left: 0, right: 0, bottom: 0,
+                maxHeight: '75vh',
+                background: '#fff',
+                borderRadius: '16px 16px 0 0',
                 overflowY: 'auto', WebkitOverflowScrolling: 'touch',
-                animation: 'v72slideIn 0.3s ease-out'
+                animation: 'v72slideUp 0.3s ease-out'
               }}
               onClick={(e) => e.stopPropagation()}
             >
+              {/* Header YouTube-style */}
               <div style={{
                 position: 'sticky', top: 0, zIndex: 10,
-                padding: '16px 20px',
-                background: 'rgba(10, 10, 20, 0.95)',
-                backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
-                borderBottom: '1px solid rgba(217, 28, 210, 0.2)',
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                background: '#fff',
+                borderBottom: '1px solid #e5e5e5',
+                borderRadius: '16px 16px 0 0'
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                  </svg>
-                  <span style={{ color: '#fff', fontSize: '16px', fontWeight: 700 }}>
-                    {socialComments.length} avis clients
-                  </span>
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px' }}>
+                  <div style={{ width: '40px', height: '4px', borderRadius: '2px', background: '#ccc' }}></div>
                 </div>
-                <button
-                  onClick={() => setShowCommentsPanel(false)}
-                  style={{
-                    width: '36px', height: '36px', borderRadius: '50%',
-                    background: 'rgba(255,255,255,0.08)', border: 'none', cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
-                  }}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2">
-                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                  </svg>
-                </button>
+                <div style={{
+                  padding: '4px 16px 12px',
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                }}>
+                  <span style={{ color: '#0f0f0f', fontSize: '16px', fontWeight: 700 }}>
+                    Commentaires {socialComments.length}
+                  </span>
+                  <button
+                    onClick={() => setShowCommentsPanel(false)}
+                    style={{
+                      width: '32px', height: '32px', borderRadius: '50%',
+                      background: 'transparent', border: 'none', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center'
+                    }}
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#606060" strokeWidth="2">
+                      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  </button>
+                </div>
               </div>
-              <div style={{ padding: '16px 20px 8px' }}>
-                <button
-                  onClick={() => { setShowCommentsPanel(false); }}
-                  style={{
-                    width: '100%', padding: '12px 16px', borderRadius: '12px',
-                    background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
-                    border: 'none', cursor: 'pointer',
-                    color: '#fff', fontSize: '14px', fontWeight: 600,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
-                  }}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
-                  </svg>
-                  Laisser mon avis
-                </button>
-              </div>
-              <div style={{ padding: '8px 20px 100px' }}>
+
+              {/* Liste des commentaires */}
+              <div style={{ padding: '0 16px 100px' }}>
                 {socialComments.map((comment) => (
                   <div key={comment.id} style={{
-                    padding: '14px 0',
-                    borderBottom: '1px solid rgba(255,255,255,0.06)'
+                    padding: '12px 0',
+                    borderBottom: '1px solid #f0f0f0'
                   }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', gap: '12px' }}>
                       <div style={{
                         width: '36px', height: '36px', borderRadius: '50%',
-                        background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                        background: '#D91CD2',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         fontSize: '14px', fontWeight: 700, color: '#fff', flexShrink: 0
                       }}>
                         {(comment.user_name || '?')[0].toUpperCase()}
                       </div>
                       <div style={{ flex: 1 }}>
-                        <span style={{ color: '#fff', fontSize: '14px', fontWeight: 600 }}>{comment.user_name}</span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '2px', marginTop: '2px' }}>
-                          {[1,2,3,4,5].map(i => (
-                            <svg key={i} width="11" height="11" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
-                              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                            </svg>
-                          ))}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ color: '#0f0f0f', fontSize: '13px', fontWeight: 600 }}>
+                            {comment.user_name}
+                          </span>
+                          <div style={{ display: 'flex', gap: '1px' }}>
+                            {[1,2,3,4,5].map(i => (
+                              <svg key={i} width="10" height="10" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
+                                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                              </svg>
+                            ))}
+                          </div>
                         </div>
+                        <p style={{ color: '#303030', fontSize: '13px', lineHeight: 1.5, margin: '4px 0 6px' }}>
+                          {comment.text}
+                        </p>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await axios.post(`${API}/comments/${comment.id}/like`);
+                              setSocialComments(prev => prev.map(c =>
+                                c.id === comment.id ? { ...c, likes: (c.likes || 0) + 1 } : c
+                              ));
+                            } catch (e) {}
+                          }}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            color: '#606060', fontSize: '12px',
+                            display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 0'
+                          }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#606060" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/>
+                            <path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>
+                          </svg>
+                          {comment.likes || 0}
+                        </button>
                       </div>
-                      <button
-                        onClick={async () => {
-                          try {
-                            await axios.post(`${API}/comments/${comment.id}/like`);
-                            setSocialComments(prev => prev.map(c =>
-                              c.id === comment.id ? { ...c, likes: (c.likes || 0) + 1 } : c
-                            ));
-                          } catch (e) {}
-                        }}
-                        style={{
-                          background: 'none', border: 'none', cursor: 'pointer',
-                          color: 'rgba(255,255,255,0.6)', fontSize: '13px',
-                          display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px'
-                        }}
-                      >
-                        <span>❤️</span> {comment.likes || 0}
-                      </button>
                     </div>
-                    <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: '13px', lineHeight: 1.6, margin: 0, paddingLeft: '46px' }}>
-                      {comment.text}
-                    </p>
                   </div>
                 ))}
               </div>
@@ -1699,15 +1691,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* v72: CSS Animations */}
+        {/* v72.1: CSS Animation panneau slide-up YouTube */}
         <style>{`
-          @keyframes v72pulse {
-            0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(217,28,210,0.4), 0 0 40px rgba(217,28,210,0.15); }
-            50% { transform: scale(1.08); box-shadow: 0 0 28px rgba(217,28,210,0.6), 0 0 56px rgba(217,28,210,0.25); }
-          }
-          @keyframes v72slideIn {
-            from { transform: translateX(100%); }
-            to { transform: translateX(0); }
+          @keyframes v72slideUp {
+            from { transform: translateY(100%); }
+            to { transform: translateY(0); }
           }
         `}</style>
 
