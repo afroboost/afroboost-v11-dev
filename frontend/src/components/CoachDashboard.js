@@ -5033,15 +5033,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           {/* Bouton Vue Visiteur - Ouvre la vitrine publique dans un nouvel onglet */}
           <button
             onClick={() => {
-              // v64: RÈGLE D'OR — Super Admin = /coach/bassi, TOUJOURS
+              // v66: Super Admin → ouvre la homepage en mode visiteur (la VRAIE vitrine publique)
+              // Partenaires → ouvre /coach/{username} (leur vitrine dédiée)
               const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
               const isSA = SUPER_ADMIN_EMAILS.includes(safeCoachUser?.email?.toLowerCase());
               const finalUrl = isSA
-                ? `${window.location.origin}/coach/bassi`
-                : (coachVitrineUrl || `${window.location.origin}/coach/bassi`);
-              const vitrineUrl = finalUrl + `?t=${Date.now()}`;
-              console.log('[V64] Vue Visiteur → ', vitrineUrl);
-              window.open(vitrineUrl, '_blank');
+                ? `${window.location.origin}/?visitor=true&t=${Date.now()}`
+                : `${coachVitrineUrl || `${window.location.origin}/coach/bassi`}?t=${Date.now()}`;
+              console.log('[V66] Vue Visiteur → ', finalUrl);
+              window.open(finalUrl, '_blank');
             }}
             className="ml-auto px-3 py-2 rounded-lg text-xs sm:text-sm flex items-center gap-2 flex-shrink-0"
             style={{

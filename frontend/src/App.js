@@ -17,7 +17,7 @@ axios.interceptors.request.use((config) => {
   }
   return config;
 });
-console.log("V65 ACTIVÉE - FUSION DONNÉES BASSI");
+console.log("V66 ACTIVÉE - VUE VISITEUR = HOMEPAGE PUBLIQUE");
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import html2canvas from "html2canvas";
@@ -3700,8 +3700,11 @@ function App() {
     );
   }
   
+  // v66: ?visitor=true bypass — le Super Admin voit la homepage publique telle que les visiteurs la voient
+  const isVisitorMode = new URLSearchParams(window.location.search).get('visitor') === 'true';
+
   // v18.2: Si l'URL est /coach/xxx, afficher la vitrine MÊME si le coach est connecté
-  if (coachMode) {
+  if (coachMode && !isVisitorMode) {
     if (showCoachVitrine) {
       return (
         <div className="fixed inset-0 z-50" style={{ background: '#000' }}>
