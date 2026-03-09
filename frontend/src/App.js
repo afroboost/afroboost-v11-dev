@@ -17,7 +17,7 @@ axios.interceptors.request.use((config) => {
   }
   return config;
 });
-console.log("V63 ACTIVÉE - VUE VISITEUR NOUVEL ONGLET");
+console.log("V64 ACTIVÉE - UNIFICATION BASSI/ADMIN");
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import html2canvas from "html2canvas";

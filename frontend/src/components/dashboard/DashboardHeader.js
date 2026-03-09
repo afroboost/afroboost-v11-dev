@@ -207,13 +207,14 @@ const DashboardHeader = ({
           </button>
         ))}
         
-        {/* Bouton Vue Visiteur — V63: ouvre la vitrine dans un nouvel onglet */}
+        {/* Bouton Vue Visiteur — V64: RÈGLE D'OR Super Admin = /coach/bassi */}
         <button
           onClick={() => {
-            const coachName = (coachUser?.name || '').toLowerCase().split(' ')[0].trim();
-            const coachSlug = coachUser?.username || coachName || coachUser?.email?.split('@')[0] || 'coach';
-            const vitrineUrl = `${window.location.origin}/coach/${coachSlug}?t=${Date.now()}`;
-            console.log('[V63] DashboardHeader Vue Visiteur →', vitrineUrl);
+            const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+            const isSA = SUPER_ADMIN_EMAILS.includes(coachUser?.email?.toLowerCase());
+            const slug = isSA ? 'bassi' : (coachUser?.username || coachUser?.name?.toLowerCase().split(' ')[0].trim() || 'coach');
+            const vitrineUrl = `${window.location.origin}/coach/${slug}?t=${Date.now()}`;
+            console.log('[V64] DashboardHeader Vue Visiteur →', vitrineUrl);
             window.open(vitrineUrl, '_blank');
           }}
           className="ml-auto px-3 py-2 rounded-lg text-xs sm:text-sm flex items-center gap-2 flex-shrink-0"

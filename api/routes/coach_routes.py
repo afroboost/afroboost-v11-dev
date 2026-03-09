@@ -435,7 +435,8 @@ async def get_public_coach_profile(coach_id: str):
 async def get_coach_vitrine(username: str):
     """Vitrine publique d'un partenaire (coach/vendeur) - v29: inclut concept + heroVideos directement"""
     # v19: Isolation stricte des données par coach_id
-    is_admin_vitrine = username.lower() in ["bassi", "afroboost", SUPER_ADMIN_EMAIL.lower()]
+    # v64: Ajouter "artboost" comme alias reconnu (anti-confusion slug)
+    is_admin_vitrine = username.lower() in ["bassi", "afroboost", "artboost", SUPER_ADMIN_EMAIL.lower()]
     if is_admin_vitrine:
         coach = {"id": "bassi", "name": "Bassi - Afroboost", "email": SUPER_ADMIN_EMAIL, "photo_url": None, "bio": "Coach Afroboost - Fitness & Bien-être", "platform_name": "Afroboost", "logo_url": None, "is_active": True}
         # Super Admin: match son coach_id OU les données legacy sans coach_id

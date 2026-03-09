@@ -3758,7 +3758,8 @@ async def get_og_meta(username: str, request: Request):
 
     # Trouver le coach — même logique que coach/vitrine
     SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com']
-    if username.lower() in ["bassi", "afroboost"]:
+    # v64: Ajouter "artboost" comme alias reconnu
+    if username.lower() in ["bassi", "afroboost", "artboost"]:
         coach = {"name": "Bassi - Afroboost", "email": "contact.artboost@gmail.com", "platform_name": "Afroboost"}
     else:
         coach = await db.coaches.find_one(

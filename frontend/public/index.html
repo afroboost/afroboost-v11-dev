@@ -26,8 +26,21 @@
         <!-- Additional SEO -->
         <meta name="keywords" content="afroboost, fitness, casque audio, danse, afrobeat, cardio, réservation, cours" />
         <meta name="author" content="Afroboost" />
-        <meta name="version" content="63.0" />
-        <script>console.log("V63 ACTIVÉE - VUE VISITEUR NOUVEL ONGLET");</script>
+        <meta name="version" content="64.0" />
+        <script>
+            console.log("🚀 V64 : Unification Bassi/Admin terminée. URL fixe : /coach/bassi");
+            // v64: Nettoyage localStorage — purger toute référence au slug "artboost"
+            try {
+                var keys = Object.keys(localStorage);
+                for (var i = 0; i < keys.length; i++) {
+                    if (keys[i].indexOf('artboost') !== -1 && keys[i] !== 'afroboost_coach_user') {
+                        localStorage.removeItem(keys[i]);
+                    }
+                }
+                // Purger le cache audio lié au mauvais slug
+                localStorage.removeItem('afroboost_audio_cache_artboost');
+            } catch(e) {}
+        </script>
         <meta name="robots" content="index, follow" />
         
         <meta name="apple-mobile-web-app-capable" content="yes" />
