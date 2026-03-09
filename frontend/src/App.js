@@ -17,7 +17,7 @@ axios.interceptors.request.use((config) => {
   }
   return config;
 });
-console.log("V66 ACTIVÉE - VUE VISITEUR = HOMEPAGE PUBLIQUE");
+console.log("V67 ACTIVÉE - VERROUILLAGE DÉFINITIF 1 SUPER ADMIN = 1 VITRINE HOMEPAGE");
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import html2canvas from "html2canvas";
@@ -2483,19 +2483,30 @@ function App() {
     return () => window.removeEventListener('openBecomeCoach', handleOpenBecomeCoach);
   }, []);
 
+  // v67: SLUGS DU SUPER ADMIN — tout accès à ces slugs = homepage publique, jamais CoachVitrine
+  const SUPER_ADMIN_SLUGS = ['bassi', 'artboost', 'afroboost'];
+
   // v8.9.6: Détecter l'URL /coach/[username] ou /partner/[username] pour afficher la vitrine
   // v9.1.8: Support route /partner/:username (alias de /coach/:username)
+  // v67: Verrouillage — /coach/bassi redirige vers /?visitor=true (1 Super Admin = 1 seule vitrine = homepage)
   useEffect(() => {
     const checkCoachVitrine = () => {
       const path = window.location.pathname;
       // Supporter /coach/xxx ET /partner/xxx
       const match = path.match(/^\/(coach|partner)\/(.+)$/);
       if (match && match[2]) {
+        const slug = decodeURIComponent(match[2]).toLowerCase().trim();
+        // v67: Si c'est un slug du Super Admin → rediriger vers la homepage publique
+        if (SUPER_ADMIN_SLUGS.includes(slug)) {
+          console.log('[V67] VERROUILLAGE: /coach/' + slug + ' → homepage publique /?visitor=true');
+          window.history.replaceState({}, '', '/?visitor=true');
+          return; // Ne PAS charger CoachVitrine
+        }
         setShowCoachVitrine(match[2]);
       }
     };
     checkCoachVitrine();
-    
+
     // Écouter les changements d'URL
     const handlePopState = () => checkCoachVitrine();
     window.addEventListener('popstate', handlePopState);
@@ -3701,22 +3712,38 @@ function App() {
   }
   
   // v66: ?visitor=true bypass — le Super Admin voit la homepage publique telle que les visiteurs la voient
-  const isVisitorMode = new URLSearchParams(window.location.search).get('visitor') === 'true';
+  // v67: Détection synchrone — si l'URL est /coach/{slugSuperAdmin}, c'est aussi du visitor mode
+  const urlParams = new URLSearchParams(window.location.search);
+  const pathSlugMatch = window.location.pathname.match(/^\/(coach|partner)\/(.+)$/);
+  const urlSlug = pathSlugMatch ? decodeURIComponent(pathSlugMatch[2]).toLowerCase().trim() : null;
+  const isSuperAdminSlugInUrl = urlSlug && SUPER_ADMIN_SLUGS.includes(urlSlug);
+  const isVisitorMode = urlParams.get('visitor') === 'true' || isSuperAdminSlugInUrl;
 
   // v18.2: Si l'URL est /coach/xxx, afficher la vitrine MÊME si le coach est connecté
+  // v67: JAMAIS CoachVitrine pour le Super Admin — sa vitrine = homepage
   if (coachMode && !isVisitorMode) {
     if (showCoachVitrine) {
-      return (
-        <div className="fixed inset-0 z-50" style={{ background: '#000' }}>
-          <CoachVitrine
-            username={showCoachVitrine}
-            onClose={() => { setShowCoachVitrine(null); window.history.pushState({}, '', '/'); }}
-            onBack={() => { setShowCoachVitrine(null); window.history.pushState({}, '', '/'); }}
-          />
-        </div>
-      );
+      // v67: Dernier verrou — si showCoachVitrine est un slug Super Admin, forcer homepage
+      const vitrineSlug = (showCoachVitrine || '').toLowerCase().trim();
+      if (SUPER_ADMIN_SLUGS.includes(vitrineSlug) || SUPER_ADMIN_EMAILS.some(e => e.toLowerCase() === vitrineSlug)) {
+        // Ne pas rendre CoachVitrine, fall through vers la homepage
+        console.log('[V67] VERROU FINAL: CoachVitrine bloquée pour slug Super Admin →', vitrineSlug);
+      } else {
+        return (
+          <div className="fixed inset-0 z-50" style={{ background: '#000' }}>
+            <CoachVitrine
+              username={showCoachVitrine}
+              onClose={() => { setShowCoachVitrine(null); window.history.pushState({}, '', '/'); }}
+              onBack={() => { setShowCoachVitrine(null); window.history.pushState({}, '', '/'); }}
+            />
+          </div>
+        );
+      }
     }
-    return <CoachDashboard t={t} lang={lang} onBack={handleBackFromCoach} onLogout={handleLogout} coachUser={coachUser} />;
+    if (!showCoachVitrine || !SUPER_ADMIN_SLUGS.includes((showCoachVitrine || '').toLowerCase().trim())) {
+      return <CoachDashboard t={t} lang={lang} onBack={handleBackFromCoach} onLogout={handleLogout} coachUser={coachUser} />;
+    }
+    // v67: Si on arrive ici, c'est un slug Super Admin en coachMode → on continue vers la homepage publique
   }
 
   // Filtrer les offres et cours selon visibilité, filtre actif et recherche
@@ -3936,7 +3963,16 @@ function App() {
         <PartnersCarousel
           onPartnerClick={(partner) => {
             const username = partner.email || partner.id || partner.name?.toLowerCase().replace(/\s+/g, '-');
-            // v12: Transition fluide sans rechargement page
+            // v67: Si clic sur le Super Admin dans le carousel → NE PAS ouvrir CoachVitrine
+            // La homepage EST sa vitrine, pas besoin d'overlay
+            const slugCheck = (username || '').toLowerCase().trim();
+            if (SUPER_ADMIN_SLUGS.includes(slugCheck) || SUPER_ADMIN_EMAILS.some(e => e.toLowerCase() === slugCheck)) {
+              console.log('[V67] Clic carousel Super Admin → scroll vers contenu homepage');
+              const sessionsEl = document.getElementById('sessions-section');
+              if (sessionsEl) sessionsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              return; // Ne PAS ouvrir CoachVitrine overlay
+            }
+            // v12: Transition fluide sans rechargement page (partenaires seulement)
             window.history.pushState({}, '', `/coach/${username}`);
             setShowCoachVitrine(username);
           }}

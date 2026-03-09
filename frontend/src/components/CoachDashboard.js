@@ -416,10 +416,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [coachCredits, setCoachCredits] = useState(isSuperAdmin ? -1 : 0); // -1=illimité (Super Admin), 0=défaut
   
   // === v8.9.9: VITRINE COACH ===
+  // v67: Super Admin vitrine = homepage publique, JAMAIS /coach/bassi
   const [coachUsername, setCoachUsername] = useState(null);
-  const coachVitrineUrl = coachUsername 
-    ? `${window.location.origin}/coach/${coachUsername}`
-    : isSuperAdmin ? `${window.location.origin}/coach/bassi` : null;
+  const coachVitrineUrl = isSuperAdmin
+    ? `${window.location.origin}/?visitor=true`
+    : coachUsername ? `${window.location.origin}/coach/${coachUsername}` : null;
   
   // === v9.1.3: MARQUE BLANCHE - platform_name ===
   const [coachPlatformName, setCoachPlatformName] = useState(null);
@@ -5033,14 +5034,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           {/* Bouton Vue Visiteur - Ouvre la vitrine publique dans un nouvel onglet */}
           <button
             onClick={() => {
-              // v66: Super Admin → ouvre la homepage en mode visiteur (la VRAIE vitrine publique)
-              // Partenaires → ouvre /coach/{username} (leur vitrine dédiée)
+              // v67: Super Admin → homepage publique, Partenaires → /coach/{username}
+              // VERROUILLÉ: aucun chemin ne génère /coach/bassi pour le Super Admin
               const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
               const isSA = SUPER_ADMIN_EMAILS.includes(safeCoachUser?.email?.toLowerCase());
               const finalUrl = isSA
                 ? `${window.location.origin}/?visitor=true&t=${Date.now()}`
-                : `${coachVitrineUrl || `${window.location.origin}/coach/bassi`}?t=${Date.now()}`;
-              console.log('[V66] Vue Visiteur → ', finalUrl);
+                : `${coachVitrineUrl || window.location.origin}?t=${Date.now()}`;
+              console.log('[V67] Vue Visiteur → ', finalUrl);
               window.open(finalUrl, '_blank');
             }}
             className="ml-auto px-3 py-2 rounded-lg text-xs sm:text-sm flex items-center gap-2 flex-shrink-0"
