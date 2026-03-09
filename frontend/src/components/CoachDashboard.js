@@ -313,17 +313,19 @@ const MediaDisplay = ({ url, className }) => {
 const COACH_TAB_KEY = 'afroboost_coach_tab';
 const COACH_SESSION_KEY = 'afroboost_coach_session';
 
-// === v77: Composant liste des 5 derniers commentaires avec contrôles individuels ===
+// === v78: Composant liste des 5 derniers commentaires avec contrôles individuels + feedback visuel ===
 const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
   const [comments, setComments] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [likedIds, setLikedIds] = React.useState({});
 
   const fetchComments = React.useCallback(async () => {
     setLoading(true);
     try {
       const res = await axios.get(`${API}/comments?coach_id=${encodeURIComponent(coachEmail || '')}`);
       setComments((res.data?.comments || []).slice(0, 5));
-    } catch (e) { console.error('[V77] Fetch comments error:', e); }
+    } catch (e) { console.error('[V78] Fetch comments error:', e); }
     finally { setLoading(false); }
   }, [API, coachEmail, axios]);
 
@@ -339,10 +341,29 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
   }, [fetchComments]);
 
   const handleLike = async (commentId) => {
+    // v78: Optimistic update + visual feedback immédiat
+    setComments(prev => prev.map(c => c.id === commentId ? { ...c, likes: (c.likes || 0) + 1 } : c));
+    setLikedIds(prev => ({ ...prev, [commentId]: true }));
     try {
       await axios.post(`${API}/comments/${commentId}/like`);
-      setComments(prev => prev.map(c => c.id === commentId ? { ...c, likes: (c.likes || 0) + 1 } : c));
-    } catch (e) { alert('❌ Erreur like'); }
+      console.log('[V78] Like +1 OK:', commentId);
+    } catch (e) {
+      // Rollback on error
+      setComments(prev => prev.map(c => c.id === commentId ? { ...c, likes: (c.likes || 0) - 1 } : c));
+      alert('❌ Erreur like');
+    }
+    // Reset animation after 1s
+    setTimeout(() => setLikedIds(prev => ({ ...prev, [commentId]: false })), 1000);
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      const res = await axios.get(`${API}/comments?coach_id=${encodeURIComponent(coachEmail || '')}`);
+      setComments((res.data?.comments || []).slice(0, 5));
+      console.log('[V78] Refresh OK');
+    } catch (e) { console.error('[V78] Refresh error:', e); }
+    finally { setRefreshing(false); }
   };
 
   const handleDelete = async (commentId) => {
@@ -368,7 +389,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
 
   if (loading && comments.length === 0) return (
     <div id="social-boost-comments-list" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', marginTop: '12px' }}>
-      Chargement des commentaires...
+      ⏳ Chargement des commentaires...
     </div>
   );
 
@@ -380,10 +401,29 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
 
   return (
     <div id="social-boost-comments-list" style={{ marginTop: '14px' }}>
+      <style>{`
+        @keyframes v78LikePulse {
+          0% { transform: scale(1); }
+          30% { transform: scale(1.5); }
+          60% { transform: scale(0.9); }
+          100% { transform: scale(1); }
+        }
+        @keyframes v78RefreshSpin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes v78LikeFlash {
+          0% { color: #D91CD2; }
+          50% { color: #00ff88; font-size: 14px; }
+          100% { color: #D91CD2; }
+        }
+      `}</style>
       <div style={{ color: '#D91CD2', fontSize: '12px', fontWeight: 600, marginBottom: '8px' }}>
         5 derniers commentaires :
       </div>
-      {comments.map((c) => (
+      {comments.map((c) => {
+        const justLiked = likedIds[c.id];
+        return (
         <div key={c.id} style={{
           display: 'flex', alignItems: 'center', gap: '10px',
           padding: '8px 10px', marginBottom: '6px',
@@ -393,14 +433,14 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
           {/* Avatar */}
           {c.profile_photo ? (
             <img src={c.profile_photo} alt="" style={{
-              width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover',
+              width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover',
               border: '2px solid #D91CD2', flexShrink: 0
             }} />
           ) : (
             <div style={{
-              width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
+              width: '32px', height: '32px', borderRadius: '50%', flexShrink: 0,
               background: '#D91CD2', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '12px', fontWeight: 700, color: '#fff'
+              fontSize: '13px', fontWeight: 700, color: '#fff'
             }}>{(c.user_name || '?')[0].toUpperCase()}</div>
           )}
           {/* Content */}
@@ -410,30 +450,69 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
               {c.text}
             </div>
           </div>
-          {/* Likes count */}
-          <span style={{ color: '#D91CD2', fontSize: '11px', fontWeight: 600, minWidth: '30px', textAlign: 'center' }}>
+          {/* Likes count — animated on change */}
+          <span style={{
+            color: justLiked ? '#00ff88' : '#D91CD2',
+            fontSize: justLiked ? '14px' : '12px',
+            fontWeight: 700, minWidth: '35px', textAlign: 'center',
+            transition: 'all 0.3s ease',
+            animation: justLiked ? 'v78LikeFlash 0.6s ease' : 'none'
+          }}>
             {c.likes || 0}
           </span>
-          {/* Action buttons */}
+          {/* v78: Like button — BIGGER touch target + pulse animation */}
           <button onClick={() => handleLike(c.id)} title="+1 Like"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '2px 4px' }}>
+            style={{
+              background: justLiked ? 'rgba(217,28,210,0.2)' : 'none',
+              border: justLiked ? '1px solid #D91CD2' : '1px solid transparent',
+              borderRadius: '8px', cursor: 'pointer', fontSize: '18px',
+              padding: '6px 10px', minWidth: '44px', minHeight: '36px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              animation: justLiked ? 'v78LikePulse 0.5s ease' : 'none',
+              transition: 'all 0.2s ease'
+            }}>
             ❤️
           </button>
+          {/* Photo button */}
           <button onClick={() => handlePhoto(c.id)} title="Ajouter photo"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '2px 4px' }}>
+            style={{
+              background: 'none', border: '1px solid transparent', borderRadius: '8px',
+              cursor: 'pointer', fontSize: '18px', padding: '6px 10px',
+              minWidth: '44px', minHeight: '36px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center'
+            }}>
             📸
           </button>
+          {/* Delete button */}
           <button onClick={() => handleDelete(c.id)} title="Supprimer"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '2px 4px' }}>
+            style={{
+              background: 'none', border: '1px solid transparent', borderRadius: '8px',
+              cursor: 'pointer', fontSize: '18px', padding: '6px 10px',
+              minWidth: '44px', minHeight: '36px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center'
+            }}>
             🗑️
           </button>
         </div>
-      ))}
-      <button onClick={fetchComments} style={{
-        background: 'none', border: 'none', color: '#D91CD2', fontSize: '11px',
-        cursor: 'pointer', marginTop: '4px', textDecoration: 'underline'
-      }}>
-        🔄 Rafraîchir
+        );
+      })}
+      {/* v78: Refresh button — bigger, visible, loading state */}
+      <button onClick={handleRefresh} disabled={refreshing}
+        style={{
+          background: refreshing ? 'rgba(217,28,210,0.15)' : 'rgba(217,28,210,0.08)',
+          border: '1px solid rgba(217,28,210,0.3)', borderRadius: '8px',
+          color: '#D91CD2', fontSize: '13px', fontWeight: 600,
+          cursor: refreshing ? 'wait' : 'pointer',
+          padding: '8px 16px', marginTop: '8px',
+          display: 'flex', alignItems: 'center', gap: '6px',
+          opacity: refreshing ? 0.7 : 1,
+          transition: 'all 0.2s ease', width: '100%', justifyContent: 'center'
+        }}>
+        <span style={{
+          display: 'inline-block',
+          animation: refreshing ? 'v78RefreshSpin 1s linear infinite' : 'none'
+        }}>🔄</span>
+        {refreshing ? 'Rafraîchissement...' : 'Rafraîchir les commentaires'}
       </button>
     </div>
   );

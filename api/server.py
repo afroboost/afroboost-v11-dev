@@ -9053,10 +9053,14 @@ async def generate_social_proof(request: Request):
     selected = pool[:count] if count <= len(pool) else (pool * (count // len(pool) + 1))[:count]
 
     for i, tpl in enumerate(selected):
+        # v78: Génère un avatar unique via DiceBear API (avatars gratuits)
+        avatar_seed = f"{tpl['user_name'].replace(' ', '')}{i}{now.strftime('%H%M%S')}"
+        avatar_url = f"https://api.dicebear.com/7.x/avataaars/svg?seed={avatar_seed}&backgroundColor=D91CD2"
         comment = {
             "id": f"ai_{now.strftime('%Y%m%d%H%M%S')}_{i}",
             "user_name": tpl["user_name"],
             "text": tpl["text"],
+            "profile_photo": avatar_url,
             "likes": _random.randint(3, 85),
             "is_ai": True,
             "is_visible": True,

@@ -5195,32 +5195,27 @@ function App() {
                   borderBottom: '1px solid #f0f0f0'
                 }}>
                   <div style={{ display: 'flex', gap: '12px' }}>
-                    {/* v74: Avatar — cliquable si photo réelle, sinon initiale */}
-                    {comment.profile_photo ? (
-                      <div
-                        onClick={() => setZoomedPhoto(comment.profile_photo)}
-                        style={{
-                          width: '36px', height: '36px', borderRadius: '50%',
-                          overflow: 'hidden', cursor: 'pointer', flexShrink: 0,
-                          border: '2px solid #D91CD2'
-                        }}
-                      >
-                        <img
-                          src={comment.profile_photo}
-                          alt={comment.user_name}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                        />
-                      </div>
-                    ) : (
-                      <div style={{
-                        width: '36px', height: '36px', borderRadius: '50%',
-                        background: '#D91CD2',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '14px', fontWeight: 700, color: '#fff', flexShrink: 0
-                      }}>
-                        {(comment.user_name || '?')[0].toUpperCase()}
-                      </div>
-                    )}
+                    {/* v78: Avatar — photo réelle, DiceBear fallback, ou initiale */}
+                    {(() => {
+                      const photoUrl = comment.profile_photo || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(comment.user_name || 'user')}&backgroundColor=D91CD2`;
+                      return (
+                        <div
+                          onClick={() => setZoomedPhoto(photoUrl)}
+                          style={{
+                            width: '36px', height: '36px', borderRadius: '50%',
+                            overflow: 'hidden', cursor: 'pointer', flexShrink: 0,
+                            border: '2px solid #D91CD2'
+                          }}
+                        >
+                          <img
+                            src={photoUrl}
+                            alt={comment.user_name}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.innerHTML = `<div style="width:100%;height:100%;background:#D91CD2;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff">${(comment.user_name || '?')[0].toUpperCase()}</div>`; }}
+                          />
+                        </div>
+                      );
+                    })()}
                     <div style={{ flex: 1 }}>
                       {/* Nom + étoiles */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -5239,27 +5234,40 @@ function App() {
                       <p style={{ color: '#303030', fontSize: '13px', lineHeight: 1.5, margin: '4px 0 6px' }}>
                         {comment.text}
                       </p>
-                      {/* Like button */}
+                      {/* v78: Like button — bigger touch target + visual feedback */}
                       <button
-                        onClick={async () => {
+                        onClick={async (e) => {
+                          const btn = e.currentTarget;
+                          // v78: Optimistic update + animation
+                          setSocialComments(prev => prev.map(c =>
+                            c.id === comment.id ? { ...c, likes: (c.likes || 0) + 1 } : c
+                          ));
+                          btn.style.transform = 'scale(1.3)';
+                          btn.style.color = '#D91CD2';
+                          setTimeout(() => { btn.style.transform = 'scale(1)'; }, 300);
+                          setTimeout(() => { btn.style.color = '#606060'; }, 1500);
                           try {
                             await axios.post(`${API}/comments/${comment.id}/like`);
+                          } catch (e) {
                             setSocialComments(prev => prev.map(c =>
-                              c.id === comment.id ? { ...c, likes: (c.likes || 0) + 1 } : c
+                              c.id === comment.id ? { ...c, likes: Math.max(0, (c.likes || 0) - 1) } : c
                             ));
-                          } catch (e) {}
+                          }
                         }}
                         style={{
                           background: 'none', border: 'none', cursor: 'pointer',
-                          color: '#606060', fontSize: '12px',
-                          display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 0'
+                          color: '#606060', fontSize: '13px',
+                          display: 'flex', alignItems: 'center', gap: '6px',
+                          padding: '6px 12px', borderRadius: '18px',
+                          transition: 'all 0.3s ease',
+                          minHeight: '32px'
                         }}
                       >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#606060" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/>
                           <path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>
                         </svg>
-                        {comment.likes || 0}
+                        <span style={{ fontWeight: 600 }}>{comment.likes || 0}</span>
                       </button>
                     </div>
                   </div>
