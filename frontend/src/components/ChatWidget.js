@@ -3,6 +3,7 @@
 // Fonctionnalités: Socket.IO temps réel, notifications push, sons, liens cliquables, suppression historique
 
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
+import ReactDOM from 'react-dom';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import { 
@@ -622,7 +623,8 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             flexShrink: 0,
             WebkitTapHighlightColor: 'transparent',
             position: 'relative',
-            zIndex: 5
+            zIndex: 10,
+            pointerEvents: 'auto'
           }}
         >
           <img
@@ -4218,63 +4220,9 @@ export const ChatWidget = () => {
                         Rafraîchir
                       </button>
                       
-                      <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }} />
-                      
-                      {/* v81: Bouton dynamique — Dashboard pour coach/admin, Devenir Partenaire pour abonnés */}
-                      {(isRegisteredCoach || isCoachMode) ? (
-                        <button
-                          onClick={() => {
-                            window.location.assign(window.location.origin + '/#coach-dashboard');
-                          }}
-                          style={{
-                            width: '100%',
-                            padding: '10px 14px',
-                            textAlign: 'left',
-                            fontSize: '12px',
-                            color: '#D91CD2',
-                            background: 'none',
-                            border: 'none',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '10px'
-                          }}
-                          className="hover:bg-white/10"
-                          data-testid="goto-dashboard-btn"
-                        >
-                          <span>⚙️</span>
-                          Mon Dashboard
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            window.open('https://wa.me/33767aborost?text=Bonjour%2C%20je%20souhaite%20devenir%20partenaire%20Afroboost%20!', '_blank');
-                            setShowMenu(false);
-                          }}
-                          style={{
-                            width: '100%',
-                            padding: '10px 14px',
-                            textAlign: 'left',
-                            fontSize: '12px',
-                            color: '#fff',
-                            background: 'linear-gradient(135deg, rgba(147, 51, 234, 0.3), rgba(217, 28, 210, 0.3))',
-                            border: 'none',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '10px',
-                            fontWeight: '600'
-                          }}
-                          className="hover:bg-white/10"
-                          data-testid="become-partner-menu-btn"
-                        >
-                          <span>✨</span>
-                          Devenir Partenaire
-                        </button>
-                      )}
-                      
-                      <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }} />
-                      
+                      {/* v82: Doublon "Devenir Partenaire" supprimé ici — gardé uniquement dans le user menu */}
+                      <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }} />
+
                       {/* Bouton Déconnexion */}
                       <button
                         onClick={() => { handleLogout(); }}
@@ -5733,8 +5681,8 @@ export const ChatWidget = () => {
         isMainChatOpen={isOpen}
       />
       
-      {/* === v79: MODAL ZOOM PHOTO DE PROFIL — z-index 2000000 + backdrop blur === */}
-      {zoomedChatPhoto && (
+      {/* === v82: MODAL ZOOM PHOTO — Portal sur document.body + z-index 99999999 === */}
+      {zoomedChatPhoto && ReactDOM.createPortal(
         <div
           style={{
             position: 'fixed',
@@ -5745,16 +5693,17 @@ export const ChatWidget = () => {
             background: 'rgba(0,0,0,0.88)',
             backdropFilter: 'blur(5px)',
             WebkitBackdropFilter: 'blur(5px)',
-            zIndex: 9999999,
+            zIndex: 99999999,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            cursor: 'pointer'
+            cursor: 'pointer',
+            pointerEvents: 'auto'
           }}
           onClick={() => setZoomedChatPhoto(null)}
           data-testid="zoom-photo-modal"
         >
-          {/* v79: Bouton Fermer (X) visible en haut à droite */}
+          {/* v82: Bouton Fermer (X) visible en haut à droite */}
           <button
             onClick={(e) => { e.stopPropagation(); setZoomedChatPhoto(null); }}
             style={{
@@ -5770,14 +5719,14 @@ export const ChatWidget = () => {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              zIndex: 10000000
+              zIndex: 100000000
             }}
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
           </button>
-          {/* v77: Photo circulaire avec bordure violet néon épaisse */}
+          {/* v82: Photo circulaire avec bordure violet néon */}
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
@@ -5796,7 +5745,8 @@ export const ChatWidget = () => {
               style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
             />
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* v76: CSS animation pour zoom photo */}

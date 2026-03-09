@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 — Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v81';
-// V81: Chat épuré (bulles WhatsApp), bouton Devenir Partenaire, zoom photo z-index fix
+const CACHE_NAME = 'afroboost-v82';
+// V82: Fix doublon Devenir Partenaire, zoom photo Portal + pointerEvents, z-index 99999999
 
 // Installation — skip waiting pour activer immédiatement
 self.addEventListener('install', (event) => {
