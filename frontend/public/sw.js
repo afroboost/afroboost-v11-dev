@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v87';
-// V87: Campagnes Multicanal & Chat Temps RÃ©el â timezone fix, son notification, anti-doublon
+const CACHE_NAME = 'afroboost-v88';
+// V88: Fix avis + controle coach avis + icones Hero lisibles
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {
@@ -138,4 +138,4 @@ self.addEventListener('message', (event) => {
     self.skipWaiting();
   }
 });
-// V87 deploy trigger — API commit
+// V88 deploy
