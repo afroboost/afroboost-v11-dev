@@ -622,6 +622,7 @@ class ConceptUpdate(BaseModel):
     logoUrl: Optional[str] = None
     faviconUrl: Optional[str] = None
     termsText: Optional[str] = None  # CGV - Conditions Générales de Vente
+    termsTextPartners: Optional[str] = None  # V93.6: CGP - Conditions Générales Partenaires
     googleReviewsUrl: Optional[str] = None  # Lien avis Google
     defaultLandingSection: Optional[str] = None  # Section d'atterrissage par défaut
     # Liens externes
