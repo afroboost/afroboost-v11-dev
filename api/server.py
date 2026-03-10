@@ -145,6 +145,7 @@ DEFAULT_COACH_ID = "bassi_default"  # ID par défaut pour les données existante
 ROLE_SUPER_ADMIN = "super_admin"
 ROLE_COACH = "coach"
 ROLE_USER = "user"
+ROLE_PARTNER = "partner"
 
 def get_user_role(email: str) -> str:
     """Détermine le rôle d'un utilisateur basé sur son email"""
@@ -1889,6 +1890,60 @@ async def check_if_partner(email: str):
     
     return {"is_partner": False, "email": email}
 
+
+# === V90: ENDPOINT CONVERSION SEANCE -> CREDIT SERVICE ===
+@api_router.post("/session-to-credit")
+async def convert_session_to_credit(request: Request):
+    """
+    V90: Convertit 1 seance payee (15 CHF) en 1 credit service.
+    Le partenaire echange ses seances achetees contre des credits utilisables pour les services.
+    """
+    try:
+        body = await request.json()
+        email = body.get("email", "").lower().strip()
+        
+        if not email:
+            return JSONResponse(status_code=400, content={"error": "Email requis"})
+        
+        # Super Admin bypass
+        if is_super_admin(email):
+            return {"success": True, "message": "Super Admin - credits illimites", "credits": -1}
+        
+        # Verifier que le coach/partenaire existe
+        coach = await db.coaches.find_one({"email": email})
+        if not coach:
+            return JSONResponse(status_code=404, content={"error": "Partenaire non trouve"})
+        
+        # Verifier qu il a au moins 1 seance disponible
+        sessions_available = coach.get("sessions_available", 0)
+        if sessions_available < 1:
+            return JSONResponse(status_code=400, content={
+                "error": "Aucune seance disponible a convertir",
+                "sessions_available": sessions_available
+            })
+        
+        # Convertir: -1 seance, +1 credit
+        result = await db.coaches.update_one(
+            {"email": email},
+            {
+                "$inc": {"sessions_available": -1, "credits": 1},
+                "$set": {"role": "partner", "updated_at": datetime.utcnow().isoformat()}
+            }
+        )
+        
+        updated = await db.coaches.find_one({"email": email})
+        logger.info(f"[V90] Session->Credit conversion for {email}: sessions={updated.get('sessions_available', 0)}, credits={updated.get('credits', 0)}")
+        
+        return {
+            "success": True,
+            "sessions_remaining": updated.get("sessions_available", 0),
+            "credits": updated.get("credits", 0),
+            "message": "1 seance convertie en 1 credit service"
+        }
+    except Exception as e:
+        logger.error(f"[V90] Error session-to-credit: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 # === v9.5.8: ENDPOINT DÉDUCTION CRÉDITS ===
 @api_router.post("/credits/deduct")
 async def api_deduct_credit(request: Request):
@@ -3164,7 +3219,7 @@ async def stripe_webhook(request: Request):
                     "email": coach_email,
                     "name": coach_name,
                     "phone": metadata.get("customer_phone", ""),
-                    "role": "coach",
+                    "role": "partner",
                     "credits": credits,
                     "pack_id": pack_id,
                     "stripe_customer_id": session.get("customer"),
@@ -3501,7 +3556,7 @@ async def create_coach_checkout(request: Request):
                         "quantity": 1
                     }],
                     mode="payment",
-                    success_url=f"{COACH_DASHBOARD_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}&auth=success",
+                    success_url=f"{base_url}/#partner-dashboard?success=true&session_id={{CHECKOUT_SESSION_ID}}&auth=success",
                     cancel_url=CANCEL_URL,
                     customer_email=email,
                     metadata={

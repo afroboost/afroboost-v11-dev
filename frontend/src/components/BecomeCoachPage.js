@@ -43,7 +43,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
   const [error, setError] = useState(null);
   
   // v9.4.7: État utilisateur connecté via Google
-  const [googleUser, setGoogleUser] = useState(null);
+  const [googleUser, setGoogleUser] = useState(null); // v90: disabled
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const hasProcessedRef = useRef(false);
   
@@ -90,58 +90,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
   }, []);
 
   // v9.4.7: Traiter le session_id dans l'URL (callback OAuth sur cette page)
-  useEffect(() => {
-    const processOAuthCallback = async () => {
-      if (hasProcessedRef.current) return;
-      
-      const hash = window.location.hash;
-      if (!hash.includes('session_id=')) return;
-      
-      hasProcessedRef.current = true;
-      setSubmitting(true);
-      setError(null);
-      
-      const sessionId = hash.split('session_id=')[1]?.split('&')[0];
-      if (!sessionId) {
-        setError("Session invalide");
-        setSubmitting(false);
-        return;
-      }
-      
-      // Nettoyer l'URL
-      window.history.replaceState(null, '', window.location.pathname);
-      
-      try {
-        const response = await axios.post(`${API}/auth/google/session`, 
-          { session_id: sessionId },
-          { withCredentials: true }
-        );
-        
-        if (response.data.success) {
-          const user = response.data.user;
-          console.log('[BECOME-COACH] ✅ Google login:', user.email);
-          setGoogleUser(user);
-          setFormData(prev => ({
-            ...prev,
-            name: user.name || prev.name,
-            email: user.email || prev.email
-          }));
-          
-          // v9.4.7: Créer automatiquement un profil "En attente de paiement"
-          await createPendingProfile(user);
-        } else {
-          setError(response.data.message || "Erreur d'authentification");
-        }
-      } catch (err) {
-        console.error('[BECOME-COACH] ❌ Erreur OAuth:', err);
-        setError(err.response?.data?.message || "Erreur d'authentification");
-      } finally {
-        setSubmitting(false);
-      }
-    };
-    
-    processOAuthCallback();
-  }, []);
+  // v90: Google OAuth removed
 
   // v9.4.7: Créer un profil "En attente de paiement" pour les nouveaux utilisateurs Google
   const createPendingProfile = async (user) => {
@@ -191,13 +140,6 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
   }, []);
 
   // Connexion Google
-  const handleGoogleLogin = () => {
-    setSubmitting(true);
-    setError(null);
-    // Rediriger vers Google OAuth avec retour sur cette page
-    const redirectUrl = window.location.origin + window.location.pathname + '#become-coach';
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
-  };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -374,33 +316,6 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
 
           {/* v9.4.7: Bouton Google Login si pas connecté */}
           {!googleUser && (
-            <div className="glass rounded-2xl p-6 mb-8 text-center" style={{ border: '1px solid rgba(217, 28, 210, 0.5)' }}>
-              <h2 className="text-xl font-semibold text-white mb-4">Commencez par vous connecter</h2>
-              <p className="text-white/60 text-sm mb-6">
-                Connectez-vous avec Google pour simplifier votre inscription
-              </p>
-              <button
-                onClick={handleGoogleLogin}
-                disabled={submitting}
-                className="inline-flex items-center justify-center gap-3 py-3 px-6 rounded-lg font-medium transition-all duration-200"
-                style={{
-                  background: '#ffffff',
-                  color: '#1f1f1f',
-                  cursor: submitting ? 'wait' : 'pointer',
-                  opacity: submitting ? 0.7 : 1
-                }}
-                data-testid="google-login-pack-btn"
-              >
-                {submitting ? (
-                  <div className="animate-spin w-5 h-5 border-2 border-gray-400 border-t-transparent rounded-full"></div>
-                ) : (
-                  <GoogleIcon />
-                )}
-                <span>{submitting ? 'Connexion...' : 'Se connecter avec Google'}</span>
-              </button>
-              <p className="text-white/40 text-xs mt-4">
-                ou remplissez le formulaire ci-dessous
-              </p>
             </div>
           )}
 

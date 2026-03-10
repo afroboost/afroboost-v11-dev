@@ -91,6 +91,7 @@ const performEmailSend = async (destination, recipientName = 'Client', subject =
       return { success: false, error: 'Message vide' };
     }
     
+  console.log("\u{1F680} V90 : Syst\u00e8me Partenaire & Conversion cr\u00e9dits op\u00e9rationnel");
     console.log('========================================');
     console.log('RESEND_DEBUG: Envoi campagne via API');
     console.log('RESEND_DEBUG: Destination =', destination);
@@ -655,6 +656,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const isSuperAdmin = SUPER_ADMIN_EMAILS.some(email => 
     (safeCoachUser?.email || '').toLowerCase() === email.toLowerCase()
   );
+  // v90: Partner dashboard - admin-only tabs hidden for partners
+  const isPartnerOnly = !isSuperAdmin;
+  const ADMIN_ONLY_TABS = ["Réservations", "Contacts"];
   
   // v9.2.5: Valeurs par défaut TOUJOURS présentes pour éviter page blanche
   const displayEmail = safeCoachUser?.email || 'Partenaire';
@@ -4641,7 +4645,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         
         {/* Onglets squelette */}
         <div className="flex flex-wrap gap-2 mb-6">
-          {['Réservations', '🎛️ Gestion', '🏪 Ma Page', 'Codes promo', 'Contacts', 'Campagnes', 'Conversations'].map((tabName, i) => (
+          {['Réservations', '🎛️ Gestion', '🏪 Ma Page', 'Codes promo', 'Contacts', 'Campagnes', 'Conversations'].filter(t => isSuperAdmin || !ADMIN_ONLY_TABS.includes(t)).map((tabName, i) => (
             <div 
               key={i}
               className="px-4 py-2 rounded-lg text-white/60 text-sm"
