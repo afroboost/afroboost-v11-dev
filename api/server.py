@@ -591,6 +591,7 @@ class Concept(BaseModel):
     logoUrl: str = ""
     faviconUrl: str = ""
     termsText: str = ""  # CGV - Conditions Générales de Vente
+    termsTextPartners: str = ""  # V93.6: CGP - Conditions Générales Partenaires
     googleReviewsUrl: str = ""  # Lien avis Google
     defaultLandingSection: str = "sessions"  # Section d'atterrissage par défaut: "sessions", "offers", "shop"
     # Liens externes
