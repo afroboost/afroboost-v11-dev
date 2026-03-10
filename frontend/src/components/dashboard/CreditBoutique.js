@@ -1,5 +1,5 @@
 /**
- * CreditBoutique Component v13.2
+ * CreditBoutique Component v13.3 (V93)
  * Section d'achat de packs de crédits pour les partenaires
  * Extrait de CoachDashboard.js pour alléger le code
  */
@@ -10,7 +10,9 @@ const CreditBoutique = ({
   creditPacks,
   loadingPacks,
   purchasingPack,
-  onBuyPack
+  onBuyPack,
+  isSuperAdmin,
+  servicePrices
 }) => {
   return (
     <div className="space-y-6" data-testid="boutique-tab">
@@ -27,6 +29,46 @@ const CreditBoutique = ({
         )}
       </div>
 
+      {/* v93: Service credit costs - read-only for partners */}
+      {servicePrices && (
+        <div style={{
+          background: 'rgba(10,10,15,0.6)',
+          border: '1px solid rgba(217,28,210,0.2)',
+          borderRadius: '12px',
+          padding: '16px',
+          marginBottom: '16px'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <h3 style={{ color: '#D91CD2', fontSize: '14px', fontWeight: 'bold', margin: 0 }}>
+              {isSuperAdmin ? '\u2699\ufe0f Tarifs des services (modifiable)' : '\ud83d\udcb0 Co\u00fbt des services'}
+            </h3>
+            {!isSuperAdmin && (
+              <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px' }}>\ud83d\udd12 D\u00e9fini par l'admin</span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            {[
+              { key: 'campaign', label: 'Campagne Email', icon: '\ud83d\udce7' },
+              { key: 'ai_conversation', label: 'Conversation IA', icon: '\ud83e\udd16' },
+              { key: 'promo_code', label: 'Code Promo', icon: '\ud83c\udfab' }
+            ].map(s => (
+              <div key={s.key} style={{
+                flex: '1 1 100px',
+                background: 'rgba(217,28,210,0.08)',
+                borderRadius: '8px',
+                padding: '10px',
+                textAlign: 'center'
+              }}>
+                <div style={{ fontSize: '20px', marginBottom: '4px' }}>{s.icon}</div>
+                <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '10px', marginBottom: '4px' }}>{s.label}</div>
+                <div style={{ color: '#D91CD2', fontWeight: 'bold', fontSize: '16px' }}>
+                  {servicePrices[s.key] || 1} cr.
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {/* Liste des packs disponibles */}
       <div>
         <h2 className="text-xl font-bold text-white mb-6">Choisissez votre pack</h2>

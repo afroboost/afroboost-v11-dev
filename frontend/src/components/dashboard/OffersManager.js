@@ -1,5 +1,5 @@
 /**
- * OffersManager Component v13.4
+ * OffersManager Component v13.5 (V93)
  * Gestion des offres/produits - Extrait de CoachDashboard.js
  */
 import React from 'react';
@@ -19,9 +19,32 @@ const OffersManager = ({
   cancelEditOffer,
   enhanceWithAI,
   API,
+  isSuperAdmin,
+  coachEmail,
+  consumeCredit,
   t
 }) => {
   const [aiLoading, setAiLoading] = React.useState(false);
+  const [showOnboarding, setShowOnboarding] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!isSuperAdmin) {
+      try {
+        const seen = localStorage.getItem('afroboost_onboarding_offers');
+        if (!seen) setShowOnboarding(true);
+      } catch(e) {}
+    }
+  }, [isSuperAdmin]);
+
+  const dismissOnboarding = () => {
+    setShowOnboarding(false);
+    try { localStorage.setItem('afroboost_onboarding_offers', '1'); } catch(e) {}
+  };
+
+  const isOwnOffer = (offer) => {
+    if (isSuperAdmin) return true;
+    return (offer.coach_id || '').toLowerCase() === (coachEmail || '').toLowerCase();
+  };
 
   const handleAIEnhance = async (field) => {
     const text = field === 'name' ? newOffer.name : newOffer.description;
@@ -49,6 +72,46 @@ const OffersManager = ({
   };
   return (
     <div className="card-gradient rounded-xl p-4 sm:p-6">
+      {/* v93: Onboarding tooltips for new partners */}
+      {showOnboarding && !isSuperAdmin && (
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(217,28,210,0.15), rgba(255,45,170,0.1))',
+          border: '1px solid rgba(217,28,210,0.4)',
+          borderRadius: '12px',
+          padding: '16px',
+          marginBottom: '16px',
+          position: 'relative'
+        }}>
+          <button onClick={dismissOnboarding} style={{
+            position: 'absolute', top: '8px', right: '12px',
+            background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)',
+            fontSize: '18px', cursor: 'pointer'
+          }}>\u2715</button>
+          <h3 style={{ color: '#D91CD2', fontSize: '14px', fontWeight: 'bold', marginBottom: '10px' }}>
+            \ud83d\udca1 Bienvenue dans votre espace Offres !
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+              <span style={{ fontSize: '16px' }}>\ud83c\udfaf</span>
+              <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', margin: 0 }}>
+                <strong style={{ color: '#fff' }}>Cr\u00e9ez vos offres</strong> \u2014 Ajoutez vos services, cours ou produits avec prix, description et images.
+              </p>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+              <span style={{ fontSize: '16px' }}>\ud83d\udd12</span>
+              <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', margin: 0 }}>
+                <strong style={{ color: '#fff' }}>S\u00e9curit\u00e9</strong> \u2014 Vous ne pouvez modifier ou supprimer que vos propres offres.
+              </p>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+              <span style={{ fontSize: '16px' }}>\ud83d\udcb3</span>
+              <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', margin: 0 }}>
+                <strong style={{ color: '#fff' }}>Cr\u00e9dits</strong> \u2014 Chaque activation de service consomme des cr\u00e9dits. Rechargez dans la Boutique.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       {/* En-tête fixe avec titre et recherche */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 sticky top-0 z-10 pb-3" style={{ background: 'inherit' }}>
         <h2 className="font-semibold text-white text-lg sm:text-xl">{t('offers')}</h2>
@@ -121,13 +184,23 @@ const OffersManager = ({
                 >
                   ✏️ Modifier
                 </button>
-                <button 
-                  onClick={() => deleteOffer(offer.id)}
-                  className="flex-1 py-3 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-medium"
-                  data-testid={`delete-offer-${offer.id}`}
-                >
-                  🗑️ Supprimer
-                </button>
+                {isOwnOffer(offer) ? (
+                  <button 
+                    onClick={() => deleteOffer(offer.id)}
+                    className="flex-1 py-3 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-medium"
+                    data-testid={`delete-offer-${offer.id}`}
+                  >
+                    🗑️ Supprimer
+                  </button>
+                ) : (
+                  <button 
+                    disabled
+                    className="flex-1 py-3 rounded-lg bg-gray-600 text-white/30 text-sm font-medium cursor-not-allowed"
+                    title="Vous ne pouvez supprimer que vos propres offres"
+                  >
+                    🔒 Protégée
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -160,13 +233,23 @@ const OffersManager = ({
                   >
                     ✏️ Modifier
                   </button>
-                  <button 
-                    onClick={() => deleteOffer(offer.id)}
-                    className="px-3 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs"
-                    data-testid={`delete-offer-${offer.id}`}
-                  >
-                    🗑️ Supprimer
-                  </button>
+                  {isOwnOffer(offer) ? (
+                    <button 
+                      onClick={() => deleteOffer(offer.id)}
+                      className="px-3 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs"
+                      data-testid={`delete-offer-${offer.id}`}
+                    >
+                      🗑️ Supprimer
+                    </button>
+                  ) : (
+                    <button 
+                      disabled
+                      className="px-3 py-2 rounded-lg bg-gray-600 text-white/30 text-xs cursor-not-allowed"
+                      title="Vous ne pouvez supprimer que vos propres offres"
+                    >
+                      🔒 Protégée
+                    </button>
+                  )}
                   <div className="flex items-center gap-2 ml-2">
                     <span className="text-xs text-white opacity-60">{t('visible')}</span>
                     <div 

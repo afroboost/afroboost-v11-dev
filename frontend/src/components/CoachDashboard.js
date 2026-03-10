@@ -1466,7 +1466,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         setReservations(res.data.data);
         setReservationPagination(res.data.pagination);
         
-        setCourses(crs.data); setOffers(off.data);
+        setCourses(crs.data);
+        // v93: Partners see only their own offers (filtered by coach_id)
+        setOffers(isSuperAdmin ? off.data : off.data.filter(o => (o.coach_id || '').toLowerCase() === safeCoachUser_.email.toLowerCase()));
         // v92: Partners don't see full user database
         setUsers(isSuperAdmin ? usr.data : []);
         setPaymentLinks(lnk.data); setConcept(cpt.data);
@@ -5713,6 +5715,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     startEditOffer={startEditOffer}
                     cancelEditOffer={cancelEditOffer}
                     API={API}
+                    isSuperAdmin={isSuperAdmin}
+                    coachEmail={safeCoachUser_.email}
+                    consumeCredit={consumeCredit}
                     t={t}
                   />
                 </div>
@@ -6332,6 +6337,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             loadingPacks={loadingPacks}
             purchasingPack={purchasingPack}
             onBuyPack={handleBuyPack}
+            isSuperAdmin={isSuperAdmin}
+            servicePrices={servicePrices}
           />
         )}
 
