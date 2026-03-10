@@ -1,11 +1,11 @@
 /**
  * CoachVitrine - Vitrine publique d'un coach v29.3 STABLE CACHE-BUSTER
  * Route: /coach/[username]
- * Layout IDENTIQUE à la page d'accueil :
+ * Layout IDENTIQUE Ã  la page d'accueil :
  *   - Hero 85vh avec YouTube Lite Facade (thumbnail + play)
  *   - Nom coach + actions overlays (style Instagram Reels)
- *   - Sous le hero : Cours/Sessions → Offres → Formulaire INLINE (pas de pop-up)
- *   - QR + Partage en haut à droite sur toutes les pages
+ *   - Sous le hero : Cours/Sessions â Offres â Formulaire INLINE (pas de pop-up)
+ *   - QR + Partage en haut Ã  droite sur toutes les pages
  */
 import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
@@ -24,32 +24,32 @@ const getYoutubeId = (url) => {
   return match ? match[1] : null;
 };
 
-// Offres par défaut Afroboost si le coach n'a pas créé les siennes
+// Offres par dÃ©faut Afroboost si le coach n'a pas crÃ©Ã© les siennes
 const DEFAULT_STARTER_OFFERS = [
   {
     id: 'default-1',
-    name: 'Séance découverte',
-    description: 'Première séance offerte pour découvrir le concept',
+    name: 'SÃ©ance dÃ©couverte',
+    description: 'PremiÃ¨re sÃ©ance offerte pour dÃ©couvrir le concept',
     price: 0,
     imageUrl: 'https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=400&h=300&fit=crop'
   },
   {
     id: 'default-2',
-    name: 'Pack 5 séances',
-    description: 'Idéal pour commencer votre transformation',
+    name: 'Pack 5 sÃ©ances',
+    description: 'IdÃ©al pour commencer votre transformation',
     price: 99,
     imageUrl: 'https://images.unsplash.com/photo-1518611012118-696072aa579a?w=400&h=300&fit=crop'
   },
   {
     id: 'default-3',
     name: 'Abonnement mensuel',
-    description: 'Accès illimité à toutes les séances du mois',
+    description: 'AccÃ¨s illimitÃ© Ã  toutes les sÃ©ances du mois',
     price: 149,
     imageUrl: 'https://images.unsplash.com/photo-1549060279-7e168fcee0c2?w=400&h=300&fit=crop'
   }
 ];
 
-// Icône de localisation
+// IcÃ´ne de localisation
 const LocationIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
@@ -76,36 +76,36 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     stripe: '', paypal: '', twint: '', coachWhatsapp: ''
   });
 
-  // Concept du coach (vidéo header)
+  // Concept du coach (vidÃ©o header)
   const [coachConcept, setCoachConcept] = useState(null);
 
-  // v29.2: Timestamp STABLE pour cache-busting — fixé au montage, ne change plus entre les rotations
+  // v29.2: Timestamp STABLE pour cache-busting â fixÃ© au montage, ne change plus entre les rotations
   const [cacheBusterTs] = useState(() => Date.now());
 
   // v17.0: Branding dynamique
   const [brandAccent, setBrandAccent] = useState('#D91CD2');
 
-  // v44: Pistes audio autonomes (indépendantes des cours)
+  // v44: Pistes audio autonomes (indÃ©pendantes des cours)
   const [audioTracks, setAudioTracks] = useState([]);
 
   // v17.2: FAQ
   const [faqs, setFaqs] = useState([]);
   const [openFaqId, setOpenFaqId] = useState(null);
 
-  // v18: Multi-vidéos héro
+  // v18: Multi-vidÃ©os hÃ©ro
   const [activeVideoIndex, setActiveVideoIndex] = useState(0);
 
-  // v34: Preview 30s pour vidéos premium
+  // v34: Preview 30s pour vidÃ©os premium
   const [showVideoPreviewOverlay, setShowVideoPreviewOverlay] = useState(false);
   const ytPreviewTimerRef = useRef(null);
   const PREVIEW_LIMIT = 30; // secondes
 
-  // v72: Social Proof — Icône interactive + panneau commentaires
+  // v72: Social Proof â IcÃ´ne interactive + panneau commentaires
   const [socialComments, setSocialComments] = useState([]);
   const [showCommentsPanel, setShowCommentsPanel] = useState(false);
   const [zoomedPhoto, setZoomedPhoto] = useState(null); // v74: Zoom photo profil
 
-  // v17: INLINE booking multi-séances (tableau de { course, date })
+  // v17: INLINE booking multi-sÃ©ances (tableau de { course, date })
   const [selectedBookings, setSelectedBookings] = useState([]); // [{ course, date }, ...]
   const selectedBooking = selectedBookings.length > 0 ? selectedBookings[0] : null; // compat
   const [selectedOffer, setSelectedOffer] = useState(null);
@@ -130,16 +130,16 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     else window.history.pushState({}, '', '/');
   };
 
-  // v17: Clic sur date → toggle sélection multi-séances (max 3)
+  // v17: Clic sur date â toggle sÃ©lection multi-sÃ©ances (max 3)
   const handleBookClick = (course, date) => {
     const dateStr = date.toISOString();
     const exists = selectedBookings.findIndex(b => b.course.id === course.id && b.date.toISOString() === dateStr);
     if (exists >= 0) {
-      // Déselection
+      // DÃ©selection
       setSelectedBookings(prev => prev.filter((_, i) => i !== exists));
     } else if (selectedBookings.length >= 3) {
-      // Max 3 séances
-      alert('Maximum 3 séances à la fois');
+      // Max 3 sÃ©ances
+      alert('Maximum 3 sÃ©ances Ã  la fois');
     } else {
       // Ajout
       setSelectedBookings(prev => [...prev, { course, date }]);
@@ -147,7 +147,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     setBookingSuccess(false);
     setPromoMessage({ type: '', text: '' });
     setAppliedDiscount(null);
-    // Scroll vers le formulaire après rendu
+    // Scroll vers le formulaire aprÃ¨s rendu
     setTimeout(() => {
       const el = document.getElementById('vitrine-booking-form');
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -169,22 +169,22 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       if (res.data && res.data.valid) {
         const discountCode = res.data.code;
         let discountText = '';
-        if (discountCode.type === '100%') discountText = `Code validé : GRATUIT`;
-        else if (discountCode.type === '%') discountText = `Code validé : -${discountCode.value}%`;
-        else discountText = `Code validé : -${discountCode.value} CHF`;
-        setPromoMessage({ type: 'success', text: `✅ ${discountText}` });
+        if (discountCode.type === '100%') discountText = `Code validÃ© : GRATUIT`;
+        else if (discountCode.type === '%') discountText = `Code validÃ© : -${discountCode.value}%`;
+        else discountText = `Code validÃ© : -${discountCode.value} CHF`;
+        setPromoMessage({ type: 'success', text: `â ${discountText}` });
         setAppliedDiscount(discountCode);
       } else {
-        setPromoMessage({ type: 'error', text: '❌ Code invalide' });
+        setPromoMessage({ type: 'error', text: 'â Code invalide' });
         setAppliedDiscount(null);
       }
     } catch (err) {
-      setPromoMessage({ type: 'error', text: '❌ Code invalide ou expiré' });
+      setPromoMessage({ type: 'error', text: 'â Code invalide ou expirÃ©' });
       setAppliedDiscount(null);
     }
   };
 
-  // v17: Calculer prix final × nombre de séances
+  // v17: Calculer prix final Ã nombre de sÃ©ances
   const calculateFinalPrice = () => {
     if (!selectedOffer) return 0;
     const qty = Math.max(1, selectedBookings.length);
@@ -197,13 +197,13 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     return total;
   };
 
-  // Soumettre réservation
+  // Soumettre rÃ©servation
   const handleBookingSubmit = async (e) => {
     e.preventDefault();
     if (selectedBookings.length === 0 || bookingLoading) return;
     setBookingLoading(true);
     try {
-      // Envoyer une réservation par séance sélectionnée
+      // Envoyer une rÃ©servation par sÃ©ance sÃ©lectionnÃ©e
       const finalPrice = calculateFinalPrice();
       const qty = selectedBookings.length;
       for (const booking of selectedBookings) {
@@ -214,7 +214,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           courseName: booking.course.name || booking.course.title,
           courseTime: booking.course.time,
           datetime: booking.date.toISOString(),
-          offerName: selectedOffer?.name || 'Séance',
+          offerName: selectedOffer?.name || 'SÃ©ance',
           totalPrice: finalPrice / qty,
           quantity: 1,
           coach_id: coach?.email || username,
@@ -233,7 +233,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       const detail = err.response?.data?.detail;
       const message = typeof detail === 'string' ? detail :
         Array.isArray(detail) ? detail.map(d => d.msg || JSON.stringify(d)).join(', ') :
-        'Erreur lors de la réservation';
+        'Erreur lors de la rÃ©servation';
       alert(message);
     } finally {
       setBookingLoading(false);
@@ -247,7 +247,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
 
   useEffect(() => {
     const fetchVitrine = async () => {
-      if (!username) { setError('Aucun coach spécifié'); setLoading(false); return; }
+      if (!username) { setError('Aucun coach spÃ©cifiÃ©'); setLoading(false); return; }
       try {
         const res = await axios.get(`${API}/coach/vitrine/${encodeURIComponent(username)}`);
         setCoach(res.data.coach);
@@ -255,14 +255,14 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         setOffers(coachOffers.length === 0 ? DEFAULT_STARTER_OFFERS : coachOffers);
         setCourses(res.data.courses || []);
 
-        // v29: Le concept (heroVideos, couleurs, etc.) est maintenant inclus directement dans la réponse vitrine
+        // v29: Le concept (heroVideos, couleurs, etc.) est maintenant inclus directement dans la rÃ©ponse vitrine
         if (res.data.concept) {
           setCoachConcept(res.data.concept);
-          console.warn('[VITRINE-V29] ✅ Concept chargé depuis vitrine API — heroVideos:', res.data.concept.heroVideos?.length || 0,
+          console.warn('[VITRINE-V29] â Concept chargÃ© depuis vitrine API â heroVideos:', res.data.concept.heroVideos?.length || 0,
             'URLs:', (res.data.concept.heroVideos || []).map(v => v?.url).filter(Boolean));
         } else {
-          console.warn('[VITRINE-V29] ⚠️ Pas de concept dans la réponse vitrine, tentative fallback...');
-          // Fallback: charger le concept séparément (compatibilité)
+          console.warn('[VITRINE-V29] â ï¸ Pas de concept dans la rÃ©ponse vitrine, tentative fallback...');
+          // Fallback: charger le concept sÃ©parÃ©ment (compatibilitÃ©)
           const coachEmail = res.data.coach.email || username;
           try {
             const conceptRes = await axios.get(`${API}/concept`, {
@@ -270,10 +270,10 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             });
             if (conceptRes.data) {
               setCoachConcept(conceptRes.data);
-              console.warn('[VITRINE-V29] ✅ Concept fallback chargé:', conceptRes.data.heroVideos?.length || 0);
+              console.warn('[VITRINE-V29] â Concept fallback chargÃ©:', conceptRes.data.heroVideos?.length || 0);
             }
           } catch (e) {
-            console.warn('[VITRINE-V29] ❌ Fallback concept échoué:', e.message);
+            console.warn('[VITRINE-V29] â Fallback concept Ã©chouÃ©:', e.message);
           }
         }
 
@@ -295,7 +295,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           setFaqs(Array.isArray(faqRes.data) ? faqRes.data : []);
         } catch (e) {}
 
-        // v52: Charger pistes audio — timeout 15s + retry + fallback cache
+        // v52: Charger pistes audio â timeout 15s + retry + fallback cache
         const audioEmail = encodeURIComponent(res.data.coach.email || username);
         const audioUrl = `${API}/public/audio-tracks/${audioEmail}`;
         let audioLoaded = false;
@@ -321,7 +321,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           }
         }
         if (!audioLoaded) {
-          // Fallback — charger depuis le cache local
+          // Fallback â charger depuis le cache local
           try {
             const cached = localStorage.getItem('afroboost_audio_cache_' + username);
             if (cached) {
@@ -339,7 +339,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
 
       } catch (err) {
         console.error('[VITRINE] Erreur:', err);
-        setError(err.response?.data?.detail || 'Coach non trouvé');
+        setError(err.response?.data?.detail || 'Coach non trouvÃ©');
       } finally {
         setLoading(false);
       }
@@ -347,7 +347,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     fetchVitrine();
   }, [username]);
 
-  // v17.1: SEO Dynamique — meta tags + OpenGraph pour chaque vitrine
+  // v17.1: SEO Dynamique â meta tags + OpenGraph pour chaque vitrine
   useEffect(() => {
     if (!coach) return;
     const coachName = coach.platform_name || coach.name || username;
@@ -358,7 +358,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       .then(r => r.json())
       .then(seo => {
         const title = seo.meta_title || `${coachName} | Afroboost`;
-        const desc = seo.meta_description || `Découvrez les cours et services de ${coachName} sur Afroboost`;
+        const desc = seo.meta_description || `DÃ©couvrez les cours et services de ${coachName} sur Afroboost`;
         const keywords = seo.seo_keywords || `${coachName}, fitness, coaching, Afroboost`;
         const image = seo.logo_url || `${window.location.origin}/logo192.png`;
         const url = `${window.location.origin}/coach/${username}`;
@@ -411,18 +411,18 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const handleShare = async () => {
     const shareData = {
       title: `${coach?.platform_name || coach?.name} - Coach`,
-      text: `Découvrez ${coach?.platform_name || coach?.name} sur Afroboost!`,
+      text: `DÃ©couvrez ${coach?.platform_name || coach?.name} sur Afroboost!`,
       url: vitrineUrl
     };
     if (navigator.share) {
       try { await navigator.share(shareData); } catch (err) {}
     } else {
       const result = await copyToClipboard(vitrineUrl);
-      alert(result.success ? 'Lien copié!' : 'Impossible de copier. URL: ' + vitrineUrl);
+      alert(result.success ? 'Lien copiÃ©!' : 'Impossible de copier. URL: ' + vitrineUrl);
     }
   };
 
-  // Générer prochaines dates
+  // GÃ©nÃ©rer prochaines dates
   const getNextOccurrences = (weekday, count = 4) => {
     const now = new Date();
     const results = [];
@@ -441,7 +441,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     return d.toLocaleDateString('fr-CH', { weekday: 'short', day: '2-digit', month: '2-digit' });
   };
 
-  // v18.4: Auto-rotation du carousel héro (8s par slide)
+  // v18.4: Auto-rotation du carousel hÃ©ro (8s par slide)
   const heroSlidesCount = (coachConcept?.heroVideos || []).filter(v => v && v.url).length;
   useEffect(() => {
     if (heroSlidesCount <= 1) return;
@@ -451,7 +451,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     return () => clearInterval(timer);
   }, [heroSlidesCount]);
 
-  // v29.4: PRELOAD vidéos en arrière-plan pour chargement instantané au switch
+  // v29.4: PRELOAD vidÃ©os en arriÃ¨re-plan pour chargement instantanÃ© au switch
   useEffect(() => {
     if (!coachConcept?.heroVideos) return;
     const base = BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '');
@@ -468,7 +468,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         link.href = fullUrl;
         document.head.appendChild(link);
         links.push(link);
-        console.log('[V29.4] Preload vidéo:', fullUrl);
+        console.log('[V29.4] Preload vidÃ©o:', fullUrl);
       }
     });
     return () => links.forEach(l => { try { document.head.removeChild(l); } catch(e) {} });
@@ -485,7 +485,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       e.target.pause();
       e.target.currentTime = 0;
       setShowVideoPreviewOverlay(true);
-      console.log('[V34-VITRINE] ⏱️ Limite 30s atteinte');
+      console.log('[V34-VITRINE] â±ï¸ Limite 30s atteinte');
     }
   }, [previewIsPremium]);
 
@@ -494,7 +494,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     if (ytPreviewTimerRef.current) { clearTimeout(ytPreviewTimerRef.current); ytPreviewTimerRef.current = null; }
   }, [activeVideoIndex]);
 
-  // === LOADING — v14: fond noir simple, pas de violet ===
+  // === LOADING â v14: fond noir simple, pas de violet ===
   if (loading) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: '#000' }}>
@@ -507,11 +507,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   if (error || !coach) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center flex-col gap-6 p-6" style={{ background: '#0a0a0f' }}>
-        <p className="text-red-400 text-xl font-semibold">{error || 'Coach non trouvé'}</p>
+        <p className="text-red-400 text-xl font-semibold">{error || 'Coach non trouvÃ©'}</p>
         <button onClick={onBack || onClose}
           className="px-6 py-3 rounded-xl text-white font-medium"
           style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #d91cd2 100%)' }}>
-          ← Retour
+          â Retour
         </button>
       </div>
     );
@@ -520,7 +520,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const displayName = coach.platform_name || coach.name || 'Coach';
   const initial = displayName.charAt(0).toUpperCase();
 
-  // v29.4: Résolution URL COMPLÈTE — cache-buster STABLE (fixé au montage)
+  // v29.4: RÃ©solution URL COMPLÃTE â cache-buster STABLE (fixÃ© au montage)
   const resolveMediaUrl = (url) => {
     if (!url) return '';
     if (url.startsWith('/api/files/')) {
@@ -529,33 +529,33 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     }
     return url;
   };
-  console.log('[VITRINE-V29.4] resolveMediaUrl stable — cacheBusterTs:', cacheBusterTs);
+  console.log('[VITRINE-V29.4] resolveMediaUrl stable â cacheBusterTs:', cacheBusterTs);
 
-  // v20.1: Détection STRICTE du type réel de média — image TOUJOURS avant vidéo
+  // v20.1: DÃ©tection STRICTE du type rÃ©el de mÃ©dia â image TOUJOURS avant vidÃ©o
   const detectMediaType = (video) => {
     if (!video || !video.url) return 'unknown';
     const url = video.url.toLowerCase();
-    // YouTube — priorité 1
+    // YouTube â prioritÃ© 1
     if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
     // Vimeo
     if (url.includes('vimeo.com')) return 'vimeo';
-    // v20.1: IMAGE — vérifier extension ET nom de fichier contenant /image_
-    // IMPORTANT: cette vérification DOIT être AVANT la vérification vidéo
+    // v20.1: IMAGE â vÃ©rifier extension ET nom de fichier contenant /image_
+    // IMPORTANT: cette vÃ©rification DOIT Ãªtre AVANT la vÃ©rification vidÃ©o
     if (url.match(/\.(jpg|jpeg|png|webp|gif|svg|bmp)(\?|$)/i) || video.type === 'image' || url.includes('/image_')) return 'image';
-    // VIDÉO — par extension OU par nom de fichier contenant /video_
+    // VIDÃO â par extension OU par nom de fichier contenant /video_
     if (url.match(/\.(mp4|webm|mov|avi|mkv)(\?|$)/i) || video.type === 'upload' || video.type === 'video' || url.includes('/video_')) return 'video';
-    // Fallback: si c'est un /api/files/ sans extension reconnue, traiter comme vidéo
+    // Fallback: si c'est un /api/files/ sans extension reconnue, traiter comme vidÃ©o
     if (url.includes('/api/files/')) return 'video';
     return 'unknown';
   };
 
-  // v20: Multi-vidéos héro — PRIORITÉ ABSOLUE aux médias uploadés
-  // v32: Respecter l'ordre MANUEL défini dans le Dashboard (plus de tri automatique)
+  // v20: Multi-vidÃ©os hÃ©ro â PRIORITÃ ABSOLUE aux mÃ©dias uploadÃ©s
+  // v32: Respecter l'ordre MANUEL dÃ©fini dans le Dashboard (plus de tri automatique)
   const heroVideos = (() => {
     if (coachConcept?.heroVideos && coachConcept.heroVideos.length > 0) {
-      // v34: Filtrer les vidéos masquées (is_visible: false)
+      // v34: Filtrer les vidÃ©os masquÃ©es (is_visible: false)
       const filtered = coachConcept.heroVideos.filter(v => v && v.url && v.is_visible !== false);
-      console.log('[V32-HERO] Carousel ordre manuel:', filtered.map((v, i) => `[${i}] ${detectMediaType(v)} → ${resolveMediaUrl(v.url)}`));
+      console.log('[V32-HERO] Carousel ordre manuel:', filtered.map((v, i) => `[${i}] ${detectMediaType(v)} â ${resolveMediaUrl(v.url)}`));
       return filtered;
     }
     if (coachConcept?.heroImageUrl) {
@@ -564,7 +564,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     return [];
   })();
 
-  // v29.4: Pré-résolution STABLE des URLs — calculée une seule fois par changement de concept
+  // v29.4: PrÃ©-rÃ©solution STABLE des URLs â calculÃ©e une seule fois par changement de concept
   const heroResolvedUrls = heroVideos.map(v => resolveMediaUrl(v.url));
 
   const currentHeroVideo = heroVideos[activeVideoIndex] || heroVideos[0] || null;
@@ -572,11 +572,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const heroMediaType = detectMediaType(currentHeroVideo);
   const youtubeId = getYoutubeId(heroVideoUrl);
 
-  // v34: Déterminer si la vidéo courante est premium (uses pre-computed values from before early returns)
+  // v34: DÃ©terminer si la vidÃ©o courante est premium (uses pre-computed values from before early returns)
   const currentVideoPrice = currentHeroVideo?.price || 0;
   const isVideoPremium = currentVideoPrice > 0;
 
-  // Déduplication des cours par nom
+  // DÃ©duplication des cours par nom
   const uniqueCourses = (() => {
     const seen = new Set();
     return courses.filter(c => {
@@ -588,7 +588,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
     });
   })();
 
-  // Déduplication des offres par nom
+  // DÃ©duplication des offres par nom
   const uniqueOffers = (() => {
     const seen = new Set();
     return offers.filter(o => {
@@ -615,7 +615,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               <QRCodeSVG value={vitrineUrl} size={200} bgColor="#ffffff" fgColor="#1a0a1f" level="M" />
             </div>
             <p className="text-gray-600 text-sm mb-4 break-all">{vitrineUrl}</p>
-            <button onClick={() => { navigator.clipboard.writeText(vitrineUrl); alert('Lien copié!'); }}
+            <button onClick={() => { navigator.clipboard.writeText(vitrineUrl); alert('Lien copiÃ©!'); }}
               className="w-full py-3 rounded-xl text-white font-medium"
               style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #d91cd2 100%)' }}>
               Copier le lien
@@ -625,17 +625,17 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       )}
 
       {/* ============================================= */}
-      {/* HERO 85vh — MIROIR EXACT du PartnersCarousel */}
+      {/* HERO 85vh â MIROIR EXACT du PartnersCarousel */}
       {/* ============================================= */}
       <div className="relative w-full" style={{ height: '85vh', maxHeight: '85vh', background: '#000000' }}>
 
-        {/* v18.3: Loading spinner médias uploadés — auto-hide après 5s */}
+        {/* v18.3: Loading spinner mÃ©dias uploadÃ©s â auto-hide aprÃ¨s 5s */}
         {heroVideoUrl && (heroMediaType === 'video' || heroMediaType === 'image') && heroVideoUrl.includes('/api/files') && (
           <div id="hero-media-loader" className="absolute inset-0 z-10 flex items-center justify-center"
             style={{ background: 'rgba(0,0,0,0.85)' }}
             ref={(el) => {
               if (el) {
-                // v18.3: Auto-hide après 5s pour éviter spinner infini
+                // v18.3: Auto-hide aprÃ¨s 5s pour Ã©viter spinner infini
                 const timer = setTimeout(() => {
                   if (el) { el.style.opacity = '0'; el.style.pointerEvents = 'none'; }
                   setTimeout(() => { if (el) el.style.display = 'none'; }, 500);
@@ -652,25 +652,25 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* v18.2: Fond média plein écran — autoplay total, switch dynamique img/video */}
+        {/* v18.2: Fond mÃ©dia plein Ã©cran â autoplay total, switch dynamique img/video */}
         <div className="absolute inset-0 overflow-hidden">
           {(() => {
             // Log de validation finale
             if (heroVideoUrl) {
-              console.log(`✅ Rendu Média Vitrine OK - Type: ${heroMediaType}, URL: ${heroVideoUrl}`);
+              console.log(`â Rendu MÃ©dia Vitrine OK - Type: ${heroMediaType}, URL: ${heroVideoUrl}`);
             }
 
             // === YOUTUBE ===
             if (heroMediaType === 'youtube' && youtubeId) {
-              // v19: YouTube thumbnail fallback — iframe embed ne fonctionne pas pour les Shorts
-              // et certains vidéos ont l'embedding désactivé (Erreur 153)
+              // v19: YouTube thumbnail fallback â iframe embed ne fonctionne pas pour les Shorts
+              // et certains vidÃ©os ont l'embedding dÃ©sactivÃ© (Erreur 153)
               // Solution: afficher la thumbnail YouTube en fond avec bouton play cliquable
               const ytThumb = `https://img.youtube.com/vi/${youtubeId}/maxresdefault.jpg`;
               const ytThumbHQ = `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg`;
               const ytLink = `https://www.youtube.com/watch?v=${youtubeId}`;
               return (
                 <div className="absolute inset-0" key={`yt-wrap-${youtubeId}`}>
-                  {/* Thumbnail YouTube en fond — fonctionne toujours, même pour Shorts */}
+                  {/* Thumbnail YouTube en fond â fonctionne toujours, mÃªme pour Shorts */}
                   <img
                     key={`yt-thumb-${youtubeId}`}
                     src={ytThumb}
@@ -678,7 +678,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                     className="absolute inset-0 w-full h-full object-cover"
                     style={{ filter: 'brightness(0.65)' }}
                     onLoad={() => {
-                      console.log('[VITRINE-MEDIA] ✅ YouTube thumbnail chargée:', youtubeId);
+                      console.log('[VITRINE-MEDIA] â YouTube thumbnail chargÃ©e:', youtubeId);
                       const loader = document.getElementById('hero-media-loader');
                       if (loader) loader.style.display = 'none';
                     }}
@@ -688,7 +688,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       e.target.src = ytThumbHQ;
                     }}
                   />
-                  {/* Bouton play centré — ouvre YouTube dans un nouvel onglet */}
+                  {/* Bouton play centrÃ© â ouvre YouTube dans un nouvel onglet */}
                   <a
                     href={ytLink}
                     target="_blank"
@@ -738,7 +738,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               );
             }
 
-            // === IMAGE (uploadée ou externe) — v20.1 ===
+            // === IMAGE (uploadÃ©e ou externe) â v20.1 ===
             if (heroMediaType === 'image') {
               return (
                 <img
@@ -748,12 +748,12 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   className="absolute inset-0 w-full h-full object-cover"
                   style={{ filter: 'brightness(0.75)' }}
                   onLoad={() => {
-                    console.log('[VITRINE-MEDIA] ✅ Image chargée:', heroVideoUrl);
+                    console.log('[VITRINE-MEDIA] â Image chargÃ©e:', heroVideoUrl);
                     const loader = document.getElementById('hero-media-loader');
                     if (loader) loader.style.display = 'none';
                   }}
                   onError={(e) => {
-                    console.error('[VITRINE-MEDIA] ❌ Erreur chargement image:', heroVideoUrl);
+                    console.error('[VITRINE-MEDIA] â Erreur chargement image:', heroVideoUrl);
                     console.error('[V29.4] Image load error:', heroVideoUrl);
                     const loader = document.getElementById('hero-media-loader');
                     if (loader) loader.style.display = 'none';
@@ -763,11 +763,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               );
             }
 
-            // === VIDEO (uploadée ou externe) — v29.5 AUTOPLAY + FALLBACK VISUEL ===
+            // === VIDEO (uploadÃ©e ou externe) â v29.5 AUTOPLAY + FALLBACK VISUEL ===
             if (heroMediaType === 'video') {
               return (
                 <div className="absolute inset-0" key={`vid-wrap-${activeVideoIndex}`}>
-                  {/* v29.5: Gradient VISIBLE par défaut — se cache quand la vidéo charge */}
+                  {/* v29.5: Gradient VISIBLE par dÃ©faut â se cache quand la vidÃ©o charge */}
                   <div id={`vid-fallback-${activeVideoIndex}`} className="absolute inset-0" style={{
                     background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.7) 0%, rgba(217, 28, 210, 0.5) 50%, rgba(30, 0, 50, 0.95) 100%)',
                     zIndex: 2, transition: 'opacity 0.5s ease'
@@ -783,7 +783,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           <path d="M28 16L0 32V0L28 16Z" fill="white"/>
                         </svg>
                       </div>
-                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem' }}>Chargement vidéo...</span>
+                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem' }}>Chargement vidÃ©o...</span>
                     </div>
                   </div>
                   <video
@@ -839,20 +839,20 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               );
             }
 
-            // === FALLBACK — gradient décoratif ===
+            // === FALLBACK â gradient dÃ©coratif ===
             return (
               <div className="absolute inset-0"
                 style={{ background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.5) 0%, rgba(217, 28, 210, 0.4) 100%)' }}>
                 <div className="absolute inset-0 flex items-center justify-center"
                   style={{ background: 'radial-gradient(circle at 50% 50%, rgba(217, 28, 210, 0.3) 0%, transparent 70%)' }}>
-                  <span className="text-5xl opacity-70">🎬</span>
+                  <span className="text-5xl opacity-70">ð¬</span>
                 </div>
               </div>
             );
           })()}
         </div>
 
-        {/* Navigation dots multi-vidéos */}
+        {/* Navigation dots multi-vidÃ©os */}
         {heroVideos.length > 1 && (
           <div className="absolute z-20" style={{ bottom: '120px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '8px' }}>
             {heroVideos.map((_, idx) => (
@@ -871,7 +871,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* v34: Badge prix si vidéo premium */}
+        {/* v34: Badge prix si vidÃ©o premium */}
         {isVideoPremium && !showVideoPreviewOverlay && (
           <div className="absolute z-20" style={{
             top: '60px', right: '16px',
@@ -880,11 +880,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             boxShadow: '0 0 15px rgba(217,28,210,0.4)',
             fontSize: '12px', fontWeight: 700, color: '#fff'
           }}>
-            💎 {currentVideoPrice} CHF
+            ð {currentVideoPrice} CHF
           </div>
         )}
 
-        {/* v34: Overlay achat vidéo premium — après 30s */}
+        {/* v34: Overlay achat vidÃ©o premium â aprÃ¨s 30s */}
         {showVideoPreviewOverlay && isVideoPremium && (
           <div className="absolute inset-0 z-30 flex flex-col items-center justify-center"
             style={{
@@ -904,15 +904,15 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
               </svg>
             </div>
-            <h3 style={{ color: '#fff', fontSize: '20px', fontWeight: 700, marginBottom: '8px' }}>Aperçu terminé</h3>
+            <h3 style={{ color: '#fff', fontSize: '20px', fontWeight: 700, marginBottom: '8px' }}>AperÃ§u terminÃ©</h3>
             <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '14px', marginBottom: '20px', textAlign: 'center', maxWidth: '280px' }}>
-              {currentHeroVideo?.description || 'Achetez la version complète pour continuer'}
+              {currentHeroVideo?.description || 'Achetez la version complÃ¨te pour continuer'}
             </p>
             <button
               onClick={() => {
-                console.log('[V34-VITRINE] Achat vidéo:', currentHeroVideo?.title, currentVideoPrice, 'CHF');
+                console.log('[V34-VITRINE] Achat vidÃ©o:', currentHeroVideo?.title, currentVideoPrice, 'CHF');
                 setSelectedOffer({
-                  name: currentHeroVideo?.title || `Vidéo ${displayName}`,
+                  name: currentHeroVideo?.title || `VidÃ©o ${displayName}`,
                   price: currentVideoPrice,
                   id: currentHeroVideo?.id || `hero-${activeVideoIndex}`,
                   type: 'video',
@@ -926,7 +926,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 cursor: 'pointer', boxShadow: '0 0 25px rgba(217,28,210,0.5)'
               }}
             >
-              Acheter — {currentVideoPrice} CHF
+              Acheter â {currentVideoPrice} CHF
             </button>
             <button
               onClick={() => setShowVideoPreviewOverlay(false)}
@@ -936,18 +936,18 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 fontSize: '13px', cursor: 'pointer'
               }}
             >
-              Revoir l'aperçu
+              Revoir l'aperÃ§u
             </button>
           </div>
         )}
 
-        {/* v75: Icône AVIS intégrée dans la barre d'actions ci-dessous */}
+        {/* v75: IcÃ´ne AVIS intÃ©grÃ©e dans la barre d'actions ci-dessous */}
 
         {/* Gradient overlay bas */}
         <div className="absolute inset-0 pointer-events-none"
           style={{ background: 'linear-gradient(0deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.3) 25%, transparent 50%)' }} />
 
-        {/* === HEADER OVERLAY — Retour + Logo + QR + Partage (FIXES en haut à droite) === */}
+        {/* === HEADER OVERLAY â Retour + Logo + QR + Partage (FIXES en haut Ã  droite) === */}
         <div className="absolute top-0 left-0 right-0 z-20 flex justify-between items-center px-4 pt-4">
           {/* Bouton Retour */}
           <button onClick={cameFromFlux ? handleReturnToFlux : (onBack || onClose)}
@@ -973,11 +973,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             </svg>
           </div>
 
-          {/* v17: QR + Partage uniquement dans la barre latérale (pas de doublon) */}
+          {/* v17: QR + Partage uniquement dans la barre latÃ©rale (pas de doublon) */}
           <div className="flex items-center gap-2" />
         </div>
 
-        {/* === BARRE D'ACTIONS DROITE — Style Instagram Reels === */}
+        {/* === BARRE D'ACTIONS DROITE â Style Instagram Reels === */}
         <div className="absolute right-3 bottom-32 z-20 flex flex-col items-center gap-5">
           {/* Avatar coach */}
           <div className="flex flex-col items-center gap-1">
@@ -994,16 +994,16 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
 
           {/* v75: Bouton Avis/Commentaires */}
+          {/* v88: Bouton Avis/Commentaires \u2014 glow r\u00e9duit pour meilleure lisibilit\u00e9 */}
           {socialComments.length > 0 && (
             <button onClick={() => setShowCommentsPanel(true)} className="flex flex-col items-center gap-1">
               <div className="w-10 h-10 rounded-full flex items-center justify-center"
                 style={{
                   background: 'rgba(217, 28, 210, 0.25)',
                   backdropFilter: 'blur(4px)',
-                  boxShadow: '0 0 14px rgba(217, 28, 210, 0.5), 0 0 30px rgba(217, 28, 210, 0.2)',
-                  animation: 'v73GlowPulse 2.5s ease-in-out infinite'
+                  boxShadow: '0 0 6px rgba(217, 28, 210, 0.25)'
                 }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" stroke="none">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                 </svg>
               </div>
@@ -1035,7 +1035,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             <span className="text-white text-[10px]">Partager</span>
           </button>
 
-          {/* Réserver (scroll) */}
+          {/* RÃ©server (scroll) */}
           <button onClick={() => {
             const target = document.getElementById('vitrine-content-section');
             if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1049,7 +1049,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 <line x1="3" y1="10" x2="21" y2="10" />
               </svg>
             </div>
-            <span className="text-white text-[10px]">Réserver</span>
+            <span className="text-white text-[10px]">RÃ©server</span>
           </button>
         </div>
 
@@ -1067,13 +1067,13 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       </div>
 
       {/* ============================================= */}
-      {/* CONTENU SOUS LE HERO — FLOW INLINE */}
-      {/* Étape 1: Choisir session → Étape 2: Choisir offre → Étape 3: Formulaire */}
+      {/* CONTENU SOUS LE HERO â FLOW INLINE */}
+      {/* Ãtape 1: Choisir session â Ãtape 2: Choisir offre â Ãtape 3: Formulaire */}
       {/* ============================================= */}
       <div id="vitrine-content-section" className="max-w-4xl mx-auto px-6 pt-2"
         style={{ background: 'transparent' }}>
 
-        {/* v16: DESCRIPTION PARTENAIRE — entre Hero et Sessions */}
+        {/* v16: DESCRIPTION PARTENAIRE â entre Hero et Sessions */}
         {coach.bio && (
           <div className="mb-8 pt-4 vitrine-fade-in" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '20px' }}>
             <div className="flex items-start gap-4">
@@ -1099,14 +1099,14 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* === ÉTAPE 1: Cours/Sessions === */}
+        {/* === ÃTAPE 1: Cours/Sessions === */}
         {uniqueCourses.length > 0 && (
           <div id="vitrine-courses-section" className="mb-8">
             <h2 className="font-semibold mb-4 text-white flex items-center gap-2" style={{ fontSize: '18px' }}>
               Choisissez vos sessions
               {selectedBookings.length > 0 && (
                 <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'rgba(217, 28, 210, 0.3)', color: '#d91cd2' }}>
-                  {selectedBookings.length} sélectionnée{selectedBookings.length > 1 ? 's' : ''}
+                  {selectedBookings.length} sÃ©lectionnÃ©e{selectedBookings.length > 1 ? 's' : ''}
                 </span>
               )}
             </h2>
@@ -1134,7 +1134,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
 
                     {course.time && (
                       <div className="flex items-center gap-2 mt-2">
-                        <span className="text-sm">⏰</span>
+                        <span className="text-sm">â°</span>
                         <span className="text-purple-400 font-medium text-sm">{course.time}</span>
                       </div>
                     )}
@@ -1154,7 +1154,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                                   color: isDateSelected ? '#fff' : '#d91cd2',
                                   cursor: 'pointer'
                                 }}>
-                                {formatDateShort(date)} • {course.time}
+                                {formatDateShort(date)} â¢ {course.time}
                               </button>
                             );
                           })}
@@ -1175,14 +1175,14 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* === ÉTAPE 2: Offres — Apparaît après sélection d'une session === */}
+        {/* === ÃTAPE 2: Offres â ApparaÃ®t aprÃ¨s sÃ©lection d'une session === */}
         {selectedBooking && uniqueOffers.length > 0 && (
           <div className="mb-8">
             <h2 className="font-semibold mb-2 text-white" style={{ fontSize: '18px' }}>
-              {offers === DEFAULT_STARTER_OFFERS ? 'Offres de démarrage' : 'Choisissez votre offre'}
+              {offers === DEFAULT_STARTER_OFFERS ? 'Offres de dÃ©marrage' : 'Choisissez votre offre'}
             </h2>
             <p className="text-sm mb-4" style={{ color: '#d91cd2' }}>
-              Sélectionnez une offre pour continuer
+              SÃ©lectionnez une offre pour continuer
             </p>
 
             <div ref={sliderRef}
@@ -1232,7 +1232,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                         </span>
                         {offer.duration_value && offer.duration_unit && (
                           <div style={{ marginTop: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 8px', borderRadius: '20px', background: 'rgba(139, 92, 246, 0.15)', border: '1px solid rgba(139, 92, 246, 0.4)', fontSize: '11px', color: '#a78bfa' }}>
-                            <span>⏱</span>
+                            <span>â±</span>
                             <span>Valable {offer.duration_value} {offer.duration_unit === 'days' ? 'jour(s)' : offer.duration_unit === 'weeks' ? 'semaine(s)' : 'mois'}</span>
                           </div>
                         )}
@@ -1245,16 +1245,16 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* Offres visibles TOUJOURS si pas de session sélectionnée (browsing) */}
+        {/* Offres visibles TOUJOURS si pas de session sÃ©lectionnÃ©e (browsing) */}
         {!selectedBooking && uniqueOffers.length > 0 && (
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold text-white" style={{ fontSize: '18px' }}>
-                {offers === DEFAULT_STARTER_OFFERS ? 'Offres de démarrage' : 'Offres disponibles'}
+                {offers === DEFAULT_STARTER_OFFERS ? 'Offres de dÃ©marrage' : 'Offres disponibles'}
               </h2>
               {uniqueOffers.length > 1 && (
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50 text-sm">🔍</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50 text-sm">ð</span>
                   <input type="text" value={offerSearch} onChange={(e) => setOfferSearch(e.target.value)}
                     placeholder="Rechercher..."
                     className="pl-9 pr-4 py-2 rounded-full bg-black/40 text-white text-sm border border-white/20 focus:outline-none focus:ring-2 focus:ring-violet-500 w-40" />
@@ -1297,7 +1297,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                             </span>
                             {offer.duration_value && offer.duration_unit && (
                               <div style={{ marginTop: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 8px', borderRadius: '20px', background: 'rgba(139, 92, 246, 0.15)', border: '1px solid rgba(139, 92, 246, 0.4)', fontSize: '11px', color: '#a78bfa' }}>
-                                <span>⏱</span>
+                                <span>â±</span>
                                 <span>Valable {offer.duration_value} {offer.duration_unit === 'days' ? 'jour(s)' : offer.duration_unit === 'weeks' ? 'semaine(s)' : 'mois'}</span>
                               </div>
                             )}
@@ -1308,18 +1308,18 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   })}
                 </div>
               ) : (
-                <p className="text-white/50 text-center py-8">Aucune offre ne correspond à "{offerSearch}"</p>
+                <p className="text-white/50 text-center py-8">Aucune offre ne correspond Ã  "{offerSearch}"</p>
               );
             })()}
           </div>
         )}
 
         {/* ============================================= */}
-        {/* v44: Section Contenus Audio — pistes autonomes depuis /api/public/audio-tracks */}
+        {/* v44: Section Contenus Audio â pistes autonomes depuis /api/public/audio-tracks */}
         {audioTracks.length > 0 && (
           <div className="mb-8 vitrine-fade-in" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
             <h2 className="font-semibold text-white text-center mb-4" style={{ fontSize: '16px' }}>
-              🎵 Contenus Audio
+              ðµ Contenus Audio
             </h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {audioTracks.map(track => (
@@ -1345,8 +1345,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* ÉTAPE 3: FORMULAIRE INLINE (pas de pop-up) */}
-        {/* Apparaît quand session + offre sélectionnées */}
+        {/* ÃTAPE 3: FORMULAIRE INLINE (pas de pop-up) */}
+        {/* ApparaÃ®t quand session + offre sÃ©lectionnÃ©es */}
         {/* ============================================= */}
         {selectedBooking && selectedOffer && (
           <div id="vitrine-booking-form" ref={formRef} className="mb-8 rounded-xl p-6"
@@ -1358,8 +1358,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
 
             {bookingSuccess ? (
               <div className="text-center py-8">
-                <div className="text-5xl mb-4">✅</div>
-                <h4 className="text-xl font-bold text-white mb-2">Réservation confirmée !</h4>
+                <div className="text-5xl mb-4">â</div>
+                <h4 className="text-xl font-bold text-white mb-2">RÃ©servation confirmÃ©e !</h4>
                 <p className="text-white/60 mb-4">Vous recevrez une confirmation par email.</p>
                 <button onClick={() => {
                   setBookingSuccess(false);
@@ -1368,16 +1368,16 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 }}
                   className="px-6 py-3 rounded-xl text-white font-medium transition-all hover:scale-105"
                   style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #d91cd2 100%)' }}>
-                  Nouvelle réservation
+                  Nouvelle rÃ©servation
                 </button>
               </div>
             ) : (
               <>
                 <h3 className="text-lg font-bold text-white mb-4">
-                  Finaliser votre réservation {selectedBookings.length > 1 && <span className="text-sm font-normal text-purple-400">({selectedBookings.length} séances)</span>}
+                  Finaliser votre rÃ©servation {selectedBookings.length > 1 && <span className="text-sm font-normal text-purple-400">({selectedBookings.length} sÃ©ances)</span>}
                 </h3>
 
-                {/* Récapitulatif multi-séances */}
+                {/* RÃ©capitulatif multi-sÃ©ances */}
                 <div className="rounded-lg p-4 mb-6"
                   style={{ background: 'rgba(217, 28, 210, 0.1)', border: '1px solid rgba(217, 28, 210, 0.2)' }}>
                   {selectedBookings.map((booking, idx) => (
@@ -1387,17 +1387,17 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           <p className="text-white font-semibold text-sm">{booking.course.name || booking.course.title}</p>
                           <p className="text-purple-400 text-xs mt-0.5">
                             {booking.date.toLocaleDateString('fr-CH', { weekday: 'long', day: '2-digit', month: 'long' })}
-                            {' • '}{booking.course.time}
+                            {' â¢ '}{booking.course.time}
                           </p>
                         </div>
                         <button type="button" onClick={() => setSelectedBookings(prev => prev.filter((_, i) => i !== idx))}
-                          className="text-white/40 hover:text-red-400 text-xs ml-2 transition-colors">✕</button>
+                          className="text-white/40 hover:text-red-400 text-xs ml-2 transition-colors">â</button>
                       </div>
                     </div>
                   ))}
                   {selectedOffer && (
                     <p className="text-white/60 text-sm mt-3 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                      Offre : <span className="text-white">{selectedOffer.name}</span> — <span style={{ color: '#d91cd2' }}>{selectedOffer.price === 0 ? 'Offert' : `CHF ${selectedOffer.price}.-`}</span>
+                      Offre : <span className="text-white">{selectedOffer.name}</span> â <span style={{ color: '#d91cd2' }}>{selectedOffer.price === 0 ? 'Offert' : `CHF ${selectedOffer.price}.-`}</span>
                     </p>
                   )}
                 </div>
@@ -1429,7 +1429,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       placeholder="+41 79 XXX XX XX" />
                   </div>
 
-                  {/* Code Promo — v17: layout mobile-safe */}
+                  {/* Code Promo â v17: layout mobile-safe */}
                   <div>
                     <label className="text-white/60 text-xs mb-1 block">Code Promo (optionnel)</label>
                     <div className="flex gap-2" style={{ flexWrap: 'nowrap', maxWidth: '100%' }}>
@@ -1456,16 +1456,16 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                     )}
                   </div>
 
-                  {/* Résumé prix — v17: × nombre de séances */}
+                  {/* RÃ©sumÃ© prix â v17: Ã nombre de sÃ©ances */}
                   <div className="rounded-lg p-3"
                     style={{ background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
                     <div className="flex justify-between text-sm text-white/70">
-                      <span>{selectedOffer.name} {selectedBookings.length > 1 ? `× ${selectedBookings.length} séances` : ''}</span>
+                      <span>{selectedOffer.name} {selectedBookings.length > 1 ? `Ã ${selectedBookings.length} sÃ©ances` : ''}</span>
                       <span>{((selectedOffer.price || 0) * Math.max(1, selectedBookings.length)).toFixed(2)} CHF</span>
                     </div>
                     {appliedDiscount && (
                       <div className="flex justify-between text-sm text-green-400 mt-1">
-                        <span>Réduction ({appliedDiscount.code})</span>
+                        <span>RÃ©duction ({appliedDiscount.code})</span>
                         <span>-{appliedDiscount.type === '100%' ? '100%' : appliedDiscount.type === '%' ? `${appliedDiscount.value}%` : `${appliedDiscount.value} CHF`}</span>
                       </div>
                     )}
@@ -1475,7 +1475,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                     </div>
                   </div>
 
-                  {/* v15.0: Checkout intégré multi-vendeurs (remplace les liens de paiement externes) */}
+                  {/* v15.0: Checkout intÃ©grÃ© multi-vendeurs (remplace les liens de paiement externes) */}
                   {(selectedBookings.length > 0 || selectedOffer) && (
                     <VitrineCheckout
                       coachEmail={coach?.email || username}
@@ -1507,9 +1507,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                         </svg>
-                        Réservation en cours...
+                        RÃ©servation en cours...
                       </span>
-                    ) : 'Confirmer la réservation'}
+                    ) : 'Confirmer la rÃ©servation'}
                   </button>
                 </form>
               </>
@@ -1517,9 +1517,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* v73: Section "Ce que disent nos clients" SUPPRIMÉE — tout passe par l'icône Glow du Hero */}
+        {/* v73: Section "Ce que disent nos clients" SUPPRIMÃE â tout passe par l'icÃ´ne Glow du Hero */}
 
-        {/* v72.1: Panneau commentaires style YouTube — slide-up depuis le bas */}
+        {/* v72.1: Panneau commentaires style YouTube â slide-up depuis le bas */}
         {showCommentsPanel && (
           <div
             className="fixed inset-0 z-50"
@@ -1577,7 +1577,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                     borderBottom: '1px solid #f0f0f0'
                   }}>
                     <div style={{ display: 'flex', gap: '12px' }}>
-                      {/* v74: Avatar — cliquable si photo réelle */}
+                      {/* v74: Avatar â cliquable si photo rÃ©elle */}
                       {comment.profile_photo ? (
                         <div
                           onClick={() => setZoomedPhoto(comment.profile_photo)}
@@ -1608,7 +1608,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           <span style={{ color: '#0f0f0f', fontSize: '13px', fontWeight: 600 }}>
                             {comment.user_name}
                           </span>
-                          {/* v86: Badge "Vérifié" pour les avis réels post-session */}
+                          {/* v86: Badge "VÃ©rifiÃ©" pour les avis rÃ©els post-session */}
                           {comment.is_verified && (
                             <span style={{
                               background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
@@ -1618,7 +1618,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                               padding: '2px 6px',
                               borderRadius: '8px',
                               letterSpacing: '0.3px'
-                            }}>✓ Vérifié</span>
+                            }}>â VÃ©rifiÃ©</span>
                           )}
                           <div style={{ display: 'flex', gap: '1px' }}>
                             {[1,2,3,4,5].map(i => (
@@ -1690,7 +1690,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
-        {/* v74: CSS Animations — slide-up + Glow Pulse + Zoom */}
+        {/* v74: CSS Animations â slide-up + Glow Pulse + Zoom */}
         <style>{`
           @keyframes v72slideUp {
             from { transform: translateY(100%); }
@@ -1706,11 +1706,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           }
         `}</style>
 
-        {/* v17.2: Section FAQ Accordéon */}
+        {/* v17.2: Section FAQ AccordÃ©on */}
         {faqs.length > 0 && (
           <div className="mb-8 vitrine-fade-in" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
             <h2 className="font-semibold text-white text-center mb-4" style={{ fontSize: '16px' }}>
-              Questions fréquentes
+              Questions frÃ©quentes
             </h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {faqs.map(faq => (
@@ -1755,7 +1755,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         {/* === Footer === */}
         <div className="text-center mt-4 pb-8">
           <p className="text-white/30 text-xs">
-            Propulsé par <span style={{ color: '#d91cd2' }}>Afroboost</span> - La plateforme des coachs
+            PropulsÃ© par <span style={{ color: '#d91cd2' }}>Afroboost</span> - La plateforme des coachs
           </p>
         </div>
       </div>

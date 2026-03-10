@@ -9217,15 +9217,21 @@ async def update_comment_photo(comment_id: str, request: Request):
     logger.info(f"[V77] Photo commentaire {comment_id} mise à jour par {user_email}")
     return {"success": True, "comment_id": comment_id, "photo_url": photo_url}
 
-# === v86: POST /api/reviews — Avis post-session soumis par un abonné identifié ===
+# === v88: POST /api/reviews — Avis post-session soumis par un abonné identifié ===
 @api_router.post("/reviews")
 async def submit_review(request: Request):
-    """V86: Un abonné identifié soumet un avis après une session. Anti-spam: 1 avis par session."""
-    body = await request.json()
+    """V88: Un abonné identifié soumet un avis. Anti-spam: 1 avis par coach (pas par session vide)."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Body JSON invalide")
     participant_code = (body.get("participant_code", "") or "").strip()
     participant_name = (body.get("participant_name", "") or "").strip()
     text = (body.get("text", "") or "").strip()
-    rating = int(body.get("rating", 5))
+    try:
+        rating = int(body.get("rating", 5))
+    except (ValueError, TypeError):
+        rating = 5
     profile_photo = (body.get("profile_photo", "") or "").strip()
     coach_id = (body.get("coach_id", "") or "").strip().lower() or "contact.artboost@gmail.com"
     session_id = (body.get("session_id", "") or "").strip()
@@ -9235,13 +9241,14 @@ async def submit_review(request: Request):
     if rating < 1 or rating > 5:
         rating = 5
 
-    # Anti-spam: 1 seul avis par abonné par session (ou 1 avis global si pas de session_id)
-    spam_query = {"participant_code": participant_code, "is_review": True}
+    # v88 fix: Anti-spam — 1 avis par abonné par coach (session_id optionnel)
+    # Si session_id fourni → 1 par session. Sinon → 1 par coach.
+    spam_query = {"participant_code": participant_code, "is_review": True, "coach_id": coach_id}
     if session_id:
         spam_query["session_id"] = session_id
     existing = await db.comments.find_one(spam_query)
     if existing:
-        raise HTTPException(status_code=409, detail="Vous avez déjà laissé un avis pour cette session")
+        raise HTTPException(status_code=409, detail="Vous avez déjà laissé un avis")
 
     now = datetime.now(timezone.utc)
     # Fallback avatar DiceBear si pas de photo
@@ -9267,8 +9274,68 @@ async def submit_review(request: Request):
     }
     await db.comments.insert_one(comment)
     comment.pop("_id", None)
-    logger.info(f"[V86] Avis post-session soumis par {participant_name} (code: {participant_code})")
+    logger.info(f"[V88] Avis soumis par {participant_name} (code: {participant_code}, coach: {coach_id})")
     return {"success": True, "comment": comment}
+
+# === v88: GET /api/reviews/check — Vérifier si un abonné a déjà laissé un avis ===
+@api_router.get("/reviews/check")
+async def check_review(request: Request):
+    """V88: Vérifie si un participant a déjà laissé un avis pour ce coach."""
+    participant_code = request.query_params.get("participant_code", "").strip()
+    coach_id = request.query_params.get("coach_id", "").strip().lower()
+    if not participant_code:
+        return {"has_reviewed": False}
+    query = {"participant_code": participant_code, "is_review": True}
+    if coach_id:
+        query["coach_id"] = coach_id
+    existing = await db.comments.find_one(query)
+    return {"has_reviewed": existing is not None}
+
+# === v88: POST /api/reviews/request — Coach envoie manuellement une demande d'avis ===
+@api_router.post("/reviews/request")
+async def send_review_request(request: Request):
+    """V88: Le coach envoie manuellement une demande d'avis aux participants d'un cours."""
+    body = await request.json()
+    coach_email = (body.get("coach_email", "") or "").strip().lower()
+    course_id = (body.get("course_id", "") or "").strip()
+    course_name = (body.get("course_name", "") or "").strip()
+
+    if not coach_email:
+        raise HTTPException(status_code=400, detail="coach_email requis")
+
+    # Trouver les abonnés actifs du coach
+    now = datetime.now(timezone.utc)
+    subscribers = await db.users.find({
+        "coach_id": coach_email,
+        "subscription.end_date": {"$gte": now.isoformat()}
+    }).to_list(200)
+
+    sent_count = 0
+    for sub in subscribers:
+        code = sub.get("code", "")
+        name = sub.get("name", sub.get("first_name", ""))
+        if not code:
+            continue
+        # Ne pas envoyer si déjà un avis
+        existing = await db.comments.find_one({"participant_code": code, "is_review": True, "coach_id": coach_email})
+        if existing:
+            continue
+        # Envoyer un message review_request dans le chat
+        msg = {
+            "id": f"review_req_{now.strftime('%Y%m%d%H%M%S')}_{_random.randint(100,999)}_{code}",
+            "session_id": f"{coach_email}__{code}",
+            "sender": "bot",
+            "sender_name": "Afroboost",
+            "text": f"🔥 Bravo pour ta session {course_name or 'Afroboost'} {name} ! Comment as-tu trouvé le cours ?",
+            "type": "review_request",
+            "timestamp": now.isoformat(),
+            "read": False
+        }
+        await db.messages.insert_one(msg)
+        sent_count += 1
+
+    logger.info(f"[V88] Demande d'avis manuelle envoyée à {sent_count} abonnés par {coach_email}")
+    return {"success": True, "sent_count": sent_count}
 
 # === v80: Page Like — Compteur de likes pour la page coach (visiteurs) ===
 @api_router.post("/page-like")
