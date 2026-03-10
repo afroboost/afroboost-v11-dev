@@ -658,6 +658,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   );
   // v90: Partner dashboard - admin-only tabs hidden for partners
   const isPartnerOnly = !isSuperAdmin;
+
+  // v93 Onboarding Dashboard
+  const [showDashOnboarding, setShowDashOnboarding] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try { return !localStorage.getItem('afroboost_onboarding_dashboard'); } catch(e) { return false; }
+  });
+  const dismissDashOnboarding = () => {
+    setShowDashOnboarding(false);
+    try { localStorage.setItem('afroboost_onboarding_dashboard', '1'); } catch(e) {}
+  };
   const ADMIN_ONLY_TABS = ["Réservations", "Contacts"];
   const ADMIN_ONLY_TAB_IDS = ['contacts', 'campaigns']; // v92: tab IDs hidden for partners
   
@@ -4649,6 +4659,63 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         </div>
         
         {/* Onglets squelette */}
+        {showDashOnboarding && !isSuperAdmin && (
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(217,28,210,0.12), rgba(120,40,200,0.08))',
+            border: '1px solid rgba(217,28,210,0.35)',
+            borderRadius: '16px',
+            padding: '20px',
+            marginBottom: '20px',
+            position: 'relative'
+          }}>
+            <button onClick={dismissDashOnboarding} style={{
+              position: 'absolute', top: '10px', right: '12px',
+              background: 'none', border: 'none', color: '#aaa', fontSize: '18px', cursor: 'pointer'
+            }}>✕</button>
+            <h3 style={{ color: '#d91cd2', margin: '0 0 14px 0', fontSize: '17px' }}>
+              \u{1F389} Bienvenue sur ton Espace Partenaire !
+            </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
+                <div style={{ fontSize: '22px', marginBottom: '6px' }}>\u{1F4B0}</div>
+                <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Cr\u00e9dits</div>
+                <div style={{ color: '#aaa', fontSize: '12px' }}>G\u00e8re ici tes s\u00e9ances converties en services. Chaque action consomme des cr\u00e9dits.</div>
+              </div>
+              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
+                <div style={{ fontSize: '22px', marginBottom: '6px' }}>\u{1F3AF}</div>
+                <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Gestion & Contenus</div>
+                <div style={{ color: '#aaa', fontSize: '12px' }}>Cr\u00e9e tes propres offres en toute autonomie. Publie des contenus attractifs pour tes clients.</div>
+              </div>
+              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
+                <div style={{ fontSize: '22px', marginBottom: '6px' }}>\u{1F4AC}</div>
+                <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Conversations IA</div>
+                <div style={{ color: '#aaa', fontSize: '12px' }}>Engage tes prospects avec notre assistant IA int\u00e9gr\u00e9. R\u00e9ponds automatiquement 24h/24.</div>
+              </div>
+              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
+                <div style={{ fontSize: '22px', marginBottom: '6px' }}>\u{1F3F7}\u{FE0F}</div>
+                <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Codes Promo</div>
+                <div style={{ color: '#aaa', fontSize: '12px' }}>Cr\u00e9e des codes de r\u00e9duction pour booster tes ventes et fid\u00e9liser tes clients.</div>
+              </div>
+              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
+                <div style={{ fontSize: '22px', marginBottom: '6px' }}>\u{1F4E3}</div>
+                <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Campagnes Email</div>
+                <div style={{ color: '#aaa', fontSize: '12px' }}>Lance des campagnes cibl\u00e9es pour promouvoir tes offres et tes \u00e9v\u00e9nements.</div>
+              </div>
+              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
+                <div style={{ fontSize: '22px', marginBottom: '6px' }}>\u{1F512}</div>
+                <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>S\u00e9curit\u00e9 & Isolation</div>
+                <div style={{ color: '#aaa', fontSize: '12px' }}>Tes donn\u00e9es sont isol\u00e9es. Tu ne vois que ton activit\u00e9, personne d'autre.</div>
+              </div>
+            </div>
+            <div style={{ textAlign: 'center', marginTop: '14px' }}>
+              <button onClick={dismissDashOnboarding} style={{
+                background: 'linear-gradient(135deg, #d91cd2, #ff2daa)',
+                color: '#fff', border: 'none', borderRadius: '8px',
+                padding: '8px 24px', cursor: 'pointer', fontSize: '13px', fontWeight: 600
+              }}>J'ai compris, c'est parti !</button>
+            </div>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2 mb-6">
           {['Réservations', '🎛️ Gestion', '🏪 Ma Page', 'Codes promo', 'Contacts', 'Campagnes', 'Conversations'].filter(t => isSuperAdmin || !ADMIN_ONLY_TABS.includes(t)).map((tabName, i) => (
             <div 
