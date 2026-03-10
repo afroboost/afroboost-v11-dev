@@ -497,7 +497,7 @@ async def create_stripe_connect_onboard(request: Request):
     coach_email = body.get("email", "").lower().strip()
     if not coach_email:
         raise HTTPException(status_code=400, detail="Email requis")
-    coach = await db.coaches.find_one({"email": coach_email, "is_active": True})
+    coach = await db.coaches.find_one({"email": coach_email})
     if not coach:
         raise HTTPException(status_code=404, detail="Coach non trouvé")
     frontend_url = os.environ.get('FRONTEND_URL', 'https://afroboost.com')
