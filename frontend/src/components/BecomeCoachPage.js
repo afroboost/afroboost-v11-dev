@@ -40,6 +40,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [acceptedCGU, setAcceptedCGU] = useState(false);
 
+  // Formulaire d'inscription
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -48,57 +49,8 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
     promoCode: ''
   });
 
-  // v9.4.7: Vérifier si déjà authentifié au chargement
-  useEffect(() => {
-    const checkExistingAuth = async () => {
-      try {
-        const response = await axios.get(`${API}/auth/me`, {
-          withCredentials: true
-        });
-        if (response.data && response.data.email) {
-          console.log('[BECOME-COACH] ✅ Déjà connecté:', response.data.email);
-          setFormData(prev => ({
-            ...prev,
-            name: response.data.name || '',
-            email: response.data.email || ''
-          }));
-        }
-      } catch (err) {
-        console.log('[BECOME-COACH] 🔒 Non connecté');
-      } finally {
-        setIsCheckingAuth(false);
-      }
-    };
-    checkExistingAuth();
-  }, []);
 
-  // v9.4.7: Traiter le session_id dans l'URL (callback OAuth sur cette page)
-  const createPendingProfile = async (user) => {
-    try {
-      // Vérifier si déjà partenaire
-      const checkRes = await axios.get(`${API}/check-partner/${user.email}`);
-      if (checkRes.data.is_partner) {
-        console.log('[BECOME-COACH] Utilisateur déjà partenaire');
-        return;
-      }
-      
-      // Créer un profil en attente (0 crédits = en attente de paiement)
-      await axios.post(`${API}/coach/register`, {
-        email: user.email,
-        name: user.name || user.email.split('@')[0],
-        phone: '',
-        credits: 0, // 0 crédits = en attente de paiement
-        pack_id: null,
-        status: 'pending_payment'
-      });
-      console.log('[BECOME-COACH] ✅ Profil "En attente" créé:', user.email);
-    } catch (err) {
-      // Ignorer si profil existe déjà (erreur 400)
-      if (err.response?.status !== 400) {
-        console.error('[BECOME-COACH] Erreur création profil:', err);
-      }
-    }
-  };
+
 
   // Charger les packs disponibles
   useEffect(() => {
@@ -119,11 +71,6 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
     fetchPacks();
   }, []);
 
-    setSubmitting(true);
-    setError(null);
-    const redirectUrl = window.location.origin + window.location.pathname + '#become-coach';
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
-  };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -297,7 +244,6 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
           </div>
 
 
-          {/* v9.4.7: Badge utilisateur connecté */}
 
           {/* Avantages */}
           <div className="glass rounded-2xl p-6 mb-8" style={{ border: '1px solid rgba(217, 28, 210, 0.3)' }}>
@@ -393,7 +339,6 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                       value={formData.name}
                       onChange={handleInputChange}
                       required
-
                       className="w-full px-4 py-3 rounded-lg disabled:opacity-60"
                       style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff' }}
                       data-testid="coach-name-input"
@@ -407,7 +352,6 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                       value={formData.email}
                       onChange={handleInputChange}
                       required
-
                       className="w-full px-4 py-3 rounded-lg disabled:opacity-60"
                       style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff' }}
                       data-testid="coach-email-input"
@@ -440,6 +384,32 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                   </div>
                 </div>
 
+                  <div style={{ position: 'relative' }}>
+                    <label className="text-white/70 text-sm mb-1 block">Mot de passe *</label>
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      name="password"
+                      value={formData.password}
+                      onChange={handleInputChange}
+                      required
+                      minLength={6}
+                      placeholder="Minimum 6 caractères"
+                      className="w-full px-4 py-3 rounded-lg"
+                      style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', paddingRight: '48px' }}
+                      data-testid="coach-password-input"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      style={{
+                        position: 'absolute', right: '12px', top: '32px',
+                        background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)',
+                        cursor: 'pointer', fontSize: '14px'
+                      }}
+                    >
+                      {showPassword ? '🙈' : '👁️'}
+                    </button>
+                  </div>
 
                 {/* v11.6: Case CGU obligatoire */}
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '8px 0' }}>
@@ -506,7 +476,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
 
                 <button
                   type="submit"
-                  disabled={submitting || !acceptedCGU || (!formData.name || !formData.email || !formData.password)}
+                  disabled={submitting || !acceptedCGU || !formData.name || !formData.email || !formData.password}
                   style={{
                     width: '100%',
                     padding: '16px',
@@ -516,7 +486,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                     fontSize: '18px',
                     border: 'none',
                     cursor: submitting ? 'wait' : 'pointer',
-                    opacity: (submitting || !acceptedCGU || (!formData.name || !formData.email || !formData.password)) ? 0.5 : 1,
+                    opacity: (submitting || !acceptedCGU || !formData.name || !formData.email || !formData.password) ? 0.5 : 1,
                     background: paymentMethod === 'mobile_money'
                       ? 'linear-gradient(135deg, #F59E0B, #D97706)'
                       : 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
@@ -541,5 +511,6 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
       </div>
     </div>
   );
+};
 
 export default BecomeCoachPage;
