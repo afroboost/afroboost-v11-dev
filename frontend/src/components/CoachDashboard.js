@@ -5455,33 +5455,33 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
               <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
                 <div style={{ fontSize: '22px', marginBottom: '6px' }}>💰</div>
-                <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Cr\u00e9dits</div>
-                <div style={{ color: '#aaa', fontSize: '12px' }}>G\u00e8re ici tes s\u00e9ances converties en services. Chaque action consomme des cr\u00e9dits.</div>
+                <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Crédits</div>
+                <div style={{ color: '#aaa', fontSize: '12px' }}>Gère ici tes séances converties en services. Chaque action consomme des crédits.</div>
               </div>
               <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
                 <div style={{ fontSize: '22px', marginBottom: '6px' }}>🎯</div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Gestion & Contenus</div>
-                <div style={{ color: '#aaa', fontSize: '12px' }}>Cr\u00e9e tes propres offres en toute autonomie. Publie des contenus attractifs pour tes clients.</div>
+                <div style={{ color: '#aaa', fontSize: '12px' }}>Crée tes propres offres en toute autonomie. Publie des contenus attractifs pour tes clients.</div>
               </div>
               <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
                 <div style={{ fontSize: '22px', marginBottom: '6px' }}>💬</div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Conversations IA</div>
-                <div style={{ color: '#aaa', fontSize: '12px' }}>Engage tes prospects avec notre assistant IA int\u00e9gr\u00e9. R\u00e9ponds automatiquement 24h/24.</div>
+                <div style={{ color: '#aaa', fontSize: '12px' }}>Engage tes prospects avec notre assistant IA intégré. Réponds automatiquement 24h/24.</div>
               </div>
               <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
                 <div style={{ fontSize: '22px', marginBottom: '6px' }}>🏷️</div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Codes Promo</div>
-                <div style={{ color: '#aaa', fontSize: '12px' }}>Cr\u00e9e des codes de r\u00e9duction pour booster tes ventes et fid\u00e9liser tes clients.</div>
+                <div style={{ color: '#aaa', fontSize: '12px' }}>Crée des codes de réduction pour booster tes ventes et fidéliser tes clients.</div>
               </div>
               <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
                 <div style={{ fontSize: '22px', marginBottom: '6px' }}>📣</div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Campagnes Email</div>
-                <div style={{ color: '#aaa', fontSize: '12px' }}>Lance des campagnes cibl\u00e9es pour promouvoir tes offres et tes \u00e9v\u00e9nements.</div>
+                <div style={{ color: '#aaa', fontSize: '12px' }}>Lance des campagnes ciblées pour promouvoir tes offres et tes événements.</div>
               </div>
               <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
                 <div style={{ fontSize: '22px', marginBottom: '6px' }}>🔒</div>
-                <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>S\u00e9curit\u00e9 & Isolation</div>
-                <div style={{ color: '#aaa', fontSize: '12px' }}>Tes donn\u00e9es sont isol\u00e9es. Tu ne vois que ton activit\u00e9, personne d'autre.</div>
+                <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Sécurité & Isolation</div>
+                <div style={{ color: '#aaa', fontSize: '12px' }}>Tes données sont isolées. Tu ne vois que ton activité, personne d'autre.</div>
               </div>
             </div>
             <div style={{ textAlign: 'center', marginTop: '14px' }}>
