@@ -37,6 +37,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
   // v11.6: Mot de passe + CGU
   const [showPassword, setShowPassword] = useState(false);
   const [acceptedCGU, setAcceptedCGU] = useState(false);
+  const [conceptData, setConceptData] = useState(null);
 
   // Formulaire d'inscription
   const [formData, setFormData] = useState({
@@ -67,6 +68,17 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
       }
     };
     fetchPacks();
+
+    // V93.6: Charger le concept pour les CGP
+    const fetchConcept = async () => {
+      try {
+        const res = await axios.get(`${API}/concept`);
+        if (res.data) setConceptData(res.data);
+      } catch (err) {
+        console.error('[CONCEPT] Erreur:', err);
+      }
+    };
+    fetchConcept();
   }, []);
 
 
@@ -459,7 +471,30 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                     </button>
                   </div>
 
-                {/* v11.6: Case CGU obligatoire */}
+                {/* V93.6: Affichage CGP partenaires */}
+        {conceptData?.termsTextPartners && (
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ color: 'rgba(255,255,255,0.7)', fontSize: '13px', display: 'block', marginBottom: '6px' }}>
+              📋 Conditions Générales Partenaires
+            </label>
+            <div style={{
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid rgba(209,156,210,0.3)',
+              borderRadius: '12px',
+              padding: '16px',
+              maxHeight: '200px',
+              overflowY: 'auto',
+              fontSize: '12px',
+              color: 'rgba(255,255,255,0.8)',
+              whiteSpace: 'pre-wrap',
+              lineHeight: '1.5'
+            }}>
+              {conceptData.termsTextPartners}
+            </div>
+          </div>
+        )}
+
+        {/* v11.6: Case CGU obligatoire */}
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '8px 0' }}>
                   <input
                     type="checkbox"
