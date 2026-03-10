@@ -243,7 +243,57 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
 
 
 
-          {/* Avantages */}
+          
+      {/* Onboarding - Présentation rapide */}
+      <div style={{
+        background: 'linear-gradient(135deg, rgba(217,28,210,0.15), rgba(120,40,200,0.10))',
+        border: '1px solid rgba(217,28,210,0.4)',
+        borderRadius: '16px',
+        padding: '24px',
+        marginBottom: '24px',
+        position: 'relative'
+      }}>
+        <h3 style={{ color: '#D91CD2', fontSize: '1.3rem', fontWeight: 700, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          🚀 Pourquoi devenir Partenaire ?
+        </h3>
+        <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '0.95rem', marginBottom: '16px', lineHeight: '1.5' }}>
+          Rejoins la communauté Afroboost et lance ton activité de coaching avec tous les outils intégrés pour réussir.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
+          <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div style={{ fontSize: '1.4rem', marginBottom: '6px' }}>💰</div>
+            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>Gagne de l'argent</div>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>Vends tes séances, packs et produits directement sur ta vitrine.</div>
+          </div>
+          <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div style={{ fontSize: '1.4rem', marginBottom: '6px' }}>🎯</div>
+            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>Ton espace perso</div>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>Dashboard complet : cours, offres, réservations, stats.</div>
+          </div>
+          <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div style={{ fontSize: '1.4rem', marginBottom: '6px' }}>🤖</div>
+            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>Assistant IA</div>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>Un chatbot IA pour engager tes prospects 24h/24.</div>
+          </div>
+          <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div style={{ fontSize: '1.4rem', marginBottom: '6px' }}>📧</div>
+            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>Campagnes email</div>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>Envoie des campagnes ciblées pour fidéliser tes clients.</div>
+          </div>
+          <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div style={{ fontSize: '1.4rem', marginBottom: '6px' }}>🔒</div>
+            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>Données isolées</div>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>Tes données sont privées. Personne d'autre n'y a accès.</div>
+          </div>
+          <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div style={{ fontSize: '1.4rem', marginBottom: '6px' }}>🌟</div>
+            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>Paiement Stripe</div>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>Connecte Stripe et reçois tes paiements directement.</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Avantages */}
           <div className="glass rounded-2xl p-6 mb-8" style={{ border: '1px solid rgba(217, 28, 210, 0.3)' }}>
             <h2 className="text-xl font-semibold text-white mb-4">Pourquoi devenir Partenaire Afroboost ?</h2>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
