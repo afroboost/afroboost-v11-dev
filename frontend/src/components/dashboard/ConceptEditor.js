@@ -653,6 +653,17 @@ const ConceptEditor = ({
               rows={4}
             />
           </div>
+    {/* V93.6: Conditions générales partenaires */}
+    <div className="mb-4">
+      <label className="text-white text-xs opacity-70 mb-1 block">Conditions Générales Partenaires</label>
+      <textarea
+        value={concept.termsTextPartners || ''}
+        onChange={(e) => setConcept({ ...concept, termsTextPartners: e.target.value })}
+        className="w-full px-3 py-2 rounded-lg neon-input text-sm"
+        rows={4}
+        placeholder="Conditions générales pour les partenaires/coachs..."
+      />
+    </div>
           {/* Lien Google Reviews */}
           <div className="mb-4">
             <label className="block mb-1 text-white text-xs opacity-70">Lien Google Reviews</label>
