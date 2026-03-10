@@ -20,13 +20,13 @@ import { sendBulkEmails } from "../services/emailService";
 import { LandingSectionSelector } from "./SearchBar";
 import { playNotificationSound, linkifyText } from "../services/notificationService";
 import { QRScannerModal } from "./QRScanner";
-// ArticleManager supprimÃÂ© - v8.9 Nettoyage SAAS
+// ArticleManager supprimÃ© - v8.9 Nettoyage SAAS
 import ReservationTab from "./coach/ReservationTab"; // Import Reservation Tab
 import CampaignManager from "./coach/CampaignManager"; // Import Campaign Manager
 import CRMSection from "./coach/CRMSection"; // v9.2.0 Import CRM Section
 import { parseMediaUrl, getMediaThumbnail } from "../services/MediaParser"; // Media Parser
 import SuperAdminPanel from "./SuperAdminPanel"; // v8.9 Super Admin Panel
-// v13.5: Composants extraits pour allÃÂ©ger CoachDashboard
+// v13.5: Composants extraits pour allÃ©ger CoachDashboard
 import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab, PaymentConfigTab, BrandingManager, SEOManager, FAQManager, ContactsManager } from "./dashboard";
 import { copyToClipboard } from "../utils/clipboard"; // Utilitaire copier avec fallback mobile
 
@@ -46,13 +46,13 @@ class SectionErrorBoundary extends Component {
     if (this.state.hasError) {
       return (
         <div className="p-6 rounded-xl bg-red-500/20 border border-red-500/50 text-white">
-          <h3 className="text-lg font-bold mb-2">Ã¢ÂÂ Ã¯Â¸Â Erreur dans la section {this.props.sectionName}</h3>
+          <h3 className="text-lg font-bold mb-2">â ï¸ Erreur dans la section {this.props.sectionName}</h3>
           <p className="text-white/70 text-sm mb-3">{this.state.error?.message || 'Une erreur est survenue'}</p>
           <button 
             onClick={() => this.setState({ hasError: false, error: null })}
             className="px-4 py-2 bg-violet-500 rounded-lg text-white text-sm"
           >
-            Ã°ÂÂÂ RÃÂ©essayer
+            ð RÃ©essayer
           </button>
         </div>
       );
@@ -70,17 +70,17 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 
 /**
  * FONCTION D'ENVOI EMAIL VIA RESEND (API BACKEND)
- * Remplace EmailJS pour un contrÃÂ´le total cÃÂ´tÃÂ© serveur
+ * Remplace EmailJS pour un contrÃ´le total cÃ´tÃ© serveur
  * @param {string} destination - Email du destinataire
  * @param {string} recipientName - Nom du destinataire
  * @param {string} subject - Sujet de l'email
  * @param {string} text - Corps du message
- * @param {string} mediaUrl - URL du visuel (optionnel, peut ÃÂªtre un lien interne /v/slug)
+ * @param {string} mediaUrl - URL du visuel (optionnel, peut Ãªtre un lien interne /v/slug)
  * @returns {Promise<{success: boolean, response?: any, error?: string}>}
  */
 const performEmailSend = async (destination, recipientName = 'Client', subject = 'Afroboost', text = '', mediaUrl = null) => {
   try {
-    // Validation des paramÃÂ¨tres
+    // Validation des paramÃ¨tres
     if (!destination || !destination.includes('@')) {
       console.error('RESEND_DEBUG: Email invalide -', destination);
       return { success: false, error: 'Email invalide' };
@@ -114,10 +114,10 @@ const performEmailSend = async (destination, recipientName = 'Client', subject =
     const result = await response.json();
     
     if (result.success) {
-      console.log('RESEND_DEBUG: SUCCÃÂS - Email ID =', result.email_id);
+      console.log('RESEND_DEBUG: SUCCÃS - Email ID =', result.email_id);
       return { success: true, response: result };
     } else {
-      console.error('RESEND_DEBUG: ÃÂCHEC -', result.error);
+      console.error('RESEND_DEBUG: ÃCHEC -', result.error);
       return { success: false, error: result.error };
     }
     
@@ -130,8 +130,8 @@ const performEmailSend = async (destination, recipientName = 'Client', subject =
 /**
  * FONCTION AUTONOME D'ENVOI WHATSAPP VIA TWILIO
  * Si pas de backend, affiche une alerte de simulation
- * @param {string} phoneNumber - NumÃÂ©ro de tÃÂ©lÃÂ©phone
- * @param {string} message - Message ÃÂ  envoyer
+ * @param {string} phoneNumber - NumÃ©ro de tÃ©lÃ©phone
+ * @param {string} message - Message Ã  envoyer
  * @param {object} twilioConfig - {accountSid, authToken, fromNumber}
  * @returns {Promise<{success: boolean, sid?: string, error?: string}>}
  */
@@ -139,21 +139,21 @@ const performWhatsAppSend = async (phoneNumber, message, twilioConfig) => {
   const { accountSid, authToken, fromNumber } = twilioConfig || {};
   
   console.log('========================================');
-  console.log('DEMANDE WHATSAPP/TWILIO ENVOYÃÂE');
-  console.log('NumÃÂ©ro:', phoneNumber);
+  console.log('DEMANDE WHATSAPP/TWILIO ENVOYÃE');
+  console.log('NumÃ©ro:', phoneNumber);
   console.log('Message:', message?.substring(0, 50) + '...');
-  console.log('Account SID:', accountSid || 'NON CONFIGURÃÂ');
-  console.log('From Number:', fromNumber || 'NON CONFIGURÃÂ');
+  console.log('Account SID:', accountSid || 'NON CONFIGURÃ');
+  console.log('From Number:', fromNumber || 'NON CONFIGURÃ');
   console.log('========================================');
   
   // Si pas de config Twilio, simulation avec alerte
   if (!accountSid || !authToken || !fromNumber) {
-    console.warn('Ã¢ÂÂ Ã¯Â¸Â Twilio non configurÃÂ© - Mode simulation');
-    alert(`WhatsApp prÃÂªt pour : ${phoneNumber}\n\nMessage: ${message?.substring(0, 100)}...`);
+    console.warn('â ï¸ Twilio non configurÃ© - Mode simulation');
+    alert(`WhatsApp prÃªt pour : ${phoneNumber}\n\nMessage: ${message?.substring(0, 100)}...`);
     return { success: true, simulated: true };
   }
   
-  // Formater le numÃÂ©ro au format E.164
+  // Formater le numÃ©ro au format E.164
   let formattedPhone = phoneNumber.replace(/[^\d+]/g, '');
   if (!formattedPhone.startsWith('+')) {
     formattedPhone = formattedPhone.startsWith('0') 
@@ -161,7 +161,7 @@ const performWhatsAppSend = async (phoneNumber, message, twilioConfig) => {
       : '+' + formattedPhone;
   }
   
-  // Construire les donnÃÂ©es pour Twilio
+  // Construire les donnÃ©es pour Twilio
   const formData = new URLSearchParams();
   formData.append('From', `whatsapp:${fromNumber.startsWith('+') ? fromNumber : '+' + fromNumber}`);
   formData.append('To', `whatsapp:${formattedPhone}`);
@@ -181,7 +181,7 @@ const performWhatsAppSend = async (phoneNumber, message, twilioConfig) => {
     );
     
     const data = await response.json();
-    console.log('Ã°ÂÂÂ± TWILIO RÃÂPONSE:', data);
+    console.log('ð± TWILIO RÃPONSE:', data);
     
     if (!response.ok) {
       return { success: false, error: data.message || `HTTP ${response.status}` };
@@ -189,12 +189,12 @@ const performWhatsAppSend = async (phoneNumber, message, twilioConfig) => {
     
     return { success: true, sid: data.sid };
   } catch (error) {
-    console.error('Ã¢ÂÂ TWILIO ERREUR:', error);
+    console.error('â TWILIO ERREUR:', error);
     return { success: false, error: error.message };
   }
 };
 
-// API avec prÃÂ©fixe /api
+// API avec prÃ©fixe /api
 const API = `${BACKEND_URL}/api`;
 
 // Weekdays mapping for multi-language support
@@ -210,7 +210,7 @@ const ClockIcon = () => <svg className="w-4 h-4" fill="none" stroke="currentColo
 const TrashIcon = () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>;
 const FolderIcon = () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>;
 
-// MediaDisplay component - Utilise parseMediaUrl importÃÂ© de MediaParser.js
+// MediaDisplay component - Utilise parseMediaUrl importÃ© de MediaParser.js
 const MediaDisplay = ({ url, className }) => {
   const media = parseMediaUrl(url);
   if (!media || media.type === 'unknown' || !url || url.trim() === '') return null;
@@ -263,7 +263,7 @@ const MediaDisplay = ({ url, className }) => {
     );
   }
   
-  // VidÃÂ©o directe
+  // VidÃ©o directe
   if (media.type === 'video') {
     return (
       <div className={className} style={containerStyle}>
@@ -309,11 +309,11 @@ const MediaDisplay = ({ url, className }) => {
   );
 };
 
-// ClÃÂ© localStorage pour persistance coach
+// ClÃ© localStorage pour persistance coach
 const COACH_TAB_KEY = 'afroboost_coach_tab';
 const COACH_SESSION_KEY = 'afroboost_coach_session';
 
-// === v79: Composant Social Boost Ã¢ÂÂ liste commentaires + formulaire ajout + toast + feedback UX ===
+// === v79: Composant Social Boost â liste commentaires + formulaire ajout + toast + feedback UX ===
 const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
   const [comments, setComments] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
@@ -355,11 +355,11 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
     try {
       await axios.post(`${API}/comments/${commentId}/like`);
       setLikedIds(prev => ({ ...prev, [commentId]: 'done' }));
-      showToast('Ã¢ÂÂ Like +1 enregistrÃÂ©');
+      showToast('â Like +1 enregistrÃ©');
       console.log('[V79] Like +1 OK:', commentId);
     } catch (e) {
       setComments(prev => prev.map(c => c.id === commentId ? { ...c, likes: (c.likes || 0) - 1 } : c));
-      showToast('Ã¢ÂÂ Erreur like');
+      showToast('â Erreur like');
     }
     setTimeout(() => setLikedIds(prev => ({ ...prev, [commentId]: false })), 1200);
   };
@@ -370,8 +370,8 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
     try {
       const res = await axios.get(`${API}/comments?coach_id=${encodeURIComponent(coachEmail || '')}`);
       setComments((res.data?.comments || []).slice(0, 5));
-      showToast('Ã¢ÂÂ Commentaires mis ÃÂ  jour');
-    } catch (e) { showToast('Ã¢ÂÂ Erreur rafraÃÂ®chissement'); }
+      showToast('â Commentaires mis Ã  jour');
+    } catch (e) { showToast('â Erreur rafraÃ®chissement'); }
     finally { setRefreshing(false); }
   };
 
@@ -382,8 +382,8 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
         headers: { 'X-User-Email': coachEmail }
       });
       setComments(prev => prev.filter(c => c.id !== commentId));
-      showToast('Ã¢ÂÂ Commentaire supprimÃÂ©');
-    } catch (e) { showToast('Ã¢ÂÂ Erreur suppression'); }
+      showToast('â Commentaire supprimÃ©');
+    } catch (e) { showToast('â Erreur suppression'); }
   };
 
   const handlePhoto = async (commentId) => {
@@ -394,8 +394,8 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
         headers: { 'X-User-Email': coachEmail, 'Content-Type': 'application/json' }
       });
       setComments(prev => prev.map(c => c.id === commentId ? { ...c, profile_photo: url } : c));
-      showToast('Ã¢ÂÂ Photo mise ÃÂ  jour');
-    } catch (e) { showToast('Ã¢ÂÂ Erreur photo'); }
+      showToast('â Photo mise Ã  jour');
+    } catch (e) { showToast('â Erreur photo'); }
   };
 
   // v79: Ajout manuel de commentaire
@@ -414,18 +414,18 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
       }
       setNewName(''); setNewText(''); setNewPhotoUrl('');
       setShowAddForm(false);
-      showToast('Ã¢ÂÂ Commentaire ajoutÃÂ©');
-      console.log('[V79] Commentaire manuel ajoutÃÂ©');
+      showToast('â Commentaire ajoutÃ©');
+      console.log('[V79] Commentaire manuel ajoutÃ©');
     } catch (e) {
       const msg = e.response?.data?.detail || 'Erreur ajout';
-      showToast('Ã¢ÂÂ ' + msg);
+      showToast('â ' + msg);
     }
     finally { setAdding(false); }
   };
 
   if (loading && comments.length === 0) return (
     <div id="social-boost-comments-list" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', marginTop: '12px' }}>
-      Ã¢ÂÂ³ Chargement des commentaires...
+      â³ Chargement des commentaires...
     </div>
   );
 
@@ -461,7 +461,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
       {toast && (
         <div style={{
           position: 'fixed', bottom: '80px', left: '50%', transform: 'translateX(-50%)',
-          background: toast.startsWith('Ã¢ÂÂ') ? 'rgba(0,200,100,0.95)' : 'rgba(220,40,40,0.95)',
+          background: toast.startsWith('â') ? 'rgba(0,200,100,0.95)' : 'rgba(220,40,40,0.95)',
           color: '#fff', padding: '10px 22px', borderRadius: '20px', fontSize: '13px',
           fontWeight: 600, zIndex: 999999, boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
           animation: 'v79ToastIn 0.3s ease', whiteSpace: 'nowrap'
@@ -480,7 +480,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
             color: '#D91CD2', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
             padding: '4px 10px'
           }}>
-          {showAddForm ? 'Ã¢ÂÂ Fermer' : 'Ã¯Â¼Â Ajouter'}
+          {showAddForm ? 'â Fermer' : 'ï¼ Ajouter'}
         </button>
       </div>
 
@@ -510,7 +510,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
               boxSizing: 'border-box', fontFamily: 'inherit'
             }} />
           <input value={newPhotoUrl} onChange={e => setNewPhotoUrl(e.target.value)}
-            placeholder="URL photo de profil (optionnel Ã¢ÂÂ DiceBear si vide)"
+            placeholder="URL photo de profil (optionnel â DiceBear si vide)"
             style={{
               width: '100%', padding: '8px 10px', marginBottom: '8px', borderRadius: '6px',
               border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.06)',
@@ -530,14 +530,14 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
                 <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTop: '2px solid #fff', borderRadius: '50%', animation: 'v79Spin 0.8s linear infinite' }}></span>
                 Ajout en cours...
               </>
-            ) : 'Ã¢ÂÂ Ajouter ce commentaire'}
+            ) : 'â Ajouter ce commentaire'}
           </button>
         </div>
       )}
 
       {comments.length === 0 && !showAddForm ? (
         <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>
-          Aucun commentaire. Cliquez sur "Booster" ou "Ã¯Â¼Â Ajouter" pour en crÃÂ©er.
+          Aucun commentaire. Cliquez sur "Booster" ou "ï¼ Ajouter" pour en crÃ©er.
         </div>
       ) : comments.map((c) => {
         const likeState = likedIds[c.id]; // false | 'loading' | 'done'
@@ -580,7 +580,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
           }}>
             {c.likes || 0}
           </span>
-          {/* v79: Like button Ã¢ÂÂ disabled pendant loading + spinner */}
+          {/* v79: Like button â disabled pendant loading + spinner */}
           <button onClick={() => handleLike(c.id)} title="+1 Like"
             disabled={!!isLiking}
             style={{
@@ -594,7 +594,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
             }}>
             {isLiking ? (
               <span style={{ display: 'inline-block', width: '16px', height: '16px', border: '2px solid rgba(217,28,210,0.3)', borderTop: '2px solid #D91CD2', borderRadius: '50%', animation: 'v79Spin 0.7s linear infinite' }}></span>
-            ) : 'Ã¢ÂÂ¤Ã¯Â¸Â'}
+            ) : 'â¤ï¸'}
           </button>
           {/* Photo button */}
           <button onClick={() => handlePhoto(c.id)} title="Ajouter photo"
@@ -604,7 +604,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
               minWidth: '44px', minHeight: '36px',
               display: 'flex', alignItems: 'center', justifyContent: 'center'
             }}>
-            Ã°ÂÂÂ¸
+            ð¸
           </button>
           {/* Delete button */}
           <button onClick={() => handleDelete(c.id)} title="Supprimer"
@@ -614,7 +614,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
               minWidth: '44px', minHeight: '36px',
               display: 'flex', alignItems: 'center', justifyContent: 'center'
             }}>
-            Ã°ÂÂÂÃ¯Â¸Â
+            ðï¸
           </button>
         </div>
         );
@@ -634,42 +634,42 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
         <span style={{
           display: 'inline-block',
           animation: refreshing ? 'v79RefreshSpin 1s linear infinite' : 'none'
-        }}>Ã°ÂÂÂ</span>
-        {refreshing ? 'RafraÃÂ®chissement...' : 'RafraÃÂ®chir les commentaires'}
+        }}>ð</span>
+        {refreshing ? 'RafraÃ®chissement...' : 'RafraÃ®chir les commentaires'}
       </button>
     </div>
   );
 };
 
 const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
-  // v9.2.5: Protection ABSOLUE contre les erreurs - Valeurs par dÃÂ©faut GARANTIES
+  // v9.2.5: Protection ABSOLUE contre les erreurs - Valeurs par dÃ©faut GARANTIES
   const safeCoachUser = coachUser || {};
   
-  // v9.2.5: ÃÂtat de chargement initial
+  // v9.2.5: Ãtat de chargement initial
   const [dashboardReady, setDashboardReady] = useState(false);
   const [loadError, setLoadError] = useState(null);
   
   // Email Super Admin
-  // v9.5.6: Liste des Super Admins autorisÃÂ©s
+  // v9.5.6: Liste des Super Admins autorisÃ©s
   const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
   const isSuperAdmin = SUPER_ADMIN_EMAILS.some(email => 
     (safeCoachUser?.email || '').toLowerCase() === email.toLowerCase()
   );
   
-  // v9.2.5: Valeurs par dÃÂ©faut TOUJOURS prÃÂ©sentes pour ÃÂ©viter page blanche
+  // v9.2.5: Valeurs par dÃ©faut TOUJOURS prÃ©sentes pour Ã©viter page blanche
   const displayEmail = safeCoachUser?.email || 'Partenaire';
   const displayName = safeCoachUser?.name || 'Partenaire';
   
-  // v8.9.5: Helper pour crÃÂ©er les headers avec l'email coach (isolation des donnÃÂ©es)
+  // v8.9.5: Helper pour crÃ©er les headers avec l'email coach (isolation des donnÃ©es)
   const getCoachHeaders = () => ({
     headers: { 'X-User-Email': safeCoachUser?.email || '' }
   });
   
-  // v9.2.5: Marquer le dashboard comme prÃÂªt aprÃÂ¨s le premier rendu
+  // v9.2.5: Marquer le dashboard comme prÃªt aprÃ¨s le premier rendu
   useEffect(() => {
     const timer = setTimeout(() => {
       setDashboardReady(true);
-      console.log('[DASHBOARD] v9.2.5 Dashboard prÃÂªt');
+      console.log('[DASHBOARD] v9.2.5 Dashboard prÃªt');
     }, 100);
     return () => clearTimeout(timer);
   }, []);
@@ -685,7 +685,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   });
   const quickControlRef = useRef(null);
   
-  // v9.2.7: Charger les settings plateforme au dÃÂ©marrage
+  // v9.2.7: Charger les settings plateforme au dÃ©marrage
   useEffect(() => {
     if (isSuperAdmin && safeCoachUser?.email) {
       axios.get(`${API}/platform-settings`, { headers: { 'X-User-Email': safeCoachUser.email } })
@@ -712,7 +712,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
   
-  // v9.2.7: Fermer Quick Control si clic extÃÂ©rieur
+  // v9.2.7: Fermer Quick Control si clic extÃ©rieur
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (quickControlRef.current && !quickControlRef.current.contains(e.target)) {
@@ -727,21 +727,21 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [stripeConnectStatus, setStripeConnectStatus] = useState(null);
   const [stripeConnectLoading, setStripeConnectLoading] = useState(false);
   
-  // === v13.0: BOUTIQUE CRÃÂDITS ===
+  // === v13.0: BOUTIQUE CRÃDITS ===
   const [creditPacks, setCreditPacks] = useState([]);
   const [loadingPacks, setLoadingPacks] = useState(false);
   const [purchasingPack, setPurchasingPack] = useState(null);
   
-  // === v13.1: PRIX DES SERVICES (configurÃÂ©s par Super Admin) ===
+  // === v13.1: PRIX DES SERVICES (configurÃ©s par Super Admin) ===
   const [servicePrices, setServicePrices] = useState({
     campaign: 1,
     ai_conversation: 1,
     promo_code: 1
   });
   
-  // === CRÃÂDITS COACH v8.9.7 ===
-  // v9.2.3: Initialiser selon le rÃÂ´le immÃÂ©diatement pour ÃÂ©viter page blanche
-  const [coachCredits, setCoachCredits] = useState(isSuperAdmin ? -1 : 0); // -1=illimitÃÂ© (Super Admin), 0=dÃÂ©faut
+  // === CRÃDITS COACH v8.9.7 ===
+  // v9.2.3: Initialiser selon le rÃ´le immÃ©diatement pour Ã©viter page blanche
+  const [coachCredits, setCoachCredits] = useState(isSuperAdmin ? -1 : 0); // -1=illimitÃ© (Super Admin), 0=dÃ©faut
   
   // === v8.9.9: VITRINE COACH ===
   // v67: Super Admin vitrine = homepage publique, JAMAIS /coach/bassi
@@ -754,18 +754,18 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [coachPlatformName, setCoachPlatformName] = useState(null);
   const dashboardTitle = coachPlatformName || (isSuperAdmin ? 'Afroboost' : 'Mon Espace Partenaire');
   
-  // v13.1: Helper - vÃÂ©rifier si assez de crÃÂ©dits pour un service
+  // v13.1: Helper - vÃ©rifier si assez de crÃ©dits pour un service
   const hasCreditsFor = (serviceType) => {
-    if (isSuperAdmin) return true; // Super Admin = accÃÂ¨s illimitÃÂ©
-    if (coachCredits === -1) return true; // CrÃÂ©dits illimitÃÂ©s
+    if (isSuperAdmin) return true; // Super Admin = accÃ¨s illimitÃ©
+    if (coachCredits === -1) return true; // CrÃ©dits illimitÃ©s
     const requiredCredits = servicePrices[serviceType] || 1;
     return coachCredits >= requiredCredits;
   };
   
-  // Helper: crÃÂ©dits insuffisants (pour info, mais plus de grisage v9.1.3)
+  // Helper: crÃ©dits insuffisants (pour info, mais plus de grisage v9.1.3)
   const hasInsufficientCredits = !isSuperAdmin && coachCredits !== null && coachCredits !== -1 && coachCredits <= 0;
 
-  // v9.2.4: Charger profil coach avec protection try-catch complÃÂ¨te
+  // v9.2.4: Charger profil coach avec protection try-catch complÃ¨te
   useEffect(() => {
     const loadProfile = async () => {
       try {
@@ -774,22 +774,22 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             headers: { 'X-User-Email': safeCoachUser.email }
           });
           setCoachCredits(res.data?.credits ?? 0);
-          // v8.9.9: RÃÂ©cupÃÂ©rer username pour vitrine
+          // v8.9.9: RÃ©cupÃ©rer username pour vitrine
           const username = res.data?.name?.toLowerCase().replace(/\s+/g, '-') || res.data?.id || safeCoachUser.email.split('@')[0];
           setCoachUsername(isSuperAdmin ? 'bassi' : username);
-          // v9.1.3: RÃÂ©cupÃÂ©rer platform_name pour marque blanche
+          // v9.1.3: RÃ©cupÃ©rer platform_name pour marque blanche
           setCoachPlatformName(res.data?.platform_name || null);
         }
       } catch (err) {
-        // v9.2.4: FORCE AFFICHAGE - Dashboard s'affiche TOUJOURS mÃÂªme si profil inexistant
-        console.warn('[COACH] v9.2.4 Profil non trouvÃÂ©, utilisation des valeurs par dÃÂ©faut:', err?.response?.status || err?.message);
-        // Pour Super Admin: crÃÂ©dits illimitÃÂ©s
+        // v9.2.4: FORCE AFFICHAGE - Dashboard s'affiche TOUJOURS mÃªme si profil inexistant
+        console.warn('[COACH] v9.2.4 Profil non trouvÃ©, utilisation des valeurs par dÃ©faut:', err?.response?.status || err?.message);
+        // Pour Super Admin: crÃ©dits illimitÃ©s
         if (isSuperAdmin) {
           setCoachCredits(-1);
           setCoachUsername('bassi');
           setCoachPlatformName('Afroboost');
         } else {
-          // Pour les partenaires: valeurs par dÃÂ©faut (pas de blocage)
+          // Pour les partenaires: valeurs par dÃ©faut (pas de blocage)
           setCoachCredits(0);
           setCoachUsername(safeCoachUser?.name?.toLowerCase().replace(/\s+/g, '-') || safeCoachUser?.email?.split('@')[0] || 'partenaire');
           setCoachPlatformName(null);
@@ -799,20 +799,20 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     loadProfile();
   }, [safeCoachUser?.email, safeCoachUser?.name, isSuperAdmin]);
 
-  // === v9.5.8: FONCTION DÃÂDUCTION CRÃÂDITS ===
-  // DÃÂ©duit 1 crÃÂ©dit et affiche message si solde ÃÂ©puisÃÂ©
+  // === v9.5.8: FONCTION DÃDUCTION CRÃDITS ===
+  // DÃ©duit 1 crÃ©dit et affiche message si solde Ã©puisÃ©
   const consumeCredit = async (action = "action") => {
-    // Super Admin ne consomme jamais de crÃÂ©dits
+    // Super Admin ne consomme jamais de crÃ©dits
     if (isSuperAdmin) {
       console.log('[CREDITS] Super Admin - action gratuite');
       return { success: true, bypassed: true };
     }
     
-    // VÃÂ©rifier le solde local d'abord
+    // VÃ©rifier le solde local d'abord
     if (coachCredits <= 0) {
-      setValidationMessage('Ã¢ÂÂ Ã¯Â¸Â Solde ÃÂ©puisÃÂ©. Achetez un pack pour continuer.');
+      setValidationMessage('â ï¸ Solde Ã©puisÃ©. Achetez un pack pour continuer.');
       setTimeout(() => setValidationMessage(''), 5000);
-      return { success: false, error: "CrÃÂ©dits insuffisants" };
+      return { success: false, error: "CrÃ©dits insuffisants" };
     }
     
     try {
@@ -821,15 +821,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         { headers: { 'X-User-Email': safeCoachUser?.email } }
       );
       
-      // Mettre ÃÂ  jour le solde local
+      // Mettre Ã  jour le solde local
       setCoachCredits(res.data?.credits_remaining ?? coachCredits - 1);
-      console.log(`[CREDITS] ${action} - 1 crÃÂ©dit dÃÂ©duit, reste: ${res.data?.credits_remaining}`);
+      console.log(`[CREDITS] ${action} - 1 crÃ©dit dÃ©duit, reste: ${res.data?.credits_remaining}`);
       
       return { success: true, credits_remaining: res.data?.credits_remaining };
     } catch (err) {
-      console.error('[CREDITS] Erreur dÃÂ©duction:', err);
+      console.error('[CREDITS] Erreur dÃ©duction:', err);
       if (err?.response?.status === 402) {
-        setValidationMessage('Ã¢ÂÂ Ã¯Â¸Â Solde ÃÂ©puisÃÂ©. Achetez un pack pour continuer.');
+        setValidationMessage('â ï¸ Solde Ã©puisÃ©. Achetez un pack pour continuer.');
         setTimeout(() => setValidationMessage(''), 5000);
         setCoachCredits(0);
       }
@@ -837,18 +837,18 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  // === v9.5.8: BLOQUEUR D'ACTION SI CRÃÂDITS ÃÂPUISÃÂS ===
+  // === v9.5.8: BLOQUEUR D'ACTION SI CRÃDITS ÃPUISÃS ===
   const checkCreditsBeforeAction = () => {
     if (isSuperAdmin) return true;
     if (coachCredits <= 0) {
-      setValidationMessage('Ã¢ÂÂ Ã¯Â¸Â Solde ÃÂ©puisÃÂ©. Achetez un pack pour continuer.');
+      setValidationMessage('â ï¸ Solde Ã©puisÃ©. Achetez un pack pour continuer.');
       setTimeout(() => setValidationMessage(''), 5000);
       return false;
     }
     return true;
   };
 
-  // VÃÂ©rifier le statut Stripe Connect au chargement (pour les coachs seulement)
+  // VÃ©rifier le statut Stripe Connect au chargement (pour les coachs seulement)
   useEffect(() => {
     if (coachUser?.email && !isSuperAdmin) {
       axios.get(`${API}/coach/stripe-connect/status`, {
@@ -880,7 +880,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
   
-  // === v13.0: BOUTIQUE CRÃÂDITS - Charger les packs disponibles ===
+  // === v13.0: BOUTIQUE CRÃDITS - Charger les packs disponibles ===
   useEffect(() => {
     const loadCreditPacks = async () => {
       setLoadingPacks(true);
@@ -898,7 +898,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   }, [isSuperAdmin]);
 
-  // v13.0: Fonction pour acheter un pack de crÃÂ©dits
+  // v13.0: Fonction pour acheter un pack de crÃ©dits
   const handleBuyPack = async (pack) => {
     if (!coachUser?.email || purchasingPack) return;
     setPurchasingPack(pack.id);
@@ -927,10 +927,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         });
         if (res.data?.service_prices) {
           setServicePrices(res.data.service_prices);
-          console.log('[SERVICE-PRICES] ChargÃÂ©s:', res.data.service_prices);
+          console.log('[SERVICE-PRICES] ChargÃ©s:', res.data.service_prices);
         }
       } catch (err) {
-        console.log('[SERVICE-PRICES] Erreur (utilisation prix par dÃÂ©faut):', err.message);
+        console.log('[SERVICE-PRICES] Erreur (utilisation prix par dÃ©faut):', err.message);
       }
     };
     loadServicePrices();
@@ -940,26 +940,26 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [tab, setTab] = useState(() => {
     try {
       const savedTab = localStorage.getItem(COACH_TAB_KEY);
-      // v36: Migration Ã¢ÂÂ "concept" et "courses" redirigent vers "offers"
+      // v36: Migration â "concept" et "courses" redirigent vers "offers"
       if (savedTab && ['reservations', 'concept', 'courses', 'offers', 'payments', 'page-vente', 'codes', 'campaigns', 'articles', 'media', 'conversations'].includes(savedTab)) {
         const migratedTab = savedTab === 'payments' ? 'page-vente'
           : (savedTab === 'concept' || savedTab === 'courses') ? 'offers'
           : savedTab;
-        console.log('[COACH] Ã¢ÂÂ Onglet restaurÃÂ©:', migratedTab);
+        console.log('[COACH] â Onglet restaurÃ©:', migratedTab);
         return migratedTab;
       }
     } catch (e) {}
     return "reservations";
   });
 
-  // v37.2: Sous-onglet du HUB "Gestion" Ã¢ÂÂ 4 sections centralisÃÂ©es
+  // v37.2: Sous-onglet du HUB "Gestion" â 4 sections centralisÃ©es
   const [offersSubTab, setOffersSubTab] = useState('contenus');
 
   // v37.2: Auto-scroll + auto-load audio course on sub-tab change
   const handleSubTabChange = (subTabId) => {
     setOffersSubTab(subTabId);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    // v44: Plus besoin d'auto-select cours Ã¢ÂÂ Studio Audio est autonome
+    // v44: Plus besoin d'auto-select cours â Studio Audio est autonome
   };
 
   // === PARTAGE COACH ===
@@ -979,7 +979,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   };
 
   const [reservations, setReservations] = useState([]);
-  const [reservationsSearch, setReservationsSearch] = useState(''); // Recherche locale rÃÂ©servations
+  const [reservationsSearch, setReservationsSearch] = useState(''); // Recherche locale rÃ©servations
   const [reservationPagination, setReservationPagination] = useState({ page: 1, limit: 20, total: 0, pages: 0 });
   const [loadingReservations, setLoadingReservations] = useState(false);
   const [courses, setCourses] = useState([]);
@@ -996,8 +996,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [newCode, setNewCode] = useState({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "" });
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [batchLoading, setBatchLoading] = useState(false);
-  const [selectedBeneficiaries, setSelectedBeneficiaries] = useState([]); // Multi-select pour bÃÂ©nÃÂ©ficiaires
-  const [editingCode, setEditingCode] = useState(null); // Pour l'ÃÂ©dition individuelle des codes
+  const [selectedBeneficiaries, setSelectedBeneficiaries] = useState([]); // Multi-select pour bÃ©nÃ©ficiaires
+  const [editingCode, setEditingCode] = useState(null); // Pour l'Ã©dition individuelle des codes
   const [newCourse, setNewCourse] = useState({ name: "", weekday: 0, time: "18:30", locationName: "", mapsUrl: "" });
   const [newOffer, setNewOffer] = useState({
     name: "", price: 0, visible: true, description: "", keywords: "",
@@ -1005,7 +1005,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     category: "service", isProduct: false, variants: null, tva: 0, shippingCost: 0, stock: -1,
     duration_value: '', duration_unit: '', is_auto_prolong: true
   });
-  const [editingOfferId, setEditingOfferId] = useState(null); // Pour mode ÃÂ©dition
+  const [editingOfferId, setEditingOfferId] = useState(null); // Pour mode Ã©dition
   const fileInputRef = useRef(null);
   
   // Scanner state
@@ -1025,7 +1025,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [newEmojiName, setNewEmojiName] = useState("");
   const emojiInputRef = useRef(null);
 
-  // ========== v44: STUDIO AUDIO AUTONOME Ã¢ÂÂ indÃÂ©pendant des cours ==========
+  // ========== v44: STUDIO AUDIO AUTONOME â indÃ©pendant des cours ==========
   const [showAudioModal, setShowAudioModal] = useState(false);
   const [selectedCourseForAudio, setSelectedCourseForAudio] = useState(null); // legacy compat
   const [audioTracks, setAudioTracks] = useState([]);
@@ -1046,7 +1046,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       const res = await axios.get(`${API}/audio-tracks`, { headers: authHeaders });
       const apiTracks = res.data.tracks || [];
 
-      // v44: Migration automatique Ã¢ÂÂ si l'API est vide mais des cours ont des audio_tracks legacy, migrer
+      // v44: Migration automatique â si l'API est vide mais des cours ont des audio_tracks legacy, migrer
       if (apiTracks.length === 0 && courses.length > 0) {
         const legacyTracks = [];
         courses.forEach(course => {
@@ -1055,7 +1055,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           }
         });
         if (legacyTracks.length > 0) {
-          console.log(`[AUDIO] Ã°ÂÂÂ Migration de ${legacyTracks.length} pistes legacy...`);
+          console.log(`[AUDIO] ð Migration de ${legacyTracks.length} pistes legacy...`);
           const migrated = [];
           for (const t of legacyTracks) {
             try {
@@ -1067,21 +1067,21 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 order: migrated.length
               }, { headers: { 'Content-Type': 'application/json', ...authHeaders } });
               migrated.push(createRes.data.track);
-              console.log(`[AUDIO] Ã¢ÂÂ MigrÃÂ©: ${t.title}`);
+              console.log(`[AUDIO] â MigrÃ©: ${t.title}`);
             } catch (migErr) {
-              console.error(`[AUDIO] Ã¢ÂÂ Erreur migration ${t.title}:`, migErr);
+              console.error(`[AUDIO] â Erreur migration ${t.title}:`, migErr);
             }
           }
           setAudioTracks(migrated);
           setAudioLoaded(true);
-          console.log(`[AUDIO] Ã°ÂÂÂ Migration terminÃÂ©e: ${migrated.length}/${legacyTracks.length}`);
+          console.log(`[AUDIO] ð Migration terminÃ©e: ${migrated.length}/${legacyTracks.length}`);
           return;
         }
       }
 
       setAudioTracks(apiTracks);
       setAudioLoaded(true);
-      console.log(`[AUDIO] Ã¢ÂÂ ${res.data.count} pistes chargÃÂ©es`);
+      console.log(`[AUDIO] â ${res.data.count} pistes chargÃ©es`);
     } catch (err) {
       console.error("[AUDIO] Erreur chargement:", err);
       setAudioLoaded(true);
@@ -1095,7 +1095,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coachUser?.email, courses.length]);
 
-  // Legacy compat Ã¢ÂÂ openAudioModal kept for modal version
+  // Legacy compat â openAudioModal kept for modal version
   const openAudioModal = (course) => {
     setSelectedCourseForAudio(course);
     setShowAudioModal(true);
@@ -1107,7 +1107,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     const uploadId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
 
-    console.log(`[AUDIO] Ã°ÂÂÂ¦ Upload en ${totalChunks} chunks pour "${file.name}" (${(file.size / 1024 / 1024).toFixed(1)}MB)`);
+    console.log(`[AUDIO] ð¦ Upload en ${totalChunks} chunks pour "${file.name}" (${(file.size / 1024 / 1024).toFixed(1)}MB)`);
 
     let finalUrl = null;
     for (let i = 0; i < totalChunks; i++) {
@@ -1124,30 +1124,30 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       formData.append('content_type', file.type || 'audio/mpeg');
       formData.append('asset_type', 'audio');
 
-      console.log(`[AUDIO] Ã¢Â¬ÂÃ¯Â¸Â Chunk ${i + 1}/${totalChunks} (${((end - start) / 1024 / 1024).toFixed(1)}MB)`);
+      console.log(`[AUDIO] â¬ï¸ Chunk ${i + 1}/${totalChunks} (${((end - start) / 1024 / 1024).toFixed(1)}MB)`);
       const res = await axios.post(`${API}/coach/upload-chunk`, formData, {
         headers: { 'Content-Type': 'multipart/form-data', ...authHeaders }
       });
 
       if (res.data.url) {
         finalUrl = res.data.url;
-        console.log(`[AUDIO] Ã¢ÂÂ Fichier assemblÃÂ©: ${finalUrl}`);
+        console.log(`[AUDIO] â Fichier assemblÃ©: ${finalUrl}`);
       }
     }
     return finalUrl;
   };
 
-  // v58: Upload audio Ã¢ÂÂ chunked pour gros fichiers
+  // v58: Upload audio â chunked pour gros fichiers
   const handleAudioFileUpload = async (files) => {
     if (!files || files.length === 0) return;
     setUploadingAudio(true);
 
     const MAX_AUDIO_SIZE = 15 * 1024 * 1024; // 15MB max
-    const CHUNK_THRESHOLD = 3.5 * 1024 * 1024; // Chunked au-delÃÂ  de 3.5MB
+    const CHUNK_THRESHOLD = 3.5 * 1024 * 1024; // Chunked au-delÃ  de 3.5MB
     for (const file of files) {
       try {
         if (file.size > MAX_AUDIO_SIZE) {
-          alert(`Ã¢ÂÂ Ã¯Â¸Â Le fichier "${file.name}" fait ${(file.size / 1024 / 1024).toFixed(1)}MB.\nMaximum : 15MB.`);
+          alert(`â ï¸ Le fichier "${file.name}" fait ${(file.size / 1024 / 1024).toFixed(1)}MB.\nMaximum : 15MB.`);
           continue;
         }
 
@@ -1157,7 +1157,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           console.log(`[AUDIO] Fichier > 3.5MB, upload en chunks...`);
           uploadUrl = await uploadFileInChunks(file);
           if (!uploadUrl) {
-            alert(`Ã¢ÂÂ Ã¯Â¸Â Erreur lors de l'upload de "${file.name}". RÃÂ©essayez.`);
+            alert(`â ï¸ Erreur lors de l'upload de "${file.name}". RÃ©essayez.`);
             continue;
           }
         } else {
@@ -1171,7 +1171,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           uploadUrl = uploadRes.data.url;
         }
 
-        // 2. CrÃÂ©er la piste dans la collection audio_tracks
+        // 2. CrÃ©er la piste dans la collection audio_tracks
         const trackRes = await axios.post(`${API}/audio-tracks`, {
           url: uploadUrl,
           title: file.name.replace(/\.[^.]+$/, ''),
@@ -1181,7 +1181,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         }, { headers: authHeaders });
 
         setAudioTracks(prev => [...prev, trackRes.data.track]);
-        console.log(`[AUDIO] Ã¢ÂÂ Piste crÃÂ©ÃÂ©e: ${trackRes.data.track.title}`);
+        console.log(`[AUDIO] â Piste crÃ©Ã©e: ${trackRes.data.track.title}`);
       } catch (err) {
         console.error("Erreur upload audio:", err);
         alert(`Erreur upload "${file.name}": ${err.response?.data?.detail || err.message}`);
@@ -1200,7 +1200,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       const res = await axios.post(`${API}/coach/upload-asset`, formData, {
         headers: { 'Content-Type': 'multipart/form-data', ...authHeaders }
       });
-      // Mettre ÃÂ  jour localement ET dans l'API
+      // Mettre Ã  jour localement ET dans l'API
       await axios.put(`${API}/audio-tracks/${trackId}`, { cover_url: res.data.url }, { headers: authHeaders });
       setAudioTracks(prev => prev.map(t => t.id === trackId ? { ...t, cover_url: res.data.url } : t));
     } catch (err) {
@@ -1209,7 +1209,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  // v44: Mettre ÃÂ  jour un champ Ã¢ÂÂ sauvegarde immÃÂ©diate dans l'API
+  // v44: Mettre Ã  jour un champ â sauvegarde immÃ©diate dans l'API
   const updateTrackField = async (trackId, field, value) => {
     setAudioTracks(prev => prev.map(t => t.id === trackId ? { ...t, [field]: value } : t));
     try {
@@ -1219,18 +1219,18 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  // v44: Supprimer une piste Ã¢ÂÂ suppression immÃÂ©diate dans l'API
+  // v44: Supprimer une piste â suppression immÃ©diate dans l'API
   const removeTrack = async (trackId) => {
     setAudioTracks(prev => prev.filter(t => t.id !== trackId).map((t, i) => ({ ...t, order: i })));
     try {
       await axios.delete(`${API}/audio-tracks/${trackId}`, { headers: authHeaders });
-      console.log(`[AUDIO] Ã°ÂÂÂÃ¯Â¸Â Piste supprimÃÂ©e: ${trackId}`);
+      console.log(`[AUDIO] ðï¸ Piste supprimÃ©e: ${trackId}`);
     } catch (err) {
       console.error("[AUDIO] Erreur suppression:", err);
     }
   };
 
-  // Drag & Drop rÃÂ©ordonnement (Desktop)
+  // Drag & Drop rÃ©ordonnement (Desktop)
   const handleTrackDragStart = (e, trackId) => {
     setDraggedTrackId(trackId);
     e.dataTransfer.effectAllowed = 'move';
@@ -1263,7 +1263,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   };
   const handleTrackTouchMove = (e, trackListEl) => {
     if (!touchTrackIdRef.current || !trackListEl) return;
-    e.preventDefault(); // empÃÂªche le scroll pendant le drag
+    e.preventDefault(); // empÃªche le scroll pendant le drag
     const touchY = e.touches[0].clientY;
     const children = Array.from(trackListEl.children);
     for (let i = 0; i < children.length; i++) {
@@ -1290,7 +1290,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     setDragOverIndex(null); setDraggedTrackId(null); touchTrackIdRef.current = null;
   };
 
-  // v44: Sauvegarder = rÃÂ©-ordonner toutes les pistes dans l'API
+  // v44: Sauvegarder = rÃ©-ordonner toutes les pistes dans l'API
   const saveAudioStudio = async () => {
     setSavingPlaylist(true);
     try {
@@ -1298,7 +1298,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       await axios.put(`${API}/audio-tracks/reorder`, {
         track_ids: sortedTracks.map(t => t.id)
       }, { headers: authHeaders });
-      alert(`Ã¢ÂÂ Studio Audio sauvegardÃÂ© (${sortedTracks.length} pistes)`);
+      alert(`â Studio Audio sauvegardÃ© (${sortedTracks.length} pistes)`);
     } catch (err) {
       console.error("Erreur sauvegarde studio:", err);
       alert("Erreur lors de la sauvegarde du Studio Audio");
@@ -1311,14 +1311,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   useEffect(() => {
     if (tab) {
       localStorage.setItem(COACH_TAB_KEY, tab);
-      console.log('[COACH] Ã°ÂÂÂ¾ Onglet sauvegardÃÂ©:', tab);
+      console.log('[COACH] ð¾ Onglet sauvegardÃ©:', tab);
     }
   }, [tab]);
   
-  // === v9.3.7: MÃÂMOIRE TOTALE - Auto-save Concept avec debounce ===
+  // === v9.3.7: MÃMOIRE TOTALE - Auto-save Concept avec debounce ===
   const conceptSaveTimeoutRef = useRef(null);
   const [conceptSaveStatus, setConceptSaveStatus] = useState(null); // 'saving' | 'saved' | 'error'
-  const isConceptLoaded = useRef(false); // ÃÂviter save au premier chargement
+  const isConceptLoaded = useRef(false); // Ãviter save au premier chargement
   
   useEffect(() => {
     // Ne pas sauvegarder au premier chargement
@@ -1327,7 +1327,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       return;
     }
     
-    // Debounce: attendre 1 seconde d'inactivitÃÂ© avant de sauvegarder
+    // Debounce: attendre 1 seconde d'inactivitÃ© avant de sauvegarder
     if (conceptSaveTimeoutRef.current) {
       clearTimeout(conceptSaveTimeoutRef.current);
     }
@@ -1337,8 +1337,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         setConceptSaveStatus('saving');
         await axios.put(`${API}/concept`, concept, getCoachHeaders());
         setConceptSaveStatus('saved');
-        console.log('[COACH] v9.3.7 Concept auto-sauvegardÃÂ©');
-        // Cacher le statut aprÃÂ¨s 2 secondes
+        console.log('[COACH] v9.3.7 Concept auto-sauvegardÃ©');
+        // Cacher le statut aprÃ¨s 2 secondes
         setTimeout(() => setConceptSaveStatus(null), 2000);
       } catch (err) {
         console.error('[COACH] Erreur auto-save concept:', err);
@@ -1353,10 +1353,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     };
   }, [concept]);
   
-  // === v9.3.7: MÃÂMOIRE TOTALE - Auto-save PaymentLinks avec debounce ===
+  // === v9.3.7: MÃMOIRE TOTALE - Auto-save PaymentLinks avec debounce ===
   const paymentSaveTimeoutRef = useRef(null);
   const [paymentSaveStatus, setPaymentSaveStatus] = useState(null); // 'saving' | 'saved' | 'error'
-  const isPaymentLoaded = useRef(false); // ÃÂviter save au premier chargement
+  const isPaymentLoaded = useRef(false); // Ãviter save au premier chargement
   
   useEffect(() => {
     // Ne pas sauvegarder au premier chargement
@@ -1365,7 +1365,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       return;
     }
     
-    // Debounce: attendre 1 seconde d'inactivitÃÂ© avant de sauvegarder
+    // Debounce: attendre 1 seconde d'inactivitÃ© avant de sauvegarder
     if (paymentSaveTimeoutRef.current) {
       clearTimeout(paymentSaveTimeoutRef.current);
     }
@@ -1375,8 +1375,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         setPaymentSaveStatus('saving');
         await axios.put(`${API}/payment-links`, paymentLinks, getCoachHeaders());
         setPaymentSaveStatus('saved');
-        console.log('[COACH] v9.3.7 Payment Links auto-sauvegardÃÂ©s');
-        // Cacher le statut aprÃÂ¨s 2 secondes
+        console.log('[COACH] v9.3.7 Payment Links auto-sauvegardÃ©s');
+        // Cacher le statut aprÃ¨s 2 secondes
         setTimeout(() => setPaymentSaveStatus(null), 2000);
       } catch (err) {
         console.error('[COACH] Erreur auto-save payment links:', err);
@@ -1399,14 +1399,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     if (result.success) {
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
-      console.log('[COACH] Lien vitrine copiÃÂ©:', shareUrl);
+      console.log('[COACH] Lien vitrine copiÃ©:', shareUrl);
     }
   };
   
-  // === DÃÂCONNEXION SÃÂCURISÃÂE ===
+  // === DÃCONNEXION SÃCURISÃE ===
   const handleSecureLogout = () => {
     try {
-      // Vider localStorage (sauf les clÃÂ©s critiques)
+      // Vider localStorage (sauf les clÃ©s critiques)
       const keysToRemove = [
         COACH_TAB_KEY,
         COACH_SESSION_KEY,
@@ -1420,18 +1420,18 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // Vider sessionStorage
       sessionStorage.clear();
       
-      console.log('[COACH] Ã°ÂÂÂª DÃÂ©connexion sÃÂ©curisÃÂ©e effectuÃÂ©e');
+      console.log('[COACH] ðª DÃ©connexion sÃ©curisÃ©e effectuÃ©e');
       
       // Appeler la fonction onLogout du parent
       if (onLogout) onLogout();
     } catch (err) {
-      console.error('[COACH] Ã¢ÂÂ Erreur dÃÂ©connexion:', err);
-      // Forcer la dÃÂ©connexion mÃÂªme en cas d'erreur
+      console.error('[COACH] â Erreur dÃ©connexion:', err);
+      // Forcer la dÃ©connexion mÃªme en cas d'erreur
       if (onLogout) onLogout();
     }
   };
 
-  // Fonction pour charger les rÃÂ©servations avec pagination
+  // Fonction pour charger les rÃ©servations avec pagination
   const loadReservations = async (page = 1, limit = 20) => {
     setLoadingReservations(true);
     try {
@@ -1448,8 +1448,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   useEffect(() => {
     const loadData = async () => {
       try {
-        // v8.9.5: Charger les rÃÂ©servations avec isolation coach_id
-        // Toutes les requÃÂªtes passent le header X-User-Email pour filtrage par coach_id
+        // v8.9.5: Charger les rÃ©servations avec isolation coach_id
+        // Toutes les requÃªtes passent le header X-User-Email pour filtrage par coach_id
         const headers = getCoachHeaders();
         const resPromise = axios.get(`${API}/reservations?page=1&limit=20`, headers);
         const [res, crs, off, usr, lnk, cpt, cds] = await Promise.all([
@@ -1457,7 +1457,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           axios.get(`${API}/users`, headers), axios.get(`${API}/payment-links`, headers),
           axios.get(`${API}/concept`, headers), axios.get(`${API}/discount-codes`, headers)
         ]);
-        // RÃÂ©servations avec pagination
+        // RÃ©servations avec pagination
         setReservations(res.data.data);
         setReservationPagination(res.data.pagination);
         
@@ -1476,12 +1476,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           setVendorPaymentConfig(pcRes.data || {});
         } catch (pcErr) { console.warn('[PAYMENT-CONFIG] Load:', pcErr); }
 
-        // === SANITIZE DATA: Nettoyer automatiquement les donnÃÂ©es fantÃÂ´mes ===
+        // === SANITIZE DATA: Nettoyer automatiquement les donnÃ©es fantÃ´mes ===
         try {
           const sanitizeResult = await axios.post(`${API}/sanitize-data`);
           if (sanitizeResult.data.stats?.codes_cleaned > 0) {
-            console.log(`Ã°ÂÂ§Â¹ Nettoyage: ${sanitizeResult.data.stats.codes_cleaned} codes promo nettoyÃÂ©s`);
-            // Recharger les codes promo aprÃÂ¨s nettoyage
+            console.log(`ð§¹ Nettoyage: ${sanitizeResult.data.stats.codes_cleaned} codes promo nettoyÃ©s`);
+            // Recharger les codes promo aprÃ¨s nettoyage
             const updatedCodes = await axios.get(`${API}/discount-codes`);
             setDiscountCodes(updatedCodes.data);
           }
@@ -1493,12 +1493,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     loadData();
   }, []);
 
-  // Fonction de nettoyage manuel (peut ÃÂªtre appelÃÂ©e depuis l'interface)
+  // Fonction de nettoyage manuel (peut Ãªtre appelÃ©e depuis l'interface)
   const manualSanitize = async () => {
     try {
       const result = await axios.post(`${API}/sanitize-data`);
       const stats = result.data.stats;
-      alert(`Ã°ÂÂ§Â¹ Nettoyage terminÃÂ©!\n\nÃ¢ÂÂ¢ ${stats.codes_cleaned} codes promo nettoyÃÂ©s\nÃ¢ÂÂ¢ ${stats.valid_offers} offres valides\nÃ¢ÂÂ¢ ${stats.valid_courses} cours valides\nÃ¢ÂÂ¢ ${stats.valid_users} contacts valides`);
+      alert(`ð§¹ Nettoyage terminÃ©!\n\nâ¢ ${stats.codes_cleaned} codes promo nettoyÃ©s\nâ¢ ${stats.valid_offers} offres valides\nâ¢ ${stats.valid_courses} cours valides\nâ¢ ${stats.valid_users} contacts valides`);
       // Recharger les codes promo
       const updatedCodes = await axios.get(`${API}/discount-codes`);
       setDiscountCodes(updatedCodes.data);
@@ -1508,16 +1508,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  // Get unique customers for beneficiary dropdown (filtrage local supplÃÂ©mentaire)
+  // Get unique customers for beneficiary dropdown (filtrage local supplÃ©mentaire)
   const uniqueCustomers = Array.from(new Map(
     [...reservations.map(r => ({ name: r.userName, email: r.userEmail })), ...users.map(u => ({ name: u.name, email: u.email }))]
-    .filter(c => c.email && c.name) // Exclure les entrÃÂ©es sans email ou nom
+    .filter(c => c.email && c.name) // Exclure les entrÃ©es sans email ou nom
     .map(c => [c.email, c])
   ).values());
 
   const exportCSV = async () => {
     try {
-      // RÃÂ©cupÃÂ©rer TOUTES les rÃÂ©servations pour l'export (sans pagination)
+      // RÃ©cupÃ©rer TOUTES les rÃ©servations pour l'export (sans pagination)
       const response = await axios.get(`${API}/reservations?all_data=true`);
       const allReservations = response.data.data;
       
@@ -1559,7 +1559,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         }, 3000);
       }
     } catch (err) {
-      setScanError(err.response?.data?.detail || 'Code non trouvÃÂ©');
+      setScanError(err.response?.data?.detail || 'Code non trouvÃ©');
       setTimeout(() => setScanError(null), 3000);
     }
   };
@@ -1579,31 +1579,31 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       console.log("Saving concept:", concept);
       const response = await axios.put(`${API}/concept`, concept); 
       console.log("Concept saved successfully:", response.data);
-      alert("Ã¢ÂÂ Concept sauvegardÃÂ© avec succÃÂ¨s !");
+      alert("â Concept sauvegardÃ© avec succÃ¨s !");
     } catch (err) {
       console.error("Error saving concept:", err);
       console.error("Error details:", err.response?.data || err.message);
       const errorMessage = err.response?.data?.detail || err.message || "Erreur inconnue";
-      alert(`Ã¢ÂÂ Erreur lors de la sauvegarde: ${errorMessage}`);
+      alert(`â Erreur lors de la sauvegarde: ${errorMessage}`);
     }
   };
   const savePayments = async () => { await axios.put(`${API}/payment-links`, paymentLinks); alert("Saved!"); };
 
-  // v9.5.8: addCode avec vÃÂ©rification crÃÂ©dits
+  // v9.5.8: addCode avec vÃ©rification crÃ©dits
   const addCode = async (e) => {
     e.preventDefault();
     if (!newCode.type || !newCode.value) return;
     
-    // v9.5.8: VÃÂ©rifier les crÃÂ©dits avant l'action (sauf Super Admin)
+    // v9.5.8: VÃ©rifier les crÃ©dits avant l'action (sauf Super Admin)
     if (!checkCreditsBeforeAction()) return;
     
-    // Si mode sÃÂ©rie activÃÂ©, utiliser la fonction batch
+    // Si mode sÃ©rie activÃ©, utiliser la fonction batch
     if (isBatchMode && newCode.batchCount > 1) {
       await addBatchCodes(e);
       return;
     }
     
-    // v9.5.8: Consommer un crÃÂ©dit pour cette action
+    // v9.5.8: Consommer un crÃ©dit pour cette action
     const creditResult = await consumeCredit("creation_code_promo");
     if (!creditResult.success && !creditResult.bypassed) return;
     
@@ -1622,7 +1622,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     setSelectedBeneficiaries([]);
   };
 
-  // GÃÂ©nÃÂ©ration en sÃÂ©rie de codes promo - CrÃÂ©e rÃÂ©ellement N entrÃÂ©es distinctes en base
+  // GÃ©nÃ©ration en sÃ©rie de codes promo - CrÃ©e rÃ©ellement N entrÃ©es distinctes en base
   const addBatchCodes = async (e) => {
     e.preventDefault();
     if (!newCode.type || !newCode.value) return;
@@ -1634,12 +1634,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     const createdCodes = [];
     
     try {
-      // Si plusieurs bÃÂ©nÃÂ©ficiaires sÃÂ©lectionnÃÂ©s, attribuer un code ÃÂ  chacun
+      // Si plusieurs bÃ©nÃ©ficiaires sÃ©lectionnÃ©s, attribuer un code Ã  chacun
       const beneficiaries = selectedBeneficiaries.length > 0 ? selectedBeneficiaries : [null];
       let codeIndex = 1;
       
       for (let i = 0; i < count; i++) {
-        // Attribuer les bÃÂ©nÃÂ©ficiaires de maniÃÂ¨re circulaire si moins de bÃÂ©nÃÂ©ficiaires que de codes
+        // Attribuer les bÃ©nÃ©ficiaires de maniÃ¨re circulaire si moins de bÃ©nÃ©ficiaires que de codes
         const beneficiaryEmail = beneficiaries[i % beneficiaries.length];
         const codeValue = `${prefix}-${String(codeIndex).padStart(2, '0')}`;
         codeIndex++;
@@ -1649,7 +1649,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           type: newCode.type, 
           value: parseFloat(newCode.value),
           assignedEmail: beneficiaryEmail,
-          courses: newCode.courses, // Cours ET produits autorisÃÂ©s
+          courses: newCode.courses, // Cours ET produits autorisÃ©s
           maxUses: newCode.maxUses ? parseInt(newCode.maxUses) : null,
           expiresAt: newCode.expiresAt || null
         });
@@ -1660,22 +1660,22 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "" });
       setSelectedBeneficiaries([]);
       setIsBatchMode(false);
-      alert(`Ã¢ÂÂ ${count} codes crÃÂ©ÃÂ©s avec succÃÂ¨s !`);
+      alert(`â ${count} codes crÃ©Ã©s avec succÃ¨s !`);
     } catch (error) {
-      console.error("Erreur gÃÂ©nÃÂ©ration en sÃÂ©rie:", error);
-      // Ajouter les codes dÃÂ©jÃÂ  crÃÂ©ÃÂ©s mÃÂªme si erreur partielle
+      console.error("Erreur gÃ©nÃ©ration en sÃ©rie:", error);
+      // Ajouter les codes dÃ©jÃ  crÃ©Ã©s mÃªme si erreur partielle
       if (createdCodes.length > 0) {
         setDiscountCodes(prev => [...prev, ...createdCodes]);
-        alert(`Ã¢ÂÂ Ã¯Â¸Â ${createdCodes.length}/${count} codes crÃÂ©ÃÂ©s. Erreur partielle.`);
+        alert(`â ï¸ ${createdCodes.length}/${count} codes crÃ©Ã©s. Erreur partielle.`);
       } else {
-        alert("Ã¢ÂÂ Erreur lors de la crÃÂ©ation des codes.");
+        alert("â Erreur lors de la crÃ©ation des codes.");
       }
     } finally {
       setBatchLoading(false);
     }
   };
   
-  // Toggle sÃÂ©lection d'un bÃÂ©nÃÂ©ficiaire (multi-select)
+  // Toggle sÃ©lection d'un bÃ©nÃ©ficiaire (multi-select)
   const toggleBeneficiarySelection = (email) => {
     setSelectedBeneficiaries(prev => 
       prev.includes(email) 
@@ -1684,7 +1684,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     );
   };
   
-  // Supprimer un article (cours/produit) de la liste des autorisÃÂ©s (formulaire de crÃÂ©ation)
+  // Supprimer un article (cours/produit) de la liste des autorisÃ©s (formulaire de crÃ©ation)
   const removeAllowedArticle = (articleId) => {
     setNewCode(prev => ({
       ...prev,
@@ -1692,7 +1692,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }));
   };
   
-  // Supprimer un article d'un code promo EXISTANT (mise ÃÂ  jour immÃÂ©diate en base)
+  // Supprimer un article d'un code promo EXISTANT (mise Ã  jour immÃ©diate en base)
   const removeArticleFromExistingCode = async (codeId, articleId) => {
     const code = discountCodes.find(c => c.id === codeId);
     if (!code) return;
@@ -1704,28 +1704,28 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       setDiscountCodes(prev => prev.map(c => 
         c.id === codeId ? { ...c, courses: updatedCourses } : c
       ));
-      console.log(`Ã¢ÂÂ Article ${articleId} retirÃÂ© du code ${code.code}`);
+      console.log(`â Article ${articleId} retirÃ© du code ${code.code}`);
     } catch (error) {
       console.error("Erreur suppression article:", error);
-      alert("Ã¢ÂÂ Erreur lors de la mise ÃÂ  jour");
+      alert("â Erreur lors de la mise Ã  jour");
     }
   };
   
-  // Supprimer un bÃÂ©nÃÂ©ficiaire d'un code promo EXISTANT (mise ÃÂ  jour immÃÂ©diate en base)
+  // Supprimer un bÃ©nÃ©ficiaire d'un code promo EXISTANT (mise Ã  jour immÃ©diate en base)
   const removeBeneficiaryFromExistingCode = async (codeId) => {
     try {
       await axios.put(`${API}/discount-codes/${codeId}`, { assignedEmail: null });
       setDiscountCodes(prev => prev.map(c => 
         c.id === codeId ? { ...c, assignedEmail: null } : c
       ));
-      console.log(`Ã¢ÂÂ BÃÂ©nÃÂ©ficiaire retirÃÂ© du code`);
+      console.log(`â BÃ©nÃ©ficiaire retirÃ© du code`);
     } catch (error) {
-      console.error("Erreur suppression bÃÂ©nÃÂ©ficiaire:", error);
-      alert("Ã¢ÂÂ Erreur lors de la mise ÃÂ  jour");
+      console.error("Erreur suppression bÃ©nÃ©ficiaire:", error);
+      alert("â Erreur lors de la mise Ã  jour");
     }
   };
   
-  // Mettre ÃÂ  jour un code promo individuellement
+  // Mettre Ã  jour un code promo individuellement
   const updateCodeIndividual = async (codeId, updates) => {
     try {
       const response = await axios.put(`${API}/discount-codes/${codeId}`, updates);
@@ -1733,8 +1733,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       setEditingCode(null);
       return true;
     } catch (error) {
-      console.error("Erreur mise ÃÂ  jour code:", error);
-      alert("Ã¢ÂÂ Erreur lors de la mise ÃÂ  jour");
+      console.error("Erreur mise Ã  jour code:", error);
+      alert("â Erreur lors de la mise Ã  jour");
       return false;
     }
   };
@@ -1744,7 +1744,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     setDiscountCodes(discountCodes.map(c => c.id === code.id ? { ...c, active: !c.active } : c));
   };
 
-  // v13.8: ÃÂditer un code promo existant - Charge les donnÃÂ©es dans le formulaire
+  // v13.8: Ãditer un code promo existant - Charge les donnÃ©es dans le formulaire
   const editCode = (code) => {
     setNewCode({
       code: code.code || "",
@@ -1758,13 +1758,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       prefix: ""
     });
     setSelectedBeneficiaries(code.assignedEmails || []);
-    setEditingCode(code.id); // Marque le code en cours d'ÃÂ©dition
-    setIsBatchMode(false); // DÃÂ©sactive le mode sÃÂ©rie pour l'ÃÂ©dition
+    setEditingCode(code.id); // Marque le code en cours d'Ã©dition
+    setIsBatchMode(false); // DÃ©sactive le mode sÃ©rie pour l'Ã©dition
     // Scroll vers le formulaire
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // v13.8: Dupliquer un code promo - Copie les donnÃÂ©es avec un nouveau nom
+  // v13.8: Dupliquer un code promo - Copie les donnÃ©es avec un nouveau nom
   const duplicateCode = (code) => {
     setNewCode({
       code: `${code.code}_COPY`,
@@ -1778,46 +1778,46 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       prefix: ""
     });
     setSelectedBeneficiaries([]);
-    setEditingCode(null); // Nouveau code, pas d'ÃÂ©dition
+    setEditingCode(null); // Nouveau code, pas d'Ã©dition
     setIsBatchMode(false);
     // Scroll vers le formulaire
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Delete discount code - SUPPRESSION DÃÂFINITIVE EN BASE + VÃÂRIFICATION
+  // Delete discount code - SUPPRESSION DÃFINITIVE EN BASE + VÃRIFICATION
   const deleteCode = async (codeId) => {
-    if (window.confirm("Ã¢ÂÂ Ã¯Â¸Â SUPPRESSION DÃÂFINITIVE\n\nCe code promo sera supprimÃÂ© de la base de donnÃÂ©es.\nCette action est irrÃÂ©versible.\n\nConfirmer la suppression ?")) {
+    if (window.confirm("â ï¸ SUPPRESSION DÃFINITIVE\n\nCe code promo sera supprimÃ© de la base de donnÃ©es.\nCette action est irrÃ©versible.\n\nConfirmer la suppression ?")) {
       try {
         await axios.delete(`${API}/discount-codes/${codeId}`);
         setDiscountCodes(prev => prev.filter(c => c.id !== codeId));
-        console.log(`Ã¢ÂÂ Code ${codeId} supprimÃÂ© dÃÂ©finitivement`);
+        console.log(`â Code ${codeId} supprimÃ© dÃ©finitivement`);
       } catch (error) {
         console.error("Erreur suppression code:", error);
-        alert("Ã¢ÂÂ Erreur lors de la suppression");
+        alert("â Erreur lors de la suppression");
       }
     }
   };
   
-  // Delete reservation - SUPPRESSION DÃÂFINITIVE EN BASE
+  // Delete reservation - SUPPRESSION DÃFINITIVE EN BASE
   const deleteReservation = async (reservationId) => {
-    if (window.confirm("Ã¢ÂÂ Ã¯Â¸Â SUPPRESSION DÃÂFINITIVE\n\nCette rÃÂ©servation sera supprimÃÂ©e de la base de donnÃÂ©es.\n\nConfirmer la suppression ?")) {
+    if (window.confirm("â ï¸ SUPPRESSION DÃFINITIVE\n\nCette rÃ©servation sera supprimÃ©e de la base de donnÃ©es.\n\nConfirmer la suppression ?")) {
       try {
-        console.log('DELETE_UI: DÃÂ©but suppression rÃÂ©servation:', reservationId);
+        console.log('DELETE_UI: DÃ©but suppression rÃ©servation:', reservationId);
         await axios.delete(`${API}/reservations/${reservationId}`);
         
-        // Mise ÃÂ  jour immÃÂ©diate de l'ÃÂ©tat - supporte id ET _id
+        // Mise Ã  jour immÃ©diate de l'Ã©tat - supporte id ET _id
         setReservations(prev => {
           const filtered = prev.filter(r => r.id !== reservationId && r._id !== reservationId);
-          console.log(`DELETE_UI: RÃÂ©servations filtrÃÂ©es: ${prev.length} -> ${filtered.length}`);
+          console.log(`DELETE_UI: RÃ©servations filtrÃ©es: ${prev.length} -> ${filtered.length}`);
           return filtered;
         });
         
-        // Mettre ÃÂ  jour le compteur de pagination
+        // Mettre Ã  jour le compteur de pagination
         setReservationPagination(prev => ({ ...prev, total: prev.total - 1 }));
-        console.log(`DELETE_UI: Ã¢ÂÂ RÃÂ©servation ${reservationId} supprimÃÂ©e - UI mise ÃÂ  jour instantanÃÂ©ment`);
+        console.log(`DELETE_UI: â RÃ©servation ${reservationId} supprimÃ©e - UI mise Ã  jour instantanÃ©ment`);
       } catch (err) {
-        console.error("DELETE_UI: Ã¢ÂÂ ERREUR:", err);
-        alert("Ã¢ÂÂ Erreur lors de la suppression");
+        console.error("DELETE_UI: â ERREUR:", err);
+        alert("â Erreur lors de la suppression");
       }
     }
   };
@@ -1828,7 +1828,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     e.preventDefault();
     if (!manualContact.name || !manualContact.email) return;
     try {
-      // 1. CrÃÂ©er dans la collection users (pour les codes promo)
+      // 1. CrÃ©er dans la collection users (pour les codes promo)
       const response = await axios.post(`${API}/users`, {
         name: manualContact.name,
         email: manualContact.email,
@@ -1836,7 +1836,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       });
       setUsers([...users, response.data]);
       
-      // 2. SYNCHRONISATION: CrÃÂ©er aussi dans chat_participants (CRM global)
+      // 2. SYNCHRONISATION: CrÃ©er aussi dans chat_participants (CRM global)
       try {
         await addManualChatParticipant(
           manualContact.name,
@@ -1855,29 +1855,29 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
   
-  // Supprimer un contact (Hard Delete avec nettoyage des rÃÂ©fÃÂ©rences)
-  // Supprimer un contact - SUPPRESSION DÃÂFINITIVE + NETTOYAGE CODES PROMO
+  // Supprimer un contact (Hard Delete avec nettoyage des rÃ©fÃ©rences)
+  // Supprimer un contact - SUPPRESSION DÃFINITIVE + NETTOYAGE CODES PROMO
   const deleteContact = async (userId) => {
-    if (!window.confirm("Ã¢ÂÂ Ã¯Â¸Â SUPPRESSION DÃÂFINITIVE\n\nCe contact sera supprimÃÂ© de la base de donnÃÂ©es.\nSon email sera retirÃÂ© de tous les codes promo.\n\nConfirmer la suppression ?")) return;
+    if (!window.confirm("â ï¸ SUPPRESSION DÃFINITIVE\n\nCe contact sera supprimÃ© de la base de donnÃ©es.\nSon email sera retirÃ© de tous les codes promo.\n\nConfirmer la suppression ?")) return;
     try {
-      // RÃÂ©cupÃÂ©rer l'email AVANT suppression du state
+      // RÃ©cupÃ©rer l'email AVANT suppression du state
       const userToDelete = users.find(u => u.id === userId || u._id === userId);
       const userEmail = userToDelete?.email;
       
-      // 1. Supprimer en base de donnÃÂ©es
+      // 1. Supprimer en base de donnÃ©es
       await axios.delete(`${API}/users/${userId}`);
       
-      // 2. Mettre ÃÂ  jour TOUS les states locaux - supporte id ET _id
+      // 2. Mettre Ã  jour TOUS les states locaux - supporte id ET _id
       setUsers(prev => {
         const filtered = prev.filter(u => u.id !== userId && u._id !== userId);
-        console.log(`DELETE_UI: users filtrÃÂ©: ${prev.length} -> ${filtered.length}`);
+        console.log(`DELETE_UI: users filtrÃ©: ${prev.length} -> ${filtered.length}`);
         return filtered;
       });
       
-      // 3. AUSSI mettre ÃÂ  jour chatParticipants au cas oÃÂ¹
+      // 3. AUSSI mettre Ã  jour chatParticipants au cas oÃ¹
       setChatParticipants(prev => {
         const filtered = prev.filter(p => p.id !== userId && p._id !== userId);
-        console.log(`DELETE_UI: chatParticipants filtrÃÂ©: ${prev.length} -> ${filtered.length}`);
+        console.log(`DELETE_UI: chatParticipants filtrÃ©: ${prev.length} -> ${filtered.length}`);
         return filtered;
       });
       
@@ -1895,10 +1895,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         console.warn("Sanitize warning:", sanitizeErr);
       }
       
-      console.log(`DELETE_UI: Ã¢ÂÂ Contact ${userId} supprimÃÂ© dÃÂ©finitivement`);
+      console.log(`DELETE_UI: â Contact ${userId} supprimÃ© dÃ©finitivement`);
     } catch (err) {
-      console.error("DELETE_UI: Ã¢ÂÂ Erreur suppression contact:", err);
-      alert("Ã¢ÂÂ Erreur lors de la suppression");
+      console.error("DELETE_UI: â Erreur suppression contact:", err);
+      alert("â Erreur lors de la suppression");
     }
   };
 
@@ -1929,12 +1929,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // Export promo codes to CSV
   const exportPromoCodesCSV = () => {
     if (discountCodes.length === 0) {
-      alert("Aucun code promo ÃÂ  exporter.");
+      alert("Aucun code promo Ã  exporter.");
       return;
     }
     
     // CSV headers
-    const headers = ["Code", "Type", "Valeur", "BÃÂ©nÃÂ©ficiaire", "Utilisations Max", "UtilisÃÂ©", "Date Expiration", "Actif", "Cours AutorisÃÂ©s"];
+    const headers = ["Code", "Type", "Valeur", "BÃ©nÃ©ficiaire", "Utilisations Max", "UtilisÃ©", "Date Expiration", "Actif", "Cours AutorisÃ©s"];
     
     // CSV rows
     const rows = discountCodes.map(code => {
@@ -1986,21 +1986,21 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     try {
       await axios.put(`${API}/offers/${offer.id}`, offer); 
     } catch (err) {
-      console.error("Erreur mise ÃÂ  jour offre:", err);
+      console.error("Erreur mise Ã  jour offre:", err);
     }
   };
 
-  // Supprimer une offre - SUPPRESSION DÃÂFINITIVE + NETTOYAGE CODES PROMO
+  // Supprimer une offre - SUPPRESSION DÃFINITIVE + NETTOYAGE CODES PROMO
   const deleteOffer = async (offerId) => {
-    if (!window.confirm("Ã¢ÂÂ Ã¯Â¸Â SUPPRESSION DÃÂFINITIVE\n\nCette offre sera supprimÃÂ©e de la base de donnÃÂ©es.\nElle sera retirÃÂ©e de tous les codes promo.\n\nConfirmer la suppression ?")) return;
+    if (!window.confirm("â ï¸ SUPPRESSION DÃFINITIVE\n\nCette offre sera supprimÃ©e de la base de donnÃ©es.\nElle sera retirÃ©e de tous les codes promo.\n\nConfirmer la suppression ?")) return;
     try {
-      // 1. Supprimer en base de donnÃÂ©es (le backend nettoie aussi les codes promo)
+      // 1. Supprimer en base de donnÃ©es (le backend nettoie aussi les codes promo)
       await axios.delete(`${API}/offers/${offerId}`, getCoachHeaders());
       
-      // 2. Mettre ÃÂ  jour le state local
+      // 2. Mettre Ã  jour le state local
       setOffers(prev => prev.filter(o => o.id !== offerId));
       
-      // 3. Nettoyer localement les rÃÂ©fÃÂ©rences dans les codes promo
+      // 3. Nettoyer localement les rÃ©fÃ©rences dans les codes promo
       setDiscountCodes(prev => prev.map(c => ({
         ...c,
         courses: c.courses ? c.courses.filter(id => id !== offerId) : []
@@ -2013,11 +2013,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         console.warn("Sanitize warning:", sanitizeErr);
       }
 
-      alert(`Offre supprimÃÂ©e avec succÃÂ¨s`);
-      console.log(`Offre ${offerId} supprimÃÂ©e dÃÂ©finitivement`);
+      alert(`Offre supprimÃ©e avec succÃ¨s`);
+      console.log(`Offre ${offerId} supprimÃ©e dÃ©finitivement`);
     } catch (err) {
       console.error("Erreur suppression offre:", err);
-      alert("Ã¢ÂÂ Erreur lors de la suppression");
+      alert("â Erreur lors de la suppression");
     }
   };
 
@@ -2031,7 +2031,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       price: offer.price || 0,
       visible: offer.visible !== false,
       description: offer.description || "",
-      keywords: offer.keywords || "", // FIX: Charger les mots-clÃÂ©s existants
+      keywords: offer.keywords || "", // FIX: Charger les mots-clÃ©s existants
       images: paddedImages,
       category: offer.category || "service",
       isProduct: offer.isProduct || false,
@@ -2045,7 +2045,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     document.getElementById('offer-form')?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Annuler l'ÃÂ©dition
+  // Annuler l'Ã©dition
   const cancelEditOffer = () => {
     setNewOffer({ 
       name: "", price: 0, visible: true, description: "", keywords: "",
@@ -2055,7 +2055,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     setEditingOfferId(null);
   };
 
-  // Ajouter ou mettre ÃÂ  jour une offre
+  // Ajouter ou mettre Ã  jour une offre
   const addOffer = async (e) => {
     e.preventDefault();
     if (!newOffer.name) return;
@@ -2063,7 +2063,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     try {
       // Filtrer les images non vides
       const filteredImages = (newOffer.images || []).filter(url => url && url.trim());
-      // v61: Blindage total Ã¢ÂÂ conversion explicite, jamais de string vide
+      // v61: Blindage total â conversion explicite, jamais de string vide
       const dv = newOffer.duration_value;
       const cleanDurationValue = (dv !== null && dv !== undefined && dv !== '' && !isNaN(parseInt(dv, 10))) ? parseInt(dv, 10) : null;
       const cleanDurationUnit = (newOffer.duration_unit && newOffer.duration_unit !== '') ? newOffer.duration_unit : null;
@@ -2093,16 +2093,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         await axios.put(`${API}/offers/${editingOfferId}`, offerData, { headers });
         setOffers(prevOffers => prevOffers.map(o => o.id === editingOfferId ? { ...o, ...offerData } : o));
         setEditingOfferId(null);
-        resultMsg = `Ã¢ÂÂ Offre "${offerData.name}" modifiÃÂ©e`;
+        resultMsg = `â Offre "${offerData.name}" modifiÃ©e`;
       } else {
         const response = await axios.post(`${API}/offers`, offerData, { headers });
         setOffers(prevOffers => [...prevOffers, response.data]);
-        resultMsg = `Ã¢ÂÂ Offre "${offerData.name}" crÃÂ©ÃÂ©e`;
+        resultMsg = `â Offre "${offerData.name}" crÃ©Ã©e`;
       }
-      // v61: Feedback durÃÂ©e
+      // v61: Feedback durÃ©e
       if (cleanDurationValue && cleanDurationUnit) {
         const unitLabel = cleanDurationUnit === 'days' ? 'jour(s)' : cleanDurationUnit === 'weeks' ? 'semaine(s)' : 'mois';
-        resultMsg += ` avec durÃÂ©e : ${cleanDurationValue} ${unitLabel}`;
+        resultMsg += ` avec durÃ©e : ${cleanDurationValue} ${unitLabel}`;
       }
       alert(resultMsg);
 
@@ -2115,9 +2115,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       });
     } catch (err) {
       console.error("[V61] Erreur offre:", err);
-      // v61: Afficher l'erreur RÃÂELLE du serveur
+      // v61: Afficher l'erreur RÃELLE du serveur
       const serverMsg = err?.response?.data?.detail || err?.response?.data?.message || err?.message || "Erreur inconnue";
-      alert(`Ã¢ÂÂ Erreur: ${typeof serverMsg === 'string' ? serverMsg : JSON.stringify(serverMsg)}`);
+      alert(`â Erreur: ${typeof serverMsg === 'string' ? serverMsg : JSON.stringify(serverMsg)}`);
     }
   };
 
@@ -2134,28 +2134,28 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     targetType: "all", selectedContacts: [],
     channels: { whatsapp: false, email: false, instagram: false, group: false, internal: true },
     targetGroupId: 'community',
-    targetConversationId: '', // ID de la conversation interne sÃÂ©lectionnÃÂ©e (legacy)
+    targetConversationId: '', // ID de la conversation interne sÃ©lectionnÃ©e (legacy)
     targetConversationName: '', // Nom pour affichage (legacy)
     scheduleSlots: [], // Multi-date scheduling
     // === CHAMPS CTA ===
     ctaType: 'none', // 'none', 'reserver', 'offre', 'personnalise'
-    ctaText: '',     // Texte personnalisÃÂ© du bouton
+    ctaText: '',     // Texte personnalisÃ© du bouton
     ctaLink: '',     // URL du bouton (pour offre et personnalise)
-    // === v11: PROMPTS INDÃÂPENDANTS PAR CAMPAGNE ===
-    systemPrompt: '',        // Instructions systÃÂ¨me IA pour cette campagne
-    descriptionPrompt: ''    // Prompt de description/objectif spÃÂ©cifique
+    // === v11: PROMPTS INDÃPENDANTS PAR CAMPAGNE ===
+    systemPrompt: '',        // Instructions systÃ¨me IA pour cette campagne
+    descriptionPrompt: ''    // Prompt de description/objectif spÃ©cifique
   });
   const [selectedContactsForCampaign, setSelectedContactsForCampaign] = useState([]);
   const [contactSearchQuery, setContactSearchQuery] = useState("");
   const [campaignLogs, setCampaignLogs] = useState([]); // Error logs
-  const [editingCampaignId, setEditingCampaignId] = useState(null); // ID de la campagne en ÃÂ©dition
+  const [editingCampaignId, setEditingCampaignId] = useState(null); // ID de la campagne en Ã©dition
   
   // === PANIER DE DESTINATAIRES (TAGS) ===
   const [selectedRecipients, setSelectedRecipients] = useState([]); // [{id, name, type: 'group'|'user'}]
   
   // === CONVERSATIONS ACTIVES POUR MESSAGERIE INTERNE ===
   const [activeConversations, setActiveConversations] = useState([]);
-  const [showConversationDropdown, setShowConversationDropdown] = useState(false); // Dropdown ouvert/fermÃÂ©
+  const [showConversationDropdown, setShowConversationDropdown] = useState(false); // Dropdown ouvert/fermÃ©
   
   // === FILTRES HISTORIQUE CAMPAGNES ===
   const [campaignHistoryFilter, setCampaignHistoryFilter] = useState('all'); // 'all', 'groups', 'individuals'
@@ -2169,7 +2169,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // === ENVOI DIRECT STATE ===
   const [directSendMode, setDirectSendMode] = useState(false);
   const [currentWhatsAppIndex, setCurrentWhatsAppIndex] = useState(0);
-  const [instagramProfile, setInstagramProfile] = useState("afroboost"); // Profil Instagram par dÃÂ©faut
+  const [instagramProfile, setInstagramProfile] = useState("afroboost"); // Profil Instagram par dÃ©faut
   const [messageCopied, setMessageCopied] = useState(false);
   
   // v8.6: Envoi message de groupe
@@ -2206,7 +2206,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [testWhatsAppNumber, setTestWhatsAppNumber] = useState('');
   const [testWhatsAppStatus, setTestWhatsAppStatus] = useState(null);
 
-  // === ENVOI GROUPÃÂ STATE ===
+  // === ENVOI GROUPÃ STATE ===
   const [bulkSendingInProgress, setBulkSendingInProgress] = useState(false);
   const [bulkSendingProgress, setBulkSendingProgress] = useState(null);
   const [bulkSendingResults, setBulkSendingResults] = useState(null);
@@ -2219,10 +2219,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [aiTestResponse, setAiTestResponse] = useState(null);
   const [aiTestLoading, setAiTestLoading] = useState(false);
   
-  // === v9.4.3 FIX: Auto-save AIConfig APRÃÂS dÃÂ©claration (corrige "Cannot access before initialization") ===
+  // === v9.4.3 FIX: Auto-save AIConfig APRÃS dÃ©claration (corrige "Cannot access before initialization") ===
   const aiConfigSaveTimeoutRef = useRef(null);
   const [aiConfigSaveStatus, setAiConfigSaveStatus] = useState(null); // 'saving' | 'saved' | 'error'
-  const isAiConfigLoaded = useRef(false); // ÃÂviter save au premier chargement
+  const isAiConfigLoaded = useRef(false); // Ãviter save au premier chargement
   
   useEffect(() => {
     // Ne pas sauvegarder au premier chargement
@@ -2231,7 +2231,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       return;
     }
     
-    // Debounce: attendre 1 seconde d'inactivitÃÂ© avant de sauvegarder
+    // Debounce: attendre 1 seconde d'inactivitÃ© avant de sauvegarder
     if (aiConfigSaveTimeoutRef.current) {
       clearTimeout(aiConfigSaveTimeoutRef.current);
     }
@@ -2241,7 +2241,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         setAiConfigSaveStatus('saving');
         await axios.put(`${API}/ai-config`, aiConfig);
         setAiConfigSaveStatus('saved');
-        console.log('[COACH] v9.4.3 AIConfig auto-sauvegardÃÂ©');
+        console.log('[COACH] v9.4.3 AIConfig auto-sauvegardÃ©');
         setTimeout(() => setAiConfigSaveStatus(null), 2000);
       } catch (err) {
         console.error('[COACH] Erreur auto-save aiConfig:', err);
@@ -2256,7 +2256,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     };
   }, [aiConfig]);
 
-  // === CONVERSATIONS STATE (CRM AVANCÃÂ) ===
+  // === CONVERSATIONS STATE (CRM AVANCÃ) ===
   const [chatSessions, setChatSessions] = useState([]);
   const [chatParticipants, setChatParticipants] = useState([]);
   const [chatLinks, setChatLinks] = useState([]);
@@ -2264,13 +2264,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [sessionMessages, setSessionMessages] = useState([]);
   const [coachMessage, setCoachMessage] = useState('');
   const [newLinkTitle, setNewLinkTitle] = useState('');
-  const [newLinkCustomPrompt, setNewLinkCustomPrompt] = useState('');  // Prompt spÃÂ©cifique au lien
+  const [newLinkCustomPrompt, setNewLinkCustomPrompt] = useState('');  // Prompt spÃ©cifique au lien
   const [newCommunityName, setNewCommunityName] = useState('');  // Nom pour le chat communautaire
   const [loadingConversations, setLoadingConversations] = useState(false);
   const [copiedLinkId, setCopiedLinkId] = useState(null);
   const [conversationSearch, setConversationSearch] = useState(''); // Recherche globale conversations
   
-  // === CRM AVANCÃÂ - Pagination et Infinite Scroll ===
+  // === CRM AVANCÃ - Pagination et Infinite Scroll ===
   const [conversationsPage, setConversationsPage] = useState(1);
   const [conversationsTotal, setConversationsTotal] = useState(0);
   const [conversationsHasMore, setConversationsHasMore] = useState(false);
@@ -2329,7 +2329,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       }
     };
     
-    // VÃÂ©rifier immÃÂ©diatement puis toutes les 30 secondes
+    // VÃ©rifier immÃ©diatement puis toutes les 30 secondes
     if (tab === "campaigns") {
       checkSchedulerHealth();
       const interval = setInterval(checkSchedulerHealth, 30000);
@@ -2361,8 +2361,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       loadActiveConversations();
       loadAIConfig();
       loadAILogs();
-      // v87: DÃÂ©clenche le check des campagnes programmÃÂ©es puis toutes les 60s
-      // (Vercel Hobby = cron limitÃÂ©, donc on compense avec polling frontend)
+      // v87: DÃ©clenche le check des campagnes programmÃ©es puis toutes les 60s
+      // (Vercel Hobby = cron limitÃ©, donc on compense avec polling frontend)
       const triggerCheck = () => {
         fetch(`${API}/cron/check-campaigns`).then(() => loadCampaigns()).catch(() => {});
       };
@@ -2372,8 +2372,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   }, [tab]);
 
-  // === RÃÂSOUDRE LA THUMBNAIL POUR L'APERÃÂU ===
-  // Si mediaUrl est un lien interne /v/slug, on rÃÂ©cupÃÂ¨re la vraie thumbnail
+  // === RÃSOUDRE LA THUMBNAIL POUR L'APERÃU ===
+  // Si mediaUrl est un lien interne /v/slug, on rÃ©cupÃ¨re la vraie thumbnail
   useEffect(() => {
     const resolveMediaThumbnail = async () => {
       const url = newCampaign.mediaUrl;
@@ -2383,8 +2383,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         return;
       }
       
-      // VÃÂ©rifier si c'est un lien interne
-      // Formats supportÃÂ©s: /v/slug, /api/share/slug
+      // VÃ©rifier si c'est un lien interne
+      // Formats supportÃ©s: /v/slug, /api/share/slug
       let slug = null;
       if (url.includes('/api/share/')) {
         slug = url.split('/api/share/').pop().split('?')[0].split('#')[0].trim();
@@ -2393,7 +2393,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       }
       
       if (slug) {
-        // RÃÂ©cupÃÂ©rer la thumbnail depuis l'API
+        // RÃ©cupÃ©rer la thumbnail depuis l'API
         try {
           const res = await axios.get(`${API}/media/${slug}/thumbnail`);
           if (res.data?.thumbnail) {
@@ -2421,7 +2421,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   }, [newCampaign.mediaUrl]);
 
   // === CONVERSATIONS FUNCTIONS ===
-  // === CRM AVANCÃÂ - Chargement des conversations avec pagination ===
+  // === CRM AVANCÃ - Chargement des conversations avec pagination ===
   const loadConversations = async (reset = true) => {
     if (conversationsLoading) return;
     
@@ -2444,7 +2444,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       
       if (reset) {
         setEnrichedConversations(conversations);
-        setChatSessions(conversations); // CompatibilitÃÂ© avec l'ancien code
+        setChatSessions(conversations); // CompatibilitÃ© avec l'ancien code
         setConversationsPage(1);
       } else {
         setEnrichedConversations(prev => [...prev, ...conversations]);
@@ -2478,7 +2478,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
   
-  // === CRM AVANCÃÂ - Charger plus de conversations (Infinite Scroll) ===
+  // === CRM AVANCÃ - Charger plus de conversations (Infinite Scroll) ===
   const loadMoreConversations = async () => {
     if (!conversationsHasMore || conversationsLoading) return;
     
@@ -2505,16 +2505,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
   
-  // === CRM AVANCÃÂ - Gestionnaire de scroll pour infinite scroll ===
+  // === CRM AVANCÃ - Gestionnaire de scroll pour infinite scroll ===
   const handleConversationsScroll = useCallback((e) => {
     const { scrollTop, scrollHeight, clientHeight } = e.target;
-    // Charger plus quand on arrive ÃÂ  80% du scroll
+    // Charger plus quand on arrive Ã  80% du scroll
     if (scrollTop + clientHeight >= scrollHeight * 0.8) {
       loadMoreConversations();
     }
   }, [conversationsHasMore, conversationsLoading, conversationsPage, conversationSearch]);
   
-  // === CRM AVANCÃÂ - Recherche avec debounce ===
+  // === CRM AVANCÃ - Recherche avec debounce ===
   const handleSearchChange = (value) => {
     setConversationSearch(value);
     
@@ -2529,7 +2529,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }, 300);
   };
   
-  // === CRM AVANCÃÂ - Formatage des dates ===
+  // === CRM AVANCÃ - Formatage des dates ===
   const formatConversationDate = (dateString) => {
     if (!dateString) return '';
     const date = new Date(dateString);
@@ -2548,7 +2548,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
   
-  // === CRM AVANCÃÂ - Grouper les conversations par date ===
+  // === CRM AVANCÃ - Grouper les conversations par date ===
   const groupedConversations = useMemo(() => {
     const groups = {};
     
@@ -2563,7 +2563,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     return groups;
   }, [enrichedConversations]);
 
-  // === RÃÂSERVATIONS - Filtrage optimisÃÂ© avec useMemo ===
+  // === RÃSERVATIONS - Filtrage optimisÃ© avec useMemo ===
   const filteredReservations = useMemo(() => {
     if (!reservationsSearch) return reservations;
     const q = reservationsSearch.toLowerCase();
@@ -2612,7 +2612,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  // v14.3: AmÃÂ©liorer un prompt avec l'IA
+  // v14.3: AmÃ©liorer un prompt avec l'IA
   const enhancePromptWithAI = async (rawPrompt) => {
     try {
       const response = await axios.post(`${API}/chat/enhance-prompt`, {
@@ -2625,18 +2625,18 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  // CrÃÂ©er un chat communautaire (sans IA)
+  // CrÃ©er un chat communautaire (sans IA)
   const createCommunityChat = async () => {
     try {
-      const title = newCommunityName.trim() || 'Chat CommunautÃÂ© Afroboost';
-      // CrÃÂ©er une session avec mode communautÃÂ©
+      const title = newCommunityName.trim() || 'Chat CommunautÃ© Afroboost';
+      // CrÃ©er une session avec mode communautÃ©
       const sessionRes = await axios.post(`${API}/chat/sessions`, {
         mode: 'community',
         is_ai_active: false,
         title: title
       });
       
-      // Mettre ÃÂ  jour les listes
+      // Mettre Ã  jour les listes
       setChatSessions(prev => [sessionRes.data, ...prev]);
       setNewCommunityName('');  // Reset le nom du groupe
       
@@ -2664,13 +2664,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   const uploadCustomEmoji = async (file) => {
     if (!file || !newEmojiName.trim()) {
-      alert("Veuillez donner un nom ÃÂ  l'emoji");
+      alert("Veuillez donner un nom Ã  l'emoji");
       return;
     }
     
     // Valider le type de fichier
     if (!file.type.startsWith('image/')) {
-      alert("Format non supportÃÂ©. Utilisez PNG, JPG ou GIF.");
+      alert("Format non supportÃ©. Utilisez PNG, JPG ou GIF.");
       return;
     }
     
@@ -2706,7 +2706,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   };
 
   const insertEmoji = (emoji) => {
-    // InsÃÂ©rer l'emoji sous forme de balise image dans le message
+    // InsÃ©rer l'emoji sous forme de balise image dans le message
     const emojiTag = `[emoji:${emoji.id}]`;
     setCoachMessage(prev => prev + ` ${emojiTag} `);
     setShowEmojiPicker(false);
@@ -2757,7 +2757,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       const sid = selectedSession?.id || (chatSessions.length > 0 ? chatSessions[0].id : null);
       if (!sid) return;
       
-      // PrÃÂ©parer le message (emojis)
+      // PrÃ©parer le message (emojis)
       let messageContent = msg;
       if (customEmojis && customEmojis.length > 0) {
         for (const emoji of customEmojis) {
@@ -2775,7 +2775,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         coach_name: coachUser?.name || 'Coach'
       });
       
-      // Si succÃÂ¨s, vider le champ et recharger
+      // Si succÃ¨s, vider le champ et recharger
       if (response.data && response.data.success) {
         setCoachMessage('');
         loadSessionMessages(sid);
@@ -2794,13 +2794,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const copyLinkToClipboard = async (linkToken) => {
     const baseUrl = window.location.origin;
     const fullUrl = `${baseUrl}/chat/${linkToken}`;
-    // Utiliser l'utilitaire avec fallback mobile robuste (clipboard Ã¢ÂÂ textarea Ã¢ÂÂ feedback)
+    // Utiliser l'utilitaire avec fallback mobile robuste (clipboard â textarea â feedback)
     const result = await copyToClipboard(fullUrl);
     if (result.success) {
       setCopiedLinkId(linkToken);
       setTimeout(() => setCopiedLinkId(null), 2000);
     } else {
-      console.warn('[COPY] ÃÂchec copie lien:', linkToken);
+      console.warn('[COPY] Ãchec copie lien:', linkToken);
     }
   };
 
@@ -2853,96 +2853,96 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   // === SUPPRESSION SESSION (Soft Delete) ===
   const deleteChatSession = async (sessionId) => {
-    if (!window.confirm("Ã¢ÂÂ Ã¯Â¸Â Supprimer cette conversation ?\n\nLa conversation sera archivÃÂ©e (suppression logique).")) return;
+    if (!window.confirm("â ï¸ Supprimer cette conversation ?\n\nLa conversation sera archivÃ©e (suppression logique).")) return;
     
     try {
       console.log('DELETE_DEBUG: Suppression session:', sessionId);
       await axios.put(`${API}/chat/sessions/${sessionId}`, { is_deleted: true });
-      console.log('DELETE_DEBUG: API OK, mise ÃÂ  jour du state...');
+      console.log('DELETE_DEBUG: API OK, mise Ã  jour du state...');
       
-      // Mettre ÃÂ  jour TOUS les states - supporte id ET _id
+      // Mettre Ã  jour TOUS les states - supporte id ET _id
       setChatSessions(prev => {
         const filtered = prev.filter(s => s.id !== sessionId && s._id !== sessionId);
-        console.log('DELETE_DEBUG: chatSessions filtrÃÂ©:', prev.length, '->', filtered.length);
+        console.log('DELETE_DEBUG: chatSessions filtrÃ©:', prev.length, '->', filtered.length);
         return filtered;
       });
       setEnrichedConversations(prev => {
         const filtered = prev.filter(c => c.id !== sessionId && c._id !== sessionId);
-        console.log('DELETE_DEBUG: enrichedConversations filtrÃÂ©:', prev.length, '->', filtered.length);
+        console.log('DELETE_DEBUG: enrichedConversations filtrÃ©:', prev.length, '->', filtered.length);
         return filtered;
       });
       setChatLinks(prev => {
         const filtered = prev.filter(l => l.id !== sessionId && l._id !== sessionId);
-        console.log('DELETE_DEBUG: chatLinks filtrÃÂ©:', prev.length, '->', filtered.length);
+        console.log('DELETE_DEBUG: chatLinks filtrÃ©:', prev.length, '->', filtered.length);
         return filtered;
       });
       
-      // Si c'ÃÂ©tait la session sÃÂ©lectionnÃÂ©e, la dÃÂ©sÃÂ©lectionner
+      // Si c'Ã©tait la session sÃ©lectionnÃ©e, la dÃ©sÃ©lectionner
       if (selectedSession?.id === sessionId || selectedSession?._id === sessionId) {
         setSelectedSession(null);
         setSessionMessages([]);
       }
       
-      console.log('DELETE_DEBUG: Suppression terminÃÂ©e Ã¢ÂÂ');
+      console.log('DELETE_DEBUG: Suppression terminÃ©e â');
     } catch (err) {
       console.error("DELETE_DEBUG: ERREUR:", err);
       alert("Erreur lors de la suppression de la conversation: " + (err.response?.data?.detail || err.message));
     }
   };
 
-  // === v38: SUPPRESSION GROUPÃÂE DE SESSIONS ===
+  // === v38: SUPPRESSION GROUPÃE DE SESSIONS ===
   const bulkDeleteChatSessions = async (sessionIds) => {
     try {
       console.log('BULK_DELETE: Suppression de', sessionIds.length, 'conversations...');
-      // ExÃÂ©cuter toutes les suppressions en parallÃÂ¨le
+      // ExÃ©cuter toutes les suppressions en parallÃ¨le
       await Promise.all(sessionIds.map(id => axios.put(`${API}/chat/sessions/${id}`, { is_deleted: true })));
 
-      // Mettre ÃÂ  jour tous les states
+      // Mettre Ã  jour tous les states
       const idsSet = new Set(sessionIds);
       setChatSessions(prev => prev.filter(s => !idsSet.has(s.id) && !idsSet.has(s._id)));
       setEnrichedConversations(prev => prev.filter(c => !idsSet.has(c.id) && !idsSet.has(c._id)));
       setChatLinks(prev => prev.filter(l => !idsSet.has(l.id) && !idsSet.has(l._id)));
 
-      // DÃÂ©sÃÂ©lectionner si la session sÃÂ©lectionnÃÂ©e est dans la liste
+      // DÃ©sÃ©lectionner si la session sÃ©lectionnÃ©e est dans la liste
       if (selectedSession && (idsSet.has(selectedSession.id) || idsSet.has(selectedSession._id))) {
         setSelectedSession(null);
         setSessionMessages([]);
       }
 
-      console.log('BULK_DELETE: Suppression groupÃÂ©e terminÃÂ©e Ã¢ÂÂ', sessionIds.length, 'conversations supprimÃÂ©es');
+      console.log('BULK_DELETE: Suppression groupÃ©e terminÃ©e â', sessionIds.length, 'conversations supprimÃ©es');
     } catch (err) {
       console.error('BULK_DELETE: ERREUR:', err);
-      alert("Erreur lors de la suppression groupÃÂ©e: " + (err.message || 'Erreur inconnue'));
+      alert("Erreur lors de la suppression groupÃ©e: " + (err.message || 'Erreur inconnue'));
       throw err;
     }
   };
 
   // === SUPPRESSION LIEN DE CHAT ===
   const deleteChatLink = async (linkId) => {
-    if (!window.confirm("Ã¢ÂÂ Ã¯Â¸Â Supprimer ce lien de partage ?\n\nLe lien ne sera plus accessible. Cette action est irrÃÂ©versible.")) return;
+    if (!window.confirm("â ï¸ Supprimer ce lien de partage ?\n\nLe lien ne sera plus accessible. Cette action est irrÃ©versible.")) return;
     
     try {
       console.log('DELETE_DEBUG: Suppression lien:', linkId);
       await axios.delete(`${API}/chat/links/${linkId}`);
-      console.log('DELETE_DEBUG: API OK pour lien, mise ÃÂ  jour du state...');
+      console.log('DELETE_DEBUG: API OK pour lien, mise Ã  jour du state...');
       
       setChatLinks(prev => {
         const filtered = prev.filter(l => l.id !== linkId && l._id !== linkId && l.link_token !== linkId);
-        console.log('DELETE_DEBUG: chatLinks filtrÃÂ©:', prev.length, '->', filtered.length);
+        console.log('DELETE_DEBUG: chatLinks filtrÃ©:', prev.length, '->', filtered.length);
         return filtered;
       });
       setEnrichedConversations(prev => {
         const filtered = prev.filter(c => c.id !== linkId && c._id !== linkId && c.link_token !== linkId);
-        console.log('DELETE_DEBUG: enrichedConversations filtrÃÂ©:', prev.length, '->', filtered.length);
+        console.log('DELETE_DEBUG: enrichedConversations filtrÃ©:', prev.length, '->', filtered.length);
         return filtered;
       });
       setChatSessions(prev => {
         const filtered = prev.filter(s => s.id !== linkId && s._id !== linkId && s.link_token !== linkId);
-        console.log('DELETE_DEBUG: chatSessions filtrÃÂ©:', prev.length, '->', filtered.length);
+        console.log('DELETE_DEBUG: chatSessions filtrÃ©:', prev.length, '->', filtered.length);
         return filtered;
       });
       
-      console.log('DELETE_DEBUG: Suppression lien terminÃÂ©e Ã¢ÂÂ');
+      console.log('DELETE_DEBUG: Suppression lien terminÃ©e â');
     } catch (err) {
       console.error("DELETE_DEBUG: ERREUR lien:", err);
       alert("Erreur lors de la suppression du lien: " + (err.response?.data?.detail || err.message));
@@ -2954,7 +2954,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     try {
       const res = await axios.put(`${API}/chat/links/${linkId}`, data);
       if (res.data.success) {
-        // Mettre ÃÂ  jour le state local
+        // Mettre Ã  jour le state local
         setChatLinks(prev => prev.map(l => {
           if (l.id === linkId) {
             return {
@@ -2966,7 +2966,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           }
           return l;
         }));
-        // RafraÃÂ®chir aussi les sessions
+        // RafraÃ®chir aussi les sessions
         const sessionsRes = await axios.get(`${API}/chat/sessions`);
         setChatSessions(sessionsRes.data);
       }
@@ -2978,7 +2978,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  // === AJOUTER CONTACT MANUEL AU CRM (synchronisÃÂ© avec codes promo) ===
+  // === AJOUTER CONTACT MANUEL AU CRM (synchronisÃ© avec codes promo) ===
   const addManualChatParticipant = async (name, email, whatsapp, source = 'manual_promo') => {
     try {
       const response = await axios.post(`${API}/chat/participants`, {
@@ -3033,7 +3033,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [toastNotifications, setToastNotifications] = useState([]); // Fallback toasts
   const lastNotifiedIdsRef = useRef(new Set());
   
-  // Ajouter un toast de notification (fallback quand les notifications browser sont bloquÃÂ©es)
+  // Ajouter un toast de notification (fallback quand les notifications browser sont bloquÃ©es)
   const addToastNotification = useCallback((message) => {
     const id = Date.now();
     const toast = {
@@ -3046,7 +3046,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     
     setToastNotifications(prev => [...prev.slice(-4), toast]); // Garder max 5 toasts
     
-    // Auto-dismiss aprÃÂ¨s 10 secondes
+    // Auto-dismiss aprÃ¨s 10 secondes
     setTimeout(() => {
       setToastNotifications(prev => prev.filter(t => t.id !== id));
     }, 10000);
@@ -3057,10 +3057,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     setToastNotifications(prev => prev.filter(t => t.id !== toastId));
   }, []);
   
-  // === TOAST GÃÂNÃÂRIQUE POUR CAMPAGNES ===
+  // === TOAST GÃNÃRIQUE POUR CAMPAGNES ===
   const showCampaignToast = useCallback((message, type = 'info') => {
     const id = Date.now();
-    const icons = { success: 'Ã¢ÂÂ', error: 'Ã¢ÂÂ', info: 'Ã¢ÂÂ¹Ã¯Â¸Â', warning: 'Ã¢ÂÂ Ã¯Â¸Â' };
+    const icons = { success: 'â', error: 'â', info: 'â¹ï¸', warning: 'â ï¸' };
     const colors = { 
       success: 'bg-green-600/90 border-green-500', 
       error: 'bg-red-600/90 border-red-500', 
@@ -3070,7 +3070,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     
     const toast = {
       id,
-      message: `${icons[type] || 'Ã¢ÂÂ¹Ã¯Â¸Â'} ${message}`,
+      message: `${icons[type] || 'â¹ï¸'} ${message}`,
       type,
       color: colors[type] || colors.info,
       createdAt: new Date().toISOString()
@@ -3078,13 +3078,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     
     setToastNotifications(prev => [...prev.slice(-4), toast]);
     
-    // Auto-dismiss aprÃÂ¨s 5 secondes (plus rapide pour les notifications de campagne)
+    // Auto-dismiss aprÃ¨s 5 secondes (plus rapide pour les notifications de campagne)
     setTimeout(() => {
       setToastNotifications(prev => prev.filter(t => t.id !== id));
     }, 5000);
   }, []);
   
-  // Cliquer sur un toast pour aller ÃÂ  la conversation
+  // Cliquer sur un toast pour aller Ã  la conversation
   const handleToastClick = useCallback((toast) => {
     const session = chatSessions.find(s => s.id === toast.sessionId);
     if (session) {
@@ -3094,12 +3094,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     dismissToast(toast.id);
   }, [chatSessions, dismissToast]);
   
-  // === ÃÂTAT POUR NOTIFICATION IA ===
+  // === ÃTAT POUR NOTIFICATION IA ===
   const [notifyOnAiResponse, setNotifyOnAiResponse] = useState(
     localStorage.getItem('afroboost_notify_ai') === 'true'
   );
   
-  // Sauvegarder la prÃÂ©fÃÂ©rence
+  // Sauvegarder la prÃ©fÃ©rence
   const toggleNotifyOnAiResponse = useCallback(() => {
     const newValue = !notifyOnAiResponse;
     setNotifyOnAiResponse(newValue);
@@ -3117,7 +3117,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // Afficher une notification de test
       const permission = getNotificationPermissionStatus();
       if (permission === 'granted') {
-        await showBrowserNotification('Ã°ÂÂÂ Test Notification', {
+        await showBrowserNotification('ð Test Notification', {
           body: 'Les notifications fonctionnent correctement !',
           icon: '/favicon.ico'
         });
@@ -3126,23 +3126,23 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         addToastNotification({
           id: Date.now(),
           senderName: 'Test',
-          content: 'Ã°ÂÂÂ Les notifications fonctionnent (mode fallback)',
+          content: 'ð Les notifications fonctionnent (mode fallback)',
           sessionId: null
         });
       }
     } catch (error) {
       console.error('[NOTIFICATION] Test error:', error);
-      // Fallback toast mÃÂªme en cas d'erreur
+      // Fallback toast mÃªme en cas d'erreur
       addToastNotification({
         id: Date.now(),
         senderName: 'Test',
-        content: 'Ã°ÂÂÂ Notification test (fallback)',
+        content: 'ð Notification test (fallback)',
         sessionId: null
       });
     }
   }, [addToastNotification]);
   
-  // VÃÂ©rifier le statut de permission au chargement ET activer le polling si dÃÂ©jÃÂ  autorisÃÂ©
+  // VÃ©rifier le statut de permission au chargement ET activer le polling si dÃ©jÃ  autorisÃ©
   useEffect(() => {
     const initNotifications = async () => {
       const { getNotificationPermissionStatus, unlockAudio } = await import('../services/notificationService');
@@ -3151,26 +3151,26 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       
       console.log('[NOTIFICATIONS] Statut initial:', status);
       
-      // Afficher le banner si permission pas encore demandÃÂ©e
+      // Afficher le banner si permission pas encore demandÃ©e
       if (status === 'default') {
         setShowPermissionBanner(true);
       } else if (status === 'granted') {
-        // Permission dÃÂ©jÃÂ  accordÃÂ©e - dÃÂ©verrouiller l'audio silencieusement
-        console.log('[NOTIFICATIONS] Permission dÃÂ©jÃÂ  accordÃÂ©e, polling actif automatiquement');
+        // Permission dÃ©jÃ  accordÃ©e - dÃ©verrouiller l'audio silencieusement
+        console.log('[NOTIFICATIONS] Permission dÃ©jÃ  accordÃ©e, polling actif automatiquement');
         try {
           await unlockAudio();
         } catch (e) {
-          // Silencieux - l'audio sera dÃÂ©bloquÃÂ© au premier clic
+          // Silencieux - l'audio sera dÃ©bloquÃ© au premier clic
         }
       }
     };
     initNotifications();
   }, []);
   
-  // Demander la permission de notification explicitement (appelÃÂ© par le bouton)
+  // Demander la permission de notification explicitement (appelÃ© par le bouton)
   const requestNotificationAccess = useCallback(async () => {
     try {
-      // DÃÂ©verrouiller l'audio (nÃÂ©cessaire sur iOS)
+      // DÃ©verrouiller l'audio (nÃ©cessaire sur iOS)
       const { unlockAudio, requestNotificationPermission } = await import('../services/notificationService');
       await unlockAudio();
       
@@ -3180,47 +3180,47 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       setShowPermissionBanner(false);
       
       if (permission === 'granted') {
-        console.log('[NOTIFICATIONS] Permission accordÃÂ©e!');
+        console.log('[NOTIFICATIONS] Permission accordÃ©e!');
         // Afficher une notification de test
         const { showBrowserNotification } = await import('../services/notificationService');
         await showBrowserNotification(
-          'Ã¢ÂÂ Notifications activÃÂ©es',
-          'Vous recevrez dÃÂ©sormais les alertes de nouveaux messages.',
+          'â Notifications activÃ©es',
+          'Vous recevrez dÃ©sormais les alertes de nouveaux messages.',
           { tag: 'afroboost-permission-granted' }
         );
       } else if (permission === 'denied') {
-        console.log('[NOTIFICATIONS] Permission refusÃÂ©e - utilisation du fallback toast');
+        console.log('[NOTIFICATIONS] Permission refusÃ©e - utilisation du fallback toast');
       }
     } catch (err) {
       console.warn('[NOTIFICATIONS] Erreur permission:', err);
     }
   }, []);
   
-  // VÃÂ©rifier les nouveaux messages non notifiÃÂ©s (endpoint optimisÃÂ©)
+  // VÃ©rifier les nouveaux messages non notifiÃ©s (endpoint optimisÃ©)
   const checkUnreadNotifications = useCallback(async () => {
     if (tab !== 'conversations') return;
     
-    console.log('NOTIF_DEBUG: Polling dÃÂ©marrÃÂ©...');
+    console.log('NOTIF_DEBUG: Polling dÃ©marrÃ©...');
     
     try {
       const res = await axios.get(`${API}/notifications/unread`, {
         params: { 
           target: 'coach',
-          include_ai: notifyOnAiResponse  // Inclure les rÃÂ©ponses IA si option activÃÂ©e
+          include_ai: notifyOnAiResponse  // Inclure les rÃ©ponses IA si option activÃ©e
         }
       });
       
       const { count, messages } = res.data;
-      console.log(`NOTIF_DEBUG: ${count} messages non lus, ${messages?.length || 0} ÃÂ  traiter`);
+      console.log(`NOTIF_DEBUG: ${count} messages non lus, ${messages?.length || 0} Ã  traiter`);
       setUnreadCount(count);
       
       if (messages && messages.length > 0) {
-        // Filtrer les messages dÃÂ©jÃÂ  notifiÃÂ©s localement
+        // Filtrer les messages dÃ©jÃ  notifiÃ©s localement
         const newMessages = messages.filter(m => !lastNotifiedIdsRef.current.has(m.id));
-        console.log(`NOTIF_DEBUG: ${newMessages.length} NOUVEAUX messages dÃÂ©tectÃÂ©s`);
+        console.log(`NOTIF_DEBUG: ${newMessages.length} NOUVEAUX messages dÃ©tectÃ©s`);
         
         if (newMessages.length > 0) {
-          console.log('NOTIF_DEBUG: Ã¢ÂÂ¡ Nouveaux messages! Tentative notification...');
+          console.log('NOTIF_DEBUG: â¡ Nouveaux messages! Tentative notification...');
           
           // Importer les fonctions de notification
           const { playNotificationSound, showBrowserNotification, getNotificationPermissionStatus } = await import('../services/notificationService');
@@ -3229,13 +3229,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           try {
             console.log('NOTIF_DEBUG: Jouer son...');
             await playNotificationSound('user');
-            console.log('NOTIF_DEBUG: Son jouÃÂ© Ã¢ÂÂ');
+            console.log('NOTIF_DEBUG: Son jouÃ© â');
           } catch (soundErr) {
-            console.warn('NOTIF_DEBUG: Erreur son (ignorÃÂ©e):', soundErr.message);
-            // Continuer mÃÂªme si le son ÃÂ©choue
+            console.warn('NOTIF_DEBUG: Erreur son (ignorÃ©e):', soundErr.message);
+            // Continuer mÃªme si le son Ã©choue
           }
           
-          // VÃÂ©rifier la permission actuelle
+          // VÃ©rifier la permission actuelle
           const currentPermission = getNotificationPermissionStatus();
           console.log('NOTIF_DEBUG: Permission actuelle:', currentPermission);
           
@@ -3246,12 +3246,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             // Essayer d'afficher une notification browser
             try {
               const result = await showBrowserNotification(
-                'Ã°ÂÂÂ¬ Nouveau message - Afroboost',
+                'ð¬ Nouveau message - Afroboost',
                 `${msg.sender_name}: ${msg.content.substring(0, 80)}${msg.content.length > 80 ? '...' : ''}`,
                 {
                   tag: `afroboost-msg-${msg.id}`,
                   onClick: () => {
-                    // SÃÂ©lectionner la session correspondante
+                    // SÃ©lectionner la session correspondante
                     const session = chatSessions.find(s => s.id === msg.session_id);
                     if (session) {
                       setSelectedSession(session);
@@ -3261,36 +3261,36 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 }
               );
               
-              console.log('NOTIF_DEBUG: RÃÂ©sultat notification:', result);
+              console.log('NOTIF_DEBUG: RÃ©sultat notification:', result);
               
-              // Si la notification browser a ÃÂ©chouÃÂ©, utiliser le fallback toast
+              // Si la notification browser a Ã©chouÃ©, utiliser le fallback toast
               if (result.fallbackNeeded) {
-                console.log('NOTIF_DEBUG: Fallback TOAST activÃÂ©!');
+                console.log('NOTIF_DEBUG: Fallback TOAST activÃ©!');
                 addToastNotification(msg);
               } else {
-                console.log('NOTIF_DEBUG: Notification browser envoyÃÂ©e Ã¢ÂÂ');
+                console.log('NOTIF_DEBUG: Notification browser envoyÃ©e â');
               }
             } catch (notifErr) {
               console.warn('NOTIF_DEBUG: Erreur notification (fallback toast):', notifErr.message);
               addToastNotification(msg);
             }
             
-            // Ajouter ÃÂ  la liste des messages notifiÃÂ©s localement (TOUJOURS, mÃÂªme en cas d'erreur)
+            // Ajouter Ã  la liste des messages notifiÃ©s localement (TOUJOURS, mÃªme en cas d'erreur)
             lastNotifiedIdsRef.current.add(msg.id);
           }
           
-          // Marquer les messages comme notifiÃÂ©s cÃÂ´tÃÂ© serveur
+          // Marquer les messages comme notifiÃ©s cÃ´tÃ© serveur
           const messageIds = newMessages.map(m => m.id);
           await axios.put(`${API}/notifications/mark-read`, {
             message_ids: messageIds
           }).catch(() => {}); // Ignorer les erreurs silencieusement
           
-          // RafraÃÂ®chir les conversations
+          // RafraÃ®chir les conversations
           loadConversations(true);
         }
       }
     } catch (err) {
-      // Fallback vers l'ancienne mÃÂ©thode si le nouvel endpoint n'est pas disponible
+      // Fallback vers l'ancienne mÃ©thode si le nouvel endpoint n'est pas disponible
       console.warn('[NOTIFICATIONS] Erreur polling:', err);
     }
   }, [tab, chatSessions, addToastNotification, notifyOnAiResponse]);
@@ -3299,9 +3299,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   useEffect(() => {
     if (tab !== 'conversations') return;
     
-    console.log('[NOTIFICATIONS] Polling activÃÂ© (interval 10s)');
+    console.log('[NOTIFICATIONS] Polling activÃ© (interval 10s)');
     
-    // VÃÂ©rifier immÃÂ©diatement
+    // VÃ©rifier immÃ©diatement
     checkUnreadNotifications();
     
     // Puis toutes les 10 secondes
@@ -3309,9 +3309,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       checkUnreadNotifications();
     }, 10000);
     
-    // Cleanup important pour ÃÂ©viter les fuites mÃÂ©moire
+    // Cleanup important pour Ã©viter les fuites mÃ©moire
     return () => {
-      console.log('[NOTIFICATIONS] Polling dÃÂ©sactivÃÂ©');
+      console.log('[NOTIFICATIONS] Polling dÃ©sactivÃ©');
       clearInterval(interval);
     };
   }, [tab, checkUnreadNotifications]);
@@ -3322,7 +3322,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const checkNewMessages = useCallback(async () => {
     if (tab !== 'conversations') return;
     
-    // VÃÂ©rifier les sessions en mode humain pour les nouveaux messages
+    // VÃ©rifier les sessions en mode humain pour les nouveaux messages
     const humanSessions = chatSessions.filter(s => !s.is_ai_active);
     
     for (const session of humanSessions) {
@@ -3336,9 +3336,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           
           // Si le message vient d'un utilisateur (pas du coach)
           if (latestMessage.sender_type === 'user') {
-            // Note: Le son est maintenant gÃÂ©rÃÂ© par checkUnreadNotifications
+            // Note: Le son est maintenant gÃ©rÃ© par checkUnreadNotifications
             
-            // Mettre ÃÂ  jour les messages si c'est la session sÃÂ©lectionnÃÂ©e
+            // Mettre Ã  jour les messages si c'est la session sÃ©lectionnÃ©e
             if (selectedSession?.id === session.id) {
               setSessionMessages(messages);
             }
@@ -3358,7 +3358,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     
     const interval = setInterval(() => {
       checkNewMessages();
-      // RafraÃÂ®chir aussi la liste des sessions
+      // RafraÃ®chir aussi la liste des sessions
       axios.get(`${API}/chat/sessions`).then(res => {
         setChatSessions(res.data);
       }).catch(() => {});
@@ -3373,7 +3373,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   }, [tab]);
 
-  // === CONTACTS COMBINÃÂS: Users + Reservations + Chat Participants ===
+  // === CONTACTS COMBINÃS: Users + Reservations + Chat Participants ===
   const allContacts = useMemo(() => {
     const contactMap = new Map();
     
@@ -3386,7 +3386,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       source: 'users'
     }));
     
-    // 2. RÃÂ©servations
+    // 2. RÃ©servations
     reservations.forEach(r => {
       if (r.userEmail && !contactMap.has(r.userEmail)) {
         contactMap.set(r.userEmail, { 
@@ -3440,8 +3440,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  // === ÃÂDITION CAMPAGNE ===
-  // PrÃÂ©-remplir le formulaire avec les donnÃÂ©es d'une campagne existante
+  // === ÃDITION CAMPAGNE ===
+  // PrÃ©-remplir le formulaire avec les donnÃ©es d'une campagne existante
   const handleEditCampaign = (campaign) => {
     setEditingCampaignId(campaign.id);
     setNewCampaign({
@@ -3463,7 +3463,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       systemPrompt: campaign.systemPrompt || '',
       descriptionPrompt: campaign.descriptionPrompt || ''
     });
-    // PrÃÂ©-sÃÂ©lectionner les contacts CRM si mode "selected"
+    // PrÃ©-sÃ©lectionner les contacts CRM si mode "selected"
     if (campaign.targetType === "selected" && campaign.selectedContacts) {
       setSelectedContactsForCampaign(campaign.selectedContacts);
     }
@@ -3490,10 +3490,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
     // Scroll vers le formulaire
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    showCampaignToast(`Ã°ÂÂÂ Mode ÃÂ©dition: "${campaign.name}"`, 'info');
+    showCampaignToast(`ð Mode Ã©dition: "${campaign.name}"`, 'info');
   };
 
-  // Annuler l'ÃÂ©dition et rÃÂ©initialiser le formulaire
+  // Annuler l'Ã©dition et rÃ©initialiser le formulaire
   const cancelEditCampaign = () => {
     setEditingCampaignId(null);
     setNewCampaign({ 
@@ -3516,26 +3516,26 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     e.preventDefault();
     if (!newCampaign.name || !newCampaign.message) return;
 
-    // v13: Blocage crÃÂ©dits cÃÂ´tÃÂ© frontend (double sÃÂ©curitÃÂ© avec backend)
+    // v13: Blocage crÃ©dits cÃ´tÃ© frontend (double sÃ©curitÃ© avec backend)
     if (!isSuperAdmin && coachCredits !== null && coachCredits !== -1 && coachCredits <= 0) {
-      showCampaignToast('Ã°ÂÂÂ CrÃÂ©dits insuffisants. Rechargez votre pack pour crÃÂ©er des campagnes.', 'error');
+      showCampaignToast('ð CrÃ©dits insuffisants. Rechargez votre pack pour crÃ©er des campagnes.', 'error');
       return;
     }
 
     // Valider qu'il y a au moins un destinataire
     const hasRecipients = selectedRecipients.length > 0 || newCampaign.channels.whatsapp || newCampaign.channels.email || newCampaign.channels.group;
     if (!hasRecipients) {
-      showCampaignToast('Ã¢ÂÂ Ã¯Â¸Â Ajoutez au moins un destinataire', 'error');
+      showCampaignToast('â ï¸ Ajoutez au moins un destinataire', 'error');
       return;
     }
     
-    // PrÃÂ©parer les targetIds depuis le panier
+    // PrÃ©parer les targetIds depuis le panier
     const targetIds = selectedRecipients.map(r => r.id);
     
-    // === MODE ÃÂDITION : Mise ÃÂ  jour d'une campagne existante ===
+    // === MODE ÃDITION : Mise Ã  jour d'une campagne existante ===
     if (editingCampaignId) {
       try {
-        // Calculer scheduledAt depuis les scheduleSlots (si modifiÃÂ©)
+        // Calculer scheduledAt depuis les scheduleSlots (si modifiÃ©)
         const editSlots = newCampaign.scheduleSlots || [];
         let editScheduledAt = null;
         if (editSlots.length > 0 && editSlots[0].date && editSlots[0].time) {
@@ -3553,38 +3553,38 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           channels: { ...newCampaign.channels, internal: selectedRecipients.length > 0 },
           targetGroupId: newCampaign.targetGroupId || 'community',
           targetIds: targetIds, // Tableau des IDs du panier
-          targetConversationId: targetIds[0] || '', // Premier ID pour compatibilitÃÂ©
+          targetConversationId: targetIds[0] || '', // Premier ID pour compatibilitÃ©
           targetConversationName: selectedRecipients[0]?.name || '',
-          scheduledAt: editScheduledAt, // Mise ÃÂ  jour de l'horaire
-          // v11: Prompts indÃÂ©pendants
+          scheduledAt: editScheduledAt, // Mise Ã  jour de l'horaire
+          // v11: Prompts indÃ©pendants
           systemPrompt: newCampaign.systemPrompt || null,
           descriptionPrompt: newCampaign.descriptionPrompt || null
         };
         const res = await axios.put(`${API}/campaigns/${editingCampaignId}`, updateData);
         setCampaigns(campaigns.map(c => c.id === editingCampaignId ? res.data : c));
-        addCampaignLog(editingCampaignId, `Campagne "${newCampaign.name}" modifiÃÂ©e avec succÃÂ¨s`, 'success');
+        addCampaignLog(editingCampaignId, `Campagne "${newCampaign.name}" modifiÃ©e avec succÃ¨s`, 'success');
         
-        // Reset form et mode ÃÂ©dition
+        // Reset form et mode Ã©dition
         cancelEditCampaign();
         setSelectedRecipients([]); // Vider le panier
-        alert(`Ã¢ÂÂ Campagne "${newCampaign.name}" modifiÃÂ©e avec succÃÂ¨s !`);
+        alert(`â Campagne "${newCampaign.name}" modifiÃ©e avec succÃ¨s !`);
         return;
       } catch (err) {
         console.error("Error updating campaign:", err);
         addCampaignLog(editingCampaignId, `Erreur modification: ${err.message}`, 'error');
-        alert(`Ã¢ÂÂ Erreur lors de la modification: ${err.message}`);
+        alert(`â Erreur lors de la modification: ${err.message}`);
         return;
       }
     }
     
-    // === MODE CRÃÂATION : Nouvelle campagne ===
+    // === MODE CRÃATION : Nouvelle campagne ===
     const scheduleSlots = newCampaign.scheduleSlots;
     const isImmediate = scheduleSlots.length === 0;
     
-    // PrÃÂ©parer les champs CTA (seulement si un type est sÃÂ©lectionnÃÂ©)
+    // PrÃ©parer les champs CTA (seulement si un type est sÃ©lectionnÃ©)
     const ctaFields = newCampaign.ctaType !== 'none' ? {
       ctaType: newCampaign.ctaType,
-      ctaText: newCampaign.ctaText || (newCampaign.ctaType === 'reserver' ? 'RÃÂSERVER' : newCampaign.ctaType === 'offre' ? 'VOIR L\'OFFRE' : 'EN SAVOIR PLUS'),
+      ctaText: newCampaign.ctaText || (newCampaign.ctaType === 'reserver' ? 'RÃSERVER' : newCampaign.ctaType === 'offre' ? 'VOIR L\'OFFRE' : 'EN SAVOIR PLUS'),
       ctaLink: newCampaign.ctaLink || (newCampaign.ctaType === 'reserver' ? '#courses' : '')
     } : {};
     
@@ -3604,25 +3604,25 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           targetConversationId: targetIds[0] || '',
           targetConversationName: selectedRecipients[0]?.name || '',
           scheduledAt: null,
-          // v11: Prompts indÃÂ©pendants
+          // v11: Prompts indÃ©pendants
           systemPrompt: newCampaign.systemPrompt || null,
           descriptionPrompt: newCampaign.descriptionPrompt || null,
           ...ctaFields  // Ajouter les champs CTA
         };
         const res = await axios.post(`${API}/campaigns`, campaignData);
         setCampaigns([res.data, ...campaigns]);
-        addCampaignLog(res.data.id, `Campagne "${newCampaign.name}" crÃÂ©ÃÂ©e (${targetIds.length} destinataire(s))`, 'success');
+        addCampaignLog(res.data.id, `Campagne "${newCampaign.name}" crÃ©Ã©e (${targetIds.length} destinataire(s))`, 'success');
 
         // v13: Auto-launch immediate campaigns
         if (targetIds.length > 0) {
           try {
-            addCampaignLog(res.data.id, 'Ã°ÂÂÂ Lancement automatique en cours...', 'info');
+            addCampaignLog(res.data.id, 'ð Lancement automatique en cours...', 'info');
             const launchRes = await axios.post(`${API}/campaigns/${res.data.id}/launch`);
             setCampaigns(prev => prev.map(c => c.id === res.data.id ? launchRes.data : c));
-            addCampaignLog(res.data.id, `Ã¢ÂÂ Campagne envoyÃÂ©e ! (${launchRes.data.results?.length || 0} envoi(s))`, 'success');
+            addCampaignLog(res.data.id, `â Campagne envoyÃ©e ! (${launchRes.data.results?.length || 0} envoi(s))`, 'success');
           } catch (launchErr) {
             console.error('Auto-launch error:', launchErr);
-            addCampaignLog(res.data.id, `Ã¢ÂÂ Ã¯Â¸Â CrÃÂ©ÃÂ©e mais envoi ÃÂ©chouÃÂ©: ${launchErr.response?.data?.detail || launchErr.message}`, 'error');
+            addCampaignLog(res.data.id, `â ï¸ CrÃ©Ã©e mais envoi Ã©chouÃ©: ${launchErr.response?.data?.detail || launchErr.message}`, 'error');
           }
         }
       } else {
@@ -3645,14 +3645,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             targetConversationId: targetIds[0] || '',
             targetConversationName: selectedRecipients[0]?.name || '',
             scheduledAt,
-            // v11: Prompts indÃÂ©pendants
+            // v11: Prompts indÃ©pendants
             systemPrompt: newCampaign.systemPrompt || null,
             descriptionPrompt: newCampaign.descriptionPrompt || null,
             ...ctaFields  // Ajouter les champs CTA
           };
           const res = await axios.post(`${API}/campaigns`, campaignData);
           setCampaigns(prev => [res.data, ...prev]);
-          addCampaignLog(res.data.id, `Campagne "${campaignData.name}" programmÃÂ©e pour ${new Date(scheduledAt).toLocaleString('fr-FR')}`, 'info');
+          addCampaignLog(res.data.id, `Campagne "${campaignData.name}" programmÃ©e pour ${new Date(scheduledAt).toLocaleString('fr-FR')}`, 'info');
         }
       }
       
@@ -3668,10 +3668,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       });
       setSelectedContactsForCampaign([]);
       setSelectedRecipients([]); // Vider le panier
-      showCampaignToast(`${isImmediate ? 'Campagne crÃÂ©ÃÂ©e' : `${scheduleSlots.length} campagne(s) programmÃÂ©e(s)`} avec succÃÂ¨s !`, 'success');
+      showCampaignToast(`${isImmediate ? 'Campagne crÃ©Ã©e' : `${scheduleSlots.length} campagne(s) programmÃ©e(s)`} avec succÃ¨s !`, 'success');
     } catch (err) { 
       console.error("Error creating campaign:", err);
-      addCampaignLog('new', `Erreur crÃÂ©ation campagne: ${err.message}`, 'error');
+      addCampaignLog('new', `Erreur crÃ©ation campagne: ${err.message}`, 'error');
       showCampaignToast(`Erreur: ${err.message}`, 'error');
     }
   };
@@ -3682,8 +3682,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       addCampaignLog(campaignId, 'Lancement de la campagne...', 'info');
       const res = await axios.post(`${API}/campaigns/${campaignId}/launch`);
       setCampaigns(campaigns.map(c => c.id === campaignId ? res.data : c));
-      addCampaignLog(campaignId, `Campagne lancÃÂ©e avec ${res.data.results?.length || 0} destinataire(s)`, 'success');
-      showCampaignToast(`Campagne lancÃÂ©e ! ${res.data.results?.length || 0} destinataire(s)`, 'success');
+      addCampaignLog(campaignId, `Campagne lancÃ©e avec ${res.data.results?.length || 0} destinataire(s)`, 'success');
+      showCampaignToast(`Campagne lancÃ©e ! ${res.data.results?.length || 0} destinataire(s)`, 'success');
     } catch (err) { 
       console.error("Error launching campaign:", err);
       addCampaignLog(campaignId, `Erreur lancement: ${err.message}`, 'error');
@@ -3692,54 +3692,54 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   };
 
   // Launch campaign WITH REAL SENDING via Resend and Twilio
-  // === BOUTON LANCER - ISOLATION COMPLÃÂTE ===
+  // === BOUTON LANCER - ISOLATION COMPLÃTE ===
   const launchCampaignWithSend = async (e, campaignId) => {
     // === BLOCAGE CRASH POSTHOG ===
-    // Ces lignes DOIVENT ÃÂªtre en premier, avant toute autre logique
+    // Ces lignes DOIVENT Ãªtre en premier, avant toute autre logique
     e.preventDefault();
     e.stopPropagation();
     
     try {
-      // 1. RÃÂ©cupÃÂ©rer la campagne
+      // 1. RÃ©cupÃ©rer la campagne
       const campaign = campaigns.find(c => c.id === campaignId);
       if (!campaign) {
-        alert('Ã¢ÂÂ Campagne non trouvÃÂ©e');
+        alert('â Campagne non trouvÃ©e');
         return;
       }
 
-      // Log isolÃÂ© (peut ÃÂªtre ignorÃÂ© si PostHog crash)
+      // Log isolÃ© (peut Ãªtre ignorÃ© si PostHog crash)
       try {
-        addCampaignLog(campaignId, 'PrÃÂ©paration de l\'envoi...', 'info');
+        addCampaignLog(campaignId, 'PrÃ©paration de l\'envoi...', 'info');
       } catch (logErr) {
-        console.warn('PostHog bloquÃÂ© sur log mais envoi maintenu:', logErr);
+        console.warn('PostHog bloquÃ© sur log mais envoi maintenu:', logErr);
       }
 
-      // 2. PrÃÂ©parer d'abord la campagne cÃÂ´tÃÂ© backend
+      // 2. PrÃ©parer d'abord la campagne cÃ´tÃ© backend
       const launchRes = await axios.post(`${API}/campaigns/${campaignId}/launch`);
       const launchedCampaign = launchRes.data;
       
       try {
         setCampaigns(campaigns.map(c => c.id === campaignId ? launchedCampaign : c));
       } catch (stateErr) {
-        console.warn('PostHog bloquÃÂ© sur setState mais envoi maintenu:', stateErr);
+        console.warn('PostHog bloquÃ© sur setState mais envoi maintenu:', stateErr);
       }
 
-      // 3. RÃÂ©cupÃÂ©rer les contacts ÃÂ  envoyer
+      // 3. RÃ©cupÃ©rer les contacts Ã  envoyer
       const results = launchedCampaign.results || [];
       if (results.length === 0) {
-        alert('Ã¢ÂÂ Ã¯Â¸Â Aucun contact ÃÂ  envoyer');
+        alert('â ï¸ Aucun contact Ã  envoyer');
         return;
       }
 
-      // 4. SÃÂ©parer par canal
+      // 4. SÃ©parer par canal
       const emailResults = results.filter(r => r.channel === 'email' && r.contactEmail);
       const whatsAppResults = results.filter(r => r.channel === 'whatsapp' && r.contactPhone);
 
       // Confirmation
-      const confirmMsg = `Ã°ÂÂÂ Lancer la campagne "${campaign.name}" ?\n\n` +
-        `Ã°ÂÂÂ§ ${emailResults.length} email(s)\n` +
-        `Ã°ÂÂÂ± ${whatsAppResults.length} WhatsApp\n\n` +
-        `Ã¢ÂÂ Ã¯Â¸Â Cette action est irrÃÂ©versible.`;
+      const confirmMsg = `ð Lancer la campagne "${campaign.name}" ?\n\n` +
+        `ð§ ${emailResults.length} email(s)\n` +
+        `ð± ${whatsAppResults.length} WhatsApp\n\n` +
+        `â ï¸ Cette action est irrÃ©versible.`;
       
       if (!window.confirm(confirmMsg)) {
         return;
@@ -3751,15 +3751,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // 5. === ENVOI EMAILS VIA RESEND (BACKEND) ===
       if (emailResults.length > 0) {
         try {
-          addCampaignLog(campaignId, `Ã°ÂÂÂ§ Envoi de ${emailResults.length} email(s) via Resend...`, 'info');
-        } catch (e) { console.warn('Log bloquÃÂ©:', e); }
+          addCampaignLog(campaignId, `ð§ Envoi de ${emailResults.length} email(s) via Resend...`, 'info');
+        } catch (e) { console.warn('Log bloquÃ©:', e); }
         
         console.log(`RESEND_DEBUG: === LANCEMENT CAMPAGNE: ${emailResults.length} destinataires ===`);
         
         for (let i = 0; i < emailResults.length; i++) {
           const contact = emailResults[i];
           
-          console.log(`RESEND_DEBUG: [${i + 1}/${emailResults.length}] Envoi ÃÂ : ${contact.contactEmail}`);
+          console.log(`RESEND_DEBUG: [${i + 1}/${emailResults.length}] Envoi Ã : ${contact.contactEmail}`);
           console.log(`RESEND_DEBUG: mediaUrl = ${campaign.mediaUrl || 'AUCUN'}`);
           
           try {
@@ -3779,20 +3779,20 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             const result = await response.json();
             
             if (result.success) {
-              console.log(`RESEND_DEBUG: [${i + 1}/${emailResults.length}] SUCCÃÂS - ID = ${result.email_id}`);
+              console.log(`RESEND_DEBUG: [${i + 1}/${emailResults.length}] SUCCÃS - ID = ${result.email_id}`);
               totalSent++;
               
-              // Marquer comme envoyÃÂ©
+              // Marquer comme envoyÃ©
               try {
                 await axios.post(`${API}/campaigns/${campaignId}/mark-sent`, {
                   contactId: contact.contactId,
                   channel: 'email'
                 });
               } catch (markErr) {
-                console.warn('RESEND_DEBUG: Mark-sent bloquÃÂ© mais email envoyÃÂ©');
+                console.warn('RESEND_DEBUG: Mark-sent bloquÃ© mais email envoyÃ©');
               }
             } else {
-              console.error(`RESEND_DEBUG: [${i + 1}/${emailResults.length}] ÃÂCHEC - ${result.error}`);
+              console.error(`RESEND_DEBUG: [${i + 1}/${emailResults.length}] ÃCHEC - ${result.error}`);
               totalFailed++;
             }
             
@@ -3801,7 +3801,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             totalFailed++;
           }
           
-          // DÃÂ©lai entre les envois
+          // DÃ©lai entre les envois
           if (i < emailResults.length - 1) {
             await new Promise(resolve => setTimeout(resolve, 300));
           }
@@ -3811,17 +3811,17 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // 6. === ENVOI WHATSAPP VIA FONCTION AUTONOME ===
       if (whatsAppResults.length > 0) {
         try {
-          addCampaignLog(campaignId, `Ã°ÂÂÂ± Envoi de ${whatsAppResults.length} WhatsApp...`, 'info');
-        } catch (e) { console.warn('Log bloquÃÂ©:', e); }
+          addCampaignLog(campaignId, `ð± Envoi de ${whatsAppResults.length} WhatsApp...`, 'info');
+        } catch (e) { console.warn('Log bloquÃ©:', e); }
         
-        console.log(`Ã°ÂÂÂ± === LANCEMENT CAMPAGNE WHATSAPP: ${whatsAppResults.length} destinataires ===`);
+        console.log(`ð± === LANCEMENT CAMPAGNE WHATSAPP: ${whatsAppResults.length} destinataires ===`);
         
         for (let i = 0; i < whatsAppResults.length; i++) {
           const contact = whatsAppResults[i];
           
-          console.log(`Ã°ÂÂÂ± [${i + 1}/${whatsAppResults.length}] Envoi ÃÂ : ${contact.contactPhone}`);
+          console.log(`ð± [${i + 1}/${whatsAppResults.length}] Envoi Ã : ${contact.contactPhone}`);
           
-          // === APPEL FONCTION AUTONOME ISOLÃÂE ===
+          // === APPEL FONCTION AUTONOME ISOLÃE ===
           const result = await performWhatsAppSend(
             contact.contactPhone,
             campaign.message,
@@ -3830,49 +3830,49 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
           if (result.success) {
             totalSent++;
-            console.log(`Ã¢ÂÂ WhatsApp envoyÃÂ©${result.simulated ? ' (simulation)' : ''}`);
-            // Marquer comme envoyÃÂ©
+            console.log(`â WhatsApp envoyÃ©${result.simulated ? ' (simulation)' : ''}`);
+            // Marquer comme envoyÃ©
             try {
               await axios.post(`${API}/campaigns/${campaignId}/mark-sent`, {
                 contactId: contact.contactId,
                 channel: 'whatsapp'
               });
             } catch (markErr) {
-              console.warn('Ã¢ÂÂ Ã¯Â¸Â Mark-sent bloquÃÂ© mais WhatsApp envoyÃÂ©:', markErr);
+              console.warn('â ï¸ Mark-sent bloquÃ© mais WhatsApp envoyÃ©:', markErr);
             }
           } else {
             totalFailed++;
-            console.error(`Ã¢ÂÂ WhatsApp failed: ${result.error}`);
+            console.error(`â WhatsApp failed: ${result.error}`);
           }
           
-          // DÃÂ©lai entre les envois
+          // DÃ©lai entre les envois
           if (i < whatsAppResults.length - 1) {
             await new Promise(resolve => setTimeout(resolve, 500));
           }
         }
       }
 
-      // 7. Recharger la campagne (peut ÃÂªtre ignorÃÂ©)
+      // 7. Recharger la campagne (peut Ãªtre ignorÃ©)
       try {
         const updatedRes = await axios.get(`${API}/campaigns/${campaignId}`);
         setCampaigns(campaigns.map(c => c.id === campaignId ? updatedRes.data : c));
       } catch (reloadErr) {
-        console.warn('Reload bloquÃÂ© mais envois effectuÃÂ©s:', reloadErr);
+        console.warn('Reload bloquÃ© mais envois effectuÃ©s:', reloadErr);
       }
 
       // 8. Notification finale
       try {
-        addCampaignLog(campaignId, `Ã¢ÂÂ TerminÃÂ©: ${totalSent} envoyÃÂ©s, ${totalFailed} ÃÂ©chouÃÂ©s`, 'success');
-      } catch (e) { console.warn('Log final bloquÃÂ©:', e); }
+        addCampaignLog(campaignId, `â TerminÃ©: ${totalSent} envoyÃ©s, ${totalFailed} Ã©chouÃ©s`, 'success');
+      } catch (e) { console.warn('Log final bloquÃ©:', e); }
       
-      alert(`Ã¢ÂÂ Campagne "${campaign.name}" terminÃÂ©e !\n\nÃ¢ÂÂ EnvoyÃÂ©s: ${totalSent}\nÃ¢ÂÂ ÃÂchouÃÂ©s: ${totalFailed}`);
+      alert(`â Campagne "${campaign.name}" terminÃ©e !\n\nâ EnvoyÃ©s: ${totalSent}\nâ ÃchouÃ©s: ${totalFailed}`);
 
     } catch (err) {
       console.error("Error launching campaign with send:", err);
       try {
-        addCampaignLog(campaignId, `Ã¢ÂÂ Erreur: ${err.message}`, 'error');
-      } catch (e) { console.warn('Log erreur bloquÃÂ©:', e); }
-      alert(`Ã¢ÂÂ Erreur lors de l'envoi: ${err.message}`);
+        addCampaignLog(campaignId, `â Erreur: ${err.message}`, 'error');
+      } catch (e) { console.warn('Log erreur bloquÃ©:', e); }
+      alert(`â Erreur lors de l'envoi: ${err.message}`);
     }
   };
 
@@ -3882,7 +3882,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     try {
       await axios.delete(`${API}/campaigns/${campaignId}`);
       setCampaigns(campaigns.filter(c => c.id !== campaignId));
-      addCampaignLog(campaignId, 'Campagne supprimÃÂ©e', 'info');
+      addCampaignLog(campaignId, 'Campagne supprimÃ©e', 'info');
     } catch (err) { 
       console.error("Error deleting campaign:", err);
       addCampaignLog(campaignId, `Erreur suppression: ${err.message}`, 'error');
@@ -3929,7 +3929,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const generateWhatsAppLink = (phone, message, mediaUrl, contactName) => {
     const firstName = contactName?.split(' ')[0] || contactName || 'ami(e)';
     const personalizedMessage = message
-      .replace(/{prÃÂ©nom}/gi, firstName)
+      .replace(/{prÃ©nom}/gi, firstName)
       .replace(/{prenom}/gi, firstName)
       .replace(/{nom}/gi, contactName || '');
     
@@ -3957,12 +3957,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const generateEmailLink = (email, subject, message, mediaUrl, contactName) => {
     const firstName = contactName?.split(' ')[0] || contactName || 'ami(e)';
     const personalizedMessage = message
-      .replace(/{prÃÂ©nom}/gi, firstName)
+      .replace(/{prÃ©nom}/gi, firstName)
       .replace(/{prenom}/gi, firstName)
       .replace(/{nom}/gi, contactName || '');
     
     const fullMessage = mediaUrl 
-      ? `${personalizedMessage}\n\nÃ°ÂÂÂ Voir le visuel: ${mediaUrl}` 
+      ? `${personalizedMessage}\n\nð Voir le visuel: ${mediaUrl}` 
       : personalizedMessage;
     
     if (!email) {
@@ -3989,7 +3989,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     return allContacts;
   };
 
-  // GÃÂ©nÃÂ©rer mailto: groupÃÂ© avec BCC pour tous les emails
+  // GÃ©nÃ©rer mailto: groupÃ© avec BCC pour tous les emails
   const generateGroupedEmailLink = () => {
     const contacts = getContactsForDirectSend();
     const emails = contacts.map(c => c.email).filter(e => e && e.includes('@'));
@@ -3998,10 +3998,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     
     const subject = newCampaign.name || "Afroboost - Message";
     const body = newCampaign.mediaUrl 
-      ? `${newCampaign.message}\n\nÃ°ÂÂÂ Voir le visuel: ${newCampaign.mediaUrl}`
+      ? `${newCampaign.message}\n\nð Voir le visuel: ${newCampaign.mediaUrl}`
       : newCampaign.message;
     
-    // Premier email en "to", reste en BCC pour confidentialitÃÂ©
+    // Premier email en "to", reste en BCC pour confidentialitÃ©
     const firstEmail = emails[0];
     const bccEmails = emails.slice(1).join(',');
     
@@ -4022,7 +4022,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  // Passer au contact WhatsApp prÃÂ©cÃÂ©dent
+  // Passer au contact WhatsApp prÃ©cÃ©dent
   const prevWhatsAppContact = () => {
     if (currentWhatsAppIndex > 0) {
       setCurrentWhatsAppIndex(currentWhatsAppIndex - 1);
@@ -4068,14 +4068,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       
       if (result.success) {
         setTestEmailStatus('success');
-        alert('Ã¢ÂÂ Email de test envoyÃÂ© avec succÃÂ¨s via Resend !');
+        alert('â Email de test envoyÃ© avec succÃ¨s via Resend !');
       } else {
         setTestEmailStatus('error');
-        alert(`Ã¢ÂÂ Erreur: ${result.error}`);
+        alert(`â Erreur: ${result.error}`);
       }
     } catch (error) {
       setTestEmailStatus('error');
-      alert(`Ã¢ÂÂ Erreur: ${error.message}`);
+      alert(`â Erreur: ${error.message}`);
     }
     
     setTimeout(() => setTestEmailStatus(null), 3000);
@@ -4089,7 +4089,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       e.stopPropagation();
     }
     
-    console.log('EMAILJS_DEBUG: Campagne email dÃÂ©marrÃÂ©e');
+    console.log('EMAILJS_DEBUG: Campagne email dÃ©marrÃ©e');
 
     const contacts = getContactsForDirectSend();
     const emailContacts = contacts
@@ -4107,7 +4107,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
 
     // Confirmation
-    if (!window.confirm(`Envoyer ${emailContacts.length} email(s) automatiquement ?\n\nSujet: ${newCampaign.name || 'Afroboost - Message'}\n\nCette action est irrÃÂ©versible.`)) {
+    if (!window.confirm(`Envoyer ${emailContacts.length} email(s) automatiquement ?\n\nSujet: ${newCampaign.name || 'Afroboost - Message'}\n\nCette action est irrÃ©versible.`)) {
       return;
     }
 
@@ -4146,48 +4146,48 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         results.errors.push(contact.email);
       }
       
-      // DÃÂ©lai
+      // DÃ©lai
       await new Promise(r => setTimeout(r, 300));
     }
 
-    console.log('CAMPAGNE TERMINÃÂE - EnvoyÃÂ©s:', results.sent, '- ÃÂchouÃÂ©s:', results.failed);
+    console.log('CAMPAGNE TERMINÃE - EnvoyÃ©s:', results.sent, '- ÃchouÃ©s:', results.failed);
 
     setEmailSendingResults(results);
     setEmailSendingProgress(null);
 
     if (results.sent > 0) {
-      alert(`Ã¢ÂÂ EnvoyÃÂ©s: ${results.sent} / ÃÂchouÃÂ©s: ${results.failed}`);
+      alert(`â EnvoyÃ©s: ${results.sent} / ÃchouÃ©s: ${results.failed}`);
     } else {
-      alert(`Ã¢ÂÂ ÃÂchec total. Erreurs: ${results.errors.join(', ')}`);
+      alert(`â Ãchec total. Erreurs: ${results.errors.join(', ')}`);
     }
   };
 
   // === WHATSAPP API FUNCTIONS ===
   
   // === FONCTION ENVOI WHATSAPP DIRECT AVEC LOG ===
-  // Log clair pour vÃÂ©rifier que les donnÃÂ©es circulent
+  // Log clair pour vÃ©rifier que les donnÃ©es circulent
   const sendWhatsAppMessageDirect = async (phoneNumber, message, mediaUrl = null) => {
     const config = whatsAppConfig;
     
-    // LOG CLAIR: Afficher toutes les donnÃÂ©es envoyÃÂ©es
-    console.log('Ã°ÂÂÂ± === ENVOI WHATSAPP ===');
-    console.log('Ã°ÂÂÂ± Envoi WhatsApp vers:', phoneNumber);
-    console.log('Ã°ÂÂÂ± Message:', message);
-    console.log('Ã°ÂÂÂ± Media URL:', mediaUrl || 'Aucun');
-    console.log('Ã°ÂÂÂ± Avec SID:', config.accountSid || 'NON CONFIGURÃÂ');
-    console.log('Ã°ÂÂÂ± Auth Token:', config.authToken ? '***' + config.authToken.slice(-4) : 'NON CONFIGURÃÂ');
-    console.log('Ã°ÂÂÂ± From Number:', config.fromNumber || 'NON CONFIGURÃÂ');
+    // LOG CLAIR: Afficher toutes les donnÃ©es envoyÃ©es
+    console.log('ð± === ENVOI WHATSAPP ===');
+    console.log('ð± Envoi WhatsApp vers:', phoneNumber);
+    console.log('ð± Message:', message);
+    console.log('ð± Media URL:', mediaUrl || 'Aucun');
+    console.log('ð± Avec SID:', config.accountSid || 'NON CONFIGURÃ');
+    console.log('ð± Auth Token:', config.authToken ? '***' + config.authToken.slice(-4) : 'NON CONFIGURÃ');
+    console.log('ð± From Number:', config.fromNumber || 'NON CONFIGURÃ');
     
-    // VÃÂ©rifier la configuration
+    // VÃ©rifier la configuration
     if (!config.accountSid || !config.authToken || !config.fromNumber) {
-      console.error('Ã¢ÂÂ Configuration WhatsApp/Twilio incomplÃÂ¨te');
+      console.error('â Configuration WhatsApp/Twilio incomplÃ¨te');
       return { 
         success: false, 
-        error: 'Configuration Twilio incomplÃÂ¨te. VÃÂ©rifiez Account SID, Auth Token et From Number.' 
+        error: 'Configuration Twilio incomplÃ¨te. VÃ©rifiez Account SID, Auth Token et From Number.' 
       };
     }
     
-    // Formater le numÃÂ©ro au format E.164
+    // Formater le numÃ©ro au format E.164
     let formattedPhone = phoneNumber.replace(/[^\d+]/g, '');
     if (!formattedPhone.startsWith('+')) {
       if (formattedPhone.startsWith('0')) {
@@ -4197,9 +4197,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       }
     }
     
-    console.log('Ã°ÂÂÂ± NumÃÂ©ro formatÃÂ©:', formattedPhone);
+    console.log('ð± NumÃ©ro formatÃ©:', formattedPhone);
     
-    // Construire les donnÃÂ©es pour Twilio
+    // Construire les donnÃ©es pour Twilio
     const formData = new URLSearchParams();
     formData.append('From', `whatsapp:${config.fromNumber.startsWith('+') ? config.fromNumber : '+' + config.fromNumber}`);
     formData.append('To', `whatsapp:${formattedPhone}`);
@@ -4209,10 +4209,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       formData.append('MediaUrl', mediaUrl);
     }
     
-    console.log('Ã°ÂÂÂ± DonnÃÂ©es Twilio:', Object.fromEntries(formData));
+    console.log('ð± DonnÃ©es Twilio:', Object.fromEntries(formData));
     
     try {
-      // Appel DIRECT ÃÂ  l'API Twilio
+      // Appel DIRECT Ã  l'API Twilio
       const response = await fetch(
         `https://api.twilio.com/2010-04-01/Accounts/${config.accountSid}/Messages.json`,
         {
@@ -4226,7 +4226,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       );
       
       const data = await response.json();
-      console.log('Ã°ÂÂÂ± RÃÂ©ponse Twilio:', data);
+      console.log('ð± RÃ©ponse Twilio:', data);
       
       if (!response.ok) {
         return { success: false, error: data.message || `HTTP ${response.status}`, code: data.code };
@@ -4234,7 +4234,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       
       return { success: true, sid: data.sid, status: data.status };
     } catch (error) {
-      console.error('Ã¢ÂÂ Erreur Twilio:', error);
+      console.error('â Erreur Twilio:', error);
       return { success: false, error: error.message };
     }
   };
@@ -4244,50 +4244,50 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     const success = await saveWhatsAppConfig(whatsAppConfig);
     if (success) {
       setShowWhatsAppConfig(false);
-      alert('Ã¢ÂÂ Configuration WhatsApp API sauvegardÃÂ©e !');
+      alert('â Configuration WhatsApp API sauvegardÃ©e !');
     } else {
-      alert('Ã¢ÂÂ Erreur lors de la sauvegarde');
+      alert('â Erreur lors de la sauvegarde');
     }
   };
 
-  // === FONCTION TEST WHATSAPP - ISOLATION COMPLÃÂTE ===
-  // Utilise la fonction autonome performWhatsAppSend pour ÃÂ©viter les conflits PostHog
+  // === FONCTION TEST WHATSAPP - ISOLATION COMPLÃTE ===
+  // Utilise la fonction autonome performWhatsAppSend pour Ã©viter les conflits PostHog
   const handleTestWhatsApp = async (e) => {
     // === BLOCAGE CRASH POSTHOG ===
-    // Ces lignes DOIVENT ÃÂªtre en premier, avant toute autre logique
+    // Ces lignes DOIVENT Ãªtre en premier, avant toute autre logique
     e.preventDefault();
     e.stopPropagation();
     
     // Validation basique
     if (!testWhatsAppNumber) {
-      alert('Veuillez entrer un numÃÂ©ro de tÃÂ©lÃÂ©phone pour le test');
+      alert('Veuillez entrer un numÃ©ro de tÃ©lÃ©phone pour le test');
       return;
     }
     
-    // Sauvegarder la config (peut ÃÂªtre ignorÃÂ© si PostHog crash)
+    // Sauvegarder la config (peut Ãªtre ignorÃ© si PostHog crash)
     try {
       await handleSaveWhatsAppConfig();
     } catch (saveError) {
-      console.warn('PostHog bloquÃÂ© sur sauvegarde mais envoi maintenu:', saveError);
+      console.warn('PostHog bloquÃ© sur sauvegarde mais envoi maintenu:', saveError);
     }
     
-    // Mise ÃÂ  jour UI - dans un try/catch sÃÂ©parÃÂ© pour isoler PostHog
+    // Mise Ã  jour UI - dans un try/catch sÃ©parÃ© pour isoler PostHog
     try {
       setTestWhatsAppStatus('sending');
     } catch (stateError) {
-      console.warn('PostHog bloquÃÂ© sur setState mais envoi maintenu:', stateError);
+      console.warn('PostHog bloquÃ© sur setState mais envoi maintenu:', stateError);
     }
     
-    // === ENVOI TECHNIQUE - ISOLÃÂ DE LA GESTION D'ÃÂTAT ===
+    // === ENVOI TECHNIQUE - ISOLÃ DE LA GESTION D'ÃTAT ===
     try {
       // Appel de la fonction autonome (hors composant React)
       const result = await performWhatsAppSend(
         testWhatsAppNumber,
-        'Ã°ÂÂÂ Test Afroboost WhatsApp API!\n\nVotre configuration Twilio fonctionne correctement.',
+        'ð Test Afroboost WhatsApp API!\n\nVotre configuration Twilio fonctionne correctement.',
         whatsAppConfig
       );
       
-      // Gestion du rÃÂ©sultat - ÃÂ©galement isolÃÂ©e
+      // Gestion du rÃ©sultat - Ã©galement isolÃ©e
       try {
         if (result.success) {
           setTestWhatsAppStatus('success');
@@ -4295,43 +4295,43 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             // Mode simulation
             setTimeout(() => setTestWhatsAppStatus(null), 3000);
           } else {
-            alert(`Ã¢ÂÂ WhatsApp de test envoyÃÂ© avec succÃÂ¨s !\n\nSID: ${result.sid}`);
+            alert(`â WhatsApp de test envoyÃ© avec succÃ¨s !\n\nSID: ${result.sid}`);
             setTimeout(() => setTestWhatsAppStatus(null), 5000);
           }
         } else {
           setTestWhatsAppStatus('error');
-          alert(`Ã¢ÂÂ Erreur Twilio: ${result.error}`);
+          alert(`â Erreur Twilio: ${result.error}`);
           setTimeout(() => setTestWhatsAppStatus(null), 3000);
         }
       } catch (uiError) {
-        console.warn('PostHog bloquÃÂ© sur UI update mais envoi rÃÂ©ussi:', uiError);
+        console.warn('PostHog bloquÃ© sur UI update mais envoi rÃ©ussi:', uiError);
         if (result.success) {
-          alert('Ã¢ÂÂ WhatsApp envoyÃÂ© (UI bloquÃÂ©e par PostHog)');
+          alert('â WhatsApp envoyÃ© (UI bloquÃ©e par PostHog)');
         }
       }
     } catch (sendError) {
-      console.error('Ã¢ÂÂ Erreur envoi WhatsApp:', sendError);
+      console.error('â Erreur envoi WhatsApp:', sendError);
       try {
         setTestWhatsAppStatus('error');
-        alert(`Ã¢ÂÂ Erreur technique: ${sendError.message}`);
+        alert(`â Erreur technique: ${sendError.message}`);
         setTimeout(() => setTestWhatsAppStatus(null), 3000);
       } catch (e) {
-        console.warn('PostHog bloquÃÂ© mais erreur signalÃÂ©e:', e);
-        alert(`Ã¢ÂÂ Erreur: ${sendError.message}`);
+        console.warn('PostHog bloquÃ© mais erreur signalÃ©e:', e);
+        alert(`â Erreur: ${sendError.message}`);
       }
     }
   };
 
   // Envoyer la campagne WhatsApp automatiquement - avec isolation PostHog
   const handleSendWhatsAppCampaign = async (e) => {
-    // EmpÃÂªcher le rafraÃÂ®chissement et la propagation (isolation PostHog)
+    // EmpÃªcher le rafraÃ®chissement et la propagation (isolation PostHog)
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
     
     if (!isWhatsAppConfigured()) {
-      alert('Ã¢ÂÂ Ã¯Â¸Â WhatsApp API non configurÃÂ©. Cliquez sur "Ã¢ÂÂÃ¯Â¸Â Config" pour ajouter vos clÃÂ©s Twilio.');
+      alert('â ï¸ WhatsApp API non configurÃ©. Cliquez sur "âï¸ Config" pour ajouter vos clÃ©s Twilio.');
       return;
     }
 
@@ -4341,7 +4341,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       .map(c => ({ phone: c.phone, name: c.name }));
 
     if (phoneContacts.length === 0) {
-      alert('Aucun contact avec numÃÂ©ro de tÃÂ©lÃÂ©phone');
+      alert('Aucun contact avec numÃ©ro de tÃ©lÃ©phone');
       return;
     }
 
@@ -4350,7 +4350,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       return;
     }
 
-    if (!window.confirm(`Envoyer ${phoneContacts.length} WhatsApp automatiquement ?\n\nÃ¢ÂÂ Ã¯Â¸Â Cette action utilise votre quota Twilio et est irrÃÂ©versible.`)) {
+    if (!window.confirm(`Envoyer ${phoneContacts.length} WhatsApp automatiquement ?\n\nâ ï¸ Cette action utilise votre quota Twilio et est irrÃ©versible.`)) {
       return;
     }
 
@@ -4372,22 +4372,22 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       setWhatsAppSendingResults(results);
       setWhatsAppSendingProgress(null);
       
-      // Notification de succÃÂ¨s
+      // Notification de succÃ¨s
       if (results.sent > 0) {
-        alert(`Ã¢ÂÂ Campagne WhatsApp terminÃÂ©e !\n\nÃ¢ÂÂ EnvoyÃÂ©s: ${results.sent}\nÃ¢ÂÂ ÃÂchouÃÂ©s: ${results.failed}`);
+        alert(`â Campagne WhatsApp terminÃ©e !\n\nâ EnvoyÃ©s: ${results.sent}\nâ ÃchouÃ©s: ${results.failed}`);
       } else {
-        alert(`Ã¢ÂÂ ÃÂchec de la campagne WhatsApp.\n\nErreurs: ${results.errors.join('\n')}`);
+        alert(`â Ãchec de la campagne WhatsApp.\n\nErreurs: ${results.errors.join('\n')}`);
       }
     } catch (error) {
-      console.error('Ã¢ÂÂ WhatsApp campaign error:', error);
+      console.error('â WhatsApp campaign error:', error);
       setWhatsAppSendingProgress(null);
-      alert(`Ã¢ÂÂ Erreur lors de l'envoi: ${error.message}`);
+      alert(`â Erreur lors de l'envoi: ${error.message}`);
     }
   };
 
-  // === ENVOI GROUPÃÂ (EMAIL + WHATSAPP) ===
+  // === ENVOI GROUPÃ (EMAIL + WHATSAPP) ===
   const handleBulkSendCampaign = async (e) => {
-    // Protection PostHog - EmpÃÂªcher la propagation d'ÃÂ©vÃÂ©nements
+    // Protection PostHog - EmpÃªcher la propagation d'Ã©vÃ©nements
     if (e) {
       e.preventDefault();
       e.stopPropagation();
@@ -4401,12 +4401,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       .filter(c => c.phone)
       .map(c => ({ phone: c.phone, name: c.name }));
 
-    // Resend est toujours configurÃÂ© cÃÂ´tÃÂ© serveur
+    // Resend est toujours configurÃ© cÃ´tÃ© serveur
     const hasEmail = emailContacts.length > 0;
     const hasWhatsApp = isWhatsAppConfigured() && phoneContacts.length > 0;
 
     if (!hasEmail && !hasWhatsApp) {
-      alert('Ã¢ÂÂ Ã¯Â¸Â Aucun contact avec email ou tÃÂ©lÃÂ©phone disponible.');
+      alert('â ï¸ Aucun contact avec email ou tÃ©lÃ©phone disponible.');
       return;
     }
 
@@ -4419,7 +4419,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     if (hasEmail) channels.push(`${emailContacts.length} emails`);
     if (hasWhatsApp) channels.push(`${phoneContacts.length} WhatsApp`);
 
-    if (!window.confirm(`Envoi automatique :\nÃ¢ÂÂ¢ ${channels.join('\nÃ¢ÂÂ¢ ')}\n\nÃ¢ÂÂ Ã¯Â¸Â Cette action est irrÃÂ©versible.`)) {
+    if (!window.confirm(`Envoi automatique :\nâ¢ ${channels.join('\nâ¢ ')}\n\nâ ï¸ Cette action est irrÃ©versible.`)) {
       return;
     }
 
@@ -4460,26 +4460,26 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         );
       }
 
-      // Notification de succÃÂ¨s
+      // Notification de succÃ¨s
       const emailSent = results.email?.sent || 0;
       const emailFailed = results.email?.failed || 0;
       const waSent = results.whatsapp?.sent || 0;
       const waFailed = results.whatsapp?.failed || 0;
       
-      alert(`Ã¢ÂÂ Campagne terminÃÂ©e !\n\nÃ°ÂÂÂ§ Emails: ${emailSent} envoyÃÂ©s, ${emailFailed} ÃÂ©chouÃÂ©s\nÃ°ÂÂÂ± WhatsApp: ${waSent} envoyÃÂ©s, ${waFailed} ÃÂ©chouÃÂ©s`);
+      alert(`â Campagne terminÃ©e !\n\nð§ Emails: ${emailSent} envoyÃ©s, ${emailFailed} Ã©chouÃ©s\nð± WhatsApp: ${waSent} envoyÃ©s, ${waFailed} Ã©chouÃ©s`);
     } catch (error) {
-      console.error('Ã¢ÂÂ Bulk campaign error:', error);
-      alert(`Ã¢ÂÂ Erreur lors de l'envoi: ${error.message}`);
+      console.error('â Bulk campaign error:', error);
+      alert(`â Erreur lors de l'envoi: ${error.message}`);
     } finally {
       setBulkSendingProgress(null);
       setBulkSendingInProgress(false);
       setBulkSendingResults(results);
     }
     
-    // Mettre ÃÂ  jour le dernier mÃÂ©dia envoyÃÂ© pour l'IA
+    // Mettre Ã  jour le dernier mÃ©dia envoyÃ© pour l'IA
     if (newCampaign.mediaUrl) {
       setLastMediaUrlService(newCampaign.mediaUrl);
-      // Aussi mettre ÃÂ  jour cÃÂ´tÃÂ© backend
+      // Aussi mettre Ã  jour cÃ´tÃ© backend
       axios.put(`${API}/ai-config`, { lastMediaUrl: newCampaign.mediaUrl }).catch(() => {});
     }
   };
@@ -4510,9 +4510,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const handleSaveAIConfig = async () => {
     try {
       await axios.put(`${API}/ai-config`, aiConfig);
-      alert('Ã¢ÂÂ Configuration IA sauvegardÃÂ©e !');
+      alert('â Configuration IA sauvegardÃ©e !');
     } catch (err) {
-      alert('Ã¢ÂÂ Erreur lors de la sauvegarde');
+      alert('â Erreur lors de la sauvegarde');
     }
   };
 
@@ -4580,19 +4580,19 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     } catch (err) { console.error("Error updating tracking:", err); }
   };
 
-  // v37.2: "Ma Page" et "Paiements" supprimÃÂ©s Ã¢ÂÂ centralisÃÂ©s dans le HUB Gestion
+  // v37.2: "Ma Page" et "Paiements" supprimÃ©s â centralisÃ©s dans le HUB Gestion
   const baseTabs = [
     { id: "reservations", label: t('reservations') },
-    { id: "offers", label: "Ã°ÂÂÂÃ¯Â¸Â Gestion" },
+    { id: "offers", label: "ðï¸ Gestion" },
     { id: "codes", label: t('promoCodes') },
-    { id: "contacts", label: "Ã°ÂÂÂ Contacts" },
-    { id: "campaigns", label: "Ã°ÂÂÂ¢ Campagnes" },
-    { id: "conversations", label: unreadCount > 0 ? `Ã°ÂÂÂ¬ Conversations (${unreadCount})` : "Ã°ÂÂÂ¬ Conversations" }
+    { id: "contacts", label: "ð Contacts" },
+    { id: "campaigns", label: "ð¢ Campagnes" },
+    { id: "conversations", label: unreadCount > 0 ? `ð¬ Conversations (${unreadCount})` : "ð¬ Conversations" }
   ];
 
   // v37.2: Boutique et Stripe pour coachs partenaires uniquement
   const tabs = !isSuperAdmin
-    ? [...baseTabs, { id: "boutique", label: "Ã°ÂÂÂ Boutique" }, { id: "stripe", label: "Ã°ÂÂÂ Mon Stripe" }]
+    ? [...baseTabs, { id: "boutique", label: "ð Boutique" }, { id: "stripe", label: "ð Mon Stripe" }]
     : [...baseTabs];
 
   // v9.2.5: COMPOSANT DE SECOURS - Affiche le squelette du dashboard pendant le chargement
@@ -4608,7 +4608,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             </h1>
             <div className="flex items-center gap-2 mt-2">
               <span className="text-white/60 text-sm">
-                ConnectÃÂ© en tant que <span className="text-purple-400">{displayEmail}</span>
+                ConnectÃ© en tant que <span className="text-purple-400">{displayEmail}</span>
               </span>
               {/* v68: Badge MODE SUPER ADMIN / COMPTE PARTENAIRE */}
               <span
@@ -4621,7 +4621,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   border: `1px solid ${isSuperAdmin ? 'rgba(217,28,210,0.6)' : 'rgba(167,139,250,0.3)'}`
                 }}
               >
-                {isSuperAdmin ? 'Ã°ÂÂÂ SUPER ADMIN : ACCÃÂS ILLIMITÃÂ' : 'COMPTE PARTENAIRE'}
+                {isSuperAdmin ? 'ð SUPER ADMIN : ACCÃS ILLIMITÃ' : 'COMPTE PARTENAIRE'}
               </span>
               {!isSuperAdmin && (
                 <span
@@ -4632,7 +4632,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     border: `1px solid ${coachCredits > 0 ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`
                   }}
                 >
-                  CrÃÂ©dits : {coachCredits}
+                  CrÃ©dits : {coachCredits}
                 </span>
               )}
             </div>
@@ -4641,7 +4641,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         
         {/* Onglets squelette */}
         <div className="flex flex-wrap gap-2 mb-6">
-          {['RÃÂ©servations', 'Ã°ÂÂÂÃ¯Â¸Â Gestion', 'Ã°ÂÂÂª Ma Page', 'Codes promo', 'Contacts', 'Campagnes', 'Conversations'].map((tabName, i) => (
+          {['RÃ©servations', 'ðï¸ Gestion', 'ðª Ma Page', 'Codes promo', 'Contacts', 'Campagnes', 'Conversations'].map((tabName, i) => (
             <div 
               key={i}
               className="px-4 py-2 rounded-lg text-white/60 text-sm"
@@ -4657,16 +4657,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           className="p-8 rounded-xl text-center"
           style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(217,28,210,0.3)' }}
         >
-          <div className="text-4xl mb-4 animate-pulse">Ã¢ÂÂ³</div>
+          <div className="text-4xl mb-4 animate-pulse">â³</div>
           <h2 className="text-xl font-bold text-white mb-2">Initialisation de votre espace...</h2>
-          <p className="text-white/60">Chargement de vos donnÃÂ©es en cours</p>
+          <p className="text-white/60">Chargement de vos donnÃ©es en cours</p>
         </div>
       </div>
     </div>
   );
 
-  // v9.2.5: Si le dashboard n'est pas prÃÂªt aprÃÂ¨s 2 secondes, afficher le fallback
-  // (Mais normalement dashboardReady passe ÃÂ  true aprÃÂ¨s 100ms)
+  // v9.2.5: Si le dashboard n'est pas prÃªt aprÃ¨s 2 secondes, afficher le fallback
+  // (Mais normalement dashboardReady passe Ã  true aprÃ¨s 100ms)
   
   return (
     <div className="w-full min-h-screen p-6 section-gradient">
@@ -4717,11 +4717,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', position: 'relative', zIndex: 1 }}>
               <div>
                 <h2 style={{ fontSize: '22px', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '10px', margin: 0 }}>
-                  <span style={{ fontSize: '28px' }}>Ã°ÂÂÂµ</span> Studio Audio
+                  <span style={{ fontSize: '28px' }}>ðµ</span> Studio Audio
                 </h2>
                 <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', margin: '4px 0 0 0' }}>
                   Cours : <span style={{ color: '#d91cd2' }}>{selectedCourseForAudio.name}</span>
-                  {audioTracks.length > 0 && <span style={{ marginLeft: '8px', color: 'rgba(255,255,255,0.3)' }}>Ã¢ÂÂ¢ {audioTracks.length} piste{audioTracks.length > 1 ? 's' : ''}</span>}
+                  {audioTracks.length > 0 && <span style={{ marginLeft: '8px', color: 'rgba(255,255,255,0.3)' }}>â¢ {audioTracks.length} piste{audioTracks.length > 1 ? 's' : ''}</span>}
                 </p>
               </div>
               <button
@@ -4767,14 +4767,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               />
               {uploadingAudio ? (
                 <div>
-                  <div style={{ fontSize: '36px', marginBottom: '8px' }}>Ã¢ÂÂ³</div>
+                  <div style={{ fontSize: '36px', marginBottom: '8px' }}>â³</div>
                   <p style={{ color: '#d91cd2', fontWeight: 600, fontSize: '14px' }}>Upload en cours...</p>
                 </div>
               ) : (
                 <div>
-                  <div style={{ fontSize: '42px', marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(217,28,210,0.5))' }}>Ã°ÂÂÂ¶</div>
+                  <div style={{ fontSize: '42px', marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(217,28,210,0.5))' }}>ð¶</div>
                   <p style={{ color: '#fff', fontWeight: 700, fontSize: '15px', marginBottom: '4px' }}>Glissez vos fichiers audio ici</p>
-                  <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>ou cliquez pour sÃÂ©lectionner Ã¢ÂÂ¢ MP3, WAV, OGG, AAC (max 15MB)</p>
+                  <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>ou cliquez pour sÃ©lectionner â¢ MP3, WAV, OGG, AAC (max 15MB)</p>
                 </div>
               )}
             </div>
@@ -4818,9 +4818,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         {/* Reorder buttons (touch-friendly) + drag handle */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flexShrink: 0 }}>
                           <button onClick={(e) => { e.stopPropagation(); if (index === 0) return; const sorted = [...audioTracks].sort((a,b) => a.order - b.order); const updated = [...sorted]; const [moved] = updated.splice(index, 1); updated.splice(index - 1, 0, moved); setAudioTracks(updated.map((t, i) => ({ ...t, order: i }))); }}
-                            style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index === 0 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index === 0 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>Ã¢ÂÂ²</button>
+                            style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index === 0 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index === 0 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>â²</button>
                           <button onClick={(e) => { e.stopPropagation(); const sorted = [...audioTracks].sort((a,b) => a.order - b.order); if (index >= sorted.length - 1) return; const updated = [...sorted]; const [moved] = updated.splice(index, 1); updated.splice(index + 1, 0, moved); setAudioTracks(updated.map((t, i) => ({ ...t, order: i }))); }}
-                            style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index >= audioTracks.length - 1 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index >= audioTracks.length - 1 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index >= audioTracks.length - 1 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>Ã¢ÂÂ¼</button>
+                            style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index >= audioTracks.length - 1 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index >= audioTracks.length - 1 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index >= audioTracks.length - 1 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>â¼</button>
                         </div>
 
                         {/* Cover thumbnail */}
@@ -4835,7 +4835,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                             boxShadow: '0 0 15px rgba(217,28,210,0.2)'
                           }}
                         >
-                          {!track.cover_url && <span style={{ fontSize: '20px' }}>Ã°ÂÂÂµ</span>}
+                          {!track.cover_url && <span style={{ fontSize: '20px' }}>ðµ</span>}
                           <div style={{
                             position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -4844,7 +4844,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                             onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
                             onMouseLeave={(e) => { e.currentTarget.style.opacity = '0'; }}
                           >
-                            <span style={{ fontSize: '14px' }}>Ã°ÂÂÂ·</span>
+                            <span style={{ fontSize: '14px' }}>ð·</span>
                           </div>
                         </div>
 
@@ -4859,16 +4859,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                             ) : (
                               <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>Gratuit</span>
                             )}
-                            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)' }}>Ã¢ÂÂ¢</span>
+                            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)' }}>â¢</span>
                             <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>Preview {track.preview_duration}s</span>
-                            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)' }}>Ã¢ÂÂ¢</span>
+                            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)' }}>â¢</span>
                             <span style={{
                               fontSize: '10px', fontWeight: 700, padding: '1px 6px', borderRadius: '6px',
                               background: track.visible !== false ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
                               color: track.visible !== false ? '#22c55e' : '#ef4444',
                               border: track.visible !== false ? '1px solid rgba(34,197,94,0.3)' : '1px solid rgba(239,68,68,0.3)'
                             }}>
-                              {track.visible !== false ? 'En vente' : 'MasquÃÂ©'}
+                              {track.visible !== false ? 'En vente' : 'MasquÃ©'}
                             </span>
                           </div>
                         </div>
@@ -4883,8 +4883,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                               color: editingTrackId === track.id ? '#d91cd2' : 'rgba(255,255,255,0.5)',
                               cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px'
                             }}
-                            title="ÃÂditer"
-                          >Ã¢ÂÂÃ¯Â¸Â</button>
+                            title="Ãditer"
+                          >âï¸</button>
                           <button
                             onClick={(e) => { e.stopPropagation(); removeTrack(track.id); }}
                             style={{
@@ -4893,7 +4893,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                               cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px'
                             }}
                             title="Supprimer"
-                          >Ã°ÂÂÂÃ¯Â¸Â</button>
+                          >ðï¸</button>
                         </div>
                       </div>
 
@@ -4945,7 +4945,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                             />
                           </div>
                           <div>
-                            <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>Prix (CHF) Ã¢ÂÂ 0 = gratuit</label>
+                            <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>Prix (CHF) â 0 = gratuit</label>
                             <input
                               type="number"
                               min="0"
@@ -4996,7 +4996,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                               }} />
                             </div>
                             <span style={{ color: track.visible !== false ? '#22c55e' : 'rgba(255,255,255,0.4)', fontSize: '13px', fontWeight: 600 }}>
-                              {track.visible !== false ? 'En vente sur la vitrine' : 'MasquÃÂ© (non visible)'}
+                              {track.visible !== false ? 'En vente sur la vitrine' : 'MasquÃ© (non visible)'}
                             </span>
                           </div>
                         </div>
@@ -5031,7 +5031,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 }}
                 data-testid="save-playlist-btn"
               >
-                {savingPlaylist ? 'Ã¢ÂÂ³ Sauvegarde...' : 'Ã°ÂÂÂ¾ Sauvegarder le Studio'}
+                {savingPlaylist ? 'â³ Sauvegarde...' : 'ð¾ Sauvegarder le Studio'}
               </button>
             </div>
           </div>
@@ -5046,7 +5046,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         />
       )}
 
-      {/* v9.5.7: BOUTON DÃÂCONNEXION FIXED - Toujours visible en haut ÃÂ  droite */}
+      {/* v9.5.7: BOUTON DÃCONNEXION FIXED - Toujours visible en haut Ã  droite */}
       <button 
         onClick={handleSecureLogout} 
         className="flex items-center gap-1 px-3 py-2 rounded-lg text-white text-xs font-medium shadow-lg"
@@ -5061,10 +5061,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         }}
         data-testid="coach-logout-fixed"
       >
-        Ã°ÂÂÂª DÃÂ©connexion
+        ðª DÃ©connexion
       </button>
       
-      {/* v10.6: BOUTON RETOUR - IcÃÂ´ne flÃÂ¨che en haut ÃÂ  gauche */}
+      {/* v10.6: BOUTON RETOUR - IcÃ´ne flÃ¨che en haut Ã  gauche */}
       <button 
         onClick={onBack}
         className="flex items-center justify-center w-10 h-10 rounded-full transition-all hover:scale-110"
@@ -5093,7 +5093,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             <h1 className="font-bold text-white text-2xl" data-testid="dashboard-title">
               {dashboardTitle}
             </h1>
-            {/* Affichage de l'utilisateur connectÃÂ© via Google OAuth */}
+            {/* Affichage de l'utilisateur connectÃ© via Google OAuth */}
             {coachUser && (
               <div className="flex items-center gap-2 mt-2 flex-wrap">
                 {coachUser.picture && (
@@ -5105,12 +5105,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   />
                 )}
                 <span className="text-white/60 text-sm">
-                  ConnectÃÂ© en tant que <span className="text-purple-400">{coachUser.email}</span>
+                  ConnectÃ© en tant que <span className="text-purple-400">{coachUser.email}</span>
                 </span>
-                {/* === v9.5.9: JAUGE DE CRÃÂDITS VISUELLE - Barre de progression ÃÂ©lÃÂ©gante === */}
+                {/* === v9.5.9: JAUGE DE CRÃDITS VISUELLE - Barre de progression Ã©lÃ©gante === */}
                 {!isSuperAdmin && (
                   <div className="flex items-center gap-2 flex-wrap">
-                    {/* Badge avec nombre de crÃÂ©dits */}
+                    {/* Badge avec nombre de crÃ©dits */}
                     <div 
                       className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
                       style={{
@@ -5119,13 +5119,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                       }}
                       data-testid="coach-credits-badge"
                     >
-                      <span style={{ color: coachCredits <= 0 ? '#ef4444' : '#D91CD2' }}>Ã°ÂÂÂ°</span>
+                      <span style={{ color: coachCredits <= 0 ? '#ef4444' : '#D91CD2' }}>ð°</span>
                       <div className="flex flex-col">
                         <span 
                           className="text-xs font-bold"
                           style={{ color: coachCredits <= 0 ? '#ef4444' : '#D91CD2' }}
                         >
-                          {coachCredits <= 0 ? '0' : coachCredits} CrÃÂ©dit{coachCredits !== 1 ? 's' : ''}
+                          {coachCredits <= 0 ? '0' : coachCredits} CrÃ©dit{coachCredits !== 1 ? 's' : ''}
                         </span>
                         {/* Barre de progression visuelle */}
                         <div 
@@ -5158,12 +5158,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         }}
                         data-testid="buy-credits-btn"
                       >
-                        Ã°ÂÂÂ Acheter
+                        ð Acheter
                       </button>
                     )}
                   </div>
                 )}
-                {/* v9.5.9: Super Admin - Badge IllimitÃÂ© Ã¢ÂÂ¾Ã¯Â¸Â */}
+                {/* v9.5.9: Super Admin - Badge IllimitÃ© â¾ï¸ */}
                 {isSuperAdmin && (
                   <span 
                     className="ml-2 px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-1"
@@ -5175,7 +5175,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     }}
                     data-testid="super-admin-badge"
                   >
-                    <span>Ã°ÂÂÂ</span> CrÃÂ©dits : IllimitÃÂ©s Ã¢ÂÂ¾Ã¯Â¸Â
+                    <span>ð</span> CrÃ©dits : IllimitÃ©s â¾ï¸
                   </span>
                 )}
               </div>
@@ -5207,7 +5207,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   <span className="text-white/80 text-xs">Quick</span>
                 </button>
                 
-                {/* Menu Quick Control - FIXÃÂ pour mobile */}
+                {/* Menu Quick Control - FIXÃ pour mobile */}
                 {showQuickControl && (
                   <div 
                     className="absolute left-1/2 transform -translate-x-1/2 mt-2 w-64 rounded-xl overflow-hidden z-50"
@@ -5222,12 +5222,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                       <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">Quick Control</span>
                     </div>
                     
-                    {/* Toggle: AccÃÂ¨s Partenaires */}
+                    {/* Toggle: AccÃ¨s Partenaires */}
                     <div className="px-4 py-3 flex items-center justify-between hover:bg-white/5 transition-colors">
                       <div className="flex items-center gap-3">
-                        <span className="text-lg">{platformSettings.partner_access_enabled ? 'Ã°ÂÂÂ¢' : 'Ã°ÂÂÂ´'}</span>
+                        <span className="text-lg">{platformSettings.partner_access_enabled ? 'ð¢' : 'ð´'}</span>
                         <div>
-                          <p className="text-sm text-white font-medium">AccÃÂ¨s Partenaires</p>
+                          <p className="text-sm text-white font-medium">AccÃ¨s Partenaires</p>
                           <p className="text-xs text-white/40">Inscription & connexion</p>
                         </div>
                       </div>
@@ -5251,10 +5251,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     {/* Toggle: Mode Maintenance */}
                     <div className="px-4 py-3 flex items-center justify-between hover:bg-white/5 transition-colors">
                       <div className="flex items-center gap-3">
-                        <span className="text-lg">{platformSettings.maintenance_mode ? 'Ã°ÂÂÂ´' : 'Ã°ÂÂÂ¢'}</span>
+                        <span className="text-lg">{platformSettings.maintenance_mode ? 'ð´' : 'ð¢'}</span>
                         <div>
                           <p className="text-sm text-white font-medium">Mode Maintenance</p>
-                          <p className="text-xs text-white/40">Bloquer tout accÃÂ¨s</p>
+                          <p className="text-xs text-white/40">Bloquer tout accÃ¨s</p>
                         </div>
                       </div>
                       <button
@@ -5311,7 +5311,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               <button 
                 onClick={handleStripeConnect}
                 disabled={stripeConnectLoading}
-                title={stripeConnectStatus?.connected ? "Compte Stripe connectÃÂ©" : "Connecter votre Stripe"}
+                title={stripeConnectStatus?.connected ? "Compte Stripe connectÃ©" : "Connecter votre Stripe"}
                 className="h-20 rounded-2xl flex flex-col items-center justify-center gap-2 transition-all duration-200 hover:scale-105"
                 style={{ 
                   background: stripeConnectStatus?.connected 
@@ -5324,7 +5324,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 }}
                 data-testid="stripe-connect-btn"
               >
-                <span className="text-lg">{stripeConnectStatus?.connected ? 'Ã¢ÂÂ' : 'Ã°ÂÂÂ³'}</span>
+                <span className="text-lg">{stripeConnectStatus?.connected ? 'â' : 'ð³'}</span>
                 <span className="text-white/80 text-xs">{stripeConnectLoading ? '...' : 'Stripe'}</span>
               </button>
             )}
@@ -5332,7 +5332,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             {/* === CARTE PARTAGER === */}
             <button 
               onClick={handleCoachShareLink}
-              title={linkCopied ? "Lien copiÃÂ© !" : "Partager le site"}
+              title={linkCopied ? "Lien copiÃ© !" : "Partager le site"}
               className="h-20 rounded-2xl flex flex-col items-center justify-center gap-2 transition-all duration-200 hover:scale-105"
               style={{ 
                 background: linkCopied 
@@ -5354,7 +5354,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
                 </svg>
               )}
-              <span className="text-white/80 text-xs">{linkCopied ? 'CopiÃÂ©!' : 'Partager'}</span>
+              <span className="text-white/80 text-xs">{linkCopied ? 'CopiÃ©!' : 'Partager'}</span>
             </button>
           </div>
         </div>
@@ -5386,14 +5386,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           {/* Bouton Vue Visiteur - Ouvre la vitrine publique dans un nouvel onglet */}
           <button
             onClick={() => {
-              // v67: Super Admin Ã¢ÂÂ homepage publique, Partenaires Ã¢ÂÂ /coach/{username}
-              // VERROUILLÃÂ: aucun chemin ne gÃÂ©nÃÂ¨re /coach/bassi pour le Super Admin
+              // v67: Super Admin â homepage publique, Partenaires â /coach/{username}
+              // VERROUILLÃ: aucun chemin ne gÃ©nÃ¨re /coach/bassi pour le Super Admin
               const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
               const isSA = SUPER_ADMIN_EMAILS.includes(safeCoachUser?.email?.toLowerCase());
               const finalUrl = isSA
                 ? `${window.location.origin}/?visitor=true&t=${Date.now()}`
                 : `${coachVitrineUrl || window.location.origin}?t=${Date.now()}`;
-              console.log('[V67] Vue Visiteur Ã¢ÂÂ ', finalUrl);
+              console.log('[V67] Vue Visiteur â ', finalUrl);
               window.open(finalUrl, '_blank');
             }}
             className="ml-auto px-3 py-2 rounded-lg text-xs sm:text-sm flex items-center gap-2 flex-shrink-0"
@@ -5443,7 +5443,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           />
         )}
 
-        {/* v36: HUB GESTION Ã¢ÂÂ Centre de commande unifiÃÂ© avec sous-onglets 2x2 */}
+        {/* v36: HUB GESTION â Centre de commande unifiÃ© avec sous-onglets 2x2 */}
         {tab === "offers" && (
           <>
             {/* v37: Grille 2x2 de navigation avec badges */}
@@ -5457,10 +5457,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 const totalAudioTracks = courses.reduce((acc, c) => acc + (c.audio_tracks?.length || c.playlist?.length || 0), 0);
                 const totalVideos = (concept?.heroVideos || []).filter(v => v && (v.url || v.file_id)).length;
                 return [
-                  { id: 'contenus', icon: 'Ã°ÂÂÂ', label: 'Contenus', badge: courses.length + (offers?.length || 0) + totalAudioTracks },
-                  { id: 'video-hero', icon: 'Ã°ÂÂÂ¬', label: 'VidÃÂ©o Hero', badge: totalVideos },
-                  { id: 'vitrine', icon: 'Ã°ÂÂÂ¼Ã¯Â¸Â', label: 'Ma Vitrine', badge: 0 },
-                  { id: 'boutique-hub', icon: 'Ã°ÂÂÂ³', label: 'Boutique & Paiements', badge: 0 }
+                  { id: 'contenus', icon: 'ð', label: 'Contenus', badge: courses.length + (offers?.length || 0) + totalAudioTracks },
+                  { id: 'video-hero', icon: 'ð¬', label: 'VidÃ©o Hero', badge: totalVideos },
+                  { id: 'vitrine', icon: 'ð¼ï¸', label: 'Ma Vitrine', badge: 0 },
+                  { id: 'boutique-hub', icon: 'ð³', label: 'Boutique & Paiements', badge: 0 }
                 ];
               })().map(sub => (
                 <button
@@ -5510,7 +5510,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               ))}
             </div>
 
-            {/* v37.2: Sous-onglet: Ã°ÂÂÂ Contenus Ã¢ÂÂ Cours + Offres + Audio Upload + Master Control Audio */}
+            {/* v37.2: Sous-onglet: ð Contenus â Cours + Offres + Audio Upload + Master Control Audio */}
             {offersSubTab === 'contenus' && (
               <>
                 <CoursesManager
@@ -5549,7 +5549,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     flexWrap: 'wrap'
                   }}>
                     <span style={{ fontSize: '18px' }}>
-                      {nextExpiration.next.days_left <= 3 ? 'Ã°ÂÂÂ´' : nextExpiration.next.days_left <= 7 ? 'Ã°ÂÂÂ¡' : 'Ã°ÂÂÂ¢'}
+                      {nextExpiration.next.days_left <= 3 ? 'ð´' : nextExpiration.next.days_left <= 7 ? 'ð¡' : 'ð¢'}
                     </span>
                     <div style={{ flex: 1, minWidth: '200px' }}>
                       <div style={{ color: '#fff', fontSize: '13px', fontWeight: 600 }}>
@@ -5559,9 +5559,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         {nextExpiration.next.days_left === 0
                           ? "Expire aujourd'hui"
                           : `Dans ${nextExpiration.next.days_left} jour${nextExpiration.next.days_left > 1 ? 's' : ''}`}
-                        {' Ã¢ÂÂ¢ '}
+                        {' â¢ '}
                         {new Date(nextExpiration.next.expiration_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}
-                        {nextExpiration.next.is_auto_prolong ? ' Ã¢ÂÂ¢ Ã¢ÂÂ»Ã¯Â¸Â Auto-renouvellement' : ' Ã¢ÂÂ¢ Ã¢ÂÂ¹Ã¯Â¸Â Pas de renouvellement'}
+                        {nextExpiration.next.is_auto_prolong ? ' â¢ â»ï¸ Auto-renouvellement' : ' â¢ â¹ï¸ Pas de renouvellement'}
                       </div>
                     </div>
                     <div style={{
@@ -5573,12 +5573,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                       fontSize: '11px',
                       fontWeight: 700
                     }}>
-                      {nextExpiration.total_with_expiration} offre{nextExpiration.total_with_expiration > 1 ? 's' : ''} avec validitÃÂ©
+                      {nextExpiration.total_with_expiration} offre{nextExpiration.total_with_expiration > 1 ? 's' : ''} avec validitÃ©
                     </div>
                   </div>
                 )}
 
-                {/* v71: SOCIAL BOOST Ã¢ÂÂ Panneau Admin (Super Admin uniquement) */}
+                {/* v71: SOCIAL BOOST â Panneau Admin (Super Admin uniquement) */}
                 {isSuperAdmin && (
                   <div style={{
                     marginTop: '16px', marginBottom: '16px',
@@ -5587,7 +5587,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     border: '1px solid rgba(217,28,210,0.2)'
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
-                      <span style={{ fontSize: '20px' }}>Ã°ÂÂÂ¬</span>
+                      <span style={{ fontSize: '20px' }}>ð¬</span>
                       <h3 style={{ color: '#fff', fontSize: '15px', fontWeight: 700, margin: 0 }}>Social Boost</h3>
                       <span style={{
                         background: 'rgba(217,28,210,0.2)', color: '#D91CD2',
@@ -5601,14 +5601,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         onClick={async (e) => {
                           const btn = e.currentTarget;
                           btn.disabled = true;
-                          btn.textContent = 'Ã¢ÂÂ³ GÃÂ©nÃÂ©ration en cours... (Patientez)';
+                          btn.textContent = 'â³ GÃ©nÃ©ration en cours... (Patientez)';
                           btn.style.opacity = '0.6';
                           btn.style.cursor = 'not-allowed';
                           try {
                             const res = await axios.post(`${API}/admin/generate-social-proof`, { count: 50 }, {
                               headers: { 'X-User-Email': coachUser?.email }
                             });
-                            alert(`Ã¢ÂÂ 50 avis gÃÂ©nÃÂ©rÃÂ©s avec succÃÂ¨s !`);
+                            alert(`â 50 avis gÃ©nÃ©rÃ©s avec succÃ¨s !`);
                             // Refresh la liste des derniers commentaires
                             try {
                               const commRes = await axios.get(`${API}/comments?coach_id=${encodeURIComponent(coachUser?.email || '')}`);
@@ -5619,10 +5619,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                               }
                             } catch(er) {}
                           } catch (e2) {
-                            alert('Ã¢ÂÂ Erreur: ' + (e2.response?.data?.detail || e2.message));
+                            alert('â Erreur: ' + (e2.response?.data?.detail || e2.message));
                           } finally {
                             btn.disabled = false;
-                            btn.textContent = 'Ã°ÂÂÂ Booster la Preuve Sociale (50 avis IA)';
+                            btn.textContent = 'ð Booster la Preuve Sociale (50 avis IA)';
                             btn.style.opacity = '1';
                             btn.style.cursor = 'pointer';
                           }
@@ -5635,7 +5635,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           transition: 'opacity 0.2s'
                         }}
                       >
-                        Ã°ÂÂÂ Booster la Preuve Sociale (50 avis IA)
+                        ð Booster la Preuve Sociale (50 avis IA)
                       </button>
                       <button
                         onClick={async () => {
@@ -5643,9 +5643,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                             const res = await axios.post(`${API}/admin/boost-likes`, { amount: 100 }, {
                               headers: { 'X-User-Email': coachUser?.email }
                             });
-                            alert(`Ã¢ÂÂ +100 likes ajoutÃÂ©s sur ${res.data.boosted_comments} commentaires !`);
+                            alert(`â +100 likes ajoutÃ©s sur ${res.data.boosted_comments} commentaires !`);
                           } catch (e) {
-                            alert('Ã¢ÂÂ Erreur: ' + (e.response?.data?.detail || e.message));
+                            alert('â Erreur: ' + (e.response?.data?.detail || e.message));
                           }
                         }}
                         style={{
@@ -5655,7 +5655,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           fontSize: '13px', fontWeight: 600, cursor: 'pointer'
                         }}
                       >
-                        Ã¢ÂÂ¤Ã¯Â¸Â +100 Likes
+                        â¤ï¸ +100 Likes
                       </button>
                       <button
                         onClick={async () => {
@@ -5664,9 +5664,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                             const res = await axios.delete(`${API}/admin/comments`, {
                               headers: { 'X-User-Email': coachUser?.email }
                             });
-                            alert(`Ã°ÂÂÂÃ¯Â¸Â ${res.data.deleted} commentaires IA supprimÃÂ©s`);
+                            alert(`ðï¸ ${res.data.deleted} commentaires IA supprimÃ©s`);
                           } catch (e) {
-                            alert('Ã¢ÂÂ Erreur: ' + (e.response?.data?.detail || e.message));
+                            alert('â Erreur: ' + (e.response?.data?.detail || e.message));
                           }
                         }}
                         style={{
@@ -5676,15 +5676,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           fontSize: '13px', fontWeight: 600, cursor: 'pointer'
                         }}
                       >
-                        Ã°ÂÂÂÃ¯Â¸Â Reset
+                        ðï¸ Reset
                       </button>
                     </div>
 
-                    {/* v77: Liste des 5 derniers commentaires avec contrÃÂ´les individuels */}
+                    {/* v77: Liste des 5 derniers commentaires avec contrÃ´les individuels */}
                     <SocialBoostCommentsList API={API} coachEmail={coachUser?.email} axios={axios} />
 
                     <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px', marginTop: '10px', margin: '10px 0 0 0' }}>
-                      Les commentaires gÃÂ©nÃÂ©rÃÂ©s s'affichent sur le Hero et la section Avis de votre vitrine.
+                      Les commentaires gÃ©nÃ©rÃ©s s'affichent sur le Hero et la section Avis de votre vitrine.
                     </p>
                   </div>
                 )}
@@ -5725,18 +5725,18 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     filter: 'blur(30px)', pointerEvents: 'none'
                   }} />
 
-                  {/* v44: Header autonome Ã¢ÂÂ plus de sÃÂ©lecteur de cours */}
+                  {/* v44: Header autonome â plus de sÃ©lecteur de cours */}
                   <div style={{ position: 'relative', zIndex: 1, marginBottom: '16px' }}>
                     <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '10px', margin: '0 0 4px 0' }}>
-                      <span style={{ fontSize: '26px' }}>Ã°ÂÂÂµ</span> Studio Audio
+                      <span style={{ fontSize: '26px' }}>ðµ</span> Studio Audio
                       <span style={{ fontSize: '12px', fontWeight: 600, color: 'rgba(217,28,210,0.7)', background: 'rgba(217,28,210,0.1)', padding: '2px 8px', borderRadius: '8px' }}>
                         {audioTracks.length} piste{audioTracks.length !== 1 ? 's' : ''}
                       </span>
                     </h2>
-                    <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: 0 }}>GÃÂ©rez vos pistes audio indÃÂ©pendamment Ã¢ÂÂ¢ Vente & tÃÂ©lÃÂ©chargement sur votre vitrine</p>
+                    <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: 0 }}>GÃ©rez vos pistes audio indÃ©pendamment â¢ Vente & tÃ©lÃ©chargement sur votre vitrine</p>
                   </div>
 
-                  {/* Upload Zone Ã¢ÂÂ v44: toujours visible */}
+                  {/* Upload Zone â v44: toujours visible */}
                   <div style={{ position: 'relative', zIndex: 1 }}>
                       <div
                         style={{
@@ -5771,14 +5771,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         />
                         {uploadingAudio ? (
                           <div>
-                            <div style={{ fontSize: '36px', marginBottom: '8px' }}>Ã¢ÂÂ³</div>
+                            <div style={{ fontSize: '36px', marginBottom: '8px' }}>â³</div>
                             <p style={{ color: '#d91cd2', fontWeight: 600, fontSize: '14px', margin: 0 }}>Upload en cours...</p>
                           </div>
                         ) : (
                           <div>
-                            <div style={{ fontSize: '42px', marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(217,28,210,0.5))' }}>Ã°ÂÂÂ¶</div>
+                            <div style={{ fontSize: '42px', marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(217,28,210,0.5))' }}>ð¶</div>
                             <p style={{ color: '#fff', fontWeight: 700, fontSize: '15px', marginBottom: '4px' }}>Glissez vos fichiers audio ici</p>
-                            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: 0 }}>ou cliquez pour sÃÂ©lectionner Ã¢ÂÂ¢ MP3, WAV, OGG, AAC (max 15MB)</p>
+                            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: 0 }}>ou cliquez pour sÃ©lectionner â¢ MP3, WAV, OGG, AAC (max 15MB)</p>
                           </div>
                         )}
                       </div>
@@ -5817,9 +5817,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                   {/* v46: Reorder buttons (touch-friendly) */}
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flexShrink: 0 }}>
                                     <button onClick={(e) => { e.stopPropagation(); if (index === 0) return; const sorted = [...audioTracks].sort((a,b) => a.order - b.order); const updated = [...sorted]; const [moved] = updated.splice(index, 1); updated.splice(index - 1, 0, moved); setAudioTracks(updated.map((t, i) => ({ ...t, order: i }))); }}
-                                      style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index === 0 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index === 0 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>Ã¢ÂÂ²</button>
+                                      style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index === 0 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index === 0 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>â²</button>
                                     <button onClick={(e) => { e.stopPropagation(); const sorted = [...audioTracks].sort((a,b) => a.order - b.order); if (index >= sorted.length - 1) return; const updated = [...sorted]; const [moved] = updated.splice(index, 1); updated.splice(index + 1, 0, moved); setAudioTracks(updated.map((t, i) => ({ ...t, order: i }))); }}
-                                      style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index >= audioTracks.length - 1 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index >= audioTracks.length - 1 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index >= audioTracks.length - 1 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>Ã¢ÂÂ¼</button>
+                                      style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index >= audioTracks.length - 1 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index >= audioTracks.length - 1 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index >= audioTracks.length - 1 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>â¼</button>
                                   </div>
                                   <div
                                     onClick={(e) => { e.stopPropagation(); setCoverUploadTrackId(track.id); audioCoverInputRef.current?.click(); }}
@@ -5832,7 +5832,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                       boxShadow: '0 0 15px rgba(217,28,210,0.2)'
                                     }}
                                   >
-                                    {!track.cover_url && <span style={{ fontSize: '20px' }}>Ã°ÂÂÂµ</span>}
+                                    {!track.cover_url && <span style={{ fontSize: '20px' }}>ðµ</span>}
                                   </div>
                                   <div style={{ flex: 1, minWidth: 0 }}>
                                     <p style={{ color: '#fff', fontSize: '14px', fontWeight: 600, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{track.title}</p>
@@ -5842,26 +5842,26 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                       ) : (
                                         <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>Gratuit</span>
                                       )}
-                                      <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)' }}>Ã¢ÂÂ¢</span>
+                                      <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)' }}>â¢</span>
                                       <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>Preview {track.preview_duration}s</span>
-                                      <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)' }}>Ã¢ÂÂ¢</span>
+                                      <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)' }}>â¢</span>
                                       <span style={{
                                         fontSize: '10px', fontWeight: 700, padding: '1px 6px', borderRadius: '6px',
                                         background: track.visible !== false ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
                                         color: track.visible !== false ? '#22c55e' : '#ef4444',
                                         border: track.visible !== false ? '1px solid rgba(34,197,94,0.3)' : '1px solid rgba(239,68,68,0.3)'
                                       }}>
-                                        {track.visible !== false ? 'En vente' : 'MasquÃÂ©'}
+                                        {track.visible !== false ? 'En vente' : 'MasquÃ©'}
                                       </span>
                                     </div>
                                   </div>
                                   <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                                     <button onClick={(e) => { e.stopPropagation(); setEditingTrackId(editingTrackId === track.id ? null : track.id); }}
                                       style={{ width: '32px', height: '32px', borderRadius: '8px', border: 'none', background: editingTrackId === track.id ? 'rgba(217,28,210,0.3)' : 'rgba(255,255,255,0.08)', color: editingTrackId === track.id ? '#d91cd2' : 'rgba(255,255,255,0.5)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}
-                                      title="ÃÂditer">Ã¢ÂÂÃ¯Â¸Â</button>
+                                      title="Ãditer">âï¸</button>
                                     <button onClick={(e) => { e.stopPropagation(); removeTrack(track.id); }}
                                       style={{ width: '32px', height: '32px', borderRadius: '8px', border: 'none', background: 'rgba(239,68,68,0.1)', color: '#ef4444', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}
-                                      title="Supprimer">Ã°ÂÂÂÃ¯Â¸Â</button>
+                                      title="Supprimer">ðï¸</button>
                                   </div>
                                 </div>
 
@@ -5884,7 +5884,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                         style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', fontSize: '13px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', outline: 'none' }} placeholder="https://exemple.com/cover.jpg" />
                                     </div>
                                     <div>
-                                      <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>Prix (CHF) Ã¢ÂÂ 0 = gratuit</label>
+                                      <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>Prix (CHF) â 0 = gratuit</label>
                                       <input type="number" min="0" step="0.5" value={track.price} onChange={(e) => updateTrackField(track.id, 'price', parseFloat(e.target.value) || 0)}
                                         style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', fontSize: '13px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', outline: 'none' }} />
                                     </div>
@@ -5899,7 +5899,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                         <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: '#fff', position: 'absolute', top: '3px', left: track.visible !== false ? '23px' : '3px', transition: 'left 0.3s ease', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }} />
                                       </div>
                                       <span style={{ color: track.visible !== false ? '#22c55e' : 'rgba(255,255,255,0.4)', fontSize: '13px', fontWeight: 600 }}>
-                                        {track.visible !== false ? 'En vente sur la vitrine' : 'MasquÃÂ© (non visible)'}
+                                        {track.visible !== false ? 'En vente sur la vitrine' : 'MasquÃ© (non visible)'}
                                       </span>
                                     </div>
                                   </div>
@@ -5925,7 +5925,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           }}
                           data-testid="save-audio-inline"
                         >
-                          {savingPlaylist ? 'Ã¢ÂÂ³ Sauvegarde...' : 'Ã°ÂÂÂ¾ Sauvegarder le Studio Audio'}
+                          {savingPlaylist ? 'â³ Sauvegarde...' : 'ð¾ Sauvegarder le Studio Audio'}
                         </button>
                       </div>
                     </div>
@@ -5948,7 +5948,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               </>
             )}
 
-            {/* v37.2: Sous-onglet: Ã°ÂÂÂ¬ VidÃÂ©o Hero */}
+            {/* v37.2: Sous-onglet: ð¬ VidÃ©o Hero */}
             {offersSubTab === 'video-hero' && (
               <ConceptEditor
                 concept={concept}
@@ -5965,7 +5965,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               />
             )}
 
-            {/* v37.2: Sous-onglet: Ã°ÂÂÂ¼Ã¯Â¸Â Ma Vitrine */}
+            {/* v37.2: Sous-onglet: ð¼ï¸ Ma Vitrine */}
             {offersSubTab === 'vitrine' && (
               <>
                 <ConceptEditor
@@ -6009,7 +6009,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               </>
             )}
 
-            {/* v37.2: Sous-onglet: Ã°ÂÂÂ³ Boutique & Paiements */}
+            {/* v37.2: Sous-onglet: ð³ Boutique & Paiements */}
             {offersSubTab === 'boutique-hub' && (
               <>
                 <ConceptEditor
@@ -6035,9 +6035,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           </>
         )}
 
-        {/* v37.2: "Ma Page" supprimÃÂ© Ã¢ÂÂ centralisÃÂ© dans HUB > Ma Vitrine */}
+        {/* v37.2: "Ma Page" supprimÃ© â centralisÃ© dans HUB > Ma Vitrine */}
 
-        {/* v13.8: Promo Codes Tab - RESTAURATION COMPLÃÂTE */}
+        {/* v13.8: Promo Codes Tab - RESTAURATION COMPLÃTE */}
         {tab === "codes" && (
           <PromoCodesTab
             // === Credits Gate ===
@@ -6061,7 +6061,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             setShowManualContactForm={setShowManualContactForm}
             manualContact={manualContact}
             setManualContact={setManualContact}
-            // === Beneficiaries selection (v13.8: RESTAURÃÂ) ===
+            // === Beneficiaries selection (v13.8: RESTAURÃ) ===
             uniqueCustomers={uniqueCustomers}
             selectedBeneficiaries={selectedBeneficiaries}
             toggleBeneficiarySelection={toggleBeneficiarySelection}
@@ -6088,14 +6088,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         {/* === CONTACTS TAB v18 === */}
         {tab === "contacts" && (
           <div className="card-gradient rounded-xl p-4 sm:p-6">
-            <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: 700, marginBottom: '16px' }}>Ã°ÂÂÂ Mes Contacts</h2>
+            <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: 700, marginBottom: '16px' }}>ð Mes Contacts</h2>
             <ContactsManager API={API} coachEmail={coachUser?.email} />
           </div>
         )}
 
         {/* === CAMPAIGNS TAB === */}
         {/* [CAMPAGNE_START] - Section extraite vers CampaignManager.js */}
-        {/* v13.2: Verrouillage crÃÂ©dits avec composant CreditsGate */}
+        {/* v13.2: Verrouillage crÃ©dits avec composant CreditsGate */}
         {tab === "campaigns" && !hasCreditsFor('campaign') ? (
           <div className="card-gradient rounded-xl p-4 sm:p-6">
             <CreditsGate 
@@ -6108,14 +6108,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           </div>
         ) : tab === "campaigns" && (
           <CampaignManager
-            // === ÃÂTATS PRINCIPAUX ===
+            // === ÃTATS PRINCIPAUX ===
             campaigns={campaigns}
             newCampaign={newCampaign}
             setNewCampaign={setNewCampaign}
             editingCampaignId={editingCampaignId}
             schedulerHealth={schedulerHealth}
             
-            // === ÃÂTATS ENVOI DIRECT ===
+            // === ÃTATS ENVOI DIRECT ===
             directSendMode={directSendMode}
             setDirectSendMode={setDirectSendMode}
             externalChannelsExpanded={externalChannelsExpanded}
@@ -6168,7 +6168,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             setTestWhatsAppNumber={setTestWhatsAppNumber}
             testWhatsAppStatus={testWhatsAppStatus}
             
-            // === ENVOI GROUPÃÂ ===
+            // === ENVOI GROUPÃ ===
             bulkSendingInProgress={bulkSendingInProgress}
             bulkSendingProgress={bulkSendingProgress}
             bulkSendingResults={bulkSendingResults}
@@ -6186,7 +6186,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             aiTestLoading={aiTestLoading}
             aiConfigSaveStatus={aiConfigSaveStatus} // v9.3.8: Indicateur auto-save
             
-            // === PREVIEW MÃÂDIA ===
+            // === PREVIEW MÃDIA ===
             resolvedThumbnail={resolvedThumbnail}
             
             // === HANDLERS ===
@@ -6230,21 +6230,21 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             showCampaignToast={showCampaignToast}
             API={API}
             
-            // === v9.0.2: CRÃÂDITS ===
+            // === v9.0.2: CRÃDITS ===
             hasInsufficientCredits={hasInsufficientCredits}
             coachCredits={coachCredits}
-            // v11: Super Admin + coÃÂ»t campagne
+            // v11: Super Admin + coÃ»t campagne
             isSuperAdmin={isSuperAdmin}
             campaignCreditCost={servicePrices?.campaign || 1}
             chatLinks={chatLinks}
             coachEmail={coachUser?.email}
           />
         )}
-        {/* [CAMPAGNE_END] - Section extraite vers CampaignManager.js (~1490 lignes ÃÂ©conomisÃÂ©es) */}
+        {/* [CAMPAGNE_END] - Section extraite vers CampaignManager.js (~1490 lignes Ã©conomisÃ©es) */}
 
 
         {/* ========== ONGLET CONVERSATIONS v9.2.0 - Extrait vers CRMSection.js ========== */}
-        {/* v13.2: Verrouillage crÃÂ©dits avec composant CreditsGate */}
+        {/* v13.2: Verrouillage crÃ©dits avec composant CreditsGate */}
         {tab === "conversations" && !hasCreditsFor('ai_conversation') ? (
           <div className="card-gradient rounded-xl p-4 sm:p-6">
             <CreditsGate 
@@ -6313,9 +6313,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           />
           </SectionErrorBoundary>
         )}
-        {/* [CONVERSATIONS_END] - Section extraite vers CRMSection.js (~940 lignes ÃÂ©conomisÃÂ©es) */}
+        {/* [CONVERSATIONS_END] - Section extraite vers CRMSection.js (~940 lignes Ã©conomisÃ©es) */}
 
-        {/* ========== v13.2: ONGLET BOUTIQUE CRÃÂDITS - Composant extrait ========== */}
+        {/* ========== v13.2: ONGLET BOUTIQUE CRÃDITS - Composant extrait ========== */}
         {tab === "boutique" && !isSuperAdmin && (
           <CreditBoutique
             coachCredits={coachCredits}
@@ -6326,7 +6326,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           />
         )}
 
-        {/* v37.2: Onglet "Paiements" supprimÃÂ© Ã¢ÂÂ centralisÃÂ© dans HUB > Boutique & Paiements */}
+        {/* v37.2: Onglet "Paiements" supprimÃ© â centralisÃ© dans HUB > Boutique & Paiements */}
 
         {/* ========== v13.2: ONGLET STRIPE - Composant extrait ========== */}
         {tab === "stripe" && !isSuperAdmin && (
