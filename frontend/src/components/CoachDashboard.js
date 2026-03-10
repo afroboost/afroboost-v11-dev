@@ -91,7 +91,7 @@ const performEmailSend = async (destination, recipientName = 'Client', subject =
       return { success: false, error: 'Message vide' };
     }
     
-  console.log("\u{1F680} V90 : Syst\u00e8me Partenaire & Conversion cr\u00e9dits op\u00e9rationnel");
+console.log("\u{1F680} V92 : Donn\u00e9es Admin isol\u00e9es du Dashboard Partenaire");
     console.log('========================================');
     console.log('RESEND_DEBUG: Envoi campagne via API');
     console.log('RESEND_DEBUG: Destination =', destination);
@@ -659,6 +659,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // v90: Partner dashboard - admin-only tabs hidden for partners
   const isPartnerOnly = !isSuperAdmin;
   const ADMIN_ONLY_TABS = ["Réservations", "Contacts"];
+  const ADMIN_ONLY_TAB_IDS = ['contacts', 'campaigns']; // v92: tab IDs hidden for partners
   
   // v9.2.5: Valeurs par défaut TOUJOURS présentes pour éviter page blanche
   const displayEmail = safeCoachUser?.email || 'Partenaire';
@@ -1465,8 +1466,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         setReservations(res.data.data);
         setReservationPagination(res.data.pagination);
         
-        setCourses(crs.data); setOffers(off.data); setUsers(usr.data);
-        setPaymentLinks(lnk.data); setConcept(cpt.data); setDiscountCodes(cds.data);
+        setCourses(crs.data); setOffers(off.data);
+        // v92: Partners don't see full user database
+        setUsers(isSuperAdmin ? usr.data : []);
+        setPaymentLinks(lnk.data); setConcept(cpt.data);
+        // v92: Partners see only their own promo codes
+        setDiscountCodes(isSuperAdmin ? cds.data : cds.data.filter(c => c.createdBy === safeCoachUser_.email || c.coach_id === safeCoachUser_.email));
 
         // v69: Charger prochaine expiration d'offre
         try {
@@ -4596,7 +4601,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   // v37.2: Boutique et Stripe pour coachs partenaires uniquement
   const tabs = !isSuperAdmin
-    ? [...baseTabs, { id: "boutique", label: "💎 Boutique" }, { id: "stripe", label: "🔗 Mon Stripe" }]
+    ? [...baseTabs.filter(t => !ADMIN_ONLY_TAB_IDS.includes(t.id)), { id: "boutique", label: "💎 Boutique" }, { id: "stripe", label: "🔗 Mon Stripe" }]
     : [...baseTabs];
 
   // v9.2.5: COMPOSANT DE SECOURS - Affiche le squelette du dashboard pendant le chargement
@@ -6093,7 +6098,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         {tab === "contacts" && (
           <div className="card-gradient rounded-xl p-4 sm:p-6">
             <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: 700, marginBottom: '16px' }}>📇 Mes Contacts</h2>
-            <ContactsManager API={API} coachEmail={coachUser?.email} />
+            <ContactsManager API={API} coachEmail={coachUser?.email} isSuperAdmin={isSuperAdmin} />
           </div>
         )}
 
