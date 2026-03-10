@@ -30,8 +30,6 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   
-  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
-  const hasProcessedRef = useRef(false);
   
   // v11.0: Méthode de paiement (card = Stripe, mobile_money = CinetPay)
   const [paymentMethod, setPaymentMethod] = useState('card');
@@ -216,7 +214,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
     }
   };
 
-  if (loading || isCheckingAuth) {
+  if (loading) {
     return (
       <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center">
         <div className="text-white text-lg">Chargement...</div>
