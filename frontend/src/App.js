@@ -3898,6 +3898,46 @@ function App() {
     <div className="w-full min-h-screen relative section-gradient" style={{ fontFamily: 'system-ui, sans-serif' }}>
       <LanguageSelector lang={lang} setLang={setLang} />
 
+      {/* V93.5: Bouton flottant "Retour au dashboard" en mode Vue Visiteur */}
+      {isVisitorMode && (
+        <div style={{
+          position: 'fixed',
+          top: '16px',
+          right: '16px',
+          zIndex: 9999,
+          animation: 'fadeIn 0.3s ease-in'
+        }}>
+          <button
+            onClick={() => {
+              window.location.href = window.location.origin + '/#partner-dashboard';
+            }}
+            style={{
+              background: 'linear-gradient(135deg, #D91CD2, #7B2FBE)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '12px',
+              padding: '12px 20px',
+              fontSize: '14px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 4px 20px rgba(217,28,210,0.4)',
+              transition: 'transform 0.2s, box-shadow 0.2s'
+            }}
+            onMouseEnter={e => { e.target.style.transform = 'scale(1.05)'; e.target.style.boxShadow = '0 6px 25px rgba(217,28,210,0.6)'; }}
+            onMouseLeave={e => { e.target.style.transform = 'scale(1)'; e.target.style.boxShadow = '0 4px 20px rgba(217,28,210,0.4)'; }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 12H5"></path>
+              <path d="M12 19l-7-7 7-7"></path>
+            </svg>
+            Retour au dashboard
+          </button>
+        </div>
+      )}
+
       {/* Event Poster Modal (Popup d'accueil) */}
       {showEventPoster && concept.eventPosterMediaUrl && (
         <EventPosterModal 
