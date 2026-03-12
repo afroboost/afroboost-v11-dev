@@ -645,7 +645,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
 const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // v9.2.5: Protection ABSOLUE contre les erreurs - Valeurs par défaut GARANTIES
   const safeCoachUser = coachUser || {};
-  
+
   // v9.2.5: État de chargement initial
   const [dashboardReady, setDashboardReady] = useState(false);
   const [loadError, setLoadError] = useState(null);
@@ -680,14 +680,23 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     headers: { 'X-User-Email': safeCoachUser?.email || '' }
   });
   
+  // v94: GARDE DE SÉCURITÉ — vérifier l'authentification au montage
+  useEffect(() => {
+    if (!coachUser?.email) {
+      console.log('[DASHBOARD] 🔒 V94 : Accès refusé — pas d\'authentification valide');
+      if (onLogout) onLogout();
+    }
+  }, [coachUser, onLogout]);
+
   // v9.2.5: Marquer le dashboard comme prêt après le premier rendu
   useEffect(() => {
+    if (!coachUser?.email) return; // v94: pas de chargement si pas authentifié
     const timer = setTimeout(() => {
       setDashboardReady(true);
       console.log('[DASHBOARD] v9.2.5 Dashboard prêt');
     }, 100);
     return () => clearTimeout(timer);
-  }, []);
+  }, [coachUser]);
   
   // === PANNEAU SUPER ADMIN ===
   const [showAdminPanel, setShowAdminPanel] = useState(false);
@@ -1418,26 +1427,28 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
   
-  // === DÉCONNEXION SÉCURISÉE ===
+  // === v94: DÉCONNEXION SÉCURISÉE — nettoyage COMPLET ===
   const handleSecureLogout = () => {
     try {
-      // Vider localStorage (sauf les clés critiques)
+      // v94: Vider TOUT le localStorage lié à l'authentification
       const keysToRemove = [
         COACH_TAB_KEY,
         COACH_SESSION_KEY,
+        'afroboost_coach_mode',
         'afroboost_coach_user',
+        'afroboost_admin_persist',
         'afroboost_identity',
         'af_chat_client',
         'af_chat_session'
       ];
       keysToRemove.forEach(key => localStorage.removeItem(key));
-      
+
       // Vider sessionStorage
       sessionStorage.clear();
-      
-      console.log('[COACH] 🚪 Déconnexion sécurisée effectuée');
-      
-      // Appeler la fonction onLogout du parent
+
+      console.log('[COACH] 🔒 V94 : Déconnexion sécurisée — tous les tokens supprimés');
+
+      // Appeler la fonction onLogout du parent (qui fait le replace('/'))
       if (onLogout) onLogout();
     } catch (err) {
       console.error('[COACH] ❌ Erreur déconnexion:', err);

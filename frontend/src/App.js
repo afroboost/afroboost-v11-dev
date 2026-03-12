@@ -3505,23 +3505,27 @@ function App() {
     );
   };
 
-  // Fonction de déconnexion Google OAuth
+  // Fonction de déconnexion — v94: Nettoyage COMPLET + anti-retour navigateur
   const handleLogout = async () => {
     try {
       await axios.post(`${API}/auth/logout`, {}, { withCredentials: true });
     } catch (err) {
       console.error('Erreur déconnexion:', err);
     }
-    // Nettoyer le localStorage coach
+    // v94: Nettoyage COMPLET — inclut admin_persist pour couper tout accès
     localStorage.removeItem('afroboost_coach_mode');
     localStorage.removeItem('afroboost_coach_user');
     localStorage.removeItem('afroboost_coach_tab');
     localStorage.removeItem('afroboost_coach_session');
+    localStorage.removeItem(ADMIN_AUTH_TOKEN_KEY);
     sessionStorage.clear();
-    
+
     setCoachMode(false);
     setCoachUser(null);
-    console.log('[APP] 🚪 Déconnexion coach effectuée');
+    console.log('[APP] 🔒 V94 : Déconnexion sécurisée — tous les tokens supprimés');
+
+    // v94: Anti-retour — replace empêche le bouton "Retour" de réafficher le dashboard
+    window.location.replace('/');
   };
 
   // Fonction de connexion Google OAuth - v9.2.4: PROPULSION FORCÉE avec mémoire morte
