@@ -4,6 +4,7 @@
 
 import React, { useState, useRef, memo, useCallback } from 'react';
 import { Link2, Copy, Check, ExternalLink, Trash2, Edit2, Save, X, Plus, ChevronDown, ChevronUp, Users, MessageCircle, Calendar, CreditCard, Phone, Target, Zap, BarChart3, Eye, Play, ArrowRight, GripVertical } from 'lucide-react';
+import SmartLinkCard from './SmartLinkCard';
 
 // ====== STYLES ======
 const GLOW = {
@@ -621,108 +622,7 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
 });
 SmartLinkModal.displayName = 'SmartLinkModal';
 
-// ====== COMPOSANT LINK CARD — STYLE CAMPAGNE ======
-const SmartLinkCard = memo(({ link, copiedLinkId, onCopy, onDelete, onEdit, onDuplicate, onPreview }) => {
-  const linkToken = link.link_token || link.token || '';
-  const fullUrl = `${window.location.origin}/?link=${linkToken}`;
-  const usageCount = link.participant_count || 0;
-  const createdAt = link.created_at || link.createdAt || '';
-  const leadType = LEAD_TYPES.find(l => l.value === (link.lead_type || 'participant')) || LEAD_TYPES[0];
-  const questionsCount = (link.tunnel_questions || []).length;
-  const actionsCount = (link.end_actions || []).length;
-  const isCopied = copiedLinkId === link.id;
-
-  const formatDate = (d) => {
-    try {
-      const date = new Date(d);
-      return isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat('fr-CH', { dateStyle: 'short' }).format(date);
-    } catch { return '—'; }
-  };
-
-  return (
-    <div style={{
-      background: 'rgba(255,255,255,0.02)',
-      border: '1px solid rgba(217,28,210,0.1)',
-      borderRadius: '12px', padding: '16px',
-      transition: 'all 0.2s',
-    }}
-      onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(217,28,210,0.25)'; e.currentTarget.style.background = 'rgba(217,28,210,0.03)'; }}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(217,28,210,0.1)'; e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; }}
-    >
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-            <span style={{ fontSize: '13px' }}>{leadType.icon}</span>
-            <p style={{ color: '#fff', fontSize: '14px', fontWeight: '600', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {link.title || 'Lien sans titre'}
-            </p>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            <span style={{
-              padding: '2px 8px', borderRadius: '10px',
-              background: `${leadType.color}18`, color: leadType.color,
-              fontSize: '10px', fontWeight: '600',
-            }}>
-              {leadType.label}
-            </span>
-            <span style={{ color: 'rgba(255,255,255,0.25)', fontSize: '10px' }}>
-              {usageCount} clic{usageCount > 1 ? 's' : ''}
-            </span>
-            <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: '10px' }}>
-              {formatDate(createdAt)}
-            </span>
-            {questionsCount > 0 && (
-              <span style={{ color: 'rgba(217,28,210,0.5)', fontSize: '10px' }}>
-                🧩 {questionsCount} question{questionsCount > 1 ? 's' : ''}
-              </span>
-            )}
-            {actionsCount > 0 && (
-              <span style={{ color: 'rgba(34,197,94,0.5)', fontSize: '10px' }}>
-                ⚡ {actionsCount} action{actionsCount > 1 ? 's' : ''}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Actions */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '2px', marginLeft: '8px' }}>
-          {[
-            { icon: Edit2, color: '#f59e0b', title: 'Modifier', onClick: () => onEdit(link) },
-            { icon: Copy, altIcon: Check, isAlt: isCopied, color: '#a78bfa', title: 'Copier', onClick: () => onCopy(linkToken) },
-            { icon: ExternalLink, color: '#22c55e', title: 'Ouvrir', isLink: true, href: fullUrl },
-            { icon: Trash2, color: '#ef4444', title: 'Supprimer', onClick: () => onDelete(link.id) },
-          ].map((action, i) => {
-            const Icon = action.isAlt ? action.altIcon : action.icon;
-            const style = {
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              width: '32px', height: '32px', borderRadius: '8px',
-              background: 'transparent', border: 'none', color: action.color,
-              cursor: 'pointer', transition: 'all 0.2s', textDecoration: 'none',
-            };
-            if (action.isLink) {
-              return <a key={i} href={action.href} target="_blank" rel="noopener noreferrer" style={style} title={action.title}><Icon size={14} /></a>;
-            }
-            return <button key={i} onClick={action.onClick} style={style} title={action.title}><Icon size={14} /></button>;
-          })}
-        </div>
-      </div>
-
-      {/* Prompt badge */}
-      {(link.custom_prompt || link.customPrompt) && (
-        <p style={{
-          margin: 0, padding: '6px 10px', borderRadius: '6px',
-          background: 'rgba(139,92,246,0.06)',
-          color: 'rgba(167, 139, 250, 0.6)', fontSize: '11px',
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>
-          ✦ {link.custom_prompt || link.customPrompt}
-        </p>
-      )}
-    </div>
-  );
-});
-SmartLinkCard.displayName = 'SmartLinkCard';
+// SmartLinkCard est maintenant importé depuis ./SmartLinkCard.js (v98.1)
 
 // ====== COMPOSANT PRINCIPAL ======
 const SmartLinksSection = ({
@@ -889,12 +789,24 @@ const SmartLinksSection = ({
         </div>
       )}
 
-      {/* Links list */}
-      <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      {/* Links grid — responsive: 1 col mobile, 2 cols desktop */}
+      <div style={{ padding: '16px 20px' }}>
         {filteredLinks.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '40px 20px' }}>
-            <div style={{ fontSize: '32px', marginBottom: '12px' }}>🔗</div>
-            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '14px', margin: '0 0 4px' }}>
+          <div style={{
+            textAlign: 'center', padding: '48px 20px',
+            background: 'rgba(217,28,210,0.02)',
+            border: '2px dashed rgba(217,28,210,0.12)',
+            borderRadius: '16px',
+          }}>
+            <div style={{
+              width: '56px', height: '56px', borderRadius: '16px',
+              background: 'linear-gradient(135deg, rgba(217,28,210,0.1), rgba(147,51,234,0.08))',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 16px', fontSize: '24px',
+            }}>
+              🔗
+            </div>
+            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '14px', margin: '0 0 4px', fontWeight: '600' }}>
               {filter !== 'all' ? 'Aucun lien de ce type' : 'Aucun lien créé'}
             </p>
             <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: '12px', margin: 0 }}>
@@ -903,17 +815,22 @@ const SmartLinksSection = ({
           </div>
         )}
 
-        {filteredLinks.map(link => (
-          <SmartLinkCard
-            key={link.id}
-            link={link}
-            copiedLinkId={copiedLinkId}
-            onCopy={copyLinkToClipboard}
-            onDelete={deleteChatLink}
-            onEdit={handleEdit}
-            onDuplicate={handleDuplicate}
-          />
-        ))}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 340px), 1fr))',
+          gap: '14px',
+        }}>
+          {filteredLinks.map(link => (
+            <SmartLinkCard
+              key={link.id}
+              link={link}
+              copiedLinkId={copiedLinkId}
+              onCopy={copyLinkToClipboard}
+              onDelete={deleteChatLink}
+              onEdit={handleEdit}
+            />
+          ))}
+        </div>
       </div>
 
       {/* Modal */}
