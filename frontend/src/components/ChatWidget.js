@@ -1665,31 +1665,34 @@ export const ChatWidget = () => {
     }
   }, [afroboostProfile?.code, afroboostProfile?.email, checkReservationEligibility]);
 
-  // === v11.4: Rafraîchir le statut d'abonnement depuis le serveur ===
+  // === v95: Rafraîchir TOUS les abonnements actifs depuis le serveur (par email, sans filtrer par code) ===
   useEffect(() => {
     const refreshSubscriptionStatus = async () => {
-      if (!afroboostProfile?.email || !afroboostProfile?.code) return;
-      
+      if (!afroboostProfile?.email) return;
+
       try {
+        // v95: Charger par email uniquement pour récupérer TOUS les abonnements
         const res = await axios.get(`${API}/discount-codes/subscriptions/status`, {
-          params: { email: afroboostProfile.email, code: afroboostProfile.code }
+          params: { email: afroboostProfile.email }
         });
-        
-        if (res.data?.success && res.data?.subscription) {
-          // Mettre à jour le profil avec les dernières données du serveur
+
+        if (res.data?.success) {
+          const allSubs = res.data?.subscriptions || (res.data?.subscription ? [res.data.subscription] : []);
+          // Mettre à jour le profil avec le premier abonnement (rétro-compatible) + liste complète
           const updatedProfile = {
             ...afroboostProfile,
-            subscription: res.data.subscription
+            subscription: allSubs[0] || null,
+            allSubscriptions: allSubs
           };
           localStorage.setItem(AFROBOOST_PROFILE_KEY, JSON.stringify(updatedProfile));
           setAfroboostProfile(updatedProfile);
-          console.log('[SUBSCRIPTION v11.4] Statut chargé:', res.data.subscription.remaining_sessions, 'séances restantes');
+          console.log('[SUBSCRIPTION v95] Tous les abonnements chargés:', allSubs.length, 'actif(s)');
         }
       } catch (err) {
-        console.log('[SUBSCRIPTION v11.4] Erreur chargement statut:', err.message);
+        console.log('[SUBSCRIPTION v95] Erreur chargement statut:', err.message);
       }
     };
-    
+
     refreshSubscriptionStatus();
   }, []); // Exécuté une seule fois au montage
 
@@ -5394,49 +5397,61 @@ export const ChatWidget = () => {
                   </div>
                 )}
                 
-                {/* === v85: BLOC INFO ABONNEMENT — fond ultra-discret, ZERO bordure === */}
-                {afroboostProfile?.subscription && (
+                {/* === v95: BLOC INFO ABONNEMENTS — affiche TOUS les abonnements actifs === */}
+                {(afroboostProfile?.allSubscriptions?.length > 0 || afroboostProfile?.subscription) && (
                   <div
                     style={{
+                      padding: '6px 16px',
+                      background: 'rgba(255, 255, 255, 0.03)',
                       display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '8px 16px',
-                      background: 'rgba(255, 255, 255, 0.03)'
+                      flexDirection: 'column',
+                      gap: '4px'
                     }}
                     data-testid="subscription-info-bar"
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '16px' }}>🎫</span>
-                      <div>
-                        <div style={{ fontSize: '12px', fontWeight: '600', color: '#D91CD2' }}>
-                          {afroboostProfile.subscription.offer_name || 'Abonnement'}
+                    {(afroboostProfile.allSubscriptions || [afroboostProfile.subscription]).map((sub, idx) => (
+                      <div
+                        key={sub?.id || idx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '4px 0'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '14px' }}>🎫</span>
+                          <div>
+                            <div style={{ fontSize: '11px', fontWeight: '600', color: '#D91CD2' }}>
+                              {sub?.offer_name || sub?.code || 'Abonnement'}
+                            </div>
+                            <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)' }}>
+                              {sub?.code}{sub?.expires_at
+                                ? ` • Expire: ${new Date(sub.expires_at).toLocaleDateString('fr-FR')}`
+                                : ''}
+                            </div>
+                          </div>
                         </div>
-                        <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)' }}>
-                          {afroboostProfile.subscription.expires_at 
-                            ? `Expire: ${new Date(afroboostProfile.subscription.expires_at).toLocaleDateString('fr-FR')}`
-                            : 'Validité: Illimitée'}
+                        <div
+                          style={{
+                            background: 'rgba(217, 28, 210, 0.3)',
+                            padding: '4px 10px',
+                            borderRadius: '20px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                          data-testid={`sessions-counter-${idx}`}
+                        >
+                          <span style={{ fontSize: '13px', fontWeight: '700', color: '#fff' }}>
+                            {sub?.remaining_sessions === -1 ? '∞' : (sub?.remaining_sessions ?? '∞')}
+                          </span>
+                          <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.7)' }}>
+                            /{sub?.total_sessions === -1 ? '∞' : (sub?.total_sessions ?? '∞')} séances
+                          </span>
                         </div>
                       </div>
-                    </div>
-                    <div 
-                      style={{ 
-                        background: 'rgba(217, 28, 210, 0.3)', 
-                        padding: '6px 12px', 
-                        borderRadius: '20px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px'
-                      }}
-                      data-testid="sessions-counter"
-                    >
-                      <span style={{ fontSize: '14px', fontWeight: '700', color: '#fff' }}>
-                        {afroboostProfile.subscription.remaining_sessions ?? '∞'}
-                      </span>
-                      <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)' }}>
-                        /{afroboostProfile.subscription.total_sessions ?? '∞'} séances
-                      </span>
-                    </div>
+                    ))}
                   </div>
                 )}
 

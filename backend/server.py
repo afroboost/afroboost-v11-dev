@@ -2460,6 +2460,24 @@ async def stripe_webhook(request: Request):
                 discount_doc = {"id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100, "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0, "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(), "source": "stripe_payment", "session_id": session.id}
                 await db.discount_codes.insert_one(discount_doc)
                 logger.info(f"[PAYMENT] Code {new_code} cree pour {customer_email} ({sessions_count} seances)")
+                # v95: CRÉATION AUTOMATIQUE DE L'ABONNEMENT — l'utilisateur n'a plus besoin de valider le code manuellement
+                subscription_data = {
+                    "id": str(uuid.uuid4()),
+                    "email": customer_email.lower().strip(),
+                    "name": metadata.get("customer_name", customer_email.split("@")[0]),
+                    "code": new_code,
+                    "offer_name": product_name,
+                    "total_sessions": sessions_count,
+                    "used_sessions": 0,
+                    "remaining_sessions": sessions_count,
+                    "expires_at": None,
+                    "status": "active",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "source": "stripe_auto"
+                }
+                await db.subscriptions.insert_one(subscription_data)
+                logger.info(f"[PAYMENT] Abonnement auto-créé: {customer_email} - {product_name} ({sessions_count} séances)")
                 # v8.1: EMAIL AVEC QR CODE + CODE TEXTE
                 if RESEND_AVAILABLE and RESEND_API_KEY and customer_email:
                     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=AFROBOOST:{new_code}&format=png"
