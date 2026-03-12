@@ -186,7 +186,7 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
         background: 'linear-gradient(180deg, #0a0a0a 0%, #1a0a1a 100%)',
         borderRadius: '16px', width: '100%', maxWidth: '420px', margin: '0 auto',
       }}>
-        <div style={{ fontSize: '32px', marginBottom: '16px', animation: 'pulse 1.5s infinite' }}>💬</div>
+        <img src="/logo192.png" alt="Afroboost" style={{ width: '48px', height: '48px', borderRadius: '50%', marginBottom: '16px', border: '2px solid rgba(217,28,210,0.3)' }} />
         <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '14px' }}>Chargement...</p>
       </div>
     );
@@ -203,9 +203,9 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
       background: 'linear-gradient(180deg, #0a0a0a 0%, #1a0a1a 100%)',
       borderRadius: '16px', width: '100%', maxWidth: '420px', margin: '0 auto'
     }}>
-      {/* Logo / Titre */}
+      {/* Logo Afroboost officiel */}
       <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-        <div style={{ fontSize: '36px', marginBottom: '8px' }}>💬</div>
+        <img src="/logo192.png" alt="Afroboost" style={{ width: '56px', height: '56px', borderRadius: '50%', marginBottom: '8px', border: '2px solid rgba(217,28,210,0.3)', boxShadow: '0 0 16px rgba(217,28,210,0.2)' }} />
         <h2 style={{ color: '#ffffff', fontSize: '20px', fontWeight: '700', margin: '0 0 8px 0' }}>
           {welcomeMsg}
         </h2>

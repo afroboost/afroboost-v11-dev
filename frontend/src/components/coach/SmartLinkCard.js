@@ -10,7 +10,7 @@ const LEAD_TYPES = [
   { value: 'question', label: 'Question', color: '#a78bfa', icon: '\u{2753}', gradient: 'linear-gradient(135deg, #a78bfa, #8b5cf6)' },
 ];
 
-const SmartLinkCard = memo(({ link, copiedLinkId, onCopy, onDelete, onEdit, selected, onToggleSelect }) => {
+const SmartLinkCard = memo(({ link, copiedLinkId, onCopy, onDelete, onEdit, onPreview, selected, onToggleSelect }) => {
   const [hovered, setHovered] = useState(false);
 
   // Robust ID: fallback chain
@@ -223,6 +223,15 @@ const SmartLinkCard = memo(({ link, copiedLinkId, onCopy, onDelete, onEdit, sele
             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(34,197,94,0.15)'; e.currentTarget.style.boxShadow = '0 0 10px rgba(34,197,94,0.15)'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'rgba(34,197,94,0.08)'; e.currentTarget.style.boxShadow = 'none'; }}
           ><ExternalLink size={13} /> Ouvrir</a>
+
+          {onPreview && (
+            <button onClick={onPreview}
+              style={{ width: '38px', height: '38px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px', flexShrink: 0, background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.18)', color: '#8b5cf6', cursor: 'pointer', transition: 'all 0.2s' }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(139,92,246,0.15)'; e.currentTarget.style.boxShadow = '0 0 10px rgba(139,92,246,0.15)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(139,92,246,0.08)'; e.currentTarget.style.boxShadow = 'none'; }}
+              title="Aperçu du tunnel"
+            ><Eye size={14} /></button>
+          )}
 
           <button onClick={() => onDelete(linkId)}
             style={{ width: '38px', height: '38px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '10px', flexShrink: 0, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)', color: '#ef4444', cursor: 'pointer', transition: 'all 0.2s' }}

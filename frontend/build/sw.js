@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v98.2';
-// V98.2: Multi-select, bulk delete, Stratégie IA, tunnel questions fix
+const CACHE_NAME = 'afroboost-v99.0';
+// V99.0: Architecture modulaire — LinkSimulator, GroupChatModule, ChatBubbles, logo Afroboost
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {

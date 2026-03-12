@@ -5,6 +5,7 @@
 import React, { useState, useRef, memo, useCallback } from 'react';
 import { Link2, Copy, Check, ExternalLink, Trash2, Edit2, Save, X, Plus, ChevronDown, ChevronUp, Users, MessageCircle, Calendar, CreditCard, Phone, Target, Zap, BarChart3, Eye, Play, ArrowRight, GripVertical, Sparkles, CheckSquare, Square } from 'lucide-react';
 import SmartLinkCard from './SmartLinkCard';
+import LinkSimulator from './LinkSimulator';
 
 // ====== STYLES ======
 const GLOW = {
@@ -734,6 +735,7 @@ const SmartLinksSection = ({
   const [filter, setFilter] = useState('all');
   const [selectedLinks, setSelectedLinks] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [simulatorLink, setSimulatorLink] = useState(null);
 
   // Multi-sélection
   const getLinkId = (link) => link.id || link._id || link.link_token || '';
@@ -1003,6 +1005,7 @@ const SmartLinksSection = ({
                 onCopy={copyLinkToClipboard}
                 onDelete={deleteChatLink}
                 onEdit={handleEdit}
+                onPreview={() => setSimulatorLink(link)}
                 selected={selectedLinks.has(lid)}
                 onToggleSelect={toggleSelect}
               />
@@ -1010,6 +1013,13 @@ const SmartLinksSection = ({
           })}
         </div>
       </div>
+
+      {/* Simulateur d'aperçu */}
+      <LinkSimulator
+        link={simulatorLink}
+        isOpen={!!simulatorLink}
+        onClose={() => setSimulatorLink(null)}
+      />
 
       {/* Modal */}
       <SmartLinkModal
