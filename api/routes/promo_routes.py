@@ -141,17 +141,65 @@ async def get_discount_codes(request: Request):
 
 @promo_router.post("")
 async def create_discount_code(code: DiscountCodeCreate, request: Request):
-    """Crée un nouveau code promo avec coach_id"""
+    """Crée un nouveau code promo avec coach_id — v96: auto-crée la subscription si bénéficiaire assigné"""
     user_email = request.headers.get('X-User-Email', '').lower().strip()
     is_super_admin = user_email == SUPER_ADMIN_EMAIL.lower()
-    
+
     code_data = code.model_dump()
     # v9.3.0: Assigner le coach_id si pas Super Admin
     if not is_super_admin and user_email:
         code_data["coach_id"] = user_email
-    
+
     code_obj = DiscountCode(**code_data)
     await _db.discount_codes.insert_one(code_obj.model_dump())
+
+    # v96: Auto-créer la subscription si un bénéficiaire est assigné
+    assigned_email = (code.assignedEmail or "").lower().strip()
+    if assigned_email:
+        code_str = code.code.upper().strip()
+        total_sessions = code.maxUses or 10
+        offer_name = code.code or "Abonnement"
+
+        # Vérifier qu'il n'y a pas déjà un abonnement actif pour ce code + email
+        existing = await _db.subscriptions.find_one({
+            "email": assigned_email,
+            "code": {"$regex": f"^{code_str}$", "$options": "i"},
+            "status": "active"
+        })
+        if not existing:
+            expiry = None
+            if code.expiresAt:
+                try:
+                    exp_str = code.expiresAt
+                    if 'T' not in exp_str:
+                        exp_str = exp_str + "T23:59:59+00:00"
+                    expiry = exp_str
+                except Exception:
+                    expiry = code.expiresAt
+
+            sub_data = {
+                "id": str(uuid.uuid4()),
+                "email": assigned_email,
+                "name": assigned_email.split("@")[0],
+                "code": code_str,
+                "offer_name": offer_name,
+                "total_sessions": total_sessions,
+                "used_sessions": 0,
+                "remaining_sessions": total_sessions,
+                "expires_at": expiry,
+                "status": "active",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "source": "admin_manual"
+            }
+            await _db.subscriptions.insert_one(sub_data)
+            logger.info(f"[PROMO] Subscription auto-créée: {assigned_email} - {code_str} ({total_sessions} séances)")
+            # Envoyer email de bienvenue
+            asyncio.create_task(_send_welcome_email(
+                assigned_email, assigned_email.split("@")[0],
+                code_str, offer_name, total_sessions
+            ))
+
     return code_obj
 
 

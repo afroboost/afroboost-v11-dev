@@ -5443,6 +5443,9 @@ export const ChatWidget = () => {
                           }}
                           data-testid={`sessions-counter-${idx}`}
                         >
+                          <span style={{ fontSize: '9px', color: '#D91CD2', fontWeight: '600', marginRight: '2px' }}>
+                            {sub?.offer_name || sub?.code || 'Abo'}
+                          </span>
                           <span style={{ fontSize: '13px', fontWeight: '700', color: '#fff' }}>
                             {sub?.remaining_sessions === -1 ? '∞' : (sub?.remaining_sessions ?? '∞')}
                           </span>
