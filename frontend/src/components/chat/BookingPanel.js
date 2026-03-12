@@ -1,8 +1,7 @@
 /**
  * BookingPanel.js - Panneau de réservation pour les abonnés
  *
- * Extrait de ChatWidget.js pour alléger le fichier principal.
- * Affiche la liste des cours disponibles et permet de réserver un créneau.
+ * v95: Sélecteur multi-abonnements — l'utilisateur choisit quel abonnement utiliser
  *
  * === SYNCHRONISATION HORAIRE ===
  * - Dates formatées en français suisse avec Intl.DateTimeFormat('fr-CH')
@@ -13,65 +12,43 @@
 import React, { memo, useMemo } from 'react';
 
 // === FORMATTER DE DATE FRANÇAIS SUISSE (Europe/Zurich) ===
-// v14.9: FIX - Calcul du jour basé sur la date réelle en timezone Suisse
-// Évite le décalage UTC qui peut donner un mauvais jour de semaine
 const formatCourseDate = (time, weekday) => {
-  // Obtenir la date/heure actuelle en Suisse via Intl (évite décalage UTC)
   const nowStr = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Europe/Zurich',
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', hour12: false
   }).format(new Date());
-  // Parser la date Suisse (format YYYY-MM-DD)
   const [datePart] = nowStr.split(',');
   const todayInZurich = new Date(datePart + 'T12:00:00');
   const currentDay = todayInZurich.getDay();
 
   let daysUntilCourse = weekday - currentDay;
-  // Permettre cours le jour même (< 0, pas <= 0)
   if (daysUntilCourse < 0) daysUntilCourse += 7;
 
   const courseDate = new Date(todayInZurich);
   courseDate.setDate(todayInZurich.getDate() + daysUntilCourse);
 
-  // Parser l'heure du cours (format "18:30")
   if (time) {
     const [hours, minutes] = time.split(':');
     courseDate.setHours(parseInt(hours) || 18, parseInt(minutes) || 30, 0, 0);
   }
 
-  // Formater en Suisse (fr-CH) avec fuseau Europe/Zurich
   const formatter = new Intl.DateTimeFormat('fr-CH', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'Europe/Zurich'
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Zurich'
   });
 
   const formatted = formatter.format(courseDate);
-  // Capitaliser la première lettre
   return formatted.charAt(0).toUpperCase() + formatted.slice(1);
 };
 
-// === FALLBACK LOCALISATION ===
 const getLocationDisplay = (course) => {
   return course?.location || course?.locationName || 'Lieu à confirmer';
 };
 
 /**
  * Panneau de réservation de cours
- * @param {object} afroboostProfile - Profil abonné {code, name, email, whatsapp}
- * @param {array} availableCourses - Liste des cours disponibles
- * @param {object} selectedCourse - Cours sélectionné
- * @param {function} setSelectedCourse - Setter pour sélectionner un cours
- * @param {boolean} loadingCourses - État de chargement des cours
- * @param {boolean} reservationLoading - État de chargement de la réservation
- * @param {string} reservationError - Message d'erreur
- * @param {function} onConfirmReservation - Handler de confirmation
- * @param {function} onClose - Handler de fermeture
+ * v95: Ajout de subscriptions, selectedSubscription, onSelectSubscription
  */
 const BookingPanel = ({
   afroboostProfile,
@@ -82,9 +59,12 @@ const BookingPanel = ({
   reservationLoading,
   reservationError,
   onConfirmReservation,
-  onClose
+  onClose,
+  // v95: Multi-abonnements
+  subscriptions = [],
+  selectedSubscription = null,
+  onSelectSubscription = null
 }) => {
-  // Mémoriser le formatage des dates
   const formattedCourses = useMemo(() => {
     return availableCourses.map(course => ({
       ...course,
@@ -92,6 +72,8 @@ const BookingPanel = ({
       displayLocation: getLocationDisplay(course)
     }));
   }, [availableCourses]);
+
+  const hasMultipleSubs = subscriptions.length > 1;
 
   return (
     <div style={{
@@ -132,11 +114,85 @@ const BookingPanel = ({
           border: '1px solid rgba(34, 197, 94, 0.3)',
           borderRadius: '8px',
           padding: '8px 12px',
-          marginBottom: '12px',
+          marginBottom: hasMultipleSubs ? '4px' : '12px',
           fontSize: '12px',
           color: '#22c55e'
         }}>
           💎 Abonné • Code: <strong>{afroboostProfile.code}</strong>
+        </div>
+      )}
+
+      {/* v95: SÉLECTEUR MULTI-ABONNEMENTS */}
+      {hasMultipleSubs && (
+        <div style={{
+          background: 'rgba(217, 28, 210, 0.1)',
+          border: '1px solid rgba(217, 28, 210, 0.3)',
+          borderRadius: '10px',
+          padding: '10px',
+          marginBottom: '8px'
+        }}>
+          <p style={{ color: '#D91CD2', fontSize: '12px', margin: '0 0 8px 0', fontWeight: '600' }}>
+            🔄 Réserver pour quel abonnement ?
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {subscriptions.map(sub => {
+              const isSelected = selectedSubscription?.id === sub.id;
+              const isUnlimited = sub.total_sessions === -1 || sub.remaining_sessions === -1;
+              return (
+                <button
+                  key={sub.id}
+                  type="button"
+                  onClick={() => onSelectSubscription && onSelectSubscription(sub)}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    background: isSelected
+                      ? 'linear-gradient(135deg, rgba(217, 28, 210, 0.4), rgba(147, 51, 234, 0.4))'
+                      : 'rgba(255,255,255,0.05)',
+                    border: isSelected
+                      ? '2px solid #D91CD2'
+                      : '1px solid rgba(255,255,255,0.1)',
+                    color: '#fff',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  data-testid={`sub-${sub.id}`}
+                >
+                  <div style={{ fontWeight: 'bold', fontSize: '13px' }}>
+                    {isSelected ? '● ' : '○ '}
+                    {sub.offer_name || sub.code}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginTop: '2px' }}>
+                    Code: {sub.code}
+                    {isUnlimited
+                      ? ' • ∞ séances'
+                      : ` • ${sub.remaining_sessions}/${sub.total_sessions} séances restantes`
+                    }
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Info abonnement unique */}
+      {subscriptions.length === 1 && (
+        <div style={{
+          background: 'rgba(147, 51, 234, 0.1)',
+          border: '1px solid rgba(147, 51, 234, 0.2)',
+          borderRadius: '8px',
+          padding: '8px 12px',
+          marginBottom: '8px',
+          fontSize: '11px',
+          color: 'rgba(255,255,255,0.6)'
+        }}>
+          📋 {subscriptions[0].offer_name || subscriptions[0].code}
+          {subscriptions[0].total_sessions === -1 || subscriptions[0].remaining_sessions === -1
+            ? ' • ∞ séances'
+            : ` • ${subscriptions[0].remaining_sessions}/${subscriptions[0].total_sessions} séances restantes`
+          }
         </div>
       )}
 
@@ -147,7 +203,7 @@ const BookingPanel = ({
         </div>
       )}
 
-      {/* Liste des cours - Avec dates formatées en français */}
+      {/* Liste des cours */}
       {!loadingCourses && !selectedCourse && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {formattedCourses.length === 0 && (
@@ -175,13 +231,11 @@ const BookingPanel = ({
               <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
                 {course.name}
               </div>
-              {/* Date formatée en français suisse (Europe/Zurich) */}
               <div style={{ fontSize: '13px', marginBottom: '4px', color: '#a78bfa' }}>
                 📅 {course.formattedDate}
               </div>
-              {/* Lieu avec style discret si "Lieu à confirmer" */}
-              <div style={{ 
-                fontSize: '12px', 
+              <div style={{
+                fontSize: '12px',
                 opacity: 0.8,
                 color: course.displayLocation === 'Lieu à confirmer' ? '#999' : 'inherit',
                 fontStyle: course.displayLocation === 'Lieu à confirmer' ? 'italic' : 'normal'
@@ -189,8 +243,8 @@ const BookingPanel = ({
                 📍 {course.displayLocation}
               </div>
               {course.spotsLeft !== undefined && (
-                <div style={{ 
-                  fontSize: '11px', 
+                <div style={{
+                  fontSize: '11px',
                   marginTop: '4px',
                   color: course.spotsLeft <= 3 ? '#f97316' : '#22c55e'
                 }}>
@@ -210,9 +264,9 @@ const BookingPanel = ({
           borderRadius: '12px',
           padding: '16px'
         }}>
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'space-between', 
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
             alignItems: 'flex-start',
             marginBottom: '12px'
           }}>
@@ -220,18 +274,16 @@ const BookingPanel = ({
               <h4 style={{ color: '#fff', margin: '0 0 4px 0', fontSize: '14px' }}>
                 {selectedCourse.name}
               </h4>
-              {/* Date formatée en français suisse (Europe/Zurich) */}
               <p style={{ color: '#a78bfa', margin: '0 0 4px 0', fontSize: '13px', fontWeight: '500' }}>
                 📅 {selectedCourse.formattedDate || formatCourseDate(selectedCourse.time, selectedCourse.weekday)}
               </p>
-              {/* Lieu avec style discret si "Lieu à confirmer" */}
               {(() => {
                 const loc = selectedCourse.displayLocation || getLocationDisplay(selectedCourse);
                 const isPlaceholder = loc === 'Lieu à confirmer';
                 return (
-                  <p style={{ 
-                    color: isPlaceholder ? '#999' : 'rgba(255,255,255,0.7)', 
-                    margin: 0, 
+                  <p style={{
+                    color: isPlaceholder ? '#999' : 'rgba(255,255,255,0.7)',
+                    margin: 0,
                     fontSize: '12px',
                     fontStyle: isPlaceholder ? 'italic' : 'normal'
                   }}>
@@ -259,27 +311,48 @@ const BookingPanel = ({
             </button>
           </div>
 
+          {/* v95: Rappel abonnement sélectionné */}
+          {hasMultipleSubs && selectedSubscription && (
+            <div style={{
+              background: 'rgba(217, 28, 210, 0.15)',
+              borderRadius: '6px',
+              padding: '6px 10px',
+              marginBottom: '10px',
+              fontSize: '11px',
+              color: '#D91CD2'
+            }}>
+              🎯 Réservation via : <strong>{selectedSubscription.offer_name || selectedSubscription.code}</strong>
+            </div>
+          )}
+
           {/* Bouton de confirmation */}
           <button
             type="button"
             onClick={onConfirmReservation}
-            disabled={reservationLoading}
+            disabled={reservationLoading || (hasMultipleSubs && !selectedSubscription)}
             style={{
               width: '100%',
               padding: '12px',
               borderRadius: '10px',
-              background: reservationLoading 
+              background: reservationLoading
                 ? 'linear-gradient(135deg, #666, #555)'
-                : 'linear-gradient(135deg, #22c55e, #16a34a)',
+                : (hasMultipleSubs && !selectedSubscription)
+                  ? 'linear-gradient(135deg, #555, #444)'
+                  : 'linear-gradient(135deg, #22c55e, #16a34a)',
               border: 'none',
               color: '#fff',
               fontWeight: 'bold',
-              cursor: reservationLoading ? 'wait' : 'pointer',
-              opacity: reservationLoading ? 0.7 : 1
+              cursor: reservationLoading ? 'wait' : (hasMultipleSubs && !selectedSubscription) ? 'not-allowed' : 'pointer',
+              opacity: (reservationLoading || (hasMultipleSubs && !selectedSubscription)) ? 0.7 : 1
             }}
             data-testid="confirm-reservation-btn"
           >
-            {reservationLoading ? '⏳ Envoi en cours...' : '✅ Confirmer la réservation'}
+            {reservationLoading
+              ? '⏳ Envoi en cours...'
+              : (hasMultipleSubs && !selectedSubscription)
+                ? '⬆️ Sélectionnez un abonnement'
+                : '✅ Confirmer la réservation'
+            }
           </button>
 
           {/* Erreur */}

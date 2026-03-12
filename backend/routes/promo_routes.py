@@ -235,40 +235,46 @@ async def use_discount_code(code_id: str):
 # === v11.4: ENDPOINTS SUBSCRIPTIONS (ABONNEMENTS) ===
 @promo_router.get("/subscriptions/status")
 async def get_subscription_status(email: str = "", code: str = ""):
-    """Récupère le statut d'abonnement d'un utilisateur v11.4"""
+    """Récupère le statut d'abonnement d'un utilisateur v11.4 — v95: retourne TOUS les abonnements actifs"""
     if not email and not code:
         return {"success": False, "message": "Email ou code requis"}
-    
+
     query = {"status": "active"}
     if email:
         query["email"] = email.lower().strip()
     if code:
         query["code"] = code.upper().strip()
-    
-    subscription = await _db.subscriptions.find_one(query, {"_id": 0})
-    
-    if not subscription:
+
+    # v95: Récupérer TOUS les abonnements actifs (pas juste le premier)
+    all_subs = await _db.subscriptions.find(query, {"_id": 0}).to_list(50)
+
+    if not all_subs:
         return {
             "success": False,
             "hasSubscription": False,
             "message": "Aucun abonnement actif"
         }
-    
+
+    def format_sub(s):
+        return {
+            "id": s.get("id"),
+            "email": s.get("email"),
+            "name": s.get("name"),
+            "code": s.get("code"),
+            "offer_name": s.get("offer_name"),
+            "total_sessions": s.get("total_sessions"),
+            "used_sessions": s.get("used_sessions", 0),
+            "remaining_sessions": s.get("remaining_sessions"),
+            "expires_at": s.get("expires_at"),
+            "status": s.get("status")
+        }
+
+    # Rétro-compatible : "subscription" = premier résultat
     return {
         "success": True,
         "hasSubscription": True,
-        "subscription": {
-            "id": subscription.get("id"),
-            "email": subscription.get("email"),
-            "name": subscription.get("name"),
-            "code": subscription.get("code"),
-            "offer_name": subscription.get("offer_name"),
-            "total_sessions": subscription.get("total_sessions"),
-            "used_sessions": subscription.get("used_sessions", 0),
-            "remaining_sessions": subscription.get("remaining_sessions"),
-            "expires_at": subscription.get("expires_at"),
-            "status": subscription.get("status")
-        }
+        "subscription": format_sub(all_subs[0]),
+        "subscriptions": [format_sub(s) for s in all_subs]
     }
 
 

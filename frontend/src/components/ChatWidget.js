@@ -1624,6 +1624,9 @@ export const ChatWidget = () => {
   const [reservationLoading, setReservationLoading] = useState(false); // Chargement réservation
   const [reservationError, setReservationError] = useState(''); // Erreur réservation
   const [reservationEligibility, setReservationEligibility] = useState(null); // Éligibilité code
+  // v95: Multi-abonnements
+  const [userSubscriptions, setUserSubscriptions] = useState([]);
+  const [selectedSubscription, setSelectedSubscription] = useState(null);
 
   // === VÉRIFICATION ÉLIGIBILITÉ RÉSERVATION ===
   const checkReservationEligibility = useCallback(async () => {
@@ -1795,6 +1798,25 @@ export const ChatWidget = () => {
     setShowReservationPanel(true);
     setSelectedCourse(null);
     setReservationError('');
+    setSelectedSubscription(null);
+
+    // v95: Charger TOUS les abonnements actifs de l'utilisateur
+    if (afroboostProfile?.email) {
+      axios.get(`${API}/discount-codes/subscriptions/status`, {
+        params: { email: afroboostProfile.email }
+      }).then(res => {
+        const subs = res.data?.subscriptions || (res.data?.subscription ? [res.data.subscription] : []);
+        setUserSubscriptions(subs);
+        // Si un seul abonnement, le sélectionner automatiquement
+        if (subs.length === 1) {
+          setSelectedSubscription(subs[0]);
+        }
+        console.log('[SUBSCRIPTIONS] v95:', subs.length, 'abonnement(s) actif(s)');
+      }).catch(err => {
+        console.log('[SUBSCRIPTIONS] Erreur chargement:', err.message);
+        setUserSubscriptions([]);
+      });
+    }
   }, [showReservationPanel, isVisitorPreview, afroboostProfile]);
 
   // === HANDLER CONFIRMATION RÉSERVATION (extrait pour BookingPanel) ===
@@ -1824,7 +1846,8 @@ export const ChatWidget = () => {
       courseName: selectedCourse.name,
       courseTime: selectedCourse.time,
       datetime: new Date().toISOString(),
-      promoCode: (afroboostProfile?.code || '').trim().toUpperCase(),
+      promoCode: (selectedSubscription?.code || afroboostProfile?.code || '').trim().toUpperCase(),
+      subscriptionId: selectedSubscription?.id || null,
       source: 'chat_widget_abonne',
       type: 'abonné',
       offerId: selectedCourse.id,
@@ -5773,6 +5796,9 @@ export const ChatWidget = () => {
                         reservationError={reservationError}
                         onConfirmReservation={handleConfirmReservation}
                         onClose={() => { setShowReservationPanel(false); setSelectedCourse(null); setReservationError(''); }}
+                        subscriptions={userSubscriptions}
+                        selectedSubscription={selectedSubscription}
+                        onSelectSubscription={setSelectedSubscription}
                       />
                     </div>
                   </div>

@@ -212,7 +212,11 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
     <div className="text-white/60 text-xs space-y-1 mb-3">
       <p>📅 {formatDateTime(r.datetime)}</p>
       {r.courseName && <p>📚 {r.courseName}</p>}
-      {r.promoCode && <p>🎫 Code: {r.promoCode}</p>}
+      {r.promoCode && (
+        <p>🎫 Code: <span className="text-yellow-400 font-medium">{r.promoCode}</span>
+          {r.subscriptionId && <span className="text-purple-400 ml-1">(abo lié)</span>}
+        </p>
+      )}
       {r.source && <p>📍 Source: {r.source}</p>}
     </div>
     
@@ -258,10 +262,15 @@ const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, 
     </td>
     <td className="py-3 text-white/60 text-xs">{formatDateTime(r.datetime)}</td>
     <td className="py-3">
-      <div className="flex gap-1">
-        {r.courseName && <span className="text-xs text-purple-400">📚</span>}
-        {isProduct && <span className="text-xs text-blue-400">🛒</span>}
-        {r.promoCode && <span className="text-xs text-yellow-400" title={r.promoCode}>🎫</span>}
+      <div className="flex flex-col gap-0.5">
+        <div className="flex gap-1">
+          {r.courseName && <span className="text-xs text-purple-400">📚</span>}
+          {isProduct && <span className="text-xs text-blue-400">🛒</span>}
+          {r.promoCode && <span className="text-xs text-yellow-400" title={`Code: ${r.promoCode}`}>🎫</span>}
+        </div>
+        {r.promoCode && (
+          <span className="text-[10px] text-yellow-400/70">{r.promoCode}</span>
+        )}
       </div>
     </td>
     <td className="py-3">

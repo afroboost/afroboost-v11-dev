@@ -4,8 +4,12 @@
  * Inclut: Edition, Duplication, Durée validité, Max uses, Sélection contacts
  * v14.0: Ajout bouton "Copier" le code
  */
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
+import axios from 'axios';
 import { CreditsGate } from './index';
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
+const API = `${BACKEND_URL}/api`;
 
 // Icônes
 const FolderIcon = () => (
@@ -74,6 +78,26 @@ const PromoCodesTab = ({
 }) => {
   const fileInputRef = useRef(null);
   const [copiedCodeId, setCopiedCodeId] = useState(null); // v14.0: État pour bouton "Copié"
+
+  // v95: Charger les subscriptions par code pour afficher séances restantes
+  const [codeSubscriptions, setCodeSubscriptions] = useState({});
+  useEffect(() => {
+    const loadSubscriptions = async () => {
+      const subsMap = {};
+      for (const code of discountCodes) {
+        try {
+          const res = await axios.get(`${API}/discount-codes/subscriptions/status`, {
+            params: { code: code.code }
+          });
+          if (res.data?.subscriptions?.length > 0) {
+            subsMap[code.code] = res.data.subscriptions;
+          }
+        } catch (err) { /* ignore */ }
+      }
+      setCodeSubscriptions(subsMap);
+    };
+    if (discountCodes?.length > 0) loadSubscriptions();
+  }, [discountCodes]);
 
   // v14.0: Fonction pour copier le code dans le presse-papier
   const copyCodeToClipboard = async (code) => {
@@ -488,6 +512,31 @@ const PromoCodesTab = ({
                   Utilisé: {code.usedCount || code.used || 0}/{code.maxUses || '∞'}
                   {code.expiresAt && ` • Expire: ${formatDate(code.expiresAt)}`}
                 </p>
+                {/* v95: Séances par abonné */}
+                {codeSubscriptions[code.code]?.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {codeSubscriptions[code.code].map(sub => (
+                      <div key={sub.id} className="flex items-center gap-2 text-xs">
+                        <span className="text-purple-400">👤</span>
+                        <span className="text-white/60">{sub.name || sub.email}</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px]" style={{
+                          background: sub.remaining_sessions <= 0
+                            ? 'rgba(239,68,68,0.2)'
+                            : sub.remaining_sessions <= 2
+                              ? 'rgba(245,158,11,0.2)'
+                              : 'rgba(34,197,94,0.2)',
+                          color: sub.remaining_sessions <= 0
+                            ? '#ef4444'
+                            : sub.remaining_sessions <= 2
+                              ? '#f59e0b'
+                              : '#22c55e'
+                        }}>
+                          {sub.remaining_sessions === -1 ? '∞' : `${sub.used_sessions}/${sub.total_sessions}`} séances
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               
               {/* BOUTONS D'ACTION */}
