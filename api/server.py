@@ -7244,6 +7244,81 @@ async def get_all_chat_links():
     
     return sessions
 
+# v98.2: Récupérer un lien spécifique par token (pour OnboardingTunnel)
+@api_router.get("/chat/links/{token}")
+async def get_chat_link_by_token(token: str):
+    """
+    Récupère un lien de chat par son link_token.
+    Utilisé par le tunnel d'onboarding pour charger les questions personnalisées.
+    """
+    link = await db.chat_sessions.find_one(
+        {"$or": [{"link_token": token}, {"id": token}], "is_deleted": {"$ne": True}},
+        {"_id": 0, "id": 1, "link_token": 1, "title": 1, "custom_prompt": 1, "lead_type": 1,
+         "tunnel_questions": 1, "end_actions": 1, "welcome_message": 1, "is_ai_active": 1}
+    )
+    if not link:
+        raise HTTPException(status_code=404, detail="Lien non trouvé")
+    return link
+
+# v98.2: Générer une stratégie IA pour le tunnel
+@api_router.post("/chat/generate-strategy")
+async def generate_ai_strategy(request: Request):
+    """
+    Utilise l'IA pour générer des questions de tunnel, un message d'accueil
+    et un prompt système basés sur l'objectif du coach.
+    """
+    body = await request.json()
+    objective = body.get("objective", "").strip()
+    lead_type = body.get("lead_type", "participant")
+
+    if not objective:
+        raise HTTPException(status_code=400, detail="Objectif requis")
+
+    try:
+        from openai import OpenAI
+        openai_key = os.environ.get("OPENAI_API_KEY")
+        if not openai_key:
+            raise HTTPException(status_code=500, detail="OpenAI non configuré")
+
+        client = OpenAI(api_key=openai_key)
+
+        system_msg = """Tu es un expert en tunnels de vente et qualification de leads.
+L'utilisateur te donne un objectif. Tu dois générer:
+1. Un message d'accueil engageant (2-3 phrases max, avec emoji)
+2. 3 à 5 questions de qualification pertinentes
+3. Un prompt système pour l'IA du chat
+
+Réponds en JSON strict:
+{
+  "welcome_message": "...",
+  "custom_prompt": "...",
+  "questions": [
+    {"text": "...", "type": "text|buttons|email|phone|city|number|date", "options": ["opt1","opt2"] }
+  ]
+}
+Pour type "buttons", fournis 2-4 options. Pour les autres types, options = [].
+Langue: français. Ton: professionnel mais chaleureux."""
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": f"Objectif: {objective}\nType de lead: {lead_type}"}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.7,
+            max_tokens=800,
+        )
+
+        import json
+        result = json.loads(response.choices[0].message.content)
+        logger.info(f"[AI STRATEGY] Généré {len(result.get('questions', []))} questions pour objectif: {objective[:50]}")
+        return result
+
+    except Exception as e:
+        logger.error(f"[AI STRATEGY] Erreur: {e}")
+        raise HTTPException(status_code=500, detail=f"Erreur IA: {str(e)}")
+
 @api_router.delete("/chat/links/{link_id}")
 async def delete_chat_link(link_id: str):
     """

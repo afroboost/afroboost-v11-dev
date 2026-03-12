@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v88';
-// V88: Fix avis + controle coach avis + icones Hero lisibles
+const CACHE_NAME = 'afroboost-v98.2';
+// V98.2: Multi-select, bulk delete, Stratégie IA, tunnel questions fix
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {

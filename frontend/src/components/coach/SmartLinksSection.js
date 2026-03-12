@@ -1,9 +1,9 @@
-// SmartLinksSection.js — v98: Liens Intelligents de Conversion
-// Composant autonome pour la gestion des liens intelligents
-// Inspiré du design CampaignModal (stepper, gradient violet, cards premium)
+// SmartLinksSection.js — v98.2: Liens Intelligents de Conversion
+// Multi-sélection, bulk delete, Stratégie IA, design premium anthracite
+// Fix: robust ID chain, delete fonctionne, tunnel questions visibles
 
 import React, { useState, useRef, memo, useCallback } from 'react';
-import { Link2, Copy, Check, ExternalLink, Trash2, Edit2, Save, X, Plus, ChevronDown, ChevronUp, Users, MessageCircle, Calendar, CreditCard, Phone, Target, Zap, BarChart3, Eye, Play, ArrowRight, GripVertical } from 'lucide-react';
+import { Link2, Copy, Check, ExternalLink, Trash2, Edit2, Save, X, Plus, ChevronDown, ChevronUp, Users, MessageCircle, Calendar, CreditCard, Phone, Target, Zap, BarChart3, Eye, Play, ArrowRight, GripVertical, Sparkles, CheckSquare, Square } from 'lucide-react';
 import SmartLinkCard from './SmartLinkCard';
 
 // ====== STYLES ======
@@ -112,6 +112,39 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
     } else {
       updateField('end_actions', [...current, { type: actionValue, config: {} }]);
     }
+  };
+
+  // === Stratégie IA ===
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiObjective, setAiObjective] = useState('');
+  const [showAiPanel, setShowAiPanel] = useState(false);
+
+  const generateAiStrategy = async () => {
+    if (!aiObjective.trim()) return;
+    setAiLoading(true);
+    try {
+      const res = await fetch(`${API}/chat/generate-strategy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail },
+        body: JSON.stringify({ objective: aiObjective.trim(), lead_type: linkData.lead_type }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.questions && data.questions.length > 0) {
+          updateField('tunnel_questions', data.questions.map((q, i) => ({
+            id: Date.now() + i, text: q.text || q, type: q.type || 'text',
+            options: q.options || [], required: true,
+          })));
+        }
+        if (data.welcome_message) updateField('welcome_message', data.welcome_message);
+        if (data.custom_prompt) updateField('custom_prompt', data.custom_prompt);
+        setShowAiPanel(false);
+        setAiObjective('');
+      }
+    } catch (e) {
+      console.error('[AI Strategy] Error:', e);
+    }
+    setAiLoading(false);
   };
 
   // === Validation ===
@@ -339,7 +372,67 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                 </button>
               </div>
 
-              {linkData.tunnel_questions.length === 0 && (
+              {/* Bouton Stratégie IA */}
+              <button
+                onClick={() => setShowAiPanel(!showAiPanel)}
+                style={{
+                  width: '100%', padding: '12px 16px', borderRadius: '12px',
+                  background: 'linear-gradient(135deg, rgba(139,92,246,0.12), rgba(217,28,210,0.08))',
+                  border: '1px solid rgba(139,92,246,0.25)',
+                  color: '#c4b5fd', fontSize: '13px', fontWeight: '600',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139,92,246,0.2), rgba(217,28,210,0.15))'; e.currentTarget.style.boxShadow = '0 0 16px rgba(139,92,246,0.2)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139,92,246,0.12), rgba(217,28,210,0.08))'; e.currentTarget.style.boxShadow = 'none'; }}
+              >
+                <Sparkles size={16} /> ✨ Générer une Stratégie IA
+              </button>
+
+              {/* Panel IA */}
+              {showAiPanel && (
+                <div style={{
+                  background: 'rgba(139,92,246,0.06)',
+                  border: '1px solid rgba(139,92,246,0.2)',
+                  borderRadius: '12px', padding: '16px',
+                }}>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#a78bfa', fontWeight: '600', marginBottom: '8px' }}>
+                    🎯 Quel est votre objectif avec ce lien ?
+                  </label>
+                  <textarea
+                    value={aiObjective}
+                    onChange={e => setAiObjective(e.target.value)}
+                    placeholder="Ex: Qualifier des prospects pour mon programme de coaching sportif à 150 CHF/mois. Je veux connaître leur niveau, objectifs et disponibilités."
+                    rows={3}
+                    style={{
+                      width: '100%', padding: '10px 14px',
+                      background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(139,92,246,0.15)',
+                      borderRadius: '8px', color: '#fff', fontSize: '13px',
+                      outline: 'none', resize: 'vertical', fontFamily: 'inherit',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                  <button
+                    onClick={generateAiStrategy}
+                    disabled={aiLoading || !aiObjective.trim()}
+                    style={{
+                      marginTop: '10px', padding: '10px 20px', borderRadius: '10px',
+                      background: aiLoading || !aiObjective.trim() ? 'rgba(139,92,246,0.15)' : 'linear-gradient(135deg, #8b5cf6, #D91CD2)',
+                      border: 'none', color: '#fff', fontSize: '12px', fontWeight: '700',
+                      cursor: aiLoading || !aiObjective.trim() ? 'not-allowed' : 'pointer',
+                      opacity: aiLoading || !aiObjective.trim() ? 0.5 : 1,
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                    }}
+                  >
+                    {aiLoading ? '⏳ Génération en cours...' : '🚀 Générer le tunnel'}
+                  </button>
+                  <p style={{ color: 'rgba(139,92,246,0.5)', fontSize: '10px', marginTop: '8px', margin: '8px 0 0' }}>
+                    L'IA va créer des questions personnalisées, un message d'accueil et un prompt système adaptés à votre objectif.
+                  </p>
+                </div>
+              )}
+
+              {linkData.tunnel_questions.length === 0 && !showAiPanel && (
                 <div style={{
                   padding: '32px', textAlign: 'center',
                   border: '2px dashed rgba(217,28,210,0.2)',
@@ -349,7 +442,7 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                     🧩 Aucune question ajoutée
                   </p>
                   <p style={{ color: 'rgba(255,255,255,0.2)', fontSize: '11px', margin: '6px 0 0' }}>
-                    L'IA utilisera uniquement le prompt système
+                    Utilisez le bouton "Stratégie IA" ou ajoutez manuellement
                   </p>
                 </div>
               )}
@@ -639,6 +732,29 @@ const SmartLinksSection = ({
   const [showModal, setShowModal] = useState(false);
   const [editingLink, setEditingLink] = useState(null);
   const [filter, setFilter] = useState('all');
+  const [selectedLinks, setSelectedLinks] = useState(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  // Multi-sélection
+  const getLinkId = (link) => link.id || link._id || link.link_token || '';
+  const toggleSelect = useCallback((linkId) => {
+    setSelectedLinks(prev => {
+      const next = new Set(prev);
+      if (next.has(linkId)) next.delete(linkId); else next.add(linkId);
+      return next;
+    });
+  }, []);
+  // selectAll is defined after filteredLinks below
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedLinks.size === 0) return;
+    setBulkDeleting(true);
+    const ids = Array.from(selectedLinks);
+    for (const id of ids) {
+      try { await deleteChatLink(id); } catch (e) { console.error('Bulk delete error:', e); }
+    }
+    setSelectedLinks(new Set());
+    setBulkDeleting(false);
+  }, [selectedLinks, deleteChatLink]);
 
   const handleCreateOrUpdate = async (linkData, existingId) => {
     if (existingId) {
@@ -685,6 +801,13 @@ const SmartLinksSection = ({
   const filteredLinks = filter === 'all'
     ? chatLinks
     : chatLinks.filter(l => (l.lead_type || 'participant') === filter);
+
+  const allFilteredIds = filteredLinks.map(getLinkId);
+  const allSelected = allFilteredIds.length > 0 && allFilteredIds.every(id => selectedLinks.has(id));
+  const selectAll = () => {
+    if (allSelected) setSelectedLinks(new Set());
+    else setSelectedLinks(new Set(allFilteredIds));
+  };
 
   // Stats
   const totalClicks = chatLinks.reduce((acc, l) => acc + (l.participant_count || 0), 0);
@@ -789,6 +912,56 @@ const SmartLinksSection = ({
         </div>
       )}
 
+      {/* Barre multi-sélection + bulk delete */}
+      {filteredLinks.length > 0 && (
+        <div style={{
+          padding: '10px 20px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          borderBottom: '1px solid rgba(255,255,255,0.04)',
+          background: selectedLinks.size > 0 ? 'rgba(217,28,210,0.04)' : 'transparent',
+          transition: 'background 0.2s',
+        }}>
+          <button
+            onClick={selectAll}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              background: 'none', border: 'none',
+              color: allSelected ? '#D91CD2' : 'rgba(255,255,255,0.4)',
+              fontSize: '12px', fontWeight: '600', cursor: 'pointer',
+              padding: '4px 0',
+            }}
+          >
+            {allSelected ? <CheckSquare size={16} /> : <Square size={16} />}
+            {allSelected ? 'Tout désélectionner' : 'Tout sélectionner'}
+          </button>
+          {selectedLinks.size > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: '600' }}>
+                {selectedLinks.size} sélectionné{selectedLinks.size > 1 ? 's' : ''}
+              </span>
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkDeleting}
+                style={{
+                  padding: '7px 16px', borderRadius: '10px',
+                  background: bulkDeleting ? 'rgba(239,68,68,0.15)' : 'rgba(239,68,68,0.12)',
+                  border: '1px solid rgba(239,68,68,0.3)',
+                  color: '#ef4444', fontSize: '12px', fontWeight: '700',
+                  cursor: bulkDeleting ? 'wait' : 'pointer',
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={e => { if (!bulkDeleting) { e.currentTarget.style.background = 'rgba(239,68,68,0.22)'; e.currentTarget.style.boxShadow = '0 0 12px rgba(239,68,68,0.2)'; }}}
+                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.12)'; e.currentTarget.style.boxShadow = 'none'; }}
+              >
+                <Trash2 size={14} />
+                {bulkDeleting ? 'Suppression...' : 'Supprimer la sélection'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Links grid — responsive: 1 col mobile, 2 cols desktop */}
       <div style={{ padding: '16px 20px' }}>
         {filteredLinks.length === 0 && (
@@ -820,16 +993,21 @@ const SmartLinksSection = ({
           gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 340px), 1fr))',
           gap: '14px',
         }}>
-          {filteredLinks.map(link => (
-            <SmartLinkCard
-              key={link.id}
-              link={link}
-              copiedLinkId={copiedLinkId}
-              onCopy={copyLinkToClipboard}
-              onDelete={deleteChatLink}
-              onEdit={handleEdit}
-            />
-          ))}
+          {filteredLinks.map(link => {
+            const lid = getLinkId(link);
+            return (
+              <SmartLinkCard
+                key={lid || Math.random()}
+                link={link}
+                copiedLinkId={copiedLinkId}
+                onCopy={copyLinkToClipboard}
+                onDelete={deleteChatLink}
+                onEdit={handleEdit}
+                selected={selectedLinks.has(lid)}
+                onToggleSelect={toggleSelect}
+              />
+            );
+          })}
         </div>
       </div>
 
