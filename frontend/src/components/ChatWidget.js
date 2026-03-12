@@ -5340,14 +5340,14 @@ export const ChatWidget = () => {
                   </div>
                 )}
 
-                {/* v85: CTA "Devenir Partenaire" TOUT EN HAUT — au-dessus de tout (tabs, abo, pass) */}
+                {/* v85: CTA "Devenir Partenaire" — compact */}
                 {!isCoachMode && (
                   <button
                     onClick={() => window.dispatchEvent(new CustomEvent('openBecomeCoach'))}
                     style={{
                       width: '100%',
-                      padding: '12px 16px',
-                      background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.2), rgba(139, 92, 246, 0.2))',
+                      padding: '8px 16px',
+                      background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.15), rgba(139, 92, 246, 0.1))',
                       border: 'none',
                       cursor: 'pointer',
                       display: 'flex',
@@ -5358,45 +5358,14 @@ export const ChatWidget = () => {
                     }}
                     data-testid="become-partner-banner"
                   >
-                    <span style={{ fontSize: '14px' }}>✨</span>
-                    <span style={{ color: '#D91CD2', fontSize: '13px', fontWeight: '700', letterSpacing: '0.3px' }}>Devenir Partenaire</span>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="2.5" strokeLinecap="round">
+                    <span style={{ fontSize: '12px' }}>✨</span>
+                    <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: '700', letterSpacing: '0.3px' }}>Devenir Partenaire</span>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="2.5" strokeLinecap="round">
                       <polyline points="9 18 15 12 9 6"></polyline>
                     </svg>
                   </button>
                 )}
 
-                {/* Messages Container - SMOOTH SCROLL: overflow-anchor none pour stabilité mobile */}
-
-                {/* v8.6: Onglets Privé / Groupe */}
-                {/* v85: Onglets sans bordure — fond noir pur, séparation par gap */}
-                {afroboostProfile?.code && (
-                  <div style={{
-                    display: 'flex',
-                    padding: '0 16px',
-                    background: '#000000'
-                  }}>
-                    <button
-                      onClick={() => { setChatMode('private'); }}
-                      style={{
-                        flex: 1, padding: '10px', background: 'none', border: 'none',
-                        borderBottom: chatMode === 'private' ? '2px solid #d91cd2' : '2px solid transparent',
-                        color: chatMode === 'private' ? '#d91cd2' : '#888',
-                        fontSize: '12px', fontWeight: '600', cursor: 'pointer'
-                      }}
-                    >Prive avec Coach</button>
-                    <button
-                      onClick={() => { setChatMode('group'); loadGroupMessages(); }}
-                      style={{
-                        flex: 1, padding: '10px', background: 'none', border: 'none',
-                        borderBottom: chatMode === 'group' ? '2px solid #d91cd2' : '2px solid transparent',
-                        color: chatMode === 'group' ? '#d91cd2' : '#888',
-                        fontSize: '12px', fontWeight: '600', cursor: 'pointer'
-                      }}
-                    >Groupe Afroboost</button>
-                  </div>
-                )}
-                
                 {/* === v97: BOUTON ABONNEMENTS — compact & moderne === */}
                 {(afroboostProfile?.allSubscriptions?.length > 0 || afroboostProfile?.subscription) && (
                   <div data-testid="subscription-section" style={{ background: '#0a0a0a' }}>
@@ -5593,6 +5562,71 @@ export const ChatWidget = () => {
                   </div>
                 )}
 
+
+                {/* v97.1: Onglets Privé / Groupe — avec icônes SVG, positionnés sous les abonnements */}
+                {afroboostProfile?.code && (
+                  <div style={{
+                    display: 'flex',
+                    padding: '0',
+                    background: '#0a0a0a',
+                    gap: '0'
+                  }}>
+                    <button
+                      onClick={() => { setChatMode('private'); }}
+                      style={{
+                        flex: 1,
+                        padding: '10px 12px',
+                        background: chatMode === 'private' ? 'rgba(217, 28, 210, 0.1)' : 'transparent',
+                        border: 'none',
+                        borderBottom: chatMode === 'private' ? '2px solid #d91cd2' : '2px solid rgba(255,255,255,0.08)',
+                        color: chatMode === 'private' ? '#d91cd2' : 'rgba(255,255,255,0.4)',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      {/* Icône discussion individuelle */}
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                      </svg>
+                      Privé Coach
+                    </button>
+                    <button
+                      onClick={() => { setChatMode('group'); loadGroupMessages(); }}
+                      style={{
+                        flex: 1,
+                        padding: '10px 12px',
+                        background: chatMode === 'group' ? 'rgba(139, 92, 246, 0.1)' : 'transparent',
+                        border: 'none',
+                        borderBottom: chatMode === 'group' ? '2px solid #8b5cf6' : '2px solid rgba(255,255,255,0.08)',
+                        color: chatMode === 'group' ? '#8b5cf6' : 'rgba(255,255,255,0.4)',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      {/* Icône groupe */}
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                      </svg>
+                      Groupe
+                    </button>
+                  </div>
+                )}
+                
                 {/* v97: Mon Pass fusionné dans le bouton Abonnements ci-dessus */}
 
                 {/* v85: Banner supprimé ici — déplacé tout en haut (avant les onglets) */}
