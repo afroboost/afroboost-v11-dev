@@ -5397,71 +5397,10 @@ export const ChatWidget = () => {
                   </div>
                 )}
                 
-                {/* === v95: BLOC INFO ABONNEMENTS — affiche TOUS les abonnements actifs === */}
+                {/* === v97: BOUTON ABONNEMENTS — compact & moderne === */}
                 {(afroboostProfile?.allSubscriptions?.length > 0 || afroboostProfile?.subscription) && (
-                  <div
-                    style={{
-                      padding: '6px 16px',
-                      background: 'rgba(255, 255, 255, 0.03)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '4px'
-                    }}
-                    data-testid="subscription-info-bar"
-                  >
-                    {(afroboostProfile.allSubscriptions || [afroboostProfile.subscription]).map((sub, idx) => (
-                      <div
-                        key={sub?.id || idx}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          padding: '4px 0'
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{ fontSize: '14px' }}>🎫</span>
-                          <div>
-                            <div style={{ fontSize: '11px', fontWeight: '600', color: '#D91CD2' }}>
-                              {sub?.offer_name || sub?.code || 'Abonnement'}
-                            </div>
-                            <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)' }}>
-                              {sub?.code}{sub?.expires_at
-                                ? ` • Expire: ${new Date(sub.expires_at).toLocaleDateString('fr-FR')}`
-                                : ''}
-                            </div>
-                          </div>
-                        </div>
-                        <div
-                          style={{
-                            background: 'rgba(217, 28, 210, 0.3)',
-                            padding: '4px 10px',
-                            borderRadius: '20px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px'
-                          }}
-                          data-testid={`sessions-counter-${idx}`}
-                        >
-                          <span style={{ fontSize: '9px', color: '#D91CD2', fontWeight: '600', marginRight: '2px' }}>
-                            {sub?.offer_name || sub?.code || 'Abo'}
-                          </span>
-                          <span style={{ fontSize: '13px', fontWeight: '700', color: '#fff' }}>
-                            {sub?.remaining_sessions === -1 ? '∞' : (sub?.remaining_sessions ?? '∞')}
-                          </span>
-                          <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.7)' }}>
-                            /{sub?.total_sessions === -1 ? '∞' : (sub?.total_sessions ?? '∞')} séances
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* === v85: MON PASS — fond ultra-discret, ZERO bordure === */}
-                {afroboostProfile?.code && (
-                  <div style={{ background: '#000000' }}>
-                    {/* Barre compacte cliquable "Mon Pass" */}
+                  <div data-testid="subscription-section" style={{ background: '#0a0a0a' }}>
+                    {/* Bouton principal — dégradé violet Afroboost */}
                     <button
                       onClick={() => setShowMonPass(prev => !prev)}
                       style={{
@@ -5469,62 +5408,192 @@ export const ChatWidget = () => {
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        padding: '6px 16px',
-                        background: 'rgba(255, 255, 255, 0.03)',
+                        padding: '10px 16px',
+                        background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.12), rgba(147, 51, 234, 0.08))',
                         border: 'none',
+                        borderBottom: '1px solid rgba(217, 28, 210, 0.15)',
                         cursor: 'pointer',
                         transition: 'background 0.2s'
                       }}
-                      data-testid="mon-pass-toggle"
+                      data-testid="abonnements-toggle"
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontSize: '14px' }}>🎫</span>
-                        <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: '600' }}>Mon Pass</span>
-                        <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px' }}>
-                          {afroboostProfile.code}
-                        </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        {/* Icône abonnement SVG */}
+                        <div style={{
+                          width: '28px', height: '28px', borderRadius: '8px',
+                          background: 'linear-gradient(135deg, #D91CD2, #9333ea)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          boxShadow: '0 2px 8px rgba(217, 28, 210, 0.3)'
+                        }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
+                            <line x1="1" y1="10" x2="23" y2="10"></line>
+                          </svg>
+                        </div>
+                        <div style={{ textAlign: 'left' }}>
+                          <div style={{ fontSize: '12px', fontWeight: '700', color: '#fff', letterSpacing: '0.3px' }}>
+                            Mes Abonnements
+                          </div>
+                          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)', marginTop: '1px' }}>
+                            {(() => {
+                              const subs = afroboostProfile.allSubscriptions || [afroboostProfile.subscription];
+                              const totalRemaining = subs.reduce((acc, s) => {
+                                if (s?.remaining_sessions === -1) return Infinity;
+                                return acc + (s?.remaining_sessions || 0);
+                              }, 0);
+                              return totalRemaining === Infinity
+                                ? `${subs.length} offre${subs.length > 1 ? 's' : ''} • Illimité`
+                                : `${subs.length} offre${subs.length > 1 ? 's' : ''} • ${totalRemaining} séance${totalRemaining > 1 ? 's' : ''} restante${totalRemaining > 1 ? 's' : ''}`;
+                            })()}
+                          </div>
+                        </div>
                       </div>
-                      <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', transform: showMonPass ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }}>
-                        ▼
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {/* Mini compteur total */}
+                        <div style={{
+                          background: 'linear-gradient(135deg, #D91CD2, #9333ea)',
+                          padding: '3px 10px',
+                          borderRadius: '12px',
+                          fontSize: '11px',
+                          fontWeight: '700',
+                          color: '#fff'
+                        }}>
+                          {(() => {
+                            const subs = afroboostProfile.allSubscriptions || [afroboostProfile.subscription];
+                            const totalRemaining = subs.reduce((acc, s) => {
+                              if (s?.remaining_sessions === -1) return Infinity;
+                              return acc + (s?.remaining_sessions || 0);
+                            }, 0);
+                            return totalRemaining === Infinity ? '∞' : totalRemaining;
+                          })()}
+                        </div>
+                        <svg
+                          width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="2"
+                          style={{ transform: showMonPass ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.25s ease' }}
+                        >
+                          <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                      </div>
                     </button>
 
-                    {/* Contenu étendu du QR Code */}
+                    {/* Section dépliable — détails de chaque abonnement */}
                     {showMonPass && (
                       <div style={{
-                        padding: '16px',
-                        textAlign: 'center',
-                        background: 'rgba(0,0,0,0.2)',
+                        padding: '12px 16px',
+                        background: 'rgba(0,0,0,0.3)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '12px',
                         animation: 'fadeIn 0.3s ease'
                       }}>
-                        <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '11px', marginBottom: '8px' }}>
-                          Présentez ce QR Code à l'entrée du cours
-                        </p>
-                        <img
-                          src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent('https://afroboost.com/?qr=' + afroboostProfile.code)}`}
-                          alt="QR Code Mon Pass"
-                          style={{
-                            width: '160px',
-                            height: '160px',
-                            borderRadius: '12px',
-                            background: '#fff',
-                            padding: '8px',
-                            margin: '0 auto',
-                            display: 'block',
-                            boxShadow: '0 4px 15px rgba(217, 28, 210, 0.3)'
-                          }}
-                          data-testid="mon-pass-qr"
-                        />
-                        <p style={{ color: '#D91CD2', fontSize: '16px', fontWeight: '800', letterSpacing: '2px', marginTop: '8px' }}>
-                          {afroboostProfile.code}
-                        </p>
-                        <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', marginTop: '4px' }}>
-                          Capturez l'écran pour garder votre pass
-                        </p>
+                        {(afroboostProfile.allSubscriptions || [afroboostProfile.subscription]).map((sub, idx) => {
+                          /* v97: Nom lisible — si offer_name = code brut, on le formate */
+                          const rawName = sub?.offer_name || sub?.code || 'Abonnement';
+                          const displayName = rawName
+                            .replace(/[-_]/g, ' ')
+                            .replace(/\b\w/g, c => c.toUpperCase())
+                            .replace(/^Bass$/, 'Pack Afroboost')
+                            .replace(/Bassboostx/i, 'Pack Boost Xtrem');
+                          const remaining = sub?.remaining_sessions === -1 ? '∞' : (sub?.remaining_sessions ?? '∞');
+                          const total = sub?.total_sessions === -1 ? '∞' : (sub?.total_sessions ?? '∞');
+                          const pct = (sub?.remaining_sessions > 0 && sub?.total_sessions > 0)
+                            ? Math.round((sub.remaining_sessions / sub.total_sessions) * 100)
+                            : sub?.remaining_sessions === -1 ? 100 : 0;
+
+                          return (
+                            <div key={sub?.id || idx} style={{
+                              background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.08), rgba(147, 51, 234, 0.05))',
+                              borderRadius: '12px',
+                              padding: '14px',
+                              border: '1px solid rgba(217, 28, 210, 0.15)'
+                            }}>
+                              {/* En-tête : nom + compteur */}
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <div style={{
+                                    width: '32px', height: '32px', borderRadius: '8px',
+                                    background: 'linear-gradient(135deg, #D91CD2, #9333ea)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                  }}>
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+                                    </svg>
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#fff' }}>{displayName}</div>
+                                    <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', marginTop: '1px' }}>
+                                      {sub?.expires_at
+                                        ? `Expire le ${new Date(sub.expires_at).toLocaleDateString('fr-FR')}`
+                                        : 'Sans expiration'}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div style={{
+                                  background: 'linear-gradient(135deg, #D91CD2, #9333ea)',
+                                  padding: '4px 12px',
+                                  borderRadius: '12px',
+                                  fontSize: '12px',
+                                  fontWeight: '700',
+                                  color: '#fff',
+                                  boxShadow: '0 2px 8px rgba(217, 28, 210, 0.3)'
+                                }}>
+                                  {remaining}/{total}
+                                </div>
+                              </div>
+
+                              {/* Barre de progression */}
+                              <div style={{
+                                height: '4px',
+                                background: 'rgba(255,255,255,0.1)',
+                                borderRadius: '2px',
+                                overflow: 'hidden',
+                                marginBottom: '10px'
+                              }}>
+                                <div style={{
+                                  height: '100%',
+                                  width: `${pct}%`,
+                                  background: 'linear-gradient(90deg, #D91CD2, #9333ea)',
+                                  borderRadius: '2px',
+                                  transition: 'width 0.5s ease'
+                                }}></div>
+                              </div>
+
+                              {/* Code + QR */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <img
+                                  src={`https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent('https://afroboost.com/?qr=' + (sub?.code || afroboostProfile.code))}`}
+                                  alt="QR"
+                                  style={{
+                                    width: '56px', height: '56px',
+                                    borderRadius: '8px',
+                                    background: '#fff',
+                                    padding: '4px'
+                                  }}
+                                />
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '2px' }}>
+                                    Code
+                                  </div>
+                                  <div style={{
+                                    fontSize: '15px', fontWeight: '800', color: '#D91CD2',
+                                    letterSpacing: '1.5px', fontFamily: 'monospace'
+                                  }}>
+                                    {sub?.code || afroboostProfile.code}
+                                  </div>
+                                  <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.35)', marginTop: '2px' }}>
+                                    Présentez ce QR à l'entrée
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
                 )}
+
+                {/* v97: Mon Pass fusionné dans le bouton Abonnements ci-dessus */}
 
                 {/* v85: Banner supprimé ici — déplacé tout en haut (avant les onglets) */}
 
