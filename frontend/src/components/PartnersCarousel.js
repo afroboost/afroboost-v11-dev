@@ -793,8 +793,9 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
         />
         
         {/* === v10.0: BARRE D'ACTIONS STYLE INSTAGRAM - DROITE === */}
-        <div 
-          className="absolute right-3 bottom-28 flex flex-col items-center gap-5"
+        {/* v94.1: z-10 ajouté — les icônes restent toujours au-dessus de la vidéo et du gradient */}
+        <div
+          className="absolute right-3 bottom-28 flex flex-col items-center gap-5 z-10"
           data-testid="reels-action-bar"
         >
           {/* v75: Bouton Avis/Commentaires — même taille que Like et Réserver */}
