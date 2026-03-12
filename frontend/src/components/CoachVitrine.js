@@ -993,21 +993,21 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             )}
           </div>
 
-          {/* v75: Bouton Avis/Commentaires */}
-          {/* v88: Bouton Avis/Commentaires \u2014 glow r\u00e9duit pour meilleure lisibilit\u00e9 */}
+          {/* v88: Bouton Avis/Commentaires — glow réduit pour meilleure lisibilité */}
           {socialComments.length > 0 && (
             <button onClick={() => setShowCommentsPanel(true)} className="flex flex-col items-center gap-1">
               <div className="w-10 h-10 rounded-full flex items-center justify-center"
                 style={{
-                  background: 'rgba(217, 28, 210, 0.25)',
-                  backdropFilter: 'blur(4px)',
+                  background: 'rgba(217, 28, 210, 0.3)',
+                  backdropFilter: 'blur(6px)',
+                  border: '1.5px solid rgba(217, 28, 210, 0.5)',
                   boxShadow: '0 0 6px rgba(217, 28, 210, 0.25)'
                 }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" stroke="none">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                 </svg>
               </div>
-              <span className="text-[10px] font-bold" style={{ color: '#D91CD2', textShadow: '0 0 8px rgba(217,28,210,0.6)' }}>
+              <span className="text-[10px] font-bold" style={{ color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
                 {socialComments.length} Avis
               </span>
             </button>
@@ -1041,7 +1041,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
           }} className="flex flex-col items-center gap-1">
             <div className="w-10 h-10 rounded-full flex items-center justify-center"
-              style={{ background: 'rgba(217, 28, 210, 0.7)', boxShadow: '0 0 15px rgba(217, 28, 210, 0.5)' }}>
+              style={{ background: 'rgba(217, 28, 210, 0.6)', boxShadow: '0 0 6px rgba(217, 28, 210, 0.3)' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
                 <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
                 <line x1="16" y1="2" x2="16" y2="6" />
@@ -1697,8 +1697,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             to { transform: translateY(0); }
           }
           @keyframes v73GlowPulse {
-            0%, 100% { transform: scale(1); box-shadow: 0 0 14px rgba(217,28,210,0.5), 0 0 30px rgba(217,28,210,0.2); }
-            50% { transform: scale(1.06); box-shadow: 0 0 20px rgba(217,28,210,0.6), 0 0 45px rgba(217,28,210,0.25); }
+            0%, 100% { transform: scale(1); box-shadow: 0 0 6px rgba(217,28,210,0.2); }
+            50% { transform: scale(1.03); box-shadow: 0 0 10px rgba(217,28,210,0.3); }
           }
           @keyframes v74ZoomIn {
             from { transform: scale(0.5); opacity: 0; }

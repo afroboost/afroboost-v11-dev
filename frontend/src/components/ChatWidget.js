@@ -1182,13 +1182,13 @@ export const ChatWidget = () => {
   // === v76: ZOOM PHOTO PROFIL (crop supprimé définitivement) ===
   const [zoomedChatPhoto, setZoomedChatPhoto] = useState(null);
 
-  // === v86: FORMULAIRE AVIS POST-SESSION ===
+  // === v88: FORMULAIRE AVIS POST-SESSION (fix erreur + masquage après pub) ===
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewText, setReviewText] = useState('');
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewSubmitted, setReviewSubmitted] = useState(() => {
-    // v88: Restaurer l'\u00e9tat "d\u00e9j\u00e0 publi\u00e9" depuis localStorage
+    // v88: Restaurer l'état "déjà publié" depuis localStorage
     const key = `afroboost_review_done_${sessionStorage.getItem('afroboost_code') || ''}`;
     return localStorage.getItem(key) === 'true';
   });
@@ -2116,11 +2116,10 @@ export const ChatWidget = () => {
     return () => window.removeEventListener('afroboost:visitorPreview', handleVisitorPreviewToggle);
   }, []);
 
-  // === v86: DÉCLENCHEUR AUTOMATIQUE AVIS POST-SESSION ===
-  // === v88: D\u00c9CLENCHEUR AUTOMATIQUE AVIS POST-SESSION (v\u00e9rifie API avant d'afficher) ===
+  // === v88: DÉCLENCHEUR AUTOMATIQUE AVIS POST-SESSION (vérifie API avant d'afficher) ===
   useEffect(() => {
     if (!afroboostProfile?.code || step !== 'chat' || reviewSubmitted || reviewRequestVisible) return;
-    // v88: V\u00e9rifier localStorage d'abord (pas besoin d'API call)
+    // v88: Vérifier localStorage d'abord (pas besoin d'API call)
     const doneKey = `afroboost_review_done_${afroboostProfile.code}`;
     if (localStorage.getItem(doneKey) === 'true') {
       setReviewSubmitted(true);
@@ -2131,7 +2130,7 @@ export const ChatWidget = () => {
     if (alreadyShown) return;
 
     const timer = setTimeout(async () => {
-      // v88: V\u00e9rifier c\u00f4t\u00e9 API si l'abonn\u00e9 a d\u00e9j\u00e0 publi\u00e9 un avis
+      // v88: Vérifier côté API si l'abonné a déjà publié un avis
       try {
         const coachId = sessionData?.coach_id || 'contact.artboost@gmail.com';
         const checkRes = await fetch(`${API}/reviews/check?participant_code=${encodeURIComponent(afroboostProfile.code)}&coach_id=${encodeURIComponent(coachId)}`);
@@ -2140,7 +2139,7 @@ export const ChatWidget = () => {
           if (checkData.has_reviewed) {
             setReviewSubmitted(true);
             localStorage.setItem(doneKey, 'true');
-            console.log('[V88] Avis d\u00e9j\u00e0 publi\u00e9 \u2014 formulaire masqu\u00e9');
+            console.log('[V88] Avis déjà publié — formulaire masqué');
             return;
           }
         }
@@ -2151,7 +2150,7 @@ export const ChatWidget = () => {
       if (afroboostProfile.subscription?.remaining_sessions !== undefined) {
         setReviewRequestVisible(true);
         sessionStorage.setItem(checkKey, 'true');
-        console.log('[V88] Review request card activ\u00e9');
+        console.log('[V88] Review request card activé');
       }
     }, 5000);
     return () => clearTimeout(timer);
@@ -3392,7 +3391,7 @@ export const ChatWidget = () => {
     }
   };
 
-  // === v86: Soumettre un avis post-session ===
+  // === v88: Soumettre un avis post-session (fix erreur + masquage permanent) ===
   const handleSubmitReview = async () => {
     if (!reviewText.trim() || reviewSubmitting) return;
     setReviewSubmitting(true);
@@ -3402,7 +3401,7 @@ export const ChatWidget = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           participant_code: afroboostProfile?.code || '',
-          participant_name: afroboostProfile?.name || leadData?.firstName || 'Abonn\u00e9',
+          participant_name: afroboostProfile?.name || leadData?.firstName || 'Abonné',
           text: reviewText.trim(),
           rating: reviewRating,
           profile_photo: profilePhoto || '',
@@ -3416,22 +3415,22 @@ export const ChatWidget = () => {
         setReviewRequestVisible(false);
         setReviewText('');
         setReviewRating(5);
-        // v88: Persister pour ne plus jamais montrer le formulaire \u00e0 cet utilisateur
+        // v88: Persister pour ne plus jamais montrer le formulaire à cet utilisateur
         if (afroboostProfile?.code) {
           localStorage.setItem(`afroboost_review_done_${afroboostProfile.code}`, 'true');
         }
         setMessages(prev => [...prev, {
           id: `review_confirm_${Date.now()}`,
           type: 'bot',
-          text: '\u2705 Merci pour ton avis ! Il est maintenant visible sur la page Afroboost \ud83d\udc9c',
+          text: '✅ Merci pour ton avis ! Il est maintenant visible sur la page Afroboost 💜',
           timestamp: new Date().toISOString()
         }]);
-        console.log('[V88] Avis soumis avec succ\u00e8s');
+        console.log('[V88] Avis soumis avec succès');
       } else {
         const err = await res.json().catch(() => ({}));
-        const isDuplicate = err.detail && err.detail.includes('d\u00e9j\u00e0');
+        const isDuplicate = err.detail && err.detail.includes('déjà');
         if (isDuplicate) {
-          // v88: Si d\u00e9j\u00e0 publi\u00e9, masquer le formulaire d\u00e9finitivement
+          // v88: Si déjà publié, masquer le formulaire définitivement
           setReviewSubmitted(true);
           setShowReviewForm(false);
           setReviewRequestVisible(false);
@@ -3443,8 +3442,8 @@ export const ChatWidget = () => {
           id: `review_error_${Date.now()}`,
           type: 'bot',
           text: isDuplicate
-            ? '\u2b50 Tu as d\u00e9j\u00e0 laiss\u00e9 un avis \u2014 merci pour ton retour !'
-            : `\u26a0\ufe0f Erreur lors de l'envoi (${res.status}). R\u00e9essaie dans quelques secondes.`,
+            ? '⭐ Tu as déjà laissé un avis — merci pour ton retour !'
+            : `⚠️ Erreur lors de l'envoi (${res.status}). Réessaie dans quelques secondes.`,
           timestamp: new Date().toISOString()
         }]);
       }
@@ -3453,12 +3452,12 @@ export const ChatWidget = () => {
       setMessages(prev => [...prev, {
         id: `review_error_${Date.now()}`,
         type: 'bot',
-        text: '\u26a0\ufe0f Probl\u00e8me de connexion. V\u00e9rifie ta connexion internet et r\u00e9essaie.',
+        text: '⚠️ Problème de connexion. Vérifie ta connexion internet et réessaie.',
         timestamp: new Date().toISOString()
       }]);
     }
     setReviewSubmitting(false);
-  }
+  };
 
   // Envoyer un message au chat avec contexte de session
   const handleSendMessage = async () => {
