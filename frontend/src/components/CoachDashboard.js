@@ -3408,6 +3408,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     if (tab === "conversations") {
       loadConversations();
     }
+    // v100: Charger chatLinks aussi quand on ouvre les campagnes (pour CTA conversation)
+    if (tab === "campagnes" && chatLinks.length === 0) {
+      axios.get(`${API}/chat/links`).then(res => setChatLinks(res.data)).catch(() => {});
+    }
   }, [tab]);
 
   // === CONTACTS COMBINÉS: Users + Reservations + Chat Participants ===

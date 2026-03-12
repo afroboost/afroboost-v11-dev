@@ -2,7 +2,7 @@
 // Multi-sélection, bulk delete, Stratégie IA, design premium anthracite
 // Fix: robust ID chain, delete fonctionne, tunnel questions visibles
 
-import React, { useState, useRef, memo, useCallback } from 'react';
+import React, { useState, useRef, memo, useCallback, useEffect } from 'react';
 import { Link2, Copy, Check, ExternalLink, Trash2, Edit2, Save, X, Plus, ChevronDown, ChevronUp, Users, MessageCircle, Calendar, CreditCard, Phone, Target, Zap, BarChart3, Eye, Play, ArrowRight, GripVertical, Sparkles, CheckSquare, Square } from 'lucide-react';
 import SmartLinkCard from './SmartLinkCard';
 import LinkSimulator from './LinkSimulator';
@@ -66,6 +66,27 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
     end_actions: [],
     welcome_message: '',
   });
+
+  // v100: Sync linkData quand editingLink change (fix: champs vides en modification)
+  useEffect(() => {
+    if (editingLink) {
+      setLinkData({
+        title: editingLink.title || '',
+        custom_prompt: editingLink.custom_prompt || '',
+        lead_type: editingLink.lead_type || 'participant',
+        tunnel_questions: editingLink.tunnel_questions || [],
+        end_actions: editingLink.end_actions || [],
+        welcome_message: editingLink.welcome_message || '',
+      });
+      setStep(1);
+    } else {
+      setLinkData({
+        title: '', custom_prompt: '', lead_type: 'participant',
+        tunnel_questions: [], end_actions: [], welcome_message: '',
+      });
+      setStep(1);
+    }
+  }, [editingLink]);
 
   const updateField = (field, value) => setLinkData(prev => ({ ...prev, [field]: value }));
 

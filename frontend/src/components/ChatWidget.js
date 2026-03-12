@@ -3225,7 +3225,8 @@ export const ChatWidget = () => {
         name: clientData.firstName,
         email: clientData.email,
         whatsapp: clientData.whatsapp,
-        link_token: linkToken
+        link_token: linkToken,
+        tunnel_answers: clientData.tunnelAnswers || null
       });
 
       const { participant, session, is_returning, chat_history, message } = response.data;

@@ -7569,7 +7569,8 @@ async def smart_chat_entry(request: Request):
     email = body.get("email", "").strip()
     whatsapp = body.get("whatsapp", "").strip()
     link_token = body.get("link_token")
-    
+    tunnel_answers = body.get("tunnel_answers")  # v100: réponses tunnel
+
     if not name:
         raise HTTPException(status_code=400, detail="Le nom est requis")
     
@@ -7681,6 +7682,28 @@ async def smart_chat_entry(request: Request):
         )
         session = await db.chat_sessions.find_one({"id": session["id"]}, {"_id": 0})
     
+    # v100: Sauvegarder les réponses tunnel dans la collection leads
+    if tunnel_answers and isinstance(tunnel_answers, (list, dict)):
+        lead_doc = {
+            "id": str(uuid.uuid4()),
+            "participant_id": participant_id,
+            "session_id": session["id"],
+            "link_token": link_token,
+            "name": name,
+            "email": email,
+            "whatsapp": whatsapp,
+            "answers": tunnel_answers,
+            "source": source,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.leads.insert_one(lead_doc)
+        logger.info(f"[V100] 📋 Lead sauvegardé: {name} ({email}) — {len(tunnel_answers) if isinstance(tunnel_answers, list) else 1} réponses")
+        # Aussi stocker dans la session pour accès rapide côté coach
+        await db.chat_sessions.update_one(
+            {"id": session["id"]},
+            {"$set": {"tunnel_answers": tunnel_answers, "lead_id": lead_doc["id"]}}
+        )
+
     # Récupérer l'historique des messages si participant existant
     chat_history = []
     if is_returning:
@@ -7688,13 +7711,14 @@ async def smart_chat_entry(request: Request):
             {"session_id": session["id"], "is_deleted": {"$ne": True}},
             {"_id": 0}
         ).sort("created_at", 1).to_list(50)
-    
+
     return {
         "participant": participant,
         "session": session,
         "is_returning": is_returning,
         "chat_history": chat_history,
-        "message": f"Ravi de te revoir, {name} !" if is_returning else f"Bienvenue, {name} !"
+        "message": f"Ravi de te revoir, {name} !" if is_returning else f"Bienvenue, {name} !",
+        "lead_saved": bool(tunnel_answers)
     }
 
 # --- AI Chat with Session Context ---

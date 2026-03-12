@@ -5,6 +5,7 @@
 import React, { useRef, useCallback, memo, useMemo, useState } from 'react';
 import { ChevronDown, Trash2, Send, Copy, Check, ExternalLink, Phone, Edit2, Save, X, MessageCircle, Link2, Users, Bell, Zap, Search, RefreshCw, Bot, User } from 'lucide-react';
 import SmartLinksSection from './SmartLinksSection'; // v98: Liens Intelligents
+import GroupChatModule from './GroupChatModule'; // v100: Groupes de chat
 
 // ====== STYLES PREMIUM PARTAGÉS ======
 const GLOW = {
@@ -1129,6 +1130,21 @@ const CRMSection = ({
         loadingConversations={loadingConversations}
       />
 
+      {/* v100: Module Groupes de Chat */}
+      <GroupChatModule
+        groups={[]}
+        contacts={enrichedConversations.map(c => ({
+          id: c.id,
+          name: c.participantName || c.participantEmail || 'Client',
+          email: c.participantEmail || '',
+          avatar: null,
+        })).filter(c => c.name !== 'Client')}
+        onCreateGroup={(data) => console.log('[V100] Créer groupe:', data)}
+        onDeleteGroup={(id) => console.log('[V100] Supprimer groupe:', id)}
+        onSelectGroup={(id) => console.log('[V100] Sélectionner groupe:', id)}
+        onToggleAi={(id, isAi) => console.log('[V100] Toggle IA groupe:', id, isAi)}
+      />
+
       {/* Main Conversations Grid */}
       <div style={{
         display: 'grid',
@@ -1352,6 +1368,25 @@ const CRMSection = ({
                     {selectedSession.mode === 'bot' ? <><Bot size={12} /> IA</> : <><User size={12} /> Manuel</>}
                   </span>
                 </div>
+
+                {/* v100: Réponses tunnel (si disponibles) */}
+                {selectedSession.tunnel_answers && Object.keys(selectedSession.tunnel_answers).length > 0 && (
+                  <div style={{
+                    marginBottom: '12px',
+                    padding: '12px',
+                    borderRadius: '10px',
+                    background: 'rgba(217,28,210,0.06)',
+                    border: '1px solid rgba(217,28,210,0.15)',
+                  }}>
+                    <p style={{ color: '#D91CD2', fontSize: '11px', fontWeight: 600, margin: '0 0 8px 0' }}>📋 Réponses du tunnel</p>
+                    {Object.values(selectedSession.tunnel_answers).map((qa, i) => (
+                      <div key={i} style={{ marginBottom: i < Object.keys(selectedSession.tunnel_answers).length - 1 ? '8px' : 0 }}>
+                        <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', margin: '0 0 2px 0' }}>{qa.question || `Question ${i+1}`}</p>
+                        <p style={{ color: '#fff', fontSize: '12px', margin: 0, fontWeight: 500 }}>{qa.answer || '—'}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Messages */}
                 <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', display: 'flex', flexDirection: 'column', gap: '10px' }}>
