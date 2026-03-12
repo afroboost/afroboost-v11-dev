@@ -235,40 +235,46 @@ async def use_discount_code(code_id: str):
 # === v11.4: ENDPOINTS SUBSCRIPTIONS (ABONNEMENTS) ===
 @promo_router.get("/subscriptions/status")
 async def get_subscription_status(email: str = "", code: str = ""):
-    """Récupère le statut d'abonnement d'un utilisateur v11.4"""
+    """Récupère le statut d'abonnement d'un utilisateur v11.4 — v95: retourne TOUS les abonnements actifs"""
     if not email and not code:
         return {"success": False, "message": "Email ou code requis"}
-    
+
     query = {"status": "active"}
     if email:
         query["email"] = email.lower().strip()
     if code:
         query["code"] = code.upper().strip()
-    
-    subscription = await _db.subscriptions.find_one(query, {"_id": 0})
-    
-    if not subscription:
+
+    # v95: Récupérer TOUS les abonnements actifs (pas juste le premier)
+    all_subs = await _db.subscriptions.find(query, {"_id": 0}).to_list(50)
+
+    if not all_subs:
         return {
             "success": False,
             "hasSubscription": False,
             "message": "Aucun abonnement actif"
         }
-    
+
+    def format_sub(s):
+        return {
+            "id": s.get("id"),
+            "email": s.get("email"),
+            "name": s.get("name"),
+            "code": s.get("code"),
+            "offer_name": s.get("offer_name"),
+            "total_sessions": s.get("total_sessions"),
+            "used_sessions": s.get("used_sessions", 0),
+            "remaining_sessions": s.get("remaining_sessions"),
+            "expires_at": s.get("expires_at"),
+            "status": s.get("status")
+        }
+
+    # Rétro-compatible : "subscription" = premier résultat
     return {
         "success": True,
         "hasSubscription": True,
-        "subscription": {
-            "id": subscription.get("id"),
-            "email": subscription.get("email"),
-            "name": subscription.get("name"),
-            "code": subscription.get("code"),
-            "offer_name": subscription.get("offer_name"),
-            "total_sessions": subscription.get("total_sessions"),
-            "used_sessions": subscription.get("used_sessions", 0),
-            "remaining_sessions": subscription.get("remaining_sessions"),
-            "expires_at": subscription.get("expires_at"),
-            "status": subscription.get("status")
-        }
+        "subscription": format_sub(all_subs[0]),
+        "subscriptions": [format_sub(s) for s in all_subs]
     }
 
 
@@ -322,4 +328,60 @@ async def deduct_session(data: dict):
         "remaining": new_remaining,
         "used": new_used,
         "total": subscription.get("total_sessions")
+    }
+
+
+# === v95: SYNC — Créer des subscriptions pour les codes promo qui n'en ont pas encore ===
+@promo_router.post("/subscriptions/sync")
+async def sync_subscriptions_for_email(data: dict):
+    """Crée des subscriptions pour tous les codes assignés à un email qui n'en ont pas encore"""
+    email = data.get("email", "").lower().strip()
+    if not email:
+        return {"success": False, "message": "Email requis"}
+
+    # Trouver tous les codes assignés à cet email
+    codes = await _db.discount_codes.find(
+        {"assignedEmail": {"$regex": f"^{email}$", "$options": "i"}, "active": True},
+        {"_id": 0}
+    ).to_list(50)
+
+    created = []
+    skipped = []
+    for code in codes:
+        code_str = code.get("code", "").upper().strip()
+        # Vérifier si une subscription existe déjà
+        existing = await _db.subscriptions.find_one(
+            {"email": email, "code": {"$regex": f"^{code_str}$", "$options": "i"}, "status": "active"},
+            {"_id": 0}
+        )
+        if existing:
+            skipped.append(code_str)
+            continue
+
+        # Créer la subscription
+        total = code.get("maxUses") or code.get("sessions") or 10
+        sub = {
+            "id": str(uuid.uuid4()),
+            "email": email,
+            "name": data.get("name", email.split("@")[0]),
+            "code": code_str,
+            "offer_name": code.get("name") or code_str,
+            "total_sessions": total,
+            "used_sessions": 0,
+            "remaining_sessions": total,
+            "expires_at": code.get("expiresAt"),
+            "status": "active",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "source": "manual_sync"
+        }
+        await _db.subscriptions.insert_one(sub)
+        created.append({"code": code_str, "sessions": total})
+        logger.info(f"[SYNC] Subscription créée: {email} - {code_str} ({total} séances)")
+
+    return {
+        "success": True,
+        "created": created,
+        "skipped": skipped,
+        "message": f"{len(created)} abonnement(s) créé(s), {len(skipped)} déjà existant(s)"
     }

@@ -53,6 +53,7 @@ class ReservationBase(BaseModel):
     isProduct: bool = False
     promoCode: Optional[str] = None
     discountCode: Optional[str] = None
+    subscriptionId: Optional[str] = None  # v95: ID de l'abonnement utilisé
     source: Optional[str] = "website"
     type: Optional[str] = "ticket"
 
@@ -100,13 +101,17 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
     promo_code = reservation.promoCode or reservation.discountCode
     user_email = reservation.userEmail.lower().strip() if reservation.userEmail else ""
     
-    # === v11.4: VÉRIFIER ET DÉDUIRE UNE SÉANCE ===
+    # === v95: VÉRIFIER ET DÉDUIRE UNE SÉANCE — support subscriptionId pour choix multi-abo ===
+    subscription_id = getattr(reservation, 'subscriptionId', None)
     if user_email:
-        # Chercher l'abonnement actif
-        query = {"email": user_email, "status": "active"}
-        if promo_code:
-            query["code"] = promo_code.upper().strip()
-        
+        # v95: Si subscriptionId fourni, cibler cet abonnement spécifique
+        if subscription_id:
+            query = {"id": subscription_id, "email": user_email, "status": "active"}
+        else:
+            query = {"email": user_email, "status": "active"}
+            if promo_code:
+                query["code"] = promo_code.upper().strip()
+
         subscription = await db.subscriptions.find_one(query, {"_id": 0})
         
         if subscription:
@@ -132,13 +137,22 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
                 {"id": subscription.get("id")},
                 {"$set": update_data}
             )
-            logger.info(f"[RESERVATION] Séance déduite: {user_email} - {new_remaining} restantes")
-    
+            # v95: Mémoriser le subscriptionId utilisé pour la traçabilité
+            subscription_id = subscription.get("id")
+            logger.info(f"[RESERVATION] Séance déduite: {user_email} - {new_remaining} restantes (sub: {subscription_id})")
+
     if promo_code:
         discount = await db.discount_codes.find_one({"code": {"$regex": f"^{promo_code}$", "$options": "i"}, "active": True}, {"_id": 0})
-        if not discount:
+        if discount:
+            # v95: Incrémenter le compteur d'utilisation du code promo
+            await db.discount_codes.update_one(
+                {"id": discount.get("id")},
+                {"$inc": {"used": 1}}
+            )
+            logger.info(f"[RESERVATION] Code promo {promo_code} utilisé (compteur incrémenté)")
+        else:
             logger.info(f"[RESERVATION] Code promo invalide: {promo_code}")
-    
+
     # Créer la réservation avec coach_id par défaut
     caller_email = request.headers.get("X-User-Email", "").lower().strip() if request else None
     reservation_data = Reservation(
@@ -147,7 +161,8 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
         offerName=reservation.offerName, totalPrice=reservation.totalPrice, quantity=reservation.quantity,
         selectedDates=reservation.selectedDates, selectedDatesText=reservation.selectedDatesText,
         selectedVariants=reservation.selectedVariants, variantsText=reservation.variantsText,
-        isProduct=reservation.isProduct, promoCode=promo_code, source=reservation.source, type=reservation.type,
+        isProduct=reservation.isProduct, promoCode=promo_code, subscriptionId=subscription_id,
+        source=reservation.source, type=reservation.type,
         coach_id=caller_email if caller_email and not is_super_admin(caller_email) else "bassi_default"
     ).model_dump()
     await db.reservations.insert_one(reservation_data)
