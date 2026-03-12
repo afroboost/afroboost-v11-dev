@@ -24,6 +24,7 @@ import { QRScannerModal } from "./QRScanner";
 import ReservationTab from "./coach/ReservationTab"; // Import Reservation Tab
 import CampaignManager from "./coach/CampaignManager"; // Import Campaign Manager
 import CRMSection from "./coach/CRMSection"; // v9.2.0 Import CRM Section
+import SmartLinksSection from "./coach/SmartLinksSection"; // v98: Liens Intelligents
 import { parseMediaUrl, getMediaThumbnail } from "../services/MediaParser"; // Media Parser
 import SuperAdminPanel from "./SuperAdminPanel"; // v8.9 Super Admin Panel
 // v13.5: Composants extraits pour alléger CoachDashboard
@@ -2617,17 +2618,23 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  const generateShareableLink = async () => {
+  // v98: generateShareableLink accepte des params optionnels pour les liens intelligents
+  const generateShareableLink = async (titleOverride, promptOverride, extraData) => {
     try {
-      const title = newLinkTitle.trim() || 'Lien Chat Afroboost';
-      const customPrompt = newLinkCustomPrompt.trim() || null;  // Null si vide
-      const res = await axios.post(`${API}/chat/generate-link`, { 
-        title, 
-        custom_prompt: customPrompt 
-      });
+      const title = (typeof titleOverride === 'string' ? titleOverride.trim() : newLinkTitle.trim()) || 'Lien Chat Afroboost';
+      const customPrompt = (typeof promptOverride === 'string' ? promptOverride.trim() : newLinkCustomPrompt.trim()) || null;
+      const payload = { title, custom_prompt: customPrompt };
+      // v98: Ajouter les champs du lien intelligent si fournis
+      if (extraData && typeof extraData === 'object') {
+        if (extraData.lead_type) payload.lead_type = extraData.lead_type;
+        if (extraData.tunnel_questions) payload.tunnel_questions = extraData.tunnel_questions;
+        if (extraData.end_actions) payload.end_actions = extraData.end_actions;
+        if (extraData.welcome_message) payload.welcome_message = extraData.welcome_message;
+      }
+      const res = await axios.post(`${API}/chat/generate-link`, payload);
       setChatLinks(prev => [res.data, ...prev]);
       setNewLinkTitle('');
-      setNewLinkCustomPrompt('');  // Reset le prompt
+      setNewLinkCustomPrompt('');
       // Recharger les sessions
       const sessionsRes = await axios.get(`${API}/chat/sessions`);
       setChatSessions(sessionsRes.data);

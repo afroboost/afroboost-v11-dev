@@ -7175,10 +7175,16 @@ async def generate_shareable_link(request: Request):
     custom_prompt = body.get("custom_prompt")
     if custom_prompt and isinstance(custom_prompt, str):
         custom_prompt = custom_prompt.strip() if custom_prompt.strip() else None
-    
+
+    # v98: Champs étendus pour les liens intelligents
+    lead_type = body.get("lead_type", "participant")
+    tunnel_questions = body.get("tunnel_questions", [])
+    end_actions = body.get("end_actions", [])
+    welcome_message = body.get("welcome_message", "")
+
     # v14.7: Récupérer le coach_id pour l'étanchéité
     coach_email = request.headers.get("X-User-Email", "").lower().strip()
-    
+
     # Créer une nouvelle session avec un token unique
     session = ChatSession(
         mode="ai",
@@ -7186,30 +7192,39 @@ async def generate_shareable_link(request: Request):
         title=title,
         custom_prompt=custom_prompt
     )
-    
+
     # v14.7: Ajouter coach_id pour l'étanchéité (Super Admin = DEFAULT_COACH_ID)
     session_data = session.model_dump()
     if coach_email and not is_super_admin(coach_email):
         session_data["coach_id"] = coach_email
     else:
         session_data["coach_id"] = DEFAULT_COACH_ID
-    
+
+    # v98: Stocker les champs du lien intelligent
+    session_data["lead_type"] = lead_type
+    session_data["tunnel_questions"] = tunnel_questions if isinstance(tunnel_questions, list) else []
+    session_data["end_actions"] = end_actions if isinstance(end_actions, list) else []
+    session_data["welcome_message"] = welcome_message.strip() if isinstance(welcome_message, str) else ""
+
     await db.chat_sessions.insert_one(session_data)
-    
+
     # Construire l'URL de partage
-    # Note: L'URL de base sera configurée côté frontend
     frontend_url = os.environ.get("FRONTEND_URL", "")
     share_url = f"{frontend_url}/chat/{session.link_token}" if frontend_url else f"/chat/{session.link_token}"
-    
-    logger.info(f"[CHAT-LINK] Lien cree: {session.link_token} | titre: {title} | custom_prompt: {'oui' if custom_prompt else 'non'}")
-    
+
+    logger.info(f"[CHAT-LINK] Lien cree: {session.link_token} | titre: {title} | custom_prompt: {'oui' if custom_prompt else 'non'} | tunnel: {len(tunnel_questions)} questions | actions: {len(end_actions)}")
+
     return {
         "link_token": session.link_token,
         "share_url": share_url,
         "session_id": session.id,
         "title": title,
         "custom_prompt": custom_prompt,
-        "has_custom_prompt": custom_prompt is not None
+        "has_custom_prompt": custom_prompt is not None,
+        "lead_type": lead_type,
+        "tunnel_questions": tunnel_questions,
+        "end_actions": end_actions,
+        "welcome_message": welcome_message
     }
 
 @api_router.get("/chat/links")
@@ -7220,7 +7235,7 @@ async def get_all_chat_links():
     """
     sessions = await db.chat_sessions.find(
         {"is_deleted": {"$ne": True}},
-        {"_id": 0, "id": 1, "link_token": 1, "title": 1, "mode": 1, "is_ai_active": 1, "created_at": 1, "participant_ids": 1, "custom_prompt": 1}
+        {"_id": 0, "id": 1, "link_token": 1, "title": 1, "mode": 1, "is_ai_active": 1, "created_at": 1, "participant_ids": 1, "custom_prompt": 1, "lead_type": 1, "tunnel_questions": 1, "end_actions": 1, "welcome_message": 1}
     ).sort("created_at", -1).to_list(100)
     
     # Ajouter le nombre de participants pour chaque lien
@@ -7273,6 +7288,17 @@ async def update_chat_link(link_id: str, request: Request):
     if "custom_prompt" in body:
         cp = body["custom_prompt"]
         update_fields["custom_prompt"] = cp.strip() if cp and isinstance(cp, str) and cp.strip() else None
+
+    # v98: Champs étendus pour les liens intelligents
+    for field in ["lead_type", "welcome_message"]:
+        if field in body:
+            val = body[field]
+            update_fields[field] = val.strip() if isinstance(val, str) else val
+
+    for field in ["tunnel_questions", "end_actions"]:
+        if field in body:
+            val = body[field]
+            update_fields[field] = val if isinstance(val, list) else []
 
     if len(update_fields) <= 1:  # Only updated_at
         raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour")

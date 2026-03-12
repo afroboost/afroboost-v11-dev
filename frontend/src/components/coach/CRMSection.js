@@ -4,6 +4,7 @@
 
 import React, { useRef, useCallback, memo, useMemo, useState } from 'react';
 import { ChevronDown, Trash2, Send, Copy, Check, ExternalLink, Phone, Edit2, Save, X, MessageCircle, Link2, Users, Bell, Zap, Search, RefreshCw, Bot, User } from 'lucide-react';
+import SmartLinksSection from './SmartLinksSection'; // v98: Liens Intelligents
 
 // ====== STYLES PREMIUM PARTAGÉS ======
 const GLOW = {
@@ -1107,33 +1108,25 @@ const CRMSection = ({
         toggleNotifyOnAiResponse={toggleNotifyOnAiResponse}
       />
 
-      {/* Generate Link — borderless */}
-      <GenerateLinkCard
-        newLinkTitle={newLinkTitle}
-        setNewLinkTitle={setNewLinkTitle}
-        newLinkCustomPrompt={newLinkCustomPrompt}
-        setNewLinkCustomPrompt={setNewLinkCustomPrompt}
-        generateShareableLink={generateShareableLink}
-        loadingConversations={loadingConversations}
-        isSuperAdmin={isSuperAdmin}
-        enhancePromptWithAI={enhancePromptWithAI}
-      />
-
-      {/* Create Community */}
-      <CommunityCard
-        newCommunityName={newCommunityName}
-        setNewCommunityName={setNewCommunityName}
-        createCommunityChat={createCommunityChat}
-        loadingConversations={loadingConversations}
-      />
-
-      {/* Chat Links List */}
-      <ChatLinksList
+      {/* v98: Liens Intelligents — remplace GenerateLinkCard + ChatLinksList */}
+      <SmartLinksSection
         chatLinks={chatLinks}
         copiedLinkId={copiedLinkId}
         copyLinkToClipboard={copyLinkToClipboard}
         deleteChatLink={deleteChatLink}
         updateChatLink={updateChatLink}
+        generateShareableLink={generateShareableLink}
+        loadingConversations={loadingConversations}
+        API={API_URL}
+        coachEmail=""
+      />
+
+      {/* Create Community — conservé tel quel */}
+      <CommunityCard
+        newCommunityName={newCommunityName}
+        setNewCommunityName={setNewCommunityName}
+        createCommunityChat={createCommunityChat}
+        loadingConversations={loadingConversations}
       />
 
       {/* Main Conversations Grid */}
