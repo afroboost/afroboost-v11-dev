@@ -1,12 +1,97 @@
-# reservation_routes.py - Routes réservations v9.5.8
+# reservation_routes.py - Routes réservations v9.5.8 → v96: Email confirmation
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timezone
 import uuid
 import logging
+import asyncio
+import os
 
 logger = logging.getLogger(__name__)
+
+# === v96: Email confirmation après réservation ===
+try:
+    import resend
+    _RESEND_OK = True
+except ImportError:
+    _RESEND_OK = False
+
+_RESEND_KEY = os.environ.get('RESEND_API_KEY', '')
+
+
+async def _send_reservation_email(user_email: str, user_name: str, reservation_data: dict, subscription_info: dict = None):
+    """Envoie un email de confirmation après réservation"""
+    if not _RESEND_OK or not _RESEND_KEY:
+        logger.warning("[EMAIL] Resend non disponible — email non envoyé")
+        return
+    resend.api_key = _RESEND_KEY
+
+    res_code = reservation_data.get("reservationCode", "N/A")
+    offer = reservation_data.get("offerName", "Réservation")
+    course = reservation_data.get("courseName", "")
+    price = reservation_data.get("totalPrice", 0)
+    promo = reservation_data.get("promoCode", "")
+    created = reservation_data.get("createdAt", "")
+    dates_text = reservation_data.get("selectedDatesText", "")
+
+    # Info abonnement
+    sub_html = ""
+    if subscription_info:
+        remaining = subscription_info.get("remaining_sessions", "?")
+        total = subscription_info.get("total_sessions", "?")
+        code = subscription_info.get("code", promo)
+        sub_html = f"""
+        <div style="background:rgba(147,51,234,0.15);border:1px solid rgba(147,51,234,0.3);border-radius:8px;padding:14px;margin:16px 0;">
+            <p style="margin:0;color:#a855f7;font-size:13px;">Ton crédit restant</p>
+            <p style="margin:4px 0 0;color:#fff;font-size:18px;font-weight:bold;">{remaining}/{total} séances</p>
+            <p style="margin:4px 0 0;color:#888;font-size:12px;">Code : {code}</p>
+        </div>"""
+
+    # QR Code de la réservation
+    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://afroboost.com/api/reservations/{res_code}/validate&format=png"
+
+    html = f"""<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0a0a0a;">
+        <div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:24px;text-align:center;">
+            <h1 style="color:white;margin:0;font-size:22px;">Réservation confirmée !</h1>
+        </div>
+        <div style="padding:24px;color:#fff;">
+            <p style="color:#a855f7;font-size:16px;line-height:1.6;">
+                Merci {user_name} pour ta réservation ! Voici le récapitulatif :
+            </p>
+            <div style="background:rgba(217,28,210,0.1);border:1px solid rgba(217,28,210,0.3);border-radius:12px;padding:20px;margin:20px 0;">
+                <table style="width:100%;color:#fff;font-size:14px;">
+                    <tr><td style="color:#888;padding:6px 0;">Référence</td><td style="font-weight:bold;color:#d91cd2;">{res_code}</td></tr>
+                    <tr><td style="color:#888;padding:6px 0;">Offre</td><td>{offer}</td></tr>
+                    {"<tr><td style='color:#888;padding:6px 0;'>Cours</td><td>" + course + "</td></tr>" if course else ""}
+                    {"<tr><td style='color:#888;padding:6px 0;'>Dates</td><td>" + dates_text + "</td></tr>" if dates_text else ""}
+                    {"<tr><td style='color:#888;padding:6px 0;'>Code promo</td><td style='color:#a855f7;'>" + promo + "</td></tr>" if promo else ""}
+                    <tr><td style="color:#888;padding:6px 0;">Prix</td><td style="font-weight:bold;">{price} CHF</td></tr>
+                </table>
+            </div>
+            {sub_html}
+            <div style="text-align:center;margin:24px 0;">
+                <p style="color:#888;margin-bottom:12px;font-size:13px;">Ton QR Code de réservation</p>
+                <img src="{qr_url}" alt="QR Code" width="140" height="140" style="background:white;padding:8px;border-radius:8px;display:block;margin:0 auto;"/>
+                <p style="color:#a855f7;font-size:12px;margin-top:8px;">Présente ce QR Code à l'entrée.</p>
+            </div>
+            <div style="text-align:center;margin:24px 0;">
+                <a href="https://afroboost.com" style="display:inline-block;background:#d91cd2;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;">Accéder à mon espace</a>
+            </div>
+            <p style="color:#666;font-size:11px;text-align:center;margin-top:24px;">Conserve cet email. À très vite chez Afroboost !</p>
+        </div>
+    </div>"""
+
+    try:
+        await asyncio.to_thread(resend.Emails.send, {
+            "from": "Afroboost <notifications@afroboosteur.com>",
+            "to": [user_email],
+            "subject": f"Réservation confirmée — {res_code}",
+            "html": html
+        })
+        logger.info(f"[EMAIL] Confirmation envoyée à {user_email} pour {res_code}")
+    except Exception as e:
+        logger.warning(f"[EMAIL] Erreur envoi confirmation: {e}")
 
 # v9.5.8: Liste des Super Admins
 SUPER_ADMIN_EMAILS = [
@@ -168,6 +253,16 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
     await db.reservations.insert_one(reservation_data)
     reservation_data.pop("_id", None)
     logger.info(f"[RESERVATION] Créée: {reservation_data.get('reservationCode')} pour {user_email}")
+
+    # v96: Envoyer email de confirmation
+    if user_email:
+        sub_info = None
+        if subscription_id:
+            sub_info = await db.subscriptions.find_one({"id": subscription_id}, {"_id": 0})
+        asyncio.create_task(_send_reservation_email(
+            user_email, reservation.userName, reservation_data, sub_info
+        ))
+
     return reservation_data
 
 @reservation_router.put("/reservations/{reservation_id}/tracking")

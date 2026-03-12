@@ -1,6 +1,7 @@
 # promo_routes.py - Routes de codes promo v9.2.0
 # Extrait de server.py pour modularisation
 # v9.3.0: Ajout isolation par coach_id
+# v96: Email bienvenue + renforcement unicité
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, ConfigDict
@@ -8,8 +9,74 @@ from typing import Optional, List
 from datetime import datetime, timezone
 import uuid
 import logging
+import asyncio
+import os
 
 logger = logging.getLogger(__name__)
+
+# === v96: Email infrastructure ===
+try:
+    import resend
+    _RESEND_OK = True
+except ImportError:
+    _RESEND_OK = False
+
+_RESEND_KEY = os.environ.get('RESEND_API_KEY', '')
+
+
+async def _send_welcome_email(user_email: str, user_name: str, code_str: str, offer_name: str, total_sessions: int):
+    """Envoie un email de bienvenue quand un code est validé pour la première fois"""
+    if not _RESEND_OK or not _RESEND_KEY:
+        return
+    resend.api_key = _RESEND_KEY
+
+    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://afroboost.com/?qr={code_str}&format=png"
+
+    html = f"""<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0a0a0a;">
+        <div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:24px;text-align:center;">
+            <h1 style="color:white;margin:0;font-size:22px;">Bienvenue chez Afroboost !</h1>
+        </div>
+        <div style="padding:24px;color:#fff;">
+            <p style="color:#a855f7;font-size:16px;line-height:1.6;">
+                Hey {user_name} ! Ton code personnel a bien été activé. Voici tes infos :
+            </p>
+            <div style="background:rgba(217,28,210,0.1);border:1px solid rgba(217,28,210,0.3);border-radius:12px;padding:20px;margin:20px 0;text-align:center;">
+                <p style="margin:0 0 8px;color:#888;">Ton code d'accès personnel</p>
+                <p style="margin:0;color:#d91cd2;font-size:28px;font-weight:bold;letter-spacing:3px;">{code_str}</p>
+                <p style="margin:12px 0 4px;color:#fff;font-size:15px;">{offer_name}</p>
+                <p style="margin:0;color:#a855f7;font-size:14px;">{total_sessions} séance{"s" if total_sessions > 1 else ""} disponible{"s" if total_sessions > 1 else ""}</p>
+            </div>
+            <div style="text-align:center;margin:24px 0;">
+                <p style="color:#888;margin-bottom:12px;font-size:13px;">Ton QR Code personnel</p>
+                <img src="{qr_url}" alt="QR Code" width="140" height="140" style="background:white;padding:8px;border-radius:8px;display:block;margin:0 auto;"/>
+                <p style="color:#a855f7;font-size:12px;margin-top:8px;">Ce code est uniquement réservé à toi.</p>
+            </div>
+            <div style="background:rgba(147,51,234,0.1);border-radius:8px;padding:14px;margin:16px 0;">
+                <p style="margin:0;color:#a855f7;font-size:13px;font-weight:bold;">Comment ça marche ?</p>
+                <p style="margin:8px 0 0;color:#ccc;font-size:13px;line-height:1.5;">
+                    1. Ouvre le chat sur afroboost.com<br>
+                    2. Entre ton code <strong style="color:#d91cd2;">{code_str}</strong> pour t'identifier<br>
+                    3. Réserve un cours ou une offre<br>
+                    4. Présente ton QR Code à l'entrée
+                </p>
+            </div>
+            <div style="text-align:center;margin:24px 0;">
+                <a href="https://afroboost.com" style="display:inline-block;background:#d91cd2;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;">Accéder à mon espace</a>
+            </div>
+            <p style="color:#666;font-size:11px;text-align:center;margin-top:24px;">Ce code est personnel et ne peut pas être partagé. Conserve cet email précieusement.</p>
+        </div>
+    </div>"""
+
+    try:
+        await asyncio.to_thread(resend.Emails.send, {
+            "from": "Afroboost <notifications@afroboosteur.com>",
+            "to": [user_email],
+            "subject": f"Ton code Afroboost — {code_str}",
+            "html": html
+        })
+        logger.info(f"[EMAIL] Bienvenue envoyé à {user_email} pour code {code_str}")
+    except Exception as e:
+        logger.warning(f"[EMAIL] Erreur envoi bienvenue: {e}")
 
 # Super Admin email - pas de filtre
 SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"
@@ -155,7 +222,15 @@ async def validate_discount_code(data: dict):
         if assigned and user_email:
             if assigned.lower() != user_email.lower():
                 return {"valid": False, "message": "Code réservé à un autre compte"}
-    
+
+    # v96: Si le code n'est assigné à personne, le verrouiller au premier utilisateur
+    if (not assigned or not assigned.strip()) and user_email:
+        await _db.discount_codes.update_one(
+            {"code": {"$regex": f"^{code_str}$", "$options": "i"}},
+            {"$set": {"assignedEmail": user_email}}
+        )
+        logger.info(f"[PROMO] Code {code_str} verrouillé pour {user_email} (premier utilisateur)")
+
     # === v11.4: CRÉER/METTRE À JOUR L'ABONNEMENT ===
     if user_email:
         # Calculer le nombre de séances (maxUses ou valeur par défaut)
@@ -187,6 +262,11 @@ async def validate_discount_code(data: dict):
             }
             await _db.subscriptions.insert_one(subscription_data)
             logger.info(f"[SUBSCRIPTION] Créé: {user_email} - {offer_name} ({total_sessions} séances)")
+            # v96: Email de bienvenue à la première activation
+            asyncio.create_task(_send_welcome_email(
+                user_email, user_name or user_email.split("@")[0],
+                code_str, offer_name, total_sessions
+            ))
         else:
             logger.info(f"[SUBSCRIPTION] Existant: {user_email} - {existing_sub.get('remaining_sessions')} séances restantes")
         
