@@ -129,7 +129,7 @@ async def _resolve_offer_details(courses_list, max_uses):
     offer_price = None
     total_sessions = max_uses  # Utiliser maxUses tel quel (peut être None)
 
-    if courses_list and _db:
+    if courses_list and _db is not None:
         # Chercher la première offre liée
         for course_id in courses_list:
             offer = await _db.offers.find_one({"id": course_id}, {"_id": 0})
@@ -425,11 +425,8 @@ async def validate_discount_code(data: dict):
         return {"valid": True, "code": code, "subscription": subscription_info}
 
     except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        logger.error(f"[VALIDATE] Erreur validation code {data.get('code', '?')}: {tb}")
-        # v106.9: Retourner le traceback pour debug (temporaire)
-        return {"valid": False, "message": f"Erreur serveur: {type(e).__name__}: {e}", "debug_trace": tb[-500:]}
+        logger.error(f"[VALIDATE] Erreur validation code {data.get('code', '?')}: {type(e).__name__}: {e}")
+        return {"valid": False, "message": f"Erreur serveur lors de la validation"}
 
 
 @promo_router.post("/{code_id}/use")
