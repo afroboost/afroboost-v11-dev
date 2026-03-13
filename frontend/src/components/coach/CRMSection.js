@@ -963,9 +963,6 @@ const SystemPromptBlock = memo(({ API, coachEmail }) => {
   // Générer le Prompt Maître
   const handleGenerate = async () => {
     if (generating) return;
-    if (systemPrompt.trim() && systemPrompt !== savedPrompt) {
-      if (!window.confirm('Le prompt actuel a des modifications non sauvegardées. Générer un nouveau prompt va les remplacer. Continuer ?')) return;
-    }
     setGenerating(true);
     try {
       const res = await axios.post(`${API}/ai/generate-master-prompt`, {}, { headers: { 'X-User-Email': coachEmail } });

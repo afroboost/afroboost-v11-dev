@@ -5185,18 +5185,28 @@ async def generate_master_prompt(request: Request):
         except:
             pass
 
-        # 4. Promotions actives
+        # 4. Promotions actives (UNIQUEMENT les promos publiques, pas les codes internes)
         promos_text = ""
         try:
             promos = await db.discount_codes.find({"active": True}, {"_id": 0}).to_list(20)
             if promos:
                 lines = []
                 for p in promos:
+                    # Ignorer les codes assignés à un email spécifique (codes internes Stripe)
+                    if p.get('assignedEmail'):
+                        continue
+                    # Ignorer les codes à usage unique déjà utilisés
+                    if p.get('maxUses') and p.get('used', 0) >= p.get('maxUses', 1):
+                        continue
                     ptype = p.get('type', '%')
                     pvalue = p.get('value', 0)
-                    label = f"{pvalue}%" if ptype == '%' else f"{pvalue} CHF"
-                    lines.append(f"- Réduction de {label}")
-                promos_text = "\n".join(lines)
+                    label = f"{pvalue}%" if ptype == '%' else f"{pvalue} CHF de réduction"
+                    line = f"- {label}"
+                    if p.get('expiresAt'):
+                        line += f" (expire le {p['expiresAt'][:10]})"
+                    lines.append(line)
+                if lines:
+                    promos_text = "\n".join(lines)
         except:
             pass
 
