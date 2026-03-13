@@ -1284,15 +1284,26 @@ export const ChatWidget = () => {
     }
   }, []);
 
-  // V107.12: Charger messages d'un groupe spécifique
+  // V108.4: Charger messages d'un groupe spécifique — avec formatage unifié
   const loadGroupSessionMessages = useCallback(async (sessionId) => {
     if (!sessionId) return;
     setGroupLoading(true);
     try {
       const res = await axios.get(`${API}/chat/sessions/${sessionId}/messages`);
-      setGroupMessages(res.data || []);
+      // V108.4: Formater les messages serveur → format client unifié
+      const formatted = (res.data || []).map(m => ({
+        id: m.id,
+        type: m.type || (m.sender_type === 'user' ? 'user' : m.sender_type === 'coach' ? 'coach' : 'ai'),
+        text: m.content || m.text || '',
+        sender: m.sender_name || m.sender || '',
+        senderId: m.sender_id || m.senderId || '',
+        created_at: m.created_at,
+        media_url: m.media_url || null,
+        is_group: true
+      }));
+      setGroupMessages(formatted);
     } catch (err) {
-      console.warn('[V107.12] Erreur chargement messages groupe:', err);
+      console.warn('[V108.4] Erreur chargement messages groupe:', err);
     }
     setGroupLoading(false);
   }, []);
@@ -3566,9 +3577,13 @@ export const ChatWidget = () => {
     // Ajouter le senderId + un ID temporaire pour identifier les messages de l'utilisateur actuel
     const tempUserMsgId = `temp_user_${Date.now()}`;
 
-    // V107.12: Déterminer la cible (groupe ou privé)
-    const isGroupMode = chatMode === 'group' && selectedGroup;
+    // V108.4: Déterminer la cible (groupe ou privé) — détection robuste
+    // Utiliser selectedGroup directement (pas seulement chatMode qui peut être stale)
+    const isGroupMode = !!(selectedGroup && selectedGroup.session_id && (chatMode === 'group' || selectedGroup.id));
     const targetMessages = isGroupMode ? setGroupMessages : setMessages;
+    if (isGroupMode) {
+      console.log('[V108.4] Mode groupe détecté:', { chatMode, selectedGroup: selectedGroup?.name, session_id: selectedGroup?.session_id, participant_id: participantId });
+    }
 
     targetMessages(prev => [...prev, { id: tempUserMsgId, type: 'user', text: userMessage, senderId: participantId }]);
     setLastMessageCount(prev => prev + 1);
@@ -5843,7 +5858,7 @@ export const ChatWidget = () => {
                     >
                       <MemoizedMessageBubble
                         msg={msg}
-                        isUser={msg.type === 'user' && msg.senderId === participantId}
+                        isUser={(msg.type === 'user' || msg.sender_type === 'user') && (msg.senderId === participantId || msg.sender_id === participantId)}
                         onParticipantClick={startPrivateChat}
                         isCommunity={chatMode === 'group'}
                         currentUserId={participantId}

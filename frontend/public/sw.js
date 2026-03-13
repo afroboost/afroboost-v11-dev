@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v107.12';
-// V107.12: Groupes thématiques pour abonnés — sélecteur, IA dans groupes, join
+const CACHE_NAME = 'afroboost-v108.4';
+// V108.4: Fix group messages subscriber — cache bust + robust group sending
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {

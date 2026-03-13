@@ -30,7 +30,7 @@
         <!-- Additional SEO -->
         <meta name="keywords" content="afroboost, fitness, casque audio, danse, afrobeat, cardio, réservation, cours" />
         <meta name="author" content="Afroboost" />
-        <meta name="version" content="107.11" />
+        <meta name="version" content="108.4" />
         <script>
             console.log("🚀 V106.7 : Compteur Avis hero affiche le vrai total, plus plafonné à 100");
             // v64: Nettoyage localStorage — purger toute référence au slug "artboost"
@@ -267,7 +267,7 @@
             if ('serviceWorker' in navigator) {
                 window.addEventListener('load', function() {
                     // Register with version query to force fresh fetch
-                    navigator.serviceWorker.register('/sw.js?v=51', { updateViaCache: 'none' })
+                    navigator.serviceWorker.register('/sw.js?v=52', { updateViaCache: 'none' })
                         .then(function(reg) {
                             console.log('[V51] SW registered, scope:', reg.scope);
                             reg.update();
