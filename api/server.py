@@ -8363,8 +8363,13 @@ async def get_ai_response_with_session(request: Request):
     })
     
     # Vérifier si l'IA est active pour cette session
-    if not session.get("is_ai_active", True) or session.get("mode") != "ai":
-        # Mode humain - Notifier le coach par e-mail (non-bloquant)
+    # V107.12: Groupes avec IA — si is_ai_active=True ET mode=group, l'IA répond aussi
+    session_mode = session.get("mode", "ai")
+    ai_enabled_for_session = session.get("is_ai_active", True)
+    ai_allowed = ai_enabled_for_session and (session_mode == "ai" or session_mode == "group")
+
+    if not ai_allowed:
+        # Mode humain ou groupe sans IA - Notifier le coach par e-mail (non-bloquant)
         asyncio.create_task(
             notify_coach_new_message(
                 participant_name=participant_name,
@@ -8375,7 +8380,7 @@ async def get_ai_response_with_session(request: Request):
         return {
             "response": None,
             "ai_active": False,
-            "mode": session.get("mode"),
+            "mode": session_mode,
             "message_saved": True,
             "user_message_id": user_message.id,
             "coach_notified": True
@@ -9008,6 +9013,56 @@ async def delete_chat_group(group_id: str, request: Request):
     await db.chat_groups.update_one({"id": group_id}, {"$set": {"is_deleted": True, "deleted_at": now_iso}})
     await db.chat_sessions.update_one({"group_id": group_id}, {"$set": {"is_deleted": True}})
     return {"success": True}
+
+
+# V107.12: Groupes publics — pour les abonnés
+@api_router.get("/chat/groups/public")
+async def get_public_groups(request: Request):
+    """V107.12: Liste les groupes disponibles pour les abonnés.
+    Retourne tous les groupes actifs avec leur session_id."""
+    groups = await db.chat_groups.find(
+        {"is_deleted": {"$ne": True}},
+        {"_id": 0, "id": 1, "name": 1, "system_prompt": 1, "is_ai_active": 1,
+         "member_ids": 1, "link_token": 1, "created_at": 1}
+    ).sort("created_at", -1).to_list(50)
+
+    # Enrichir avec session_id
+    for g in groups:
+        g["session_id"] = f"grp_{g['id'][:8]}"
+        g["member_count"] = len(g.get("member_ids", []))
+
+    return groups
+
+
+@api_router.post("/chat/groups/{group_id}/join")
+async def join_chat_group(group_id: str, request: Request):
+    """V107.12: Un abonné rejoint un groupe. Ajoute son participant_id à la session."""
+    body = await request.json()
+    participant_id = body.get("participant_id", "").strip()
+    if not participant_id:
+        raise HTTPException(status_code=400, detail="participant_id requis")
+
+    # Vérifier que le groupe existe
+    group = await db.chat_groups.find_one(
+        {"id": group_id, "is_deleted": {"$ne": True}}, {"_id": 0}
+    )
+    if not group:
+        raise HTTPException(status_code=404, detail="Groupe introuvable")
+
+    session_id = f"grp_{group_id[:8]}"
+
+    # Ajouter le participant au groupe et à la session
+    await db.chat_groups.update_one(
+        {"id": group_id},
+        {"$addToSet": {"member_ids": participant_id}}
+    )
+    await db.chat_sessions.update_one(
+        {"id": session_id},
+        {"$addToSet": {"participant_ids": participant_id}}
+    )
+
+    logger.info(f"[V107.12] Participant {participant_id} a rejoint le groupe '{group.get('name', '')}' ({group_id})")
+    return {"success": True, "session_id": session_id, "group_name": group.get("name", "")}
 
 
 # --- Private Chat from Community ---

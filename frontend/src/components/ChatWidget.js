@@ -1049,6 +1049,9 @@ export const ChatWidget = () => {
   const [isCommunityMode, setIsCommunityMode] = useState(false);
   const [chatMode, setChatMode] = useState('private'); // v8.6: 'private' ou 'group'
   const [groupMessages, setGroupMessages] = useState([]); // v8.6: Messages de groupe
+  const [availableGroups, setAvailableGroups] = useState([]); // V107.12: Groupes disponibles
+  const [selectedGroup, setSelectedGroup] = useState(null); // V107.12: Groupe sélectionné
+  const [groupLoading, setGroupLoading] = useState(false); // V107.12: Chargement groupes
   const [lastMessageCount, setLastMessageCount] = useState(0);
   const [privateChatTarget, setPrivateChatTarget] = useState(null);
   const [messageCount, setMessageCount] = useState(0); // Compteur de messages pour prompt notif
@@ -1261,7 +1264,7 @@ export const ChatWidget = () => {
     playSoundIfAllowed(type, soundEnabled, silenceAutoEnabled);
   }, [soundEnabled, silenceAutoEnabled]);
   
-  // v8.6: Charger messages de groupe
+  // v8.6: Charger messages de groupe (legacy broadcast)
   const loadGroupMessages = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/chat/group/messages?limit=100`);
@@ -1270,6 +1273,52 @@ export const ChatWidget = () => {
       console.warn('[GROUP] Erreur chargement:', err);
     }
   }, []);
+
+  // V107.12: Charger la liste des groupes disponibles
+  const loadAvailableGroups = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/chat/groups/public`);
+      setAvailableGroups(res.data || []);
+    } catch (err) {
+      console.warn('[V107.12] Erreur chargement groupes:', err);
+    }
+  }, []);
+
+  // V107.12: Charger messages d'un groupe spécifique
+  const loadGroupSessionMessages = useCallback(async (sessionId) => {
+    if (!sessionId) return;
+    setGroupLoading(true);
+    try {
+      const res = await axios.get(`${API}/chat/sessions/${sessionId}/messages`);
+      setGroupMessages(res.data || []);
+    } catch (err) {
+      console.warn('[V107.12] Erreur chargement messages groupe:', err);
+    }
+    setGroupLoading(false);
+  }, []);
+
+  // V107.12: Sélectionner un groupe et rejoindre
+  const handleSelectGroup = useCallback(async (group) => {
+    setSelectedGroup(group);
+    setGroupMessages([]); // Reset messages pendant le chargement
+    // Rejoindre le groupe si on a un participantId
+    if (participantId && group.id) {
+      try {
+        await axios.post(`${API}/chat/groups/${group.id}/join`, { participant_id: participantId });
+      } catch (e) { /* déjà membre, pas grave */ }
+    }
+    // Charger les messages du groupe
+    loadGroupSessionMessages(group.session_id);
+  }, [participantId, loadGroupSessionMessages]);
+
+  // V107.12: Polling messages du groupe sélectionné (toutes les 10s)
+  useEffect(() => {
+    if (chatMode !== 'group' || !selectedGroup?.session_id) return;
+    const interval = setInterval(() => {
+      loadGroupSessionMessages(selectedGroup.session_id);
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [chatMode, selectedGroup?.session_id, loadGroupSessionMessages]);
   
   // Fonction pour copier le lien du site
   const handleShareLink = async () => {
@@ -3511,17 +3560,56 @@ export const ChatWidget = () => {
   // Envoyer un message au chat avec contexte de session
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isLoading) return;
-    
+
     const userMessage = inputMessage.trim();
     setInputMessage('');
     // Ajouter le senderId + un ID temporaire pour identifier les messages de l'utilisateur actuel
     const tempUserMsgId = `temp_user_${Date.now()}`;
-    setMessages(prev => [...prev, { id: tempUserMsgId, type: 'user', text: userMessage, senderId: participantId }]);
+
+    // V107.12: Déterminer la cible (groupe ou privé)
+    const isGroupMode = chatMode === 'group' && selectedGroup;
+    const targetMessages = isGroupMode ? setGroupMessages : setMessages;
+
+    targetMessages(prev => [...prev, { id: tempUserMsgId, type: 'user', text: userMessage, senderId: participantId }]);
     setLastMessageCount(prev => prev + 1);
     setMessageCount(prev => prev + 1);
     setIsLoading(true);
-    
+
     try {
+      // V107.12: Si mode groupe avec un groupe sélectionné, envoyer au session du groupe
+      if (isGroupMode && participantId) {
+        const response = await axios.post(`${API}/chat/ai-response`, {
+          session_id: selectedGroup.session_id,
+          participant_id: participantId,
+          message: userMessage
+        });
+
+        // Mettre à jour l'ID temporaire
+        if (response.data.user_message_id) {
+          targetMessages(prev => prev.map(m =>
+            m.id === tempUserMsgId ? { ...m, id: response.data.user_message_id } : m
+          ));
+        }
+
+        if (response.data.response) {
+          playSoundIfEnabled('message');
+          targetMessages(prev => [...prev, {
+            id: response.data.ai_message_id || `ai_${Date.now()}`,
+            type: 'ai',
+            text: response.data.response
+          }]);
+        } else if (!response.data.ai_active) {
+          targetMessages(prev => [...prev, {
+            id: `wait_${Date.now()}`,
+            type: 'ai',
+            text: "Message envoyé au groupe ! Le coach et les autres membres le verront."
+          }]);
+        }
+
+        setIsLoading(false);
+        return;
+      }
+
       // Si on a une session active, utiliser l'API améliorée
       if (sessionData && participantId) {
         // Transmettre le link_token de l'URL pour initialiser le bon contexte IA
@@ -5626,7 +5714,7 @@ export const ChatWidget = () => {
                       Privé Coach
                     </button>
                     <button
-                      onClick={() => { setChatMode('group'); loadGroupMessages(); }}
+                      onClick={() => { setChatMode('group'); loadAvailableGroups(); if (selectedGroup) loadGroupSessionMessages(selectedGroup.session_id); else loadGroupMessages(); }}
                       style={{
                         flex: 1,
                         padding: '10px 12px',
@@ -5651,7 +5739,7 @@ export const ChatWidget = () => {
                         <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
                         <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                       </svg>
-                      Groupe
+                      Groupes
                     </button>
                   </div>
                 )}
@@ -5659,6 +5747,36 @@ export const ChatWidget = () => {
                 {/* v97: Mon Pass fusionné dans le bouton Abonnements ci-dessus */}
 
                 {/* v85: Banner supprimé ici — déplacé tout en haut (avant les onglets) */}
+
+                {/* V107.12: Sélecteur de groupes thématiques */}
+                {chatMode === 'group' && (
+                  <div style={{
+                    padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)',
+                    display: 'flex', gap: '6px', overflowX: 'auto', flexShrink: 0,
+                    WebkitOverflowScrolling: 'touch',
+                  }}>
+                    {availableGroups.length === 0 ? (
+                      <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px', padding: '6px 0' }}>Chargement des groupes...</span>
+                    ) : availableGroups.map(g => (
+                      <button
+                        key={g.id}
+                        onClick={() => handleSelectGroup(g)}
+                        style={{
+                          padding: '6px 14px', borderRadius: '16px', border: 'none', cursor: 'pointer',
+                          background: selectedGroup?.id === g.id
+                            ? 'linear-gradient(135deg, #8b5cf6, #D91CD2)'
+                            : 'rgba(255,255,255,0.06)',
+                          color: selectedGroup?.id === g.id ? '#fff' : 'rgba(255,255,255,0.5)',
+                          fontSize: '11px', fontWeight: '600', whiteSpace: 'nowrap',
+                          transition: 'all 0.2s',
+                          boxShadow: selectedGroup?.id === g.id ? '0 0 10px rgba(139,92,246,0.3)' : 'none',
+                        }}
+                      >
+                        {g.name} {g.is_ai_active ? '🤖' : ''}
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 <div
                   style={{
@@ -5676,7 +5794,25 @@ export const ChatWidget = () => {
                   {isLoadingHistory && messages.length === 0 && (
                     <MessageSkeleton count={4} />
                   )}
-                  
+
+                  {/* V107.12: Message d'accueil quand aucun groupe sélectionné */}
+                  {chatMode === 'group' && !selectedGroup && availableGroups.length > 0 && groupMessages.length === 0 && (
+                    <div style={{ textAlign: 'center', padding: '30px 16px' }}>
+                      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(139,92,246,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto 12px' }}>
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                      </svg>
+                      <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '13px', margin: '0 0 6px' }}>
+                        Choisissez un groupe ci-dessus
+                      </p>
+                      <p style={{ color: 'rgba(255,255,255,0.2)', fontSize: '11px', margin: 0 }}>
+                        Posez vos questions et discutez avec les autres membres
+                      </p>
+                    </div>
+                  )}
+
                   {/* === MESSAGES: Affichés selon mode (privé ou groupe) === */}
                   {/* v16.4: Animation slide-in + fade pour chaque message */}
                   {(chatMode === 'group' ? groupMessages : messages).filter(m => m.type !== 'review_request').map((msg, idx) => (
