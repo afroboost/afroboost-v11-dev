@@ -7089,20 +7089,21 @@ async def get_session_messages(session_id: str, include_deleted: bool = False):
         if all_pids:
             merge_queries.append({"participant_ids": {"$in": list(all_pids)}})
 
-        if merge_queries:
+        if merge_queries and session.get("mode") not in ("group", "community"):
             other_sessions = await db.chat_sessions.find(
                 {
                     "$or": merge_queries,
                     "id": {"$ne": session_id},
                     "is_deleted": {"$ne": True},
-                    "mode": {"$nin": ["community"]},
+                    "mode": {"$nin": ["community", "group"]},
+                    "group_id": {"$exists": False},
                 },
                 {"_id": 0}
             ).to_list(10)
 
             for other in other_sessions:
-                # Exclure les sessions de groupe
-                if other.get("is_group") or other.get("group_id"):
+                # Double-check: exclure les sessions de groupe
+                if other.get("is_group") or other.get("group_id") or other.get("mode") == "group":
                     continue
                 # Fusionner: migrer les messages de l'autre session vers celle-ci
                 migrated = await db.chat_messages.update_many(
@@ -7135,6 +7136,60 @@ async def get_session_messages(session_id: str, include_deleted: bool = False):
     if not include_deleted: query["is_deleted"] = {"$ne": True}
     raw = await db.chat_messages.find(query, {"_id": 0}).sort("created_at", 1).to_list(500)
     return [format_message_for_frontend(m) for m in raw]
+
+# V107.10: Restaurer les sessions supprimées par erreur lors de la fusion
+@api_router.post("/chat/sessions/restore-merged")
+async def restore_merged_sessions():
+    """
+    V107.10: Restaure toutes les sessions qui ont été merged par erreur
+    (sessions de groupe, community, ou sessions avec group_id)
+    """
+    restored = []
+    # Trouver toutes les sessions supprimées avec merged_into
+    deleted_sessions = await db.chat_sessions.find(
+        {"merged_into": {"$exists": True}, "is_deleted": True},
+        {"_id": 0}
+    ).to_list(100)
+
+    for sess in deleted_sessions:
+        # Restaurer les sessions de groupe/community supprimées par erreur
+        should_restore = (
+            sess.get("mode") in ("group", "community") or
+            sess.get("group_id") or
+            sess.get("is_group")
+        )
+        if should_restore:
+            merged_into = sess.get("merged_into")
+            # Restaurer les messages qui ont été migrés
+            if merged_into:
+                await db.chat_messages.update_many(
+                    {"session_id": merged_into, "original_session_id": sess["id"]},
+                    {"$set": {"session_id": sess["id"]}}
+                )
+            # Restaurer la session
+            await db.chat_sessions.update_one(
+                {"id": sess["id"]},
+                {"$set": {"is_deleted": False}, "$unset": {"merged_into": ""}}
+            )
+            restored.append(sess["id"])
+            logger.info(f"[V107.10] Session restaurée: {sess['id'][:8]} (mode={sess.get('mode')}, group_id={sess.get('group_id', 'N/A')[:8] if sess.get('group_id') else 'N/A'})")
+
+    # Aussi restaurer les sessions de conversation directe supprimées par erreur
+    # qui ont des modes normaux (ai, human, bot)
+    all_merged = await db.chat_sessions.find(
+        {"merged_into": {"$exists": True}, "is_deleted": True, "mode": {"$in": ["ai", "human", "bot", None]}},
+        {"_id": 0}
+    ).to_list(100)
+    for sess in all_merged:
+        # Restaurer si elle a été fusionnée récemment (merged_into existe)
+        await db.chat_sessions.update_one(
+            {"id": sess["id"]},
+            {"$set": {"is_deleted": False}, "$unset": {"merged_into": ""}}
+        )
+        restored.append(sess["id"])
+        logger.info(f"[V107.10] Session directe restaurée: {sess['id'][:8]}")
+
+    return {"success": True, "restored_count": len(restored), "restored_ids": restored}
 
 # v8.6: Endpoint messages de groupe
 @api_router.get("/chat/group/messages")
