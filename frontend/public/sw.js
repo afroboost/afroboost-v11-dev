@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v106';
-// V106: Réactivation langues EN/DE + Recherche universelle avec mots-clés
+const CACHE_NAME = 'afroboost-v111';
+// V111: Fix WhatsApp campaign delivery — backend-only sending, precise error statuses
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {
