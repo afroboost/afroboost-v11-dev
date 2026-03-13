@@ -809,16 +809,14 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
               data-testid="comments-btn"
             >
               <div
-                className="w-11 h-11 rounded-full flex items-center justify-center"
                 style={{
-                  background: 'rgba(217, 28, 210, 0.25)',
-                  backdropFilter: 'blur(4px)',
-                  border: '2px solid rgba(255, 255, 255, 0.85)',
-                  boxShadow: '0 0 14px rgba(217, 28, 210, 0.5), 0 0 30px rgba(217, 28, 210, 0.2)',
-                  animation: 'v73GlowPulse 2.5s ease-in-out infinite'
+                  width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: '#D91CD2',
+                  border: '2.5px solid #fff',
+                  boxShadow: '0 0 14px rgba(217, 28, 210, 0.6), 0 0 30px rgba(217, 28, 210, 0.3), 0 4px 15px rgba(217, 28, 210, 0.4)'
                 }}
               >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="#D91CD2" stroke="white" strokeWidth="1">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="rgba(255,255,255,0.95)" stroke="white" strokeWidth="0.5">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                 </svg>
               </div>
@@ -846,10 +844,9 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
             <div
               style={{
                 width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: isLiked ? 'rgba(217, 28, 210, 0.3)' : 'rgba(0,0,0,0.4)',
-                backdropFilter: 'blur(4px)',
-                border: '2px solid rgba(255, 255, 255, 0.85)',
-                boxShadow: isLiked ? '0 0 20px rgba(217, 28, 210, 0.8), 0 0 40px rgba(217, 28, 210, 0.4)' : '0 0 8px rgba(0, 0, 0, 0.4)',
+                background: '#D91CD2',
+                border: '2.5px solid #fff',
+                boxShadow: isLiked ? '0 0 20px rgba(217, 28, 210, 0.8), 0 0 40px rgba(217, 28, 210, 0.4), 0 4px 15px rgba(217, 28, 210, 0.4)' : '0 0 14px rgba(217, 28, 210, 0.6), 0 0 30px rgba(217, 28, 210, 0.3), 0 4px 15px rgba(217, 28, 210, 0.4)',
                 transform: likeAnimating ? 'scale(1.3)' : 'scale(1)',
                 transition: 'all 0.3s ease'
               }}
@@ -858,13 +855,13 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                 width="24"
                 height="24"
                 viewBox="0 0 24 24"
-                fill={isLiked ? '#D91CD2' : 'none'}
-                stroke={isLiked ? '#D91CD2' : 'white'}
+                fill={isLiked ? 'white' : 'none'}
+                stroke="white"
                 strokeWidth="2"
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 style={{
-                  filter: isLiked ? 'drop-shadow(0 0 8px #D91CD2)' : 'none',
+                  filter: isLiked ? 'drop-shadow(0 0 8px rgba(255,255,255,0.8))' : 'none',
                   transition: 'all 0.3s ease'
                 }}
               >
@@ -874,8 +871,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
             <span
               style={{
                 fontSize: '12px', fontWeight: 600, marginTop: '4px',
-                color: isLiked ? '#D91CD2' : 'white',
-                textShadow: isLiked ? '0 0 10px rgba(217, 28, 210, 0.8)' : '0 1px 3px rgba(0,0,0,0.9)',
+                color: 'white',
+                textShadow: '0 1px 3px rgba(0,0,0,0.9)',
                 transition: 'all 0.3s ease',
                 transform: likeAnimating ? 'scale(1.2)' : 'scale(1)'
               }}
@@ -892,11 +889,11 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
               data-testid={`reserve-btn-${partner.id || partner.email}`}
             >
               <div
-                className="w-11 h-11 rounded-full flex items-center justify-center"
                 style={{
-                  background: 'var(--primary-color, #D91CD2)',
-                  border: '2px solid rgba(255, 255, 255, 0.85)',
-                  boxShadow: '0 0 12px rgba(217, 28, 210, 0.5), 0 0 8px rgba(0, 0, 0, 0.4)'
+                  width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: '#D91CD2',
+                  border: '2.5px solid #fff',
+                  boxShadow: '0 0 14px rgba(217, 28, 210, 0.6), 0 0 30px rgba(217, 28, 210, 0.3), 0 4px 15px rgba(217, 28, 210, 0.4)'
                 }}
               >
                 <CalendarIcon />
