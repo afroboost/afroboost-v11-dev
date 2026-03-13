@@ -5491,10 +5491,16 @@ export const ChatWidget = () => {
                                   </div>
                                   <div>
                                     <div style={{ fontSize: '13px', fontWeight: '700', color: '#fff' }}>{displayName}</div>
+                                    {sub?.offer_price != null && (
+                                      <div style={{ fontSize: '10px', color: '#a78bfa', marginTop: '1px', fontWeight: '600' }}>
+                                        {sub.offer_price > 0 ? `${sub.offer_price.toFixed(2)} CHF` : 'Offert'}
+                                      </div>
+                                    )}
                                     <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', marginTop: '1px' }}>
                                       {sub?.expires_at
                                         ? `Expire le ${new Date(sub.expires_at).toLocaleDateString('fr-FR')}`
                                         : 'Sans expiration'}
+                                      {' • '}{remaining === '∞' ? 'Illimité' : `${remaining}/${total} séance${total > 1 ? 's' : ''}`}
                                     </div>
                                   </div>
                                 </div>

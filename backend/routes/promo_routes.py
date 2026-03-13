@@ -121,6 +121,40 @@ class DiscountCodeCreate(BaseModel):
     coach_id: Optional[str] = None  # v9.3.0: Isolation par coach
 
 
+# === v104: HELPER — Résoudre les détails de l'offre liée à un code ===
+async def _resolve_offer_details(courses_list, max_uses):
+    """Détermine le nombre de séances et le nom de l'offre en se basant sur l'article autorisé.
+    Règle v104: Plus de défaut 10 séances. Le crédit vient de l'article ou de maxUses."""
+    offer_name = "Abonnement"
+    offer_price = None
+    total_sessions = max_uses  # Utiliser maxUses tel quel (peut être None)
+
+    if courses_list and _db:
+        # Chercher la première offre liée
+        for course_id in courses_list:
+            offer = await _db.offers.find_one({"id": course_id}, {"_id": 0})
+            if offer:
+                offer_name = offer.get("name", offer_name)
+                offer_price = offer.get("price")
+                # v104: Déduire les séances du nom de l'offre si maxUses non défini
+                if total_sessions is None:
+                    name_lower = offer_name.lower()
+                    # Patterns: "x10", "x5", "x20", "× 10", etc.
+                    import re
+                    match = re.search(r'[x×]\s*(\d+)', name_lower)
+                    if match:
+                        total_sessions = int(match.group(1))
+                    elif 'unit' in name_lower or 'à l\'unité' in name_lower or 'unique' in name_lower:
+                        total_sessions = 1
+                break  # On prend la première offre
+
+    # v104: Si toujours None après résolution, défaut = 1 (pas 10)
+    if total_sessions is None:
+        total_sessions = 1
+
+    return total_sessions, offer_name, offer_price
+
+
 # === ROUTES ===
 @promo_router.get("")
 async def get_discount_codes(request: Request):
@@ -154,11 +188,11 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
     await _db.discount_codes.insert_one(code_obj.model_dump())
 
     # v96: Auto-créer la subscription si un bénéficiaire est assigné
+    # v104: Résolution dynamique des séances via l'article lié
     assigned_email = (code.assignedEmail or "").lower().strip()
     if assigned_email:
         code_str = code.code.upper().strip()
-        total_sessions = code.maxUses or 10
-        offer_name = code.code or "Abonnement"
+        total_sessions, offer_name, offer_price = await _resolve_offer_details(code.courses, code.maxUses)
 
         # Vérifier qu'il n'y a pas déjà un abonnement actif pour ce code + email
         existing = await _db.subscriptions.find_one({
@@ -183,6 +217,7 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
                 "name": assigned_email.split("@")[0],
                 "code": code_str,
                 "offer_name": offer_name,
+                "offer_price": offer_price,
                 "total_sessions": total_sessions,
                 "used_sessions": 0,
                 "remaining_sessions": total_sessions,
@@ -279,19 +314,23 @@ async def validate_discount_code(data: dict):
         )
         logger.info(f"[PROMO] Code {code_str} verrouillé pour {user_email} (premier utilisateur)")
 
-    # === v11.4: CRÉER/METTRE À JOUR L'ABONNEMENT ===
+    # === v104: CRÉER/METTRE À JOUR L'ABONNEMENT — résolution dynamique via article ===
     if user_email:
-        # Calculer le nombre de séances (maxUses ou valeur par défaut)
-        total_sessions = code.get("maxUses") or code.get("sessions") or 10
-        offer_name = code.get("name") or code.get("code") or "Abonnement"
-        
+        # v104: Résolution dynamique — plus de défaut 10 séances
+        courses_list = code.get("courses") or []
+        raw_max = code.get("maxUses") or code.get("sessions") or None
+        total_sessions, offer_name, offer_price = await _resolve_offer_details(courses_list, raw_max)
+        # Fallback nom: code name > code string
+        if offer_name == "Abonnement":
+            offer_name = code.get("name") or code.get("code") or "Abonnement"
+
         # Vérifier si l'abonné a déjà un abonnement actif avec CE code
         existing_sub = await _db.subscriptions.find_one({
             "email": user_email,
             "code": code_str,
             "status": "active"
         }, {"_id": 0})
-        
+
         if not existing_sub:
             # Créer un nouvel abonnement
             subscription_data = {
@@ -300,6 +339,7 @@ async def validate_discount_code(data: dict):
                 "name": user_name or user_email.split("@")[0],
                 "code": code_str,
                 "offer_name": offer_name,
+                "offer_price": offer_price,
                 "total_sessions": total_sessions,
                 "used_sessions": 0,
                 "remaining_sessions": total_sessions,
@@ -345,6 +385,7 @@ async def validate_discount_code(data: dict):
         if sub:
             subscription_info = {
                 "offer_name": sub.get("offer_name"),
+                "offer_price": sub.get("offer_price"),
                 "total_sessions": sub.get("total_sessions"),
                 "used_sessions": sub.get("used_sessions", 0),
                 "remaining_sessions": sub.get("remaining_sessions"),
@@ -390,6 +431,7 @@ async def get_subscription_status(email: str = "", code: str = ""):
             "name": s.get("name"),
             "code": s.get("code"),
             "offer_name": s.get("offer_name"),
+            "offer_price": s.get("offer_price"),
             "total_sessions": s.get("total_sessions"),
             "used_sessions": s.get("used_sessions", 0),
             "remaining_sessions": s.get("remaining_sessions"),
@@ -486,14 +528,17 @@ async def sync_subscriptions_for_email(data: dict):
             skipped.append(code_str)
             continue
 
-        # Créer la subscription
-        total = code.get("maxUses") or code.get("sessions") or 10
+        # v104: Résolution dynamique des séances via l'article
+        raw_max = code.get("maxUses") or code.get("sessions") or None
+        total, resolved_name, resolved_price = await _resolve_offer_details(code.get("courses", []), raw_max)
+        final_name = resolved_name if resolved_name != "Abonnement" else (code.get("name") or code_str)
         sub = {
             "id": str(uuid.uuid4()),
             "email": email,
             "name": data.get("name", email.split("@")[0]),
             "code": code_str,
-            "offer_name": code.get("name") or code_str,
+            "offer_name": final_name,
+            "offer_price": resolved_price,
             "total_sessions": total,
             "used_sessions": 0,
             "remaining_sessions": total,

@@ -4,7 +4,7 @@
  * Inclut: Edition, Duplication, Durée validité, Max uses, Sélection contacts
  * v14.0: Ajout bouton "Copier" le code
  */
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { CreditsGate } from './index';
 
@@ -73,6 +73,8 @@ const PromoCodesTab = ({
   handleImportCSV,
   exportPromoCodesCSV,
   manualSanitize,
+  // v104: Edit mode
+  editingCode,
   // Translations
   t
 }) => {
@@ -118,6 +120,28 @@ const PromoCodesTab = ({
       setTimeout(() => setCopiedCodeId(null), 2000);
     }
   };
+
+  // v104: Auto-remplir maxUses quand un article est sélectionné
+  const resolvedSessionsFromOffer = useMemo(() => {
+    if (!newCode.courses?.length) return null;
+    const allArticles = [...(courses || []), ...(offers || [])];
+    for (const articleId of newCode.courses) {
+      const article = allArticles.find(a => a.id === articleId);
+      if (article?.name) {
+        const match = article.name.match(/[x×]\s*(\d+)/i);
+        if (match) return { count: parseInt(match[1]), name: article.name };
+        if (/unit|à l'unité|unique/i.test(article.name)) return { count: 1, name: article.name };
+      }
+    }
+    return null;
+  }, [newCode.courses, courses, offers]);
+
+  // Auto-populate maxUses when article changes (only if maxUses is empty)
+  useEffect(() => {
+    if (resolvedSessionsFromOffer && !newCode.maxUses) {
+      setNewCode(prev => ({ ...prev, maxUses: String(resolvedSessionsFromOffer.count) }));
+    }
+  }, [resolvedSessionsFromOffer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Helper pour formater les dates
   const formatDate = (dateVal) => {
@@ -231,6 +255,18 @@ const PromoCodesTab = ({
       
       {/* Formulaire de création de code - COMPLET */}
       <form onSubmit={addCode} className="mb-6 p-4 rounded-lg glass">
+        {/* v104: Bandeau mode édition avec email bénéficiaire */}
+        {editingCode && (
+          <div className="mb-4 p-3 rounded-lg flex items-center gap-3 flex-wrap" style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
+            <span className="text-blue-400 text-sm font-bold">✏️ Mode Édition</span>
+            <span className="text-white/60 text-xs">Code: <span className="text-white font-mono">{newCode.code}</span></span>
+            {(newCode.assignedEmails?.length > 0 || selectedBeneficiaries?.length > 0) && (
+              <span className="text-xs px-2 py-1 rounded-full" style={{ background: 'rgba(217, 28, 210, 0.15)', color: '#D91CD2', border: '1px solid rgba(217, 28, 210, 0.3)' }}>
+                📧 Bénéficiaire: {(selectedBeneficiaries?.length > 0 ? selectedBeneficiaries : newCode.assignedEmails)?.join(', ')}
+              </span>
+            )}
+          </div>
+        )}
         {/* Toggle Mode Série */}
         <div className="flex items-center justify-between mb-4">
           <label className="flex items-center gap-3 cursor-pointer">
@@ -370,17 +406,22 @@ const PromoCodesTab = ({
         
         {/* ============ PARAMÈTRES AVANCÉS ============ */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          {/* Nombre max d'utilisations */}
+          {/* Nombre max d'utilisations — v104: auto-rempli par l'article */}
           <div>
-            <label className="block text-white text-xs mb-1 opacity-70">{t('maxUses')} (limite)</label>
-            <input 
-              type="number" 
-              placeholder="∞ = illimité" 
-              value={newCode.maxUses || ''} 
+            <label className="block text-white text-xs mb-1 opacity-70">{t('maxUses')} (séances)</label>
+            <input
+              type="number"
+              placeholder="1 par défaut"
+              value={newCode.maxUses || ''}
               onChange={e => setNewCode({ ...newCode, maxUses: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg neon-input text-sm" 
+              className="w-full px-3 py-2 rounded-lg neon-input text-sm"
               data-testid="max-uses-input"
             />
+            {resolvedSessionsFromOffer && (
+              <p className="text-xs mt-1" style={{ color: '#a78bfa' }}>
+                Auto-détecté : {resolvedSessionsFromOffer.count} séance(s) — {resolvedSessionsFromOffer.name}
+              </p>
+            )}
           </div>
           
           {/* Date d'expiration */}

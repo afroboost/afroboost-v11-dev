@@ -6224,6 +6224,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             handleImportCSV={handleImportCSV}
             exportPromoCodesCSV={exportPromoCodesCSV}
             manualSanitize={manualSanitize}
+            // === v104: Edit mode ===
+            editingCode={editingCode}
             // === Translations ===
             t={t}
           />
