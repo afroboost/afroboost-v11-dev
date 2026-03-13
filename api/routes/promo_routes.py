@@ -155,6 +155,26 @@ async def _resolve_offer_details(courses_list, max_uses):
     return total_sessions, offer_name, offer_price
 
 
+# === v106.9: HELPER — Sanitize MongoDB docs for JSON serialization ===
+def _sanitize_mongo_doc(doc):
+    """Convertit les types non-sérialisables (datetime, ObjectId, bytes) en strings JSON-safe"""
+    if not isinstance(doc, dict):
+        return doc
+    sanitized = {}
+    for key, value in doc.items():
+        if isinstance(value, datetime):
+            sanitized[key] = value.isoformat()
+        elif isinstance(value, dict):
+            sanitized[key] = _sanitize_mongo_doc(value)
+        elif isinstance(value, list):
+            sanitized[key] = [_sanitize_mongo_doc(v) if isinstance(v, dict) else (v.isoformat() if isinstance(v, datetime) else str(v) if not isinstance(v, (str, int, float, bool, type(None))) else v) for v in value]
+        elif not isinstance(value, (str, int, float, bool, type(None), list)):
+            sanitized[key] = str(value)  # ObjectId, bytes, etc.
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
 # === ROUTES ===
 @promo_router.get("")
 async def get_discount_codes(request: Request):
@@ -255,144 +275,158 @@ async def delete_discount_code(code_id: str):
 
 @promo_router.post("/validate")
 async def validate_discount_code(data: dict):
-    """Valide un code promo et crée/met à jour l'abonnement v11.4"""
-    code_str = data.get("code", "").strip().upper()  # Normalize: trim + uppercase
-    user_email = data.get("email", "").strip().lower()
-    user_name = data.get("name", "").strip()
-    course_id = data.get("courseId", "").strip() if data.get("courseId") else ""
-    
-    # Case-insensitive search using regex
-    code = await _db.discount_codes.find_one({
-        "code": {"$regex": f"^{code_str}$", "$options": "i"},  # Case insensitive match
-        "active": True
-    }, {"_id": 0})
-    
-    if not code:
-        return {"valid": False, "message": "Code inconnu ou invalide"}
-    
-    # Check expiration date
-    expiry_date = None
-    if code.get("expiresAt"):
-        try:
-            expiry = code["expiresAt"]
-            if isinstance(expiry, str):
-                # Handle various date formats
-                expiry = expiry.replace('Z', '+00:00')
-                if 'T' not in expiry:
-                    expiry = expiry + "T23:59:59+00:00"
-                expiry_date = datetime.fromisoformat(expiry)
-            else:
-                expiry_date = expiry
-            if expiry_date < datetime.now(timezone.utc):
-                return {"valid": False, "message": "Code promo expiré"}
-        except Exception as e:
-            logger.debug(f"Date parsing: {e}")
-    
-    # Check max uses (global)
-    if code.get("maxUses") and code.get("used", 0) >= code["maxUses"]:
-        return {"valid": False, "message": "Code promo épuisé (nombre max d'utilisations atteint)"}
-    
-    # Check if course is allowed - SKIP if no courseId provided (identification flow)
-    allowed_courses = code.get("courses", [])
-    if course_id and allowed_courses and len(allowed_courses) > 0:
-        if course_id not in allowed_courses:
-            return {"valid": False, "message": "Code non applicable à ce cours"}
-    
-    # Check assigned email (only if assignedEmail is set AND email is provided)
-    assigned = code.get("assignedEmail") or ""
-    if assigned and isinstance(assigned, str):
-        assigned = assigned.strip()
-        if assigned and user_email:
-            if assigned.lower() != user_email.lower():
-                return {"valid": False, "message": "Code réservé à un autre compte"}
+    """Valide un code promo et crée/met à jour l'abonnement v11.4 — v106.9: fix JSON serialization"""
+    try:
+        code_str = data.get("code", "").strip().upper()  # Normalize: trim + uppercase
+        user_email = data.get("email", "").strip().lower()
+        user_name = data.get("name", "").strip()
+        course_id = data.get("courseId", "").strip() if data.get("courseId") else ""
 
-    # v96: Si le code n'est assigné à personne, le verrouiller au premier utilisateur
-    if (not assigned or not assigned.strip()) and user_email:
-        await _db.discount_codes.update_one(
-            {"code": {"$regex": f"^{code_str}$", "$options": "i"}},
-            {"$set": {"assignedEmail": user_email}}
-        )
-        logger.info(f"[PROMO] Code {code_str} verrouillé pour {user_email} (premier utilisateur)")
-
-    # === v104: CRÉER/METTRE À JOUR L'ABONNEMENT — résolution dynamique via article ===
-    if user_email:
-        # v104: Résolution dynamique — plus de défaut 10 séances
-        courses_list = code.get("courses") or []
-        raw_max = code.get("maxUses") or code.get("sessions") or None
-        total_sessions, offer_name, offer_price = await _resolve_offer_details(courses_list, raw_max)
-        # Fallback nom: code name > code string
-        if offer_name == "Abonnement":
-            offer_name = code.get("name") or code.get("code") or "Abonnement"
-
-        # Vérifier si l'abonné a déjà un abonnement actif avec CE code
-        existing_sub = await _db.subscriptions.find_one({
-            "email": user_email,
-            "code": code_str,
-            "status": "active"
+        # Case-insensitive search using regex
+        code = await _db.discount_codes.find_one({
+            "code": {"$regex": f"^{code_str}$", "$options": "i"},  # Case insensitive match
+            "active": True
         }, {"_id": 0})
 
-        if not existing_sub:
-            # Créer un nouvel abonnement
-            subscription_data = {
-                "id": str(uuid.uuid4()),
+        if not code:
+            return {"valid": False, "message": "Code inconnu ou invalide"}
+
+        # v106.9: Sanitize MongoDB doc — convert datetime/non-serializable to strings
+        code = _sanitize_mongo_doc(code)
+
+        # Check expiration date
+        expiry_date = None
+        if code.get("expiresAt"):
+            try:
+                expiry = code["expiresAt"]
+                if isinstance(expiry, str):
+                    # Handle various date formats
+                    expiry = expiry.replace('Z', '+00:00')
+                    if 'T' not in expiry:
+                        expiry = expiry + "T23:59:59+00:00"
+                    expiry_date = datetime.fromisoformat(expiry)
+                elif isinstance(expiry, datetime):
+                    expiry_date = expiry
+                # v106.9: Ensure timezone-aware comparison
+                now_utc = datetime.now(timezone.utc)
+                if expiry_date:
+                    if expiry_date.tzinfo is None:
+                        expiry_date = expiry_date.replace(tzinfo=timezone.utc)
+                    if expiry_date < now_utc:
+                        return {"valid": False, "message": "Code promo expiré"}
+            except Exception as e:
+                logger.warning(f"[VALIDATE] Date parsing error for code {code_str}: {e}")
+
+        # Check max uses (global)
+        if code.get("maxUses") and code.get("used", 0) >= code["maxUses"]:
+            return {"valid": False, "message": "Code promo épuisé (nombre max d'utilisations atteint)"}
+
+        # Check if course is allowed - SKIP if no courseId provided (identification flow)
+        allowed_courses = code.get("courses", [])
+        if course_id and allowed_courses and len(allowed_courses) > 0:
+            if course_id not in allowed_courses:
+                return {"valid": False, "message": "Code non applicable à ce cours"}
+
+        # Check assigned email (only if assignedEmail is set AND email is provided)
+        assigned = code.get("assignedEmail") or ""
+        if assigned and isinstance(assigned, str):
+            assigned = assigned.strip()
+            if assigned and user_email:
+                if assigned.lower() != user_email.lower():
+                    return {"valid": False, "message": "Code réservé à un autre compte"}
+
+        # v96: Si le code n'est assigné à personne, le verrouiller au premier utilisateur
+        if (not assigned or (isinstance(assigned, str) and not assigned.strip())) and user_email:
+            await _db.discount_codes.update_one(
+                {"code": {"$regex": f"^{code_str}$", "$options": "i"}},
+                {"$set": {"assignedEmail": user_email}}
+            )
+            logger.info(f"[PROMO] Code {code_str} verrouillé pour {user_email} (premier utilisateur)")
+
+        # === v104: CRÉER/METTRE À JOUR L'ABONNEMENT — résolution dynamique via article ===
+        if user_email:
+            # v104: Résolution dynamique — plus de défaut 10 séances
+            courses_list = code.get("courses") or []
+            raw_max = code.get("maxUses") or code.get("sessions") or None
+            total_sessions, offer_name, offer_price = await _resolve_offer_details(courses_list, raw_max)
+            # Fallback nom: code name > code string
+            if offer_name == "Abonnement":
+                offer_name = code.get("name") or code.get("code") or "Abonnement"
+
+            # Vérifier si l'abonné a déjà un abonnement actif avec CE code
+            existing_sub = await _db.subscriptions.find_one({
                 "email": user_email,
-                "name": user_name or user_email.split("@")[0],
                 "code": code_str,
-                "offer_name": offer_name,
-                "offer_price": offer_price,
-                "total_sessions": total_sessions,
-                "used_sessions": 0,
-                "remaining_sessions": total_sessions,
-                "expires_at": expiry_date.isoformat() if expiry_date else None,
-                "status": "active",
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }
-            await _db.subscriptions.insert_one(subscription_data)
-            logger.info(f"[SUBSCRIPTION] Créé: {user_email} - {offer_name} ({total_sessions} séances)")
-            # v96: Email de bienvenue à la première activation
-            asyncio.create_task(_send_welcome_email(
-                user_email, user_name or user_email.split("@")[0],
-                code_str, offer_name, total_sessions
-            ))
-        else:
-            logger.info(f"[SUBSCRIPTION] Existant: {user_email} - {existing_sub.get('remaining_sessions')} séances restantes")
-        
-        # Sync CRM
-        await _db.chat_participants.update_one(
-            {"email": user_email},
-            {
-                "$set": {
+                "status": "active"
+            }, {"_id": 0})
+
+            if not existing_sub:
+                # Créer un nouvel abonnement
+                subscription_data = {
+                    "id": str(uuid.uuid4()),
                     "email": user_email,
                     "name": user_name or user_email.split("@")[0],
-                    "source": "chat_login",
-                    "isSubscriber": True,
-                    "subscriptionCode": code_str,
+                    "code": code_str,
+                    "offer_name": offer_name,
+                    "offer_price": offer_price,
+                    "total_sessions": total_sessions,
+                    "used_sessions": 0,
+                    "remaining_sessions": total_sessions,
+                    "expires_at": expiry_date.isoformat() if expiry_date else None,
+                    "status": "active",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
                     "updated_at": datetime.now(timezone.utc).isoformat()
-                },
-                "$setOnInsert": {
-                    "id": str(uuid.uuid4()),
-                    "created_at": datetime.now(timezone.utc).isoformat()
                 }
-            },
-            upsert=True
-        )
-    
-    # Enrichir la réponse avec les infos d'abonnement
-    subscription_info = None
-    if user_email:
-        sub = await _db.subscriptions.find_one({"email": user_email, "code": code_str, "status": "active"}, {"_id": 0})
-        if sub:
-            subscription_info = {
-                "offer_name": sub.get("offer_name"),
-                "offer_price": sub.get("offer_price"),
-                "total_sessions": sub.get("total_sessions"),
-                "used_sessions": sub.get("used_sessions", 0),
-                "remaining_sessions": sub.get("remaining_sessions"),
-                "expires_at": sub.get("expires_at")
-            }
-    
-    return {"valid": True, "code": code, "subscription": subscription_info}
+                await _db.subscriptions.insert_one(subscription_data)
+                logger.info(f"[SUBSCRIPTION] Créé: {user_email} - {offer_name} ({total_sessions} séances)")
+                # v96: Email de bienvenue à la première activation
+                asyncio.create_task(_send_welcome_email(
+                    user_email, user_name or user_email.split("@")[0],
+                    code_str, offer_name, total_sessions
+                ))
+            else:
+                logger.info(f"[SUBSCRIPTION] Existant: {user_email} - {existing_sub.get('remaining_sessions')} séances restantes")
+
+            # Sync CRM
+            await _db.chat_participants.update_one(
+                {"email": user_email},
+                {
+                    "$set": {
+                        "email": user_email,
+                        "name": user_name or user_email.split("@")[0],
+                        "source": "chat_login",
+                        "isSubscriber": True,
+                        "subscriptionCode": code_str,
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    },
+                    "$setOnInsert": {
+                        "id": str(uuid.uuid4()),
+                        "created_at": datetime.now(timezone.utc).isoformat()
+                    }
+                },
+                upsert=True
+            )
+
+        # Enrichir la réponse avec les infos d'abonnement
+        subscription_info = None
+        if user_email:
+            sub = await _db.subscriptions.find_one({"email": user_email, "code": code_str, "status": "active"}, {"_id": 0})
+            if sub:
+                sub = _sanitize_mongo_doc(sub)
+                subscription_info = {
+                    "offer_name": sub.get("offer_name"),
+                    "offer_price": sub.get("offer_price"),
+                    "total_sessions": sub.get("total_sessions"),
+                    "used_sessions": sub.get("used_sessions", 0),
+                    "remaining_sessions": sub.get("remaining_sessions"),
+                    "expires_at": sub.get("expires_at")
+                }
+
+        return {"valid": True, "code": code, "subscription": subscription_info}
+
+    except Exception as e:
+        logger.error(f"[VALIDATE] Erreur validation code {data.get('code', '?')}: {type(e).__name__}: {e}")
+        return {"valid": False, "message": f"Erreur serveur lors de la validation: {type(e).__name__}"}
 
 
 @promo_router.post("/{code_id}/use")
