@@ -1,8 +1,8 @@
-// LinkSimulator.js — v99: Aperçu du tunnel de chat en direct
+// LinkSimulator.js — v103: Fix mémoire champs, scroll responsive, boutons cochables
 // Panneau de simulation qui montre comment le visiteur verra le tunnel
 // Utilise le logo Afroboost officiel (/logo192.png)
 
-import React, { useState, memo, useEffect } from 'react';
+import React, { useState, useRef, memo, useEffect } from 'react';
 import { Eye, Play, RotateCcw, Smartphone, Monitor, X } from 'lucide-react';
 
 const GLOW = {
@@ -10,10 +10,9 @@ const GLOW = {
 };
 
 // === Simulated Tunnel Step ===
-const SimStep = ({ question, type, options, stepNum, totalSteps, active, onAnswer }) => {
+const SimStep = ({ question, type, options, stepNum, totalSteps, onAnswer }) => {
   const [value, setValue] = useState('');
-
-  if (!active) return null;
+  const [selectedBtn, setSelectedBtn] = useState(null);
 
   return (
     <div style={{
@@ -42,18 +41,19 @@ const SimStep = ({ question, type, options, stepNum, totalSteps, active, onAnswe
 
       {/* Input based on type */}
       {type === 'buttons' && options?.length > 0 ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '200px', overflowY: 'auto' }}>
           {options.map((opt, i) => (
             <button
               key={i}
-              onClick={() => { setValue(opt); setTimeout(() => onAnswer(opt), 300); }}
+              onClick={() => { setSelectedBtn(opt); setTimeout(() => onAnswer(opt), 300); }}
               style={{
                 padding: '10px 14px', borderRadius: '10px',
-                background: value === opt ? 'rgba(217,28,210,0.15)' : 'rgba(255,255,255,0.04)',
-                border: value === opt ? '1.5px solid #D91CD2' : '1.5px solid rgba(255,255,255,0.1)',
-                color: value === opt ? '#D91CD2' : '#fff',
-                fontSize: '13px', fontWeight: value === opt ? '600' : '400',
+                background: selectedBtn === opt ? 'rgba(217,28,210,0.15)' : 'rgba(255,255,255,0.04)',
+                border: selectedBtn === opt ? '1.5px solid #D91CD2' : '1.5px solid rgba(255,255,255,0.1)',
+                color: selectedBtn === opt ? '#D91CD2' : '#fff',
+                fontSize: '13px', fontWeight: selectedBtn === opt ? '600' : '400',
                 cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s',
+                flexShrink: 0,
               }}
             >
               {opt}
@@ -63,6 +63,7 @@ const SimStep = ({ question, type, options, stepNum, totalSteps, active, onAnswe
       ) : (
         <div style={{ display: 'flex', gap: '8px' }}>
           <input
+            key={`input-${stepNum}`}
             type={type === 'email' ? 'email' : type === 'phone' || type === 'tel' ? 'tel' : 'text'}
             value={value}
             onChange={e => setValue(e.target.value)}
@@ -72,6 +73,7 @@ const SimStep = ({ question, type, options, stepNum, totalSteps, active, onAnswe
               type === 'city' ? 'Votre ville...' :
               'Votre réponse...'
             }
+            autoComplete="off"
             style={{
               flex: 1, padding: '10px 14px', borderRadius: '10px',
               background: 'rgba(0,0,0,0.3)', border: '1.5px solid rgba(255,255,255,0.1)',
@@ -105,6 +107,7 @@ const LinkSimulator = memo(({ link, isOpen, onClose }) => {
   const [answers, setAnswers] = useState([]);
   const [viewMode, setViewMode] = useState('mobile'); // 'mobile' | 'desktop'
   const [completed, setCompleted] = useState(false);
+  const chatBodyRef = useRef(null);
 
   // Default steps + custom tunnel questions
   const defaultSteps = [
@@ -135,6 +138,15 @@ const LinkSimulator = memo(({ link, isOpen, onClose }) => {
   useEffect(() => {
     if (isOpen) handleReset();
   }, [isOpen, link]);
+
+  // v103: Auto-scroll vers le bas après chaque réponse
+  useEffect(() => {
+    if (chatBodyRef.current) {
+      setTimeout(() => {
+        chatBodyRef.current.scrollTop = chatBodyRef.current.scrollHeight;
+      }, 100);
+    }
+  }, [answers.length, currentStep, completed]);
 
   if (!isOpen) return null;
 
@@ -250,10 +262,12 @@ const LinkSimulator = memo(({ link, isOpen, onClose }) => {
             </div>
           </div>
 
-          {/* Chat body */}
-          <div style={{
+          {/* Chat body — v103: scroll responsive */}
+          <div ref={chatBodyRef} style={{
             padding: '20px 16px',
-            minHeight: viewMode === 'mobile' ? '380px' : '300px',
+            minHeight: viewMode === 'mobile' ? '300px' : '250px',
+            maxHeight: viewMode === 'mobile' ? '420px' : '400px',
+            overflowY: 'auto',
             display: 'flex', flexDirection: 'column', gap: '16px',
             background: 'linear-gradient(180deg, #0a0a0a 0%, #1a0a1a 100%)',
           }}>
@@ -291,15 +305,15 @@ const LinkSimulator = memo(({ link, isOpen, onClose }) => {
               </div>
             ))}
 
-            {/* Current step */}
+            {/* Current step — key force remount pour reset les champs */}
             {!completed && (
               <SimStep
+                key={`step-${currentStep}`}
                 question={allSteps[currentStep]?.text}
                 type={allSteps[currentStep]?.type}
                 options={allSteps[currentStep]?.options}
                 stepNum={currentStep + 1}
                 totalSteps={allSteps.length}
-                active={true}
                 onAnswer={handleAnswer}
               />
             )}

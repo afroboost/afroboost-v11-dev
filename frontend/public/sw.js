@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v102.0';
-// V102.0: Sync temps reel, contacts universels, FAQ partenaire, admin FAQ CRUD
+const CACHE_NAME = 'afroboost-v103.0';
+// V103.0: Fix simulateur — mémoire champs, scroll responsive, boutons cochables
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {
