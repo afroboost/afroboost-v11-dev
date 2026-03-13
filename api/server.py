@@ -940,6 +940,34 @@ async def update_media_by_slug(slug: str, request: Request):
         raise HTTPException(status_code=404, detail="Média non trouvé")
     return {"success": True, "updated_fields": list(update_data.keys())}
 
+# V109.2: Endpoint POST pour créer un media_link
+@api_router.post("/media")
+async def create_media_link(request: Request):
+    """Crée un nouveau media_link pour le MediaViewer."""
+    body = await request.json()
+    slug = body.get("slug", "").strip().lower()
+    video_url = body.get("video_url", "").strip()
+    if not slug or not video_url:
+        raise HTTPException(status_code=400, detail="slug et video_url requis")
+    # Vérifier si le slug existe déjà
+    existing = await db.media_links.find_one({"slug": slug}, {"_id": 0, "slug": 1})
+    if existing:
+        raise HTTPException(status_code=409, detail="Ce slug existe déjà")
+    doc = {
+        "slug": slug,
+        "video_url": video_url,
+        "thumbnail": body.get("thumbnail"),
+        "custom_thumbnail": body.get("custom_thumbnail"),
+        "title": body.get("title", "Vidéo Afroboost"),
+        "description": body.get("description", ""),
+        "cta_text": body.get("cta_text"),
+        "cta_link": body.get("cta_link"),
+        "created_at": datetime.utcnow().isoformat()
+    }
+    await db.media_links.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
 @api_router.get("/")
 async def root():
     return {"message": "Afroboost API"}
