@@ -909,6 +909,37 @@ def format_message_for_frontend(m: dict) -> dict:
     }
 
 # ROUTES
+
+# V109.2: Endpoint MediaViewer — retourne les données d'un media_link par slug
+@api_router.get("/media/{slug}")
+async def get_media_by_slug(slug: str):
+    """Récupère un media_link par son slug pour le MediaViewer frontend."""
+    media = await db.media_links.find_one({"slug": slug.lower()}, {"_id": 0})
+    if not media:
+        raise HTTPException(status_code=404, detail="Média non trouvé")
+    # Enrichir avec youtube_id si c'est une URL YouTube
+    video_url = media.get("video_url", "")
+    if video_url and ("youtube.com" in video_url or "youtu.be" in video_url):
+        import re as re_mv
+        yt_match = re_mv.search(r'(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})', video_url)
+        if yt_match:
+            media["youtube_id"] = yt_match.group(1)
+    return media
+
+# V109.2: Endpoint PUT pour modifier un media_link
+@api_router.put("/media/{slug}")
+async def update_media_by_slug(slug: str, request: Request):
+    """Met à jour un media_link existant (description, cta_text, cta_link, etc.)."""
+    body = await request.json()
+    allowed_fields = ["title", "description", "cta_text", "cta_link", "thumbnail", "custom_thumbnail", "video_url"]
+    update_data = {k: v for k, v in body.items() if k in allowed_fields}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Aucun champ valide à mettre à jour")
+    result = await db.media_links.update_one({"slug": slug.lower()}, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Média non trouvé")
+    return {"success": True, "updated_fields": list(update_data.keys())}
+
 @api_router.get("/")
 async def root():
     return {"message": "Afroboost API"}
