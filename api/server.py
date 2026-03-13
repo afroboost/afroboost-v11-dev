@@ -8388,6 +8388,12 @@ async def get_ai_response_with_session(request: Request):
 
     participant_name = participant.get("name", "Utilisateur")
     
+    # V108.3: Log détaillé pour debug groupe
+    session_mode = session.get("mode", "ai")
+    is_group = session_mode == "group" or session.get("group_id")
+    if is_group:
+        logger.info(f"[V108.3-GROUP] Message de {participant_name} ({participant_id}) → session {session_id} (mode={session_mode}, group_id={session.get('group_id', 'N/A')})")
+
     # Sauvegarder le message de l'utilisateur
     user_message = EnhancedChatMessage(
         session_id=session_id,
@@ -8397,8 +8403,12 @@ async def get_ai_response_with_session(request: Request):
         content=message_text,
         mode=session.get("mode", "ai")
     )
-    await db.chat_messages.insert_one(user_message.model_dump())
-    
+    msg_data = user_message.model_dump()
+    await db.chat_messages.insert_one(msg_data)
+
+    if is_group:
+        logger.info(f"[V108.3-GROUP] Message SAUVÉ: id={user_message.id}, session_id={msg_data.get('session_id')}, content='{message_text[:50]}'")
+
     # === SOCKET.IO: Émettre le message utilisateur en temps réel ===
     await emit_new_message(session_id, {
         "id": user_message.id,
@@ -8412,7 +8422,7 @@ async def get_ai_response_with_session(request: Request):
     
     # Vérifier si l'IA est active pour cette session
     # V107.12: Groupes avec IA — si is_ai_active=True ET mode=group, l'IA répond aussi
-    session_mode = session.get("mode", "ai")
+    # session_mode déjà défini plus haut (V108.3)
     ai_enabled_for_session = session.get("is_ai_active", True)
     ai_allowed = ai_enabled_for_session and (session_mode == "ai" or session_mode == "group")
 
@@ -9095,6 +9105,51 @@ async def get_public_groups(request: Request):
         g["member_count"] = len(g.get("member_ids", []))
 
     return groups
+
+
+@api_router.get("/chat/groups/{group_id}/debug")
+async def debug_group_messages(group_id: str):
+    """V108.3: Debug endpoint — vérifie les messages d'un groupe et sa session."""
+    session_id = f"grp_{group_id[:8]}"
+
+    # Vérifier la session
+    session = await db.chat_sessions.find_one({"id": session_id}, {"_id": 0})
+
+    # Vérifier le groupe
+    group = await db.chat_groups.find_one({"id": group_id}, {"_id": 0})
+
+    # Compter les messages
+    messages = await db.chat_messages.find(
+        {"session_id": session_id, "is_deleted": {"$ne": True}},
+        {"_id": 0, "id": 1, "sender_name": 1, "sender_type": 1, "sender_id": 1, "content": 1, "session_id": 1, "created_at": 1}
+    ).sort("created_at", 1).to_list(100)
+
+    # Chercher aussi des messages avec un session_id similaire (typo, etc.)
+    similar_messages = await db.chat_messages.find(
+        {"session_id": {"$regex": f"grp_{group_id[:6]}"}, "is_deleted": {"$ne": True}},
+        {"_id": 0, "id": 1, "session_id": 1, "sender_name": 1, "sender_type": 1, "content": 1, "created_at": 1}
+    ).sort("created_at", 1).to_list(100)
+
+    return {
+        "group_id": group_id,
+        "expected_session_id": session_id,
+        "session_exists": session is not None,
+        "session_data": {
+            "id": session.get("id") if session else None,
+            "mode": session.get("mode") if session else None,
+            "participant_ids": session.get("participant_ids") if session else None,
+            "is_deleted": session.get("is_deleted") if session else None,
+            "group_id": session.get("group_id") if session else None,
+        } if session else None,
+        "group_data": {
+            "id": group.get("id") if group else None,
+            "name": group.get("name") if group else None,
+            "member_ids": group.get("member_ids") if group else None,
+        } if group else None,
+        "messages_count": len(messages),
+        "messages": messages,
+        "similar_session_messages": similar_messages,
+    }
 
 
 @api_router.post("/chat/groups/{group_id}/join")

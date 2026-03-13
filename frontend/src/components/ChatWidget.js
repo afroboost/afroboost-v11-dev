@@ -3576,33 +3576,51 @@ export const ChatWidget = () => {
     setIsLoading(true);
 
     try {
-      // V107.12: Si mode groupe avec un groupe sélectionné, envoyer au session du groupe
+      // V108.3: Si mode groupe avec un groupe sélectionné, envoyer au session du groupe
       if (isGroupMode && participantId) {
-        const response = await axios.post(`${API}/chat/ai-response`, {
-          session_id: selectedGroup.session_id,
-          participant_id: participantId,
-          message: userMessage
-        });
+        console.log('[V108.3] Envoi message groupe:', { session_id: selectedGroup.session_id, participant_id: participantId, group_name: selectedGroup.name });
+        try {
+          const response = await axios.post(`${API}/chat/ai-response`, {
+            session_id: selectedGroup.session_id,
+            participant_id: participantId,
+            message: userMessage
+          });
 
-        // Mettre à jour l'ID temporaire
-        if (response.data.user_message_id) {
+          console.log('[V108.3] Réponse groupe:', response.data);
+
+          // Mettre à jour l'ID temporaire
+          if (response.data.user_message_id) {
+            targetMessages(prev => prev.map(m =>
+              m.id === tempUserMsgId ? { ...m, id: response.data.user_message_id } : m
+            ));
+          }
+
+          if (response.data.response) {
+            playSoundIfEnabled('message');
+            targetMessages(prev => [...prev, {
+              id: response.data.ai_message_id || `ai_${Date.now()}`,
+              type: 'ai',
+              text: response.data.response
+            }]);
+          } else if (!response.data.ai_active) {
+            targetMessages(prev => [...prev, {
+              id: `wait_${Date.now()}`,
+              type: 'ai',
+              text: "Message envoyé au groupe ! Le coach et les autres membres le verront."
+            }]);
+          }
+        } catch (groupErr) {
+          console.error('[V108.3] ERREUR envoi groupe:', groupErr?.response?.status, groupErr?.response?.data, groupErr);
+          // V108.3: Afficher l'erreur dans les messages du GROUPE (pas privé)
           targetMessages(prev => prev.map(m =>
-            m.id === tempUserMsgId ? { ...m, id: response.data.user_message_id } : m
+            m.id === tempUserMsgId
+              ? { ...m, text: `${userMessage} (erreur envoi)`, error: true }
+              : m
           ));
-        }
-
-        if (response.data.response) {
-          playSoundIfEnabled('message');
           targetMessages(prev => [...prev, {
-            id: response.data.ai_message_id || `ai_${Date.now()}`,
+            id: `grp_error_${Date.now()}`,
             type: 'ai',
-            text: response.data.response
-          }]);
-        } else if (!response.data.ai_active) {
-          targetMessages(prev => [...prev, {
-            id: `wait_${Date.now()}`,
-            type: 'ai',
-            text: "Message envoyé au groupe ! Le coach et les autres membres le verront."
+            text: `Erreur d'envoi: ${groupErr?.response?.data?.detail || 'Vérifie ta connexion et réessaie.'}`,
           }]);
         }
 
