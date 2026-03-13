@@ -1,5 +1,5 @@
 {
-  "buildCommand": "cd frontend && npm install --legacy-peer-deps && CI=false npx craco build",
+  "buildCommand": "cd frontend && npm install --legacy-peer-deps && rm -rf node_modules/.cache && CI=false npx craco build",
   "installCommand": "cd frontend && npm install --legacy-peer-deps",
   "outputDirectory": "frontend/build",
   "crons": [
