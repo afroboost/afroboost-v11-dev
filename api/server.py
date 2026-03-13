@@ -8030,8 +8030,10 @@ async def smart_chat_entry(request: Request):
         if sessions:
             session = sessions[0]
 
-    # V107.4: Chercher aussi par participantEmail (session créée par le coach avant connexion de l'abonné)
-    if not session and email:
+    # V107.6: Chercher aussi par participantEmail (session créée par le coach)
+    # Cas 1: Pas de session → utiliser celle du coach
+    # Cas 2: Session existante MAIS une autre session coach existe aussi → FUSIONNER les messages
+    if email:
         email_session = await db.chat_sessions.find_one(
             {
                 "participantEmail": {"$regex": f"^{email}$", "$options": "i"},
@@ -8040,18 +8042,44 @@ async def smart_chat_entry(request: Request):
             {"_id": 0}
         )
         if email_session:
-            # Ajouter le participant_id à cette session pour les futurs syncs
-            if participant_id not in email_session.get("participant_ids", []):
-                await db.chat_sessions.update_one(
-                    {"id": email_session["id"]},
-                    {
-                        "$push": {"participant_ids": participant_id},
-                        "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}
-                    }
+            if not session:
+                # Cas 1: Pas de session trouvée par participant_ids → utiliser celle du coach
+                if participant_id not in email_session.get("participant_ids", []):
+                    await db.chat_sessions.update_one(
+                        {"id": email_session["id"]},
+                        {
+                            "$push": {"participant_ids": participant_id},
+                            "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}
+                        }
+                    )
+                    email_session = await db.chat_sessions.find_one({"id": email_session["id"]}, {"_id": 0})
+                session = email_session
+                logger.info(f"[SMART-ENTRY] V107.6 Cas1: Session coach trouvée par email {email} -> {session['id'][:8]}")
+            elif session["id"] != email_session["id"]:
+                # Cas 2: DEUX sessions différentes existent → FUSIONNER
+                # Migrer tous les messages de la session abonné vers la session coach
+                subscriber_session_id = session["id"]
+                coach_session_id = email_session["id"]
+                migrated = await db.chat_messages.update_many(
+                    {"session_id": subscriber_session_id},
+                    {"$set": {"session_id": coach_session_id}}
                 )
-                email_session = await db.chat_sessions.find_one({"id": email_session["id"]}, {"_id": 0})
-            session = email_session
-            logger.info(f"[SMART-ENTRY] V107.4: Session trouvée par email {email} -> {session['id'][:8]}")
+                # Ajouter le participant_id à la session coach
+                if participant_id not in email_session.get("participant_ids", []):
+                    await db.chat_sessions.update_one(
+                        {"id": coach_session_id},
+                        {
+                            "$push": {"participant_ids": participant_id},
+                            "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}
+                        }
+                    )
+                # Soft-delete l'ancienne session de l'abonné
+                await db.chat_sessions.update_one(
+                    {"id": subscriber_session_id},
+                    {"$set": {"is_deleted": True, "merged_into": coach_session_id}}
+                )
+                session = await db.chat_sessions.find_one({"id": coach_session_id}, {"_id": 0})
+                logger.info(f"[SMART-ENTRY] V107.6 Cas2: FUSION {subscriber_session_id[:8]} → {coach_session_id[:8]} ({migrated.modified_count} msgs migrés)")
 
     if not session:
         # Créer une nouvelle session

@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v107.5';
-// V107.5: Prompt Système IA + Générer Prompt Maître dans Conversations
+const CACHE_NAME = 'afroboost-v107.6';
+// V107.6: Fusion auto sessions dupliquées coach↔abonné dans smart-entry
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {
