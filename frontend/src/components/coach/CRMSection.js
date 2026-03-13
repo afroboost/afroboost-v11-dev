@@ -923,6 +923,192 @@ const GroupedConversationList = memo(({
 });
 GroupedConversationList.displayName = 'GroupedConversationList';
 
+// ====== V107.5: COMPOSANT PROMPT SYSTÈME IA ======
+const SystemPromptBlock = memo(({ API, coachEmail }) => {
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [savedPrompt, setSavedPrompt] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Charger le prompt existant
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await axios.get(`${API}/ai-config`);
+        const prompt = res.data?.systemPrompt || '';
+        setSystemPrompt(prompt);
+        setSavedPrompt(prompt);
+      } catch (e) { console.warn('[V107.5] Load prompt:', e); }
+      setLoading(false);
+    };
+    if (API) load();
+  }, [API]);
+
+  // Sauvegarder le prompt
+  const handleSave = async () => {
+    if (!systemPrompt.trim() || saving) return;
+    setSaving(true);
+    try {
+      await axios.put(`${API}/ai-config`, { systemPrompt }, { headers: { 'X-User-Email': coachEmail } });
+      setSavedPrompt(systemPrompt);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+    } catch (e) { console.error('[V107.5] Save prompt:', e); }
+    setSaving(false);
+  };
+
+  // Générer le Prompt Maître
+  const handleGenerate = async () => {
+    if (generating) return;
+    if (systemPrompt.trim() && systemPrompt !== savedPrompt) {
+      if (!window.confirm('Le prompt actuel a des modifications non sauvegardées. Générer un nouveau prompt va les remplacer. Continuer ?')) return;
+    }
+    setGenerating(true);
+    try {
+      const res = await axios.post(`${API}/ai/generate-master-prompt`, {}, { headers: { 'X-User-Email': coachEmail } });
+      if (res.data?.success && res.data?.prompt) {
+        setSystemPrompt(res.data.prompt);
+        setExpanded(true);
+      }
+    } catch (e) { console.error('[V107.5] Generate prompt:', e); }
+    setGenerating(false);
+  };
+
+  const hasChanges = systemPrompt !== savedPrompt;
+  const charCount = systemPrompt.length;
+
+  return (
+    <div style={{
+      margin: '16px 0',
+      borderRadius: '16px',
+      border: '1px solid rgba(217, 28, 210, 0.1)',
+      background: '#111111',
+      overflow: 'hidden',
+    }}>
+      {/* Header */}
+      <div
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '16px 20px', cursor: 'pointer',
+          background: expanded ? 'rgba(217, 28, 210, 0.04)' : 'transparent',
+          transition: 'background 0.2s',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <Bot size={18} style={{ color: '#D91CD2' }} />
+          <span style={{ color: '#fff', fontSize: '14px', fontWeight: '600' }}>Prompt Système IA</span>
+          {hasChanges && (
+            <span style={{
+              fontSize: '10px', color: '#f59e0b', background: 'rgba(245,158,11,0.12)',
+              padding: '2px 8px', borderRadius: '10px', fontWeight: '600',
+            }}>Non sauvegardé</span>
+          )}
+          {saveSuccess && (
+            <span style={{
+              fontSize: '10px', color: '#22c55e', background: 'rgba(34,197,94,0.12)',
+              padding: '2px 8px', borderRadius: '10px', fontWeight: '600',
+            }}>Sauvegardé</span>
+          )}
+        </div>
+        <ChevronDown size={16} style={{
+          color: 'rgba(255,255,255,0.4)',
+          transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
+          transition: 'transform 0.2s',
+        }} />
+      </div>
+
+      {/* Body */}
+      {expanded && (
+        <div style={{ padding: '0 20px 20px' }}>
+          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: '0 0 12px', lineHeight: '1.5' }}>
+            Ce prompt définit le comportement de l'IA dans toutes les conversations. Cliquez sur "Générer Prompt Maître" pour créer automatiquement un prompt basé sur vos cours, offres, articles et infos de la plateforme.
+          </p>
+
+          {/* Bouton Générer */}
+          <button
+            onClick={handleGenerate}
+            disabled={generating}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              padding: '10px 20px', marginBottom: '14px',
+              borderRadius: '12px', border: 'none',
+              background: generating
+                ? 'rgba(217, 28, 210, 0.15)'
+                : 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+              color: '#fff', fontSize: '13px', fontWeight: '600',
+              cursor: generating ? 'wait' : 'pointer',
+              boxShadow: generating ? 'none' : GLOW.violet,
+              transition: 'all 0.25s',
+              width: '100%', justifyContent: 'center',
+            }}
+            onMouseEnter={(e) => { if (!generating) e.currentTarget.style.boxShadow = '0 0 20px rgba(217, 28, 210, 0.6)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.boxShadow = generating ? 'none' : GLOW.violet; }}
+          >
+            <Zap size={15} />
+            {generating ? 'Génération en cours...' : 'Générer Prompt Maître'}
+          </button>
+
+          {/* Textarea */}
+          {loading ? (
+            <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: '12px', textAlign: 'center', padding: '20px' }}>Chargement...</div>
+          ) : (
+            <>
+              <textarea
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                placeholder="Entrez les instructions système pour l'IA..."
+                style={{
+                  width: '100%', minHeight: '250px',
+                  padding: '14px',
+                  background: '#1A1A1A',
+                  border: hasChanges ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(217, 28, 210, 0.12)',
+                  borderRadius: '12px',
+                  color: '#fff', fontSize: '13px', lineHeight: '1.6',
+                  fontFamily: 'monospace',
+                  outline: 'none', resize: 'vertical',
+                  transition: 'border-color 0.2s',
+                }}
+                onFocus={(e) => { e.target.style.borderColor = 'rgba(217, 28, 210, 0.4)'; e.target.style.boxShadow = '0 0 12px rgba(217, 28, 210, 0.08)'; }}
+                onBlur={(e) => { e.target.style.borderColor = hasChanges ? 'rgba(245, 158, 11, 0.3)' : 'rgba(217, 28, 210, 0.12)'; e.target.style.boxShadow = 'none'; }}
+              />
+
+              {/* Footer: char count + save */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '10px' }}>
+                <span style={{ color: 'rgba(255,255,255,0.25)', fontSize: '11px' }}>
+                  {charCount} caractères
+                </span>
+                <button
+                  onClick={handleSave}
+                  disabled={saving || !hasChanges}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '6px',
+                    padding: '8px 18px',
+                    borderRadius: '10px', border: 'none',
+                    background: !hasChanges ? 'rgba(255,255,255,0.06)' : 'linear-gradient(135deg, #22c55e, #16a34a)',
+                    color: !hasChanges ? 'rgba(255,255,255,0.25)' : '#fff',
+                    fontSize: '12px', fontWeight: '600',
+                    cursor: !hasChanges ? 'default' : 'pointer',
+                    boxShadow: hasChanges ? GLOW.green : 'none',
+                    transition: 'all 0.25s',
+                  }}
+                >
+                  <Save size={13} />
+                  {saving ? 'Sauvegarde...' : 'Sauvegarder'}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
+SystemPromptBlock.displayName = 'SystemPromptBlock';
+
 // ====== COMPOSANT MAIN CRM SECTION — PREMIUM BORDERLESS ======
 const CRMSection = ({
   // Notification state
@@ -1114,6 +1300,9 @@ const CRMSection = ({
       />
 
       {/* v105: Communauté supprimée — tout passe par GroupChatModule */}
+
+      {/* v107.5: Prompt Système IA */}
+      <SystemPromptBlock API={API_URL} coachEmail={coachEmail} />
 
       {/* v104: Module Groupes de Chat — contacts unifiés (même source que Contacts + Campagnes) */}
       <GroupChatModule

@@ -5113,6 +5113,184 @@ async def update_ai_config(config: AIConfigUpdate):
     await db.ai_config.update_one({"id": "ai_config"}, {"$set": updates}, upsert=True)
     return await db.ai_config.find_one({"id": "ai_config"}, {"_id": 0})
 
+# --- V107.5: Génération Prompt Maître ---
+@api_router.post("/ai/generate-master-prompt")
+async def generate_master_prompt(request: Request):
+    """
+    V107.5: Génère un Prompt Maître complet en agrégeant toutes les données de la plateforme:
+    - Concept/description du site
+    - Cours disponibles (noms, dates, horaires, lieux, prix)
+    - Offres et tarifs (abonnements, produits)
+    - Promotions actives
+    - Articles de blog
+    - Page partenaire (si existante)
+    Retourne le prompt généré prêt à être sauvegardé dans ai_config.systemPrompt
+    """
+    try:
+        user_email = request.headers.get("X-User-Email", "")
+
+        # 1. Concept / Description du site
+        concept_text = ""
+        try:
+            concept = await db.concept.find_one({"id": "concept"}, {"_id": 0})
+            if concept and concept.get("description"):
+                concept_text = concept["description"][:800]
+        except:
+            pass
+
+        # 2. Cours disponibles
+        courses_text = ""
+        try:
+            courses = await db.courses.find({"archived": {"$ne": True}, "visible": {"$ne": False}}, {"_id": 0}).to_list(30)
+            if courses:
+                lines = []
+                for c in courses:
+                    line = f"- {c.get('name', 'Cours')}"
+                    if c.get('date'): line += f" | Date: {c['date']}"
+                    if c.get('time'): line += f" | Heure: {c['time']}"
+                    if c.get('location') or c.get('locationName'): line += f" | Lieu: {c.get('location') or c.get('locationName')}"
+                    if c.get('price'): line += f" | Prix: {c['price']} CHF"
+                    if c.get('description'): line += f"\n  Description: {c['description'][:150]}"
+                    lines.append(line)
+                courses_text = "\n".join(lines)
+        except:
+            pass
+
+        # 3. Offres (services + produits)
+        offers_text = ""
+        try:
+            all_offers = await db.offers.find({"visible": {"$ne": False}}, {"_id": 0}).to_list(50)
+            if all_offers:
+                products = [o for o in all_offers if o.get('isProduct')]
+                services = [o for o in all_offers if not o.get('isProduct')]
+                lines = []
+                if services:
+                    lines.append("ABONNEMENTS & SERVICES:")
+                    for s in services:
+                        l = f"- {s.get('name', 'Offre')} : {s.get('price', 0)} CHF"
+                        if s.get('description'): l += f" — {s['description'][:120]}"
+                        if s.get('duration_value') and s.get('duration_unit'):
+                            l += f" (Durée: {s['duration_value']} {s['duration_unit']})"
+                        lines.append(l)
+                if products:
+                    lines.append("\nPRODUITS BOUTIQUE:")
+                    for p in products:
+                        l = f"- {p.get('name', 'Produit')} : {p.get('price', 0)} CHF"
+                        if p.get('description'): l += f" — {p['description'][:120]}"
+                        if p.get('category'): l += f" [Catégorie: {p['category']}]"
+                        stock = p.get('stock', -1)
+                        if stock >= 0: l += f" (Stock: {stock})"
+                        lines.append(l)
+                offers_text = "\n".join(lines)
+        except:
+            pass
+
+        # 4. Promotions actives
+        promos_text = ""
+        try:
+            promos = await db.discount_codes.find({"active": True}, {"_id": 0}).to_list(20)
+            if promos:
+                lines = []
+                for p in promos:
+                    ptype = p.get('type', '%')
+                    pvalue = p.get('value', 0)
+                    label = f"{pvalue}%" if ptype == '%' else f"{pvalue} CHF"
+                    lines.append(f"- Réduction de {label}")
+                promos_text = "\n".join(lines)
+        except:
+            pass
+
+        # 5. Articles de blog
+        articles_text = ""
+        try:
+            articles = await db.articles.find({"visible": {"$ne": False}}, {"_id": 0}).sort("created_at", -1).to_list(10)
+            if articles:
+                lines = []
+                for a in articles:
+                    l = f"- {a.get('title', 'Article')}"
+                    if a.get('summary'): l += f": {a['summary'][:100]}"
+                    elif a.get('content'): l += f": {a['content'][:100]}"
+                    lines.append(l)
+                articles_text = "\n".join(lines)
+        except:
+            pass
+
+        # 6. Page partenaire (sales page)
+        partner_text = ""
+        try:
+            partner = await db.partner_pages.find_one({"coach_email": user_email}, {"_id": 0})
+            if partner:
+                if partner.get('title'): partner_text += f"Titre: {partner['title']}\n"
+                if partner.get('subtitle'): partner_text += f"Sous-titre: {partner['subtitle']}\n"
+                if partner.get('description'): partner_text += f"Description: {partner['description'][:300]}\n"
+                if partner.get('features'):
+                    partner_text += "Points forts: " + ", ".join(partner['features'][:5]) + "\n"
+        except:
+            pass
+
+        # Assembler le Prompt Maître
+        prompt = f"""Tu es l'assistant virtuel d'Afroboost, une expérience fitness unique combinant cardio, danse afrobeat et casques audio immersifs.
+
+TON RÔLE:
+- Répondre aux questions sur les cours, les offres, les réservations et la boutique
+- Être chaleureux, dynamique et motivant comme un coach fitness
+- Utiliser un ton amical et des emojis appropriés
+- Personnaliser les réponses avec le prénom du client quand disponible
+- Encourager la réservation et l'achat quand c'est pertinent
+- Ne JAMAIS inventer d'informations — utilise UNIQUEMENT les données ci-dessous"""
+
+        if concept_text:
+            prompt += f"""
+
+À PROPOS D'AFROBOOST:
+{concept_text}"""
+
+        if courses_text:
+            prompt += f"""
+
+COURS DISPONIBLES:
+{courses_text}"""
+        else:
+            prompt += "\n\nCOURS: Aucun cours programmé actuellement. Invite le client à suivre nos réseaux pour les prochaines dates."
+
+        if offers_text:
+            prompt += f"""
+
+OFFRES ET TARIFS:
+{offers_text}"""
+
+        if promos_text:
+            prompt += f"""
+
+PROMOTIONS EN COURS:
+{promos_text}
+Note: Ne communique JAMAIS les codes promo directement. Indique seulement qu'une promotion existe."""
+
+        if articles_text:
+            prompt += f"""
+
+ARTICLES / BLOG:
+{articles_text}"""
+
+        if partner_text:
+            prompt += f"""
+
+PAGE PARTENAIRE:
+{partner_text}"""
+
+        prompt += f"""
+
+CONTACT: contact.artboost@gmail.com
+SITE: https://www.afroboost.com
+
+Si tu ne connais pas la réponse à une question, oriente vers le contact email ou WhatsApp."""
+
+        return {"success": True, "prompt": prompt}
+
+    except Exception as e:
+        logger.error(f"[V107.5] Erreur génération Prompt Maître: {e}")
+        return {"success": False, "error": str(e)}
+
 # --- AI Logs Routes ---
 @api_router.get("/ai-logs")
 async def get_ai_logs():
