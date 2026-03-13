@@ -1539,11 +1539,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  // Get unique customers for beneficiary dropdown (filtrage local supplémentaire)
+  // v104: Contacts unifiés pour bénéficiaires (reservations + users + chatParticipants)
   const uniqueCustomers = Array.from(new Map(
-    [...reservations.map(r => ({ name: r.userName, email: r.userEmail })), ...users.map(u => ({ name: u.name, email: u.email }))]
-    .filter(c => c.email && c.name) // Exclure les entrées sans email ou nom
-    .map(c => [c.email, c])
+    [
+      ...reservations.map(r => ({ name: r.userName, email: r.userEmail })),
+      ...users.map(u => ({ name: u.name, email: u.email })),
+      ...chatParticipants.map(p => ({ name: p.name, email: p.email || p.whatsapp }))
+    ]
+    .filter(c => c.email && c.name && c.name !== 'Sans nom')
+    .map(c => [c.email.toLowerCase(), c])
   ).values());
 
   const exportCSV = async () => {
@@ -3411,6 +3415,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     // v100: Charger chatLinks aussi quand on ouvre les campagnes (pour CTA conversation)
     if (tab === "campagnes" && chatLinks.length === 0) {
       axios.get(`${API}/chat/links`).then(res => setChatLinks(res.data)).catch(() => {});
+    }
+    // v104: Charger chatParticipants pour les codes promo (bénéficiaires unifiés)
+    if (tab === "codes" && chatParticipants.length === 0) {
+      axios.get(`${API}/chat/participants`, getCoachHeaders()).then(res => setChatParticipants(res.data)).catch(() => {});
     }
   }, [tab]);
 

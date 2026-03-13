@@ -2,7 +2,8 @@
 // Refonte visuelle minimaliste "borderless" — Fond noir profond, accents violet glow
 // ANTI-BREAK: Toute la logique data/API est 100% identique à v16.1
 
-import React, { useRef, useCallback, memo, useMemo, useState } from 'react';
+import React, { useRef, useCallback, memo, useMemo, useState, useEffect } from 'react';
+import axios from 'axios';
 import { ChevronDown, Trash2, Send, Copy, Check, ExternalLink, Phone, Edit2, Save, X, MessageCircle, Link2, Users, Bell, Zap, Search, RefreshCw, Bot, User } from 'lucide-react';
 import SmartLinksSection from './SmartLinksSection'; // v98: Liens Intelligents
 import GroupChatModule from './GroupChatModule'; // v100: Groupes de chat
@@ -1046,6 +1047,26 @@ const CRMSection = ({
   const [bulkSelected, setBulkSelected] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
+  // v104: Contacts unifiés pour GroupChatModule (même source que Contacts + Campagnes)
+  const [unifiedContacts, setUnifiedContacts] = useState([]);
+  useEffect(() => {
+    const loadUnified = async () => {
+      try {
+        const res = await axios.get(`${API_URL}/contacts/all`, {
+          headers: { 'X-User-Email': coachEmail }
+        });
+        if (res.data?.success) {
+          setUnifiedContacts(
+            (res.data.contacts || [])
+              .filter(c => c.type === 'user')
+              .map(c => ({ id: c.id, name: c.name || 'Sans nom', email: c.email || '', whatsapp: c.phone || '' }))
+          );
+        }
+      } catch (e) { console.warn('[CRM] Contacts unifiés:', e); }
+    };
+    if (API_URL) loadUnified();
+  }, [API_URL, coachEmail]);
+
   const toggleBulkSelect = useCallback((sessionId) => {
     setBulkSelected(prev => {
       const next = new Set(prev);
@@ -1131,14 +1152,9 @@ const CRMSection = ({
         loadingConversations={loadingConversations}
       />
 
-      {/* v101: Module Groupes de Chat (autonome avec CRUD) */}
+      {/* v104: Module Groupes de Chat — contacts unifiés (même source que Contacts + Campagnes) */}
       <GroupChatModule
-        contacts={enrichedConversations.map(c => ({
-          id: c.id,
-          name: c.participantName || c.participantEmail || 'Client',
-          email: c.participantEmail || '',
-          whatsapp: c.participantWhatsapp || '',
-        })).filter(c => c.name !== 'Client')}
+        contacts={unifiedContacts}
         API={API_URL}
         coachEmail={coachEmail}
       />
