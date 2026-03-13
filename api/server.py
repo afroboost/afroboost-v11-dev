@@ -8331,6 +8331,103 @@ async def send_group_message(request: Request):
     logger.info(f"[GROUP] Message envoye a {len(participants)} abonnes")
     return {"success": True, "message_id": group_msg.id, "recipients": len(participants)}
 
+# ====== v101: CRUD Groupes de Chat ======
+@api_router.post("/chat/groups")
+async def create_chat_group(request: Request):
+    """v101: Créer un groupe de chat avec membres sélectionnés et prompt IA dédié"""
+    require_auth(request)
+    body = await request.json()
+    coach_email = request.headers.get("X-User-Email", "").lower().strip()
+    name = body.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Le nom du groupe est requis")
+    member_ids = body.get("members", [])
+    system_prompt = body.get("system_prompt", "")
+    is_ai_active = body.get("is_ai_active", True)
+
+    group_id = str(uuid.uuid4())
+    link_token = str(uuid.uuid4())[:8]
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    group_doc = {
+        "id": group_id,
+        "name": name,
+        "coach_id": coach_email,
+        "member_ids": member_ids,
+        "system_prompt": system_prompt,
+        "is_ai_active": is_ai_active,
+        "link_token": link_token,
+        "mode": "group",
+        "created_at": now_iso,
+        "updated_at": now_iso,
+        "is_deleted": False,
+    }
+    await db.chat_groups.insert_one(group_doc)
+
+    # Créer aussi une session de chat liée au groupe
+    session_doc = {
+        "id": f"grp_{group_id[:8]}",
+        "title": name,
+        "mode": "group",
+        "is_ai_active": is_ai_active,
+        "custom_prompt": system_prompt,
+        "participant_ids": member_ids,
+        "coach_id": coach_email,
+        "group_id": group_id,
+        "link_token": link_token,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+    await db.chat_sessions.insert_one(session_doc)
+
+    logger.info(f"[V101] ✅ Groupe '{name}' créé ({len(member_ids)} membres) par {coach_email}")
+    return {**group_doc, "_id": None, "session_id": session_doc["id"]}
+
+
+@api_router.get("/chat/groups")
+async def get_chat_groups(request: Request):
+    """v101: Liste des groupes du coach"""
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    query = {"is_deleted": {"$ne": True}}
+    if caller_email and not is_super_admin(caller_email):
+        query["coach_id"] = caller_email
+    groups = await db.chat_groups.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return groups
+
+
+@api_router.put("/chat/groups/{group_id}")
+async def update_chat_group(group_id: str, request: Request):
+    """v101: Modifier un groupe (nom, membres, prompt IA, switch IA)"""
+    require_auth(request)
+    body = await request.json()
+    update_fields = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    for key in ["name", "member_ids", "system_prompt", "is_ai_active"]:
+        if key in body:
+            update_fields[key] = body[key]
+    await db.chat_groups.update_one({"id": group_id}, {"$set": update_fields})
+    # Sync session liée
+    session_update = {}
+    if "name" in body: session_update["title"] = body["name"]
+    if "system_prompt" in body: session_update["custom_prompt"] = body["system_prompt"]
+    if "is_ai_active" in body: session_update["is_ai_active"] = body["is_ai_active"]
+    if "member_ids" in body: session_update["participant_ids"] = body["member_ids"]
+    if session_update:
+        session_update["updated_at"] = update_fields["updated_at"]
+        await db.chat_sessions.update_one({"group_id": group_id}, {"$set": session_update})
+    updated = await db.chat_groups.find_one({"id": group_id}, {"_id": 0})
+    return updated
+
+
+@api_router.delete("/chat/groups/{group_id}")
+async def delete_chat_group(group_id: str, request: Request):
+    """v101: Supprimer un groupe (soft delete)"""
+    require_auth(request)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.chat_groups.update_one({"id": group_id}, {"$set": {"is_deleted": True, "deleted_at": now_iso}})
+    await db.chat_sessions.update_one({"group_id": group_id}, {"$set": {"is_deleted": True}})
+    return {"success": True}
+
+
 # --- Private Chat from Community ---
 @api_router.post("/chat/start-private")
 async def start_private_chat(request: Request):

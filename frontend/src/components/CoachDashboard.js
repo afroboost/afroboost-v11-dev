@@ -6416,6 +6416,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             loadingConversations={loadingConversations}
             isSuperAdmin={isSuperAdmin}
             API_URL={API}
+            coachEmail={coachUser?.email || ''}
           />
           </SectionErrorBoundary>
         )}

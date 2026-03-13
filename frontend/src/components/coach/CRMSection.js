@@ -1038,7 +1038,8 @@ const CRMSection = ({
   // General
   loadingConversations,
   isSuperAdmin,
-  API_URL
+  API_URL,
+  coachEmail = ''
 }) => {
   // v38: Bulk selection state
   const [bulkMode, setBulkMode] = useState(false);
@@ -1119,7 +1120,7 @@ const CRMSection = ({
         generateShareableLink={generateShareableLink}
         loadingConversations={loadingConversations}
         API={API_URL}
-        coachEmail=""
+        coachEmail={coachEmail}
       />
 
       {/* Create Community — conservé tel quel */}
@@ -1130,19 +1131,16 @@ const CRMSection = ({
         loadingConversations={loadingConversations}
       />
 
-      {/* v100: Module Groupes de Chat */}
+      {/* v101: Module Groupes de Chat (autonome avec CRUD) */}
       <GroupChatModule
-        groups={[]}
         contacts={enrichedConversations.map(c => ({
           id: c.id,
           name: c.participantName || c.participantEmail || 'Client',
           email: c.participantEmail || '',
-          avatar: null,
+          whatsapp: c.participantWhatsapp || '',
         })).filter(c => c.name !== 'Client')}
-        onCreateGroup={(data) => console.log('[V100] Créer groupe:', data)}
-        onDeleteGroup={(id) => console.log('[V100] Supprimer groupe:', id)}
-        onSelectGroup={(id) => console.log('[V100] Sélectionner groupe:', id)}
-        onToggleAi={(id, isAi) => console.log('[V100] Toggle IA groupe:', id, isAi)}
+        API={API_URL}
+        coachEmail={coachEmail}
       />
 
       {/* Main Conversations Grid */}

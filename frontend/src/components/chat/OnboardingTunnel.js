@@ -278,11 +278,13 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
           </div>
         ) : (
           <input
+            key={step.field}
             type={step.type === 'city' ? 'text' : step.type === 'buttons' ? 'text' : step.type}
             value={currentValue}
             onChange={(e) => setCurrentValue(e.target.value)}
             onKeyPress={handleKeyPress}
             placeholder={step.placeholder}
+            autoComplete="off"
             autoFocus
             style={{
               width: '100%', padding: '14px 16px', borderRadius: '12px',

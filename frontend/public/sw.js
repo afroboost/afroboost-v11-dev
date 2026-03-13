@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v100.0';
-// V100.0: Fix conversion — Formulaire edit pré-rempli, tunnel→leads, CTA campagnes, GroupChat intégré
+const CACHE_NAME = 'afroboost-v101.0';
+// V101.0: Groupes de chat CRUD, prompt IA dédié, fix mémoire tunnel, canal interne campagnes
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {
