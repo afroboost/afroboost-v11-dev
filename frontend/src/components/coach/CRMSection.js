@@ -991,7 +991,7 @@ const CRMSection = ({
         text: coachMessage,
         style: 'afroboost'
       }, { headers: { 'X-User-Email': coachEmail } });
-      const enhanced = res.data?.enhanced || res.data?.text || res.data?.result || '';
+      const enhanced = res.data?.enhanced_text || res.data?.enhanced || res.data?.text || res.data?.result || '';
       if (enhanced) setCoachMessage(enhanced);
     } catch (e) { console.warn('[V105] Réécriture IA:', e); }
     setRewritingAI(false);
@@ -1472,22 +1472,33 @@ const CRMSection = ({
                     }}
                     data-testid="coach-message-input"
                   />
-                  {/* v105: Bouton Réécrire IA */}
+                  {/* v106.1: Bouton Réécrire IA — GLOW NÉON VIOLET */}
                   <button
                     onClick={handleRewriteAI}
                     disabled={!coachMessage.trim() || rewritingAI}
-                    title="Réécrire avec l'IA"
+                    title="✨ Réécrire avec l'IA Afroboost"
                     style={{
-                      ...iconBtn('#8b5cf6'),
-                      width: '34px', height: '34px',
-                      opacity: (!coachMessage.trim() || rewritingAI) ? 0.2 : 0.8,
-                      transition: 'all 0.25s',
-                      fontSize: '12px', fontWeight: '700',
+                      width: '38px', height: '38px',
+                      borderRadius: '12px',
+                      border: coachMessage.trim() && !rewritingAI
+                        ? '1px solid rgba(217, 28, 210, 0.5)'
+                        : '1px solid rgba(255,255,255,0.08)',
+                      background: coachMessage.trim() && !rewritingAI
+                        ? 'linear-gradient(135deg, #D91CD2, #8b5cf6)'
+                        : 'rgba(255,255,255,0.04)',
+                      color: coachMessage.trim() && !rewritingAI ? '#fff' : 'rgba(255,255,255,0.2)',
+                      cursor: coachMessage.trim() && !rewritingAI ? 'pointer' : 'not-allowed',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                      boxShadow: coachMessage.trim() && !rewritingAI
+                        ? '0 0 16px rgba(217, 28, 210, 0.45), 0 0 32px rgba(217, 28, 210, 0.15)'
+                        : 'none',
+                      flexShrink: 0,
                     }}
-                    onMouseEnter={(e) => { if (coachMessage.trim() && !rewritingAI) { e.currentTarget.style.opacity = '1'; e.currentTarget.style.boxShadow = GLOW.violetSoft; }}}
-                    onMouseLeave={(e) => { e.currentTarget.style.opacity = coachMessage.trim() ? '0.8' : '0.2'; e.currentTarget.style.boxShadow = 'none'; }}
+                    onMouseEnter={(e) => { if (coachMessage.trim() && !rewritingAI) { e.currentTarget.style.boxShadow = '0 0 24px rgba(217, 28, 210, 0.6), 0 0 48px rgba(217, 28, 210, 0.25)'; e.currentTarget.style.transform = 'scale(1.08)'; }}}
+                    onMouseLeave={(e) => { e.currentTarget.style.boxShadow = coachMessage.trim() ? '0 0 16px rgba(217, 28, 210, 0.45), 0 0 32px rgba(217, 28, 210, 0.15)' : 'none'; e.currentTarget.style.transform = 'scale(1)'; }}
                   >
-                    {rewritingAI ? '⏳' : <Bot size={15} />}
+                    {rewritingAI ? <span style={{ fontSize: '14px' }}>⏳</span> : <span style={{ fontSize: '14px' }}>✨</span>}
                   </button>
                   <button
                     onClick={handleSendMessage}

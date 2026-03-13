@@ -7649,7 +7649,7 @@ async def enhance_text_with_ai(request: Request):
     """
     body = await request.json()
     text = body.get("text", "").strip()
-    context = body.get("context", "general")
+    context = body.get("context") or body.get("style") or "general"
     lang = body.get("lang", "fr")
 
     if not text:
@@ -7701,7 +7701,23 @@ Réponds UNIQUEMENT avec la réponse.""",
 Améliore ce texte pour le rendre plus clair et impactant.
 - Garde le sens original
 - Langue: {lang}
-Réponds UNIQUEMENT avec le texte amélioré."""
+Réponds UNIQUEMENT avec le texte amélioré.""",
+            "afroboost": f"""Tu es le coach Afroboost, expert en fitness et bien-être.
+Réécris ce message dans le style Afroboost : motivant, chaleureux, professionnel et énergique.
+- Utilise un ton positif et encourageant
+- Ajoute de l'énergie et de la motivation
+- Garde le sens du message original
+- Maximum 2-3 phrases percutantes
+- Langue: {lang}
+Réponds UNIQUEMENT avec le texte réécrit.""",
+            "expert": f"""Tu es un architecte de systèmes IA et expert en prompt engineering.
+Le texte ci-dessous est une instruction pour créer un prompt système pour un assistant IA de groupe.
+- Génère un prompt système expert, concis et précis
+- Définis la personnalité, le ton et le domaine d'expertise de l'IA
+- Style Afroboost : motivant, chaleureux, professionnel
+- Maximum 3 phrases
+- Langue: {lang}
+Réponds UNIQUEMENT avec le prompt système généré."""
         }
 
         system_prompt = prompts.get(context, prompts["general"])

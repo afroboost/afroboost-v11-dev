@@ -172,7 +172,7 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
       });
       if (res.ok) {
         const data = await res.json();
-        const enhanced = data.enhanced || data.text || data.result || '';
+        const enhanced = data.enhanced_text || data.enhanced || data.text || data.result || '';
         if (enhanced) setSystemPrompt(enhanced);
       }
     } catch (e) { console.error('[V105] Erreur génération prompt:', e); }
@@ -311,19 +311,31 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
                   }}
                   onFocus={e => e.target.style.borderColor = 'rgba(139,92,246,0.4)'}
                   onBlur={e => e.target.style.borderColor = 'rgba(139,92,246,0.15)'} />
-                {/* v105: Bouton Générer Prompt Maître */}
+                {/* v106.1: Bouton Générer Prompt Maître — GLOW NÉON VIOLET */}
                 <button onClick={handleGeneratePrompt} disabled={!newGroupName.trim() || generatingPrompt}
                   style={{
-                    marginTop: '6px', padding: '7px 14px', borderRadius: '20px',
-                    background: newGroupName.trim() && !generatingPrompt ? 'linear-gradient(135deg, rgba(139,92,246,0.2), rgba(217,28,210,0.2))' : 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(139,92,246,0.25)', color: newGroupName.trim() ? '#a78bfa' : 'rgba(255,255,255,0.2)',
-                    fontSize: '11px', fontWeight: '600', cursor: newGroupName.trim() && !generatingPrompt ? 'pointer' : 'not-allowed',
-                    display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.25s', width: 'fit-content',
+                    marginTop: '8px', padding: '10px 20px', borderRadius: '24px',
+                    background: newGroupName.trim() && !generatingPrompt
+                      ? 'linear-gradient(135deg, #D91CD2, #8b5cf6)'
+                      : 'rgba(255,255,255,0.06)',
+                    border: newGroupName.trim() && !generatingPrompt
+                      ? '1px solid rgba(217,28,210,0.6)'
+                      : '1px solid rgba(255,255,255,0.1)',
+                    color: newGroupName.trim() && !generatingPrompt ? '#fff' : 'rgba(255,255,255,0.25)',
+                    fontSize: '12px', fontWeight: '700', letterSpacing: '0.3px',
+                    cursor: newGroupName.trim() && !generatingPrompt ? 'pointer' : 'not-allowed',
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                    width: 'fit-content',
+                    boxShadow: newGroupName.trim() && !generatingPrompt
+                      ? '0 0 20px rgba(217, 28, 210, 0.4), 0 0 40px rgba(217, 28, 210, 0.15), inset 0 1px 0 rgba(255,255,255,0.15)'
+                      : 'none',
+                    textShadow: newGroupName.trim() && !generatingPrompt ? '0 0 8px rgba(255,255,255,0.5)' : 'none',
                   }}
-                  onMouseEnter={e => { if (newGroupName.trim() && !generatingPrompt) e.currentTarget.style.boxShadow = '0 0 12px rgba(139,92,246,0.3)'; }}
-                  onMouseLeave={e => e.currentTarget.style.boxShadow = 'none'}
+                  onMouseEnter={e => { if (newGroupName.trim() && !generatingPrompt) { e.currentTarget.style.boxShadow = '0 0 30px rgba(217, 28, 210, 0.6), 0 0 60px rgba(217, 28, 210, 0.25), inset 0 1px 0 rgba(255,255,255,0.2)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}}
+                  onMouseLeave={e => { if (newGroupName.trim() && !generatingPrompt) { e.currentTarget.style.boxShadow = '0 0 20px rgba(217, 28, 210, 0.4), 0 0 40px rgba(217, 28, 210, 0.15), inset 0 1px 0 rgba(255,255,255,0.15)'; e.currentTarget.style.transform = 'translateY(0)'; }}}
                 >
-                  {generatingPrompt ? '⏳ Génération...' : '✨ Générer Prompt Maître'}
+                  {generatingPrompt ? '⏳ Génération en cours...' : '✨ Générer Prompt Maître'}
                 </button>
               </div>
 

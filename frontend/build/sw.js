@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v106.0';
-// V106.0: Logique stricte abonnements, codes promo dynamiques, CRM amélioré
+const CACHE_NAME = 'afroboost-v106.1';
+// V106.1: Boutons IA activés, glow néon violet, styles afroboost/expert
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {
