@@ -6732,15 +6732,32 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
         participant_email = ""
         participant_whatsapp = ""
 
-        # Chercher dans participant_ids
+        # v108: Chercher dans participant_ids — fallback users + affichage multi-membres pour groupes
+        is_group_session = session.get("mode") == "group" or session.get("group_id")
+        all_member_names = []
+
         for pid in session.get("participant_ids", []):
-            participant = await db.chat_participants.find_one({"id": pid}, {"_id": 0, "name": 1, "email": 1, "whatsapp": 1})
-            if participant:
-                participant_name = participant.get("name", "")
-                participant_email = participant.get("email", "")
-                participant_whatsapp = participant.get("whatsapp", "")
-                break
-        
+            p = await db.chat_participants.find_one({"id": pid}, {"_id": 0, "name": 1, "email": 1, "whatsapp": 1})
+            if not p:
+                # v108: Fallback vers users
+                p = await db.users.find_one({"id": pid}, {"_id": 0, "name": 1, "email": 1})
+            if p:
+                pname = p.get("name", "")
+                if not participant_name:
+                    participant_name = pname
+                    participant_email = p.get("email", "")
+                    participant_whatsapp = p.get("whatsapp", "")
+                if pname:
+                    all_member_names.append(pname)
+                if not is_group_session:
+                    break  # Pour les conversations privées, 1 seul nom suffit
+
+        # v108: Pour les groupes, afficher tous les noms des membres
+        if is_group_session and all_member_names:
+            participant_name = ", ".join(all_member_names[:4])
+            if len(all_member_names) > 4:
+                participant_name += f" +{len(all_member_names) - 4}"
+
         # Fallback sur le titre de la session
         if not participant_name and session.get("title"):
             participant_name = session.get("title")
