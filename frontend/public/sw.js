@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v106.7.1';
-// V106.7.1: Force rebuild — fix bundle cache Vercel manquant socialTotalCount
+const CACHE_NAME = 'afroboost-v106.8';
+// V106.8: Fix compteur avis hero — App.js passait socialComments.length (plafonné 100) au lieu de socialTotalCount
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {

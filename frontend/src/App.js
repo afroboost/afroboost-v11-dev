@@ -2090,6 +2090,7 @@ function App() {
 
   // v72: Social Proof — Icône interactive + panneau commentaires
   const [socialComments, setSocialComments] = useState([]);
+  const [socialTotalCount, setSocialTotalCount] = useState(0); // v106.8: vrai total commentaires (pas plafonné à 100)
   const [showCommentsPanel, setShowCommentsPanel] = useState(false);
   const [zoomedPhoto, setZoomedPhoto] = useState(null); // v74: Zoom photo profil
 
@@ -2564,6 +2565,7 @@ function App() {
         const res = await axios.get(`${API}/comments?coach_id=${encodeURIComponent(SUPER_ADMIN_EMAILS[0])}`);
         if (res.data?.comments && res.data.comments.length > 0) {
           setSocialComments(res.data.comments);
+          setSocialTotalCount(res.data.total_count || res.data.comments.length); // v106.8: vrai total
         }
       } catch (e) {}
     };
@@ -4087,7 +4089,7 @@ function App() {
             console.log('[V34-BUY] Achat vidéo depuis carousel:', videoOffer);
             handleSelectOffer(videoOffer);
           }}
-          socialCommentsCount={socialComments.length}
+          socialCommentsCount={socialTotalCount || socialComments.length}
           onShowComments={() => setShowCommentsPanel(true)}
         />
         {/* v75: Icône AVIS intégrée dans la barre d'actions PartnersCarousel */}
@@ -5312,7 +5314,7 @@ function App() {
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between'
               }}>
                 <span style={{ color: '#0f0f0f', fontSize: '16px', fontWeight: 700 }}>
-                  Commentaires {socialComments.length}
+                  Commentaires {socialTotalCount || socialComments.length}
                 </span>
                 <button
                   onClick={() => setShowCommentsPanel(false)}
