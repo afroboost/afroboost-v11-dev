@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v108.5';
-// V108.5: Auto-recovery participantId + robust group debug logging
+const CACHE_NAME = 'afroboost-v109';
+// V109: YouTube campaign emails → MediaViewer link via media_links slug
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {

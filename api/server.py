@@ -2745,14 +2745,63 @@ async def launch_campaign(campaign_id: str):
                         elif any(media_url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
                             media_html = f'<div style="padding:0;"><img src="{media_url}" alt="Média" style="width:100%;max-height:300px;object-fit:cover;" /></div>'
                         elif 'youtube.com' in media_url or 'youtu.be' in media_url:
-                            # v87: Extraire l'ID YouTube — lien redirige vers l'app Afroboost
+                            # V109: YouTube → chercher/créer slug dans media_links → ouvrir MediaViewer
                             import re as re_yt
+                            import uuid as uuid_yt
                             yt_match = re_yt.search(r'(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})', media_url)
                             yt_id = yt_match.group(1) if yt_match else None
+                            yt_click_url = app_url  # fallback
+                            yt_thumbnail = f"https://img.youtube.com/vi/{yt_id}/hqdefault.jpg" if yt_id else None
                             if yt_id:
-                                media_html = f'<div style="padding:0;text-align:center;"><a href="{app_url}" style="text-decoration:none;"><img src="https://img.youtube.com/vi/{yt_id}/hqdefault.jpg" alt="Vidéo" style="width:100%;max-height:300px;object-fit:cover;border-radius:4px;" /><div style="padding:8px;color:#9333EA;font-size:13px;font-weight:bold;">&#9658; Voir sur Afroboost</div></a></div>'
+                                try:
+                                    # Chercher un media_link existant pour cette vidéo YouTube
+                                    yt_media_link = await db.media_links.find_one(
+                                        {"$or": [
+                                            {"video_url": media_url},
+                                            {"video_url": {"$regex": yt_id}},
+                                            {"video_url": f"https://www.youtube.com/watch?v={yt_id}"},
+                                            {"video_url": f"https://youtu.be/{yt_id}"}
+                                        ]},
+                                        {"_id": 0, "slug": 1, "thumbnail": 1, "custom_thumbnail": 1}
+                                    )
+                                    if yt_media_link and yt_media_link.get("slug"):
+                                        slug = yt_media_link["slug"]
+                                        yt_click_url = f"{app_url}/#/v/{slug}"
+                                        yt_thumbnail = yt_media_link.get("custom_thumbnail") or yt_media_link.get("thumbnail") or yt_thumbnail
+                                        logger.info(f"[CAMPAIGN-EMAIL] YouTube media_link trouvé: slug={slug}")
+                                    else:
+                                        # Auto-créer un media_link pour cette vidéo YouTube
+                                        auto_slug = f"yt-{yt_id}".lower()
+                                        await db.media_links.update_one(
+                                            {"slug": auto_slug},
+                                            {"$setOnInsert": {
+                                                "slug": auto_slug,
+                                                "video_url": media_url,
+                                                "thumbnail": yt_thumbnail,
+                                                "title": campaign.get("subject", "Vidéo Afroboost"),
+                                                "created_at": datetime.utcnow().isoformat()
+                                            }},
+                                            upsert=True
+                                        )
+                                        yt_click_url = f"{app_url}/#/v/{auto_slug}"
+                                        logger.info(f"[CAMPAIGN-EMAIL] YouTube media_link auto-créé: slug={auto_slug}")
+                                except Exception as yt_err:
+                                    logger.warning(f"[CAMPAIGN-EMAIL] Erreur lookup YouTube media_link: {yt_err}")
+                                    yt_click_url = media_url  # fallback vers YouTube direct
+
+                            if yt_thumbnail:
+                                media_html = f'''<div style="padding:0;text-align:center;">
+<a href="{yt_click_url}" style="text-decoration:none;display:block;position:relative;">
+<img src="{yt_thumbnail}" alt="Vidéo Afroboost" style="width:100%;max-width:440px;border-radius:8px;display:block;margin:0 auto;" />
+</a>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:12px;">
+<tr><td align="center">
+<a href="{yt_click_url}" style="display:inline-block;padding:12px 28px;background:#E91E63;color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir la vidéo</a>
+</td></tr>
+</table>
+</div>'''
                             else:
-                                media_html = f'<div style="padding:10px 20px;text-align:center;"><a href="{app_url}" style="color:#9333EA;font-size:13px;">&#9658; Voir sur Afroboost</a></div>'
+                                media_html = f'<div style="padding:10px 20px;text-align:center;"><a href="{yt_click_url}" style="display:inline-block;padding:12px 28px;background:#E91E63;color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir la vidéo</a></div>'
                         else:
                             # V108.5: Lien média générique (ni vidéo, ni image, ni YouTube)
                             media_html = f'''<div style="padding:16px;text-align:center;">
