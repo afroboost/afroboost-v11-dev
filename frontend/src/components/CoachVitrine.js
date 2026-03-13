@@ -1,5 +1,5 @@
 /**
- * CoachVitrine - Vitrine publique d'un coach v29.3 STABLE CACHE-BUSTER
+ * CoachVitrine - Vitrine publique d'un coach v29.4 — socialTotalCount fix
  * Route: /coach/[username]
  * Layout IDENTIQUE à la page d'accueil :
  *   - Hero 85vh avec YouTube Lite Facade (thumbnail + play)
