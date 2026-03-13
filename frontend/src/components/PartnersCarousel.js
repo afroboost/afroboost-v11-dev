@@ -813,19 +813,20 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                 style={{
                   background: 'rgba(217, 28, 210, 0.25)',
                   backdropFilter: 'blur(4px)',
+                  border: '2px solid rgba(255, 255, 255, 0.85)',
                   boxShadow: '0 0 14px rgba(217, 28, 210, 0.5), 0 0 30px rgba(217, 28, 210, 0.2)',
                   animation: 'v73GlowPulse 2.5s ease-in-out infinite'
                 }}
               >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="#D91CD2" stroke="none">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#D91CD2" stroke="white" strokeWidth="1">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                 </svg>
               </div>
               <span
                 className="text-xs mt-1 font-medium"
                 style={{
-                  color: '#D91CD2',
-                  textShadow: '0 0 10px rgba(217, 28, 210, 0.8)'
+                  color: '#fff',
+                  textShadow: '0 1px 3px rgba(0,0,0,0.8)'
                 }}
               >
                 {socialCommentsCount}
@@ -847,7 +848,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                 width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
                 background: isLiked ? 'rgba(217, 28, 210, 0.3)' : 'rgba(0,0,0,0.4)',
                 backdropFilter: 'blur(4px)',
-                boxShadow: isLiked ? '0 0 20px rgba(217, 28, 210, 0.8), 0 0 40px rgba(217, 28, 210, 0.4)' : 'none',
+                border: '2px solid rgba(255, 255, 255, 0.85)',
+                boxShadow: isLiked ? '0 0 20px rgba(217, 28, 210, 0.8), 0 0 40px rgba(217, 28, 210, 0.4)' : '0 0 8px rgba(0, 0, 0, 0.4)',
                 transform: likeAnimating ? 'scale(1.3)' : 'scale(1)',
                 transition: 'all 0.3s ease'
               }}
@@ -889,11 +891,12 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
               className="flex flex-col items-center transition-all hover:scale-110"
               data-testid={`reserve-btn-${partner.id || partner.email}`}
             >
-              <div 
+              <div
                 className="w-11 h-11 rounded-full flex items-center justify-center"
                 style={{
                   background: 'var(--primary-color, #D91CD2)',
-                  boxShadow: '0 0 12px rgba(217, 28, 210, 0.5)'
+                  border: '2px solid rgba(255, 255, 255, 0.85)',
+                  boxShadow: '0 0 12px rgba(217, 28, 210, 0.5), 0 0 8px rgba(0, 0, 0, 0.4)'
                 }}
               >
                 <CalendarIcon />
