@@ -6898,26 +6898,30 @@ async def get_conversations_advanced(
             sort=[("created_at", -1)]
         )
         
-        # Récupérer les infos des participants
+        # v108.2: Récupérer les infos des participants — fallback vers users
         participants_info = []
         for pid in session.get("participant_ids", []):
             participant = await db.chat_participants.find_one({"id": pid}, {"_id": 0})
+            if not participant:
+                # v108.2: Fallback vers la collection users
+                participant = await db.users.find_one({"id": pid}, {"_id": 0})
             if participant:
                 participants_info.append({
-                    "id": participant.get("id"),
+                    "id": participant.get("id", pid),
                     "name": participant.get("name", "Inconnu"),
                     "email": participant.get("email", ""),
-                    "whatsapp": participant.get("whatsapp", ""),
+                    "whatsapp": participant.get("whatsapp", participant.get("phone", "")),
                     "source": participant.get("source", "")
                 })
-        
+
         # Compter le nombre de messages
         message_count = await db.chat_messages.count_documents({
             "session_id": session["id"],
             "is_deleted": {"$ne": True}
         })
-        
-        # v14.0: Extraire le nom, email et WhatsApp du premier participant pour l'affichage CRM
+
+        # v108.2: Pour les groupes, afficher TOUS les noms des membres
+        is_group_session = session.get("mode") == "group" or session.get("group_id")
         first_participant_name = ""
         first_participant_email = ""
         first_participant_whatsapp = ""
@@ -6925,6 +6929,15 @@ async def get_conversations_advanced(
             first_participant_name = participants_info[0].get("name", "")
             first_participant_email = participants_info[0].get("email", "")
             first_participant_whatsapp = participants_info[0].get("whatsapp", "")
+
+        # v108.2: Pour les groupes, concaténer tous les noms
+        if is_group_session and len(participants_info) > 1:
+            all_names = [p.get("name", "") for p in participants_info if p.get("name")]
+            if all_names:
+                first_participant_name = ", ".join(all_names[:4])
+                if len(all_names) > 4:
+                    first_participant_name += f" +{len(all_names) - 4}"
+
         # Fallback sur le titre de la session (pour les liens nommés)
         if not first_participant_name and session.get("title"):
             first_participant_name = session.get("title")
