@@ -5812,6 +5812,31 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                       >
                         🚀 Booster la Preuve Sociale (50 avis IA)
                       </button>
+                      {/* v106.5: Bouton +1 Like */}
+                      <button
+                        onClick={async () => {
+                          try {
+                            const res = await axios.post(`${API}/admin/boost-likes`, { amount: 1 }, {
+                              headers: { 'X-User-Email': coachUser?.email }
+                            });
+                            alert(`✅ +1 like ajouté sur ${res.data.boosted_comments} commentaires !`);
+                            // Refresh la liste des commentaires
+                            const el = document.getElementById('social-boost-comments-list');
+                            if (el) el.dispatchEvent(new Event('refresh'));
+                          } catch (e) {
+                            alert('❌ Erreur: ' + (e.response?.data?.detail || e.message));
+                          }
+                        }}
+                        style={{
+                          background: 'rgba(255,255,255,0.08)',
+                          color: '#fff', border: '1px solid rgba(217,28,210,0.3)',
+                          padding: '10px 18px', borderRadius: '12px',
+                          fontSize: '13px', fontWeight: 600, cursor: 'pointer'
+                        }}
+                      >
+                        ❤️ +1 Like
+                      </button>
+                      {/* v106.5: Bouton +100 Likes avec refresh */}
                       <button
                         onClick={async () => {
                           try {
@@ -5819,6 +5844,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                               headers: { 'X-User-Email': coachUser?.email }
                             });
                             alert(`✅ +100 likes ajoutés sur ${res.data.boosted_comments} commentaires !`);
+                            // Refresh la liste des commentaires
+                            const el = document.getElementById('social-boost-comments-list');
+                            if (el) el.dispatchEvent(new Event('refresh'));
                           } catch (e) {
                             alert('❌ Erreur: ' + (e.response?.data?.detail || e.message));
                           }

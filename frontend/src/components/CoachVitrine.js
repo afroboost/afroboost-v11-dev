@@ -1014,6 +1014,26 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             </button>
           )}
 
+          {/* v106.5: Icône Like/Cœur — total likes de tous les commentaires */}
+          {socialComments.length > 0 && (
+            <div className="flex flex-col items-center gap-1">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center"
+                style={{
+                  background: 'rgba(217, 28, 210, 0.25)',
+                  backdropFilter: 'blur(6px)',
+                  border: '2px solid rgba(255, 255, 255, 0.85)',
+                  boxShadow: '0 0 8px rgba(0, 0, 0, 0.4)'
+                }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="#D91CD2" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                </svg>
+              </div>
+              <span className="text-[10px] font-bold" style={{ color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
+                {socialComments.reduce((sum, c) => sum + (c.likes || 0), 0)}
+              </span>
+            </div>
+          )}
+
           {/* v106.4: QR Code — contour blanc */}
           <button onClick={() => setShowQR(true)} className="flex flex-col items-center gap-1">
             <div className="w-10 h-10 rounded-full flex items-center justify-center"

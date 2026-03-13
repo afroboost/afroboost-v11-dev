@@ -9636,7 +9636,7 @@ async def boost_likes(request: Request):
     comments = await db.comments.find({"is_visible": True}, {"id": 1}).to_list(500)
     boosted = 0
     for c in comments:
-        add = _random.randint(int(boost_amount * 0.3), boost_amount)
+        add = max(1, _random.randint(int(boost_amount * 0.3), boost_amount))
         await db.comments.update_one({"id": c["id"]}, {"$inc": {"likes": add}})
         boosted += 1
 

@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v106.4';
-// V106.4: Contour blanc icônes hero pour visibilité sur vidéo/image
+const CACHE_NAME = 'afroboost-v106.5';
+// V106.5: Icône likes hero, bouton +1 Like dashboard, refresh après boost
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {
