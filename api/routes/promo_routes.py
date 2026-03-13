@@ -425,8 +425,11 @@ async def validate_discount_code(data: dict):
         return {"valid": True, "code": code, "subscription": subscription_info}
 
     except Exception as e:
-        logger.error(f"[VALIDATE] Erreur validation code {data.get('code', '?')}: {type(e).__name__}: {e}")
-        return {"valid": False, "message": f"Erreur serveur lors de la validation: {type(e).__name__}"}
+        import traceback
+        tb = traceback.format_exc()
+        logger.error(f"[VALIDATE] Erreur validation code {data.get('code', '?')}: {tb}")
+        # v106.9: Retourner le traceback pour debug (temporaire)
+        return {"valid": False, "message": f"Erreur serveur: {type(e).__name__}: {e}", "debug_trace": tb[-500:]}
 
 
 @promo_router.post("/{code_id}/use")
