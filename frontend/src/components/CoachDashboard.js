@@ -1619,34 +1619,65 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // v9.5.8: addCode avec vérification crédits
   const addCode = async (e) => {
     e.preventDefault();
-    if (!newCode.type || !newCode.value) return;
-    
-    // v9.5.8: Vérifier les crédits avant l'action (sauf Super Admin)
-    if (!checkCreditsBeforeAction()) return;
-    
-    // Si mode série activé, utiliser la fonction batch
-    if (isBatchMode && newCode.batchCount > 1) {
-      await addBatchCodes(e);
+    if (!newCode.type || !newCode.value) {
+      setValidationMessage('⚠️ Sélectionne un type et une valeur pour le code.');
+      setTimeout(() => setValidationMessage(''), 4000);
       return;
     }
-    
-    // v9.5.8: Consommer un crédit pour cette action
-    const creditResult = await consumeCredit("creation_code_promo");
-    if (!creditResult.success && !creditResult.bypassed) return;
-    
-    // Mode normal - un seul code
-    const beneficiaryEmail = selectedBeneficiaries.length > 0 ? selectedBeneficiaries[0] : null;
-    
-    const response = await axios.post(`${API}/discount-codes`, {
-      code: newCode.code || `CODE-${Date.now().toString().slice(-4)}`,
-      type: newCode.type, value: parseFloat(newCode.value),
-      assignedEmail: beneficiaryEmail,
-      courses: newCode.courses, maxUses: newCode.maxUses ? parseInt(newCode.maxUses) : null,
-      expiresAt: newCode.expiresAt || null
-    });
-    setDiscountCodes([...discountCodes, response.data]);
-    setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "" });
-    setSelectedBeneficiaries([]);
+
+    try {
+      // v106.1: Si on est en mode édition, mettre à jour au lieu de créer
+      if (editingCode) {
+        const beneficiaryEmail = selectedBeneficiaries.length > 0 ? selectedBeneficiaries[0] : null;
+        const updates = {
+          code: newCode.code,
+          type: newCode.type,
+          value: parseFloat(newCode.value),
+          assignedEmail: beneficiaryEmail,
+          courses: newCode.courses,
+          maxUses: newCode.maxUses ? parseInt(newCode.maxUses) : null,
+          expiresAt: newCode.expiresAt || null
+        };
+        await axios.put(`${API}/discount-codes/${editingCode}`, updates);
+        setDiscountCodes(prev => prev.map(c => c.id === editingCode ? { ...c, ...updates } : c));
+        setEditingCode(null);
+        setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "" });
+        setSelectedBeneficiaries([]);
+        return;
+      }
+
+      // v9.5.8: Vérifier les crédits avant l'action (sauf Super Admin)
+      if (!checkCreditsBeforeAction()) return;
+
+      // Si mode série activé, utiliser la fonction batch
+      if (isBatchMode && newCode.batchCount > 1) {
+        await addBatchCodes(e);
+        return;
+      }
+
+      // v9.5.8: Consommer un crédit pour cette action
+      const creditResult = await consumeCredit("creation_code_promo");
+      if (!creditResult.success && !creditResult.bypassed) return;
+
+      // Mode normal - un seul code
+      const beneficiaryEmail = selectedBeneficiaries.length > 0 ? selectedBeneficiaries[0] : null;
+
+      const response = await axios.post(`${API}/discount-codes`, {
+        code: newCode.code || `CODE-${Date.now().toString().slice(-4)}`,
+        type: newCode.type, value: parseFloat(newCode.value),
+        assignedEmail: beneficiaryEmail,
+        courses: newCode.courses, maxUses: newCode.maxUses ? parseInt(newCode.maxUses) : null,
+        expiresAt: newCode.expiresAt || null
+      });
+      setDiscountCodes([...discountCodes, response.data]);
+      setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "" });
+      setSelectedBeneficiaries([]);
+    } catch (error) {
+      console.error('[PROMO] Erreur création/édition code:', error);
+      const msg = error?.response?.data?.detail || error?.message || 'Erreur inconnue';
+      setValidationMessage(`❌ Erreur: ${msg}`);
+      setTimeout(() => setValidationMessage(''), 6000);
+    }
   };
 
   // Génération en série de codes promo - Crée réellement N entrées distinctes en base
@@ -1773,18 +1804,22 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   // v13.8: Éditer un code promo existant - Charge les données dans le formulaire
   const editCode = (code) => {
+    // v106.1: Support assignedEmail (string) ET assignedEmails (array)
+    const emails = code.assignedEmails?.length > 0
+      ? code.assignedEmails
+      : code.assignedEmail ? [code.assignedEmail] : [];
     setNewCode({
       code: code.code || "",
       type: code.type || "",
       value: code.value || "",
-      assignedEmails: code.assignedEmails || [],
+      assignedEmails: emails,
       courses: code.courses || [],
       maxUses: code.maxUses || "",
       expiresAt: code.expiresAt || "",
       batchCount: 1,
       prefix: ""
     });
-    setSelectedBeneficiaries(code.assignedEmails || []);
+    setSelectedBeneficiaries(emails);
     setEditingCode(code.id); // Marque le code en cours d'édition
     setIsBatchMode(false); // Désactive le mode série pour l'édition
     // Scroll vers le formulaire

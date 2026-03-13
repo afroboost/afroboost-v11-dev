@@ -489,14 +489,17 @@ const PromoCodesTab = ({
           </div>
         </div>
         
-        <button 
-          type="submit" 
-          className="btn-primary px-6 py-2 rounded-lg text-sm flex items-center gap-2" 
+        <button
+          type="submit"
+          className="btn-primary px-6 py-2 rounded-lg text-sm flex items-center gap-2"
           data-testid={isBatchMode ? "generate-batch" : "add-code"}
           disabled={batchLoading}
+          style={editingCode ? { background: 'linear-gradient(135deg, #3b82f6, #2563eb)' } : {}}
         >
           {batchLoading ? (
             <><span className="animate-spin">⏳</span> Création en cours...</>
+          ) : editingCode ? (
+            '✏️ Mettre à jour le code'
           ) : isBatchMode ? (
             <>{t('generateBatch')} ({newCode.batchCount || 1} codes)</>
           ) : (
@@ -507,9 +510,10 @@ const PromoCodesTab = ({
       
       {/* ============ LISTE DES CODES ============ */}
       <div className="space-y-3" style={{ maxHeight: '400px', overflowY: 'auto' }}>
-        {(codesSearch ? discountCodes.filter(c => 
+        {(codesSearch ? discountCodes.filter(c =>
           c.code?.toLowerCase().includes(codesSearch.toLowerCase()) ||
-          c.assignedEmails?.some(e => e.toLowerCase().includes(codesSearch.toLowerCase()))
+          c.assignedEmails?.some(e => e.toLowerCase().includes(codesSearch.toLowerCase())) ||
+          (c.assignedEmail || '').toLowerCase().includes(codesSearch.toLowerCase())
         ) : discountCodes).map(code => (
           <div 
             key={code.id} 
@@ -542,10 +546,15 @@ const PromoCodesTab = ({
                     </span>
                   )}
                 </div>
-                {/* Bénéficiaires */}
-                {code.assignedEmails?.length > 0 && (
+                {/* Bénéficiaires — v106.1: support assignedEmail (string) + assignedEmails (array) */}
+                {(code.assignedEmails?.length > 0 || code.assignedEmail) && (
                   <p className="text-white/50 text-xs mt-1">
-                    👤 {code.assignedEmails.slice(0, 3).join(', ')}{code.assignedEmails.length > 3 ? ` +${code.assignedEmails.length - 3}` : ''}
+                    📧 {(() => {
+                      const emails = code.assignedEmails?.length > 0
+                        ? code.assignedEmails
+                        : code.assignedEmail ? [code.assignedEmail] : [];
+                      return emails.slice(0, 3).join(', ') + (emails.length > 3 ? ` +${emails.length - 3}` : '');
+                    })()}
                   </p>
                 )}
                 {/* Stats utilisation */}
