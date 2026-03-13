@@ -1,9 +1,9 @@
-// GroupChatModule.js — v101: Groupes de chat avec prompt IA dédié
+// GroupChatModule.js — v107.11: Groupes de chat avec prompt IA dédié + Chat intégré
 // CRUD via /chat/groups — Sélecteur membres, Prompt Système, Switch IA/Humain
-// Logo Afroboost uniquement
+// V107.11: Ajout interface chat inline pour envoyer/lire messages dans le groupe
 
-import React, { useState, useEffect, memo, useCallback } from 'react';
-import { Users, Plus, X, Search, Check, Bot, UserCircle, Trash2, ChevronDown, ChevronUp, Copy, MessageSquare } from 'lucide-react';
+import React, { useState, useEffect, useRef, memo, useCallback } from 'react';
+import { Users, Plus, X, Search, Check, Bot, UserCircle, Trash2, ChevronDown, ChevronUp, Copy, MessageSquare, Send, RefreshCw } from 'lucide-react';
 
 // === AI / Human Toggle Switch ===
 const AiHumanSwitch = memo(({ isAi, onToggle, size = 'normal' }) => {
@@ -93,8 +93,168 @@ const MemberSelector = memo(({ contacts = [], selectedIds, onToggleMember }) => 
 });
 MemberSelector.displayName = 'MemberSelector';
 
+// === V107.11: Group Chat Panel — interface chat inline pour les groupes ===
+const GroupChatPanel = memo(({ group, API, coachEmail, onClose }) => {
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const messagesEndRef = useRef(null);
+  const sessionId = group.session_id || `grp_${group.id.slice(0, 8)}`;
+
+  const loadMessages = useCallback(async () => {
+    if (!API) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/chat/sessions/${sessionId}/messages`, {
+        headers: { 'X-User-Email': coachEmail || '' }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(data || []);
+      }
+    } catch (e) { console.error('[V107.11] Erreur chargement messages groupe:', e); }
+    setLoading(false);
+  }, [API, sessionId, coachEmail]);
+
+  useEffect(() => { loadMessages(); }, [loadMessages]);
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  // Polling toutes les 10s
+  useEffect(() => {
+    const interval = setInterval(loadMessages, 10000);
+    return () => clearInterval(interval);
+  }, [loadMessages]);
+
+  const handleSend = async () => {
+    const msg = newMessage.trim();
+    if (!msg || !API || sending) return;
+    setSending(true);
+    try {
+      const res = await fetch(`${API}/chat/coach-response`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail || '' },
+        body: JSON.stringify({ session_id: sessionId, message: msg, coach_name: 'Coach' }),
+      });
+      if (res.ok) {
+        setNewMessage('');
+        await loadMessages();
+      }
+    } catch (e) { console.error('[V107.11] Erreur envoi message groupe:', e); }
+    setSending(false);
+  };
+
+  return (
+    <div style={{
+      background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(217,28,210,0.2)',
+      borderRadius: '12px', overflow: 'hidden', marginTop: '8px',
+    }}>
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)',
+        background: 'linear-gradient(135deg, rgba(217,28,210,0.08), rgba(139,92,246,0.04))',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Users size={14} color="#D91CD2" />
+          <span style={{ color: '#fff', fontSize: '12px', fontWeight: '700' }}>{group.name}</span>
+          <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px' }}>
+            {messages.length} msg
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <button onClick={loadMessages} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', padding: '2px' }}>
+            <RefreshCw size={12} />
+          </button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', padding: '2px' }}>
+            <X size={14} />
+          </button>
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div style={{ maxHeight: '300px', overflowY: 'auto', padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {loading && messages.length === 0 ? (
+          <p style={{ color: 'rgba(255,255,255,0.2)', fontSize: '11px', textAlign: 'center', margin: '20px 0' }}>Chargement...</p>
+        ) : messages.length === 0 ? (
+          <p style={{ color: 'rgba(255,255,255,0.15)', fontSize: '11px', textAlign: 'center', margin: '20px 0' }}>
+            Aucun message. Envoyez le premier message au groupe !
+          </p>
+        ) : messages.map((msg, idx) => {
+          const isCoach = msg.sender_type === 'coach' || msg.role === 'coach';
+          const isAI = msg.sender_type === 'assistant' || msg.role === 'assistant';
+          const isSystem = msg.sender_type === 'system';
+
+          if (isSystem) {
+            return (
+              <div key={msg.id || idx} style={{ textAlign: 'center' }}>
+                <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', padding: '2px 10px', borderRadius: '10px', background: 'rgba(139,92,246,0.06)' }}>
+                  {msg.content || msg.text || ''}
+                </span>
+              </div>
+            );
+          }
+
+          return (
+            <div key={msg.id || idx} style={{ display: 'flex', justifyContent: isCoach || isAI ? 'flex-end' : 'flex-start' }}>
+              <div style={{
+                maxWidth: '80%', padding: '8px 12px', borderRadius: isCoach || isAI ? '12px 4px 12px 12px' : '4px 12px 12px 12px',
+                background: isCoach ? '#D91CD2' : isAI ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.06)',
+              }}>
+                <p style={{ fontSize: '9px', fontWeight: '600', opacity: 0.5, color: '#fff', margin: '0 0 3px' }}>
+                  {isCoach ? 'Vous' : isAI ? 'IA' : (msg.sender_name || 'Membre')}
+                </p>
+                <p style={{ fontSize: '12px', color: '#fff', margin: 0, lineHeight: '1.4', wordBreak: 'break-word' }}>
+                  {msg.content || msg.text || msg.message || ''}
+                </p>
+                <p style={{ fontSize: '9px', color: 'rgba(255,255,255,0.3)', margin: '4px 0 0', textAlign: 'right' }}>
+                  {(() => {
+                    const d = msg.timestamp || msg.createdAt || msg.created_at;
+                    if (!d) return '';
+                    try { return new Date(d).toLocaleString('fr-CH', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }); } catch { return ''; }
+                  })()}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input */}
+      <div style={{
+        display: 'flex', gap: '8px', alignItems: 'center',
+        padding: '10px 12px', borderTop: '1px solid rgba(255,255,255,0.06)',
+      }}>
+        <input
+          value={newMessage}
+          onChange={e => setNewMessage(e.target.value)}
+          onKeyPress={e => e.key === 'Enter' && handleSend()}
+          placeholder="Message au groupe..."
+          style={{
+            flex: 1, padding: '8px 0', background: 'transparent', border: 'none',
+            color: '#fff', fontSize: '12px', outline: 'none',
+          }}
+        />
+        <button
+          onClick={handleSend}
+          disabled={!newMessage.trim() || sending}
+          style={{
+            background: 'none', border: 'none', cursor: newMessage.trim() && !sending ? 'pointer' : 'not-allowed',
+            color: newMessage.trim() && !sending ? '#D91CD2' : 'rgba(255,255,255,0.15)',
+            padding: '4px', transition: 'color 0.2s',
+          }}
+        >
+          <Send size={16} />
+        </button>
+      </div>
+    </div>
+  );
+});
+GroupChatPanel.displayName = 'GroupChatPanel';
+
 // === Group Card ===
-const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, isActive, copiedId }) => {
+const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, onOpenChat, isActive, copiedId }) => {
   const memberCount = (group.member_ids || []).length;
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const groupLink = group.link_token ? `${origin}/?group=${group.link_token}` : '';
@@ -126,6 +286,15 @@ const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, isActive, copie
         )}
       </div>
       <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+        {/* V107.11: Bouton Chat */}
+        <button onClick={e => { e.stopPropagation(); onOpenChat(group); }}
+          title="Ouvrir le chat du groupe"
+          style={{
+            background: isActive ? 'rgba(217,28,210,0.2)' : 'none', border: 'none', padding: '4px', borderRadius: '6px',
+            color: isActive ? '#D91CD2' : 'rgba(255,255,255,0.3)', cursor: 'pointer', transition: 'all 0.2s',
+          }}>
+          <MessageSquare size={14} />
+        </button>
         {groupLink && (
           <button onClick={e => { e.stopPropagation(); onCopyLink(group.id, groupLink); }}
             title="Copier le lien du groupe"
@@ -143,7 +312,7 @@ const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, isActive, copie
 });
 GroupCard.displayName = 'GroupCard';
 
-// === Main GroupChatModule (autonome avec CRUD) ===
+// === Main GroupChatModule (autonome avec CRUD + Chat inline V107.11) ===
 const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -154,6 +323,7 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
   const [isAiActive, setIsAiActive] = useState(true);
   const [expanded, setExpanded] = useState(true);
   const [activeGroupId, setActiveGroupId] = useState(null);
+  const [chatGroupId, setChatGroupId] = useState(null); // V107.11: groupe avec chat ouvert
   const [copiedId, setCopiedId] = useState(null);
   const [generatingPrompt, setGeneratingPrompt] = useState(false);
 
@@ -249,9 +419,22 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
           {groups.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
               {groups.map(g => (
-                <GroupCard key={g.id} group={g} isActive={g.id === activeGroupId}
-                  onSelect={(grp) => setActiveGroupId(grp.id)} onDelete={handleDelete}
-                  onCopyLink={handleCopyLink} copiedId={copiedId} />
+                <React.Fragment key={g.id}>
+                  <GroupCard group={g} isActive={g.id === chatGroupId}
+                    onSelect={(grp) => { setChatGroupId(prev => prev === grp.id ? null : grp.id); setActiveGroupId(grp.id); }}
+                    onOpenChat={(grp) => setChatGroupId(prev => prev === grp.id ? null : grp.id)}
+                    onDelete={handleDelete}
+                    onCopyLink={handleCopyLink} copiedId={copiedId} />
+                  {/* V107.11: Chat panel inline sous le groupe actif */}
+                  {chatGroupId === g.id && (
+                    <GroupChatPanel
+                      group={g}
+                      API={API}
+                      coachEmail={coachEmail}
+                      onClose={() => setChatGroupId(null)}
+                    />
+                  )}
+                </React.Fragment>
               ))}
             </div>
           )}
@@ -371,5 +554,5 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
 });
 
 GroupChatModule.displayName = 'GroupChatModule';
-export { AiHumanSwitch, MemberSelector, GroupCard };
+export { AiHumanSwitch, MemberSelector, GroupCard, GroupChatPanel };
 export default GroupChatModule;
