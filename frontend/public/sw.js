@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v104.0';
-// V104.0: Contacts unifiés, FAQ homepage accordéon, suppression double CGP partenaire
+const CACHE_NAME = 'afroboost-v104.4';
+// V104.4: Fix écran noir — TDZ chatParticipants corrigé, useMemo uniqueCustomers
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {

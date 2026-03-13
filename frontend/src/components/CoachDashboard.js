@@ -1539,16 +1539,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  // v104: Contacts unifiés pour bénéficiaires (reservations + users + chatParticipants)
-  const uniqueCustomers = Array.from(new Map(
-    [
-      ...reservations.map(r => ({ name: r.userName, email: r.userEmail })),
-      ...users.map(u => ({ name: u.name, email: u.email })),
-      ...chatParticipants.map(p => ({ name: p.name, email: p.email || p.whatsapp }))
-    ]
-    .filter(c => c.email && c.name && c.name !== 'Sans nom')
-    .map(c => [c.email.toLowerCase(), c])
-  ).values());
+  // v104.4: uniqueCustomers déplacé après la déclaration de chatParticipants (fix TDZ)
+  // Voir useMemo uniqueCustomers plus bas dans le fichier
 
   const exportCSV = async () => {
     try {
@@ -2313,6 +2305,17 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [enrichedConversations, setEnrichedConversations] = useState([]);
   const conversationsListRef = useRef(null);
   const searchTimeoutRef = useRef(null);
+
+  // v104.4: uniqueCustomers — déplacé ici APRÈS chatParticipants useState (fix TDZ ReferenceError)
+  const uniqueCustomers = useMemo(() => Array.from(new Map(
+    [
+      ...reservations.map(r => ({ name: r.userName, email: r.userEmail })),
+      ...users.map(u => ({ name: u.name, email: u.email })),
+      ...chatParticipants.map(p => ({ name: p.name, email: p.email || p.whatsapp }))
+    ]
+    .filter(c => c.email && c.name && c.name !== 'Sans nom')
+    .map(c => [c.email.toLowerCase(), c])
+  ).values()), [reservations, users, chatParticipants]);
 
   // Add schedule slot
   const addScheduleSlot = () => {
