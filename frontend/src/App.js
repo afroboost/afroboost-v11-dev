@@ -3684,7 +3684,13 @@ function App() {
       }}
     />
   );
-  
+
+  // V109: MediaViewer PRIORITAIRE — affiché AVANT le dashboard coach
+  // Pour que les liens /#/v/{slug} fonctionnent même quand le coach est connecté
+  if (mediaSlug) {
+    return <MediaViewer slug={mediaSlug} />;
+  }
+
   // Panneau Super Admin
   if (showSuperAdminPanel && coachUser?.email) return (
     <SuperAdminPanel 

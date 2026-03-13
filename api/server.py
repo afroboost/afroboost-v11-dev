@@ -9697,9 +9697,56 @@ async def send_campaign_email(request: Request):
             else:
                 logger.warning(f"Media link not found for slug: {slug}")
         else:
-            # URL externe directe (image)
-            thumbnail_url = media_url
-        
+            # V109: Vérifier si c'est une URL YouTube → auto-créer slug MediaViewer
+            import re as re_yt2
+            import uuid as uuid_yt2
+            yt_match2 = re_yt2.search(r'(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})', media_url)
+            if yt_match2:
+                yt_id2 = yt_match2.group(1)
+                thumbnail_url = f"https://img.youtube.com/vi/{yt_id2}/hqdefault.jpg"
+                try:
+                    # Chercher ou créer un media_link
+                    yt_ml = await db.media_links.find_one(
+                        {"$or": [{"video_url": media_url}, {"video_url": {"$regex": yt_id2}}]},
+                        {"_id": 0, "slug": 1}
+                    )
+                    if yt_ml and yt_ml.get("slug"):
+                        click_url = f"{frontend_base}/#/v/{yt_ml['slug']}"
+                    else:
+                        auto_slug2 = f"yt-{yt_id2}".lower()
+                        await db.media_links.update_one(
+                            {"slug": auto_slug2},
+                            {"$setOnInsert": {
+                                "slug": auto_slug2,
+                                "video_url": media_url,
+                                "thumbnail": thumbnail_url,
+                                "title": subject,
+                                "created_at": datetime.utcnow().isoformat()
+                            }},
+                            upsert=True
+                        )
+                        click_url = f"{frontend_base}/#/v/{auto_slug2}"
+                    logger.info(f"[SEND-EMAIL] YouTube → MediaViewer: {click_url}")
+                except Exception as yt_err2:
+                    logger.warning(f"[SEND-EMAIL] YouTube media_link error: {yt_err2}")
+                    click_url = media_url
+            elif any(media_url.lower().endswith(ext) for ext in ['.mp4', '.webm', '.mov']):
+                # V109: Vidéo MP4 → chercher/créer slug MediaViewer
+                thumbnail_url = None
+                try:
+                    mp4_ml = await db.media_links.find_one(
+                        {"$or": [{"video_url": media_url}, {"video_url": {"$regex": media_url.split("/")[-1]}}]},
+                        {"_id": 0, "slug": 1, "thumbnail": 1, "custom_thumbnail": 1}
+                    )
+                    if mp4_ml and mp4_ml.get("slug"):
+                        thumbnail_url = mp4_ml.get("custom_thumbnail") or mp4_ml.get("thumbnail")
+                        click_url = f"{frontend_base}/#/v/{mp4_ml['slug']}"
+                except Exception:
+                    pass
+            else:
+                # URL externe directe (image)
+                thumbnail_url = media_url
+
         # Générer le HTML de l'image cliquable - V5 FINAL (taille réduite -20%)
         if thumbnail_url:
             if thumbnail_url.startswith('http://'):
