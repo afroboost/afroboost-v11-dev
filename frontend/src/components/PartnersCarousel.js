@@ -812,7 +812,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                 style={{
                   width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
                   background: '#D91CD2',
-                  border: '2.5px solid #fff',
+                  border: 'none',
                   boxShadow: '0 0 14px rgba(217, 28, 210, 0.6), 0 0 30px rgba(217, 28, 210, 0.3), 0 4px 15px rgba(217, 28, 210, 0.4)'
                 }}
               >
@@ -845,7 +845,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
               style={{
                 width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
                 background: '#D91CD2',
-                border: '2.5px solid #fff',
+                border: 'none',
                 boxShadow: isLiked ? '0 0 20px rgba(217, 28, 210, 0.8), 0 0 40px rgba(217, 28, 210, 0.4), 0 4px 15px rgba(217, 28, 210, 0.4)' : '0 0 14px rgba(217, 28, 210, 0.6), 0 0 30px rgba(217, 28, 210, 0.3), 0 4px 15px rgba(217, 28, 210, 0.4)',
                 transform: likeAnimating ? 'scale(1.3)' : 'scale(1)',
                 transition: 'all 0.3s ease'
@@ -892,7 +892,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                 style={{
                   width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
                   background: '#D91CD2',
-                  border: '2.5px solid #fff',
+                  border: 'none',
                   boxShadow: '0 0 14px rgba(217, 28, 210, 0.6), 0 0 30px rgba(217, 28, 210, 0.3), 0 4px 15px rgba(217, 28, 210, 0.4)'
                 }}
               >
