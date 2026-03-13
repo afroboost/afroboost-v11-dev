@@ -2685,17 +2685,63 @@ async def launch_campaign(campaign_id: str):
 <a href="{cta_link}" style="display:inline-block;padding:14px 32px;background:{cta_color};color:#fff;font-size:15px;font-weight:bold;text-decoration:none;border-radius:8px;">{cta_text}</a>
 </div>"""
                     elif cta_text and cta_type == "reserver":
-                        site_url = "https://afroboost-v11-dev-pm7l.vercel.app"
+                        site_url = "https://afroboost.com"
                         cta_html = f"""
 <div style="padding:16px 20px;text-align:center;">
 <a href="{site_url}/#devenir-coach" style="display:inline-block;padding:14px 32px;background:#9333EA;color:#fff;font-size:15px;font-weight:bold;text-decoration:none;border-radius:8px;">{cta_text or 'Réserver'}</a>
 </div>"""
 
-                    # Construire le bloc média HTML
+                    # V108.5: Construire le bloc média HTML — avec preview vidéo améliorée
                     media_html = ""
+                    app_url = "https://afroboost.com"
                     if media_url:
                         if any(media_url.lower().endswith(ext) for ext in ['.mp4', '.webm', '.mov']):
-                            media_html = f'<div style="padding:0;text-align:center;"><a href="{media_url}" style="color:#9333EA;font-size:13px;">▶ Voir la vidéo</a></div>'
+                            # V108.5: Pour MP4, chercher thumbnail dans media_links + afficher preview cliquable
+                            video_thumbnail = None
+                            video_click_url = media_url
+                            try:
+                                # Chercher un media_link qui pointe vers cette vidéo
+                                media_link = await db.media_links.find_one(
+                                    {"$or": [{"video_url": media_url}, {"video_url": {"$regex": media_url.split("/")[-1]}}]},
+                                    {"_id": 0, "slug": 1, "thumbnail": 1, "custom_thumbnail": 1}
+                                )
+                                if media_link:
+                                    video_thumbnail = media_link.get("custom_thumbnail") or media_link.get("thumbnail")
+                                    slug = media_link.get("slug")
+                                    if slug:
+                                        video_click_url = f"{app_url}/#/v/{slug}"
+                                        logger.info(f"[CAMPAIGN-EMAIL] Media link trouvé: slug={slug}, thumbnail={video_thumbnail}")
+                            except Exception as ml_err:
+                                logger.warning(f"[CAMPAIGN-EMAIL] Erreur lookup media_link: {ml_err}")
+
+                            if video_thumbnail:
+                                # Thumbnail trouvée → afficher image cliquable avec bouton play
+                                media_html = f'''<div style="padding:0;text-align:center;">
+<a href="{video_click_url}" style="text-decoration:none;display:block;position:relative;">
+<img src="{video_thumbnail}" alt="Vidéo Afroboost" style="width:100%;max-width:440px;border-radius:8px;display:block;margin:0 auto;" />
+</a>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:12px;">
+<tr><td align="center">
+<a href="{video_click_url}" style="display:inline-block;padding:12px 28px;background:#E91E63;color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir la vidéo</a>
+</td></tr>
+</table>
+</div>'''
+                            else:
+                                # Pas de thumbnail → bouton play visible sur fond sombre
+                                media_html = f'''<div style="padding:20px;text-align:center;background:#1a1a2e;border-radius:8px;margin:10px;">
+<table cellpadding="0" cellspacing="0" border="0" width="100%">
+<tr><td align="center" style="padding:20px 0;">
+<a href="{video_click_url}" style="text-decoration:none;">
+<div style="width:64px;height:64px;border-radius:50%;background:#E91E63;display:inline-block;line-height:64px;text-align:center;">
+<span style="color:#fff;font-size:28px;margin-left:4px;">&#9658;</span>
+</div>
+</a>
+</td></tr>
+<tr><td align="center">
+<a href="{video_click_url}" style="display:inline-block;padding:12px 28px;background:#E91E63;color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir la vidéo</a>
+</td></tr>
+</table>
+</div>'''
                         elif any(media_url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
                             media_html = f'<div style="padding:0;"><img src="{media_url}" alt="Média" style="width:100%;max-height:300px;object-fit:cover;" /></div>'
                         elif 'youtube.com' in media_url or 'youtu.be' in media_url:
@@ -2703,12 +2749,15 @@ async def launch_campaign(campaign_id: str):
                             import re as re_yt
                             yt_match = re_yt.search(r'(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})', media_url)
                             yt_id = yt_match.group(1) if yt_match else None
-                            # v87: Lien CTA vers l'app Afroboost au lieu de YouTube
-                            app_url = "https://afroboost-v11-dev-pm7l.vercel.app"
                             if yt_id:
-                                media_html = f'<div style="padding:0;text-align:center;"><a href="{app_url}" style="text-decoration:none;"><img src="https://img.youtube.com/vi/{yt_id}/hqdefault.jpg" alt="Vidéo" style="width:100%;max-height:300px;object-fit:cover;border-radius:4px;" /><div style="padding:8px;color:#9333EA;font-size:13px;font-weight:bold;">▶ Voir sur Afroboost</div></a></div>'
+                                media_html = f'<div style="padding:0;text-align:center;"><a href="{app_url}" style="text-decoration:none;"><img src="https://img.youtube.com/vi/{yt_id}/hqdefault.jpg" alt="Vidéo" style="width:100%;max-height:300px;object-fit:cover;border-radius:4px;" /><div style="padding:8px;color:#9333EA;font-size:13px;font-weight:bold;">&#9658; Voir sur Afroboost</div></a></div>'
                             else:
-                                media_html = f'<div style="padding:10px 20px;text-align:center;"><a href="{app_url}" style="color:#9333EA;font-size:13px;">▶ Voir sur Afroboost</a></div>'
+                                media_html = f'<div style="padding:10px 20px;text-align:center;"><a href="{app_url}" style="color:#9333EA;font-size:13px;">&#9658; Voir sur Afroboost</a></div>'
+                        else:
+                            # V108.5: Lien média générique (ni vidéo, ni image, ni YouTube)
+                            media_html = f'''<div style="padding:16px;text-align:center;">
+<a href="{media_url}" style="display:inline-block;padding:12px 28px;background:#9333EA;color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir le contenu</a>
+</div>'''
 
                     html_content = f"""<!DOCTYPE html>
 <html lang="fr">
