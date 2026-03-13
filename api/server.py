@@ -7848,10 +7848,33 @@ async def smart_chat_entry(request: Request):
             },
             {"_id": 0}
         ).sort("created_at", -1).to_list(1)
-        
+
         if sessions:
             session = sessions[0]
-    
+
+    # V107.4: Chercher aussi par participantEmail (session créée par le coach avant connexion de l'abonné)
+    if not session and email:
+        email_session = await db.chat_sessions.find_one(
+            {
+                "participantEmail": {"$regex": f"^{email}$", "$options": "i"},
+                "is_deleted": {"$ne": True}
+            },
+            {"_id": 0}
+        )
+        if email_session:
+            # Ajouter le participant_id à cette session pour les futurs syncs
+            if participant_id not in email_session.get("participant_ids", []):
+                await db.chat_sessions.update_one(
+                    {"id": email_session["id"]},
+                    {
+                        "$push": {"participant_ids": participant_id},
+                        "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}
+                    }
+                )
+                email_session = await db.chat_sessions.find_one({"id": email_session["id"]}, {"_id": 0})
+            session = email_session
+            logger.info(f"[SMART-ENTRY] V107.4: Session trouvée par email {email} -> {session['id'][:8]}")
+
     if not session:
         # Créer une nouvelle session
         session_obj = ChatSession(
