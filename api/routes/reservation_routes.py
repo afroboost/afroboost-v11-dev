@@ -317,3 +317,90 @@ async def check_reservation_eligibility(request: Request):
         if subscriber and subscriber.get("isSubscriber"):
             return {"eligible": True, "subscriber": {"name": subscriber.get("name"), "email": subscriber.get("email")}, "type": "subscriber"}
     return {"eligible": False, "reason": "Aucun abonnement ou code valide trouvé"}
+
+
+# === v107: Vérifier si une séance vient de se terminer (pour déclencher la demande d'avis) ===
+SESSION_DURATION_MINUTES = 90  # Durée par défaut d'une séance Afroboost
+
+@reservation_router.get("/reservations/ended-for-review")
+async def check_ended_session_for_review(email: str = "", code: str = ""):
+    """V107: Vérifie si l'abonné a une séance récemment terminée qui mérite un avis.
+    Retourne has_ended_session=true si une séance a fini dans les 6 dernières heures."""
+    from datetime import timedelta
+
+    if not email and not code:
+        return {"has_ended_session": False, "reason": "Email ou code requis"}
+
+    email = email.lower().strip()
+    now = datetime.now(timezone.utc)
+    six_hours_ago = (now - timedelta(hours=6)).isoformat()
+
+    # Chercher les réservations confirmées récentes de cet abonné
+    query = {"feedback_sent": {"$ne": True}}
+    if email:
+        query["userEmail"] = {"$regex": f"^{email}$", "$options": "i"}
+    elif code:
+        query["promoCode"] = {"$regex": f"^{code}$", "$options": "i"}
+
+    reservations = await db.reservations.find(query, {"_id": 0}).sort("createdAt", -1).to_list(20)
+
+    for res in reservations:
+        session_end = _calculate_session_end(res)
+        if session_end is None:
+            continue
+
+        # La séance doit être terminée (now > session_end) mais pas trop ancienne (< 6h)
+        if session_end <= now and session_end.isoformat() >= six_hours_ago:
+            return {
+                "has_ended_session": True,
+                "session_name": res.get("courseName") or res.get("offerName") or "Séance",
+                "session_end": session_end.isoformat(),
+                "reservation_id": res.get("id")
+            }
+
+    return {"has_ended_session": False}
+
+
+def _calculate_session_end(reservation: dict) -> datetime:
+    """Calcule l'heure de fin d'une séance à partir des données de réservation.
+    Retourne un datetime UTC ou None si impossible à déterminer."""
+    from datetime import timedelta
+
+    # Méthode 1: Utiliser le champ 'datetime' (datetime complet de la séance)
+    dt_str = reservation.get("datetime")
+    if dt_str and isinstance(dt_str, str):
+        try:
+            session_start = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+            if session_start.tzinfo is None:
+                session_start = session_start.replace(tzinfo=timezone.utc)
+            return session_start + timedelta(minutes=SESSION_DURATION_MINUTES)
+        except Exception:
+            pass
+
+    # Méthode 2: Combiner selectedDates[0] + courseTime
+    selected_dates = reservation.get("selectedDates") or []
+    course_time = reservation.get("courseTime")  # ex: "18:30"
+
+    if selected_dates and course_time:
+        try:
+            date_str = selected_dates[0] if isinstance(selected_dates[0], str) else str(selected_dates[0])
+            # Normaliser: "2026-03-13" ou "2026-03-13T00:00:00..."
+            date_part = date_str[:10]  # "2026-03-13"
+            time_part = course_time.strip()  # "18:30"
+            full_dt = f"{date_part}T{time_part}:00+00:00"
+            session_start = datetime.fromisoformat(full_dt)
+            return session_start + timedelta(minutes=SESSION_DURATION_MINUTES)
+        except Exception:
+            pass
+
+    # Méthode 3: Utiliser selectedDates[0] seul (sans heure, on suppose fin de journée)
+    if selected_dates:
+        try:
+            date_str = selected_dates[0][:10]
+            # Pas d'heure connue → on suppose séance en soirée (20:00 fin)
+            session_end = datetime.fromisoformat(f"{date_str}T20:00:00+00:00")
+            return session_end
+        except Exception:
+            pass
+
+    return None

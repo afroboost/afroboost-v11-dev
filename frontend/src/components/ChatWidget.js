@@ -2142,10 +2142,10 @@ export const ChatWidget = () => {
     return () => window.removeEventListener('afroboost:visitorPreview', handleVisitorPreviewToggle);
   }, []);
 
-  // === v88: DÉCLENCHEUR AUTOMATIQUE AVIS POST-SESSION (vérifie API avant d'afficher) ===
+  // === v107: DÉCLENCHEUR AVIS POST-SESSION — uniquement après fin d'une séance réservée ===
   useEffect(() => {
     if (!afroboostProfile?.code || step !== 'chat' || reviewSubmitted || reviewRequestVisible) return;
-    // v88: Vérifier localStorage d'abord (pas besoin d'API call)
+    // Vérifier localStorage d'abord (avis déjà publié)
     const doneKey = `afroboost_review_done_${afroboostProfile.code}`;
     if (localStorage.getItem(doneKey) === 'true') {
       setReviewSubmitted(true);
@@ -2155,31 +2155,53 @@ export const ChatWidget = () => {
     const alreadyShown = sessionStorage.getItem(checkKey);
     if (alreadyShown) return;
 
-    const timer = setTimeout(async () => {
-      // v88: Vérifier côté API si l'abonné a déjà publié un avis
+    let intervalId = null;
+    const checkEndedSession = async () => {
       try {
+        const email = afroboostProfile?.email || '';
+        const code = afroboostProfile?.code || '';
+        if (!email && !code) return;
+
+        // v107: Vérifier d'abord si l'abonné a déjà publié un avis
         const coachId = sessionData?.coach_id || 'contact.artboost@gmail.com';
-        const checkRes = await fetch(`${API}/reviews/check?participant_code=${encodeURIComponent(afroboostProfile.code)}&coach_id=${encodeURIComponent(coachId)}`);
-        if (checkRes.ok) {
-          const checkData = await checkRes.json();
-          if (checkData.has_reviewed) {
+        const reviewCheckRes = await fetch(`${API}/reviews/check?participant_code=${encodeURIComponent(code)}&coach_id=${encodeURIComponent(coachId)}`);
+        if (reviewCheckRes.ok) {
+          const reviewData = await reviewCheckRes.json();
+          if (reviewData.has_reviewed) {
             setReviewSubmitted(true);
             localStorage.setItem(doneKey, 'true');
-            console.log('[V88] Avis déjà publié — formulaire masqué');
+            if (intervalId) clearInterval(intervalId);
+            console.log('[V107] Avis déjà publié — notification masquée');
             return;
           }
         }
+
+        // v107: Vérifier si une séance vient de se terminer
+        const endedRes = await fetch(`${API}/reservations/ended-for-review?email=${encodeURIComponent(email)}&code=${encodeURIComponent(code)}`);
+        if (endedRes.ok) {
+          const endedData = await endedRes.json();
+          if (endedData.has_ended_session) {
+            setReviewRequestVisible(true);
+            sessionStorage.setItem(checkKey, 'true');
+            if (intervalId) clearInterval(intervalId);
+            console.log(`[V107] Séance terminée: ${endedData.session_name} — notification avis activée`);
+          }
+        }
       } catch (e) {
-        console.warn('[V88] Check review API failed, showing form anyway');
+        console.warn('[V107] Check ended session failed:', e.message);
       }
-      // Afficher la carte seulement si abonnement actif et pas encore d'avis
-      if (afroboostProfile.subscription?.remaining_sessions !== undefined) {
-        setReviewRequestVisible(true);
-        sessionStorage.setItem(checkKey, 'true');
-        console.log('[V88] Review request card activé');
-      }
-    }, 5000);
-    return () => clearTimeout(timer);
+    };
+
+    // Vérifier immédiatement après 3s, puis toutes les 2 minutes
+    const timer = setTimeout(() => {
+      checkEndedSession();
+      intervalId = setInterval(checkEndedSession, 120000); // 2 min
+    }, 3000);
+
+    return () => {
+      clearTimeout(timer);
+      if (intervalId) clearInterval(intervalId);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [afroboostProfile?.code, step, reviewSubmitted, reviewRequestVisible]);
 
