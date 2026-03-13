@@ -132,6 +132,9 @@ const SubscriberForm = ({
   // Ref pour accéder à rememberMe dans les handlers
   const rememberRef = React.useRef(true);
   rememberRef.current = rememberMe;
+  // Ref pour accéder à formData à jour (éviter closures stale)
+  const formDataRef = React.useRef(formData);
+  formDataRef.current = formData;
   // Ref pour le timer du feedback
   const feedbackTimer = React.useRef(null);
 
@@ -182,9 +185,11 @@ const SubscriberForm = ({
 
   /**
    * Handler de changement de champ — sauvegarde DIRECTE dans localStorage
+   * Utilise formDataRef pour toujours avoir l'état le plus récent
+   * (évite les closures stale lors de saisie rapide après restauration)
    */
   const handleFieldChange = useCallback((field, value) => {
-    const updatedData = { ...formData, [field]: value };
+    const updatedData = { ...formDataRef.current, [field]: value };
     setFormData(updatedData);
     // Sauvegarde directe et immédiate avec vérification
     if (rememberRef.current) {
@@ -195,7 +200,7 @@ const SubscriberForm = ({
         showFeedback('error');
       }
     }
-  }, [formData, setFormData, showFeedback]);
+  }, [setFormData, showFeedback]);
 
   // Wrapper soumission
   const handleSubmit = useCallback((e) => {
@@ -320,7 +325,7 @@ const SubscriberForm = ({
         <input
           type="text"
           value={formData.code}
-          onChange={(e) => handleFieldChange('code', e.target.value.toUpperCase())}
+          onChange={(e) => handleFieldChange('code', e.target.value)}
           placeholder="Votre code abonné"
           className="w-full px-3 py-2 rounded-lg text-sm"
           style={{
