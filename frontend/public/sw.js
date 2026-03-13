@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v106.6';
-// V106.6: Boutons +1/+50 Avis, +1/+100 Likes sur dashboard Social Boost
+const CACHE_NAME = 'afroboost-v106.7';
+// V106.7: Compteur Avis hero affiche le vrai total, plus plafonné à 100
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {

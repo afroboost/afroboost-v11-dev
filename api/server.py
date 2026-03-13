@@ -9611,8 +9611,10 @@ async def get_comments(request: Request):
     if coach_id:
         query["coach_id"] = coach_id
 
+    # v106.7: Retourner le vrai total + les 100 derniers commentaires
+    total_count = await db.comments.count_documents(query)
     comments = await db.comments.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
-    return {"comments": comments, "total": len(comments)}
+    return {"comments": comments, "total": len(comments), "total_count": total_count}
 
 @api_router.post("/comments/{comment_id}/like")
 async def like_comment(comment_id: str):

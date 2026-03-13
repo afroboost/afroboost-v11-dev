@@ -103,6 +103,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
 
   // v72: Social Proof — Icône interactive + panneau commentaires
   const [socialComments, setSocialComments] = useState([]);
+  const [socialTotalCount, setSocialTotalCount] = useState(0); // v106.7: vrai total commentaires
   const [showCommentsPanel, setShowCommentsPanel] = useState(false);
   const [zoomedPhoto, setZoomedPhoto] = useState(null); // v74: Zoom photo profil
 
@@ -335,7 +336,10 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         // v71: Charger commentaires Social Proof
         try {
           const commentsRes = await axios.get(`${API}/comments?coach_id=${encodeURIComponent(res.data.coach.email || username)}`);
-          if (commentsRes.data?.comments) setSocialComments(commentsRes.data.comments);
+          if (commentsRes.data?.comments) {
+            setSocialComments(commentsRes.data.comments);
+            setSocialTotalCount(commentsRes.data.total_count || commentsRes.data.comments.length);
+          }
         } catch (e) {}
 
       } catch (err) {
@@ -994,8 +998,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             )}
           </div>
 
-          {/* v106.4: Bouton Avis/Commentaires — contour blanc pour visibilité sur hero */}
-          {socialComments.length > 0 && (
+          {/* v106.7: Bouton Avis/Commentaires — affiche le vrai total (pas limité à 100) */}
+          {socialTotalCount > 0 && (
             <button onClick={() => setShowCommentsPanel(true)} className="flex flex-col items-center gap-1">
               <div className="w-10 h-10 rounded-full flex items-center justify-center"
                 style={{
@@ -1009,13 +1013,13 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 </svg>
               </div>
               <span className="text-[10px] font-bold" style={{ color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
-                {socialComments.length} Avis
+                {socialTotalCount}
               </span>
             </button>
           )}
 
           {/* v106.5: Icône Like/Cœur — total likes de tous les commentaires */}
-          {socialComments.length > 0 && (
+          {socialTotalCount > 0 && (
             <div className="flex flex-col items-center gap-1">
               <div className="w-10 h-10 rounded-full flex items-center justify-center"
                 style={{
@@ -1573,7 +1577,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between'
                 }}>
                   <span style={{ color: '#0f0f0f', fontSize: '16px', fontWeight: 700 }}>
-                    Commentaires {socialComments.length}
+                    Commentaires {socialTotalCount}
                   </span>
                   <button
                     onClick={() => setShowCommentsPanel(false)}
