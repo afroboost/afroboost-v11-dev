@@ -375,77 +375,7 @@ const GenerateLinkCard = memo(({
 });
 GenerateLinkCard.displayName = 'GenerateLinkCard';
 
-// ====== COMPOSANT COMMUNITY CHAT CARD — PREMIUM BORDERLESS ======
-const CommunityCard = memo(({
-  newCommunityName,
-  setNewCommunityName,
-  createCommunityChat,
-  loadingConversations
-}) => (
-  <div style={{ padding: '20px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-      <div style={{
-        width: '32px', height: '32px', borderRadius: '50%',
-        background: 'rgba(34, 197, 94, 0.1)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <Users size={16} style={{ color: '#22c55e' }} />
-      </div>
-      <span style={{ color: '#fff', fontSize: '15px', fontWeight: '600', letterSpacing: '-0.01em' }}>
-        Communauté
-      </span>
-    </div>
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-end' }}>
-      <div style={{ flex: '1 1 200px' }}>
-        <input
-          type="text"
-          value={newCommunityName}
-          onChange={(e) => setNewCommunityName(e.target.value)}
-          placeholder="Nom de la communauté"
-          style={{
-            width: '100%',
-            padding: '10px 14px',
-            background: 'rgba(255,255,255,0.04)',
-            border: 'none',
-            borderBottom: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: '0',
-            color: '#fff',
-            fontSize: '14px',
-            outline: 'none',
-            transition: 'border-color 0.2s',
-          }}
-          onFocus={(e) => e.target.style.borderBottomColor = '#22c55e'}
-          onBlur={(e) => e.target.style.borderBottomColor = 'rgba(255,255,255,0.08)'}
-          data-testid="community-name-input"
-        />
-      </div>
-      <button
-        onClick={createCommunityChat}
-        disabled={loadingConversations || !newCommunityName.trim()}
-        style={{
-          padding: '10px 24px',
-          background: '#22c55e',
-          border: 'none',
-          borderRadius: '24px',
-          color: '#fff',
-          fontSize: '13px',
-          fontWeight: '600',
-          cursor: (loadingConversations || !newCommunityName.trim()) ? 'not-allowed' : 'pointer',
-          opacity: (loadingConversations || !newCommunityName.trim()) ? 0.4 : 1,
-          transition: 'all 0.25s',
-          boxShadow: 'none',
-          whiteSpace: 'nowrap',
-        }}
-        onMouseEnter={(e) => { if (!loadingConversations && newCommunityName.trim()) e.target.style.boxShadow = GLOW.green; }}
-        onMouseLeave={(e) => e.target.style.boxShadow = 'none'}
-        data-testid="create-community-btn"
-      >
-        {loadingConversations ? '⏳' : '+ Créer'}
-      </button>
-    </div>
-  </div>
-));
-CommunityCard.displayName = 'CommunityCard';
+// v105: CommunityCard SUPPRIMÉ — tout passe par GroupChatModule + Conversations Directes
 
 // ====== COMPOSANT LINK ITEM — PREMIUM BORDERLESS (v16.2) ======
 const LinkItem = memo(({ link, copiedLinkId, copyLinkToClipboard, deleteChatLink, updateChatLink }) => {
@@ -719,12 +649,17 @@ const ConversationItem = memo(({
         padding: '12px 14px',
         borderRadius: '12px',
         cursor: 'pointer',
-        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-        background: isBulkChecked ? 'rgba(239,68,68,0.08)' : isSelected ? 'rgba(217, 28, 210, 0.1)' : 'transparent',
+        transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+        background: isBulkChecked ? 'rgba(239,68,68,0.08)' : isSelected ? 'rgba(217, 28, 210, 0.12)' : 'rgba(255,255,255,0.02)',
         borderLeft: isBulkChecked ? '2px solid #ef4444' : isSelected ? '2px solid #D91CD2' : '2px solid transparent',
+        border: isSelected ? '1px solid rgba(217, 28, 210, 0.25)' : '1px solid rgba(255,255,255,0.04)',
+        borderLeftWidth: isBulkChecked || isSelected ? '2px' : '2px',
+        borderLeftColor: isBulkChecked ? '#ef4444' : isSelected ? '#D91CD2' : 'transparent',
+        boxShadow: isSelected ? '0 0 15px rgba(217, 28, 210, 0.08), inset 0 0 20px rgba(217, 28, 210, 0.03)' : 'none',
+        marginBottom: '4px',
       }}
-      onMouseEnter={(e) => { if (!isSelected && !isBulkChecked) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
-      onMouseLeave={(e) => { if (!isSelected && !isBulkChecked) e.currentTarget.style.background = isBulkChecked ? 'rgba(239,68,68,0.08)' : 'transparent'; }}
+      onMouseEnter={(e) => { if (!isSelected && !isBulkChecked) { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.borderColor = 'rgba(217, 28, 210, 0.15)'; e.currentTarget.style.boxShadow = '0 0 10px rgba(217, 28, 210, 0.05)'; }}}
+      onMouseLeave={(e) => { if (!isSelected && !isBulkChecked) { e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.04)'; e.currentTarget.style.boxShadow = 'none'; }}}
       data-testid={`conversation-${session.id}`}
     >
       <div style={{ display: 'flex', alignItems: 'start', justifyContent: 'space-between', gap: '10px' }}>
@@ -771,7 +706,7 @@ const ConversationItem = memo(({
             )}
           </div>
 
-          <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '12px', margin: '4px 0 0 16px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', margin: '4px 0 0 16px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {session.lastMessage || 'Nouvelle conversation'}
           </p>
 
@@ -806,7 +741,7 @@ const ConversationItem = memo(({
           </div>
 
           <div style={{ marginLeft: '16px', marginTop: '4px', display: 'flex', gap: '10px' }}>
-            <span style={{ color: 'rgba(255,255,255,0.15)', fontSize: '10px' }}>
+            <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px' }}>
               {(() => {
                 try {
                   const dateVal = session.lastActivity || session.createdAt;
@@ -816,7 +751,7 @@ const ConversationItem = memo(({
                 } catch { return '—'; }
               })()}
             </span>
-            <span style={{ color: 'rgba(255,255,255,0.15)', fontSize: '10px' }}>
+            <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px' }}>
               {session.messageCount || 0} msg
             </span>
           </div>
@@ -839,10 +774,10 @@ const ConversationItem = memo(({
           </button>
           <button
             onClick={() => deleteChatSession(session.id)}
-            style={{ ...iconBtn('rgba(239,68,68,0.5)'), width: '30px', height: '30px' }}
+            style={{ ...iconBtn('rgba(239,68,68,0.6)'), width: '30px', height: '30px' }}
             title="Supprimer"
             onMouseEnter={(e) => { e.currentTarget.style.boxShadow = GLOW.red; e.currentTarget.style.color = '#ef4444'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.color = 'rgba(239,68,68,0.5)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.color = 'rgba(239,68,68,0.6)'; }}
           >
             <Trash2 size={13} />
           </button>
@@ -891,7 +826,7 @@ const GroupedConversationList = memo(({
     <div
       ref={conversationsListRef}
       onScroll={handleConversationsScroll}
-      style={{ maxHeight: '500px', overflowY: 'auto', paddingRight: '4px' }}
+      style={{ maxHeight: '500px', overflowY: 'auto', paddingRight: '4px', borderRadius: '14px', background: '#1A1A1A', border: '1px solid rgba(217, 28, 210, 0.1)', padding: '8px' }}
     >
       {enrichedConversations.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '40px 20px' }}>
@@ -915,11 +850,13 @@ const GroupedConversationList = memo(({
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   padding: '10px 12px',
-                  background: 'transparent',
+                  background: 'rgba(217, 28, 210, 0.04)',
                   border: 'none',
-                  borderBottom: isCollapsed ? 'none' : '1px solid rgba(217, 28, 210, 0.08)',
+                  borderBottom: isCollapsed ? 'none' : '1px solid rgba(217, 28, 210, 0.12)',
+                  borderRadius: '8px',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease',
+                  marginBottom: isCollapsed ? '0' : '6px',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -931,10 +868,10 @@ const GroupedConversationList = memo(({
                       transition: 'transform 0.2s ease',
                     }}
                   />
-                  <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: '600' }}>
+                  <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: '600', textShadow: '0 0 8px rgba(217,28,210,0.3)' }}>
                     {groupKey}
                   </span>
-                  <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: '11px' }}>
+                  <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '11px' }}>
                     {sessions.length}
                   </span>
                 </div>
@@ -1006,10 +943,7 @@ const CRMSection = ({
   setNewLinkCustomPrompt,
   generateShareableLink,
   enhancePromptWithAI,
-  // Community
-  newCommunityName,
-  setNewCommunityName,
-  createCommunityChat,
+  // v105: Community props supprimés
   // Chat links
   chatLinks,
   copiedLinkId,
@@ -1046,6 +980,22 @@ const CRMSection = ({
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkSelected, setBulkSelected] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [rewritingAI, setRewritingAI] = useState(false);
+
+  // v105: Réécrire le message avec l'IA — style Afroboost motivant
+  const handleRewriteAI = async () => {
+    if (!coachMessage.trim() || !API_URL) return;
+    setRewritingAI(true);
+    try {
+      const res = await axios.post(`${API_URL}/ai/enhance-text`, {
+        text: coachMessage,
+        style: 'afroboost'
+      }, { headers: { 'X-User-Email': coachEmail } });
+      const enhanced = res.data?.enhanced || res.data?.text || res.data?.result || '';
+      if (enhanced) setCoachMessage(enhanced);
+    } catch (e) { console.warn('[V105] Réécriture IA:', e); }
+    setRewritingAI(false);
+  };
 
   // v104: Contacts unifiés pour GroupChatModule (même source que Contacts + Campagnes)
   const [unifiedContacts, setUnifiedContacts] = useState([]);
@@ -1066,6 +1016,25 @@ const CRMSection = ({
     };
     if (API_URL) loadUnified();
   }, [API_URL, coachEmail]);
+
+  // v105: Real-time polling — refresh conversations every 30s, messages every 15s
+  useEffect(() => {
+    if (!API_URL) return;
+    const convInterval = setInterval(() => {
+      if (loadConversations && !conversationsLoading) {
+        loadConversations(false);
+      }
+    }, 30000);
+    return () => clearInterval(convInterval);
+  }, [API_URL, loadConversations, conversationsLoading]);
+
+  useEffect(() => {
+    if (!API_URL || !selectedSession?.id) return;
+    const msgInterval = setInterval(() => {
+      loadSessionMessages(selectedSession.id);
+    }, 15000);
+    return () => clearInterval(msgInterval);
+  }, [API_URL, selectedSession?.id, loadSessionMessages]);
 
   const toggleBulkSelect = useCallback((sessionId) => {
     setBulkSelected(prev => {
@@ -1144,13 +1113,7 @@ const CRMSection = ({
         coachEmail={coachEmail}
       />
 
-      {/* Create Community — conservé tel quel */}
-      <CommunityCard
-        newCommunityName={newCommunityName}
-        setNewCommunityName={setNewCommunityName}
-        createCommunityChat={createCommunityChat}
-        loadingConversations={loadingConversations}
-      />
+      {/* v105: Communauté supprimée — tout passe par GroupChatModule */}
 
       {/* v104: Module Groupes de Chat — contacts unifiés (même source que Contacts + Campagnes) */}
       <GroupChatModule
@@ -1159,11 +1122,16 @@ const CRMSection = ({
         coachEmail={coachEmail}
       />
 
-      {/* Main Conversations Grid */}
+      {/* Main Conversations Grid — v105 redesign */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: '1fr',
         gap: '0',
+        borderRadius: '16px',
+        border: '1px solid rgba(217, 28, 210, 0.1)',
+        background: '#111111',
+        boxShadow: '0 0 25px rgba(217, 28, 210, 0.04)',
+        overflow: 'hidden',
       }}>
         {/* Responsive: on larger screens, use 2 columns */}
         <style>{`
@@ -1176,10 +1144,11 @@ const CRMSection = ({
           gridTemplateColumns: '1fr',
           gap: '0',
         }}>
-          {/* Left: Conversations List */}
+          {/* Left: Conversations List — v105 redesign */}
           <div style={{
             padding: '20px',
-            borderRight: '1px solid rgba(255,255,255,0.04)',
+            borderRight: '1px solid rgba(217, 28, 210, 0.08)',
+            background: 'rgba(26, 26, 26, 0.4)',
           }}>
             {/* Header */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
@@ -1278,9 +1247,9 @@ const CRMSection = ({
               </div>
             )}
 
-            {/* Search — borderless */}
+            {/* Search — v105 redesign */}
             <div style={{ position: 'relative', marginBottom: '16px' }}>
-              <Search size={14} style={{ position: 'absolute', left: '0', top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.2)' }} />
+              <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.3)' }} />
               <input
                 type="text"
                 value={conversationSearch}
@@ -1288,17 +1257,17 @@ const CRMSection = ({
                 placeholder="Rechercher…"
                 style={{
                   width: '100%',
-                  padding: '8px 8px 8px 22px',
-                  background: 'transparent',
-                  border: 'none',
-                  borderBottom: '1px solid rgba(255,255,255,0.06)',
+                  padding: '10px 12px 10px 32px',
+                  background: '#1A1A1A',
+                  border: '1px solid rgba(217, 28, 210, 0.1)',
+                  borderRadius: '10px',
                   color: '#fff',
                   fontSize: '13px',
                   outline: 'none',
-                  transition: 'border-color 0.2s',
+                  transition: 'all 0.25s',
                 }}
-                onFocus={(e) => e.target.style.borderBottomColor = 'rgba(217, 28, 210, 0.3)'}
-                onBlur={(e) => e.target.style.borderBottomColor = 'rgba(255,255,255,0.06)'}
+                onFocus={(e) => { e.target.style.borderColor = 'rgba(217, 28, 210, 0.35)'; e.target.style.boxShadow = '0 0 12px rgba(217, 28, 210, 0.08)'; }}
+                onBlur={(e) => { e.target.style.borderColor = 'rgba(217, 28, 210, 0.1)'; e.target.style.boxShadow = 'none'; }}
                 data-testid="conversation-search"
               />
             </div>
@@ -1322,13 +1291,14 @@ const CRMSection = ({
             />
           </div>
 
-          {/* Right: Selected Conversation Messages */}
+          {/* Right: Selected Conversation Messages — v105 redesign */}
           <div style={{
             padding: '20px',
             display: 'flex',
             flexDirection: 'column',
             minHeight: '500px',
-            borderTop: '1px solid rgba(255,255,255,0.04)',
+            borderTop: '1px solid rgba(217, 28, 210, 0.08)',
+            background: 'rgba(26, 26, 26, 0.3)',
           }}>
             <style>{`
               @media (min-width: 1024px) {
@@ -1343,7 +1313,7 @@ const CRMSection = ({
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   paddingBottom: '14px',
-                  borderBottom: '1px solid rgba(255,255,255,0.06)',
+                  borderBottom: '1px solid rgba(217, 28, 210, 0.1)',
                   marginBottom: '14px',
                 }}>
                   <div style={{ minWidth: 0 }}>
@@ -1502,6 +1472,23 @@ const CRMSection = ({
                     }}
                     data-testid="coach-message-input"
                   />
+                  {/* v105: Bouton Réécrire IA */}
+                  <button
+                    onClick={handleRewriteAI}
+                    disabled={!coachMessage.trim() || rewritingAI}
+                    title="Réécrire avec l'IA"
+                    style={{
+                      ...iconBtn('#8b5cf6'),
+                      width: '34px', height: '34px',
+                      opacity: (!coachMessage.trim() || rewritingAI) ? 0.2 : 0.8,
+                      transition: 'all 0.25s',
+                      fontSize: '12px', fontWeight: '700',
+                    }}
+                    onMouseEnter={(e) => { if (coachMessage.trim() && !rewritingAI) { e.currentTarget.style.opacity = '1'; e.currentTarget.style.boxShadow = GLOW.violetSoft; }}}
+                    onMouseLeave={(e) => { e.currentTarget.style.opacity = coachMessage.trim() ? '0.8' : '0.2'; e.currentTarget.style.boxShadow = 'none'; }}
+                  >
+                    {rewritingAI ? '⏳' : <Bot size={15} />}
+                  </button>
                   <button
                     onClick={handleSendMessage}
                     disabled={!coachMessage.trim()}

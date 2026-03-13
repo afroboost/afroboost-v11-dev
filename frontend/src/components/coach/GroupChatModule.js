@@ -155,6 +155,29 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
   const [expanded, setExpanded] = useState(true);
   const [activeGroupId, setActiveGroupId] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
+  const [generatingPrompt, setGeneratingPrompt] = useState(false);
+
+  // v105: Générer un Prompt Maître IA basé sur le nom du groupe
+  const handleGeneratePrompt = async () => {
+    if (!newGroupName.trim() || !API) return;
+    setGeneratingPrompt(true);
+    try {
+      const res = await fetch(`${API}/ai/enhance-text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail || '' },
+        body: JSON.stringify({
+          text: `Génère un prompt système expert pour un assistant IA dans un groupe appelé "${newGroupName.trim()}". Le prompt doit définir la personnalité, le ton et l'expertise de l'IA. Style Afroboost : motivant, chaleureux, professionnel. Maximum 3 phrases.`,
+          style: 'expert'
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const enhanced = data.enhanced || data.text || data.result || '';
+        if (enhanced) setSystemPrompt(enhanced);
+      }
+    } catch (e) { console.error('[V105] Erreur génération prompt:', e); }
+    setGeneratingPrompt(false);
+  };
 
   // Charger les groupes au mount
   useEffect(() => {
@@ -288,6 +311,20 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
                   }}
                   onFocus={e => e.target.style.borderColor = 'rgba(139,92,246,0.4)'}
                   onBlur={e => e.target.style.borderColor = 'rgba(139,92,246,0.15)'} />
+                {/* v105: Bouton Générer Prompt Maître */}
+                <button onClick={handleGeneratePrompt} disabled={!newGroupName.trim() || generatingPrompt}
+                  style={{
+                    marginTop: '6px', padding: '7px 14px', borderRadius: '20px',
+                    background: newGroupName.trim() && !generatingPrompt ? 'linear-gradient(135deg, rgba(139,92,246,0.2), rgba(217,28,210,0.2))' : 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(139,92,246,0.25)', color: newGroupName.trim() ? '#a78bfa' : 'rgba(255,255,255,0.2)',
+                    fontSize: '11px', fontWeight: '600', cursor: newGroupName.trim() && !generatingPrompt ? 'pointer' : 'not-allowed',
+                    display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.25s', width: 'fit-content',
+                  }}
+                  onMouseEnter={e => { if (newGroupName.trim() && !generatingPrompt) e.currentTarget.style.boxShadow = '0 0 12px rgba(139,92,246,0.3)'; }}
+                  onMouseLeave={e => e.currentTarget.style.boxShadow = 'none'}
+                >
+                  {generatingPrompt ? '⏳ Génération...' : '✨ Générer Prompt Maître'}
+                </button>
               </div>
 
               {/* Switch IA / Humain */}
