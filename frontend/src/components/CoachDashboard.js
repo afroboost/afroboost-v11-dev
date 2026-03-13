@@ -3414,6 +3414,33 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   }, [tab]);
 
+  // v102: Polling temps reel — liens + conversations + messages (8s)
+  useEffect(() => {
+    if (tab !== 'conversations') return;
+    const poll = async () => {
+      try {
+        const [linksRes, convsRes, partsRes] = await Promise.all([
+          axios.get(`${API}/chat/links`).catch(() => null),
+          axios.get(`${API}/conversations`, { params: { page: 1, limit: 20 } }).catch(() => null),
+          axios.get(`${API}/chat/participants`, { headers: { 'X-User-Email': coachUser?.email || '' } }).catch(() => null),
+        ]);
+        if (linksRes?.data) setChatLinks(linksRes.data);
+        if (convsRes?.data?.conversations) {
+          setEnrichedConversations(convsRes.data.conversations);
+          setChatSessions(convsRes.data.conversations);
+        }
+        if (partsRes?.data) setChatParticipants(partsRes.data);
+        // Rafraichir messages si une session est ouverte
+        if (selectedSession?.id) {
+          const msgRes = await axios.get(`${API}/chat/sessions/${selectedSession.id}/messages`).catch(() => null);
+          if (msgRes?.data) setSessionMessages(msgRes.data);
+        }
+      } catch (e) { /* silencieux */ }
+    };
+    const interval = setInterval(poll, 8000);
+    return () => clearInterval(interval);
+  }, [tab, selectedSession?.id]);
+
   // === CONTACTS COMBINÉS: Users + Reservations + Chat Participants ===
   const allContacts = useMemo(() => {
     const contactMap = new Map();

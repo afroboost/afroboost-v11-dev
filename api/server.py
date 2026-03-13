@@ -3938,6 +3938,60 @@ async def get_sitemap():
 
 
 # --- v17.2: FAQ Module ---
+@api_router.get("/public/faqs/{faq_type}")
+async def get_public_faqs(faq_type: str):
+    """v102: FAQ publiques (partner, general) — sans auth"""
+    faqs = await db.public_faqs.find(
+        {"type": faq_type, "is_active": {"$ne": False}},
+        {"_id": 0}
+    ).sort("order", 1).to_list(50)
+    return faqs
+
+@api_router.post("/admin/faqs")
+async def admin_create_faq(request: Request):
+    """v102: SuperAdmin — creer une FAQ publique"""
+    require_auth(request)
+    email = request.headers.get('X-User-Email', '').lower().strip()
+    if not is_super_admin(email):
+        raise HTTPException(status_code=403, detail="SuperAdmin requis")
+    body = await request.json()
+    faq_doc = {
+        "id": str(uuid.uuid4()),
+        "type": body.get("type", "partner"),
+        "question": body.get("question", ""),
+        "answer": body.get("answer", ""),
+        "order": body.get("order", 0),
+        "is_active": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.public_faqs.insert_one(faq_doc)
+    return faq_doc
+
+@api_router.put("/admin/faqs/{faq_id}")
+async def admin_update_faq(faq_id: str, request: Request):
+    """v102: SuperAdmin — modifier une FAQ publique"""
+    require_auth(request)
+    email = request.headers.get('X-User-Email', '').lower().strip()
+    if not is_super_admin(email):
+        raise HTTPException(status_code=403, detail="SuperAdmin requis")
+    body = await request.json()
+    update = {}
+    for k in ["question", "answer", "order", "is_active", "type"]:
+        if k in body: update[k] = body[k]
+    if update:
+        await db.public_faqs.update_one({"id": faq_id}, {"$set": update})
+    return await db.public_faqs.find_one({"id": faq_id}, {"_id": 0})
+
+@api_router.delete("/admin/faqs/{faq_id}")
+async def admin_delete_faq(faq_id: str, request: Request):
+    """v102: SuperAdmin — supprimer une FAQ publique"""
+    require_auth(request)
+    email = request.headers.get('X-User-Email', '').lower().strip()
+    if not is_super_admin(email):
+        raise HTTPException(status_code=403, detail="SuperAdmin requis")
+    await db.public_faqs.delete_one({"id": faq_id})
+    return {"success": True}
+
 @api_router.get("/coach/faqs/{coach_email}")
 async def get_coach_faqs(coach_email: str):
     """Récupère les FAQs publiques d'un coach"""

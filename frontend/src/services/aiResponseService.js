@@ -1,5 +1,5 @@
 // aiResponseService.js - Service IA pour réponses WhatsApp automatiques
-// Compatible Vercel - Utilise OpenAI via Emergent LLM Key
+// Compatible Vercel - Utilise OpenAI via Afroboost API
 // Ce service est utilisé côté frontend pour la configuration
 
 // === CONFIGURATION PAR DÉFAUT ===

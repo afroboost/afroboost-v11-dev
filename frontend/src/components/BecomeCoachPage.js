@@ -591,6 +591,78 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
             </div>
           )}
         </div>
+
+        {/* v102: Section FAQ Partenaire */}
+        <PartnerFAQ />
+
+      </div>
+    </div>
+  );
+};
+
+// v102: FAQ Partenaire — chargement dynamique depuis le backend
+const PartnerFAQ = () => {
+  const [faqs, setFaqs] = useState([]);
+  const [openId, setOpenId] = useState(null);
+
+  useEffect(() => {
+    const loadFaqs = async () => {
+      try {
+        // Charger les FAQ du super admin (FAQ globales partenaires)
+        const res = await fetch(`${API}/public/faqs/partner`);
+        if (res.ok) {
+          const data = await res.json();
+          setFaqs(Array.isArray(data) ? data : []);
+        }
+      } catch { /* FAQ optionnelle */ }
+    };
+    loadFaqs();
+  }, []);
+
+  // FAQ statique de secours si aucune FAQ dynamique
+  const defaultFaqs = [
+    { id: 'f1', question: 'Combien coute le pack Partenaire ?', answer: 'Les packs demarrent a 0 CHF (Starter gratuit). Le pack Standard est a 29 CHF/mois et le Premium a 79 CHF/mois.' },
+    { id: 'f2', question: 'Comment fonctionne l\'assistant IA ?', answer: 'L\'IA repond automatiquement a vos clients 24h/24 selon le prompt que vous definissez. Vous gardez le controle total et pouvez intervenir a tout moment.' },
+    { id: 'f3', question: 'Puis-je vendre mes produits sur Afroboost ?', answer: 'Oui ! Vous pouvez ajouter des offres, des cours et des produits physiques avec paiement integre (Stripe ou Mobile Money).' },
+    { id: 'f4', question: 'Comment mes clients me trouvent-ils ?', answer: 'Chaque partenaire a sa propre vitrine publique. Vous pouvez partager votre lien unique ou creer des Liens Intelligents de conversion.' },
+  ];
+
+  const displayFaqs = faqs.length > 0 ? faqs : defaultFaqs;
+
+  if (displayFaqs.length === 0) return null;
+
+  return (
+    <div style={{ maxWidth: '600px', margin: '32px auto 0', padding: '0 20px' }}>
+      <h3 style={{ color: '#fff', fontSize: '18px', fontWeight: '700', textAlign: 'center', marginBottom: '16px' }}>
+        Questions frequentes
+      </h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {displayFaqs.map(faq => (
+          <div key={faq.id} style={{
+            background: '#1A1A1A', borderRadius: '10px',
+            border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden',
+          }}>
+            <button
+              onClick={() => setOpenId(openId === faq.id ? null : faq.id)}
+              style={{
+                width: '100%', padding: '14px 16px', background: 'none', border: 'none',
+                color: '#fff', fontSize: '13px', fontWeight: '600', textAlign: 'left',
+                cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              }}
+            >
+              <span>{faq.question}</span>
+              <span style={{
+                color: 'rgba(217,28,210,0.6)', fontSize: '18px', fontWeight: '300',
+                transform: openId === faq.id ? 'rotate(45deg)' : 'none', transition: 'transform 0.2s',
+              }}>+</span>
+            </button>
+            {openId === faq.id && (
+              <div style={{ padding: '0 16px 14px', color: 'rgba(255,255,255,0.6)', fontSize: '12px', lineHeight: '1.6' }}>
+                {faq.answer}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
