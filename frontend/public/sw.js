@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v107.2';
-// V107.2: Suppression contour blanc sur icônes hero
+const CACHE_NAME = 'afroboost-v107.3';
+// V107.3: Icône Réserver blanche + taille 22px
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {
