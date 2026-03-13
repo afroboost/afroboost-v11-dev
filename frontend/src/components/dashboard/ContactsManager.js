@@ -21,6 +21,7 @@ export default function ContactsManager({ API, coachEmail }) {
   const [syncMessage, setSyncMessage] = useState('');
   const [showImport, setShowImport] = useState(false);
   const [importResult, setImportResult] = useState(null);
+  const [deduping, setDeduping] = useState(false);
   const importRef = useRef(null);
 
   const headers = { 'X-User-Email': coachEmail || '' };
@@ -131,6 +132,24 @@ export default function ContactsManager({ API, coachEmail }) {
     };
     reader.readAsText(file);
     e.target.value = '';
+  };
+
+  // v104: Dédupliquer les contacts
+  const deduplicateContacts = async () => {
+    setDeduping(true);
+    try {
+      const res = await axios.post(`${API}/contacts/deduplicate`, {}, { headers });
+      if (res.data.success) {
+        setImportResult({ imported: 0, message: `✅ ${res.data.merged} doublons fusionnés (${res.data.total_before} → ${res.data.total_after} contacts)` });
+        loadContacts();
+      } else {
+        setImportResult({ imported: 0, message: '❌ Erreur: ' + (res.data.error || 'inconnue') });
+      }
+    } catch (err) {
+      setImportResult({ imported: 0, message: '❌ Erreur dédup: ' + (err.response?.data?.detail || err.message) });
+    } finally {
+      setDeduping(false);
+    }
   };
 
   // Filtered contacts
@@ -251,6 +270,13 @@ export default function ContactsManager({ API, coachEmail }) {
           color: '#D91CD2', cursor: 'pointer'
         }}>
           📤 Importer CSV / vCard
+        </button>
+        <button onClick={deduplicateContacts} disabled={deduping} title="Fusionner les doublons" style={{
+          padding: '10px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,
+          background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)',
+          color: '#f59e0b', cursor: deduping ? 'not-allowed' : 'pointer'
+        }}>
+          {deduping ? '⏳' : '🧹'}
         </button>
         <button onClick={loadContacts} disabled={loading} style={{
           padding: '10px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,

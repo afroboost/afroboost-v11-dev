@@ -4108,6 +4108,103 @@ async def check_duplicate_contacts(request: Request):
 # CONTACTS UNIFIÉS — v18: Merge participants + users + groupes
 # ============================================================
 
+@api_router.post("/contacts/deduplicate")
+async def deduplicate_contacts(request: Request):
+    """v104: Nettoie les doublons existants dans chat_participants.
+    Fusionne par email (case-insensitive) ou phone normalisé.
+    Garde le contact le plus ancien (created_at), met à jour avec les infos des doublons."""
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not caller_email:
+        raise HTTPException(status_code=401, detail="Email requis")
+
+    try:
+        # Récupérer tous les contacts du coach
+        query = {} if is_super_admin(caller_email) else {"coach_id": caller_email}
+        all_contacts = await db.chat_participants.find(query, {"_id": 0}).to_list(10000)
+
+        # Grouper par email normalisé
+        email_groups = {}
+        phone_groups = {}
+        for c in all_contacts:
+            email = (c.get("email") or "").strip().lower()
+            phone = (c.get("whatsapp") or c.get("phone") or "").replace(" ", "").replace("-", "").replace("+", "")
+            if email:
+                email_groups.setdefault(email, []).append(c)
+            elif phone:
+                phone_groups.setdefault(phone, []).append(c)
+
+        merged = 0
+        deleted_ids = []
+
+        # Fusionner les doublons email
+        for email, contacts in email_groups.items():
+            if len(contacts) <= 1:
+                continue
+            # Garder le plus ancien
+            contacts.sort(key=lambda x: x.get("created_at", ""))
+            keeper = contacts[0]
+            for dup in contacts[1:]:
+                # Transférer les infos manquantes du doublon vers le keeper
+                updates = {}
+                if not keeper.get("whatsapp") and dup.get("whatsapp"):
+                    updates["whatsapp"] = dup["whatsapp"]
+                if not keeper.get("phone") and dup.get("phone"):
+                    updates["phone"] = dup["phone"]
+                if not keeper.get("name") or keeper["name"] == "Sans nom":
+                    if dup.get("name") and dup["name"] != "Sans nom":
+                        updates["name"] = dup["name"]
+                # Fusionner tags
+                keeper_tags = set(keeper.get("tags", []))
+                dup_tags = set(dup.get("tags", []))
+                if dup_tags - keeper_tags:
+                    updates["tags"] = list(keeper_tags | dup_tags)
+                if updates:
+                    await db.chat_participants.update_one({"id": keeper["id"]}, {"$set": updates})
+                    keeper.update(updates)
+                # Supprimer le doublon
+                await db.chat_participants.delete_one({"id": dup["id"]})
+                deleted_ids.append(dup["id"])
+                merged += 1
+
+        # Fusionner les doublons phone (ceux sans email)
+        for phone, contacts in phone_groups.items():
+            if len(contacts) <= 1:
+                continue
+            contacts.sort(key=lambda x: x.get("created_at", ""))
+            keeper = contacts[0]
+            for dup in contacts[1:]:
+                updates = {}
+                if not keeper.get("email") and dup.get("email"):
+                    updates["email"] = dup["email"]
+                if not keeper.get("name") or keeper["name"] == "Sans nom":
+                    if dup.get("name") and dup["name"] != "Sans nom":
+                        updates["name"] = dup["name"]
+                keeper_tags = set(keeper.get("tags", []))
+                dup_tags = set(dup.get("tags", []))
+                if dup_tags - keeper_tags:
+                    updates["tags"] = list(keeper_tags | dup_tags)
+                if updates:
+                    await db.chat_participants.update_one({"id": keeper["id"]}, {"$set": updates})
+                    keeper.update(updates)
+                await db.chat_participants.delete_one({"id": dup["id"]})
+                deleted_ids.append(dup["id"])
+                merged += 1
+
+        # Mettre à jour les sessions qui référencent les contacts supprimés
+        if deleted_ids:
+            logger.info(f"[DEDUP] {merged} doublons fusionnés, IDs supprimés: {deleted_ids[:10]}...")
+
+        return {
+            "success": True,
+            "merged": merged,
+            "deleted_ids": deleted_ids,
+            "total_before": len(all_contacts),
+            "total_after": len(all_contacts) - merged
+        }
+    except Exception as e:
+        logger.error(f"[DEDUP] Erreur: {e}")
+        return {"success": False, "error": str(e)}
+
 @api_router.get("/contacts/all")
 async def get_all_contacts_unified(request: Request):
     """

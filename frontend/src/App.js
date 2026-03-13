@@ -2138,16 +2138,26 @@ function App() {
   const [audioVolume, setAudioVolume] = useState(0.7);
   const audioRef = useRef(null);
 
-  // v104: Charger les FAQ homepage (publiques type "general" + FAQ coach)
+  // v104: Charger les FAQ homepage (publiques + FAQ coach principal)
   useEffect(() => {
     const loadFaqs = async () => {
       try {
-        const [publicRes, coachRes] = await Promise.all([
+        // Charger FAQ publiques "general" + FAQ du coach principal (contact.artboost)
+        const results = await Promise.all([
           axios.get(`${API}/public/faqs/general`).catch(() => ({ data: [] })),
-          axios.get(`${API}/coach/faqs/${encodeURIComponent(concept.coachEmail || 'default')}`).catch(() => ({ data: [] })),
+          axios.get(`${API}/public/faqs/partner`).catch(() => ({ data: [] })),
+          axios.get(`${API}/coach/faqs/contact.artboost@gmail.com`).catch(() => ({ data: [] })),
         ]);
-        const allFaqs = [...(Array.isArray(publicRes.data) ? publicRes.data : []), ...(Array.isArray(coachRes.data) ? coachRes.data : [])];
-        if (allFaqs.length === 0) {
+        const allFaqs = results.flatMap(r => Array.isArray(r.data) ? r.data : []);
+        // Dédupliquer par question
+        const seen = new Set();
+        const unique = allFaqs.filter(f => {
+          const key = (f.question || '').toLowerCase().trim();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        if (unique.length === 0) {
           // Fallback FAQ statiques
           setHomeFaqs([
             { id: 'f1', question: "Comment réserver une séance ?", answer: "Choisissez votre séance dans le calendrier, sélectionnez votre créneau et confirmez. Vous recevrez un email de confirmation." },
@@ -2156,7 +2166,7 @@ function App() {
             { id: 'f4', question: "Puis-je annuler ma réservation ?", answer: "Contactez-nous directement via le chat ou par email pour toute demande d'annulation ou de modification." },
           ]);
         } else {
-          setHomeFaqs(allFaqs);
+          setHomeFaqs(unique);
         }
       } catch (e) { console.warn('[FAQ] Erreur chargement:', e); }
     };
