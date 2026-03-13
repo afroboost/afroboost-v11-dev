@@ -7048,18 +7048,46 @@ async def get_session_messages(session_id: str, include_deleted: bool = False):
     """Recupere tous les messages d'une session avec format unifie.
     V107.8: Auto-détecte et fusionne les sessions dupliquées côté coach.
     """
-    # V107.8: Vérifier s'il existe des sessions dupliquées à fusionner
+    # V107.9: Vérifier s'il existe des sessions dupliquées à fusionner
+    # Cross-référence via chat_participants pour trouver TOUTES les sessions du même abonné
     session = await db.chat_sessions.find_one({"id": session_id, "is_deleted": {"$ne": True}}, {"_id": 0})
     if session:
         participant_email = session.get("participantEmail", "")
-        participant_ids = session.get("participant_ids", [])
+        participant_ids = list(session.get("participant_ids", []))
 
-        # Chercher d'autres sessions pour le même participant (par email ou participant_ids)
-        merge_queries = []
+        # V107.9: Résoudre TOUS les participant_ids liés à cet email via chat_participants
+        all_pids = set(participant_ids)
+        resolved_email = participant_email
+
+        # Si on a un email, chercher le participant_id correspondant
         if participant_email:
-            merge_queries.append({"participantEmail": {"$regex": f"^{participant_email}$", "$options": "i"}})
+            participant = await db.chat_participants.find_one(
+                {"email": {"$regex": f"^{participant_email}$", "$options": "i"}},
+                {"_id": 0, "id": 1}
+            )
+            if participant:
+                all_pids.add(participant["id"])
+
+        # Si on a des participant_ids, résoudre leurs emails
         if participant_ids:
-            merge_queries.append({"participant_ids": {"$in": participant_ids}})
+            for pid in participant_ids:
+                p = await db.chat_participants.find_one({"id": pid}, {"_id": 0, "email": 1})
+                if p and p.get("email"):
+                    resolved_email = resolved_email or p["email"]
+                    # Chercher d'autres participants avec le même email
+                    same_email_ps = await db.chat_participants.find(
+                        {"email": {"$regex": f"^{p['email']}$", "$options": "i"}},
+                        {"_id": 0, "id": 1}
+                    ).to_list(10)
+                    for sp in same_email_ps:
+                        all_pids.add(sp["id"])
+
+        # Construire les requêtes de recherche de sessions dupliquées
+        merge_queries = []
+        if resolved_email:
+            merge_queries.append({"participantEmail": {"$regex": f"^{resolved_email}$", "$options": "i"}})
+        if all_pids:
+            merge_queries.append({"participant_ids": {"$in": list(all_pids)}})
 
         if merge_queries:
             other_sessions = await db.chat_sessions.find(
@@ -7073,6 +7101,9 @@ async def get_session_messages(session_id: str, include_deleted: bool = False):
             ).to_list(10)
 
             for other in other_sessions:
+                # Exclure les sessions de groupe
+                if other.get("is_group") or other.get("group_id"):
+                    continue
                 # Fusionner: migrer les messages de l'autre session vers celle-ci
                 migrated = await db.chat_messages.update_many(
                     {"session_id": other["id"]},
@@ -7088,16 +7119,17 @@ async def get_session_messages(session_id: str, include_deleted: bool = False):
                         participant_ids.append(pid)
                 # Copier participantEmail si manquant
                 if not participant_email and other.get("participantEmail"):
+                    participant_email = other["participantEmail"]
                     await db.chat_sessions.update_one(
                         {"id": session_id},
-                        {"$set": {"participantEmail": other["participantEmail"]}}
+                        {"$set": {"participantEmail": participant_email}}
                     )
                 # Soft-delete l'autre session
                 await db.chat_sessions.update_one(
                     {"id": other["id"]},
                     {"$set": {"is_deleted": True, "merged_into": session_id}}
                 )
-                logger.info(f"[V107.8] FUSION côté coach: {other['id'][:8]} → {session_id[:8]} ({migrated.modified_count} msgs)")
+                logger.info(f"[V107.9] FUSION: {other['id'][:8]} → {session_id[:8]} ({migrated.modified_count} msgs, pids={list(all_pids)[:3]})")
 
     query = {"session_id": session_id}
     if not include_deleted: query["is_deleted"] = {"$ne": True}
