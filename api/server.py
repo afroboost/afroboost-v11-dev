@@ -7045,7 +7045,60 @@ async def toggle_session_ai(session_id: str):
 # --- Chat Messages ---
 @api_router.get("/chat/sessions/{session_id}/messages")
 async def get_session_messages(session_id: str, include_deleted: bool = False):
-    """Recupere tous les messages d'une session avec format unifie."""
+    """Recupere tous les messages d'une session avec format unifie.
+    V107.8: Auto-détecte et fusionne les sessions dupliquées côté coach.
+    """
+    # V107.8: Vérifier s'il existe des sessions dupliquées à fusionner
+    session = await db.chat_sessions.find_one({"id": session_id, "is_deleted": {"$ne": True}}, {"_id": 0})
+    if session:
+        participant_email = session.get("participantEmail", "")
+        participant_ids = session.get("participant_ids", [])
+
+        # Chercher d'autres sessions pour le même participant (par email ou participant_ids)
+        merge_queries = []
+        if participant_email:
+            merge_queries.append({"participantEmail": {"$regex": f"^{participant_email}$", "$options": "i"}})
+        if participant_ids:
+            merge_queries.append({"participant_ids": {"$in": participant_ids}})
+
+        if merge_queries:
+            other_sessions = await db.chat_sessions.find(
+                {
+                    "$or": merge_queries,
+                    "id": {"$ne": session_id},
+                    "is_deleted": {"$ne": True},
+                    "mode": {"$nin": ["community"]},
+                },
+                {"_id": 0}
+            ).to_list(10)
+
+            for other in other_sessions:
+                # Fusionner: migrer les messages de l'autre session vers celle-ci
+                migrated = await db.chat_messages.update_many(
+                    {"session_id": other["id"]},
+                    {"$set": {"session_id": session_id}}
+                )
+                # Fusionner les participant_ids
+                for pid in other.get("participant_ids", []):
+                    if pid not in participant_ids:
+                        await db.chat_sessions.update_one(
+                            {"id": session_id},
+                            {"$push": {"participant_ids": pid}}
+                        )
+                        participant_ids.append(pid)
+                # Copier participantEmail si manquant
+                if not participant_email and other.get("participantEmail"):
+                    await db.chat_sessions.update_one(
+                        {"id": session_id},
+                        {"$set": {"participantEmail": other["participantEmail"]}}
+                    )
+                # Soft-delete l'autre session
+                await db.chat_sessions.update_one(
+                    {"id": other["id"]},
+                    {"$set": {"is_deleted": True, "merged_into": session_id}}
+                )
+                logger.info(f"[V107.8] FUSION côté coach: {other['id'][:8]} → {session_id[:8]} ({migrated.modified_count} msgs)")
+
     query = {"session_id": session_id}
     if not include_deleted: query["is_deleted"] = {"$ne": True}
     raw = await db.chat_messages.find(query, {"_id": 0}).sort("created_at", 1).to_list(500)
