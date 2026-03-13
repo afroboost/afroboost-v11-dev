@@ -5769,50 +5769,76 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         fontSize: '10px', padding: '2px 8px', borderRadius: '10px', fontWeight: 600
                       }}>ADMIN</span>
                     </div>
-                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                      {/* v77: Bouton Boost avec feedback visuel */}
+                    {/* v106.6: Ligne Avis (commentaires) */}
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '8px' }}>
+                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', fontWeight: 600, minWidth: '50px' }}>💬 Avis</span>
+                      {/* +1 Avis */}
+                      <button
+                        onClick={async (e) => {
+                          const btn = e.currentTarget;
+                          btn.disabled = true;
+                          btn.style.opacity = '0.6';
+                          try {
+                            await axios.post(`${API}/admin/generate-social-proof`, { count: 1 }, {
+                              headers: { 'X-User-Email': coachUser?.email }
+                            });
+                            alert('✅ +1 avis généré !');
+                            const el = document.getElementById('social-boost-comments-list');
+                            if (el) el.dispatchEvent(new Event('refresh'));
+                          } catch (e2) {
+                            alert('❌ Erreur: ' + (e2.response?.data?.detail || e2.message));
+                          } finally {
+                            btn.disabled = false;
+                            btn.style.opacity = '1';
+                          }
+                        }}
+                        style={{
+                          background: 'rgba(255,255,255,0.08)',
+                          color: '#fff', border: '1px solid rgba(217,28,210,0.3)',
+                          padding: '8px 14px', borderRadius: '10px',
+                          fontSize: '12px', fontWeight: 600, cursor: 'pointer'
+                        }}
+                      >
+                        💬 +1 Avis
+                      </button>
+                      {/* +50 Avis */}
                       <button
                         id="boost-social-btn"
                         onClick={async (e) => {
                           const btn = e.currentTarget;
                           btn.disabled = true;
-                          btn.textContent = '⏳ Génération en cours... (Patientez)';
+                          btn.textContent = '⏳ Génération...';
                           btn.style.opacity = '0.6';
-                          btn.style.cursor = 'not-allowed';
                           try {
-                            const res = await axios.post(`${API}/admin/generate-social-proof`, { count: 50 }, {
+                            await axios.post(`${API}/admin/generate-social-proof`, { count: 50 }, {
                               headers: { 'X-User-Email': coachUser?.email }
                             });
-                            alert(`✅ 50 avis générés avec succès !`);
-                            // Refresh la liste des derniers commentaires
-                            try {
-                              const commRes = await axios.get(`${API}/comments?coach_id=${encodeURIComponent(coachUser?.email || '')}`);
-                              const el = document.getElementById('social-boost-comments-list');
-                              if (el && commRes.data?.comments) {
-                                el.dataset.comments = JSON.stringify(commRes.data.comments.slice(0, 5));
-                                el.dispatchEvent(new Event('refresh'));
-                              }
-                            } catch(er) {}
+                            alert('✅ +50 avis générés !');
+                            const el = document.getElementById('social-boost-comments-list');
+                            if (el) el.dispatchEvent(new Event('refresh'));
                           } catch (e2) {
                             alert('❌ Erreur: ' + (e2.response?.data?.detail || e2.message));
                           } finally {
                             btn.disabled = false;
-                            btn.textContent = '🚀 Booster la Preuve Sociale (50 avis IA)';
+                            btn.textContent = '🚀 +50 Avis';
                             btn.style.opacity = '1';
-                            btn.style.cursor = 'pointer';
                           }
                         }}
                         style={{
                           background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
-                          color: '#fff', border: 'none', padding: '10px 18px',
-                          borderRadius: '12px', fontSize: '13px', fontWeight: 600,
-                          cursor: 'pointer', boxShadow: '0 0 15px rgba(217,28,210,0.3)',
+                          color: '#fff', border: 'none', padding: '8px 14px',
+                          borderRadius: '10px', fontSize: '12px', fontWeight: 600,
+                          cursor: 'pointer', boxShadow: '0 0 12px rgba(217,28,210,0.3)',
                           transition: 'opacity 0.2s'
                         }}
                       >
-                        🚀 Booster la Preuve Sociale (50 avis IA)
+                        🚀 +50 Avis
                       </button>
-                      {/* v106.5: Bouton +1 Like */}
+                    </div>
+                    {/* v106.6: Ligne Likes */}
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '8px' }}>
+                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', fontWeight: 600, minWidth: '50px' }}>❤️ Likes</span>
+                      {/* +1 Like */}
                       <button
                         onClick={async () => {
                           try {
@@ -5820,7 +5846,6 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                               headers: { 'X-User-Email': coachUser?.email }
                             });
                             alert(`✅ +1 like ajouté sur ${res.data.boosted_comments} commentaires !`);
-                            // Refresh la liste des commentaires
                             const el = document.getElementById('social-boost-comments-list');
                             if (el) el.dispatchEvent(new Event('refresh'));
                           } catch (e) {
@@ -5830,13 +5855,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         style={{
                           background: 'rgba(255,255,255,0.08)',
                           color: '#fff', border: '1px solid rgba(217,28,210,0.3)',
-                          padding: '10px 18px', borderRadius: '12px',
-                          fontSize: '13px', fontWeight: 600, cursor: 'pointer'
+                          padding: '8px 14px', borderRadius: '10px',
+                          fontSize: '12px', fontWeight: 600, cursor: 'pointer'
                         }}
                       >
                         ❤️ +1 Like
                       </button>
-                      {/* v106.5: Bouton +100 Likes avec refresh */}
+                      {/* +100 Likes */}
                       <button
                         onClick={async () => {
                           try {
@@ -5844,7 +5869,6 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                               headers: { 'X-User-Email': coachUser?.email }
                             });
                             alert(`✅ +100 likes ajoutés sur ${res.data.boosted_comments} commentaires !`);
-                            // Refresh la liste des commentaires
                             const el = document.getElementById('social-boost-comments-list');
                             if (el) el.dispatchEvent(new Event('refresh'));
                           } catch (e) {
@@ -5854,12 +5878,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         style={{
                           background: 'rgba(255,255,255,0.08)',
                           color: '#fff', border: '1px solid rgba(217,28,210,0.3)',
-                          padding: '10px 18px', borderRadius: '12px',
-                          fontSize: '13px', fontWeight: 600, cursor: 'pointer'
+                          padding: '8px 14px', borderRadius: '10px',
+                          fontSize: '12px', fontWeight: 600, cursor: 'pointer'
                         }}
                       >
                         ❤️ +100 Likes
                       </button>
+                    </div>
+                    {/* v106.6: Ligne Actions */}
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                       <button
                         onClick={async () => {
                           if (!window.confirm('Supprimer tous les commentaires IA ?')) return;
