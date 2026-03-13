@@ -994,15 +994,15 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             )}
           </div>
 
-          {/* v88: Bouton Avis/Commentaires — glow réduit pour meilleure lisibilité */}
+          {/* v106.4: Bouton Avis/Commentaires — contour blanc pour visibilité sur hero */}
           {socialComments.length > 0 && (
             <button onClick={() => setShowCommentsPanel(true)} className="flex flex-col items-center gap-1">
               <div className="w-10 h-10 rounded-full flex items-center justify-center"
                 style={{
                   background: 'rgba(217, 28, 210, 0.3)',
                   backdropFilter: 'blur(6px)',
-                  border: '1.5px solid rgba(217, 28, 210, 0.5)',
-                  boxShadow: '0 0 6px rgba(217, 28, 210, 0.25)'
+                  border: '2px solid rgba(255, 255, 255, 0.85)',
+                  boxShadow: '0 0 8px rgba(0, 0, 0, 0.4)'
                 }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
@@ -1014,10 +1014,10 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             </button>
           )}
 
-          {/* QR Code */}
+          {/* v106.4: QR Code — contour blanc */}
           <button onClick={() => setShowQR(true)} className="flex flex-col items-center gap-1">
             <div className="w-10 h-10 rounded-full flex items-center justify-center"
-              style={{ background: 'rgba(255,255,255,0.15)', backdropFilter: 'blur(8px)' }}>
+              style={{ background: 'rgba(255,255,255,0.15)', backdropFilter: 'blur(8px)', border: '2px solid rgba(255, 255, 255, 0.85)', boxShadow: '0 0 8px rgba(0, 0, 0, 0.4)' }}>
               <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h2M4 12h2m14 0h2M6 20h2m-2-8h2" />
               </svg>
@@ -1025,10 +1025,10 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             <span className="text-white text-[10px]">QR</span>
           </button>
 
-          {/* Partager */}
+          {/* v106.4: Partager — contour blanc */}
           <button onClick={handleShare} className="flex flex-col items-center gap-1">
             <div className="w-10 h-10 rounded-full flex items-center justify-center"
-              style={{ background: 'rgba(255,255,255,0.15)', backdropFilter: 'blur(8px)' }}>
+              style={{ background: 'rgba(255,255,255,0.15)', backdropFilter: 'blur(8px)', border: '2px solid rgba(255, 255, 255, 0.85)', boxShadow: '0 0 8px rgba(0, 0, 0, 0.4)' }}>
               <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
               </svg>
@@ -1036,13 +1036,13 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             <span className="text-white text-[10px]">Partager</span>
           </button>
 
-          {/* Réserver (scroll) */}
+          {/* v106.4: Réserver (scroll) — contour blanc */}
           <button onClick={() => {
             const target = document.getElementById('vitrine-content-section');
             if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
           }} className="flex flex-col items-center gap-1">
             <div className="w-10 h-10 rounded-full flex items-center justify-center"
-              style={{ background: 'rgba(217, 28, 210, 0.6)', boxShadow: '0 0 6px rgba(217, 28, 210, 0.3)' }}>
+              style={{ background: 'rgba(217, 28, 210, 0.6)', border: '2px solid rgba(255, 255, 255, 0.85)', boxShadow: '0 0 8px rgba(0, 0, 0, 0.4)' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
                 <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
                 <line x1="16" y1="2" x2="16" y2="6" />
