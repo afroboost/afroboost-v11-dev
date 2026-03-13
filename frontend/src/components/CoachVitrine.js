@@ -104,6 +104,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   // v72: Social Proof — Icône interactive + panneau commentaires
   const [socialComments, setSocialComments] = useState([]);
   const [socialTotalCount, setSocialTotalCount] = useState(0); // v106.7: vrai total commentaires
+  const _BUILD_V = "106.7.1"; // force webpack hash change
   const [showCommentsPanel, setShowCommentsPanel] = useState(false);
   const [zoomedPhoto, setZoomedPhoto] = useState(null); // v74: Zoom photo profil
 
