@@ -3577,12 +3577,70 @@ export const ChatWidget = () => {
     // Ajouter le senderId + un ID temporaire pour identifier les messages de l'utilisateur actuel
     const tempUserMsgId = `temp_user_${Date.now()}`;
 
-    // V108.4: Déterminer la cible (groupe ou privé) — détection robuste
-    // Utiliser selectedGroup directement (pas seulement chatMode qui peut être stale)
+    // V108.5: Déterminer la cible (groupe ou privé) — détection robuste
     const isGroupMode = !!(selectedGroup && selectedGroup.session_id && (chatMode === 'group' || selectedGroup.id));
     const targetMessages = isGroupMode ? setGroupMessages : setMessages;
-    if (isGroupMode) {
-      console.log('[V108.4] Mode groupe détecté:', { chatMode, selectedGroup: selectedGroup?.name, session_id: selectedGroup?.session_id, participant_id: participantId });
+
+    // V108.5: Log systématique pour debug (toujours, pas seulement en mode groupe)
+    console.log('[V108.5] handleSendMessage:', {
+      chatMode, isGroupMode,
+      selectedGroup: selectedGroup?.name || null,
+      session_id: selectedGroup?.session_id || null,
+      participantId: participantId || 'NULL!',
+      hasSessionData: !!sessionData,
+      message: userMessage.substring(0, 20)
+    });
+
+    // V108.5: Si mode groupe mais participantId manquant, tenter récupération
+    let effectiveParticipantId = participantId;
+    if (isGroupMode && !effectiveParticipantId) {
+      console.warn('[V108.5] participantId NULL en mode groupe — tentative récupération...');
+      try {
+        const savedIdentity = localStorage.getItem('afroboost_identity');
+        const savedClient = localStorage.getItem('af_chat_client');
+        if (savedIdentity || savedClient) {
+          const data = JSON.parse(savedIdentity || savedClient);
+          effectiveParticipantId = data?.participantId || null;
+          console.log('[V108.5] Récupéré participantId depuis localStorage:', effectiveParticipantId);
+        }
+      } catch (e) { console.error('[V108.5] Erreur récup localStorage:', e); }
+
+      // Si toujours null, tenter smart-entry auto avec le profil
+      if (!effectiveParticipantId && afroboostProfile?.email) {
+        console.log('[V108.5] Tentative auto-registration via smart-entry...');
+        try {
+          const regRes = await axios.post(`${API}/chat/smart-entry`, {
+            name: afroboostProfile.name || 'Abonné',
+            email: afroboostProfile.email,
+            whatsapp: afroboostProfile.whatsapp || ''
+          });
+          if (regRes.data?.participant?.id) {
+            effectiveParticipantId = regRes.data.participant.id;
+            setParticipantId(effectiveParticipantId);
+            // Sauvegarder pour les prochaines fois
+            localStorage.setItem('afroboost_identity', JSON.stringify({
+              firstName: afroboostProfile.name,
+              email: afroboostProfile.email,
+              participantId: effectiveParticipantId,
+              savedAt: new Date().toISOString()
+            }));
+            console.log('[V108.5] Auto-registration OK! participantId:', effectiveParticipantId);
+          }
+        } catch (regErr) {
+          console.error('[V108.5] Auto-registration FAILED:', regErr);
+        }
+      }
+
+      if (!effectiveParticipantId) {
+        console.error('[V108.5] IMPOSSIBLE de récupérer participantId!');
+        targetMessages(prev => [...prev, {
+          id: `err_nopid_${Date.now()}`,
+          type: 'ai',
+          text: "Erreur: votre session n'est pas initialisée. Essayez de recharger la page ou de vous reconnecter."
+        }]);
+        setIsLoading(false);
+        return;
+      }
     }
 
     targetMessages(prev => [...prev, { id: tempUserMsgId, type: 'user', text: userMessage, senderId: participantId }]);
@@ -3591,13 +3649,13 @@ export const ChatWidget = () => {
     setIsLoading(true);
 
     try {
-      // V108.3: Si mode groupe avec un groupe sélectionné, envoyer au session du groupe
-      if (isGroupMode && participantId) {
-        console.log('[V108.3] Envoi message groupe:', { session_id: selectedGroup.session_id, participant_id: participantId, group_name: selectedGroup.name });
+      // V108.5: Si mode groupe avec un groupe sélectionné, envoyer au session du groupe
+      if (isGroupMode && effectiveParticipantId) {
+        console.log('[V108.5] Envoi message groupe:', { session_id: selectedGroup.session_id, participant_id: effectiveParticipantId, group_name: selectedGroup.name });
         try {
           const response = await axios.post(`${API}/chat/ai-response`, {
             session_id: selectedGroup.session_id,
-            participant_id: participantId,
+            participant_id: effectiveParticipantId,
             message: userMessage
           });
 
