@@ -256,6 +256,12 @@ GroupChatPanel.displayName = 'GroupChatPanel';
 // === Group Card ===
 const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, onOpenChat, isActive, copiedId }) => {
   const memberCount = (group.member_ids || []).length;
+  // v108: Afficher les noms des membres résolus depuis members_info
+  const membersInfo = group.members_info || [];
+  const memberNames = membersInfo.map(m => m.name || m.email || 'Inconnu').filter(Boolean);
+  const membersSummary = memberNames.length > 0
+    ? memberNames.slice(0, 3).join(', ') + (memberNames.length > 3 ? ` +${memberNames.length - 3}` : '')
+    : '';
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const groupLink = group.link_token ? `${origin}/?group=${group.link_token}` : '';
 
@@ -278,6 +284,11 @@ const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, onOpenChat, isA
         <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '10px', margin: '2px 0 0' }}>
           {memberCount} membre{memberCount > 1 ? 's' : ''} {group.is_ai_active ? '🤖 IA' : '👤 Humain'}
         </p>
+        {membersSummary && (
+          <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: '9px', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {membersSummary}
+          </p>
+        )}
         {group.system_prompt && (
           <p style={{ color: 'rgba(139,92,246,0.5)', fontSize: '9px', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             <MessageSquare size={8} style={{ verticalAlign: 'middle', marginRight: '3px' }} />

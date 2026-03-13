@@ -4253,7 +4253,11 @@ async def get_all_contacts_unified(request: Request):
                     "source": "default", "member_count": 0
                 })
 
-        # 2. CHAT_PARTICIPANTS — Contacts CRM (imports, stripe, chat)
+        # v108: Construction d'un index ID→email pour déduplication cohérente
+        # chat_participants est la source PRIORITAIRE (CRM du coach)
+        seen_ids = set()
+
+        # 2. CHAT_PARTICIPANTS — Contacts CRM (imports, stripe, chat) — SOURCE PRIORITAIRE
         if is_super_admin(caller_email):
             participants = await db.chat_participants.find({}, {"_id": 0}).to_list(5000)
         else:
@@ -4262,20 +4266,25 @@ async def get_all_contacts_unified(request: Request):
             ).to_list(5000)
 
         for p in participants:
+            pid = p.get("id", "")
             email = (p.get("email") or "").strip().lower()
             phone = (p.get("whatsapp") or p.get("phone") or "").strip()
-            # Dedup
+            # Dedup par ID d'abord, puis email/phone
+            if pid and pid in seen_ids:
+                continue
             if email and email in seen_emails:
                 continue
             if phone and phone in seen_phones:
                 continue
+            if pid:
+                seen_ids.add(pid)
             if email:
                 seen_emails.add(email)
             if phone:
                 seen_phones.add(phone)
 
             contacts.append({
-                "id": p.get("id", ""),
+                "id": pid,
                 "name": p.get("name") or email or phone or "Sans nom",
                 "type": "user",
                 "category": p.get("source", "import"),
@@ -4286,15 +4295,21 @@ async def get_all_contacts_unified(request: Request):
             })
 
         # 3. USERS — Utilisateurs de l'app (ceux pas déjà dans participants)
+        # v108: Dedup par ID ET email pour éviter les doublons cross-collections
         all_users = await db.users.find({}, {"_id": 0, "id": 1, "name": 1, "email": 1, "created_at": 1}).to_list(5000)
         for u in all_users:
+            uid = u.get("id", "")
             email = (u.get("email") or "").strip().lower()
+            if uid and uid in seen_ids:
+                continue
             if email and email in seen_emails:
                 continue
+            if uid:
+                seen_ids.add(uid)
             if email:
                 seen_emails.add(email)
             contacts.append({
-                "id": u.get("id", ""),
+                "id": uid,
                 "name": u.get("name") or email or "Sans nom",
                 "type": "user",
                 "category": "app_user",
@@ -8333,11 +8348,14 @@ async def get_ai_response_with_session(request: Request):
     if not session:
         raise HTTPException(status_code=404, detail="Session non trouvée")
     
-    # Récupérer le participant
+    # Récupérer le participant — chercher dans chat_participants PUIS fallback dans users
     participant = await db.chat_participants.find_one({"id": participant_id}, {"_id": 0})
     if not participant:
+        # v108: Fallback vers la collection users (abonnés qui rejoignent via groupe/lien)
+        participant = await db.users.find_one({"id": participant_id}, {"_id": 0})
+    if not participant:
         raise HTTPException(status_code=404, detail="Participant non trouvé")
-    
+
     participant_name = participant.get("name", "Utilisateur")
     
     # Sauvegarder le message de l'utilisateur
@@ -8973,12 +8991,27 @@ async def create_chat_group(request: Request):
 
 @api_router.get("/chat/groups")
 async def get_chat_groups(request: Request):
-    """v101: Liste des groupes du coach"""
+    """v108: Liste des groupes du coach — enrichi avec noms des membres"""
     caller_email = request.headers.get("X-User-Email", "").lower().strip()
     query = {"is_deleted": {"$ne": True}}
     if caller_email and not is_super_admin(caller_email):
         query["coach_id"] = caller_email
     groups = await db.chat_groups.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
+
+    # v108: Enrichir chaque groupe avec les noms des membres pour l'affichage
+    for g in groups:
+        member_ids = g.get("member_ids", [])
+        members_info = []
+        for mid in member_ids:
+            p = await db.chat_participants.find_one({"id": mid}, {"_id": 0, "name": 1, "email": 1})
+            if not p:
+                p = await db.users.find_one({"id": mid}, {"_id": 0, "name": 1, "email": 1})
+            if p:
+                members_info.append({"id": mid, "name": p.get("name", ""), "email": p.get("email", "")})
+            else:
+                members_info.append({"id": mid, "name": "Inconnu", "email": ""})
+        g["members_info"] = members_info
+
     return groups
 
 
@@ -9036,7 +9069,7 @@ async def get_public_groups(request: Request):
 
 @api_router.post("/chat/groups/{group_id}/join")
 async def join_chat_group(group_id: str, request: Request):
-    """V107.12: Un abonné rejoint un groupe. Ajoute son participant_id à la session."""
+    """V108: Un abonné rejoint un groupe. Assure la cohérence chat_participants + session."""
     body = await request.json()
     participant_id = body.get("participant_id", "").strip()
     if not participant_id:
@@ -9051,6 +9084,28 @@ async def join_chat_group(group_id: str, request: Request):
 
     session_id = f"grp_{group_id[:8]}"
 
+    # v108: S'assurer que le participant existe dans chat_participants
+    # Si il est dans users mais pas dans chat_participants, le créer
+    existing_participant = await db.chat_participants.find_one({"id": participant_id}, {"_id": 0})
+    if not existing_participant:
+        user_record = await db.users.find_one({"id": participant_id}, {"_id": 0})
+        if user_record:
+            new_participant = {
+                "id": participant_id,
+                "name": user_record.get("name", "Membre"),
+                "email": user_record.get("email", ""),
+                "whatsapp": user_record.get("phone", ""),
+                "source": "group_join",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_seen_at": datetime.now(timezone.utc).isoformat(),
+            }
+            # Attribuer le coach_id du groupe
+            coach_id = group.get("coach_id", "")
+            if coach_id:
+                new_participant["coach_id"] = coach_id
+            await db.chat_participants.insert_one(new_participant)
+            logger.info(f"[V108] Participant {participant_id} migré users→chat_participants pour groupe {group_id}")
+
     # Ajouter le participant au groupe et à la session
     await db.chat_groups.update_one(
         {"id": group_id},
@@ -9061,7 +9116,7 @@ async def join_chat_group(group_id: str, request: Request):
         {"$addToSet": {"participant_ids": participant_id}}
     )
 
-    logger.info(f"[V107.12] Participant {participant_id} a rejoint le groupe '{group.get('name', '')}' ({group_id})")
+    logger.info(f"[V108] Participant {participant_id} a rejoint le groupe '{group.get('name', '')}' ({group_id})")
     return {"success": True, "session_id": session_id, "group_name": group.get("name", "")}
 
 
