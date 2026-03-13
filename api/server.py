@@ -2752,7 +2752,7 @@ async def launch_campaign(campaign_id: str):
 
                     # V108.5: Construire le bloc média HTML — avec preview vidéo améliorée
                     media_html = ""
-                    app_url = "https://afroboost.com"
+                    app_url = "https://www.afroboost.com"
                     if media_url:
                         if any(media_url.lower().endswith(ext) for ext in ['.mp4', '.webm', '.mov']):
                             # V108.5: Pour MP4, chercher thumbnail dans media_links + afficher preview cliquable
@@ -2768,7 +2768,7 @@ async def launch_campaign(campaign_id: str):
                                     video_thumbnail = media_link.get("custom_thumbnail") or media_link.get("thumbnail")
                                     slug = media_link.get("slug")
                                     if slug:
-                                        video_click_url = f"{app_url}/#/v/{slug}"
+                                        video_click_url = f"{app_url}/?_mv=1#/v/{slug}"
                                         logger.info(f"[CAMPAIGN-EMAIL] Media link trouvé: slug={slug}, thumbnail={video_thumbnail}")
                             except Exception as ml_err:
                                 logger.warning(f"[CAMPAIGN-EMAIL] Erreur lookup media_link: {ml_err}")
@@ -2825,7 +2825,7 @@ async def launch_campaign(campaign_id: str):
                                     )
                                     if yt_media_link and yt_media_link.get("slug"):
                                         slug = yt_media_link["slug"]
-                                        yt_click_url = f"{app_url}/#/v/{slug}"
+                                        yt_click_url = f"{app_url}/?_mv=1#/v/{slug}"
                                         yt_thumbnail = yt_media_link.get("custom_thumbnail") or yt_media_link.get("thumbnail") or yt_thumbnail
                                         logger.info(f"[CAMPAIGN-EMAIL] YouTube media_link trouvé: slug={slug}")
                                     else:
@@ -2842,7 +2842,7 @@ async def launch_campaign(campaign_id: str):
                                             }},
                                             upsert=True
                                         )
-                                        yt_click_url = f"{app_url}/#/v/{auto_slug}"
+                                        yt_click_url = f"{app_url}/?_mv=1#/v/{auto_slug}"
                                         logger.info(f"[CAMPAIGN-EMAIL] YouTube media_link auto-créé: slug={auto_slug}")
                                 except Exception as yt_err:
                                     logger.warning(f"[CAMPAIGN-EMAIL] Erreur lookup YouTube media_link: {yt_err}")
@@ -9732,7 +9732,7 @@ async def send_campaign_email(request: Request):
             # Le backend est appelé via REACT_APP_BACKEND_URL qui contient le domaine preview
             from fastapi import Request
             # Par défaut, utiliser afroboost.com pour la production
-            frontend_base = 'https://afroboost.com'
+            frontend_base = 'https://www.afroboost.com'
         
         logger.info(f"Frontend base URL: {frontend_base}")
         
@@ -9751,7 +9751,7 @@ async def send_campaign_email(request: Request):
                 thumbnail_url = media_link.get("thumbnail") or media_link.get("custom_thumbnail")
                 # HASH ROUTING: Utiliser /#/v/{slug} pour garantir le fonctionnement
                 # sans configuration serveur (100% côté client)
-                click_url = f"{frontend_base}/#/v/{slug}"
+                click_url = f"{frontend_base}/?_mv=1#/v/{slug}"
                 logger.info(f"Media link found for slug {slug}: click_url={click_url}, thumbnail={thumbnail_url}")
             else:
                 logger.warning(f"Media link not found for slug: {slug}")
@@ -9770,7 +9770,7 @@ async def send_campaign_email(request: Request):
                         {"_id": 0, "slug": 1}
                     )
                     if yt_ml and yt_ml.get("slug"):
-                        click_url = f"{frontend_base}/#/v/{yt_ml['slug']}"
+                        click_url = f"{frontend_base}/?_mv=1#/v/{yt_ml['slug']}"
                     else:
                         auto_slug2 = f"yt-{yt_id2}".lower()
                         await db.media_links.update_one(
@@ -9784,7 +9784,7 @@ async def send_campaign_email(request: Request):
                             }},
                             upsert=True
                         )
-                        click_url = f"{frontend_base}/#/v/{auto_slug2}"
+                        click_url = f"{frontend_base}/?_mv=1#/v/{auto_slug2}"
                     logger.info(f"[SEND-EMAIL] YouTube → MediaViewer: {click_url}")
                 except Exception as yt_err2:
                     logger.warning(f"[SEND-EMAIL] YouTube media_link error: {yt_err2}")
@@ -9799,7 +9799,7 @@ async def send_campaign_email(request: Request):
                     )
                     if mp4_ml and mp4_ml.get("slug"):
                         thumbnail_url = mp4_ml.get("custom_thumbnail") or mp4_ml.get("thumbnail")
-                        click_url = f"{frontend_base}/#/v/{mp4_ml['slug']}"
+                        click_url = f"{frontend_base}/?_mv=1#/v/{mp4_ml['slug']}"
                 except Exception:
                     pass
             else:

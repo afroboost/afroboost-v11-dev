@@ -30,7 +30,7 @@
         <!-- Additional SEO -->
         <meta name="keywords" content="afroboost, fitness, casque audio, danse, afrobeat, cardio, réservation, cours" />
         <meta name="author" content="Afroboost" />
-        <meta name="version" content="109.2" />
+        <meta name="version" content="110" />
         <script>
             console.log("🚀 V106.7 : Compteur Avis hero affiche le vrai total, plus plafonné à 100");
             // v64: Nettoyage localStorage — purger toute référence au slug "artboost"
@@ -253,11 +253,13 @@
                     });
                 }
                 // 3. Force ONE hard reload per session if not done yet
+                // V110: PRÉSERVER LE HASH (#/v/slug) lors du reload cache-bust
                 if (!sessionStorage.getItem(forceKey)) {
                     sessionStorage.setItem(forceKey, '1');
                     // Use cache-busting URL to bypass ALL levels of cache
                     var cleanUrl = window.location.pathname;
-                    window.location.replace(cleanUrl + '?_v=v54&t=' + Date.now());
+                    var hash = window.location.hash || '';
+                    window.location.replace(cleanUrl + '?_v=v54&t=' + Date.now() + hash);
                     return; // Stop execution — page will reload
                 }
             })();
