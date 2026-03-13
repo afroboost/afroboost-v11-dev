@@ -2129,6 +2129,7 @@ function App() {
   // v104: FAQ homepage
   const [homeFaqs, setHomeFaqs] = useState([]);
   const [openFaqId, setOpenFaqId] = useState(null);
+  const [faqSectionOpen, setFaqSectionOpen] = useState(false);
 
   // ========== AUDIO PLAYER STATE ==========
   const [showAudioPlayer, setShowAudioPlayer] = useState(false);
@@ -5060,46 +5061,62 @@ function App() {
 
         {/* v73: Section "Ce que disent nos clients" SUPPRIMÉE — tout passe par l'icône Glow du Hero */}
 
-        {/* v104: Section FAQ Accordéon Homepage */}
+        {/* v104: Section FAQ Accordéon Homepage — titre cliquable */}
         {!coachMode && homeFaqs.length > 0 && (
           <div style={{ maxWidth: '700px', margin: '40px auto', padding: '0 16px' }}>
-            <h3 style={{ color: '#fff', fontSize: '18px', fontWeight: '700', textAlign: 'center', marginBottom: '20px' }}>
-              Questions fréquentes
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {homeFaqs.map(faq => (
-                <div key={faq.id} style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  borderRadius: '12px', overflow: 'hidden',
-                }}>
-                  <button
-                    onClick={() => setOpenFaqId(openFaqId === faq.id ? null : faq.id)}
-                    style={{
-                      width: '100%', padding: '14px 16px', display: 'flex',
-                      justifyContent: 'space-between', alignItems: 'center',
-                      background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
-                    }}
-                  >
-                    <span style={{ color: '#fff', fontSize: '14px', fontWeight: 500 }}>{faq.question}</span>
-                    <span style={{
-                      color: '#D91CD2', fontSize: '18px', fontWeight: '300',
-                      transform: openFaqId === faq.id ? 'rotate(45deg)' : 'none',
-                      transition: 'transform 0.2s ease',
-                    }}>+</span>
-                  </button>
-                  {openFaqId === faq.id && faq.answer && (
-                    <div style={{
-                      padding: '0 16px 14px',
-                      color: 'rgba(255,255,255,0.6)', fontSize: '13px',
-                      lineHeight: '1.6', whiteSpace: 'pre-wrap',
-                    }}>
-                      {faq.answer}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+            <button
+              onClick={() => setFaqSectionOpen(!faqSectionOpen)}
+              style={{
+                width: '100%', background: 'none', border: 'none', cursor: 'pointer',
+                display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px',
+                marginBottom: faqSectionOpen ? '20px' : '0', padding: '8px 0',
+              }}
+            >
+              <h3 style={{ color: '#fff', fontSize: '18px', fontWeight: '700', margin: 0 }}>
+                Questions fréquentes
+              </h3>
+              <span style={{
+                color: '#D91CD2', fontSize: '20px', fontWeight: '300',
+                transform: faqSectionOpen ? 'rotate(45deg)' : 'none',
+                transition: 'transform 0.2s ease',
+              }}>+</span>
+            </button>
+            {faqSectionOpen && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {homeFaqs.map(faq => (
+                  <div key={faq.id} style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: '12px', overflow: 'hidden',
+                  }}>
+                    <button
+                      onClick={() => setOpenFaqId(openFaqId === faq.id ? null : faq.id)}
+                      style={{
+                        width: '100%', padding: '14px 16px', display: 'flex',
+                        justifyContent: 'space-between', alignItems: 'center',
+                        background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
+                      }}
+                    >
+                      <span style={{ color: '#fff', fontSize: '14px', fontWeight: 500 }}>{faq.question}</span>
+                      <span style={{
+                        color: '#D91CD2', fontSize: '18px', fontWeight: '300',
+                        transform: openFaqId === faq.id ? 'rotate(45deg)' : 'none',
+                        transition: 'transform 0.2s ease',
+                      }}>+</span>
+                    </button>
+                    {openFaqId === faq.id && faq.answer && (
+                      <div style={{
+                        padding: '0 16px 14px',
+                        color: 'rgba(255,255,255,0.6)', fontSize: '13px',
+                        lineHeight: '1.6', whiteSpace: 'pre-wrap',
+                      }}>
+                        {faq.answer}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

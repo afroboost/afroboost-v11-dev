@@ -91,6 +91,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   // v17.2: FAQ
   const [faqs, setFaqs] = useState([]);
   const [openFaqId, setOpenFaqId] = useState(null);
+  const [faqSectionOpen, setFaqSectionOpen] = useState(false);
 
   // v18: Multi-vidéos héro
   const [activeVideoIndex, setActiveVideoIndex] = useState(0);
@@ -1706,49 +1707,65 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           }
         `}</style>
 
-        {/* v17.2: Section FAQ Accordéon */}
+        {/* v104: Section FAQ Accordéon — titre cliquable pour ouvrir/fermer */}
         {faqs.length > 0 && (
           <div className="mb-8 vitrine-fade-in" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
-            <h2 className="font-semibold text-white text-center mb-4" style={{ fontSize: '16px' }}>
-              Questions fréquentes
-            </h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              {faqs.map(faq => (
-                <div key={faq.id} style={{
-                  borderRadius: '10px',
-                  background: 'rgba(255,255,255,0.03)',
-                  border: '1px solid rgba(255,255,255,0.06)',
-                  overflow: 'hidden'
-                }}>
-                  <button
-                    onClick={() => setOpenFaqId(openFaqId === faq.id ? null : faq.id)}
-                    style={{
-                      width: '100%', padding: '12px 16px',
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                      background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left'
-                    }}
-                  >
-                    <span style={{ color: '#fff', fontSize: '13px', fontWeight: 500 }}>{faq.question}</span>
-                    <span style={{
-                      color: brandAccent, fontSize: '16px', fontWeight: 700,
-                      transform: openFaqId === faq.id ? 'rotate(45deg)' : 'none',
-                      transition: 'transform 0.2s ease'
-                    }}>+</span>
-                  </button>
-                  {openFaqId === faq.id && faq.answer && (
-                    <div style={{
-                      padding: '0 16px 12px',
-                      color: 'rgba(255,255,255,0.6)',
-                      fontSize: '12px',
-                      lineHeight: '1.5',
-                      animation: 'afroMsgSlideIn 0.2s ease-out'
-                    }}>
-                      {faq.answer}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+            <button
+              onClick={() => setFaqSectionOpen(!faqSectionOpen)}
+              style={{
+                width: '100%', background: 'none', border: 'none', cursor: 'pointer',
+                display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px',
+                marginBottom: faqSectionOpen ? '16px' : '0', padding: '8px 0',
+              }}
+            >
+              <h2 className="font-semibold text-white" style={{ fontSize: '16px', margin: 0 }}>
+                Questions fréquentes
+              </h2>
+              <span style={{
+                color: brandAccent, fontSize: '18px', fontWeight: '300',
+                transform: faqSectionOpen ? 'rotate(45deg)' : 'none',
+                transition: 'transform 0.2s ease',
+              }}>+</span>
+            </button>
+            {faqSectionOpen && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {faqs.map(faq => (
+                  <div key={faq.id} style={{
+                    borderRadius: '10px',
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                    overflow: 'hidden'
+                  }}>
+                    <button
+                      onClick={() => setOpenFaqId(openFaqId === faq.id ? null : faq.id)}
+                      style={{
+                        width: '100%', padding: '12px 16px',
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left'
+                      }}
+                    >
+                      <span style={{ color: '#fff', fontSize: '13px', fontWeight: 500 }}>{faq.question}</span>
+                      <span style={{
+                        color: brandAccent, fontSize: '16px', fontWeight: 700,
+                        transform: openFaqId === faq.id ? 'rotate(45deg)' : 'none',
+                        transition: 'transform 0.2s ease'
+                      }}>+</span>
+                    </button>
+                    {openFaqId === faq.id && faq.answer && (
+                      <div style={{
+                        padding: '0 16px 12px',
+                        color: 'rgba(255,255,255,0.6)',
+                        fontSize: '12px',
+                        lineHeight: '1.5',
+                        animation: 'afroMsgSlideIn 0.2s ease-out'
+                      }}>
+                        {faq.answer}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

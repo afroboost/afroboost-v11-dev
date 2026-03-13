@@ -583,6 +583,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
 const PartnerFAQ = () => {
   const [faqs, setFaqs] = useState([]);
   const [openId, setOpenId] = useState(null);
+  const [sectionOpen, setSectionOpen] = useState(false);
 
   useEffect(() => {
     const loadFaqs = async () => {
@@ -612,37 +613,53 @@ const PartnerFAQ = () => {
 
   return (
     <div style={{ maxWidth: '600px', margin: '32px auto 0', padding: '0 20px' }}>
-      <h3 style={{ color: '#fff', fontSize: '18px', fontWeight: '700', textAlign: 'center', marginBottom: '16px' }}>
-        Questions frequentes
-      </h3>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        {displayFaqs.map(faq => (
-          <div key={faq.id} style={{
-            background: '#1A1A1A', borderRadius: '10px',
-            border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden',
-          }}>
-            <button
-              onClick={() => setOpenId(openId === faq.id ? null : faq.id)}
-              style={{
-                width: '100%', padding: '14px 16px', background: 'none', border: 'none',
-                color: '#fff', fontSize: '13px', fontWeight: '600', textAlign: 'left',
-                cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              }}
-            >
-              <span>{faq.question}</span>
-              <span style={{
-                color: 'rgba(217,28,210,0.6)', fontSize: '18px', fontWeight: '300',
-                transform: openId === faq.id ? 'rotate(45deg)' : 'none', transition: 'transform 0.2s',
-              }}>+</span>
-            </button>
-            {openId === faq.id && (
-              <div style={{ padding: '0 16px 14px', color: 'rgba(255,255,255,0.6)', fontSize: '12px', lineHeight: '1.6' }}>
-                {faq.answer}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
+      <button
+        onClick={() => setSectionOpen(!sectionOpen)}
+        style={{
+          width: '100%', background: 'none', border: 'none', cursor: 'pointer',
+          display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px',
+          marginBottom: sectionOpen ? '16px' : '0', padding: '8px 0',
+        }}
+      >
+        <h3 style={{ color: '#fff', fontSize: '18px', fontWeight: '700', margin: 0 }}>
+          Questions fréquentes
+        </h3>
+        <span style={{
+          color: '#D91CD2', fontSize: '20px', fontWeight: '300',
+          transform: sectionOpen ? 'rotate(45deg)' : 'none',
+          transition: 'transform 0.2s ease',
+        }}>+</span>
+      </button>
+      {sectionOpen && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          {displayFaqs.map(faq => (
+            <div key={faq.id} style={{
+              background: '#1A1A1A', borderRadius: '10px',
+              border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden',
+            }}>
+              <button
+                onClick={() => setOpenId(openId === faq.id ? null : faq.id)}
+                style={{
+                  width: '100%', padding: '14px 16px', background: 'none', border: 'none',
+                  color: '#fff', fontSize: '13px', fontWeight: '600', textAlign: 'left',
+                  cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                }}
+              >
+                <span>{faq.question}</span>
+                <span style={{
+                  color: 'rgba(217,28,210,0.6)', fontSize: '18px', fontWeight: '300',
+                  transform: openId === faq.id ? 'rotate(45deg)' : 'none', transition: 'transform 0.2s',
+                }}>+</span>
+              </button>
+              {openId === faq.id && (
+                <div style={{ padding: '0 16px 14px', color: 'rgba(255,255,255,0.6)', fontSize: '12px', lineHeight: '1.6' }}>
+                  {faq.answer}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
