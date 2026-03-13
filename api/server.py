@@ -6016,28 +6016,58 @@ async def get_chat_participant(participant_id: str):
     return participant
 @api_router.post("/chat/participants")
 async def create_chat_participant(participant: ChatParticipantCreate, request: Request):
-    """Crée un nouveau participant - v9.0.2: Déduit 1 crédit pour les coaches"""
+    """v104: Upsert contact — déduplique par email/phone, met à jour si existant"""
     coach_email = request.headers.get("X-User-Email", "").lower().strip()
-    # v9.0.2: Vérifier et déduire les crédits pour les coaches (pas Super Admin)
+    coach_id = coach_email if (coach_email and not is_super_admin(coach_email)) else DEFAULT_COACH_ID
+
+    p = participant.model_dump()
+    email = (p.get("email") or "").strip().lower()
+    phone = (p.get("whatsapp") or p.get("phone") or "").replace(" ", "").replace("-", "")
+
+    # v104: Recherche doublon par email ou phone
+    dup_query = {"$or": []}
+    if email:
+        dup_query["$or"].append({"email": {"$regex": f"^{email}$", "$options": "i"}})
+    if phone:
+        dup_query["$or"].append({"whatsapp": {"$regex": phone}})
+        dup_query["$or"].append({"phone": {"$regex": phone}})
+
+    existing = None
+    if dup_query["$or"]:
+        existing = await db.chat_participants.find_one(dup_query, {"_id": 0})
+
+    if existing:
+        # Mettre à jour les champs non vides
+        updates = {"last_seen_at": datetime.now(timezone.utc).isoformat()}
+        if p.get("name") and p["name"] != existing.get("name"):
+            updates["name"] = p["name"]
+        if email and not existing.get("email"):
+            updates["email"] = email
+        if phone and not existing.get("whatsapp"):
+            updates["whatsapp"] = phone
+        if p.get("source") and p["source"] != existing.get("source"):
+            updates["source"] = p["source"]
+        # Fusionner les tags
+        new_tags = p.get("tags", [])
+        if new_tags:
+            updates["tags"] = list(set(existing.get("tags", []) + new_tags))
+        await db.chat_participants.update_one({"id": existing["id"]}, {"$set": updates})
+        updated = await db.chat_participants.find_one({"id": existing["id"]}, {"_id": 0})
+        return updated
+
+    # Nouveau contact — vérifier crédits
     if coach_email and not is_super_admin(coach_email):
         credit_check = await check_credits(coach_email)
         if not credit_check.get("has_credits"):
             raise HTTPException(status_code=402, detail="Crédits insuffisants. Achetez un pack pour continuer.")
         await deduct_credit(coach_email, "création contact")
-    participant_obj = ChatParticipant(**participant.model_dump())
-    # Ajouter coach_id si coach authentifié
-    if coach_email:
-        participant_data = participant_obj.model_dump()
-        participant_data["coach_id"] = coach_email if not is_super_admin(coach_email) else DEFAULT_COACH_ID
-        await db.chat_participants.insert_one(participant_data)
-        # Fix: exclude _id from response
-        participant_data.pop("_id", None)
-        return participant_data
-    doc = participant_obj.model_dump()
-    await db.chat_participants.insert_one(doc)
-    # Fix: exclude _id from response
-    doc.pop("_id", None)
-    return doc
+
+    participant_obj = ChatParticipant(**p)
+    participant_data = participant_obj.model_dump()
+    participant_data["coach_id"] = coach_id
+    await db.chat_participants.insert_one(participant_data)
+    participant_data.pop("_id", None)
+    return participant_data
 
 @api_router.get("/chat/participants/find")
 async def find_participant(
@@ -7653,11 +7683,15 @@ async def smart_chat_entry(request: Request):
         participant_id = existing_participant["id"]
         update_fields = {"last_seen_at": datetime.now(timezone.utc).isoformat()}
         
-        # Mettre à jour les infos si nouvelles
+        # v104: Mettre à jour les infos si nouvelles ou manquantes
         if email and not existing_participant.get("email"):
             update_fields["email"] = email
         if whatsapp and not existing_participant.get("whatsapp"):
             update_fields["whatsapp"] = whatsapp
+        if name and name != existing_participant.get("name"):
+            update_fields["name"] = name
+        if not existing_participant.get("coach_id"):
+            update_fields["coach_id"] = DEFAULT_COACH_ID
         
         await db.chat_participants.update_one(
             {"id": participant_id},
@@ -7667,7 +7701,7 @@ async def smart_chat_entry(request: Request):
         participant = await db.chat_participants.find_one({"id": participant_id}, {"_id": 0})
         is_returning = True
     else:
-        # Nouveau participant
+        # Nouveau participant — v104: ajouter coach_id pour unification contacts
         participant_obj = ChatParticipant(
             name=name,
             email=email,
@@ -7675,8 +7709,10 @@ async def smart_chat_entry(request: Request):
             source=source,
             link_token=link_token
         )
-        await db.chat_participants.insert_one(participant_obj.model_dump())
-        participant = participant_obj.model_dump()
+        new_doc = participant_obj.model_dump()
+        new_doc["coach_id"] = DEFAULT_COACH_ID
+        await db.chat_participants.insert_one(new_doc)
+        participant = {k: v for k, v in new_doc.items() if k != "_id"}
         participant_id = participant["id"]
         is_returning = False
     

@@ -471,28 +471,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                     </button>
                   </div>
 
-                {/* V93.6: Affichage CGP partenaires */}
-        {conceptData?.termsTextPartners && (
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ color: 'rgba(255,255,255,0.7)', fontSize: '13px', display: 'block', marginBottom: '6px' }}>
-              📋 Conditions Générales Partenaires
-            </label>
-            <div style={{
-              background: 'rgba(255,255,255,0.05)',
-              border: '1px solid rgba(209,156,210,0.3)',
-              borderRadius: '12px',
-              padding: '16px',
-              maxHeight: '200px',
-              overflowY: 'auto',
-              fontSize: '12px',
-              color: 'rgba(255,255,255,0.8)',
-              whiteSpace: 'pre-wrap',
-              lineHeight: '1.5'
-            }}>
-              {conceptData.termsTextPartners}
-            </div>
-          </div>
-        )}
+                {/* v104: CGP supprimé (doublon) — seule la case CGU reste */}
 
         {/* v11.6: Case CGU obligatoire */}
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '8px 0' }}>

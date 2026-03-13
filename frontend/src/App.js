@@ -2126,6 +2126,9 @@ function App() {
   const [concept, setConcept] = useState({ appName: "Afroboost", description: "", heroImageUrl: "", logoUrl: "", faviconUrl: "", termsText: "", googleReviewsUrl: "", defaultLandingSection: "sessions", externalLink1Title: "", externalLink1Url: "", externalLink2Title: "", externalLink2Url: "", paymentTwint: false, paymentPaypal: false, paymentCreditCard: false, eventPosterEnabled: false, eventPosterMediaUrl: "" });
   const [showEventPoster, setShowEventPoster] = useState(false);
   const [discountCodes, setDiscountCodes] = useState([]);
+  // v104: FAQ homepage
+  const [homeFaqs, setHomeFaqs] = useState([]);
+  const [openFaqId, setOpenFaqId] = useState(null);
 
   // ========== AUDIO PLAYER STATE ==========
   const [showAudioPlayer, setShowAudioPlayer] = useState(false);
@@ -2134,6 +2137,31 @@ function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioVolume, setAudioVolume] = useState(0.7);
   const audioRef = useRef(null);
+
+  // v104: Charger les FAQ homepage (publiques type "general" + FAQ coach)
+  useEffect(() => {
+    const loadFaqs = async () => {
+      try {
+        const [publicRes, coachRes] = await Promise.all([
+          axios.get(`${API}/public/faqs/general`).catch(() => ({ data: [] })),
+          axios.get(`${API}/coach/faqs/${encodeURIComponent(concept.coachEmail || 'default')}`).catch(() => ({ data: [] })),
+        ]);
+        const allFaqs = [...(Array.isArray(publicRes.data) ? publicRes.data : []), ...(Array.isArray(coachRes.data) ? coachRes.data : [])];
+        if (allFaqs.length === 0) {
+          // Fallback FAQ statiques
+          setHomeFaqs([
+            { id: 'f1', question: "Comment réserver une séance ?", answer: "Choisissez votre séance dans le calendrier, sélectionnez votre créneau et confirmez. Vous recevrez un email de confirmation." },
+            { id: 'f2', question: "Quels sont les moyens de paiement acceptés ?", answer: "Nous acceptons les paiements par carte bancaire (Visa, Mastercard), TWINT et Mobile Money (MTN, Orange, Moov/Airtel)." },
+            { id: 'f3', question: "Comment fonctionne le chat IA ?", answer: "Notre assistant IA est disponible 24h/24 pour répondre à vos questions, vous guider dans vos choix et vous accompagner dans votre parcours." },
+            { id: 'f4', question: "Puis-je annuler ma réservation ?", answer: "Contactez-nous directement via le chat ou par email pour toute demande d'annulation ou de modification." },
+          ]);
+        } else {
+          setHomeFaqs(allFaqs);
+        }
+      } catch (e) { console.warn('[FAQ] Erreur chargement:', e); }
+    };
+    if (!coachMode) loadFaqs();
+  }, [coachMode]);
 
   // Vérifier si le feature flag Audio est activé
   useEffect(() => {
@@ -5021,6 +5049,49 @@ function App() {
         )}
 
         {/* v73: Section "Ce que disent nos clients" SUPPRIMÉE — tout passe par l'icône Glow du Hero */}
+
+        {/* v104: Section FAQ Accordéon Homepage */}
+        {!coachMode && homeFaqs.length > 0 && (
+          <div style={{ maxWidth: '700px', margin: '40px auto', padding: '0 16px' }}>
+            <h3 style={{ color: '#fff', fontSize: '18px', fontWeight: '700', textAlign: 'center', marginBottom: '20px' }}>
+              Questions fréquentes
+            </h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {homeFaqs.map(faq => (
+                <div key={faq.id} style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: '12px', overflow: 'hidden',
+                }}>
+                  <button
+                    onClick={() => setOpenFaqId(openFaqId === faq.id ? null : faq.id)}
+                    style={{
+                      width: '100%', padding: '14px 16px', display: 'flex',
+                      justifyContent: 'space-between', alignItems: 'center',
+                      background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
+                    }}
+                  >
+                    <span style={{ color: '#fff', fontSize: '14px', fontWeight: 500 }}>{faq.question}</span>
+                    <span style={{
+                      color: '#D91CD2', fontSize: '18px', fontWeight: '300',
+                      transform: openFaqId === faq.id ? 'rotate(45deg)' : 'none',
+                      transition: 'transform 0.2s ease',
+                    }}>+</span>
+                  </button>
+                  {openFaqId === faq.id && faq.answer && (
+                    <div style={{
+                      padding: '0 16px 14px',
+                      color: 'rgba(255,255,255,0.6)', fontSize: '13px',
+                      lineHeight: '1.6', whiteSpace: 'pre-wrap',
+                    }}>
+                      {faq.answer}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* v15: Footer amélioré avec réseaux sociaux + infos utiles */}
         <footer className="mt-12 mb-8 text-center" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
