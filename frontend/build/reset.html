@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Afroboost — Reset</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+        .container { text-align: center; max-width: 400px; }
+        h1 { font-size: 24px; margin-bottom: 16px; }
+        p { font-size: 14px; color: #aaa; margin-bottom: 24px; line-height: 1.5; }
+        .status { background: #111; border: 1px solid #333; border-radius: 12px; padding: 20px; margin-bottom: 20px; text-align: left; font-size: 13px; line-height: 1.8; }
+        .ok { color: #4ade80; }
+        .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #555; border-top-color: #d91cd2; border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 8px; vertical-align: middle; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .btn { display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #8b5cf6, #d91cd2); color: #fff; font-size: 16px; font-weight: 600; border: none; border-radius: 12px; cursor: pointer; text-decoration: none; margin-top: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Reset Afroboost</h1>
+        <p>Nettoyage complet du cache et du Service Worker...</p>
+        <div class="status" id="status">
+            <div><span class="spinner"></span> Désinscription des Service Workers...</div>
+        </div>
+    </div>
+    <script>
+        var statusEl = document.getElementById('status');
+        function log(msg) {
+            var div = document.createElement('div');
+            div.className = 'ok';
+            div.textContent = '✓ ' + msg;
+            statusEl.appendChild(div);
+        }
+        (async function() {
+            // 1. Unregister ALL service workers
+            try {
+                if ('serviceWorker' in navigator) {
+                    var regs = await navigator.serviceWorker.getRegistrations();
+                    for (var i = 0; i < regs.length; i++) {
+                        await regs[i].unregister();
+                    }
+                    log(regs.length + ' Service Worker(s) désinscrits');
+                } else {
+                    log('Pas de Service Worker supporté');
+                }
+            } catch(e) { log('SW erreur: ' + e.message); }
+
+            // 2. Delete ALL caches
+            try {
+                if ('caches' in window) {
+                    var names = await caches.keys();
+                    for (var j = 0; j < names.length; j++) {
+                        await caches.delete(names[j]);
+                    }
+                    log(names.length + ' cache(s) supprimés');
+                } else {
+                    log('Pas de Cache API');
+                }
+            } catch(e) { log('Cache erreur: ' + e.message); }
+
+            // 3. Clear localStorage
+            try {
+                localStorage.clear();
+                log('localStorage vidé');
+            } catch(e) { log('localStorage erreur: ' + e.message); }
+
+            // 4. Clear sessionStorage
+            try {
+                sessionStorage.clear();
+                log('sessionStorage vidé');
+            } catch(e) {}
+
+            // 5. Done — redirect
+            log('Nettoyage terminé ! Redirection dans 3s...');
+            setTimeout(function() {
+                window.location.replace('/');
+            }, 3000);
+        })();
+    </script>
+</body>
+</html>

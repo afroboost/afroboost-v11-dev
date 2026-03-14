@@ -134,6 +134,37 @@
     <body>
         <noscript>You need to enable JavaScript to run this app.</noscript>
         <div id="root"></div>
+        <!-- V123: Détection écran noir — si React ne monte pas en 8s, reset automatique -->
+        <script>
+            (function() {
+                var resetKey = 'af_auto_reset_v123';
+                // Si on a déjà fait un auto-reset, ne pas boucler
+                if (sessionStorage.getItem(resetKey)) return;
+                setTimeout(function() {
+                    var root = document.getElementById('root');
+                    // Si root est vide après 8s = écran noir = fichiers JS cassés/cachés
+                    if (root && (!root.firstChild || root.innerHTML.trim() === '')) {
+                        console.warn('[V123] Écran noir détecté — auto-reset SW + caches');
+                        sessionStorage.setItem(resetKey, '1');
+                        // Désinscrire SW + purger caches
+                        var tasks = [];
+                        if ('serviceWorker' in navigator) {
+                            tasks.push(navigator.serviceWorker.getRegistrations().then(function(regs) {
+                                return Promise.all(regs.map(function(r) { return r.unregister(); }));
+                            }));
+                        }
+                        if ('caches' in window) {
+                            tasks.push(caches.keys().then(function(names) {
+                                return Promise.all(names.map(function(n) { return caches.delete(n); }));
+                            }));
+                        }
+                        Promise.all(tasks).then(function() {
+                            window.location.reload(true);
+                        });
+                    }
+                }, 8000);
+            })();
+        </script>
         <!--
       This HTML file is a template.
       If you open it directly in the browser, you will see an empty page.
