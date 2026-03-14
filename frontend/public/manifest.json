@@ -2,31 +2,19 @@
   "short_name": "Afroboost",
   "name": "Afroboost - Coaching sportif",
   "description": "Le concept Afroboost : cardio + danse afrobeat + casques audio immersifs.",
-  "id": "afroboost-v138-final",
+  "id": "/",
   "icons": [
     {
       "src": "logo192.png",
       "type": "image/png",
       "sizes": "192x192",
-      "purpose": "any"
-    },
-    {
-      "src": "logo192.png",
-      "type": "image/png",
-      "sizes": "192x192",
-      "purpose": "maskable"
+      "purpose": "any maskable"
     },
     {
       "src": "logo512.png",
       "type": "image/png",
       "sizes": "512x512",
-      "purpose": "any"
-    },
-    {
-      "src": "logo512.png",
-      "type": "image/png",
-      "sizes": "512x512",
-      "purpose": "maskable"
+      "purpose": "any maskable"
     }
   ],
   "start_url": "/",
@@ -34,5 +22,6 @@
   "display": "standalone",
   "theme_color": "#000000",
   "background_color": "#000000",
-  "orientation": "portrait-primary"
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false
 }

@@ -2692,23 +2692,20 @@ function App() {
 
   useEffect(() => { localStorage.setItem("af_lang", lang); }, [lang]);
 
-  // PWA Install Prompt - Capture beforeinstallprompt event
-  // V126: Toujours montrer la bannière si pas en standalone, même sans prompt
+  // V138: PWA Install — bannière TOUJOURS visible si pas en standalone
   useEffect(() => {
     const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
     setIsIOS(iOS);
 
     const handleBeforeInstallPrompt = (e) => {
-      // V129: NE PAS appeler e.preventDefault() — Chrome affiche son mini-infobar natif
-      // On stocke quand même l'événement pour notre bouton en fallback
-      console.log('[V129] beforeinstallprompt capturé — Chrome mini-infobar + notre bannière');
+      // NE PAS appeler e.preventDefault() — Chrome affiche son mini-infobar natif
+      console.log('[V138] beforeinstallprompt capturé');
       setDeferredPrompt(e);
       setShowInstallBanner(true);
     };
 
-    // V129: Quand l'app est installée, tout cacher
     const handleAppInstalled = () => {
-      console.log('[V129] App installée !');
+      console.log('[V138] App installée !');
       localStorage.setItem('af_pwa_dismissed', 'true');
       setShowInstallBanner(false);
       setDeferredPrompt(null);
@@ -2717,18 +2714,20 @@ function App() {
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
 
-    // Check if already installed (standalone mode)
+    // V138: Vérifier si on est en mode standalone (déjà installé)
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
                          window.navigator.standalone === true;
 
     if (isStandalone) {
       setShowInstallBanner(false);
-    } else if (iOS) {
-      // V129: Bannière iOS (Safari n'a pas de mini-infobar natif)
-      const dismissed = localStorage.getItem('af_pwa_dismissed');
-      if (!dismissed) {
-        setShowInstallBanner(true);
-      }
+    } else {
+      // V138: TOUJOURS afficher la bannière si pas en standalone
+      // Ne plus dépendre de beforeinstallprompt ni de af_pwa_dismissed
+      // Le bouton guidera l'utilisateur vers le menu Chrome si le prompt natif n'est pas dispo
+      console.log('[V138] Pas en standalone — bannière install affichée');
+      setShowInstallBanner(true);
+      // V138: Supprimer le flag dismissed pour permettre la réinstallation
+      try { localStorage.removeItem('af_pwa_dismissed'); } catch(e) {}
     }
 
     return () => {
