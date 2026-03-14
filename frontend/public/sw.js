@@ -171,104 +171,18 @@ self.addEventListener('fetch', function(event) {
 });
 
 // -----------------------------------------------------------------
-// NOTIFICATIONS — Isolées dans try/catch, ne bloquent JAMAIS le SW
+// NOTIFICATIONS — DÉSACTIVÉES V139
+// Les handlers push/notificationclick cassaient l'installation WebAPK
+// sur Android. Ils seront réactivés quand les VAPID keys seront configurées.
 // -----------------------------------------------------------------
-var unreadCount = 0;
-
-// Push
-try {
-  self.addEventListener('push', function(event) {
-    var data = {
-      title: 'Afroboost',
-      body: 'Nouveau message',
-      icon: '/logo192.png',
-      badge: '/logo192.png',
-      data: { url: '/' }
-    };
-
-    try {
-      if (event.data) {
-        var payload = event.data.json();
-        data.title = payload.title || data.title;
-        data.body = payload.body || payload.message || data.body;
-        data.icon = payload.icon || data.icon;
-        data.badge = payload.badge || data.badge;
-        data.data = payload.data || data.data;
-      }
-    } catch (e) {
-      try {
-        var text = event.data.text();
-        if (text) { data.body = text; }
-      } catch (e2) {}
-    }
-
-    unreadCount = unreadCount + 1;
-
-    event.waitUntil(
-      self.registration.showNotification(data.title, {
-        body: data.body,
-        icon: data.icon,
-        badge: data.badge,
-        vibrate: [200, 100, 200],
-        tag: 'afroboost-notif',
-        renotify: true,
-        data: data.data
-      }).catch(function() {})
-    );
-  });
-} catch (e) {
-  // Push non supporté — silencieux
-}
-
-// Notification click
-try {
-  self.addEventListener('notificationclick', function(event) {
-    try { event.notification.close(); } catch (e) {}
-    unreadCount = Math.max(0, unreadCount - 1);
-
-    var targetUrl = '/';
-    try {
-      if (event.notification.data && event.notification.data.url) {
-        targetUrl = event.notification.data.url;
-      }
-    } catch (e) {}
-
-    event.waitUntil(
-      self.clients.matchAll({ type: 'window', includeUncontrolled: true })
-        .then(function(clientList) {
-          for (var i = 0; i < clientList.length; i++) {
-            try {
-              if (clientList[i].url.indexOf(self.location.origin) !== -1) {
-                return clientList[i].focus();
-              }
-            } catch (e) {}
-          }
-          try {
-            return self.clients.openWindow(targetUrl);
-          } catch (e) {}
-        })
-        .catch(function() {})
-    );
-  });
-} catch (e) {
-  // Notification click non supporté — silencieux
-}
-
-// Notification close
-try {
-  self.addEventListener('notificationclose', function() {});
-} catch (e) {}
 
 // -----------------------------------------------------------------
-// MESSAGE — Écoute les commandes du client (SKIP_WAITING, CLEAR_BADGE)
+// MESSAGE — Écoute les commandes du client (SKIP_WAITING)
 // -----------------------------------------------------------------
 self.addEventListener('message', function(event) {
   try {
     if (event.data && event.data.type === 'SKIP_WAITING') {
       self.skipWaiting();
-    }
-    if (event.data && event.data.type === 'CLEAR_BADGE') {
-      unreadCount = 0;
     }
   } catch (e) {
     // Silencieux
