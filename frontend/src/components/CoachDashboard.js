@@ -677,6 +677,61 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }, 100);
     return () => clearTimeout(timer);
   }, [coachUser]);
+
+  // V120: Auto-subscribe coach aux notifications push
+  useEffect(() => {
+    if (!coachUser?.email || !dashboardReady) return;
+    const autoSubscribeCoach = async () => {
+      try {
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+        if (Notification.permission === 'denied') return;
+        // Demander permission si pas encore accordée
+        if (Notification.permission === 'default') {
+          const perm = await Notification.requestPermission();
+          if (perm !== 'granted') return;
+        }
+        const registration = await navigator.serviceWorker.ready;
+        const existingSub = await registration.pushManager.getSubscription();
+        if (existingSub) {
+          // Déjà souscrit — s'assurer que le backend a le role=coach
+          await axios.post(`${API}/push/subscribe`, {
+            participant_id: `coach_${coachUser.email}`,
+            subscription: existingSub.toJSON(),
+            role: 'coach',
+            email: coachUser.email
+          });
+          console.log('[PUSH-COACH] Re-enregistré comme coach');
+          return;
+        }
+        // Nouvelle souscription
+        const vapidRes = await axios.get(`${API}/push/vapid-key`);
+        const vapidKey = vapidRes.data.publicKey;
+        if (!vapidKey) return;
+        const urlBase64ToUint8Array = (base64String) => {
+          const padding = '='.repeat((4 - base64String.length % 4) % 4);
+          const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+          const rawData = window.atob(base64);
+          const outputArray = new Uint8Array(rawData.length);
+          for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+          return outputArray;
+        };
+        const subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidKey)
+        });
+        await axios.post(`${API}/push/subscribe`, {
+          participant_id: `coach_${coachUser.email}`,
+          subscription: subscription.toJSON(),
+          role: 'coach',
+          email: coachUser.email
+        });
+        console.log('[PUSH-COACH] Souscription push OK');
+      } catch (err) {
+        console.warn('[PUSH-COACH] Auto-subscribe erreur:', err.message);
+      }
+    };
+    autoSubscribeCoach();
+  }, [coachUser, dashboardReady]);
   
   // === PANNEAU SUPER ADMIN ===
   const [showAdminPanel, setShowAdminPanel] = useState(false);

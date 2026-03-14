@@ -15,12 +15,13 @@ import {
   getNotificationPermissionStatus,
   unlockAudio
 } from '../services/notificationService';
-import { 
-  isPushSupported, 
-  promptForNotifications, 
+import {
+  isPushSupported,
+  promptForNotifications,
   registerServiceWorker,
   isSubscribed,
-  subscribeToPush
+  subscribeToPush,
+  unsubscribeFromPush
 } from '../services/pushNotificationService';
 import { 
   isInSilenceHours, 
@@ -1055,7 +1056,7 @@ export const ChatWidget = () => {
   const [lastMessageCount, setLastMessageCount] = useState(0);
   const [privateChatTarget, setPrivateChatTarget] = useState(null);
   const [messageCount, setMessageCount] = useState(0); // Compteur de messages pour prompt notif
-  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(() => isSubscribed()); // V120: init depuis localStorage
   const [unreadCount, setUnreadCount] = useState(0); // v9.4.0: Compteur de messages non lus pour badge
   const [hasNewMessage, setHasNewMessage] = useState(false); // v9.4.0: Indicateur de nouveau message
   const [isCoachMode, setIsCoachMode] = useState(() => {
@@ -1258,6 +1259,43 @@ export const ChatWidget = () => {
     localStorage.setItem('afroboost_sound_enabled', String(newValue));
     console.log('[SOUND] 🔊', newValue ? 'Activé' : 'Désactivé');
   };
+
+  // V120: Toggle notifications push
+  const togglePush = async () => {
+    if (pushEnabled) {
+      // Désactiver
+      await unsubscribeFromPush(participantId);
+      setPushEnabled(false);
+      console.log('[PUSH] 🔕 Désactivé');
+    } else {
+      // Activer — demander permission + souscrire
+      if (!participantId) return;
+      const permission = await Notification.requestPermission();
+      if (permission === 'granted') {
+        const ok = await subscribeToPush(participantId);
+        setPushEnabled(ok);
+        console.log('[PUSH] 🔔', ok ? 'Activé' : 'Échec');
+      }
+    }
+  };
+
+  // V120: Clear badge quand le chat est ouvert/visible
+  useEffect(() => {
+    const clearBadge = () => {
+      if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => {});
+      // Signaler au SW de remettre le compteur à 0
+      if (navigator.serviceWorker?.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_BADGE' });
+      }
+    };
+    // Clear badge au montage et quand on revient sur l'onglet
+    clearBadge();
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') clearBadge();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
   
   // === WRAPPER SIMPLIFIÉ (délègue à SoundManager) ===
   const playSoundIfEnabled = useCallback((type = SOUND_TYPES.MESSAGE) => {
@@ -4558,7 +4596,35 @@ export const ChatWidget = () => {
                         </svg>
                         {silenceAutoEnabled ? 'Silence Auto (actif)' : `Silence Auto (${getSilenceHoursLabel()})`}
                       </button>
-                      
+
+                      {/* V120: Toggle Notifications Push */}
+                      {isPushSupported() && (
+                        <button
+                          onClick={async () => { await togglePush(); setShowUserMenu(false); }}
+                          style={{
+                            width: '100%',
+                            padding: '10px 14px',
+                            textAlign: 'left',
+                            fontSize: '12px',
+                            color: pushEnabled ? '#22c55e' : '#fff',
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px'
+                          }}
+                          className="hover:bg-white/10"
+                          data-testid="toggle-push-btn"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                          </svg>
+                          {pushEnabled ? 'Notifications activées' : 'Activer les notifications'}
+                        </button>
+                      )}
+
                       {/* Rafraîchir */}
                       <button
                         onClick={() => { window.location.reload(); }}

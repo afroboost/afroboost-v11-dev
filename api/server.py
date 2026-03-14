@@ -3619,6 +3619,16 @@ async def stripe_webhook(request: Request):
                         logger.warning(f"[PAYMENT] Email error: {mail_err}")
                 # v8.7: Sync CRM - Creer/MAJ contact (email unique)
                 await db.chat_participants.update_one({"email": customer_email}, {"$set": {"email": customer_email, "name": metadata.get("customer_name", customer_email.split("@")[0]), "source": "stripe_payment", "updated_at": datetime.now(timezone.utc).isoformat()}, "$setOnInsert": {"id": str(uuid.uuid4()), "created_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+                # V120: Push notification au coach pour la vente
+                try:
+                    customer_name = metadata.get("customer_name", customer_email.split("@")[0])
+                    await send_push_to_coaches(
+                        "💰 Nouvelle vente !",
+                        f"{customer_name} — {product_name} ({sessions_count} séances)",
+                        {"url": "/coach", "type": "new_sale"}
+                    )
+                except Exception as push_err:
+                    logger.warning(f"[PUSH-COACH] Push vente error: {push_err}")
         elif event.type == 'checkout.session.expired':
             session = event.data.object
             await db.payment_transactions.update_one({"session_id": session.id}, {"$set": {"status": "expired", "webhook_received_at": datetime.now(timezone.utc).isoformat()}})
@@ -10026,19 +10036,29 @@ async def get_vapid_public_key():
 
 @api_router.post("/push/subscribe")
 async def subscribe_push(request: Request):
-    """Enregistre une souscription push. Si endpoint existe deja pour autre user, le reassigner."""
+    """V120: Enregistre une souscription push. Supporte role=subscriber|coach et email pour les coachs."""
     body = await request.json()
     participant_id = body.get("participant_id")
     subscription = body.get("subscription")
+    role = body.get("role", "subscriber")  # V120: subscriber ou coach
+    email = body.get("email", "")  # V120: email du coach pour lookup
     if not participant_id or not subscription:
         raise HTTPException(status_code=400, detail="participant_id et subscription requis")
     endpoint = subscription.get("endpoint", "")
+    doc = {
+        "participant_id": participant_id,
+        "subscription": subscription,
+        "active": True,
+        "role": role,
+        "email": email.lower().strip() if email else "",
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
     # Securite: si endpoint existe pour AUTRE user, le reassigner au nouveau
     if endpoint:
-        await db.push_subscriptions.update_one({"subscription.endpoint": endpoint}, {"$set": {"participant_id": participant_id, "subscription": subscription, "active": True, "updated_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+        await db.push_subscriptions.update_one({"subscription.endpoint": endpoint}, {"$set": doc}, upsert=True)
     else:
-        await db.push_subscriptions.update_one({"participant_id": participant_id}, {"$set": {"subscription": subscription, "active": True}}, upsert=True)
-    logger.debug(f"[PUSH] Subscribe OK: {participant_id[:8]}...")
+        await db.push_subscriptions.update_one({"participant_id": participant_id}, {"$set": doc}, upsert=True)
+    logger.debug(f"[PUSH] Subscribe OK: {participant_id[:8]}... role={role}")
     return {"success": True}
 
 @api_router.delete("/push/subscribe/{participant_id}")
@@ -10081,6 +10101,32 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
     except Exception as e:
         logger.error(f"[PUSH] Erreur: {str(e)}")
         return False
+
+async def send_push_to_coaches(title: str, body: str, data: dict = None):
+    """V120: Envoie une notification push a TOUS les coachs inscrits."""
+    if not WEBPUSH_AVAILABLE or not VAPID_PRIVATE_KEY:
+        return 0
+    sent_count = 0
+    try:
+        coach_subs = await db.push_subscriptions.find({"role": "coach", "active": True}, {"_id": 0}).to_list(100)
+        payload = json.dumps({"title": title, "body": body, "icon": "/logo192.png", "badge": "/logo192.png", "data": data or {"url": "/coach"}, "timestamp": datetime.now(timezone.utc).isoformat()})
+        for sub in coach_subs:
+            subscription_info = sub.get("subscription")
+            if not subscription_info:
+                continue
+            try:
+                webpush(subscription_info=subscription_info, data=payload, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"})
+                sent_count += 1
+            except WebPushException as e:
+                if e.response and e.response.status_code in [404, 410]:
+                    await db.push_subscriptions.update_one({"participant_id": sub.get("participant_id")}, {"$set": {"active": False}})
+                logger.debug(f"[PUSH-COACH] Echec: {str(e)[:80]}")
+            except Exception as e:
+                logger.error(f"[PUSH-COACH] Erreur: {str(e)[:80]}")
+    except Exception as e:
+        logger.error(f"[PUSH-COACH] Erreur globale: {str(e)}")
+    logger.debug(f"[PUSH-COACH] Envoi OK: {sent_count}/{len(coach_subs) if 'coach_subs' in dir() else '?'}")
+    return sent_count
 
 async def send_backup_email(participant_id: str, message_preview: str):
     """Envoie un email de backup si la notification push echoue."""
@@ -10139,9 +10185,18 @@ async def send_backup_email(participant_id: str, message_preview: str):
 
 async def notify_coach_new_message(participant_name: str, message_preview: str, session_id: str):
     """
-    Notifie le coach par e-mail quand un message arrive en mode humain.
+    V120: Notifie le coach par push + e-mail quand un message arrive en mode humain.
     Crucial pour ne pas rater de ventes.
     """
+    # V120: Push notification au coach EN PREMIER (instantané)
+    try:
+        await send_push_to_coaches(
+            f"💬 {participant_name}",
+            message_preview[:120],
+            {"url": "/coach", "type": "new_message", "session_id": session_id}
+        )
+    except Exception as push_err:
+        logger.warning(f"[PUSH-COACH] Erreur push: {push_err}")
     # Récupérer l'email du coach depuis coach_auth
     coach_auth = await db.coach_auth.find_one({}, {"_id": 0})
     if not coach_auth or not coach_auth.get("email"):

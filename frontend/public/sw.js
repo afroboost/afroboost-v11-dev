@@ -1,9 +1,9 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v119';
-// V119: Section Offres toujours visible + ordre configurable (sessions-first / offers-first)
-// Dashboard toggle pour super admin et partenaires
+const CACHE_NAME = 'afroboost-v120';
+// V120: Notifications push complètes — coach + abonné, badge PWA, toggle dans Chat
+// Push au coach pour messages et ventes, badge compteur sur icône PWA
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {
@@ -61,6 +61,9 @@ self.addEventListener('fetch', (event) => {
   }
 });
 
+// V120: Compteur de notifications non lues pour badge PWA
+let unreadCount = 0;
+
 // Reception des notifications push
 self.addEventListener('push', (event) => {
   console.log('[SW] Notification push recue');
@@ -94,7 +97,7 @@ self.addEventListener('push', (event) => {
     icon: data.icon,
     badge: data.badge,
     vibrate: [200, 100, 200],
-    tag: 'afroboost-chat-sync',
+    tag: data.data?.type || 'afroboost-chat-sync',
     renotify: true,
     requireInteraction: false,
     silent: false,
@@ -105,14 +108,28 @@ self.addEventListener('push', (event) => {
     options.actions = [];
   }
 
+  // V120: Incrementer le badge PWA sur l'icone de l'app
+  unreadCount++;
   event.waitUntil(
-    self.registration.showNotification(data.title, options)
+    Promise.all([
+      self.registration.showNotification(data.title, options),
+      // Badge API (Chrome 81+, Edge 81+) — affiche un compteur sur l'icone PWA
+      navigator.setAppBadge ? navigator.setAppBadge(unreadCount).catch(() => {}) : Promise.resolve()
+    ])
   );
 });
 
 // Clic sur la notification
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  // V120: Réinitialiser le badge au clic
+  unreadCount = Math.max(0, unreadCount - 1);
+  if (navigator.clearAppBadge && unreadCount === 0) {
+    navigator.clearAppBadge().catch(() => {});
+  } else if (navigator.setAppBadge && unreadCount > 0) {
+    navigator.setAppBadge(unreadCount).catch(() => {});
+  }
+
   const urlToOpen = event.notification.data?.url || '/';
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true })
@@ -135,6 +152,12 @@ self.addEventListener('notificationclose', (event) => {
 // Message du client
 self.addEventListener('message', (event) => {
   console.log('[SW] Message recu:', event.data);
+  // V120: Reset badge quand l'app signale que le chat est ouvert
+  if (event.data && event.data.type === 'CLEAR_BADGE') {
+    unreadCount = 0;
+    if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => {});
+    return;
+  }
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
