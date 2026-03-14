@@ -2,7 +2,7 @@
  * CampaignModal.js — v19 (V113): Tunnel de création en 3 étapes
  * Étape 1: Médias & Objectif (prompt système, objectif IA, message, média)
  * Étape 2: Contacts & Canaux (checkboxes multi-select, recherche, import, sync)
- *          + Sélecteur d'expéditeur WhatsApp (Twilio sandbox vs numéro Business)
+ *          + Sélecteur d'expéditeur WhatsApp (numéro Afroboost prod vs numéro custom partenaire)
  * Étape 3: Confirmation & Coût (récapitulatif, programmation, coût crédits)
  *
  * V113: Ajout sélecteur expéditeur WhatsApp — numéro Afroboost (Twilio) ou numéro Business perso
@@ -666,35 +666,48 @@ export default function CampaignModal({
                 </div>
               </div>
 
-              {/* V113: Sélecteur d'expéditeur WhatsApp — visible uniquement si WhatsApp est activé */}
+              {/* V115: Sélecteur d'expéditeur WhatsApp — prod par défaut, option numéro partenaire */}
               {newCampaign.channels?.whatsapp && (
                 <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '10px', background: 'rgba(37,211,102,0.06)', border: '1px solid rgba(37,211,102,0.18)' }}>
                   <label style={{ display: 'block', color: '#4ade80', fontSize: '12px', fontWeight: 500, marginBottom: '8px' }}>📲 Expéditeur WhatsApp</label>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     {[
-                      { key: 'twilio', label: '🌐 Numéro Afroboost (Twilio Sandbox)', desc: '+1 415 523 8886 — destinataires doivent rejoindre le sandbox' },
-                      { key: 'business', label: '🇨🇭 Mon numéro Business', desc: '+41 76 520 33 63 — numéro suisse direct, plus pro' }
+                      { key: 'business', label: '🇨🇭 Numéro Afroboost', desc: '+41 76 520 33 63 — numéro officiel production' },
+                      { key: 'custom', label: '📲 Mon numéro WhatsApp Business', desc: 'Utiliser votre propre numéro vérifié' }
                     ].map(opt => (
                       <button key={opt.key} type="button"
                         onClick={() => setNewCampaign(prev => ({ ...prev, senderType: opt.key }))}
                         style={{
                           display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
                           padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', textAlign: 'left',
-                          background: (newCampaign.senderType || 'twilio') === opt.key ? 'rgba(37,211,102,0.12)' : 'rgba(255,255,255,0.04)',
-                          border: (newCampaign.senderType || 'twilio') === opt.key ? '1px solid rgba(37,211,102,0.5)' : '1px solid rgba(255,255,255,0.08)',
+                          background: (newCampaign.senderType || 'business') === opt.key ? 'rgba(37,211,102,0.12)' : 'rgba(255,255,255,0.04)',
+                          border: (newCampaign.senderType || 'business') === opt.key ? '1px solid rgba(37,211,102,0.5)' : '1px solid rgba(255,255,255,0.08)',
                         }}>
                         <span style={{
                           fontSize: '13px', fontWeight: 600,
-                          color: (newCampaign.senderType || 'twilio') === opt.key ? '#4ade80' : 'rgba(255,255,255,0.7)'
+                          color: (newCampaign.senderType || 'business') === opt.key ? '#4ade80' : 'rgba(255,255,255,0.7)'
                         }}>{opt.label}</span>
                         <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: '2px' }}>{opt.desc}</span>
                       </button>
                     ))}
                   </div>
-                  {(newCampaign.senderType || 'twilio') === 'business' && (
-                    <p style={{ fontSize: '11px', color: '#fbbf24', marginTop: '8px', lineHeight: 1.4 }}>
-                      ⚠️ Le numéro Business nécessite un compte WhatsApp Business API vérifié via Meta/Twilio (BYON).
-                    </p>
+                  {(newCampaign.senderType) === 'custom' && (
+                    <div style={{ marginTop: '8px' }}>
+                      <input
+                        type="text"
+                        placeholder="+41 7X XXX XX XX"
+                        value={newCampaign.customFromNumber || ''}
+                        onChange={e => setNewCampaign(prev => ({ ...prev, customFromNumber: e.target.value }))}
+                        style={{
+                          width: '100%', padding: '8px 12px', borderRadius: '8px',
+                          background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
+                          color: '#fff', fontSize: '13px', outline: 'none'
+                        }}
+                      />
+                      <p style={{ fontSize: '11px', color: '#fbbf24', marginTop: '6px', lineHeight: 1.4 }}>
+                        Ce numéro doit être enregistré et vérifié sur votre compte WhatsApp Business API (Twilio/Meta).
+                      </p>
+                    </div>
                   )}
                 </div>
               )}

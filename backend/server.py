@@ -64,7 +64,8 @@ if RESEND_AVAILABLE and RESEND_API_KEY:
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
 TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER', '')
-TWILIO_SANDBOX_NUMBER = "+14155238886"
+# V115: Numéro WhatsApp production (plus de sandbox)
+TWILIO_PRODUCTION_NUMBER = "+41765203363"
 
 # MongoDB connection
 mongo_url = os.environ.get('MONGO_URL')

@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v114';
-// V114: StatusCallback Twilio — détection asynchrone des échecs WhatsApp (erreur 63015 sandbox)
+const CACHE_NAME = 'afroboost-v115';
+// V115: WhatsApp Production — envoi depuis +41765203363 sans sandbox, sélecteur partenaire
 // formatage suisse +41, statuts précis (Échoué/Partiel), polling temps réel 3s
 
 // Installation â skip waiting pour activer immÃ©diatement

@@ -66,7 +66,8 @@ if RESEND_AVAILABLE and RESEND_API_KEY:
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
 TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER', '')
-TWILIO_SANDBOX_NUMBER = "+14155238886"
+# V115: Numéro WhatsApp production (plus de sandbox)
+TWILIO_PRODUCTION_NUMBER = "+41765203363"
 
 # MongoDB connection
 mongo_url = os.environ.get('MONGO_URL')
@@ -553,8 +554,8 @@ class Campaign(BaseModel):
     # v11: Prompts indépendants par campagne
     systemPrompt: Optional[str] = None  # Instructions système IA pour cette campagne
     descriptionPrompt: Optional[str] = None  # Prompt de description/objectif spécifique
-    # V113: Choix de l'expéditeur WhatsApp — "twilio" (sandbox) ou "business" (numéro suisse perso)
-    senderType: Optional[str] = "twilio"  # "twilio" = sandbox/Twilio, "business" = +41 76 520 33 63
+    # V115: Choix de l'expéditeur WhatsApp — "business" (prod +41765203363) par défaut
+    senderType: Optional[str] = "business"  # "business" = +41 76 520 33 63 (prod), "custom" = numéro partenaire perso
     coach_id: Optional[str] = None  # v11: Email du coach propriétaire
     results: List[dict] = []
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -581,8 +582,8 @@ class CampaignCreate(BaseModel):
     # v11: Prompts indépendants par campagne
     systemPrompt: Optional[str] = None
     descriptionPrompt: Optional[str] = None
-    # V113: Choix de l'expéditeur WhatsApp — "twilio" (sandbox) ou "business" (numéro suisse perso)
-    senderType: Optional[str] = "twilio"  # "twilio" = sandbox/Twilio, "business" = +41 76 520 33 63
+    # V115: Choix de l'expéditeur WhatsApp — "business" (prod +41765203363) par défaut
+    senderType: Optional[str] = "business"  # "business" = +41 76 520 33 63 (prod), "custom" = numéro partenaire perso
 
 class Concept(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -2485,11 +2486,16 @@ async def launch_campaign(campaign_id: str):
     cta_text = campaign.get("ctaText", "")
     cta_link = campaign.get("ctaLink", "")
 
-    # V113: Déterminer le numéro expéditeur WhatsApp selon le senderType
-    sender_type = campaign.get("senderType", "twilio")
-    business_from_number = "+41765203363" if sender_type == "business" else None
-    if business_from_number:
-        logger.info(f"[CAMPAIGN-LAUNCH-V113] 🇨🇭 Mode Business: envoi depuis {business_from_number}")
+    # V115: Déterminer le numéro expéditeur WhatsApp — production par défaut
+    sender_type = campaign.get("senderType", "business")
+    if sender_type == "custom":
+        # Numéro personnalisé du partenaire (WhatsApp Business vérifié)
+        business_from_number = campaign.get("customFromNumber", TWILIO_PRODUCTION_NUMBER)
+        logger.info(f"[CAMPAIGN-LAUNCH-V115] 📲 Mode Custom: envoi depuis {business_from_number}")
+    else:
+        # Mode par défaut: numéro Afroboost production (+41765203363)
+        business_from_number = TWILIO_PRODUCTION_NUMBER
+        logger.info(f"[CAMPAIGN-LAUNCH-V115] 🇨🇭 Mode Production: envoi depuis {business_from_number}")
     
     success_count = 0
     fail_count = 0
@@ -3021,7 +3027,7 @@ async def twilio_status_webhook(request: Request):
     """
     Webhook Twilio pour les mises à jour de statut WhatsApp.
     Twilio envoie: queued, sent, delivered, read, failed, undelivered
-    V114: Gère les échecs asynchrones (ex: erreur 63015 sandbox) et recalcule le statut campagne.
+    V114+V115: Gère les échecs asynchrones et recalcule le statut campagne (production).
     """
     try:
         form_data = await request.form()
@@ -3045,15 +3051,16 @@ async def twilio_status_webhook(request: Request):
         elif message_status == "read":
             update_fields = {"results.$.readAt": now_iso, "results.$.deliveredAt": now_iso}
         elif message_status in ("failed", "undelivered"):
-            # V114: Mapper les codes d'erreur Twilio vers des messages lisibles en français
+            # V115: Mapper les codes d'erreur Twilio vers des messages lisibles en français
             error_messages = {
-                "63015": "Destinataire n'a pas rejoint le Sandbox WhatsApp (envoyez 'join everyone-goes' au +1 415 523 8886)",
-                "63016": "Session sandbox expirée (>72h) — renvoyez 'join everyone-goes'",
                 "63007": "Numéro WhatsApp non valide ou non enregistré",
+                "63015": "Numéro non enregistré ou session WhatsApp expirée",
+                "63016": "Fenêtre de conversation expirée (>24h) — le contact doit répondre d'abord",
                 "21610": "Destinataire a bloqué les messages",
                 "21408": "Crédits Twilio insuffisants",
                 "21211": "Numéro 'To' invalide",
                 "21614": "Numéro non compatible WhatsApp",
+                "63032": "Template de message non approuvé par WhatsApp",
             }
             error_msg = error_messages.get(str(error_code), f"Twilio erreur {error_code}: {message_status}")
             update_fields = {
@@ -5792,9 +5799,11 @@ async def _get_twilio_config():
     Retourne: (account_sid, auth_token, from_number) ou (None, None, None) si non configuré
     """
     # PRIORITÉ 1: Variables d'environnement (.env)
-    if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER:
-        logger.info(f"[WHATSAPP-PROD] ✅ Utilisation config .env - Numéro: {TWILIO_FROM_NUMBER}")
-        return TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER
+    if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
+        # V115: from_number peut être vide en env — on utilise TWILIO_PRODUCTION_NUMBER comme fallback
+        effective_from = TWILIO_FROM_NUMBER or TWILIO_PRODUCTION_NUMBER
+        logger.info(f"[WHATSAPP-PROD] ✅ Utilisation config .env - Numéro: {effective_from}")
+        return TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, effective_from
     
     # PRIORITÉ 2: Configuration en base de données (fallback)
     whatsapp_config = await db.whatsapp_config.find_one({"id": "whatsapp_config"}, {"_id": 0})
@@ -5829,10 +5838,14 @@ async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = Non
     # Récupérer la config Twilio (priorité .env)
     account_sid, auth_token, from_number = await _get_twilio_config()
 
-    # V113: Utiliser le numéro override si fourni (BYON / numéro business suisse)
+    # V115: Utiliser le numéro override si fourni, sinon numéro production par défaut
     if from_number_override:
         from_number = from_number_override
-        logger.info(f"[WHATSAPP-V113] 🇨🇭 Override expéditeur: {from_number_override}")
+        logger.info(f"[WHATSAPP-V115] 📲 Override expéditeur: {from_number_override}")
+    elif not from_number:
+        # Fallback: toujours utiliser le numéro production Afroboost
+        from_number = TWILIO_PRODUCTION_NUMBER
+        logger.info(f"[WHATSAPP-V115] 🇨🇭 Fallback numéro production: {from_number}")
 
     if not account_sid or not auth_token or not from_number:
         # V112: JAMAIS de mode simulé — erreur explicite si config manquante
@@ -5853,7 +5866,7 @@ async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = Non
         else:
             clean_to = "+41" + clean_to
 
-    # V112: Forcer le numéro sandbox Twilio comme expéditeur
+    # V115: Formater le numéro expéditeur
     clean_from = from_number if from_number.startswith("+") else "+" + from_number
     
     # Construire la requête Twilio
@@ -5868,8 +5881,8 @@ async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = Non
     if media_url:
         data["MediaUrl"] = media_url
 
-    # V114: StatusCallback pour recevoir les notifications d'échec asynchrones de Twilio
-    # (ex: erreur 63015 sandbox non rejoint — Twilio accepte le message en 201 puis échoue)
+    # V114: StatusCallback pour recevoir les notifications de statut asynchrones de Twilio
+    # (delivered, read, failed, undelivered — mise à jour temps réel du statut campagne)
     base_url = os.environ.get("VERCEL_URL", "afroboost-v11-dev-pm7l.vercel.app")
     if not base_url.startswith("http"):
         base_url = f"https://{base_url}"
