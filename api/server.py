@@ -11708,20 +11708,32 @@ async def get_dynamic_manifest():
         "orientation": "portrait-primary"
     }
     
-    # Add dynamic logo icons if configured
+    # Add dynamic logo icons if configured — V139: separate "any" and "maskable"
     if logo_url:
         manifest["icons"] = [
             {
                 "src": logo_url,
                 "sizes": "192x192",
                 "type": "image/png",
-                "purpose": "any maskable"
+                "purpose": "any"
+            },
+            {
+                "src": logo_url,
+                "sizes": "192x192",
+                "type": "image/png",
+                "purpose": "maskable"
             },
             {
                 "src": logo_url,
                 "sizes": "512x512",
                 "type": "image/png",
-                "purpose": "any maskable"
+                "purpose": "any"
+            },
+            {
+                "src": logo_url,
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "maskable"
             },
             {
                 "src": "favicon.ico",
