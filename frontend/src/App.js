@@ -266,6 +266,39 @@ const translations = {
     generateBatch: "🚀 Générer la série",
     batchSuccess: "codes créés avec succès !",
     batchMax: "Maximum 20 codes par série",
+    // V106: Nouvelles traductions
+    searchPlaceholder: "Rechercher...",
+    all: "Tout",
+    sessions: "Sessions",
+    offersFilter: "Offres",
+    shopFilter: "Shop",
+    noResults: "Aucun résultat",
+    tryAnotherSearch: "Essayez un autre terme de recherche",
+    results: "résultat(s)",
+    chooseYourSession: "Choisissez votre session",
+    shop: "shop",
+    shopDescription: "Produits exclusifs Afroboost",
+    deliveryAvailable: "Livraison dispo",
+    audioShop: "Audio Shop",
+    audioDescription: "Musiques & contenus audio exclusifs",
+    faq: "Questions fréquentes",
+    platform: "La plateforme des coachs",
+    bookBtn: "Réserver",
+    findCoach: "Trouver un coach",
+    searchContacts: "Rechercher des contacts...",
+    searchOffers: "Rechercher une offre...",
+    keywords: "Mots clés",
+    management: "Gestion",
+    contacts: "Contacts",
+    campaigns: "Campagnes",
+    conversations: "Conversations",
+    viewVisitor: "Vue Visiteur",
+    backToDashboard: "Retour au dashboard",
+    quick: "Quick",
+    admin: "Admin",
+    shareBtn: "Partager",
+    credits: "Crédits",
+    unlimited: "Illimités",
   },
   en: {
     appTitle: "Afroboost",
@@ -383,6 +416,39 @@ const translations = {
     generateBatch: "🚀 Generate batch",
     batchSuccess: "codes created successfully!",
     batchMax: "Maximum 20 codes per batch",
+    // V106: New translations
+    searchPlaceholder: "Search...",
+    all: "All",
+    sessions: "Sessions",
+    offersFilter: "Offers",
+    shopFilter: "Shop",
+    noResults: "No results",
+    tryAnotherSearch: "Try another search term",
+    results: "result(s)",
+    chooseYourSession: "Choose your session",
+    shop: "shop",
+    shopDescription: "Exclusive Afroboost products",
+    deliveryAvailable: "Delivery available",
+    audioShop: "Audio Shop",
+    audioDescription: "Exclusive music & audio content",
+    faq: "Frequently asked questions",
+    platform: "The coaches' platform",
+    bookBtn: "Book",
+    findCoach: "Find a coach",
+    searchContacts: "Search contacts...",
+    searchOffers: "Search an offer...",
+    keywords: "Keywords",
+    management: "Management",
+    contacts: "Contacts",
+    campaigns: "Campaigns",
+    conversations: "Conversations",
+    viewVisitor: "Visitor View",
+    backToDashboard: "Back to dashboard",
+    quick: "Quick",
+    admin: "Admin",
+    shareBtn: "Share",
+    credits: "Credits",
+    unlimited: "Unlimited",
   },
   de: {
     appTitle: "Afroboost",
@@ -500,6 +566,39 @@ const translations = {
     generateBatch: "🚀 Serie generieren",
     batchSuccess: "Codes erfolgreich erstellt!",
     batchMax: "Maximal 20 Codes pro Serie",
+    // V106: Neue Übersetzungen
+    searchPlaceholder: "Suchen...",
+    all: "Alle",
+    sessions: "Sitzungen",
+    offersFilter: "Angebote",
+    shopFilter: "Shop",
+    noResults: "Keine Ergebnisse",
+    tryAnotherSearch: "Versuchen Sie einen anderen Suchbegriff",
+    results: "Ergebnis(se)",
+    chooseYourSession: "Wählen Sie Ihre Sitzung",
+    shop: "Shop",
+    shopDescription: "Exklusive Afroboost-Produkte",
+    deliveryAvailable: "Lieferung verfügbar",
+    audioShop: "Audio-Shop",
+    audioDescription: "Exklusive Musik & Audio-Inhalte",
+    faq: "Häufig gestellte Fragen",
+    platform: "Die Plattform der Coaches",
+    bookBtn: "Buchen",
+    findCoach: "Einen Coach finden",
+    searchContacts: "Kontakte suchen...",
+    searchOffers: "Angebot suchen...",
+    keywords: "Schlüsselwörter",
+    management: "Verwaltung",
+    contacts: "Kontakte",
+    campaigns: "Kampagnen",
+    conversations: "Konversationen",
+    viewVisitor: "Besucheransicht",
+    backToDashboard: "Zurück zum Dashboard",
+    quick: "Schnell",
+    admin: "Admin",
+    shareBtn: "Teilen",
+    credits: "Guthaben",
+    unlimited: "Unbegrenzt",
   }
 };
 
@@ -3984,7 +4083,7 @@ function App() {
               <path d="M19 12H5"></path>
               <path d="M12 19l-7-7 7-7"></path>
             </svg>
-            Retour au dashboard
+            {t('backToDashboard')}
           </button>
         </div>
       )}
@@ -4140,10 +4239,10 @@ function App() {
       >
         <div className="max-w-4xl mx-auto flex items-center gap-1 px-4 py-2 overflow-x-auto hide-scrollbar">
           {[
-            { key: 'all', label: 'Tout', icon: '✨' },
-            { key: 'sessions', label: 'Sessions', icon: '📅' },
-            { key: 'offers', label: 'Offres', icon: '🎁' },
-            { key: 'shop', label: 'Shop', icon: '🛒' }
+            { key: 'all', label: t('all'), icon: '✨' },
+            { key: 'sessions', label: t('sessions'), icon: '📅' },
+            { key: 'offers', label: t('offersFilter'), icon: '🎁' },
+            { key: 'shop', label: t('shopFilter'), icon: '🛒' }
           ].map(tab => (
             <button
               key={tab.key}
@@ -4170,6 +4269,36 @@ function App() {
               <span>{tab.label}</span>
             </button>
           ))}
+          {/* V106: Barre de recherche universelle dans la sticky nav */}
+          <div style={{ position: 'relative', marginLeft: 'auto', minWidth: '140px', maxWidth: '200px' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(217,28,210,0.5)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+              style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t('searchPlaceholder')}
+              style={{
+                width: '100%', padding: '6px 30px 6px 32px', borderRadius: '16px',
+                border: '1px solid rgba(217,28,210,0.3)', background: 'rgba(0,0,0,0.3)',
+                color: '#fff', fontSize: '11px', fontWeight: '300', outline: 'none',
+                transition: 'all 0.3s ease'
+              }}
+              onFocus={(e) => { e.target.style.borderColor = '#D91CD2'; e.target.style.boxShadow = '0 0 8px rgba(217,28,210,0.2)'; }}
+              onBlur={(e) => { e.target.style.borderColor = 'rgba(217,28,210,0.3)'; e.target.style.boxShadow = 'none'; }}
+            />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery('')}
+                style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)',
+                  background: 'none', border: 'none', color: 'rgba(217,28,210,0.6)', cursor: 'pointer', padding: '2px', display: 'flex' }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -4186,7 +4315,7 @@ function App() {
         {/* Message si aucun résultat */}
         {filteredServices.length === 0 && filteredProducts.length === 0 && visibleCourses.length === 0 && searchQuery.trim() && (
           <div className="text-center py-8 mb-8 rounded-xl" style={{ background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
-            <p className="text-white opacity-70">🔍 Aucun résultat pour "{searchQuery}"</p>
+            <p className="text-white opacity-70">🔍 {t('noResults')} "{searchQuery}"</p>
             <button 
               onClick={() => { setSearchQuery(''); setActiveFilter('all'); }}
               className="mt-3 px-4 py-2 rounded-lg text-sm"
@@ -4478,7 +4607,7 @@ function App() {
                   {t('shop') || 'Boutique'}
                 </h2>
                 <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)', fontWeight: '300' }}>
-                  Produits exclusifs Afroboost
+                  {t('shopDescription')}
                 </p>
               </div>
               <span
@@ -4489,7 +4618,7 @@ function App() {
                   color: 'rgba(34, 197, 94, 0.9)'
                 }}
               >
-                📦 Livraison dispo
+                📦 {t('deliveryAvailable')}
               </span>
             </div>
             
@@ -4580,10 +4709,10 @@ function App() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
                 <div>
                   <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '22px' }}>🎧</span> Audio Shop
+                    <span style={{ fontSize: '22px' }}>🎧</span> {t('audioShop')}
                   </h2>
                   <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', fontWeight: 300, marginTop: '2px' }}>
-                    Musiques & contenus audio exclusifs
+                    {t('audioDescription')}
                   </p>
                 </div>
                 <span style={{
@@ -5041,7 +5170,7 @@ function App() {
             <button type="submit" disabled={!hasAcceptedTerms || loading} 
               className={`w-full py-4 rounded-xl font-bold uppercase tracking-wide ${parseFloat(totalPrice) === 0 ? 'btn-free' : 'btn-primary'}`} 
               data-testid="submit-reservation-btn">
-              {loading ? t('loading') : parseFloat(totalPrice) === 0 ? '🎁 Réserver gratuitement' : t('payAndReserve')}
+              {loading ? t('loading') : parseFloat(totalPrice) === 0 ? `🎁 ${t('reserveFree')}` : t('payAndReserve')}
             </button>
           </form>
         )}
@@ -5081,7 +5210,7 @@ function App() {
               }}
             >
               <h3 style={{ color: '#fff', fontSize: '18px', fontWeight: '700', margin: 0 }}>
-                Questions fréquentes
+                {t('faq')}
               </h3>
               <span style={{
                 color: '#D91CD2', fontSize: '20px', fontWeight: '300',
@@ -5132,7 +5261,7 @@ function App() {
         <footer className="mt-12 mb-8 text-center" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
           {/* Branding */}
           <p className="text-white font-semibold text-sm mb-1">Afroboost</p>
-          <p className="text-white/40 text-xs mb-4">La plateforme des coachs</p>
+          <p className="text-white/40 text-xs mb-4">{t('platform')}</p>
           
           {/* Logos de paiement - Sans rectangle, juste les logos */}
           {(concept.paymentTwint || concept.paymentPaypal || concept.paymentCreditCard) && (

@@ -72,7 +72,41 @@ export const translations = {
     reservationSuccess: "Réservation confirmée !",
     
     // Admin
-    adminEmail: "contact.artboost@gmail.com"
+    adminEmail: "contact.artboost@gmail.com",
+
+    // V106: Nouvelles traductions
+    searchPlaceholder: "Rechercher...",
+    all: "Tout",
+    sessions: "Sessions",
+    offersFilter: "Offres",
+    shopFilter: "Shop",
+    noResults: "Aucun résultat",
+    tryAnotherSearch: "Essayez un autre terme de recherche",
+    results: "résultat(s)",
+    chooseYourSession: "Choisissez votre session",
+    shop: "shop",
+    shopDescription: "Produits exclusifs Afroboost",
+    deliveryAvailable: "Livraison dispo",
+    audioShop: "Audio Shop",
+    audioDescription: "Musiques & contenus audio exclusifs",
+    faq: "Questions fréquentes",
+    platform: "La plateforme des coachs",
+    bookBtn: "Réserver",
+    findCoach: "Trouver un coach",
+    searchContacts: "Rechercher des contacts...",
+    searchOffers: "Rechercher une offre...",
+    keywords: "Mots clés",
+    management: "Gestion",
+    contacts: "Contacts",
+    campaigns: "Campagnes",
+    conversations: "Conversations",
+    viewVisitor: "Vue Visiteur",
+    backToDashboard: "Retour au dashboard",
+    quick: "Quick",
+    admin: "Admin",
+    shareBtn: "Partager",
+    credits: "Crédits",
+    unlimited: "Illimités"
   },
   
   en: {
@@ -134,8 +168,42 @@ export const translations = {
     swipeToSeeMore: "← Swipe to see more offers →",
     noPaymentConfigured: "Payment required – booking impossible.",
     reservationSuccess: "Booking confirmed!",
-    
-    adminEmail: "contact.artboost@gmail.com"
+
+    adminEmail: "contact.artboost@gmail.com",
+
+    // V106: New translations
+    searchPlaceholder: "Search...",
+    all: "All",
+    sessions: "Sessions",
+    offersFilter: "Offers",
+    shopFilter: "Shop",
+    noResults: "No results",
+    tryAnotherSearch: "Try another search term",
+    results: "result(s)",
+    chooseYourSession: "Choose your session",
+    shop: "shop",
+    shopDescription: "Exclusive Afroboost products",
+    deliveryAvailable: "Delivery available",
+    audioShop: "Audio Shop",
+    audioDescription: "Exclusive music & audio content",
+    faq: "Frequently asked questions",
+    platform: "The coaches' platform",
+    bookBtn: "Book",
+    findCoach: "Find a coach",
+    searchContacts: "Search contacts...",
+    searchOffers: "Search an offer...",
+    keywords: "Keywords",
+    management: "Management",
+    contacts: "Contacts",
+    campaigns: "Campaigns",
+    conversations: "Conversations",
+    viewVisitor: "Visitor View",
+    backToDashboard: "Back to dashboard",
+    quick: "Quick",
+    admin: "Admin",
+    shareBtn: "Share",
+    credits: "Credits",
+    unlimited: "Unlimited"
   },
   
   de: {
@@ -197,8 +265,42 @@ export const translations = {
     swipeToSeeMore: "← Wischen für mehr Angebote →",
     noPaymentConfigured: "Zahlung erforderlich – Buchung nicht möglich.",
     reservationSuccess: "Buchung bestätigt!",
-    
-    adminEmail: "contact.artboost@gmail.com"
+
+    adminEmail: "contact.artboost@gmail.com",
+
+    // V106: Neue Übersetzungen
+    searchPlaceholder: "Suchen...",
+    all: "Alle",
+    sessions: "Sitzungen",
+    offersFilter: "Angebote",
+    shopFilter: "Shop",
+    noResults: "Keine Ergebnisse",
+    tryAnotherSearch: "Versuchen Sie einen anderen Suchbegriff",
+    results: "Ergebnis(se)",
+    chooseYourSession: "Wählen Sie Ihre Sitzung",
+    shop: "Shop",
+    shopDescription: "Exklusive Afroboost-Produkte",
+    deliveryAvailable: "Lieferung verfügbar",
+    audioShop: "Audio-Shop",
+    audioDescription: "Exklusive Musik & Audio-Inhalte",
+    faq: "Häufig gestellte Fragen",
+    platform: "Die Plattform der Coaches",
+    bookBtn: "Buchen",
+    findCoach: "Einen Coach finden",
+    searchContacts: "Kontakte suchen...",
+    searchOffers: "Angebot suchen...",
+    keywords: "Schlüsselwörter",
+    management: "Verwaltung",
+    contacts: "Kontakte",
+    campaigns: "Kampagnen",
+    conversations: "Konversationen",
+    viewVisitor: "Besucheransicht",
+    backToDashboard: "Zurück zum Dashboard",
+    quick: "Schnell",
+    admin: "Admin",
+    shareBtn: "Teilen",
+    credits: "Guthaben",
+    unlimited: "Unbegrenzt"
   }
 };
 

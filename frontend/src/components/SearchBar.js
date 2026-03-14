@@ -375,6 +375,7 @@ export const useNavigation = (offers = [], courses = [], defaultSection = 'all')
   const [activeFilter, setActiveFilter] = useState(defaultSection);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // V106: Recherche universelle — scanne nom, description, ET mots-clés
   const filteredOffers = offers.filter(offer => {
     let categoryMatch = true;
     if (activeFilter === 'sessions') {
@@ -386,22 +387,29 @@ export const useNavigation = (offers = [], courses = [], defaultSection = 'all')
     let searchMatch = true;
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase().trim();
-      searchMatch = (offer.name?.toLowerCase() || '').includes(query);
+      const name = (offer.name || '').toLowerCase();
+      const description = (offer.description || '').toLowerCase();
+      const keywords = (offer.keywords || '').toLowerCase();
+      const category = (offer.category || '').toLowerCase();
+      searchMatch = name.includes(query) || description.includes(query) || keywords.includes(query) || category.includes(query);
     }
 
     return categoryMatch && searchMatch;
   });
 
+  // V106: Recherche cours — scanne nom, lieu, description
   const filteredCourses = courses.filter(course => {
     if (activeFilter === 'shop') {
       return false;
     }
-    
+
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase().trim();
-      return (course.name?.toLowerCase() || '').includes(query);
+      const name = (course.name || '').toLowerCase();
+      const location = (course.locationName || course.location || '').toLowerCase();
+      return name.includes(query) || location.includes(query);
     }
-    
+
     return true;
   });
 

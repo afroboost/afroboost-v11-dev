@@ -1443,7 +1443,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
         {showSearch && searchQuery && (
           <div className="px-3 pb-1">
             <p className="text-white/60 text-xs">
-              {filteredPartners.length} résultat{filteredPartners.length > 1 ? 's' : ''}
+              {filteredPartners.length} {lang === 'de' ? 'Ergebnis(se)' : lang === 'en' ? 'result(s)' : `résultat${filteredPartners.length > 1 ? 's' : ''}`}
             </p>
           </div>
         )}
@@ -1466,8 +1466,8 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
         {filteredPartners.length === 0 && searchQuery ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <p className="text-white/50 text-lg mb-2">Aucun résultat</p>
-              <p className="text-white/30 text-sm">Essayez un autre terme de recherche</p>
+              <p className="text-white/50 text-lg mb-2">{lang === 'de' ? 'Keine Ergebnisse' : lang === 'en' ? 'No results' : 'Aucun résultat'}</p>
+              <p className="text-white/30 text-sm">{lang === 'de' ? 'Versuchen Sie einen anderen Suchbegriff' : lang === 'en' ? 'Try another search term' : 'Essayez un autre terme de recherche'}</p>
             </div>
           </div>
         ) : (
