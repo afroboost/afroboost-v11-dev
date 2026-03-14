@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Afroboost PWA Diagnostic</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, sans-serif; background: #111; color: #fff; padding: 16px; font-size: 14px; }
+h1 { font-size: 18px; margin-bottom: 16px; color: #f0f; }
+.test { padding: 10px; margin: 6px 0; border-radius: 8px; background: #222; }
+.pass { border-left: 4px solid #0f0; }
+.fail { border-left: 4px solid #f00; }
+.warn { border-left: 4px solid #ff0; }
+.info { border-left: 4px solid #0af; }
+.label { font-weight: bold; color: #aaa; font-size: 12px; }
+.value { margin-top: 2px; word-break: break-all; }
+#installBtn { display: none; width: 100%; padding: 16px; margin: 16px 0; background: #f0f; color: #000; font-size: 18px; font-weight: bold; border: none; border-radius: 12px; cursor: pointer; }
+#installBtn.show { display: block; }
+#log { margin-top: 16px; padding: 10px; background: #1a1a2e; border-radius: 8px; font-family: monospace; font-size: 11px; max-height: 300px; overflow-y: auto; }
+.logline { margin: 2px 0; }
+.logtime { color: #666; }
+.logok { color: #0f0; }
+.logerr { color: #f00; }
+.logwarn { color: #ff0; }
+</style>
+</head>
+<body>
+<h1>Diagnostic PWA Afroboost</h1>
+<div id="results"></div>
+<button id="installBtn">INSTALLER AFROBOOST</button>
+<div id="log"></div>
+
+<script>
+var results = document.getElementById('results');
+var logEl = document.getElementById('log');
+var installBtn = document.getElementById('installBtn');
+var deferredPrompt = null;
+
+function log(msg, type) {
+  var line = document.createElement('div');
+  line.className = 'logline';
+  var time = new Date().toLocaleTimeString();
+  var cls = type === 'ok' ? 'logok' : type === 'err' ? 'logerr' : type === 'warn' ? 'logwarn' : '';
+  line.innerHTML = '<span class="logtime">' + time + '</span> <span class="' + cls + '">' + msg + '</span>';
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function addResult(label, value, status) {
+  var div = document.createElement('div');
+  div.className = 'test ' + status;
+  div.innerHTML = '<div class="label">' + label + '</div><div class="value">' + value + '</div>';
+  results.appendChild(div);
+}
+
+// Device info
+var ua = navigator.userAgent;
+var isAndroid = /Android/.test(ua);
+var isSamsung = /Samsung|SM-/.test(ua);
+var chromeMatch = ua.match(/Chrome\/(\d+)/);
+var chromeVer = chromeMatch ? chromeMatch[1] : 'N/A';
+var androidMatch = ua.match(/Android\s([\d.]+)/);
+var androidVer = androidMatch ? androidMatch[1] : 'N/A';
+
+addResult('Appareil', (isSamsung ? 'Samsung ' : '') + 'Android ' + androidVer + ' | Chrome ' + chromeVer, 'info');
+addResult('User-Agent', ua, 'info');
+addResult('Standalone mode', window.matchMedia('(display-mode: standalone)').matches ? 'OUI (deja installe)' : 'NON (navigateur)', window.matchMedia('(display-mode: standalone)').matches ? 'warn' : 'pass');
+
+// HTTPS
+addResult('HTTPS', location.protocol === 'https:' ? 'OUI' : 'NON', location.protocol === 'https:' ? 'pass' : 'fail');
+
+// Manifest link
+var manifestLink = document.querySelector('link[rel="manifest"]');
+// We don't have a manifest link on this page, so we check the main page's manifest
+log('Verification du manifest...', 'ok');
+
+// Check manifest fetch
+fetch('/manifest.json', { cache: 'no-store' }).then(function(r) {
+  var ct = r.headers.get('content-type') || 'N/A';
+  var cc = r.headers.get('cache-control') || 'N/A';
+  addResult('Manifest status', r.status + ' ' + r.statusText, r.ok ? 'pass' : 'fail');
+  addResult('Manifest Content-Type', ct, ct.indexOf('manifest') !== -1 ? 'pass' : 'warn');
+  addResult('Manifest Cache-Control', cc, cc.indexOf('public') !== -1 ? 'pass' : 'fail');
+  return r.json();
+}).then(function(m) {
+  addResult('Manifest name', m.name || 'MANQUANT', m.name ? 'pass' : 'fail');
+  addResult('Manifest short_name', m.short_name || 'MANQUANT', m.short_name ? 'pass' : 'fail');
+  addResult('Manifest display', m.display || 'MANQUANT', m.display === 'standalone' ? 'pass' : 'fail');
+  addResult('Manifest start_url', m.start_url || 'MANQUANT', m.start_url ? 'pass' : 'fail');
+  addResult('Manifest id', m.id || 'ABSENT', m.id ? 'pass' : 'warn');
+  addResult('Manifest icons', m.icons ? m.icons.length + ' icones' : 'AUCUNE', m.icons && m.icons.length >= 2 ? 'pass' : 'fail');
+
+  if (m.icons) {
+    var hasMaskable = false;
+    var has192 = false;
+    var has512 = false;
+    for (var i = 0; i < m.icons.length; i++) {
+      var icon = m.icons[i];
+      if (icon.purpose === 'maskable') hasMaskable = true;
+      if (icon.sizes === '192x192') has192 = true;
+      if (icon.sizes === '512x512') has512 = true;
+    }
+    addResult('Icon 192x192', has192 ? 'OUI' : 'MANQUANT', has192 ? 'pass' : 'fail');
+    addResult('Icon 512x512', has512 ? 'OUI' : 'MANQUANT', has512 ? 'pass' : 'fail');
+    addResult('Icon maskable', hasMaskable ? 'OUI' : 'ABSENT', hasMaskable ? 'pass' : 'warn');
+
+    // Test each icon
+    for (var j = 0; j < m.icons.length; j++) {
+      (function(icon) {
+        var iconUrl = icon.src;
+        fetch(iconUrl, { method: 'HEAD', cache: 'no-store' }).then(function(r) {
+          var iconCt = r.headers.get('content-type') || 'N/A';
+          var iconCc = r.headers.get('cache-control') || 'N/A';
+          var iconSize = r.headers.get('content-length') || '?';
+          addResult('Icon ' + icon.sizes + ' (' + icon.purpose + ')',
+            'status=' + r.status + ' type=' + iconCt + ' cache=' + iconCc + ' size=' + iconSize + 'B',
+            r.ok && iconCt.indexOf('image') !== -1 ? 'pass' : 'fail');
+          log('Icon ' + icon.src + ': ' + r.status + ' ' + iconCt + ' CC=' + iconCc, r.ok ? 'ok' : 'err');
+        }).catch(function(e) {
+          addResult('Icon ' + icon.sizes, 'ERREUR: ' + e.message, 'fail');
+          log('Icon ' + icon.src + ' ERREUR: ' + e.message, 'err');
+        });
+      })(m.icons[j]);
+    }
+  }
+  log('Manifest OK: ' + m.name + ' | ' + (m.icons ? m.icons.length : 0) + ' icons', 'ok');
+}).catch(function(e) {
+  addResult('Manifest', 'ERREUR: ' + e.message, 'fail');
+  log('Manifest ERREUR: ' + e.message, 'err');
+});
+
+// Service Worker
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistration().then(function(reg) {
+    if (reg) {
+      addResult('Service Worker', 'Enregistre | scope=' + reg.scope, 'pass');
+      if (reg.active) {
+        addResult('SW actif', reg.active.scriptURL, 'pass');
+        log('SW actif: ' + reg.active.scriptURL, 'ok');
+      }
+      if (reg.waiting) {
+        addResult('SW en attente', 'OUI — une mise a jour attend', 'warn');
+        log('SW en attente detecte', 'warn');
+      }
+    } else {
+      addResult('Service Worker', 'NON ENREGISTRE', 'fail');
+      log('Pas de SW enregistre', 'err');
+    }
+  });
+} else {
+  addResult('Service Worker', 'NON SUPPORTE', 'fail');
+}
+
+// beforeinstallprompt
+var promptFired = false;
+window.addEventListener('beforeinstallprompt', function(e) {
+  e.preventDefault();
+  deferredPrompt = e;
+  promptFired = true;
+  addResult('beforeinstallprompt', 'CAPTURE ! Le bouton install va fonctionner', 'pass');
+  log('beforeinstallprompt CAPTURE !', 'ok');
+  installBtn.className = 'show';
+});
+
+// Check if already captured globally
+if (window.__pwaInstallPrompt) {
+  deferredPrompt = window.__pwaInstallPrompt;
+  promptFired = true;
+  addResult('beforeinstallprompt (global)', 'Deja capture depuis la page principale', 'pass');
+  installBtn.className = 'show';
+}
+
+// Wait 5 seconds then report if not fired
+setTimeout(function() {
+  if (!promptFired) {
+    addResult('beforeinstallprompt', 'PAS RECU apres 5s — Chrome ne propose pas install. Causes possibles: app deja installee, prompt refuse recemment, ou criteres non remplis', 'warn');
+    log('beforeinstallprompt NON recu apres 5s', 'warn');
+  }
+
+  // Check if app is already installed via getInstalledRelatedApps
+  if ('getInstalledRelatedApps' in navigator) {
+    navigator.getInstalledRelatedApps().then(function(apps) {
+      addResult('Apps installees detectees', apps.length > 0 ? apps.length + ' app(s): ' + JSON.stringify(apps) : 'Aucune (0)', apps.length > 0 ? 'warn' : 'info');
+      log('Apps installees: ' + apps.length, apps.length > 0 ? 'warn' : 'ok');
+    }).catch(function(e) {
+      addResult('getInstalledRelatedApps', 'Non supporte ou erreur: ' + e.message, 'info');
+    });
+  }
+}, 5000);
+
+// Install button handler
+installBtn.addEventListener('click', function() {
+  if (deferredPrompt) {
+    log('Lancement du prompt install...', 'ok');
+    deferredPrompt.prompt();
+    deferredPrompt.userChoice.then(function(result) {
+      log('Resultat install: ' + result.outcome, result.outcome === 'accepted' ? 'ok' : 'warn');
+      addResult('Resultat installation', result.outcome === 'accepted' ? 'ACCEPTE par utilisateur' : 'REFUSE par utilisateur', result.outcome === 'accepted' ? 'pass' : 'warn');
+      deferredPrompt = null;
+      installBtn.style.display = 'none';
+    });
+  }
+});
+
+// Google Play Services check (indirect)
+log('Chrome ' + chromeVer + ' | Android ' + androidVer + (isSamsung ? ' | Samsung' : ''), 'ok');
+log('Diagnostic en cours... les resultats apparaissent ci-dessus', 'ok');
+
+// Network connectivity test to Google
+fetch('https://fonts.googleapis.com/css?family=Roboto', { mode: 'no-cors', cache: 'no-store' }).then(function() {
+  addResult('Connexion Google', 'OK — Google accessible', 'pass');
+  log('Google accessible', 'ok');
+}).catch(function() {
+  addResult('Connexion Google', 'ECHEC — probleme de connexion a Google', 'fail');
+  log('Google NON accessible', 'err');
+});
+</script>
+</body>
+</html>
