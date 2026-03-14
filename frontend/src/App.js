@@ -155,6 +155,7 @@ const translations = {
     conceptDefault: "Le concept Afroboost : cardio + danse afrobeat + casques audio immersifs. Un entraînement fun, énergétique et accessible à tous.",
     chooseSession: "Choisissez votre session",
     chooseOffer: "Choisissez votre offre",
+    selectSessionFirst: "Sélectionnez une session et des dates pour réserver",
     yourInfo: "Vos informations",
     fullName: "Nom complet",
     emailRequired: "Email (obligatoire)",
@@ -305,6 +306,7 @@ const translations = {
     conceptDefault: "The Afroboost concept: cardio + afrobeat dance + immersive audio headsets. A fun, energetic workout for everyone.",
     chooseSession: "Choose your session",
     chooseOffer: "Choose your offer",
+    selectSessionFirst: "Select a session and dates to book",
     yourInfo: "Your information",
     fullName: "Full name",
     emailRequired: "Email (required)",
@@ -2223,7 +2225,7 @@ function App() {
   const [selectedAudioTracks, setSelectedAudioTracks] = useState([]); // v57: sélection multiple audio
   const [audioLightbox, setAudioLightbox] = useState(null); // v57: modale miniature audio {track}
   const [paymentLinks, setPaymentLinks] = useState({ stripe: "", paypal: "", twint: "", coachWhatsapp: "" });
-  const [concept, setConcept] = useState({ appName: "Afroboost", description: "", heroImageUrl: "", logoUrl: "", faviconUrl: "", termsText: "", googleReviewsUrl: "", defaultLandingSection: "sessions", externalLink1Title: "", externalLink1Url: "", externalLink2Title: "", externalLink2Url: "", paymentTwint: false, paymentPaypal: false, paymentCreditCard: false, eventPosterEnabled: false, eventPosterMediaUrl: "" });
+  const [concept, setConcept] = useState({ appName: "Afroboost", description: "", heroImageUrl: "", logoUrl: "", faviconUrl: "", termsText: "", googleReviewsUrl: "", defaultLandingSection: "sessions", vitrineSectionOrder: "sessions-first", externalLink1Title: "", externalLink1Url: "", externalLink2Title: "", externalLink2Url: "", paymentTwint: false, paymentPaypal: false, paymentCreditCard: false, eventPosterEnabled: false, eventPosterMediaUrl: "" });
   const [showEventPoster, setShowEventPoster] = useState(false);
   const [discountCodes, setDiscountCodes] = useState([]);
   // v104: FAQ homepage
@@ -4335,64 +4337,81 @@ function App() {
           </div>
         )}
 
-        {/* Section Sessions - Masquée si filtre Shop actif */}
-        {activeFilter !== 'shop' && visibleCourses.length > 0 && (
-          <div id="sessions-section" className="mb-8 fade-in-section" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
-            <h2 className="font-semibold mb-4 text-white" style={{ fontSize: '18px' }}>{t('chooseSession')}</h2>
-            {/* Container avec scroll pour mobile - scrollbar rose fine 4px */}
-            <div 
-              className="space-y-4 sessions-scrollbar" 
-              style={{ maxHeight: '400px', overflowY: 'auto', paddingRight: '8px', background: 'transparent' }}
-            >
-              {visibleCourses.map(course => (
-                <div 
-                  key={course.id} 
-                  className={`course-card rounded-xl p-5 ${selectedCourse?.id === course.id ? 'selected' : ''}`} 
-                  data-testid={`course-card-${course.id}`}
-                  style={{ 
-                    background: selectedCourse?.id === course.id ? 'rgba(217, 28, 210, 0.08)' : 'transparent',
-                    border: 'none',
-                    borderLeft: selectedCourse?.id === course.id ? '2px solid #d91cd2' : 'none',
-                    borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-                    boxShadow: 'none'
-                  }}
-                >
-                  <h3 className="font-semibold text-white">{course.name}</h3>
-                  <div className="flex items-center gap-2 text-xs text-white opacity-60 mb-1">
-                    <LocationIcon />
-                    <span>{course.locationName}</span>
-                    {course.mapsUrl && (
-                      <a href={course.mapsUrl} target="_blank" rel="noopener noreferrer" className="ml-2 flex items-center gap-1" style={{ color: '#8b5cf6' }}
-                        onClick={(e) => e.stopPropagation()}>
-                        <LocationIcon /> Maps
-                      </a>
-                    )}
-                  </div>
-                  {renderDates(course)}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* =====================================================
-            SECTION OFFRES/SERVICES - Affichée si cours + dates sélectionnées
+            V119: SECTIONS DYNAMIQUES — Ordre configurable via concept.vitrineSectionOrder
+            'offers-first' = Offres puis Sessions, 'sessions-first' = Sessions puis Offres (défaut)
             ===================================================== */}
-        {selectedCourse && selectedDates.length > 0 && filteredServices.length > 0 && (
-          <div id="offers-section" className="mb-8 fade-in-section">
-            <h2 className="font-semibold mb-2 text-white" style={{ fontSize: '18px' }}>{t('chooseOffer')}</h2>
-            
-            <p className="text-sm mb-4" style={{ color: '#d91cd2' }}>
-              👉 Sélectionnez une offre pour continuer
-            </p>
-            
-            <OffersSliderAutoPlay 
-              offers={filteredServices}
-              selectedOffer={selectedOffer}
-              onSelectOffer={handleSelectOffer}
-            />
-          </div>
-        )}
+        {(() => {
+          const isOffersFirst = concept.vitrineSectionOrder === 'offers-first';
+
+          // --- BLOC SESSIONS ---
+          const sessionsBlock = activeFilter !== 'shop' && visibleCourses.length > 0 && (
+            <div key="sessions-block" id="sessions-section" className="mb-8 fade-in-section" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
+              <h2 className="font-semibold mb-4 text-white" style={{ fontSize: '18px' }}>{t('chooseSession')}</h2>
+              {/* Container avec scroll pour mobile - scrollbar rose fine 4px */}
+              <div
+                className="space-y-4 sessions-scrollbar"
+                style={{ maxHeight: '400px', overflowY: 'auto', paddingRight: '8px', background: 'transparent' }}
+              >
+                {visibleCourses.map(course => (
+                  <div
+                    key={course.id}
+                    className={`course-card rounded-xl p-5 ${selectedCourse?.id === course.id ? 'selected' : ''}`}
+                    data-testid={`course-card-${course.id}`}
+                    style={{
+                      background: selectedCourse?.id === course.id ? 'rgba(217, 28, 210, 0.08)' : 'transparent',
+                      border: 'none',
+                      borderLeft: selectedCourse?.id === course.id ? '2px solid #d91cd2' : 'none',
+                      borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                      boxShadow: 'none'
+                    }}
+                  >
+                    <h3 className="font-semibold text-white">{course.name}</h3>
+                    <div className="flex items-center gap-2 text-xs text-white opacity-60 mb-1">
+                      <LocationIcon />
+                      <span>{course.locationName}</span>
+                      {course.mapsUrl && (
+                        <a href={course.mapsUrl} target="_blank" rel="noopener noreferrer" className="ml-2 flex items-center gap-1" style={{ color: '#8b5cf6' }}
+                          onClick={(e) => e.stopPropagation()}>
+                          <LocationIcon /> Maps
+                        </a>
+                      )}
+                    </div>
+                    {renderDates(course)}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+
+          // --- BLOC OFFRES (V119: toujours visible si des offres existent, pas besoin de sélectionner un cours) ---
+          const offersBlock = activeFilter !== 'shop' && filteredServices.length > 0 && (
+            <div key="offers-block" id="offers-section" className="mb-8 fade-in-section">
+              <h2 className="font-semibold mb-2 text-white" style={{ fontSize: '18px' }}>{t('chooseOffer')}</h2>
+
+              {!selectedCourse || selectedDates.length === 0 ? (
+                <p className="text-sm mb-4" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                  👇 {t('selectSessionFirst') || 'Sélectionnez une session et des dates pour réserver'}
+                </p>
+              ) : (
+                <p className="text-sm mb-4" style={{ color: '#d91cd2' }}>
+                  👉 Sélectionnez une offre pour continuer
+                </p>
+              )}
+
+              <OffersSliderAutoPlay
+                offers={filteredServices}
+                selectedOffer={selectedOffer}
+                onSelectOffer={handleSelectOffer}
+              />
+            </div>
+          );
+
+          // V119: Rendu dynamique selon l'ordre choisi
+          return isOffersFirst
+            ? <>{offersBlock}{sessionsBlock}</>
+            : <>{sessionsBlock}{offersBlock}</>;
+        })()}
 
         {/* =====================================================
             BOUTON EXPERIENCE AUDIO IMMERSIVE

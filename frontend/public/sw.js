@@ -1,9 +1,9 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v118';
-// V118: Meta Cloud API WhatsApp Business — envoi direct via graph.facebook.com
-// formatage suisse +41, statuts précis (Échoué/Partiel), polling temps réel 3s
+const CACHE_NAME = 'afroboost-v119';
+// V119: Section Offres toujours visible + ordre configurable (sessions-first / offers-first)
+// Dashboard toggle pour super admin et partenaires
 
 // Installation â skip waiting pour activer immÃ©diatement
 self.addEventListener('install', (event) => {

@@ -603,6 +603,7 @@ class Concept(BaseModel):
     termsTextPartners: str = ""  # V93.6: CGP - Conditions Générales Partenaires
     googleReviewsUrl: str = ""  # Lien avis Google
     defaultLandingSection: str = "sessions"  # Section d'atterrissage par défaut: "sessions", "offers", "shop"
+    vitrineSectionOrder: str = "sessions-first"  # V119: Ordre des sections vitrine: "sessions-first" ou "offers-first"
     # Liens externes
     externalLink1Title: str = ""
     externalLink1Url: str = ""
@@ -634,6 +635,7 @@ class ConceptUpdate(BaseModel):
     termsTextPartners: Optional[str] = None  # V93.6: CGP - Conditions Générales Partenaires
     googleReviewsUrl: Optional[str] = None  # Lien avis Google
     defaultLandingSection: Optional[str] = None  # Section d'atterrissage par défaut
+    vitrineSectionOrder: Optional[str] = None  # V119: Ordre des sections vitrine
     # Liens externes
     externalLink1Title: Optional[str] = None
     externalLink1Url: Optional[str] = None

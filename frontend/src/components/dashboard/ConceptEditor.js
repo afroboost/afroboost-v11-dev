@@ -691,6 +691,44 @@ const ConceptEditor = ({
           />
         </div>)}
 
+        {/* V119: Ordre des sections vitrine — sessions-first ou offers-first */}
+        {showVitrine && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+          <h3 className="text-white text-sm font-semibold mb-3">📐 Ordre des sections vitrine</h3>
+          <p className="text-white/50 text-xs mb-3">Choisissez quel bloc apparaît en premier sur la page publique</p>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setConcept({ ...concept, vitrineSectionOrder: 'sessions-first' })}
+              className="flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all"
+              style={{
+                background: (concept.vitrineSectionOrder || 'sessions-first') === 'sessions-first'
+                  ? 'linear-gradient(135deg, rgba(217, 28, 210, 0.3), rgba(139, 92, 246, 0.3))'
+                  : 'rgba(255, 255, 255, 0.06)',
+                border: (concept.vitrineSectionOrder || 'sessions-first') === 'sessions-first'
+                  ? '1px solid rgba(217, 28, 210, 0.5)'
+                  : '1px solid rgba(255, 255, 255, 0.1)',
+                color: (concept.vitrineSectionOrder || 'sessions-first') === 'sessions-first' ? '#fff' : 'rgba(255, 255, 255, 0.6)'
+              }}
+            >
+              📅 Sessions d'abord
+            </button>
+            <button
+              onClick={() => setConcept({ ...concept, vitrineSectionOrder: 'offers-first' })}
+              className="flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all"
+              style={{
+                background: concept.vitrineSectionOrder === 'offers-first'
+                  ? 'linear-gradient(135deg, rgba(217, 28, 210, 0.3), rgba(139, 92, 246, 0.3))'
+                  : 'rgba(255, 255, 255, 0.06)',
+                border: concept.vitrineSectionOrder === 'offers-first'
+                  ? '1px solid rgba(217, 28, 210, 0.5)'
+                  : '1px solid rgba(255, 255, 255, 0.1)',
+                color: concept.vitrineSectionOrder === 'offers-first' ? '#fff' : 'rgba(255, 255, 255, 0.6)'
+              }}
+            >
+              🎁 Offres d'abord
+            </button>
+          </div>
+        </div>)}
+
         {/* Liens Externes — v37.2: section vitrine */}
         {showVitrine && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <h3 className="text-white text-sm font-semibold mb-4">🔗 Liens Externes (affichés en bas de page)</h3>
