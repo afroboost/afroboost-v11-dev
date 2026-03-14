@@ -30,14 +30,14 @@
         <!-- Additional SEO -->
         <meta name="keywords" content="afroboost, fitness, casque audio, danse, afrobeat, cardio, réservation, cours" />
         <meta name="author" content="Afroboost" />
-        <meta name="version" content="127" />
+        <meta name="version" content="130" />
         <script>
-            console.log("🚀 V127 : SW résilient + auto-reset rapide");
+            console.log("🚀 V130 : force-reload quand SW se met à jour");
             // V121: Force update SW + hard reload si version obsolète
             // FIX: Utilise sessionStorage au lieu de ?_reloaded=1 pour ne pas polluer l'URL
             // (les query params empêchaient Chrome de matcher start_url et bloquer l'install PWA)
             (function() {
-                var CURRENT_VERSION = '127';
+                var CURRENT_VERSION = '130';
                 var lastVersion = '';
                 try { lastVersion = localStorage.getItem('af_app_version') || ''; } catch(e) {}
                 // Toujours forcer un update du SW
@@ -145,7 +145,7 @@
         <script>
             (function() {
                 var statusEl = document.getElementById('af-loader-status');
-                var resetKey = 'af_auto_reset_v127';
+                var resetKey = 'af_auto_reset_v130';
                 // Cacher le loader quand React monte
                 var observer = new MutationObserver(function() {
                     var root = document.getElementById('root');
@@ -342,8 +342,25 @@
                             });
                         })
                         .catch(function(e) { console.log('[V121] SW fail:', e); });
+                    // V130: Quand le SW se met à jour, recharger la page pour servir le nouveau contenu
+                    // Empêche l'écran noir sur les PWA installées avec un ancien SW
+                    var refreshing = false;
                     navigator.serviceWorker.addEventListener('controllerchange', function() {
-                        console.log('[V121] Controller changed — SW update complete');
+                        console.log('[V130] Controller changed — reload pour nouveau contenu');
+                        if (!refreshing) {
+                            refreshing = true;
+                            window.location.reload();
+                        }
+                    });
+                    // V130: Écouter les messages du SW pour force-reload
+                    navigator.serviceWorker.addEventListener('message', function(event) {
+                        if (event.data && event.data.type === 'SW_UPDATED') {
+                            console.log('[V130] SW mis à jour vers', event.data.version, '— reload');
+                            if (!refreshing) {
+                                refreshing = true;
+                                window.location.reload();
+                            }
+                        }
                     });
                 });
             }

@@ -3,7 +3,7 @@
 // V124: Réécriture complète en ES5 (pas de const/let/arrow/optional chaining)
 // pour compatibilité maximale avec les anciens navigateurs mobiles
 
-var CACHE_NAME = 'afroboost-v129';
+var CACHE_NAME = 'afroboost-v130';
 
 // V128: Pre-cache résilient — l'installation du SW ne doit JAMAIS échouer
 // Sinon l'ancien SW cassé (V120 avec syntaxe ES6) reste actif = écran noir
@@ -51,7 +51,15 @@ self.addEventListener('activate', function(event) {
           })
       );
     }).then(function() {
-      return clients.claim();
+      return self.clients.claim();
+    }).then(function() {
+      // V130: Forcer le reload de tous les clients (PWA installées incluses)
+      // Quand le nouveau SW remplace l'ancien, recharger pour servir le nouveau HTML
+      return self.clients.matchAll({ type: 'window' }).then(function(allClients) {
+        allClients.forEach(function(client) {
+          client.postMessage({ type: 'SW_UPDATED', version: CACHE_NAME });
+        });
+      });
     })
   );
 });
