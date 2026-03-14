@@ -12,6 +12,7 @@
         p { font-size: 14px; color: #aaa; margin-bottom: 24px; line-height: 1.5; }
         .status { background: #111; border: 1px solid #333; border-radius: 12px; padding: 20px; margin-bottom: 20px; text-align: left; font-size: 13px; line-height: 1.8; }
         .ok { color: #4ade80; }
+        .err { color: #f87171; }
         .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #555; border-top-color: #d91cd2; border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 8px; vertical-align: middle; }
         @keyframes spin { to { transform: rotate(360deg); } }
         .btn { display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #8b5cf6, #d91cd2); color: #fff; font-size: 16px; font-weight: 600; border: none; border-radius: 12px; cursor: pointer; text-decoration: none; margin-top: 12px; }
@@ -20,64 +21,83 @@
 <body>
     <div class="container">
         <h1>Reset Afroboost</h1>
-        <p>Nettoyage complet du cache et du Service Worker...</p>
+        <p>Nettoyage complet — le header HTTP Clear-Site-Data a déjà tout nettoyé côté navigateur. Vérification JS en cours...</p>
         <div class="status" id="status">
-            <div><span class="spinner"></span> Désinscription des Service Workers...</div>
+            <div><span class="spinner"></span> Nettoyage en cours...</div>
+        </div>
+        <div id="done-section" style="display:none;">
+            <a href="/" class="btn">Ouvrir Afroboost</a>
         </div>
     </div>
     <script>
         var statusEl = document.getElementById('status');
-        function log(msg) {
+        function log(msg, isError) {
             var div = document.createElement('div');
-            div.className = 'ok';
-            div.textContent = '✓ ' + msg;
+            div.className = isError ? 'err' : 'ok';
+            div.textContent = (isError ? '✗ ' : '✓ ') + msg;
             statusEl.appendChild(div);
         }
-        (async function() {
+
+        // ES5 compatible — pas d'async/await
+        function doReset() {
+            var tasks = [];
+
             // 1. Unregister ALL service workers
-            try {
-                if ('serviceWorker' in navigator) {
-                    var regs = await navigator.serviceWorker.getRegistrations();
-                    for (var i = 0; i < regs.length; i++) {
-                        await regs[i].unregister();
-                    }
-                    log(regs.length + ' Service Worker(s) désinscrits');
-                } else {
-                    log('Pas de Service Worker supporté');
-                }
-            } catch(e) { log('SW erreur: ' + e.message); }
+            if ('serviceWorker' in navigator) {
+                tasks.push(
+                    navigator.serviceWorker.getRegistrations().then(function(regs) {
+                        var unregs = regs.map(function(r) { return r.unregister(); });
+                        return Promise.all(unregs).then(function() {
+                            log(regs.length + ' Service Worker(s) désinscrits');
+                        });
+                    }).catch(function(e) { log('SW erreur: ' + e.message, true); })
+                );
+            } else {
+                log('Pas de Service Worker supporté');
+            }
 
             // 2. Delete ALL caches
-            try {
-                if ('caches' in window) {
-                    var names = await caches.keys();
-                    for (var j = 0; j < names.length; j++) {
-                        await caches.delete(names[j]);
-                    }
-                    log(names.length + ' cache(s) supprimés');
-                } else {
-                    log('Pas de Cache API');
-                }
-            } catch(e) { log('Cache erreur: ' + e.message); }
+            if ('caches' in window) {
+                tasks.push(
+                    caches.keys().then(function(names) {
+                        var dels = names.map(function(n) { return caches.delete(n); });
+                        return Promise.all(dels).then(function() {
+                            log(names.length + ' cache(s) supprimés');
+                        });
+                    }).catch(function(e) { log('Cache erreur: ' + e.message, true); })
+                );
+            }
 
-            // 3. Clear localStorage
-            try {
-                localStorage.clear();
-                log('localStorage vidé');
-            } catch(e) { log('localStorage erreur: ' + e.message); }
+            // 3. Clear storage
+            try { localStorage.clear(); log('localStorage vidé'); } catch(e) { log('localStorage: ' + e.message, true); }
+            try { sessionStorage.clear(); log('sessionStorage vidé'); } catch(e) {}
 
-            // 4. Clear sessionStorage
-            try {
-                sessionStorage.clear();
-                log('sessionStorage vidé');
-            } catch(e) {}
+            // 4. Clear IndexedDB databases
+            if (window.indexedDB && window.indexedDB.databases) {
+                tasks.push(
+                    window.indexedDB.databases().then(function(dbs) {
+                        dbs.forEach(function(db) {
+                            window.indexedDB.deleteDatabase(db.name);
+                        });
+                        log(dbs.length + ' base(s) IndexedDB supprimées');
+                    }).catch(function(e) { log('IndexedDB: ' + e.message, true); })
+                );
+            }
 
-            // 5. Done — redirect
-            log('Nettoyage terminé ! Redirection dans 3s...');
-            setTimeout(function() {
-                window.location.replace('/');
-            }, 3000);
-        })();
+            Promise.all(tasks).then(function() {
+                log('Nettoyage terminé !');
+                document.getElementById('done-section').style.display = 'block';
+                // Auto-redirect après 3s
+                setTimeout(function() {
+                    window.location.replace('/');
+                }, 3000);
+            }).catch(function() {
+                log('Nettoyage partiel — cliquez le bouton ci-dessous');
+                document.getElementById('done-section').style.display = 'block';
+            });
+        }
+
+        doReset();
     </script>
 </body>
 </html>

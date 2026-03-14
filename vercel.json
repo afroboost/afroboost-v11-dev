@@ -36,6 +36,13 @@
       ]
     },
     {
+      "source": "/reset.html",
+      "headers": [
+        { "key": "Clear-Site-Data", "value": "\"cache\", \"storage\"" },
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    },
+    {
       "source": "/(.*)",
       "headers": [
         { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
