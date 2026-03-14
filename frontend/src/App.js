@@ -1158,17 +1158,18 @@ const OfferCardSlider = ({ offer, selected, onClick }) => {
         </div>
       )}
       
-      <div 
+      {/* V119.1: Cartes agrandies, responsive, glow fin et élégant */}
+      <div
         className="flex-shrink-0 snap-start"
-        style={{ width: '300px', minWidth: '300px', padding: '4px' }}
+        style={{ width: 'min(340px, 80vw)', minWidth: 'min(340px, 80vw)', padding: '6px' }}
       >
-        <div 
+        <div
           onClick={onClick}
           className={`offer-card-slider rounded-xl overflow-visible cursor-pointer transition-all duration-300`}
           style={{
-            boxShadow: selected 
-              ? '0 0 0 3px #d91cd2, 0 0 10px rgba(217, 28, 210, 0.4)' 
-              : '0 4px 20px rgba(0,0,0,0.4)',
+            boxShadow: selected
+              ? '0 0 0 1.5px #d91cd2, 0 0 12px rgba(217, 28, 210, 0.25)'
+              : '0 0 0 1px rgba(139, 92, 246, 0.2), 0 4px 24px rgba(0,0,0,0.5)',
             border: 'none',
             transform: selected ? 'scale(1.02)' : 'scale(1)',
             background: 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(5,0,15,0.99) 100%)',
@@ -1177,35 +1178,35 @@ const OfferCardSlider = ({ offer, selected, onClick }) => {
           }}
           data-testid={`offer-card-${offer.id}`}
         >
-          {/* Image Section - 250px HEIGHT */}
-          <div style={{ position: 'relative', height: '250px', overflow: 'hidden' }}>
+          {/* Image Section — V119.1: hauteur augmentée à 220px */}
+          <div style={{ position: 'relative', height: '220px', overflow: 'hidden' }}>
             {!showDescription ? (
               <>
-                <img 
-                  src={currentImage} 
-                  alt={offer.name} 
+                <img
+                  src={currentImage}
+                  alt={offer.name}
                   className="w-full h-full"
-                  style={{ objectFit: 'cover', objectPosition: 'center', height: '250px' }}
+                  style={{ objectFit: 'cover', objectPosition: 'center', height: '220px' }}
                   onError={(e) => { e.target.src = defaultImage; }}
                 />
-                
+
                 {/* Points discrets cliquables - PAS de flèches */}
                 {hasMultipleImages && (
                   <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5" style={{ zIndex: 15 }}>
                     {images.map((_, idx) => (
-                      <div 
-                        key={idx} 
+                      <div
+                        key={idx}
                         onClick={(e) => { e.stopPropagation(); setCurrentImageIndex(idx); }}
                         className={`w-1.5 h-1.5 rounded-full cursor-pointer transition-all ${idx === currentImageIndex ? 'bg-pink-500 scale-150' : 'bg-white/40'}`}
                       />
                     ))}
                   </div>
                 )}
-                
+
                 {/* Zoom Button (Loupe) - Top Left */}
-                <div 
+                <div
                   className="absolute top-3 left-3 w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all hover:scale-110"
-                  style={{ 
+                  style={{
                     background: 'rgba(0, 0, 0, 0.6)',
                     backdropFilter: 'blur(4px)'
                   }}
@@ -1218,12 +1219,12 @@ const OfferCardSlider = ({ offer, selected, onClick }) => {
                     <path d="M11 8v6M8 11h6"/>
                   </svg>
                 </div>
-                
+
                 {/* Info Icon "i" - Top Right */}
                 {offer.description && (
-                  <div 
+                  <div
                     className="absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center cursor-pointer transition-all hover:scale-110"
-                    style={{ 
+                    style={{
                       background: 'rgba(217, 28, 210, 0.85)',
                       boxShadow: '0 0 8px rgba(217, 28, 210, 0.5)'
                     }}
@@ -1234,14 +1235,14 @@ const OfferCardSlider = ({ offer, selected, onClick }) => {
                     <span className="text-white text-sm font-bold">i</span>
                   </div>
                 )}
-                
+
                 {/* Selected indicator */}
                 {selected && (
-                  <div 
+                  <div
                     className="absolute bottom-3 left-3 px-3 py-1 rounded-full text-xs font-bold text-white flex items-center gap-1"
-                    style={{ 
-                      background: 'linear-gradient(135deg, #d91cd2 0%, #8b5cf6 100%)', 
-                      boxShadow: '0 0 15px rgba(217, 28, 210, 0.7)' 
+                    style={{
+                      background: 'linear-gradient(135deg, #d91cd2 0%, #8b5cf6 100%)',
+                      boxShadow: '0 0 15px rgba(217, 28, 210, 0.7)'
                     }}
                   >
                     <span>✓</span> Sélectionné
@@ -1249,13 +1250,13 @@ const OfferCardSlider = ({ offer, selected, onClick }) => {
                 )}
               </>
             ) : (
-              /* Description Panel */
-              <div 
-                className="w-full h-full flex flex-col justify-center p-4"
+              /* Description Panel — V119.1: overflow scroll pour texte long */
+              <div
+                className="w-full h-full flex flex-col justify-start p-5 pt-10 overflow-y-auto"
                 style={{ background: 'linear-gradient(180deg, rgba(139, 92, 246, 0.95) 0%, rgba(217, 28, 210, 0.9) 100%)' }}
               >
                 <p className="text-white text-sm leading-relaxed">{offer.description}</p>
-                <button 
+                <button
                   className="absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center bg-white/20 hover:bg-white/30 transition-all text-white"
                   onClick={toggleDescription}
                   title="Fermer"
@@ -1265,16 +1266,21 @@ const OfferCardSlider = ({ offer, selected, onClick }) => {
               </div>
             )}
           </div>
-          
-          {/* Content Section */}
-          <div className="p-4">
-            <p className="font-semibold text-white mb-2" style={{ fontSize: '17px' }}>{offer.name}</p>
+
+          {/* Content Section — V119.1: plus d'espace, extrait de description */}
+          <div className="p-4 pb-5">
+            <p className="font-semibold text-white mb-1" style={{ fontSize: '17px', lineHeight: '1.3' }}>{offer.name}</p>
+            {offer.description && !showDescription && (
+              <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.45)', lineHeight: '1.4', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                {offer.description}
+              </p>
+            )}
             <div className="flex items-baseline gap-2">
-              <span 
-                className="text-2xl font-bold" 
-                style={{ 
-                  color: '#d91cd2', 
-                  textShadow: selected ? '0 0 15px rgba(217, 28, 210, 0.6)' : 'none' 
+              <span
+                className="text-2xl font-bold"
+                style={{
+                  color: '#d91cd2',
+                  textShadow: selected ? '0 0 15px rgba(217, 28, 210, 0.6)' : 'none'
                 }}
               >
                 CHF {offer.price}.-
@@ -1300,8 +1306,8 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   
-  // Largeur d'une carte + padding
-  const CARD_WIDTH = 308; // 300px + 8px padding
+  // V119.1: Largeur carte responsive — min(340px, 80vw) + 12px padding
+  const CARD_WIDTH = typeof window !== 'undefined' ? Math.min(340, window.innerWidth * 0.8) + 12 : 352;
   const AUTO_PLAY_INTERVAL = 3500; // 3.5 secondes entre chaque slide
   
   // Auto-play effect
@@ -1369,14 +1375,16 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer }) => {
       <div 
         ref={sliderRef}
         onScroll={handleScroll}
-        className="flex gap-2 overflow-x-auto snap-x snap-mandatory pb-4 hide-scrollbar"
-        style={{ 
+        className="flex gap-1 overflow-x-auto snap-x snap-mandatory pb-4 hide-scrollbar"
+        style={{
           scrollBehavior: 'smooth',
           WebkitOverflowScrolling: 'touch',
           scrollbarWidth: 'none',
           msOverflowStyle: 'none',
-          paddingTop: '30px',  /* Espace pour que le glow ne soit pas coupé - 30px */
-          marginTop: '-10px'   /* Compense partiellement le padding pour l'alignement */
+          paddingTop: '16px',   /* V119.1: Espace réduit — glow plus fin = moins de marge nécessaire */
+          marginTop: '-6px',
+          paddingLeft: '2px',   /* V119.1: Évite le clip du glow gauche */
+          paddingRight: '2px'
         }}
         data-testid="offers-slider"
       >
