@@ -15,7 +15,7 @@
             justify-content: center;
             min-height: 100vh;
             padding: 20px;
-            overflow: hidden;
+            overflow-x: hidden;
         }
         body::before {
             content: '';
@@ -97,14 +97,14 @@
             transform: translateY(-1px);
             box-shadow: 0 4px 20px rgba(217,28,210,0.4);
         }
+        .btn-danger {
+            background: linear-gradient(135deg, #dc2626, #b91c1c);
+            box-shadow: 0 4px 24px rgba(220, 38, 38, 0.4);
+        }
         .btn-outline {
             background: transparent;
             border: 1.5px solid rgba(217,28,210,0.5);
             color: #D91CD2;
-        }
-        .btn-outline:hover {
-            background: rgba(217,28,210,0.1);
-            box-shadow: 0 4px 20px rgba(217,28,210,0.2);
         }
         .hidden { display: none; }
         .section-divider {
@@ -112,10 +112,29 @@
             background: rgba(217,28,210,0.12);
             margin: 20px 0;
         }
-        .deep-label {
-            font-size: 12px;
-            color: rgba(255,255,255,0.3);
-            margin-top: 8px;
+        .chrome-reset-box {
+            margin-top: 20px;
+            padding: 20px;
+            background: rgba(220, 38, 38, 0.06);
+            border: 2px solid rgba(220, 38, 38, 0.3);
+            border-radius: 16px;
+            text-align: left;
+        }
+        .chrome-reset-box h3 {
+            font-size: 16px;
+            color: #f87171;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+        .chrome-reset-box ol {
+            font-size: 14px;
+            color: rgba(255,255,255,0.7);
+            line-height: 2.2;
+            padding-left: 22px;
+            margin: 0;
+        }
+        .chrome-reset-box ol strong {
+            color: #D91CD2;
         }
         .success-msg {
             display: none;
@@ -133,7 +152,7 @@
 <body>
     <div class="container">
         <img src="/logo192.png" alt="Afroboost" class="logo" />
-        <h1>Mise à jour du système Afroboost</h1>
+        <h1>Mise à jour V139</h1>
         <p class="subtitle">Nettoyage du cache en cours. Redémarrage imminent.</p>
 
         <div class="progress-container">
@@ -152,62 +171,47 @@
 
         <div class="section-divider" id="divider" style="display:none;"></div>
 
-        <div id="deepSection" style="display:none;">
-            <p class="deep-label">L'application ne se lance toujours pas ?</p>
-            <button class="btn btn-outline" id="deepBtn" onclick="deepClean()">
-                Nettoyage Total
+        <!-- V139: SECTION PRINCIPALE — Reset Chrome complet pour débloquer l'installation -->
+        <div id="chromeResetSection" style="display:none;">
+            <div class="chrome-reset-box">
+                <h3>L'app ne s'installe pas ?</h3>
+                <p style="font-size: 13px; color: rgba(255,255,255,0.5); margin-bottom: 14px; text-align: center;">
+                    Chrome garde en mémoire les anciens essais.<br>
+                    Il faut effacer les données Chrome pour ce site :
+                </p>
+                <ol>
+                    <li>Ouvrez <strong>Chrome</strong> sur votre téléphone</li>
+                    <li>Tapez dans la barre d'adresse :<br>
+                        <code style="display:inline-block;margin:4px 0;padding:6px 12px;background:rgba(255,255,255,0.08);border-radius:8px;color:#D91CD2;font-size:13px;user-select:all;-webkit-user-select:all;">chrome://settings/content/all</code>
+                    </li>
+                    <li>Cherchez <strong>afroboost</strong></li>
+                    <li>Appuyez dessus, puis <strong>Supprimer les données</strong></li>
+                    <li>Revenez sur <strong>www.afroboost.com</strong></li>
+                    <li>Le bouton <strong>"Installer"</strong> apparaîtra !</li>
+                </ol>
+            </div>
+
+            <button class="btn btn-danger" id="nuclearBtn" onclick="nuclearReset()" style="margin-top: 16px; width: 100%; font-size: 17px; padding: 18px 24px; text-transform: uppercase; letter-spacing: 0.5px;">
+                RESET TOTAL + OUVRIR AFROBOOST
             </button>
+            <p style="font-size: 11px; color: rgba(255,255,255,0.3); margin-top: 6px;">
+                Purge SW + caches + stockage, puis ouvre une page fraîche
+            </p>
         </div>
 
         <div class="success-msg" id="successMsg">
             Système purifié. Vous pouvez maintenant réinstaller l'application.
         </div>
-
-        <div class="section-divider" id="divider2" style="display:none;"></div>
-
-        <!-- V137: Bouton géant RÉPARER L'ICÔNE -->
-        <div id="iconFixSection" style="display:none;">
-            <button id="iconFixBtn" onclick="fixGhostIcon()" style="
-                display: block; width: 100%; margin: 8px 0 12px;
-                padding: 18px 24px;
-                background: linear-gradient(135deg, #dc2626, #b91c1c);
-                color: #fff; font-size: 17px; font-weight: 700;
-                border: none; border-radius: 14px; cursor: pointer;
-                text-transform: uppercase; letter-spacing: 0.5px;
-                box-shadow: 0 4px 24px rgba(220, 38, 38, 0.4);
-                transition: transform 0.2s, box-shadow 0.2s;
-            ">
-                RÉPARER L'ICÔNE INVISIBLE
-            </button>
-            <p style="font-size: 11px; color: rgba(255,255,255,0.3); margin-top: 4px;">
-                Supprime toute trace de l'ancienne app pour permettre une nouvelle installation
-            </p>
-        </div>
-
-        <div id="chromeHelp" style="display:none; margin-top: 20px; padding: 16px 20px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; text-align: left;">
-            <p style="font-size: 13px; color: rgba(255,255,255,0.7); margin-bottom: 10px; font-weight: 600;">
-                Si l'icône n'apparaît toujours pas :
-            </p>
-            <ol style="font-size: 12px; color: rgba(255,255,255,0.45); line-height: 2; padding-left: 20px; margin: 0;">
-                <li>Ouvrez <strong style="color:#D91CD2">Paramètres</strong> sur votre téléphone</li>
-                <li>Allez dans <strong style="color:#D91CD2">Applications &gt; Chrome</strong></li>
-                <li>Appuyez sur <strong style="color:#D91CD2">Stockage</strong></li>
-                <li>Appuyez sur <strong style="color:#D91CD2">Supprimer les données du site</strong></li>
-                <li>Revenez sur <strong style="color:#D91CD2">afroboost.com</strong> et réinstallez</li>
-            </ol>
-        </div>
     </div>
 
     <script>
-        // ES5 compatible
+        // ES5 compatible — V139
         var statusEl = document.getElementById('status');
         var progressBar = document.getElementById('progressBar');
         var redirectMsg = document.getElementById('redirectMsg');
         var countdownEl = document.getElementById('countdown');
         var btnsEl = document.getElementById('btns');
         var dividerEl = document.getElementById('divider');
-        var deepSectionEl = document.getElementById('deepSection');
-        var successMsgEl = document.getElementById('successMsg');
         var stepsDone = 0;
         var totalSteps = 4;
 
@@ -279,64 +283,40 @@
 
             Promise.all(tasks).then(function() {
                 progressBar.style.width = '100%';
-                startCountdown();
+                showAllSections();
             }).catch(function() {
                 progressBar.style.width = '100%';
-                showButtons();
+                showAllSections();
             });
         }
 
-        function startCountdown() {
-            redirectMsg.style.display = 'block';
-            var seconds = 3;
-            countdownEl.textContent = seconds;
-            var timer = setInterval(function() {
-                seconds--;
-                if (seconds <= 0) {
-                    clearInterval(timer);
-                    countdownEl.textContent = '0';
-                    window.location.replace('/');
-                } else {
-                    countdownEl.textContent = seconds;
-                }
-            }, 1000);
-            // Après 4s, montrer les boutons + deep clean en fallback
-            setTimeout(function() { showButtons(); }, 4000);
-        }
-
-        function showButtons() {
+        function showAllSections() {
             btnsEl.classList.remove('hidden');
             dividerEl.style.display = 'block';
-            deepSectionEl.style.display = 'block';
-            document.getElementById('divider2').style.display = 'block';
-            document.getElementById('iconFixSection').style.display = 'block';
-            document.getElementById('chromeHelp').style.display = 'block';
+            document.getElementById('chromeResetSection').style.display = 'block';
         }
 
-        // V137: Réparation icône fantôme — purge totale SW + redirect avec paramètre unique
-        function fixGhostIcon() {
-            var btn = document.getElementById('iconFixBtn');
+        // V139: NUCLEAR RESET — purge maximale puis redirection fraîche
+        function nuclearReset() {
+            var btn = document.getElementById('nuclearBtn');
             btn.disabled = true;
-            btn.textContent = 'RÉPARATION EN COURS...';
+            btn.textContent = 'PURGE EN COURS...';
             btn.style.opacity = '0.6';
 
-            var fixTasks = [];
+            var tasks = [];
 
             // 1. Désenregistrer TOUS les Service Workers
             if ('serviceWorker' in navigator) {
-                fixTasks.push(
+                tasks.push(
                     navigator.serviceWorker.getRegistrations().then(function(regs) {
-                        return Promise.all(regs.map(function(r) {
-                            console.log('[V137] Unregister SW:', r.scope);
-                            return r.unregister();
-                        }));
+                        return Promise.all(regs.map(function(r) { return r.unregister(); }));
                     }).catch(function() {})
                 );
             }
 
             // 2. Purger TOUS les caches
             if ('caches' in window) {
-                fixTasks.push(
+                tasks.push(
                     caches.keys().then(function(names) {
                         return Promise.all(names.map(function(n) { return caches.delete(n); }));
                     }).catch(function() {})
@@ -349,123 +329,21 @@
 
             // 4. Purger IndexedDB
             if (window.indexedDB && window.indexedDB.databases) {
-                fixTasks.push(
+                tasks.push(
                     window.indexedDB.databases().then(function(dbs) {
                         dbs.forEach(function(db) { window.indexedDB.deleteDatabase(db.name); });
                     }).catch(function() {})
                 );
             }
 
-            // 5. Rediriger avec paramètre unique pour forcer Chrome à traiter comme nouvelle app
-            Promise.all(fixTasks).then(function() {
-                btn.textContent = 'REDIRECTION...';
-                // Le paramètre new_install + timestamp force un traitement fresh par Chrome
-                var ts = Date.now();
-                window.location.replace('/?new_install=true&t=' + ts);
-            }).catch(function() {
-                btn.textContent = 'REDIRECTION...';
-                window.location.replace('/?new_install=true&t=' + Date.now());
-            });
-        }
-
-        // === NETTOYAGE TOTAL (deepClean) ===
-        function deepClean() {
-            var deepBtn = document.getElementById('deepBtn');
-            deepBtn.disabled = true;
-            deepBtn.textContent = 'Purge en cours...';
-
-            // Reset la progress bar
-            stepsDone = 0;
-            totalSteps = 5;
-            progressBar.style.width = '0%';
-            statusEl.innerHTML = '';
-
-            var tasks = [];
-
-            // 1. Désenregistrer TOUS les SW (encore)
-            if ('serviceWorker' in navigator) {
-                tasks.push(
-                    navigator.serviceWorker.getRegistrations().then(function(regs) {
-                        return Promise.all(regs.map(function(r) { return r.unregister(); })).then(function() {
-                            log('SW: ' + regs.length + ' supprime(s) (deep)');
-                        });
-                    }).catch(function(e) { log('SW deep: ' + e.message, true); })
-                );
-            } else {
-                updateProgress();
-            }
-
-            // 2. Supprimer TOUS les caches
-            if ('caches' in window) {
-                tasks.push(
-                    caches.keys().then(function(names) {
-                        return Promise.all(names.map(function(n) { return caches.delete(n); })).then(function() {
-                            log('Caches API: ' + names.length + ' supprime(s)');
-                        });
-                    }).catch(function(e) { log('Caches: ' + e.message, true); })
-                );
-            } else {
-                updateProgress();
-            }
-
-            // 3. Vider localStorage
-            try {
-                var lsCount = localStorage.length;
-                localStorage.clear();
-                log('localStorage: ' + lsCount + ' cle(s) supprimee(s)');
-            } catch(e) { log('localStorage: ' + e.message, true); }
-
-            // 4. Vider sessionStorage
-            try {
-                sessionStorage.clear();
-                log('sessionStorage: vide');
-            } catch(e) { log('sessionStorage: ' + e.message, true); }
-
-            // 5. Supprimer TOUTES les bases IndexedDB
-            if (window.indexedDB && window.indexedDB.databases) {
-                tasks.push(
-                    window.indexedDB.databases().then(function(dbs) {
-                        var delPromises = dbs.map(function(dbInfo) {
-                            return new Promise(function(resolve) {
-                                var req = window.indexedDB.deleteDatabase(dbInfo.name);
-                                req.onsuccess = function() { resolve(true); };
-                                req.onerror = function() { resolve(false); };
-                                req.onblocked = function() {
-                                    // DB bloquée par un onglet ouvert — forcer
-                                    resolve(false);
-                                };
-                            });
-                        });
-                        return Promise.all(delPromises).then(function(results) {
-                            var ok = results.filter(function(r) { return r; }).length;
-                            log('IndexedDB: ' + ok + '/' + dbs.length + ' base(s) purgee(s)');
-                        });
-                    }).catch(function(e) { log('IndexedDB: ' + e.message, true); })
-                );
-            } else {
-                // Fallback pour navigateurs sans indexedDB.databases()
-                try {
-                    // Tenter de supprimer les DB Firebase connues
-                    var knownDBs = ['firebase-heartbeat-database', 'firebase-installations-database',
-                                    'firebaseLocalStorageDb', 'firebase-messaging-database'];
-                    knownDBs.forEach(function(name) {
-                        window.indexedDB.deleteDatabase(name);
-                    });
-                    log('IndexedDB: bases connues supprimees (fallback)');
-                } catch(e) { log('IndexedDB fallback: ' + e.message, true); }
-            }
-
+            // 5. Rediriger vers une page fraîche
             Promise.all(tasks).then(function() {
-                progressBar.style.width = '100%';
-                deepBtn.textContent = 'Purge terminee';
-                successMsgEl.style.display = 'block';
-                // Cacher redirection auto
-                redirectMsg.style.display = 'none';
+                btn.textContent = 'REDIRECTION...';
+                // Force fresh load sans SW
+                window.location.replace('/?fresh=' + Date.now());
             }).catch(function() {
-                progressBar.style.width = '100%';
-                deepBtn.textContent = 'Purge partielle';
-                successMsgEl.style.display = 'block';
-                successMsgEl.textContent = 'Nettoyage partiel effectue. Fermez et re-ouvrez le navigateur, puis revenez sur afroboost.com.';
+                btn.textContent = 'REDIRECTION...';
+                window.location.replace('/?fresh=' + Date.now());
             });
         }
 
