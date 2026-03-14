@@ -3,9 +3,9 @@
 // V124: Réécriture complète en ES5 (pas de const/let/arrow/optional chaining)
 // pour compatibilité maximale avec les anciens navigateurs mobiles
 
-var CACHE_NAME = 'afroboost-v127';
+var CACHE_NAME = 'afroboost-v128';
 
-// V127: Pre-cache résilient — l'installation du SW ne doit JAMAIS échouer
+// V128: Pre-cache résilient — l'installation du SW ne doit JAMAIS échouer
 // Sinon l'ancien SW cassé (V120 avec syntaxe ES6) reste actif = écran noir
 var PRECACHE_URLS = [
   '/',
@@ -17,10 +17,10 @@ var PRECACHE_URLS = [
 
 // Installation — TOUJOURS réussir, même si le pre-cache échoue
 self.addEventListener('install', function(event) {
-  console.log('[SW] V127 install — resilient pre-cache');
+  console.log('[SW] V128 install — resilient pre-cache');
   event.waitUntil(
     caches.open(CACHE_NAME).then(function(cache) {
-      // V127: Cache chaque URL individuellement — si une échoue, les autres continuent
+      // V128: Cache chaque URL individuellement — si une échoue, les autres continuent
       var promises = PRECACHE_URLS.map(function(url) {
         return cache.add(url).catch(function(err) {
           console.warn('[SW] Pre-cache échoué pour ' + url + ':', err);
@@ -29,7 +29,7 @@ self.addEventListener('install', function(event) {
       });
       return Promise.all(promises);
     }).catch(function(err) {
-      // V127: Même si tout le cache échoue, on installe quand même le SW
+      // V128: Même si tout le cache échoue, on installe quand même le SW
       console.warn('[SW] Cache open échoué, installation continue:', err);
     }).then(function() {
       return self.skipWaiting();
@@ -39,7 +39,7 @@ self.addEventListener('install', function(event) {
 
 // Activation — supprime TOUS les anciens caches + prend le contrôle immédiat
 self.addEventListener('activate', function(event) {
-  console.log('[SW] V127 activate — nuclear purge + claim');
+  console.log('[SW] V128 activate — nuclear purge + claim');
   event.waitUntil(
     caches.keys().then(function(cacheNames) {
       return Promise.all(

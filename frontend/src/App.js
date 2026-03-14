@@ -2624,9 +2624,7 @@ function App() {
   }, []);
 
   // PWA Install Prompt State
-  // V125: Stocker le prompt dans une ref ET un state pour ne jamais le perdre
-  const installPromptRef = useRef(null);
-  const [installPrompt, setInstallPrompt] = useState(null);
+  // V128: Simplifié — Chrome gère l'install nativement (comme avant V120)
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
 
@@ -2694,20 +2692,16 @@ function App() {
     setIsIOS(iOS);
 
     const handleBeforeInstallPrompt = (e) => {
-      e.preventDefault();
-      installPromptRef.current = e;
-      setInstallPrompt(e);
-      console.log('[V126] beforeinstallprompt capturé');
-      setShowInstallBanner(true);
+      // V128: Ne PAS appeler e.preventDefault() — laisser Chrome afficher son mini-infobar natif
+      // C'est comme avant V120 : Chrome gère l'installation tout seul
+      console.log('[V128] beforeinstallprompt — Chrome gère nativement');
     };
 
-    // V126: Quand l'app est installée, cacher la bannière définitivement
+    // V128: Quand l'app est installée, cacher la bannière iOS si visible
     const handleAppInstalled = () => {
-      console.log('[V126] App installée !');
+      console.log('[V128] App installée !');
       localStorage.setItem('af_pwa_dismissed', 'true');
       setShowInstallBanner(false);
-      installPromptRef.current = null;
-      setInstallPrompt(null);
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
@@ -2719,9 +2713,8 @@ function App() {
 
     if (isStandalone) {
       setShowInstallBanner(false);
-    } else {
-      // V126: Toujours montrer la bannière si pas installé (même sans prompt)
-      // Le bouton affichera les instructions manuelles si le prompt est absent
+    } else if (iOS) {
+      // V128: Bannière custom uniquement pour iOS (pas de mini-infobar natif sur Safari)
       const dismissed = localStorage.getItem('af_pwa_dismissed');
       if (!dismissed) {
         setShowInstallBanner(true);
@@ -2734,49 +2727,14 @@ function App() {
     };
   }, []);
 
-  // Handle PWA install button click
-  // V126: Ne cache la bannière que si l'installation est acceptée
-  const handleInstallClick = async () => {
+  // V128: Handle PWA install button click — iOS uniquement (Android = Chrome natif)
+  const handleInstallClick = () => {
     if (isIOS) {
       alert('Pour installer Afroboost sur iOS:\n\n1. Appuyez sur le bouton Partager (📤)\n2. Sélectionnez "Sur l\'écran d\'accueil"\n3. Appuyez sur "Ajouter"');
       return;
     }
-
-    // V125: Utiliser la ref comme source principale (ne se perd pas lors des re-renders)
-    const promptEvt = installPromptRef.current || installPrompt;
-
-    if (!promptEvt) {
-      console.warn('[V126] installPrompt est null — instructions manuelles');
-      alert('Pour installer Afroboost :\n\n1. Appuyez sur les 3 points (⋮) en haut à droite de Chrome\n2. Appuyez sur "Installer l\'application"\n3. Confirmez l\'installation\n\nL\'app apparaîtra dans vos applications.');
-      return;
-    }
-
-    try {
-      console.log('[V126] Affichage du prompt d\'installation...');
-      promptEvt.prompt();
-
-      const { outcome } = await promptEvt.userChoice;
-      console.log('[V126] Résultat installation:', outcome);
-
-      if (outcome === 'accepted') {
-        console.log('[V126] PWA installée avec succès !');
-        // V126: Ne cacher la bannière QUE si l'installation est acceptée
-        installPromptRef.current = null;
-        setInstallPrompt(null);
-        setShowInstallBanner(false);
-        localStorage.setItem('af_pwa_dismissed', 'true');
-      } else {
-        // V126: L'utilisateur a refusé — garder la bannière visible
-        // mais le prompt est consommé, il faudra passer par le menu Chrome
-        console.log('[V126] Installation refusée — bannière maintenue');
-        installPromptRef.current = null;
-        setInstallPrompt(null);
-        // On garde showInstallBanner = true pour montrer le fallback
-      }
-    } catch (err) {
-      console.error('[V126] Erreur installation PWA:', err);
-      alert('Pour installer Afroboost :\n\n1. Appuyez sur les 3 points (⋮) en haut à droite de Chrome\n2. Appuyez sur "Installer l\'application"\n3. Confirmez');
-    }
+    // V128: Sur Android, Chrome gère l'install nativement — instructions manuelles en fallback
+    alert('Pour installer Afroboost :\n\n1. Appuyez sur les 3 points (⋮) en haut à droite de Chrome\n2. Appuyez sur "Installer l\'application"\n3. Confirmez l\'installation\n\nL\'app apparaîtra dans vos applications.');
   };
 
   // Dismiss install banner
@@ -4136,8 +4094,7 @@ function App() {
         />
       )}
 
-      {/* PWA Install Banner */}
-      {/* V126: Bannière install — affiche instructions si prompt consommé */}
+      {/* PWA Install Banner — V128: iOS uniquement (Android = Chrome mini-infobar natif) */}
       {showInstallBanner && (
         <div
           className="fixed bottom-0 left-0 right-0 z-50 px-3 py-2"
@@ -4152,7 +4109,7 @@ function App() {
             <div className="flex items-center gap-2">
               <span className="text-sm">{isIOS ? '📤' : '📲'}</span>
               <p className="text-white text-xs opacity-80">
-                {isIOS ? 'Ajoutez Afroboost à votre écran' : (installPromptRef.current || installPrompt) ? 'Installer l\'app Afroboost' : 'Menu Chrome (⋮) → Installer l\'app'}
+                {isIOS ? 'Ajoutez Afroboost à votre écran' : 'Installer l\'app Afroboost'}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -5408,7 +5365,7 @@ function App() {
                 <span className="text-white" style={{ opacity: 0.3 }}>|</span>
               </>
             )}
-            {(installPrompt || isIOS) && !window.matchMedia('(display-mode: standalone)').matches && (
+            {!window.matchMedia('(display-mode: standalone)').matches && (
               <>
                 <button 
                   onClick={handleInstallClick}
