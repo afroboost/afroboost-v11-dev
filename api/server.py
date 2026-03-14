@@ -3015,22 +3015,26 @@ async def launch_campaign(campaign_id: str):
     
     return await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
 
-# === v11: WEBHOOK TWILIO STATUS (delivered, read) ===
+# === v11 + V114: WEBHOOK TWILIO STATUS (delivered, read, failed, undelivered) ===
 @api_router.post("/webhooks/twilio/status")
 async def twilio_status_webhook(request: Request):
     """
     Webhook Twilio pour les mises à jour de statut WhatsApp.
     Twilio envoie: queued, sent, delivered, read, failed, undelivered
+    V114: Gère les échecs asynchrones (ex: erreur 63015 sandbox) et recalcule le statut campagne.
     """
     try:
         form_data = await request.form()
         message_sid = form_data.get("MessageSid", "")
         message_status = form_data.get("MessageStatus", "")
+        error_code = form_data.get("ErrorCode", "")
+        to_phone = form_data.get("To", "").replace("whatsapp:", "")
+        from_phone = form_data.get("From", "").replace("whatsapp:", "")
 
         if not message_sid or not message_status:
             return {"ok": True}
 
-        logger.info(f"[TWILIO-WEBHOOK] SID={message_sid} Status={message_status}")
+        logger.info(f"[TWILIO-WEBHOOK-V114] 📬 SID={message_sid} Status={message_status} ErrorCode={error_code} To={to_phone}")
 
         now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -3041,7 +3045,23 @@ async def twilio_status_webhook(request: Request):
         elif message_status == "read":
             update_fields = {"results.$.readAt": now_iso, "results.$.deliveredAt": now_iso}
         elif message_status in ("failed", "undelivered"):
-            update_fields = {"results.$.status": "failed", "results.$.error": f"Twilio: {message_status}"}
+            # V114: Mapper les codes d'erreur Twilio vers des messages lisibles en français
+            error_messages = {
+                "63015": "Destinataire n'a pas rejoint le Sandbox WhatsApp (envoyez 'join everyone-goes' au +1 415 523 8886)",
+                "63016": "Session sandbox expirée (>72h) — renvoyez 'join everyone-goes'",
+                "63007": "Numéro WhatsApp non valide ou non enregistré",
+                "21610": "Destinataire a bloqué les messages",
+                "21408": "Crédits Twilio insuffisants",
+                "21211": "Numéro 'To' invalide",
+                "21614": "Numéro non compatible WhatsApp",
+            }
+            error_msg = error_messages.get(str(error_code), f"Twilio erreur {error_code}: {message_status}")
+            update_fields = {
+                "results.$.status": "failed",
+                "results.$.error": error_msg,
+                "results.$.error_code": str(error_code),
+                "results.$.failedAt": now_iso
+            }
 
         if update_fields:
             result = await db.campaigns.update_one(
@@ -3049,13 +3069,59 @@ async def twilio_status_webhook(request: Request):
                 {"$set": update_fields}
             )
             if result.modified_count > 0:
-                logger.info(f"[TWILIO-WEBHOOK] ✅ Campagne mise à jour pour SID={message_sid}: {message_status}")
+                logger.info(f"[TWILIO-WEBHOOK-V114] ✅ Résultat mis à jour pour SID={message_sid}: {message_status}")
+
+                # V114: Si échec, recalculer le statut global de la campagne
+                if message_status in ("failed", "undelivered"):
+                    campaign = await db.campaigns.find_one(
+                        {"results.sid": message_sid},
+                        {"_id": 0, "id": 1, "results": 1, "name": 1}
+                    )
+                    if campaign:
+                        campaign_id = campaign["id"]
+                        campaign_name = campaign.get("name", "")
+                        all_results = campaign.get("results", [])
+                        success_count = sum(1 for r in all_results if r.get("status") == "sent")
+                        fail_count = sum(1 for r in all_results if r.get("status") == "failed")
+
+                        if fail_count > 0 and success_count == 0:
+                            new_status = "failed"
+                        elif fail_count > 0 and success_count > 0:
+                            new_status = "partial"
+                        else:
+                            new_status = "completed"
+
+                        await db.campaigns.update_one(
+                            {"id": campaign_id},
+                            {"$set": {
+                                "status": new_status,
+                                "successCount": success_count,
+                                "failCount": fail_count,
+                                "updatedAt": now_iso
+                            }}
+                        )
+                        logger.info(f"[TWILIO-WEBHOOK-V114] 📊 Campagne '{campaign_name}' → statut: {new_status} (✅{success_count} ❌{fail_count})")
+
+                        # Enregistrer l'erreur dans campaign_errors
+                        await db.campaign_errors.insert_one({
+                            "campaign_id": campaign_id,
+                            "campaign_name": campaign_name,
+                            "error_type": "twilio_async_failure",
+                            "error_code": str(error_code),
+                            "error_message": error_msg,
+                            "message_sid": message_sid,
+                            "channel": "whatsapp",
+                            "to_phone": to_phone,
+                            "from_phone": from_phone,
+                            "twilio_status": message_status,
+                            "created_at": now_iso
+                        })
             else:
-                logger.debug(f"[TWILIO-WEBHOOK] Aucune campagne trouvée pour SID={message_sid}")
+                logger.debug(f"[TWILIO-WEBHOOK-V114] Aucune campagne trouvée pour SID={message_sid}")
 
         return {"ok": True}
     except Exception as e:
-        logger.error(f"[TWILIO-WEBHOOK] Erreur: {e}")
+        logger.error(f"[TWILIO-WEBHOOK-V114] Erreur: {e}")
         return {"ok": True}  # Toujours retourner 200 à Twilio
 
 # V112: Endpoint polling temps réel — récupérer le statut d'une campagne
@@ -5798,11 +5864,19 @@ async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = Non
         "To": f"whatsapp:{clean_to}",
         "Body": message
     }
-    
+
     if media_url:
         data["MediaUrl"] = media_url
-    
-    logger.info(f"[WHATSAPP-PROD] 📤 Envoi via {clean_from} vers {clean_to}")
+
+    # V114: StatusCallback pour recevoir les notifications d'échec asynchrones de Twilio
+    # (ex: erreur 63015 sandbox non rejoint — Twilio accepte le message en 201 puis échoue)
+    base_url = os.environ.get("VERCEL_URL", "afroboost-v11-dev-pm7l.vercel.app")
+    if not base_url.startswith("http"):
+        base_url = f"https://{base_url}"
+    status_callback_url = f"{base_url}/api/webhooks/twilio/status"
+    data["StatusCallback"] = status_callback_url
+
+    logger.info(f"[WHATSAPP-PROD] 📤 Envoi via {clean_from} vers {clean_to} (callback: {status_callback_url})")
     
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
