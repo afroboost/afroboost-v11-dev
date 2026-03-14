@@ -1,19 +1,21 @@
 // =================================================================
-// Service Worker Afroboost V138 — ES5 PUR (100% compatible Android)
+// Service Worker Afroboost V140 — ES5 PUR (100% compatible Android)
 // Pas de const, let, arrow functions, template literals, ou ES6+
 // =================================================================
 // RÈGLE D'OR : L'installation du SW ne doit JAMAIS échouer.
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v139';
-var SW_VERSION = 139;
+var CACHE_NAME = 'afroboost-v140';
+var SW_VERSION = 140;
 
 var PRECACHE_URLS = [
   '/',
   '/index.html',
   '/logo192.png',
-  '/logo512.png'
+  '/logo512.png',
+  '/logo192-maskable.png',
+  '/logo512-maskable.png'
 ];
 
 // -----------------------------------------------------------------

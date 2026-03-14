@@ -65,6 +65,23 @@
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
       ]
+    },
+    {
+      "source": "/logo(.*).png",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=86400" },
+        { "key": "Pragma", "value": "public" },
+        { "key": "Expires", "value": "" }
+      ]
+    },
+    {
+      "source": "/manifest.json",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" },
+        { "key": "Content-Type", "value": "application/manifest+json" },
+        { "key": "Pragma", "value": "public" },
+        { "key": "Expires", "value": "" }
+      ]
     }
   ]
 }
