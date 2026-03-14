@@ -2412,11 +2412,12 @@ def substitute_campaign_variables(message: str, contact: dict) -> str:
     return result
 
 
-def format_phone_e164(phone: str, default_country: str = "+33") -> str:
+def format_phone_e164(phone: str, default_country: str = "+41") -> str:
     """
-    Convertit un numéro de téléphone au format E.164 pour Twilio.
-    Ex: 0765203363 → +33765203363
-    Ex: +33765203363 → +33765203363
+    V112: Convertit un numéro de téléphone au format E.164 pour Twilio.
+    Défaut: Suisse (+41) au lieu de France (+33).
+    Ex: 0765203363 → +41765203363
+    Ex: +41765203363 → +41765203363
     """
     if not phone:
         return ""
@@ -2461,6 +2462,13 @@ async def launch_campaign(campaign_id: str):
         if not deduct_result.get("success"):
             raise HTTPException(status_code=402, detail=deduct_result.get("error", "Erreur déduction crédits"))
         logger.info(f"[CAMPAIGN-LAUNCH] 💰 {total_cost} crédits déduits pour {coach_email} ({target_count} contacts)")
+
+    # V112: Marquer immédiatement "sending" pour le suivi temps réel côté frontend
+    await db.campaigns.update_one(
+        {"id": campaign_id},
+        {"$set": {"status": "sending", "updatedAt": datetime.now(timezone.utc).isoformat()}}
+    )
+    logger.info(f"[CAMPAIGN-LAUNCH] 🔄 Statut 'sending' appliqué pour {campaign_id}")
 
     # Prepare results and tracking
     results = []
@@ -3038,6 +3046,21 @@ async def twilio_status_webhook(request: Request):
     except Exception as e:
         logger.error(f"[TWILIO-WEBHOOK] Erreur: {e}")
         return {"ok": True}  # Toujours retourner 200 à Twilio
+
+# V112: Endpoint polling temps réel — récupérer le statut d'une campagne
+@api_router.get("/campaigns/{campaign_id}/status")
+async def get_campaign_status(campaign_id: str):
+    """
+    V112: Retourne le statut actuel d'une campagne pour le polling temps réel.
+    Utilisé par le frontend pour mettre à jour l'UI sans recharger la page.
+    """
+    campaign = await db.campaigns.find_one(
+        {"id": campaign_id},
+        {"_id": 0, "id": 1, "status": 1, "results": 1, "successCount": 1, "failCount": 1, "totalCount": 1, "updatedAt": 1}
+    )
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return campaign
 
 @api_router.post("/campaigns/{campaign_id}/mark-sent")
 async def mark_campaign_sent(campaign_id: str, data: dict):
@@ -5662,19 +5685,25 @@ async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = Non
     account_sid, auth_token, from_number = await _get_twilio_config()
     
     if not account_sid or not auth_token or not from_number:
-        logger.warning("[WHATSAPP-PROD] ❌ Configuration Twilio manquante - mode simulation")
+        # V112: JAMAIS de mode simulé — erreur explicite si config manquante
+        logger.error("[WHATSAPP-V112] ❌ Configuration Twilio manquante — ENVOI IMPOSSIBLE")
         return {
-            "status": "simulated",
-            "message": f"WhatsApp simulé pour: {to_phone}",
-            "simulated": True
+            "status": "error",
+            "error": "Configuration Twilio manquante (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER non définis)",
+            "error_code": "MISSING_CONFIG"
         }
-    
-    # Formater le numéro destinataire
-    clean_to = to_phone.replace(" ", "").replace("-", "")
+
+    # V112: Formater le numéro destinataire — format international obligatoire (+41 pour la Suisse)
+    clean_to = to_phone.replace(" ", "").replace("-", "").replace(".", "")
     if not clean_to.startswith("+"):
-        clean_to = "+41" + clean_to.lstrip("0") if clean_to.startswith("0") else "+" + clean_to
-    
-    # Formater le numéro expéditeur
+        if clean_to.startswith("0"):
+            clean_to = "+41" + clean_to[1:]
+        elif clean_to.startswith("41"):
+            clean_to = "+" + clean_to
+        else:
+            clean_to = "+41" + clean_to
+
+    # V112: Forcer le numéro sandbox Twilio comme expéditeur
     clean_from = from_number if from_number.startswith("+") else "+" + from_number
     
     # Construire la requête Twilio

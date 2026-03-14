@@ -2424,6 +2424,27 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   }, [tab]);
 
+  // V112: Polling rapide temps réel — quand une campagne est en "sending", poll toutes les 3s
+  useEffect(() => {
+    const sendingCampaigns = campaigns.filter(c => c.status === 'sending');
+    if (sendingCampaigns.length === 0) return;
+
+    const pollSending = async () => {
+      try {
+        for (const sc of sendingCampaigns) {
+          const res = await axios.get(`${API}/campaigns/${sc.id}/status`);
+          if (res.data && res.data.status !== sc.status) {
+            // Statut changé → mettre à jour dans la liste
+            setCampaigns(prev => prev.map(c => c.id === sc.id ? { ...c, ...res.data } : c));
+          }
+        }
+      } catch (err) { /* silencieux */ }
+    };
+
+    const fastPollInterval = setInterval(pollSending, 3000); // 3s
+    return () => clearInterval(fastPollInterval);
+  }, [campaigns.filter(c => c.status === 'sending').map(c => c.id).join(',')]);
+
   // === RÉSOUDRE LA THUMBNAIL POUR L'APERÇU ===
   // Si mediaUrl est un lien interne /v/slug, on récupère la vraie thumbnail
   useEffect(() => {
@@ -3807,12 +3828,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         console.warn('PostHog bloqué sur log mais envoi maintenu:', logErr);
       }
 
+      // V112: Marquer immédiatement "sending" côté UI pour feedback temps réel
+      setCampaigns(prev => prev.map(c => c.id === campaignId ? { ...c, status: 'sending' } : c));
+
       // 2. Préparer d'abord la campagne côté backend
       const launchRes = await axios.post(`${API}/campaigns/${campaignId}/launch`);
       const launchedCampaign = launchRes.data;
-      
+
       try {
-        setCampaigns(campaigns.map(c => c.id === campaignId ? launchedCampaign : c));
+        setCampaigns(prev => prev.map(c => c.id === campaignId ? launchedCampaign : c));
       } catch (stateErr) {
         console.warn('PostHog bloqué sur setState mais envoi maintenu:', stateErr);
       }

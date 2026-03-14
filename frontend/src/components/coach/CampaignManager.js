@@ -306,6 +306,35 @@ const CampaignManager = ({
         coachEmail={coachEmail}
       />
 
+      {/* V112: Rappel sandbox WhatsApp pour Super Admin */}
+      {isSuperAdmin && (
+        <div style={{
+          marginBottom: '16px', padding: '12px 16px', borderRadius: '10px',
+          background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)',
+          display: 'flex', alignItems: 'flex-start', gap: '10px'
+        }}>
+          <span style={{ fontSize: '20px', flexShrink: 0 }}>📱</span>
+          <div>
+            <p style={{ color: '#4ade80', fontWeight: 600, fontSize: '13px', margin: '0 0 4px' }}>
+              WhatsApp Sandbox (Twilio)
+            </p>
+            <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '12px', margin: '0 0 6px', lineHeight: 1.5 }}>
+              Pour recevoir les messages WhatsApp test, chaque destinataire doit d'abord envoyer
+              <strong style={{ color: '#fbbf24' }}> join everyone-goes </strong>
+              au <strong style={{ color: '#60a5fa' }}>+1 415 523 8886</strong> via WhatsApp.
+            </p>
+            <a
+              href="https://wa.me/14155238886?text=join%20everyone-goes"
+              target="_blank" rel="noopener noreferrer"
+              style={{
+                display: 'inline-block', padding: '5px 14px', borderRadius: '6px', fontSize: '11px',
+                fontWeight: 600, background: '#25D366', color: '#fff', textDecoration: 'none'
+              }}
+            >Rejoindre le Sandbox</a>
+          </div>
+        </div>
+      )}
+
       {/* === HISTORIQUE DES CAMPAGNES === */}
       <div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
