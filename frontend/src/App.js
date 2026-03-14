@@ -2634,6 +2634,7 @@ function App() {
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [installStatus, setInstallStatus] = useState(null); // null | 'waiting' | 'installing' | 'success'
 
   // v8.9.3: Écouter l'événement "openBecomeCoach" depuis le ChatWidget
   useEffect(() => {
@@ -2715,10 +2716,13 @@ function App() {
     };
 
     const handleAppInstalled = () => {
-      console.log('[V139] App installée !');
+      console.log('[V141] App installée !');
       window.__pwaInstallPrompt = null;
       setShowInstallBanner(false);
       setDeferredPrompt(null);
+      setInstallStatus('success');
+      // Masquer le succès après 5 secondes
+      setTimeout(function() { setInstallStatus(null); }, 5000);
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
@@ -2755,38 +2759,40 @@ function App() {
     };
   }, []);
 
-  // V139: Handle PWA install button click — triple vérification du prompt
+  // V141: Handle PWA install button click — avec overlay de progression
   const handleInstallClick = async () => {
     if (isIOS) {
-      alert('Pour installer Afroboost sur iOS:\n\n1. Appuyez sur le bouton Partager (📤)\n2. Sélectionnez "Sur l\'écran d\'accueil"\n3. Appuyez sur "Ajouter"');
+      setInstallStatus('waiting');
       return;
     }
 
-    // V139: Triple source pour le prompt — state React, global, ou fallback
+    // Triple source pour le prompt — state React, global, ou fallback
     const prompt = deferredPrompt || window.__pwaInstallPrompt;
 
     if (prompt) {
       try {
-        console.log('[V139] Affichage du prompt natif...');
+        setInstallStatus('installing');
         prompt.prompt();
         var result = await prompt.userChoice;
-        console.log('[V139] Résultat:', result.outcome);
         if (result.outcome === 'accepted') {
+          // L'event 'appinstalled' va gérer le succès
+          // Mais montrons 'installing' en attendant
           setShowInstallBanner(false);
+        } else {
+          setInstallStatus(null);
         }
-        // Le prompt est consommé dans tous les cas
         setDeferredPrompt(null);
         window.__pwaInstallPrompt = null;
       } catch (err) {
         console.error('[V141] Erreur prompt:', err);
         setDeferredPrompt(null);
         window.__pwaInstallPrompt = null;
-        // Si le prompt est invalide/expiré, tenter via les instructions
-        alert('Pour installer Afroboost :\n\n1. Appuyez sur les 3 points (⋮) en haut à droite de Chrome\n2. Appuyez sur "Installer l\'application"\n3. Confirmez l\'installation\n\n📱 Samsung : Vérifiez le tiroir d\'applications après installation !');
+        // Fallback: afficher les instructions visuelles
+        setInstallStatus('waiting');
       }
     } else {
-      // Dernier fallback: instructions manuelles + Samsung tip
-      alert('Pour installer Afroboost :\n\n1. Appuyez sur les 3 points (⋮) en haut à droite de Chrome\n2. Appuyez sur "Installer l\'application"\n3. Confirmez l\'installation\n\n📱 Samsung : Après installation, l\'app peut apparaître dans le tiroir d\'applications (glissez vers le haut depuis l\'écran d\'accueil) plutôt que sur l\'écran d\'accueil.');
+      // Pas de prompt disponible — afficher l'overlay d'instructions
+      setInstallStatus('waiting');
     }
   };
 
@@ -4214,6 +4220,134 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* V141: Overlay d'installation PWA — instructions visuelles + barre de progression */}
+      {installStatus && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(8px)' }}
+          onClick={() => { if (installStatus !== 'installing') setInstallStatus(null); }}
+        >
+          <div
+            className="mx-4 rounded-2xl p-6 max-w-sm w-full text-center"
+            style={{ background: 'linear-gradient(145deg, #1a1a2e, #16213e)', border: '1px solid rgba(217,28,210,0.3)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {installStatus === 'waiting' && !isIOS && (
+              <>
+                <div className="text-4xl mb-4">📲</div>
+                <h3 className="text-white text-lg font-bold mb-3">Installer Afroboost</h3>
+                <div className="text-left text-sm text-gray-300 space-y-3 mb-4">
+                  <div className="flex items-start gap-3">
+                    <span className="bg-purple-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">1</span>
+                    <span>Appuyez sur les <strong className="text-white">3 points ⋮</strong> en haut à droite de Chrome</span>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <span className="bg-purple-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">2</span>
+                    <span>Appuyez sur <strong className="text-white">"Installer l'application"</strong></span>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <span className="bg-purple-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>
+                    <span>Confirmez puis <strong className="text-white">patientez 30 à 60 secondes</strong> — Google génère votre app</span>
+                  </div>
+                </div>
+                <div className="text-xs text-gray-500 mb-4">
+                  L'app apparaîtra dans votre tiroir d'applications
+                </div>
+                <button
+                  onClick={() => setInstallStatus(null)}
+                  className="px-6 py-2 rounded-full text-sm text-white opacity-60 hover:opacity-100"
+                >
+                  Fermer
+                </button>
+              </>
+            )}
+
+            {installStatus === 'waiting' && isIOS && (
+              <>
+                <div className="text-4xl mb-4">📤</div>
+                <h3 className="text-white text-lg font-bold mb-3">Installer sur iPhone</h3>
+                <div className="text-left text-sm text-gray-300 space-y-3 mb-4">
+                  <div className="flex items-start gap-3">
+                    <span className="bg-purple-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">1</span>
+                    <span>Appuyez sur le bouton <strong className="text-white">Partager 📤</strong> en bas</span>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <span className="bg-purple-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">2</span>
+                    <span>Sélectionnez <strong className="text-white">"Sur l'écran d'accueil"</strong></span>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <span className="bg-purple-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>
+                    <span>Appuyez sur <strong className="text-white">"Ajouter"</strong></span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setInstallStatus(null)}
+                  className="px-6 py-2 rounded-full text-sm text-white opacity-60 hover:opacity-100"
+                >
+                  Fermer
+                </button>
+              </>
+            )}
+
+            {installStatus === 'installing' && (
+              <>
+                <div className="text-4xl mb-4" style={{ animation: 'pulse 1.5s infinite' }}>⏳</div>
+                <h3 className="text-white text-lg font-bold mb-2">Installation en cours...</h3>
+                <p className="text-gray-400 text-sm mb-4">
+                  Google génère votre application.<br/>Cela peut prendre 30 à 60 secondes.
+                </p>
+                <div className="w-full bg-gray-700 rounded-full h-2 mb-4 overflow-hidden">
+                  <div
+                    className="h-2 rounded-full"
+                    style={{
+                      background: 'linear-gradient(90deg, #D91CD2, #8b5cf6)',
+                      animation: 'installProgress 45s ease-out forwards'
+                    }}
+                  />
+                </div>
+                <p className="text-gray-500 text-xs">Ne fermez pas Chrome</p>
+              </>
+            )}
+
+            {installStatus === 'success' && (
+              <>
+                <div className="text-5xl mb-4">✅</div>
+                <h3 className="text-white text-lg font-bold mb-2">Afroboost installé !</h3>
+                <p className="text-gray-400 text-sm mb-4">
+                  L'app est dans votre tiroir d'applications.<br/>Glissez vers le haut pour la trouver.
+                </p>
+                <button
+                  onClick={() => setInstallStatus(null)}
+                  className="px-6 py-2.5 rounded-full text-sm font-medium text-white"
+                  style={{ background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)' }}
+                >
+                  Super !
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* V141: CSS animation pour la barre de progression */}
+      {installStatus === 'installing' && (
+        <style>{`
+          @keyframes installProgress {
+            0% { width: 0%; }
+            10% { width: 15%; }
+            30% { width: 40%; }
+            50% { width: 60%; }
+            70% { width: 75%; }
+            90% { width: 88%; }
+            100% { width: 95%; }
+          }
+          @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+          }
+        `}</style>
       )}
 
       {showConfirmPayment && <ConfirmPaymentOverlay t={t} onConfirm={confirmPayment} onCancel={() => { setShowConfirmPayment(false); setPendingReservation(null); }} />}
