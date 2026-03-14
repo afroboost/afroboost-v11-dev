@@ -30,14 +30,14 @@
         <!-- Additional SEO -->
         <meta name="keywords" content="afroboost, fitness, casque audio, danse, afrobeat, cardio, réservation, cours" />
         <meta name="author" content="Afroboost" />
-        <meta name="version" content="124" />
+        <meta name="version" content="127" />
         <script>
-            console.log("🚀 V124 : SW ES5 + loading screen + auto-reset");
+            console.log("🚀 V127 : SW résilient + auto-reset rapide");
             // V121: Force update SW + hard reload si version obsolète
             // FIX: Utilise sessionStorage au lieu de ?_reloaded=1 pour ne pas polluer l'URL
             // (les query params empêchaient Chrome de matcher start_url et bloquer l'install PWA)
             (function() {
-                var CURRENT_VERSION = '124';
+                var CURRENT_VERSION = '127';
                 var lastVersion = '';
                 try { lastVersion = localStorage.getItem('af_app_version') || ''; } catch(e) {}
                 // Toujours forcer un update du SW
@@ -145,7 +145,7 @@
         <script>
             (function() {
                 var statusEl = document.getElementById('af-loader-status');
-                var resetKey = 'af_auto_reset_v124';
+                var resetKey = 'af_auto_reset_v127';
                 // Cacher le loader quand React monte
                 var observer = new MutationObserver(function() {
                     var root = document.getElementById('root');
@@ -173,7 +173,7 @@
                         return;
                     }
 
-                    console.warn('[V124] App non chargée après 10s — auto-reset');
+                    console.warn('[V127] App non chargée après 5s — auto-reset');
                     sessionStorage.setItem(resetKey, '1');
                     var tasks = [];
                     if ('serviceWorker' in navigator) {
@@ -189,7 +189,7 @@
                     Promise.all(tasks).then(function() {
                         window.location.reload(true);
                     });
-                }, 10000);
+                }, 5000);
             })();
         </script>
         <!--
