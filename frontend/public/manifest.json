@@ -1,34 +1,35 @@
 {
+  "id": "/",
   "short_name": "Afroboost",
   "name": "Afroboost - Coaching sportif",
   "icons": [
     {
-      "src": "/logo192.png",
+      "src": "https://www.afroboost.com/logo192.png",
       "type": "image/png",
       "sizes": "192x192",
       "purpose": "any"
     },
     {
-      "src": "/logo512.png",
+      "src": "https://www.afroboost.com/logo512.png",
       "type": "image/png",
       "sizes": "512x512",
       "purpose": "any"
     },
     {
-      "src": "/logo192-maskable.png",
+      "src": "https://www.afroboost.com/logo192-maskable.png",
       "type": "image/png",
       "sizes": "192x192",
       "purpose": "maskable"
     },
     {
-      "src": "/logo512-maskable.png",
+      "src": "https://www.afroboost.com/logo512-maskable.png",
       "type": "image/png",
       "sizes": "512x512",
       "purpose": "maskable"
     }
   ],
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "https://www.afroboost.com/",
+  "scope": "https://www.afroboost.com/",
   "display": "standalone",
   "theme_color": "#000000",
   "background_color": "#000000"

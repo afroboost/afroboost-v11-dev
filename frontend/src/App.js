@@ -2778,15 +2778,15 @@ function App() {
         setDeferredPrompt(null);
         window.__pwaInstallPrompt = null;
       } catch (err) {
-        console.error('[V139] Erreur prompt:', err);
+        console.error('[V141] Erreur prompt:', err);
         setDeferredPrompt(null);
         window.__pwaInstallPrompt = null;
         // Si le prompt est invalide/expiré, tenter via les instructions
-        alert('Pour installer Afroboost :\n\n1. Appuyez sur les 3 points (⋮) en haut à droite de Chrome\n2. Appuyez sur "Installer l\'application"\n3. Confirmez l\'installation');
+        alert('Pour installer Afroboost :\n\n1. Appuyez sur les 3 points (⋮) en haut à droite de Chrome\n2. Appuyez sur "Installer l\'application"\n3. Confirmez l\'installation\n\n📱 Samsung : Vérifiez le tiroir d\'applications après installation !');
       }
     } else {
-      // Dernier fallback: instructions manuelles
-      alert('Pour installer Afroboost :\n\n1. Appuyez sur les 3 points (⋮) en haut à droite de Chrome\n2. Appuyez sur "Installer l\'application"\n3. Confirmez l\'installation\n\nSi "Installer" n\'apparaît pas, allez dans :\nChrome → Paramètres → Données des sites → afroboost → Supprimer\nPuis revenez ici.');
+      // Dernier fallback: instructions manuelles + Samsung tip
+      alert('Pour installer Afroboost :\n\n1. Appuyez sur les 3 points (⋮) en haut à droite de Chrome\n2. Appuyez sur "Installer l\'application"\n3. Confirmez l\'installation\n\n📱 Samsung : Après installation, l\'app peut apparaître dans le tiroir d\'applications (glissez vers le haut depuis l\'écran d\'accueil) plutôt que sur l\'écran d\'accueil.');
     }
   };
 
