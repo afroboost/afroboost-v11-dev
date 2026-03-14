@@ -66,8 +66,9 @@ if RESEND_AVAILABLE and RESEND_API_KEY:
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
 TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER', '')
-# V115: Numéro WhatsApp production (plus de sandbox)
-TWILIO_PRODUCTION_NUMBER = "+41765203363"
+# V115: Numéros WhatsApp — le système détecte automatiquement quel sender utiliser
+TWILIO_SANDBOX_NUMBER = "+14155238886"  # Sandbox Twilio (fallback si aucun sender enregistré)
+TWILIO_PRODUCTION_NUMBER = "+41765203363"  # Numéro cible production (à enregistrer sur Twilio)
 
 # MongoDB connection
 mongo_url = os.environ.get('MONGO_URL')
@@ -2486,16 +2487,17 @@ async def launch_campaign(campaign_id: str):
     cta_text = campaign.get("ctaText", "")
     cta_link = campaign.get("ctaLink", "")
 
-    # V115: Déterminer le numéro expéditeur WhatsApp — production par défaut
+    # V115: Déterminer le numéro expéditeur WhatsApp — détection automatique
     sender_type = campaign.get("senderType", "business")
-    if sender_type == "custom":
+    if sender_type == "custom" and campaign.get("customFromNumber"):
         # Numéro personnalisé du partenaire (WhatsApp Business vérifié)
-        business_from_number = campaign.get("customFromNumber", TWILIO_PRODUCTION_NUMBER)
+        business_from_number = campaign.get("customFromNumber")
+        wa_mode = "custom"
         logger.info(f"[CAMPAIGN-LAUNCH-V115] 📲 Mode Custom: envoi depuis {business_from_number}")
     else:
-        # Mode par défaut: numéro Afroboost production (+41765203363)
-        business_from_number = TWILIO_PRODUCTION_NUMBER
-        logger.info(f"[CAMPAIGN-LAUNCH-V115] 🇨🇭 Mode Production: envoi depuis {business_from_number}")
+        # Mode par défaut: détection auto (sender enregistré → prod, sinon → sandbox)
+        business_from_number, wa_mode = await _get_whatsapp_sender()
+        logger.info(f"[CAMPAIGN-LAUNCH-V115] 📤 Mode {wa_mode}: envoi depuis {business_from_number}")
     
     success_count = 0
     fail_count = 0
@@ -5263,6 +5265,42 @@ async def get_whatsapp_config():
         return {"id": "whatsapp_config", "accountSid": "", "authToken": "", "fromNumber": "", "apiMode": "twilio"}
     return config
 
+# V115: Endpoint pour récupérer le mode WhatsApp actuel (sandbox/production)
+@api_router.get("/whatsapp-mode")
+async def get_whatsapp_mode():
+    """
+    V115: Retourne le mode WhatsApp actuel et le numéro expéditeur.
+    Utilisé par le frontend pour afficher le bon indicateur.
+    """
+    sender_number, mode = await _get_whatsapp_sender()
+    return {
+        "mode": mode,  # "production" | "sandbox"
+        "senderNumber": sender_number,
+        "sandboxNumber": TWILIO_SANDBOX_NUMBER,
+        "productionNumber": TWILIO_PRODUCTION_NUMBER,
+        "sandboxJoinCode": "join everyone-goes" if mode == "sandbox" else None,
+        "needsRegistration": mode == "sandbox"
+    }
+
+# V115: Endpoint pour enregistrer un sender WhatsApp vérifié
+@api_router.put("/whatsapp-sender")
+async def set_whatsapp_sender(data: dict):
+    """
+    V115: Enregistre le numéro WhatsApp sender vérifié sur Twilio.
+    Une fois enregistré, le système bascule automatiquement en mode production.
+    """
+    registered_sender = data.get("registeredSender", "")
+    if not registered_sender:
+        raise HTTPException(status_code=400, detail="registeredSender requis")
+
+    await db.whatsapp_config.update_one(
+        {"id": "whatsapp_config"},
+        {"$set": {"registeredSender": registered_sender, "updatedAt": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    logger.info(f"[WHATSAPP-V115] ✅ Sender production enregistré: {registered_sender}")
+    return {"status": "ok", "registeredSender": registered_sender, "mode": "production"}
+
 @api_router.put("/whatsapp-config")
 async def update_whatsapp_config(config: WhatsAppConfigUpdate):
     updates = {k: v for k, v in config.model_dump().items() if v is not None}
@@ -5800,9 +5838,9 @@ async def _get_twilio_config():
     """
     # PRIORITÉ 1: Variables d'environnement (.env)
     if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
-        # V115: from_number peut être vide en env — on utilise TWILIO_PRODUCTION_NUMBER comme fallback
-        effective_from = TWILIO_FROM_NUMBER or TWILIO_PRODUCTION_NUMBER
-        logger.info(f"[WHATSAPP-PROD] ✅ Utilisation config .env - Numéro: {effective_from}")
+        # V115: from_number — priorité env, sinon sandbox comme fallback sûr
+        effective_from = TWILIO_FROM_NUMBER or TWILIO_SANDBOX_NUMBER
+        logger.info(f"[WHATSAPP-CONFIG] ✅ Config .env - Numéro: {effective_from}")
         return TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, effective_from
     
     # PRIORITÉ 2: Configuration en base de données (fallback)
@@ -5817,6 +5855,35 @@ async def _get_twilio_config():
             return account_sid, auth_token, from_number
     
     return None, None, None
+
+async def _get_whatsapp_sender():
+    """
+    V115: Détermine le numéro WhatsApp expéditeur à utiliser.
+    Ordre de priorité:
+    1. Sender enregistré dans whatsapp_config.registeredSender (numéro vérifié sur Twilio)
+    2. TWILIO_FROM_NUMBER (variable env)
+    3. TWILIO_SANDBOX_NUMBER (fallback sandbox)
+
+    Retourne: (from_number, mode) — mode = "production" | "sandbox"
+    """
+    # 1. Vérifier si un sender WhatsApp est enregistré dans la DB
+    wa_config = await db.whatsapp_config.find_one({"id": "whatsapp_config"}, {"_id": 0})
+    if wa_config:
+        registered = wa_config.get("registeredSender", "")
+        if registered:
+            logger.info(f"[WHATSAPP-SENDER] ✅ Sender production enregistré: {registered}")
+            return registered, "production"
+
+    # 2. Variable d'environnement
+    if TWILIO_FROM_NUMBER and TWILIO_FROM_NUMBER != TWILIO_SANDBOX_NUMBER:
+        logger.info(f"[WHATSAPP-SENDER] ✅ Sender env: {TWILIO_FROM_NUMBER}")
+        return TWILIO_FROM_NUMBER, "production"
+
+    # 3. Fallback sandbox
+    logger.info(f"[WHATSAPP-SENDER] ⚠️ Aucun sender enregistré — fallback sandbox: {TWILIO_SANDBOX_NUMBER}")
+    return TWILIO_SANDBOX_NUMBER, "sandbox"
+
+
 async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = None, campaign_id: str = None, campaign_name: str = None, from_number_override: str = None) -> dict:
     """
     Fonction interne pour envoyer un message WhatsApp via Twilio.
@@ -5838,14 +5905,14 @@ async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = Non
     # Récupérer la config Twilio (priorité .env)
     account_sid, auth_token, from_number = await _get_twilio_config()
 
-    # V115: Utiliser le numéro override si fourni, sinon numéro production par défaut
+    # V115: Utiliser le numéro override si fourni (campagnes passent toujours un override)
     if from_number_override:
         from_number = from_number_override
         logger.info(f"[WHATSAPP-V115] 📲 Override expéditeur: {from_number_override}")
     elif not from_number:
-        # Fallback: toujours utiliser le numéro production Afroboost
-        from_number = TWILIO_PRODUCTION_NUMBER
-        logger.info(f"[WHATSAPP-V115] 🇨🇭 Fallback numéro production: {from_number}")
+        # Fallback pour envois directs (hors campagne): détection auto
+        from_number, _mode = await _get_whatsapp_sender()
+        logger.info(f"[WHATSAPP-V115] 📤 Auto-détection sender ({_mode}): {from_number}")
 
     if not account_sid or not auth_token or not from_number:
         # V112: JAMAIS de mode simulé — erreur explicite si config manquante

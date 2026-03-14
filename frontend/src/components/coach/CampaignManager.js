@@ -6,7 +6,7 @@
  * Anti-break: toutes les fonctionnalités existantes sont préservées.
  */
 
-import React, { memo, useState } from 'react';
+import React, { memo, useState, useEffect } from 'react';
 import axios from 'axios';
 import CampaignCalendar from './CampaignCalendar';
 import CampaignModal from './CampaignModal';
@@ -149,6 +149,13 @@ const CampaignManager = ({
   // v12: Modal state
   const [showModal, setShowModal] = useState(false);
   const [preSelectedDate, setPreSelectedDate] = useState(null);
+
+  // V115: Mode WhatsApp (sandbox/production) — détection automatique
+  const [waMode, setWaMode] = useState(null);
+  useEffect(() => {
+    const API = process.env.REACT_APP_API_URL || '';
+    axios.get(`${API}/api/whatsapp-mode`).then(r => setWaMode(r.data)).catch(() => {});
+  }, []);
 
   // Credit block message
   const creditBlockMessage = hasInsufficientCredits ? (
@@ -306,18 +313,51 @@ const CampaignManager = ({
         coachEmail={coachEmail}
       />
 
-      {/* V115: Indicateur WhatsApp Production */}
-      {isSuperAdmin && (
-        <div style={{
-          marginBottom: '16px', padding: '10px 16px', borderRadius: '10px',
-          background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)',
-          display: 'flex', alignItems: 'center', gap: '10px'
-        }}>
-          <span style={{ fontSize: '18px', flexShrink: 0 }}>✅</span>
-          <p style={{ color: '#4ade80', fontWeight: 500, fontSize: '12px', margin: 0 }}>
-            WhatsApp Production — Envoi depuis <strong>+41 76 520 33 63</strong>
-          </p>
-        </div>
+      {/* V115: Indicateur WhatsApp dynamique — sandbox ou production */}
+      {isSuperAdmin && waMode && (
+        waMode.mode === 'production' ? (
+          <div style={{
+            marginBottom: '16px', padding: '10px 16px', borderRadius: '10px',
+            background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)',
+            display: 'flex', alignItems: 'center', gap: '10px'
+          }}>
+            <span style={{ fontSize: '18px', flexShrink: 0 }}>✅</span>
+            <p style={{ color: '#4ade80', fontWeight: 500, fontSize: '12px', margin: 0 }}>
+              WhatsApp Production — Envoi depuis <strong>{waMode.senderNumber}</strong>
+            </p>
+          </div>
+        ) : (
+          <div style={{
+            marginBottom: '16px', padding: '12px 16px', borderRadius: '10px',
+            background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.25)',
+            display: 'flex', alignItems: 'flex-start', gap: '10px'
+          }}>
+            <span style={{ fontSize: '18px', flexShrink: 0 }}>⚠️</span>
+            <div>
+              <p style={{ color: '#fb923c', fontWeight: 600, fontSize: '13px', margin: '0 0 4px' }}>
+                WhatsApp Sandbox (mode test)
+              </p>
+              <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '12px', margin: '0 0 6px', lineHeight: 1.5 }}>
+                Le numéro <strong style={{ color: '#60a5fa' }}>+41 76 520 33 63</strong> n'est pas encore enregistré comme sender WhatsApp sur Twilio.
+                En attendant, chaque destinataire doit envoyer
+                <strong style={{ color: '#fbbf24' }}> {waMode.sandboxJoinCode} </strong>
+                au <strong style={{ color: '#60a5fa' }}>{waMode.sandboxNumber}</strong>.
+              </p>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <a href={`https://wa.me/${waMode.sandboxNumber?.replace('+','')}?text=${encodeURIComponent(waMode.sandboxJoinCode || '')}`}
+                  target="_blank" rel="noopener noreferrer"
+                  style={{ display: 'inline-block', padding: '5px 14px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, background: '#25D366', color: '#fff', textDecoration: 'none' }}>
+                  Rejoindre le Sandbox
+                </a>
+                <a href="https://console.twilio.com/us1/develop/sms/senders/whatsapp-senders"
+                  target="_blank" rel="noopener noreferrer"
+                  style={{ display: 'inline-block', padding: '5px 14px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, background: 'rgba(99,102,241,0.2)', color: '#818cf8', textDecoration: 'none', border: '1px solid rgba(99,102,241,0.3)' }}>
+                  Enregistrer le sender sur Twilio →
+                </a>
+              </div>
+            </div>
+          </div>
+        )
       )}
 
       {/* === HISTORIQUE DES CAMPAGNES === */}

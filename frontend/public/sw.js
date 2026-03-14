@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v115';
-// V115: WhatsApp Production — envoi depuis +41765203363 sans sandbox, sélecteur partenaire
+const CACHE_NAME = 'afroboost-v115.1';
+// V115.1: WhatsApp mode hybride — détection auto sandbox/production, fallback intelligent
 // formatage suisse +41, statuts précis (Échoué/Partiel), polling temps réel 3s
 
 // Installation â skip waiting pour activer immÃ©diatement
