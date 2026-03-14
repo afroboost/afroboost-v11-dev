@@ -3206,12 +3206,9 @@ function App() {
     newAppleIcon.href = newFaviconUrl;
     document.head.appendChild(newAppleIcon);
     
-    // 5. Mettre à jour le manifest pour PWA
-    let manifestLink = document.querySelector("link[rel='manifest']");
-    if (manifestLink) {
-      const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
-      manifestLink.href = `${apiUrl}/api/manifest.json?v=${Date.now()}`;
-    }
+    // 5. NE PAS toucher au manifest — il doit rester sur /manifest.json (fichier statique)
+    // BUGFIX V139: L'ancien code réécrivait vers /api/manifest.json qui est routé
+    // par Vercel vers l'API Python → Chrome ne pouvait PAS lire le manifest → PWA non installable
     
     console.log("✅ Favicon unique mis à jour:", newFaviconUrl);
   }, []);

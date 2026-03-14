@@ -32,9 +32,9 @@
         <meta name="author" content="Afroboost" />
         <meta name="version" content="138" />
         <script>
-            // V138: Force update + version check + auto-purge
+            // V139: Force update + version check + auto-purge
             (function() {
-                var CURRENT_VERSION = '138';
+                var CURRENT_VERSION = '139';
                 var lastVersion = '';
                 try { lastVersion = localStorage.getItem('af_app_version') || ''; } catch(e) {}
 
@@ -135,7 +135,7 @@
             </div>
             <div style="color:#d91cd2;font-family:-apple-system,sans-serif;font-size:20px;font-weight:700;letter-spacing:0.5px;">Afroboost</div>
             <div id="af-loader-status" style="color:#aaa;font-family:-apple-system,sans-serif;font-size:13px;margin-top:10px;">Chargement en cours...</div>
-            <div id="af-loader-version" style="color:#444;font-family:-apple-system,sans-serif;font-size:10px;margin-top:24px;">V138</div>
+            <div id="af-loader-version" style="color:#444;font-family:-apple-system,sans-serif;font-size:10px;margin-top:24px;">V139</div>
             <style>
                 @keyframes af-spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
                 #af-loader-spinner{display:inline-block;width:20px;height:20px;border:2px solid #333;border-top-color:#d91cd2;border-radius:50%;animation:af-spin 0.7s linear infinite;margin-top:16px;}
@@ -147,7 +147,7 @@
         <script>
             (function() {
                 var statusEl = document.getElementById('af-loader-status');
-                var resetKey = 'af_auto_reset_v138';
+                var resetKey = 'af_auto_reset_v139';
 
                 // Cacher le loader quand React monte
                 try {
