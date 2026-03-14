@@ -2692,21 +2692,31 @@ function App() {
 
   useEffect(() => { localStorage.setItem("af_lang", lang); }, [lang]);
 
-  // V138: PWA Install — bannière TOUJOURS visible si pas en standalone
+  // V139: PWA Install — récupère le prompt capturé globalement dans index.html
   useEffect(() => {
     const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
     setIsIOS(iOS);
 
+    // V139: Récupérer le prompt déjà capturé par le script global dans index.html
+    // Chrome déclenche beforeinstallprompt AVANT que React ne monte
+    if (window.__pwaInstallPrompt) {
+      console.log('[V139] Prompt récupéré depuis le capteur global index.html !');
+      setDeferredPrompt(window.__pwaInstallPrompt);
+      setShowInstallBanner(true);
+    }
+
+    // Écouter aussi au cas où l'événement arrive après le montage React
     const handleBeforeInstallPrompt = (e) => {
-      // NE PAS appeler e.preventDefault() — Chrome affiche son mini-infobar natif
-      console.log('[V138] beforeinstallprompt capturé');
+      e.preventDefault(); // On gère nous-mêmes l'affichage
+      console.log('[V139] beforeinstallprompt capturé dans React');
+      window.__pwaInstallPrompt = e; // Sauvegarder globalement aussi
       setDeferredPrompt(e);
       setShowInstallBanner(true);
     };
 
     const handleAppInstalled = () => {
-      console.log('[V138] App installée !');
-      localStorage.setItem('af_pwa_dismissed', 'true');
+      console.log('[V139] App installée !');
+      window.__pwaInstallPrompt = null;
       setShowInstallBanner(false);
       setDeferredPrompt(null);
     };
@@ -2714,54 +2724,69 @@ function App() {
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
 
-    // V138: Vérifier si on est en mode standalone (déjà installé)
+    // Vérifier si on est en mode standalone (déjà installé)
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
                          window.navigator.standalone === true;
 
     if (isStandalone) {
       setShowInstallBanner(false);
     } else {
-      // V138: TOUJOURS afficher la bannière si pas en standalone
-      // Ne plus dépendre de beforeinstallprompt ni de af_pwa_dismissed
-      // Le bouton guidera l'utilisateur vers le menu Chrome si le prompt natif n'est pas dispo
-      console.log('[V138] Pas en standalone — bannière install affichée');
+      // Afficher la bannière si pas en standalone
+      console.log('[V139] Pas en standalone — bannière install affichée');
       setShowInstallBanner(true);
-      // V138: Supprimer le flag dismissed pour permettre la réinstallation
       try { localStorage.removeItem('af_pwa_dismissed'); } catch(e) {}
     }
+
+    // V139: Vérifier périodiquement si le prompt global a été capturé
+    // (cas où Chrome le déclenche tardivement après le montage React)
+    const checkInterval = setInterval(function() {
+      if (window.__pwaInstallPrompt && !deferredPrompt) {
+        console.log('[V139] Prompt récupéré depuis intervalle !');
+        setDeferredPrompt(window.__pwaInstallPrompt);
+        setShowInstallBanner(true);
+        clearInterval(checkInterval);
+      }
+    }, 1000);
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
+      clearInterval(checkInterval);
     };
   }, []);
 
-  // V129: Handle PWA install button click — prompt natif si dispo, sinon instructions
+  // V139: Handle PWA install button click — triple vérification du prompt
   const handleInstallClick = async () => {
     if (isIOS) {
       alert('Pour installer Afroboost sur iOS:\n\n1. Appuyez sur le bouton Partager (📤)\n2. Sélectionnez "Sur l\'écran d\'accueil"\n3. Appuyez sur "Ajouter"');
       return;
     }
 
-    if (deferredPrompt) {
+    // V139: Triple source pour le prompt — state React, global, ou fallback
+    const prompt = deferredPrompt || window.__pwaInstallPrompt;
+
+    if (prompt) {
       try {
-        console.log('[V129] Affichage du prompt natif...');
-        deferredPrompt.prompt();
-        var result = await deferredPrompt.userChoice;
-        console.log('[V129] Résultat:', result.outcome);
+        console.log('[V139] Affichage du prompt natif...');
+        prompt.prompt();
+        var result = await prompt.userChoice;
+        console.log('[V139] Résultat:', result.outcome);
         if (result.outcome === 'accepted') {
           setShowInstallBanner(false);
-          localStorage.setItem('af_pwa_dismissed', 'true');
         }
         // Le prompt est consommé dans tous les cas
         setDeferredPrompt(null);
+        window.__pwaInstallPrompt = null;
       } catch (err) {
-        console.error('[V129] Erreur prompt:', err);
+        console.error('[V139] Erreur prompt:', err);
         setDeferredPrompt(null);
+        window.__pwaInstallPrompt = null;
+        // Si le prompt est invalide/expiré, tenter via les instructions
+        alert('Pour installer Afroboost :\n\n1. Appuyez sur les 3 points (⋮) en haut à droite de Chrome\n2. Appuyez sur "Installer l\'application"\n3. Confirmez l\'installation');
       }
     } else {
-      // Fallback: instructions manuelles si le prompt a été consommé ou n'existe pas
-      alert('Pour installer Afroboost :\n\n1. Appuyez sur les 3 points (⋮) en haut à droite de Chrome\n2. Appuyez sur "Installer l\'application"\n3. Confirmez l\'installation\n\nL\'app apparaîtra dans vos applications.');
+      // Dernier fallback: instructions manuelles
+      alert('Pour installer Afroboost :\n\n1. Appuyez sur les 3 points (⋮) en haut à droite de Chrome\n2. Appuyez sur "Installer l\'application"\n3. Confirmez l\'installation\n\nSi "Installer" n\'apparaît pas, allez dans :\nChrome → Paramètres → Données des sites → afroboost → Supprimer\nPuis revenez ici.');
     }
   };
 

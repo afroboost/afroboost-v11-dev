@@ -76,6 +76,16 @@
                 }
             })();
         </script>
+        <script>
+            // V139: Capturer beforeinstallprompt GLOBALEMENT avant que React ne charge
+            // Chrome déclenche cet événement très tôt — React peut le rater si le bundle est lent
+            window.__pwaInstallPrompt = null;
+            window.addEventListener('beforeinstallprompt', function(e) {
+                e.preventDefault(); // Empêcher le mini-infobar Chrome — on gère nous-mêmes
+                window.__pwaInstallPrompt = e;
+                console.log('[V139-GLOBAL] beforeinstallprompt capturé !');
+            });
+        </script>
         <meta name="robots" content="index, follow" />
         
         <meta name="apple-mobile-web-app-capable" content="yes" />
