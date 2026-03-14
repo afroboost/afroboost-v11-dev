@@ -2648,12 +2648,33 @@ async def launch_campaign(campaign_id: str):
         contact_id = contact.get("id", "")
         contact_name = contact.get("name", "")
         contact_email = contact.get("email", "")
-        contact_phone = contact.get("whatsapp", "")
+        # v107: Résolution robuste du téléphone — essayer plusieurs champs
+        contact_phone = (
+            contact.get("whatsapp", "") or
+            contact.get("phone", "") or
+            contact.get("telephone", "") or
+            contact.get("userWhatsapp", "") or
+            ""
+        ).strip()
 
         # Substituer les variables pour chaque contact
         personalized_msg = substitute_campaign_variables(message_content, contact)
 
         # ==================== ENVOI WHATSAPP (INDÉPENDANT) ====================
+        if channels.get("whatsapp") and not contact_phone:
+            # v107: Contact sans numéro → enregistrer l'échec explicitement
+            results.append({
+                "contactId": contact_id,
+                "contactName": contact_name,
+                "contactEmail": contact_email,
+                "contactPhone": "",
+                "channel": "whatsapp",
+                "status": "failed",
+                "error": f"Aucun numéro de téléphone trouvé pour {contact_name or contact_email}",
+                "sentAt": None
+            })
+            fail_count += 1
+            logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ WhatsApp impossible: pas de téléphone pour {contact_name} ({contact_id})")
         if channels.get("whatsapp") and contact_phone:
             whatsapp_result = {
                 "contactId": contact_id,
@@ -2673,9 +2694,11 @@ async def launch_campaign(campaign_id: str):
                 wa_response = await send_whatsapp_direct(
                     to_phone=phone_e164,
                     message=personalized_msg,
-                    media_url=media_url if media_url else None
+                    media_url=media_url if media_url else None,
+                    campaign_id=campaign_id,
+                    campaign_name=campaign_name
                 )
-                
+
                 if wa_response.get("status") == "success":
                     whatsapp_result["status"] = "sent"
                     whatsapp_result["sentAt"] = datetime.now(timezone.utc).isoformat()
@@ -2698,12 +2721,15 @@ async def launch_campaign(campaign_id: str):
                     except Exception as chat_err:
                         logger.warning(f"[CAMPAIGN-CHAT] Écriture chat_messages échouée (WhatsApp, {contact_id}): {chat_err}")
                 elif wa_response.get("status") == "simulated":
-                    whatsapp_result["status"] = "simulated"
-                    whatsapp_result["sentAt"] = datetime.now(timezone.utc).isoformat()
-                    logger.info(f"[CAMPAIGN-LAUNCH] 🧪 WhatsApp simulé pour {contact_name} ({contact_phone})")
+                    # v107: Simulated = Twilio non configuré → compter comme ÉCHEC
+                    whatsapp_result["status"] = "failed"
+                    whatsapp_result["error"] = "Configuration Twilio manquante (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER non définis)"
+                    fail_count += 1
+                    logger.error(f"[CAMPAIGN-LAUNCH] ❌ WhatsApp NON ENVOYÉ (Twilio non configuré) pour {contact_name} ({contact_phone})")
                 else:
                     whatsapp_result["status"] = "failed"
                     whatsapp_result["error"] = wa_response.get("error", "Unknown error")
+                    whatsapp_result["error_code"] = wa_response.get("error_code", "")
                     fail_count += 1
                     logger.error(f"[CAMPAIGN-LAUNCH] ❌ WhatsApp échoué pour {contact_name}: {wa_response.get('error')}")
             except Exception as e:
@@ -2941,22 +2967,26 @@ async def launch_campaign(campaign_id: str):
                 "note": "Envoi manuel requis"
             })
     
-    # Déterminer le statut final
+    # v107: Déterminer le statut final avec précision
     if not results:
-        final_status = "completed"  # Aucun envoi nécessaire (pas de contacts valides)
+        final_status = "failed"  # Aucun contact résolu → échec
+        logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ Aucun résultat - 0 contacts résolus pour la campagne")
     elif fail_count > 0 and success_count == 0:
-        final_status = "failed"
-    elif fail_count > 0:
-        final_status = "completed"  # Partiellement réussi
+        final_status = "failed"  # 100% échoué
+    elif fail_count > 0 and success_count > 0:
+        final_status = "partial"  # Partiellement réussi
     else:
-        final_status = "completed"  # Tout envoyé
+        final_status = "completed"  # 100% envoyé
     
-    # Update campaign
+    # v107: Update campaign avec compteurs détaillés
     await db.campaigns.update_one(
         {"id": campaign_id},
         {"$set": {
             "status": final_status,
             "results": results,
+            "successCount": success_count,
+            "failCount": fail_count,
+            "totalCount": success_count + fail_count,
             "updatedAt": datetime.now(timezone.utc).isoformat(),
             "launchedAt": datetime.now(timezone.utc).isoformat()
         }}

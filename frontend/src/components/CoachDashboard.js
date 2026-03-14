@@ -137,61 +137,40 @@ console.log("🚀 V93 : Contr\u00f4le Cr\u00e9dits Admin + Isolation Offres + On
  * @param {object} twilioConfig - {accountSid, authToken, fromNumber}
  * @returns {Promise<{success: boolean, sid?: string, error?: string}>}
  */
-const performWhatsAppSend = async (phoneNumber, message, twilioConfig) => {
-  const { accountSid, authToken, fromNumber } = twilioConfig || {};
-  
+/**
+ * v107: Envoi WhatsApp via le backend API (plus de CORS Twilio direct)
+ */
+const performWhatsAppSend = async (phoneNumber, message, _twilioConfig) => {
   console.log('========================================');
-  console.log('DEMANDE WHATSAPP/TWILIO ENVOYÉE');
+  console.log('📱 WHATSAPP VIA BACKEND API');
   console.log('Numéro:', phoneNumber);
   console.log('Message:', message?.substring(0, 50) + '...');
-  console.log('Account SID:', accountSid || 'NON CONFIGURÉ');
-  console.log('From Number:', fromNumber || 'NON CONFIGURÉ');
   console.log('========================================');
-  
-  // Si pas de config Twilio, simulation avec alerte
-  if (!accountSid || !authToken || !fromNumber) {
-    console.warn('⚠️ Twilio non configuré - Mode simulation');
-    alert(`WhatsApp prêt pour : ${phoneNumber}\n\nMessage: ${message?.substring(0, 100)}...`);
-    return { success: true, simulated: true };
+
+  if (!phoneNumber) {
+    return { success: false, error: 'Numéro de téléphone manquant' };
   }
-  
-  // Formater le numéro au format E.164
-  let formattedPhone = phoneNumber.replace(/[^\d+]/g, '');
-  if (!formattedPhone.startsWith('+')) {
-    formattedPhone = formattedPhone.startsWith('0') 
-      ? '+41' + formattedPhone.substring(1) 
-      : '+' + formattedPhone;
-  }
-  
-  // Construire les données pour Twilio
-  const formData = new URLSearchParams();
-  formData.append('From', `whatsapp:${fromNumber.startsWith('+') ? fromNumber : '+' + fromNumber}`);
-  formData.append('To', `whatsapp:${formattedPhone}`);
-  formData.append('Body', message);
-  
+
   try {
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Basic ' + btoa(`${accountSid}:${authToken}`),
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: formData
-      }
-    );
-    
+    const response = await fetch(`${BACKEND_URL}/api/send-whatsapp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: phoneNumber, message })
+    });
+
     const data = await response.json();
-    console.log('📱 TWILIO RÉPONSE:', data);
-    
-    if (!response.ok) {
-      return { success: false, error: data.message || `HTTP ${response.status}` };
+    console.log('📱 BACKEND RÉPONSE:', data);
+
+    if (data.status === 'success') {
+      return { success: true, sid: data.sid };
+    } else if (data.status === 'simulated') {
+      // v107: Simulated = Twilio non configuré → ÉCHEC explicite
+      return { success: false, error: 'Twilio non configuré sur le serveur', simulated: true };
+    } else {
+      return { success: false, error: data.error || `Erreur serveur: ${response.status}`, error_code: data.error_code };
     }
-    
-    return { success: true, sid: data.sid };
   } catch (error) {
-    console.error('❌ TWILIO ERREUR:', error);
+    console.error('❌ BACKEND WHATSAPP ERREUR:', error);
     return { success: false, error: error.message };
   }
 };
@@ -3922,48 +3901,26 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         }
       }
 
-      // 6. === ENVOI WHATSAPP VIA FONCTION AUTONOME ===
+      // 6. === WHATSAPP : Déjà envoyé par le backend /launch ===
+      // v107: Le backend gère l'envoi WhatsApp directement dans /campaigns/{id}/launch
+      // On ne fait que compter les résultats
       if (whatsAppResults.length > 0) {
-        try {
-          addCampaignLog(campaignId, `📱 Envoi de ${whatsAppResults.length} WhatsApp...`, 'info');
-        } catch (e) { console.warn('Log bloqué:', e); }
-        
-        console.log(`📱 === LANCEMENT CAMPAGNE WHATSAPP: ${whatsAppResults.length} destinataires ===`);
-        
-        for (let i = 0; i < whatsAppResults.length; i++) {
-          const contact = whatsAppResults[i];
-          
-          console.log(`📱 [${i + 1}/${whatsAppResults.length}] Envoi à: ${contact.contactPhone}`);
-          
-          // === APPEL FONCTION AUTONOME ISOLÉE ===
-          const result = await performWhatsAppSend(
-            contact.contactPhone,
-            campaign.message,
-            whatsAppConfig
-          );
+        const waSent = whatsAppResults.filter(r => r.status === 'sent').length;
+        const waFailed = whatsAppResults.filter(r => r.status === 'failed').length;
+        totalSent += waSent;
+        totalFailed += waFailed;
 
-          if (result.success) {
-            totalSent++;
-            console.log(`✅ WhatsApp envoyé${result.simulated ? ' (simulation)' : ''}`);
-            // Marquer comme envoyé
-            try {
-              await axios.post(`${API}/campaigns/${campaignId}/mark-sent`, {
-                contactId: contact.contactId,
-                channel: 'whatsapp'
-              });
-            } catch (markErr) {
-              console.warn('⚠️ Mark-sent bloqué mais WhatsApp envoyé:', markErr);
-            }
+        try {
+          if (waFailed > 0) {
+            const errors = whatsAppResults
+              .filter(r => r.status === 'failed')
+              .map(r => `${r.contactName || r.contactPhone}: ${r.error || 'Erreur inconnue'}`)
+              .join('\n');
+            addCampaignLog(campaignId, `📱 WhatsApp: ${waSent} envoyé(s), ${waFailed} échoué(s)\n${errors}`, waFailed === whatsAppResults.length ? 'error' : 'warning');
           } else {
-            totalFailed++;
-            console.error(`❌ WhatsApp failed: ${result.error}`);
+            addCampaignLog(campaignId, `📱 ${waSent} WhatsApp envoyé(s) avec succès`, 'success');
           }
-          
-          // Délai entre les envois
-          if (i < whatsAppResults.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-          }
-        }
+        } catch (e) { console.warn('Log bloqué:', e); }
       }
 
       // 7. Recharger la campagne (peut être ignoré)

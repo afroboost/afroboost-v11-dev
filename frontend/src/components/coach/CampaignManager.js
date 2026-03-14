@@ -392,8 +392,9 @@ const CampaignManager = ({
                         {campaign.status === 'scheduled' && <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(234,179,8,0.2)', color: '#fbbf24' }}>📅 Programmé</span>}
                         {campaign.status === 'sending' && <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(59,130,246,0.3)', color: '#60a5fa' }}>🔄 En cours</span>}
                         {(campaign.status === 'completed' || campaign.status === 'sent') && !hasErrors && <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(34,197,94,0.2)', color: '#4ade80' }}>✅ Envoyé</span>}
-                        {(campaign.status === 'completed' || campaign.status === 'sent') && hasErrors && <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(249,115,22,0.2)', color: '#fb923c' }}>⚠️ Partiel</span>}
-                        {campaign.status === 'failed' && <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(239,68,68,0.2)', color: '#f87171' }}>❌ Échoué</span>}
+                        {(campaign.status === 'completed' || campaign.status === 'sent') && hasErrors && <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(249,115,22,0.2)', color: '#fb923c' }}>⚠️ Partiel ({failedCount})</span>}
+                        {campaign.status === 'partial' && <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(249,115,22,0.2)', color: '#fb923c' }} title={campaign.results?.filter(r => r.status === 'failed').map(r => r.error).join(', ')}>⚠️ Partiel ({failedCount})</span>}
+                        {campaign.status === 'failed' && <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(239,68,68,0.2)', color: '#f87171' }} title={campaign.results?.filter(r => r.status === 'failed').map(r => r.error).join(', ')}>❌ Échoué ({failedCount})</span>}
                       </td>
                       <td style={{ padding: '10px 8px', fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>
                         {campaign.scheduledAt ? new Date(campaign.scheduledAt).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'Immédiat'}
@@ -410,9 +411,9 @@ const CampaignManager = ({
                             <button type="button" onClick={(e) => launchCampaignWithSend(e, campaign.id)}
                               style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', cursor: 'pointer' }} title="Lancer maintenant">🚀</button>
                           )}
-                          {(campaign.status === 'sent' || campaign.status === 'completed' || campaign.status === 'failed') && (
+                          {(campaign.status === 'sent' || campaign.status === 'completed' || campaign.status === 'failed' || campaign.status === 'partial') && (
                             <button type="button" onClick={(e) => launchCampaignWithSend(e, campaign.id)}
-                              style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(34,197,94,0.2)', border: 'none', color: '#4ade80', cursor: 'pointer' }}>🔄</button>
+                              style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(34,197,94,0.2)', border: 'none', color: '#4ade80', cursor: 'pointer' }} title="Relancer">🔄</button>
                           )}
                           <button type="button" onClick={() => deleteCampaign(campaign.id)}
                             style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(239,68,68,0.15)', border: 'none', color: '#f87171', cursor: 'pointer' }}>🗑️</button>
