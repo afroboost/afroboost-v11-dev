@@ -1,14 +1,9 @@
 {
-  "short_name": "Afroboost Pro",
-  "name": "Afroboost Pro - Réservation de casque",
+  "short_name": "Afroboost",
+  "name": "Afroboost - Coaching sportif",
   "description": "Le concept Afroboost : cardio + danse afrobeat + casques audio immersifs.",
-  "id": "/pwa-v137",
+  "id": "afroboost-v138-final",
   "icons": [
-    {
-      "src": "favicon.ico",
-      "sizes": "64x64 32x32 24x24 16x16",
-      "type": "image/x-icon"
-    },
     {
       "src": "logo192.png",
       "type": "image/png",
@@ -34,7 +29,7 @@
       "purpose": "maskable"
     }
   ],
-  "start_url": "/?v=137",
+  "start_url": ".",
   "scope": "/",
   "display": "standalone",
   "theme_color": "#000000",

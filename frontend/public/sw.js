@@ -1,128 +1,164 @@
-// Service Worker Afroboost V137 — ES5 compatible pour tous les mobiles
-// IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
-// V137: Nouvelle identité PWA (/pwa-v137) + self-destruct anciennes versions
+// =================================================================
+// Service Worker Afroboost V138 — ES5 PUR (100% compatible Android)
+// Pas de const, let, arrow functions, template literals, ou ES6+
+// =================================================================
+// RÈGLE D'OR : L'installation du SW ne doit JAMAIS échouer.
+// Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
+// =================================================================
 
-var CACHE_NAME = 'afroboost-v137';
-var SW_VERSION = 137;
-
-// V136+: Self-Destruct — détecte et élimine les anciennes versions
-// Si un ancien SW (< 137) est encore actif, il sera écrasé par skipWaiting
-// Les caches orphelins sont purgés à l'activation
-(function selfDestruct() {
-  // Vérifier si des caches d'anciennes versions existent
-  if (typeof caches !== 'undefined') {
-    caches.keys().then(function(names) {
-      names.forEach(function(name) {
-        // Matcher les patterns "afroboost-vXXX" avec version < 136
-        var match = name.match(/^afroboost-v(\d+)$/);
-        if (match) {
-          var ver = parseInt(match[1], 10);
-          if (ver < SW_VERSION) {
-            console.log('[SW] V137 Self-Destruct: suppression ancien cache ' + name + ' (v' + ver + ')');
-            caches.delete(name);
-          }
-        }
-      });
-    }).catch(function() {});
-  }
-})();
+var CACHE_NAME = 'afroboost-v138';
+var SW_VERSION = 138;
 
 var PRECACHE_URLS = [
   '/',
   '/index.html',
   '/logo192.png',
-  '/logo512.png',
-  '/manifest.json'
+  '/logo512.png'
 ];
 
-// V135: Installation "Install-Ready" — JAMAIS d'échec, même si le réseau est mort
-// Chaque URL est tentée individuellement avec fetch+put (plus robuste que cache.add)
-// Si tout échoue, le SW s'installe quand même = l'ancien SW cassé est remplacé
+// -----------------------------------------------------------------
+// INSTALL — Résilient : chaque URL est tentée seule, échec = ignoré
+// -----------------------------------------------------------------
 self.addEventListener('install', function(event) {
-  console.log('[SW] V137 install — Install-Ready + Self-Destruct');
   event.waitUntil(
-    caches.open(CACHE_NAME).then(function(cache) {
-      var promises = PRECACHE_URLS.map(function(url) {
-        return fetch(url, { cache: 'no-store' }).then(function(response) {
-          if (response.ok) {
-            return cache.put(url, response);
-          }
-          console.warn('[SW] Réponse non-OK pour ' + url + ': ' + response.status);
-        }).catch(function(err) {
-          console.warn('[SW] Fetch échoué pour ' + url + ' — ignoré:', err.message || err);
-        });
-      });
-      return Promise.all(promises);
-    }).catch(function(err) {
-      console.warn('[SW] Cache open échoué — installation continue sans cache:', err);
-    }).then(function() {
-      console.log('[SW] V137 skipWaiting — prise de contrôle immédiate');
-      return self.skipWaiting();
-    })
-  );
-});
-
-// V137: Activation — purge nucléaire de TOUS les anciens caches + claim + reload
-self.addEventListener('activate', function(event) {
-  console.log('[SW] V137 activate — nuclear purge + claim + reload');
-  event.waitUntil(
-    caches.keys().then(function(cacheNames) {
-      return Promise.all(
-        cacheNames
-          .filter(function(name) { return name !== CACHE_NAME; })
-          .map(function(name) {
-            console.log('[SW] V137 Suppression cache:', name);
-            return caches.delete(name);
-          })
-      );
-    }).then(function() {
-      return self.clients.claim();
-    }).then(function() {
-      // Forcer le reload de tous les clients (PWA installées incluses)
-      return self.clients.matchAll({ type: 'window' }).then(function(allClients) {
-        allClients.forEach(function(client) {
-          client.postMessage({ type: 'SW_UPDATED', version: CACHE_NAME });
-        });
-      });
-    })
-  );
-});
-
-// Fetch — network-first pour HTML, cache-first pour static assets
-self.addEventListener('fetch', function(event) {
-  var url = new URL(event.request.url);
-
-  // API calls — toujours réseau
-  if (url.pathname.startsWith('/api/')) return;
-
-  // HTML pages / navigation — network-first avec fallback cache
-  var acceptHeader = event.request.headers.get('accept') || '';
-  if (event.request.mode === 'navigate' || acceptHeader.indexOf('text/html') !== -1) {
-    event.respondWith(
-      fetch(event.request).then(function(response) {
-        if (response.ok) {
-          var clone = response.clone();
-          caches.open(CACHE_NAME).then(function(cache) { cache.put(event.request, clone); });
+    caches.open(CACHE_NAME)
+      .then(function(cache) {
+        var promises = [];
+        for (var i = 0; i < PRECACHE_URLS.length; i++) {
+          (function(url) {
+            promises.push(
+              fetch(url, { cache: 'no-store' })
+                .then(function(resp) {
+                  if (resp && resp.ok) {
+                    return cache.put(url, resp);
+                  }
+                })
+                .catch(function() {
+                  // Échec silencieux — on continue
+                })
+            );
+          })(PRECACHE_URLS[i]);
         }
-        return response;
-      }).catch(function() {
-        return caches.match(event.request).then(function(cached) {
-          return cached || caches.match('/index.html');
-        });
+        return Promise.all(promises);
       })
+      .catch(function() {
+        // Même si caches.open échoue, on installe quand même
+      })
+      .then(function() {
+        return self.skipWaiting();
+      })
+  );
+});
+
+// -----------------------------------------------------------------
+// ACTIVATE — Purge tous les anciens caches + prend le contrôle
+// -----------------------------------------------------------------
+self.addEventListener('activate', function(event) {
+  event.waitUntil(
+    caches.keys()
+      .then(function(names) {
+        var deletions = [];
+        for (var i = 0; i < names.length; i++) {
+          if (names[i] !== CACHE_NAME) {
+            deletions.push(caches.delete(names[i]));
+          }
+        }
+        return Promise.all(deletions);
+      })
+      .then(function() {
+        return self.clients.claim();
+      })
+      .then(function() {
+        return self.clients.matchAll({ type: 'window' });
+      })
+      .then(function(allClients) {
+        if (allClients && allClients.length > 0) {
+          for (var i = 0; i < allClients.length; i++) {
+            try {
+              allClients[i].postMessage({ type: 'SW_UPDATED', version: CACHE_NAME });
+            } catch (e) {
+              // Silencieux
+            }
+          }
+        }
+      })
+      .catch(function() {
+        // Erreur d'activation non-bloquante
+      })
+  );
+});
+
+// -----------------------------------------------------------------
+// FETCH — Network-first pour HTML et manifest, cache-first pour static
+// -----------------------------------------------------------------
+self.addEventListener('fetch', function(event) {
+  var url;
+  try {
+    url = new URL(event.request.url);
+  } catch (e) {
+    return;
+  }
+
+  // API → toujours réseau, pas de cache
+  if (url.pathname.indexOf('/api/') === 0) {
+    return;
+  }
+
+  // manifest.json → TOUJOURS network-first (Chrome doit voir la dernière version)
+  if (url.pathname === '/manifest.json') {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-store' })
+        .then(function(response) {
+          if (response && response.ok) {
+            var clone = response.clone();
+            caches.open(CACHE_NAME).then(function(cache) {
+              cache.put(event.request, clone);
+            });
+          }
+          return response;
+        })
+        .catch(function() {
+          return caches.match(event.request);
+        })
     );
     return;
   }
 
-  // Static assets (JS/CSS avec hash) — cache-first
-  if (url.pathname.startsWith('/static/')) {
+  // Navigation / HTML → network-first
+  var accept = '';
+  try { accept = event.request.headers.get('accept') || ''; } catch (e) {}
+  if (event.request.mode === 'navigate' || accept.indexOf('text/html') !== -1) {
+    event.respondWith(
+      fetch(event.request)
+        .then(function(response) {
+          if (response && response.ok) {
+            var clone = response.clone();
+            caches.open(CACHE_NAME).then(function(cache) {
+              cache.put(event.request, clone);
+            });
+          }
+          return response;
+        })
+        .catch(function() {
+          return caches.match(event.request).then(function(cached) {
+            return cached || caches.match('/index.html');
+          });
+        })
+    );
+    return;
+  }
+
+  // Static assets (/static/) → cache-first (fichiers hashés)
+  if (url.pathname.indexOf('/static/') === 0) {
     event.respondWith(
       caches.match(event.request).then(function(cached) {
-        if (cached) return cached;
+        if (cached) { return cached; }
         return fetch(event.request).then(function(response) {
-          if (response.ok) {
+          if (response && response.ok) {
             var clone = response.clone();
-            caches.open(CACHE_NAME).then(function(cache) { cache.put(event.request, clone); });
+            caches.open(CACHE_NAME).then(function(cache) {
+              cache.put(event.request, clone);
+            });
           }
           return response;
         });
@@ -131,116 +167,125 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
-  // Autres ressources — network-first avec cache
+  // Tout le reste → network-first avec fallback cache
   event.respondWith(
-    fetch(event.request).then(function(response) {
-      if (response.ok) {
-        var clone = response.clone();
-        caches.open(CACHE_NAME).then(function(cache) { cache.put(event.request, clone); });
-      }
-      return response;
-    }).catch(function() {
-      return caches.match(event.request);
-    })
-  );
-});
-
-// Compteur de notifications non lues pour badge PWA
-var unreadCount = 0;
-
-// Reception des notifications push
-self.addEventListener('push', function(event) {
-  console.log('[SW] Notification push recue');
-
-  var data = {
-    title: 'Afroboost',
-    body: 'Nouveau message de votre coach',
-    icon: '/logo192.png',
-    badge: '/logo192.png',
-    data: { url: '/' }
-  };
-
-  if (event.data) {
-    try {
-      var payload = event.data.json();
-      data = {
-        title: payload.title || 'Afroboost',
-        body: payload.body || payload.message || 'Nouveau message de votre coach',
-        icon: payload.icon || '/logo192.png',
-        badge: payload.badge || '/logo192.png',
-        data: payload.data || { url: '/' }
-      };
-    } catch (e) {
-      var text = event.data.text();
-      if (text) data.body = text;
-    }
-  }
-
-  var options = {
-    body: data.body,
-    icon: data.icon,
-    badge: data.badge,
-    vibrate: [200, 100, 200],
-    tag: (data.data && data.data.type) ? data.data.type : 'afroboost-chat-sync',
-    renotify: true,
-    requireInteraction: false,
-    silent: false,
-    data: data.data
-  };
-
-  if ('actions' in Notification.prototype) {
-    options.actions = [];
-  }
-
-  unreadCount++;
-  event.waitUntil(
-    Promise.all([
-      self.registration.showNotification(data.title, options),
-      navigator.setAppBadge ? navigator.setAppBadge(unreadCount).catch(function() {}) : Promise.resolve()
-    ])
-  );
-});
-
-// Clic sur la notification
-self.addEventListener('notificationclick', function(event) {
-  event.notification.close();
-  unreadCount = Math.max(0, unreadCount - 1);
-  if (navigator.clearAppBadge && unreadCount === 0) {
-    navigator.clearAppBadge().catch(function() {});
-  } else if (navigator.setAppBadge && unreadCount > 0) {
-    navigator.setAppBadge(unreadCount).catch(function() {});
-  }
-
-  var notifData = event.notification.data || {};
-  var urlToOpen = notifData.url || '/';
-  event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true })
-      .then(function(clientList) {
-        for (var i = 0; i < clientList.length; i++) {
-          var client = clientList[i];
-          if (client.url.indexOf(self.location.origin) !== -1 && 'focus' in client) {
-            return client.focus();
-          }
+    fetch(event.request)
+      .then(function(response) {
+        if (response && response.ok) {
+          var clone = response.clone();
+          caches.open(CACHE_NAME).then(function(cache) {
+            cache.put(event.request, clone);
+          });
         }
-        if (clients.openWindow) return clients.openWindow(urlToOpen);
+        return response;
+      })
+      .catch(function() {
+        return caches.match(event.request);
       })
   );
 });
 
-// Fermeture notification
-self.addEventListener('notificationclose', function(event) {
-  console.log('[SW] Notification fermee');
-});
+// -----------------------------------------------------------------
+// NOTIFICATIONS — Isolées dans try/catch, ne bloquent JAMAIS le SW
+// -----------------------------------------------------------------
+var unreadCount = 0;
 
-// Message du client
+// Push
+try {
+  self.addEventListener('push', function(event) {
+    var data = {
+      title: 'Afroboost',
+      body: 'Nouveau message',
+      icon: '/logo192.png',
+      badge: '/logo192.png',
+      data: { url: '/' }
+    };
+
+    try {
+      if (event.data) {
+        var payload = event.data.json();
+        data.title = payload.title || data.title;
+        data.body = payload.body || payload.message || data.body;
+        data.icon = payload.icon || data.icon;
+        data.badge = payload.badge || data.badge;
+        data.data = payload.data || data.data;
+      }
+    } catch (e) {
+      try {
+        var text = event.data.text();
+        if (text) { data.body = text; }
+      } catch (e2) {}
+    }
+
+    unreadCount = unreadCount + 1;
+
+    event.waitUntil(
+      self.registration.showNotification(data.title, {
+        body: data.body,
+        icon: data.icon,
+        badge: data.badge,
+        vibrate: [200, 100, 200],
+        tag: 'afroboost-notif',
+        renotify: true,
+        data: data.data
+      }).catch(function() {})
+    );
+  });
+} catch (e) {
+  // Push non supporté — silencieux
+}
+
+// Notification click
+try {
+  self.addEventListener('notificationclick', function(event) {
+    try { event.notification.close(); } catch (e) {}
+    unreadCount = Math.max(0, unreadCount - 1);
+
+    var targetUrl = '/';
+    try {
+      if (event.notification.data && event.notification.data.url) {
+        targetUrl = event.notification.data.url;
+      }
+    } catch (e) {}
+
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+        .then(function(clientList) {
+          for (var i = 0; i < clientList.length; i++) {
+            try {
+              if (clientList[i].url.indexOf(self.location.origin) !== -1) {
+                return clientList[i].focus();
+              }
+            } catch (e) {}
+          }
+          try {
+            return self.clients.openWindow(targetUrl);
+          } catch (e) {}
+        })
+        .catch(function() {})
+    );
+  });
+} catch (e) {
+  // Notification click non supporté — silencieux
+}
+
+// Notification close
+try {
+  self.addEventListener('notificationclose', function() {});
+} catch (e) {}
+
+// -----------------------------------------------------------------
+// MESSAGE — Écoute les commandes du client (SKIP_WAITING, CLEAR_BADGE)
+// -----------------------------------------------------------------
 self.addEventListener('message', function(event) {
-  console.log('[SW] Message recu:', event.data);
-  if (event.data && event.data.type === 'CLEAR_BADGE') {
-    unreadCount = 0;
-    if (navigator.clearAppBadge) navigator.clearAppBadge().catch(function() {});
-    return;
-  }
-  if (event.data && event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
+  try {
+    if (event.data && event.data.type === 'SKIP_WAITING') {
+      self.skipWaiting();
+    }
+    if (event.data && event.data.type === 'CLEAR_BADGE') {
+      unreadCount = 0;
+    }
+  } catch (e) {
+    // Silencieux
   }
 });
