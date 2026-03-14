@@ -157,6 +157,25 @@ const CampaignManager = ({
     axios.get(`${API}/api/whatsapp-mode`).then(r => setWaMode(r.data)).catch(() => {});
   }, []);
 
+  // V118: Meta WhatsApp Business config panel states
+  const [showMetaConfig, setShowMetaConfig] = useState(false);
+  const [metaConfig, setMetaConfig] = useState({ phoneNumberId: '', accessToken: '', displayNumber: '+41765203363' });
+  const [metaTestStatus, setMetaTestStatus] = useState(null);
+
+  // V118: Charger la config Meta existante au montage
+  useEffect(() => {
+    const API = process.env.REACT_APP_API_URL || '';
+    axios.get(`${API}/api/meta-whatsapp-config`).then(r => {
+      if (r.data && r.data.phoneNumberId) {
+        setMetaConfig({
+          phoneNumberId: r.data.phoneNumberId || '',
+          accessToken: r.data.accessToken || '',
+          displayNumber: r.data.displayNumber || '+41765203363'
+        });
+      }
+    }).catch(() => {});
+  }, []);
+
   // Credit block message
   const creditBlockMessage = hasInsufficientCredits ? (
     <div style={{ padding: '16px', borderRadius: '10px', marginBottom: '16px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
@@ -313,51 +332,92 @@ const CampaignManager = ({
         coachEmail={coachEmail}
       />
 
-      {/* V115: Indicateur WhatsApp dynamique — sandbox ou production */}
+      {/* V118: Panneau WhatsApp — indicateur mode + config Meta Cloud API */}
       {isSuperAdmin && waMode && (
-        waMode.mode === 'production' ? (
+        <div style={{ marginBottom: '16px' }}>
+          {/* Indicateur de mode actuel */}
           <div style={{
-            marginBottom: '16px', padding: '10px 16px', borderRadius: '10px',
-            background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)',
-            display: 'flex', alignItems: 'center', gap: '10px'
+            padding: '10px 16px', borderRadius: showMetaConfig ? '10px 10px 0 0' : '10px',
+            background: waMode.mode === 'meta' ? 'rgba(37,211,102,0.1)' : waMode.mode === 'sandbox' ? 'rgba(249,115,22,0.08)' : 'rgba(34,197,94,0.08)',
+            border: `1px solid ${waMode.mode === 'meta' ? 'rgba(37,211,102,0.3)' : waMode.mode === 'sandbox' ? 'rgba(249,115,22,0.25)' : 'rgba(34,197,94,0.25)'}`,
+            borderBottom: showMetaConfig ? 'none' : undefined,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px'
           }}>
-            <span style={{ fontSize: '18px', flexShrink: 0 }}>✅</span>
-            <p style={{ color: '#4ade80', fontWeight: 500, fontSize: '12px', margin: 0 }}>
-              WhatsApp Production — Envoi depuis <strong>{waMode.senderNumber}</strong>
-            </p>
-          </div>
-        ) : (
-          <div style={{
-            marginBottom: '16px', padding: '12px 16px', borderRadius: '10px',
-            background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.25)',
-            display: 'flex', alignItems: 'flex-start', gap: '10px'
-          }}>
-            <span style={{ fontSize: '18px', flexShrink: 0 }}>⚠️</span>
-            <div>
-              <p style={{ color: '#fb923c', fontWeight: 600, fontSize: '13px', margin: '0 0 4px' }}>
-                WhatsApp Sandbox (mode test)
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '16px' }}>{waMode.mode === 'meta' ? '🟢' : waMode.mode === 'sandbox' ? '🟠' : '✅'}</span>
+              <p style={{ color: waMode.mode === 'sandbox' ? '#fb923c' : '#4ade80', fontWeight: 500, fontSize: '12px', margin: 0 }}>
+                {waMode.mode === 'meta' && <>WhatsApp Meta Cloud API — <strong>{waMode.senderNumber}</strong></>}
+                {waMode.mode === 'production' && <>WhatsApp Twilio Production — <strong>{waMode.senderNumber}</strong></>}
+                {waMode.mode === 'sandbox' && <>WhatsApp Sandbox (mode test) — Configurez Meta pour passer en production</>}
               </p>
-              <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '12px', margin: '0 0 6px', lineHeight: 1.5 }}>
-                Le numéro <strong style={{ color: '#60a5fa' }}>+41 76 520 33 63</strong> n'est pas encore enregistré comme sender WhatsApp sur Twilio.
-                En attendant, chaque destinataire doit envoyer
-                <strong style={{ color: '#fbbf24' }}> {waMode.sandboxJoinCode} </strong>
-                au <strong style={{ color: '#60a5fa' }}>{waMode.sandboxNumber}</strong>.
-              </p>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <a href={`https://wa.me/${waMode.sandboxNumber?.replace('+','')}?text=${encodeURIComponent(waMode.sandboxJoinCode || '')}`}
-                  target="_blank" rel="noopener noreferrer"
-                  style={{ display: 'inline-block', padding: '5px 14px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, background: '#25D366', color: '#fff', textDecoration: 'none' }}>
-                  Rejoindre le Sandbox
-                </a>
-                <a href="https://console.twilio.com/us1/develop/sms/senders/whatsapp-senders"
-                  target="_blank" rel="noopener noreferrer"
-                  style={{ display: 'inline-block', padding: '5px 14px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, background: 'rgba(99,102,241,0.2)', color: '#818cf8', textDecoration: 'none', border: '1px solid rgba(99,102,241,0.3)' }}>
-                  Enregistrer le sender sur Twilio →
-                </a>
-              </div>
             </div>
+            <button type="button" onClick={() => setShowMetaConfig(p => !p)} style={{
+              padding: '4px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+              background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff'
+            }}>{showMetaConfig ? '▲ Fermer' : '⚙️ Config'}</button>
           </div>
-        )
+
+          {/* Panneau de configuration Meta Cloud API */}
+          {showMetaConfig && (
+            <div style={{
+              padding: '16px', borderRadius: '0 0 10px 10px',
+              background: 'rgba(30,30,50,0.6)', border: '1px solid rgba(255,255,255,0.1)', borderTop: 'none'
+            }}>
+              <h4 style={{ color: '#25D366', fontSize: '13px', fontWeight: 600, margin: '0 0 12px' }}>
+                📲 Configuration WhatsApp Meta Cloud API
+              </h4>
+              <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', margin: '0 0 12px', lineHeight: 1.5 }}>
+                Collez vos clés depuis <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa' }}>Facebook Developers</a> pour envoyer des messages WhatsApp depuis votre numéro.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <input type="text" placeholder="Phone Number ID (ex: 123456789012345)"
+                  value={metaConfig.phoneNumberId} onChange={e => setMetaConfig(p => ({ ...p, phoneNumberId: e.target.value }))}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', fontSize: '12px', outline: 'none' }} />
+                <input type="password" placeholder="Access Token (collez votre token ici)"
+                  value={metaConfig.accessToken} onChange={e => setMetaConfig(p => ({ ...p, accessToken: e.target.value }))}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', fontSize: '12px', outline: 'none' }} />
+                <input type="text" placeholder="Numéro WhatsApp (ex: +41765203363)"
+                  value={metaConfig.displayNumber} onChange={e => setMetaConfig(p => ({ ...p, displayNumber: e.target.value }))}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', fontSize: '12px', outline: 'none' }} />
+              </div>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
+                <button type="button" onClick={async () => {
+                  try {
+                    setMetaTestStatus('saving');
+                    const API = process.env.REACT_APP_API_URL || '';
+                    await axios.put(`${API}/api/meta-whatsapp-config`, metaConfig);
+                    setMetaTestStatus('saved');
+                    // Rafraîchir le mode
+                    const r = await axios.get(`${API}/api/whatsapp-mode`);
+                    setWaMode(r.data);
+                    setTimeout(() => setMetaTestStatus(null), 3000);
+                  } catch (e) { setMetaTestStatus('error'); }
+                }} style={{
+                  padding: '8px 16px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', border: 'none',
+                  background: 'linear-gradient(135deg, #25D366, #128C7E)', color: '#fff'
+                }}>{metaTestStatus === 'saving' ? '⏳...' : metaTestStatus === 'saved' ? '✅ Sauvé !' : '💾 Sauvegarder'}</button>
+
+                <button type="button" onClick={async () => {
+                  try {
+                    setMetaTestStatus('testing');
+                    const API = process.env.REACT_APP_API_URL || '';
+                    const r = await axios.post(`${API}/api/meta-whatsapp-test`);
+                    setMetaTestStatus('test_ok');
+                    setTimeout(() => setMetaTestStatus(null), 5000);
+                  } catch (e) {
+                    setMetaTestStatus('test_fail');
+                    alert('❌ Test échoué: ' + (e.response?.data?.detail || e.message));
+                    setTimeout(() => setMetaTestStatus(null), 5000);
+                  }
+                }} style={{
+                  padding: '8px 16px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', border: 'none',
+                  background: 'rgba(99,102,241,0.2)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)'
+                }}>{metaTestStatus === 'testing' ? '⏳ Envoi...' : metaTestStatus === 'test_ok' ? '✅ Reçu !' : metaTestStatus === 'test_fail' ? '❌ Échoué' : '📤 Tester la connexion'}</button>
+              </div>
+              {metaTestStatus === 'error' && <p style={{ color: '#f87171', fontSize: '11px', marginTop: '8px' }}>Erreur lors de la sauvegarde.</p>}
+            </div>
+          )}
+        </div>
       )}
 
       {/* === HISTORIQUE DES CAMPAGNES === */}

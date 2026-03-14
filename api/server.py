@@ -66,9 +66,12 @@ if RESEND_AVAILABLE and RESEND_API_KEY:
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
 TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER', '')
-# V115: Numéros WhatsApp — le système détecte automatiquement quel sender utiliser
-TWILIO_SANDBOX_NUMBER = "+14155238886"  # Sandbox Twilio (fallback si aucun sender enregistré)
-TWILIO_PRODUCTION_NUMBER = "+41765203363"  # Numéro cible production (à enregistrer sur Twilio)
+TWILIO_SANDBOX_NUMBER = "+14155238886"
+TWILIO_PRODUCTION_NUMBER = "+41765203363"
+
+# V118: Meta Cloud API WhatsApp — priorité sur Twilio quand configuré
+META_ACCESS_TOKEN = os.environ.get('META_ACCESS_TOKEN', '')
+META_PHONE_NUMBER_ID = os.environ.get('META_PHONE_NUMBER_ID', '')
 
 # MongoDB connection
 mongo_url = os.environ.get('MONGO_URL')
@@ -2487,17 +2490,13 @@ async def launch_campaign(campaign_id: str):
     cta_text = campaign.get("ctaText", "")
     cta_link = campaign.get("ctaLink", "")
 
-    # V115: Déterminer le numéro expéditeur WhatsApp — détection automatique
+    # V118: Déterminer le moteur WhatsApp — Meta Cloud API > Twilio production > Twilio sandbox
     sender_type = campaign.get("senderType", "business")
+    business_from_number, wa_mode = await _get_whatsapp_sender()
     if sender_type == "custom" and campaign.get("customFromNumber"):
-        # Numéro personnalisé du partenaire (WhatsApp Business vérifié)
         business_from_number = campaign.get("customFromNumber")
-        wa_mode = "custom"
-        logger.info(f"[CAMPAIGN-LAUNCH-V115] 📲 Mode Custom: envoi depuis {business_from_number}")
-    else:
-        # Mode par défaut: détection auto (sender enregistré → prod, sinon → sandbox)
-        business_from_number, wa_mode = await _get_whatsapp_sender()
-        logger.info(f"[CAMPAIGN-LAUNCH-V115] 📤 Mode {wa_mode}: envoi depuis {business_from_number}")
+        wa_mode = "twilio_custom"
+    logger.info(f"[CAMPAIGN-LAUNCH-V118] 📤 Mode {wa_mode}: envoi depuis {business_from_number}")
     
     success_count = 0
     fail_count = 0
@@ -2715,16 +2714,25 @@ async def launch_campaign(campaign_id: str):
             }
             
             try:
-                # Envoi DIRECT via Twilio (format E.164)
+                # V118: Router vers Meta Cloud API ou Twilio selon le mode détecté
                 phone_e164 = format_phone_e164(contact_phone)
-                wa_response = await send_whatsapp_direct(
-                    to_phone=phone_e164,
-                    message=personalized_msg,
-                    media_url=media_url if media_url else None,
-                    campaign_id=campaign_id,
-                    campaign_name=campaign_name,
-                    from_number_override=business_from_number  # V113: numéro business si sélectionné
-                )
+                if wa_mode == "meta":
+                    wa_response = await send_whatsapp_meta(
+                        to_phone=phone_e164,
+                        message=personalized_msg,
+                        media_url=media_url if media_url else None,
+                        campaign_id=campaign_id,
+                        campaign_name=campaign_name
+                    )
+                else:
+                    wa_response = await send_whatsapp_direct(
+                        to_phone=phone_e164,
+                        message=personalized_msg,
+                        media_url=media_url if media_url else None,
+                        campaign_id=campaign_id,
+                        campaign_name=campaign_name,
+                        from_number_override=business_from_number
+                    )
 
                 if wa_response.get("status") == "success":
                     whatsapp_result["status"] = "sent"
@@ -5265,19 +5273,21 @@ async def get_whatsapp_config():
         return {"id": "whatsapp_config", "accountSid": "", "authToken": "", "fromNumber": "", "apiMode": "twilio"}
     return config
 
-# V115: Endpoint pour récupérer le mode WhatsApp actuel (sandbox/production)
+# V118: Endpoint pour récupérer le mode WhatsApp actuel
 @api_router.get("/whatsapp-mode")
 async def get_whatsapp_mode():
     """
-    V115: Retourne le mode WhatsApp actuel et le numéro expéditeur.
-    Utilisé par le frontend pour afficher le bon indicateur.
+    V118: Retourne le mode WhatsApp actuel (meta / production / sandbox).
     """
     sender_number, mode = await _get_whatsapp_sender()
+    meta_token, meta_phone_id = await _get_meta_config()
     return {
-        "mode": mode,  # "production" | "sandbox"
+        "mode": mode,  # "meta" | "production" | "sandbox"
+        "engine": "meta" if mode == "meta" else "twilio",
         "senderNumber": sender_number,
         "sandboxNumber": TWILIO_SANDBOX_NUMBER,
         "productionNumber": TWILIO_PRODUCTION_NUMBER,
+        "metaConfigured": bool(meta_token and meta_phone_id),
         "sandboxJoinCode": "join everyone-goes" if mode == "sandbox" else None,
         "needsRegistration": mode == "sandbox"
     }
@@ -5300,6 +5310,81 @@ async def set_whatsapp_sender(data: dict):
     )
     logger.info(f"[WHATSAPP-V115] ✅ Sender production enregistré: {registered_sender}")
     return {"status": "ok", "registeredSender": registered_sender, "mode": "production"}
+
+# V118: Configuration Meta Cloud API WhatsApp
+@api_router.get("/meta-whatsapp-config")
+async def get_meta_whatsapp_config():
+    """V118: Récupère la config Meta WhatsApp (sans exposer le token complet)."""
+    config = await db.meta_whatsapp_config.find_one({"id": "meta_whatsapp_config"}, {"_id": 0})
+    if not config:
+        return {"id": "meta_whatsapp_config", "configured": False, "phoneNumberId": "", "displayNumber": "", "tokenSet": False}
+    token = config.get("accessToken", "")
+    return {
+        "id": "meta_whatsapp_config",
+        "configured": bool(token and config.get("phoneNumberId")),
+        "phoneNumberId": config.get("phoneNumberId", ""),
+        "displayNumber": config.get("displayNumber", ""),
+        "businessName": config.get("businessName", ""),
+        "tokenSet": bool(token),
+        "tokenPreview": f"{token[:8]}...{token[-4:]}" if len(token) > 12 else ("***" if token else ""),
+        "updatedAt": config.get("updatedAt", "")
+    }
+
+@api_router.put("/meta-whatsapp-config")
+async def update_meta_whatsapp_config(data: dict):
+    """V118: Sauvegarde la config Meta Cloud API WhatsApp du Super Admin."""
+    access_token = data.get("accessToken", "")
+    phone_number_id = data.get("phoneNumberId", "")
+    display_number = data.get("displayNumber", "+41765203363")
+    business_name = data.get("businessName", "Afroboost")
+
+    if not access_token or not phone_number_id:
+        raise HTTPException(status_code=400, detail="accessToken et phoneNumberId requis")
+
+    await db.meta_whatsapp_config.update_one(
+        {"id": "meta_whatsapp_config"},
+        {"$set": {
+            "id": "meta_whatsapp_config",
+            "accessToken": access_token,
+            "phoneNumberId": phone_number_id,
+            "displayNumber": display_number,
+            "businessName": business_name,
+            "updatedAt": datetime.now(timezone.utc).isoformat()
+        }},
+        upsert=True
+    )
+    logger.info(f"[META-V118] ✅ Config Meta WhatsApp sauvegardée — phoneNumberId={phone_number_id}")
+    return {"status": "ok", "configured": True, "mode": "meta"}
+
+@api_router.post("/meta-whatsapp-test")
+async def test_meta_whatsapp():
+    """V118: Envoie un message test 'Hello Afroboost' via Meta Cloud API au numéro du Super Admin."""
+    meta_token, meta_phone_id = await _get_meta_config()
+    if not meta_token or not meta_phone_id:
+        raise HTTPException(status_code=400, detail="Meta Cloud API non configurée. Renseignez d'abord vos clés.")
+
+    # Récupérer le numéro du Super Admin
+    meta_cfg = await db.meta_whatsapp_config.find_one({"id": "meta_whatsapp_config"}, {"_id": 0})
+    test_number = (meta_cfg or {}).get("displayNumber", "+41765203363")
+
+    result = await send_whatsapp_meta(
+        to_phone=test_number,
+        message="✅ Hello Afroboost ! Votre configuration WhatsApp Meta Cloud API fonctionne parfaitement. 🚀",
+        campaign_id="meta_test",
+        campaign_name="Test Meta Config"
+    )
+
+    if result.get("status") == "success":
+        return {"status": "ok", "message": f"Message test envoyé à {test_number}", "wamid": result.get("sid")}
+    else:
+        raise HTTPException(status_code=502, detail=f"Échec envoi test: {result.get('error', 'Erreur inconnue')}")
+
+@api_router.delete("/meta-whatsapp-config")
+async def delete_meta_whatsapp_config():
+    """V118: Supprime la config Meta et rebascule sur Twilio."""
+    await db.meta_whatsapp_config.delete_one({"id": "meta_whatsapp_config"})
+    logger.info("[META-V118] 🗑️ Config Meta WhatsApp supprimée — retour Twilio")
+    return {"status": "ok", "mode": "twilio"}
 
 @api_router.put("/whatsapp-config")
 async def update_whatsapp_config(config: WhatsAppConfigUpdate):
@@ -5856,32 +5941,158 @@ async def _get_twilio_config():
     
     return None, None, None
 
+async def _get_meta_config():
+    """
+    V118: Récupère la config Meta Cloud API WhatsApp.
+    Priorité: 1. Variables .env  2. Config MongoDB (meta_whatsapp_config)
+    Retourne: (access_token, phone_number_id) ou (None, None)
+    """
+    if META_ACCESS_TOKEN and META_PHONE_NUMBER_ID:
+        return META_ACCESS_TOKEN, META_PHONE_NUMBER_ID
+    meta_cfg = await db.meta_whatsapp_config.find_one({"id": "meta_whatsapp_config"}, {"_id": 0})
+    if meta_cfg:
+        token = meta_cfg.get("accessToken", "")
+        phone_id = meta_cfg.get("phoneNumberId", "")
+        if token and phone_id:
+            return token, phone_id
+    return None, None
+
+
 async def _get_whatsapp_sender():
     """
-    V115: Détermine le numéro WhatsApp expéditeur à utiliser.
+    V118: Détermine le moteur WhatsApp et le numéro expéditeur.
     Ordre de priorité:
-    1. Sender enregistré dans whatsapp_config.registeredSender (numéro vérifié sur Twilio)
-    2. TWILIO_FROM_NUMBER (variable env)
-    3. TWILIO_SANDBOX_NUMBER (fallback sandbox)
+    1. Meta Cloud API (si configuré) → mode "meta"
+    2. Twilio sender enregistré (registeredSender DB) → mode "production"
+    3. TWILIO_FROM_NUMBER (env) → mode "production"
+    4. TWILIO_SANDBOX_NUMBER → mode "sandbox"
 
-    Retourne: (from_number, mode) — mode = "production" | "sandbox"
+    Retourne: (from_number, mode) — mode = "meta" | "production" | "sandbox"
     """
-    # 1. Vérifier si un sender WhatsApp est enregistré dans la DB
-    wa_config = await db.whatsapp_config.find_one({"id": "whatsapp_config"}, {"_id": 0})
-    if wa_config:
-        registered = wa_config.get("registeredSender", "")
-        if registered:
-            logger.info(f"[WHATSAPP-SENDER] ✅ Sender production enregistré: {registered}")
-            return registered, "production"
+    # 1. Meta Cloud API configuré ?
+    meta_token, meta_phone_id = await _get_meta_config()
+    if meta_token and meta_phone_id:
+        # Récupérer le numéro affiché depuis la config
+        meta_cfg = await db.meta_whatsapp_config.find_one({"id": "meta_whatsapp_config"}, {"_id": 0})
+        display_number = (meta_cfg or {}).get("displayNumber", TWILIO_PRODUCTION_NUMBER)
+        logger.info(f"[WHATSAPP-SENDER-V118] ✅ Mode Meta Cloud API — numéro: {display_number}")
+        return display_number, "meta"
 
-    # 2. Variable d'environnement
+    # 2. Sender Twilio enregistré dans la DB
+    wa_config = await db.whatsapp_config.find_one({"id": "whatsapp_config"}, {"_id": 0})
+    if wa_config and wa_config.get("registeredSender"):
+        registered = wa_config["registeredSender"]
+        logger.info(f"[WHATSAPP-SENDER] ✅ Sender Twilio production: {registered}")
+        return registered, "production"
+
+    # 3. Variable d'environnement Twilio
     if TWILIO_FROM_NUMBER and TWILIO_FROM_NUMBER != TWILIO_SANDBOX_NUMBER:
-        logger.info(f"[WHATSAPP-SENDER] ✅ Sender env: {TWILIO_FROM_NUMBER}")
         return TWILIO_FROM_NUMBER, "production"
 
-    # 3. Fallback sandbox
-    logger.info(f"[WHATSAPP-SENDER] ⚠️ Aucun sender enregistré — fallback sandbox: {TWILIO_SANDBOX_NUMBER}")
+    # 4. Fallback sandbox
+    logger.info(f"[WHATSAPP-SENDER] ⚠️ Fallback sandbox: {TWILIO_SANDBOX_NUMBER}")
     return TWILIO_SANDBOX_NUMBER, "sandbox"
+
+
+async def send_whatsapp_meta(to_phone: str, message: str, media_url: str = None, campaign_id: str = None, campaign_name: str = None) -> dict:
+    """
+    V118: Envoie un message WhatsApp via Meta Cloud API (graph.facebook.com).
+    Utilisé quand le Super Admin a configuré ses clés Meta.
+    """
+    import httpx
+
+    access_token, phone_number_id = await _get_meta_config()
+    if not access_token or not phone_number_id:
+        return {"status": "error", "error": "Meta Cloud API non configurée (META_ACCESS_TOKEN / META_PHONE_NUMBER_ID manquants)", "error_code": "META_NOT_CONFIGURED"}
+
+    # Formater le numéro destinataire (E.164 sans le +)
+    clean_to = to_phone.replace(" ", "").replace("-", "").replace(".", "")
+    if clean_to.startswith("+"):
+        clean_to = clean_to[1:]
+    elif clean_to.startswith("0"):
+        clean_to = "41" + clean_to[1:]
+    elif not clean_to.startswith("41"):
+        clean_to = "41" + clean_to
+
+    meta_url = f"https://graph.facebook.com/v21.0/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    # Construire le payload — message texte simple (pas de template)
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": clean_to,
+        "type": "text",
+        "text": {"preview_url": False, "body": message}
+    }
+
+    # Si un média image est fourni, envoyer comme message image
+    if media_url and any(media_url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": clean_to,
+            "type": "image",
+            "image": {"link": media_url, "caption": message}
+        }
+    elif media_url and any(media_url.lower().endswith(ext) for ext in ['.mp4', '.mov', '.webm']):
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": clean_to,
+            "type": "video",
+            "video": {"link": media_url, "caption": message}
+        }
+
+    logger.info(f"[META-WHATSAPP-V118] 📤 Envoi vers {clean_to} via Meta Cloud API")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(meta_url, json=payload, headers=headers)
+            result = response.json()
+
+            if response.status_code >= 400:
+                error_msg = "Erreur Meta API"
+                error_detail = result.get("error", {})
+                if isinstance(error_detail, dict):
+                    error_msg = error_detail.get("message", error_msg)
+                    error_code = error_detail.get("code", response.status_code)
+                else:
+                    error_code = response.status_code
+
+                logger.error(f"[META-WHATSAPP-V118] ❌ Erreur [{error_code}]: {error_msg}")
+
+                try:
+                    await db.campaign_errors.insert_one({
+                        "campaign_id": campaign_id or "direct_send",
+                        "campaign_name": campaign_name or "Envoi Direct",
+                        "error_type": "meta_api_error",
+                        "error_code": str(error_code),
+                        "error_message": error_msg,
+                        "channel": "whatsapp",
+                        "to_phone": clean_to,
+                        "engine": "meta",
+                        "http_status": response.status_code,
+                        "created_at": datetime.now(timezone.utc).isoformat()
+                    })
+                except Exception:
+                    pass
+
+                return {"status": "error", "error": error_msg, "error_code": str(error_code)}
+
+            # Succès — extraire le message ID
+            messages = result.get("messages", [])
+            wa_id = messages[0].get("id", "") if messages else ""
+            logger.info(f"[META-WHATSAPP-V118] ✅ Envoyé — wamid: {wa_id}")
+
+            return {"status": "success", "sid": wa_id, "to": clean_to, "engine": "meta"}
+
+    except Exception as e:
+        logger.error(f"[META-WHATSAPP-V118] ❌ Exception: {str(e)}")
+        return {"status": "error", "error": str(e), "error_code": "META_EXCEPTION"}
 
 
 async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = None, campaign_id: str = None, campaign_name: str = None, from_number_override: str = None) -> dict:
