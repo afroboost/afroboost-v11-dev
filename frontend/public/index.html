@@ -33,12 +33,34 @@
         <meta name="version" content="120" />
         <script>
             console.log("🚀 V120 : Notifications push + badge PWA");
-            // V120: Force update SW si version change — résout l'écran noir après reinstall PWA
-            if ('serviceWorker' in navigator) {
-                navigator.serviceWorker.getRegistration().then(function(reg) {
-                    if (reg) reg.update();
-                }).catch(function() {});
-            }
+            // V120: Force update SW + hard reload si version obsolète (résout écran noir PWA)
+            (function() {
+                var CURRENT_VERSION = '120';
+                var lastVersion = '';
+                try { lastVersion = localStorage.getItem('af_app_version') || ''; } catch(e) {}
+                // Toujours forcer un update du SW
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.getRegistration().then(function(reg) {
+                        if (reg) reg.update();
+                    }).catch(function() {});
+                }
+                // Si la version a changé et qu'on n'est pas déjà en train de recharger
+                if (lastVersion && lastVersion !== CURRENT_VERSION && !window.location.search.includes('_reloaded=1')) {
+                    try { localStorage.setItem('af_app_version', CURRENT_VERSION); } catch(e) {}
+                    // Purger les caches via API si disponible
+                    if ('caches' in window) {
+                        caches.keys().then(function(names) {
+                            names.forEach(function(name) { caches.delete(name); });
+                        }).then(function() {
+                            window.location.replace(window.location.pathname + '?_reloaded=1');
+                        });
+                    } else {
+                        window.location.replace(window.location.pathname + '?_reloaded=1');
+                    }
+                } else {
+                    try { localStorage.setItem('af_app_version', CURRENT_VERSION); } catch(e) {}
+                }
+            })();
             // v64: Nettoyage localStorage — purger toute référence au slug "artboost"
             try {
                 var keys = Object.keys(localStorage);

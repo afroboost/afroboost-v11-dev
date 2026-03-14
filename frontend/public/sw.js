@@ -24,7 +24,7 @@ self.addEventListener('activate', (event) => {
             return caches.delete(name);
           })
       );
-    }).then(() => clients.claim()).then(() => { return clients.matchAll({ type: "window" }).then((windowClients) => { windowClients.forEach((client) => { client.navigate(client.url); }); }); })
+    }).then(() => clients.claim())
   );
 });
 
