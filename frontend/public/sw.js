@@ -1,12 +1,32 @@
-// Service Worker Afroboost V124 — ES5 compatible pour tous les mobiles
+// Service Worker Afroboost V136 — ES5 compatible pour tous les mobiles
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
-// V124: Réécriture complète en ES5 (pas de const/let/arrow/optional chaining)
-// pour compatibilité maximale avec les anciens navigateurs mobiles
+// V136: Nouvelle identité PWA + self-destruct anciennes versions
 
-var CACHE_NAME = 'afroboost-v135';
+var CACHE_NAME = 'afroboost-v136';
+var SW_VERSION = 136;
 
-// V128: Pre-cache résilient — l'installation du SW ne doit JAMAIS échouer
-// Sinon l'ancien SW cassé (V120 avec syntaxe ES6) reste actif = écran noir
+// V136: Self-Destruct — détecte et élimine les anciennes versions
+// Si un ancien SW (< V135) est encore actif, il sera écrasé par skipWaiting
+// Les caches orphelins sont purgés à l'activation
+(function selfDestruct() {
+  // Vérifier si des caches d'anciennes versions existent
+  if (typeof caches !== 'undefined') {
+    caches.keys().then(function(names) {
+      names.forEach(function(name) {
+        // Matcher les patterns "afroboost-vXXX" avec version < 136
+        var match = name.match(/^afroboost-v(\d+)$/);
+        if (match) {
+          var ver = parseInt(match[1], 10);
+          if (ver < SW_VERSION) {
+            console.log('[SW] V136 Self-Destruct: suppression ancien cache ' + name + ' (v' + ver + ')');
+            caches.delete(name);
+          }
+        }
+      });
+    }).catch(function() {});
+  }
+})();
+
 var PRECACHE_URLS = [
   '/',
   '/index.html',
@@ -19,7 +39,7 @@ var PRECACHE_URLS = [
 // Chaque URL est tentée individuellement avec fetch+put (plus robuste que cache.add)
 // Si tout échoue, le SW s'installe quand même = l'ancien SW cassé est remplacé
 self.addEventListener('install', function(event) {
-  console.log('[SW] V135 install — Install-Ready strategy');
+  console.log('[SW] V136 install — Install-Ready + Self-Destruct');
   event.waitUntil(
     caches.open(CACHE_NAME).then(function(cache) {
       var promises = PRECACHE_URLS.map(function(url) {
@@ -36,30 +56,29 @@ self.addEventListener('install', function(event) {
     }).catch(function(err) {
       console.warn('[SW] Cache open échoué — installation continue sans cache:', err);
     }).then(function() {
-      console.log('[SW] V135 skipWaiting — prise de contrôle immédiate');
+      console.log('[SW] V136 skipWaiting — prise de contrôle immédiate');
       return self.skipWaiting();
     })
   );
 });
 
-// V135: Activation — purge nucléaire + claim + force-reload tous les clients
+// V136: Activation — purge nucléaire de TOUS les anciens caches + claim + reload
 self.addEventListener('activate', function(event) {
-  console.log('[SW] V135 activate — nuclear purge + claim + reload');
+  console.log('[SW] V136 activate — nuclear purge + claim + reload');
   event.waitUntil(
     caches.keys().then(function(cacheNames) {
       return Promise.all(
         cacheNames
           .filter(function(name) { return name !== CACHE_NAME; })
           .map(function(name) {
-            console.log('[SW] Suppression ancien cache:', name);
+            console.log('[SW] V136 Suppression cache:', name);
             return caches.delete(name);
           })
       );
     }).then(function() {
       return self.clients.claim();
     }).then(function() {
-      // V130: Forcer le reload de tous les clients (PWA installées incluses)
-      // Quand le nouveau SW remplace l'ancien, recharger pour servir le nouveau HTML
+      // Forcer le reload de tous les clients (PWA installées incluses)
       return self.clients.matchAll({ type: 'window' }).then(function(allClients) {
         allClients.forEach(function(client) {
           client.postMessage({ type: 'SW_UPDATED', version: CACHE_NAME });

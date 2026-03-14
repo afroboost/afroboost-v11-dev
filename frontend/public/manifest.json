@@ -1,8 +1,8 @@
 {
-  "short_name": "Afroboost",
-  "name": "Afroboost - Réservation de casque",
+  "short_name": "Afroboost App",
+  "name": "Afroboost App - Réservation de casque",
   "description": "Le concept Afroboost : cardio + danse afrobeat + casques audio immersifs.",
-  "id": "/",
+  "id": "/?v=136",
   "icons": [
     {
       "src": "favicon.ico",
@@ -34,7 +34,7 @@
       "purpose": "maskable"
     }
   ],
-  "start_url": "/",
+  "start_url": "/?v=136",
   "scope": "/",
   "display": "standalone",
   "theme_color": "#000000",

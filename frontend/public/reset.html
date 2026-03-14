@@ -162,6 +162,19 @@
         <div class="success-msg" id="successMsg">
             Système purifié. Vous pouvez maintenant réinstaller l'application.
         </div>
+
+        <div id="chromeHelp" style="display:none; margin-top: 20px; padding: 16px 20px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; text-align: left;">
+            <p style="font-size: 13px; color: rgba(255,255,255,0.7); margin-bottom: 10px; font-weight: 600;">
+                Si l'icône n'apparaît toujours pas :
+            </p>
+            <ol style="font-size: 12px; color: rgba(255,255,255,0.45); line-height: 2; padding-left: 20px; margin: 0;">
+                <li>Ouvrez <strong style="color:#D91CD2">Paramètres</strong> sur votre téléphone</li>
+                <li>Allez dans <strong style="color:#D91CD2">Applications &gt; Chrome</strong></li>
+                <li>Appuyez sur <strong style="color:#D91CD2">Stockage</strong></li>
+                <li>Appuyez sur <strong style="color:#D91CD2">Supprimer les données du site</strong></li>
+                <li>Revenez sur <strong style="color:#D91CD2">afroboost.com</strong> et réinstallez</li>
+            </ol>
+        </div>
     </div>
 
     <script>
@@ -274,6 +287,7 @@
             btnsEl.classList.remove('hidden');
             dividerEl.style.display = 'block';
             deepSectionEl.style.display = 'block';
+            document.getElementById('chromeHelp').style.display = 'block';
         }
 
         // === NETTOYAGE TOTAL (deepClean) ===
