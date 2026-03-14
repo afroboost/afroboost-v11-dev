@@ -2624,9 +2624,10 @@ function App() {
   }, []);
 
   // PWA Install Prompt State
-  // V128: Simplifié — Chrome gère l'install nativement (comme avant V120)
+  // V129: Hybrid — Chrome mini-infobar natif + notre bannière en fallback
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
 
   // v8.9.3: Écouter l'événement "openBecomeCoach" depuis le ChatWidget
   useEffect(() => {
@@ -2692,16 +2693,19 @@ function App() {
     setIsIOS(iOS);
 
     const handleBeforeInstallPrompt = (e) => {
-      // V128: Ne PAS appeler e.preventDefault() — laisser Chrome afficher son mini-infobar natif
-      // C'est comme avant V120 : Chrome gère l'installation tout seul
-      console.log('[V128] beforeinstallprompt — Chrome gère nativement');
+      // V129: NE PAS appeler e.preventDefault() — Chrome affiche son mini-infobar natif
+      // On stocke quand même l'événement pour notre bouton en fallback
+      console.log('[V129] beforeinstallprompt capturé — Chrome mini-infobar + notre bannière');
+      setDeferredPrompt(e);
+      setShowInstallBanner(true);
     };
 
-    // V128: Quand l'app est installée, cacher la bannière iOS si visible
+    // V129: Quand l'app est installée, tout cacher
     const handleAppInstalled = () => {
-      console.log('[V128] App installée !');
+      console.log('[V129] App installée !');
       localStorage.setItem('af_pwa_dismissed', 'true');
       setShowInstallBanner(false);
+      setDeferredPrompt(null);
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
@@ -2714,7 +2718,7 @@ function App() {
     if (isStandalone) {
       setShowInstallBanner(false);
     } else if (iOS) {
-      // V128: Bannière custom uniquement pour iOS (pas de mini-infobar natif sur Safari)
+      // V129: Bannière iOS (Safari n'a pas de mini-infobar natif)
       const dismissed = localStorage.getItem('af_pwa_dismissed');
       if (!dismissed) {
         setShowInstallBanner(true);
@@ -2727,14 +2731,33 @@ function App() {
     };
   }, []);
 
-  // V128: Handle PWA install button click — iOS uniquement (Android = Chrome natif)
-  const handleInstallClick = () => {
+  // V129: Handle PWA install button click — prompt natif si dispo, sinon instructions
+  const handleInstallClick = async () => {
     if (isIOS) {
       alert('Pour installer Afroboost sur iOS:\n\n1. Appuyez sur le bouton Partager (📤)\n2. Sélectionnez "Sur l\'écran d\'accueil"\n3. Appuyez sur "Ajouter"');
       return;
     }
-    // V128: Sur Android, Chrome gère l'install nativement — instructions manuelles en fallback
-    alert('Pour installer Afroboost :\n\n1. Appuyez sur les 3 points (⋮) en haut à droite de Chrome\n2. Appuyez sur "Installer l\'application"\n3. Confirmez l\'installation\n\nL\'app apparaîtra dans vos applications.');
+
+    if (deferredPrompt) {
+      try {
+        console.log('[V129] Affichage du prompt natif...');
+        deferredPrompt.prompt();
+        var result = await deferredPrompt.userChoice;
+        console.log('[V129] Résultat:', result.outcome);
+        if (result.outcome === 'accepted') {
+          setShowInstallBanner(false);
+          localStorage.setItem('af_pwa_dismissed', 'true');
+        }
+        // Le prompt est consommé dans tous les cas
+        setDeferredPrompt(null);
+      } catch (err) {
+        console.error('[V129] Erreur prompt:', err);
+        setDeferredPrompt(null);
+      }
+    } else {
+      // Fallback: instructions manuelles si le prompt a été consommé ou n'existe pas
+      alert('Pour installer Afroboost :\n\n1. Appuyez sur les 3 points (⋮) en haut à droite de Chrome\n2. Appuyez sur "Installer l\'application"\n3. Confirmez l\'installation\n\nL\'app apparaîtra dans vos applications.');
+    }
   };
 
   // Dismiss install banner
@@ -4094,7 +4117,7 @@ function App() {
         />
       )}
 
-      {/* PWA Install Banner — V128: iOS uniquement (Android = Chrome mini-infobar natif) */}
+      {/* PWA Install Banner — V129: Bannière hybride (Chrome mini-infobar + notre bouton fallback) */}
       {showInstallBanner && (
         <div
           className="fixed bottom-0 left-0 right-0 z-50 px-3 py-2"
@@ -4109,7 +4132,7 @@ function App() {
             <div className="flex items-center gap-2">
               <span className="text-sm">{isIOS ? '📤' : '📲'}</span>
               <p className="text-white text-xs opacity-80">
-                {isIOS ? 'Ajoutez Afroboost à votre écran' : 'Installer l\'app Afroboost'}
+                {isIOS ? 'Ajoutez Afroboost à votre écran' : deferredPrompt ? 'Installer l\'app Afroboost' : 'Menu Chrome (⋮) → Installer l\'app'}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -5365,7 +5388,7 @@ function App() {
                 <span className="text-white" style={{ opacity: 0.3 }}>|</span>
               </>
             )}
-            {!window.matchMedia('(display-mode: standalone)').matches && (
+            {(deferredPrompt || isIOS) && !window.matchMedia('(display-mode: standalone)').matches && (
               <>
                 <button 
                   onClick={handleInstallClick}
