@@ -163,6 +163,27 @@
             Système purifié. Vous pouvez maintenant réinstaller l'application.
         </div>
 
+        <div class="section-divider" id="divider2" style="display:none;"></div>
+
+        <!-- V137: Bouton géant RÉPARER L'ICÔNE -->
+        <div id="iconFixSection" style="display:none;">
+            <button id="iconFixBtn" onclick="fixGhostIcon()" style="
+                display: block; width: 100%; margin: 8px 0 12px;
+                padding: 18px 24px;
+                background: linear-gradient(135deg, #dc2626, #b91c1c);
+                color: #fff; font-size: 17px; font-weight: 700;
+                border: none; border-radius: 14px; cursor: pointer;
+                text-transform: uppercase; letter-spacing: 0.5px;
+                box-shadow: 0 4px 24px rgba(220, 38, 38, 0.4);
+                transition: transform 0.2s, box-shadow 0.2s;
+            ">
+                RÉPARER L'ICÔNE INVISIBLE
+            </button>
+            <p style="font-size: 11px; color: rgba(255,255,255,0.3); margin-top: 4px;">
+                Supprime toute trace de l'ancienne app pour permettre une nouvelle installation
+            </p>
+        </div>
+
         <div id="chromeHelp" style="display:none; margin-top: 20px; padding: 16px 20px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; text-align: left;">
             <p style="font-size: 13px; color: rgba(255,255,255,0.7); margin-bottom: 10px; font-weight: 600;">
                 Si l'icône n'apparaît toujours pas :
@@ -287,7 +308,64 @@
             btnsEl.classList.remove('hidden');
             dividerEl.style.display = 'block';
             deepSectionEl.style.display = 'block';
+            document.getElementById('divider2').style.display = 'block';
+            document.getElementById('iconFixSection').style.display = 'block';
             document.getElementById('chromeHelp').style.display = 'block';
+        }
+
+        // V137: Réparation icône fantôme — purge totale SW + redirect avec paramètre unique
+        function fixGhostIcon() {
+            var btn = document.getElementById('iconFixBtn');
+            btn.disabled = true;
+            btn.textContent = 'RÉPARATION EN COURS...';
+            btn.style.opacity = '0.6';
+
+            var fixTasks = [];
+
+            // 1. Désenregistrer TOUS les Service Workers
+            if ('serviceWorker' in navigator) {
+                fixTasks.push(
+                    navigator.serviceWorker.getRegistrations().then(function(regs) {
+                        return Promise.all(regs.map(function(r) {
+                            console.log('[V137] Unregister SW:', r.scope);
+                            return r.unregister();
+                        }));
+                    }).catch(function() {})
+                );
+            }
+
+            // 2. Purger TOUS les caches
+            if ('caches' in window) {
+                fixTasks.push(
+                    caches.keys().then(function(names) {
+                        return Promise.all(names.map(function(n) { return caches.delete(n); }));
+                    }).catch(function() {})
+                );
+            }
+
+            // 3. Vider tout le storage
+            try { localStorage.clear(); } catch(e) {}
+            try { sessionStorage.clear(); } catch(e) {}
+
+            // 4. Purger IndexedDB
+            if (window.indexedDB && window.indexedDB.databases) {
+                fixTasks.push(
+                    window.indexedDB.databases().then(function(dbs) {
+                        dbs.forEach(function(db) { window.indexedDB.deleteDatabase(db.name); });
+                    }).catch(function() {})
+                );
+            }
+
+            // 5. Rediriger avec paramètre unique pour forcer Chrome à traiter comme nouvelle app
+            Promise.all(fixTasks).then(function() {
+                btn.textContent = 'REDIRECTION...';
+                // Le paramètre new_install + timestamp force un traitement fresh par Chrome
+                var ts = Date.now();
+                window.location.replace('/?new_install=true&t=' + ts);
+            }).catch(function() {
+                btn.textContent = 'REDIRECTION...';
+                window.location.replace('/?new_install=true&t=' + Date.now());
+            });
         }
 
         // === NETTOYAGE TOTAL (deepClean) ===

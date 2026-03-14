@@ -1,12 +1,12 @@
-// Service Worker Afroboost V136 — ES5 compatible pour tous les mobiles
+// Service Worker Afroboost V137 — ES5 compatible pour tous les mobiles
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
-// V136: Nouvelle identité PWA + self-destruct anciennes versions
+// V137: Nouvelle identité PWA (/pwa-v137) + self-destruct anciennes versions
 
-var CACHE_NAME = 'afroboost-v136';
-var SW_VERSION = 136;
+var CACHE_NAME = 'afroboost-v137';
+var SW_VERSION = 137;
 
-// V136: Self-Destruct — détecte et élimine les anciennes versions
-// Si un ancien SW (< V135) est encore actif, il sera écrasé par skipWaiting
+// V136+: Self-Destruct — détecte et élimine les anciennes versions
+// Si un ancien SW (< 137) est encore actif, il sera écrasé par skipWaiting
 // Les caches orphelins sont purgés à l'activation
 (function selfDestruct() {
   // Vérifier si des caches d'anciennes versions existent
@@ -18,7 +18,7 @@ var SW_VERSION = 136;
         if (match) {
           var ver = parseInt(match[1], 10);
           if (ver < SW_VERSION) {
-            console.log('[SW] V136 Self-Destruct: suppression ancien cache ' + name + ' (v' + ver + ')');
+            console.log('[SW] V137 Self-Destruct: suppression ancien cache ' + name + ' (v' + ver + ')');
             caches.delete(name);
           }
         }
@@ -39,7 +39,7 @@ var PRECACHE_URLS = [
 // Chaque URL est tentée individuellement avec fetch+put (plus robuste que cache.add)
 // Si tout échoue, le SW s'installe quand même = l'ancien SW cassé est remplacé
 self.addEventListener('install', function(event) {
-  console.log('[SW] V136 install — Install-Ready + Self-Destruct');
+  console.log('[SW] V137 install — Install-Ready + Self-Destruct');
   event.waitUntil(
     caches.open(CACHE_NAME).then(function(cache) {
       var promises = PRECACHE_URLS.map(function(url) {
@@ -56,22 +56,22 @@ self.addEventListener('install', function(event) {
     }).catch(function(err) {
       console.warn('[SW] Cache open échoué — installation continue sans cache:', err);
     }).then(function() {
-      console.log('[SW] V136 skipWaiting — prise de contrôle immédiate');
+      console.log('[SW] V137 skipWaiting — prise de contrôle immédiate');
       return self.skipWaiting();
     })
   );
 });
 
-// V136: Activation — purge nucléaire de TOUS les anciens caches + claim + reload
+// V137: Activation — purge nucléaire de TOUS les anciens caches + claim + reload
 self.addEventListener('activate', function(event) {
-  console.log('[SW] V136 activate — nuclear purge + claim + reload');
+  console.log('[SW] V137 activate — nuclear purge + claim + reload');
   event.waitUntil(
     caches.keys().then(function(cacheNames) {
       return Promise.all(
         cacheNames
           .filter(function(name) { return name !== CACHE_NAME; })
           .map(function(name) {
-            console.log('[SW] V136 Suppression cache:', name);
+            console.log('[SW] V137 Suppression cache:', name);
             return caches.delete(name);
           })
       );

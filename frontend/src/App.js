@@ -2766,6 +2766,38 @@ function App() {
     }
   };
 
+  // V137: Android — force SW update si installation échoue ou fantôme détecté
+  useEffect(() => {
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    if (!isAndroid || !('serviceWorker' in navigator)) return;
+
+    // Forcer la mise à jour du SW à chaque chargement sur Android
+    navigator.serviceWorker.getRegistration().then(function(reg) {
+      if (reg) {
+        console.log('[V137] Android: force SW update check');
+        reg.update().catch(function() {});
+        // Si un SW est en attente, l'activer immédiatement
+        if (reg.waiting) {
+          console.log('[V137] Android: SW en attente — activation forcée');
+          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
+        reg.addEventListener('updatefound', function() {
+          var newWorker = reg.installing;
+          if (newWorker) {
+            newWorker.addEventListener('statechange', function() {
+              if (newWorker.state === 'installed' && reg.active) {
+                console.log('[V137] Android: nouveau SW installé — activation');
+                newWorker.postMessage({ type: 'SKIP_WAITING' });
+              }
+            });
+          }
+        });
+      }
+    }).catch(function(err) {
+      console.warn('[V137] Android SW check error:', err);
+    });
+  }, []);
+
   // Dismiss install banner
   const dismissInstallBanner = () => {
     setShowInstallBanner(false);
