@@ -32,7 +32,13 @@
         <meta name="author" content="Afroboost" />
         <meta name="version" content="120" />
         <script>
-            console.log("🚀 V106 : Langues EN/DE réactivées + Recherche universelle mots-clés");
+            console.log("🚀 V120 : Notifications push + badge PWA");
+            // V120: Force update SW si version change — résout l'écran noir après reinstall PWA
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistration().then(function(reg) {
+                    if (reg) reg.update();
+                }).catch(function() {});
+            }
             // v64: Nettoyage localStorage — purger toute référence au slug "artboost"
             try {
                 var keys = Object.keys(localStorage);

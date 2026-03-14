@@ -13,7 +13,7 @@ self.addEventListener('install', (event) => {
 
 // Activation â supprime TOUS les anciens caches (nuclear purge)
 self.addEventListener('activate', (event) => {
-  console.log('[SW] V54 active â nuclear purge caches');
+  console.log("[SW] V120 activate - nuclear purge + reload clients");
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
@@ -24,7 +24,7 @@ self.addEventListener('activate', (event) => {
             return caches.delete(name);
           })
       );
-    }).then(() => clients.claim())
+    }).then(() => clients.claim()).then(() => { return clients.matchAll({ type: "window" }).then((windowClients) => { windowClients.forEach((client) => { client.navigate(client.url); }); }); })
   );
 });
 
