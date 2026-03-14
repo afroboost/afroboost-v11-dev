@@ -104,23 +104,8 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
-  // manifest.json → TOUJOURS network-first (Chrome doit voir la dernière version)
+  // manifest.json → NE PAS intercepter — Chrome doit le lire directement du serveur
   if (url.pathname === '/manifest.json') {
-    event.respondWith(
-      fetch(event.request, { cache: 'no-store' })
-        .then(function(response) {
-          if (response && response.ok) {
-            var clone = response.clone();
-            caches.open(CACHE_NAME).then(function(cache) {
-              cache.put(event.request, clone);
-            });
-          }
-          return response;
-        })
-        .catch(function() {
-          return caches.match(event.request);
-        })
-    );
     return;
   }
 
