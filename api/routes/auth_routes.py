@@ -1,4 +1,4 @@
-# auth_routes.py - Routes d'authentification v9.1.9
+# auth_routes.py - Routes d'authentification v9.1.9 → V133 (JWT)
 # Extrait de server.py pour modularisation
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -13,6 +13,7 @@ import secrets
 import re
 import os
 import asyncio
+import jwt as pyjwt
 
 # Resend email
 try:
@@ -35,14 +36,27 @@ auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
 # Référence DB (initialisée depuis server.py)
 _db = None
 
-# Email coach autorisé
-AUTHORIZED_COACH_EMAIL = "contact.artboost@gmail.com"
+# V133: Emails admin depuis variable d'environnement
+_admin_emails_env = os.environ.get('ADMIN_EMAILS', 'contact.artboost@gmail.com,afroboost.bassi@gmail.com')
+SUPER_ADMIN_EMAILS = [e.strip().lower() for e in _admin_emails_env.split(',') if e.strip()]
+AUTHORIZED_COACH_EMAIL = SUPER_ADMIN_EMAILS[0] if SUPER_ADMIN_EMAILS else "contact.artboost@gmail.com"
 
-# v9.5.6: Liste des Super Admins autorisés
-SUPER_ADMIN_EMAILS = [
-    "contact.artboost@gmail.com",
-    "afroboost.bassi@gmail.com"
-]
+# V133: JWT configuration
+JWT_SECRET = os.environ.get('JWT_SECRET', '')
+JWT_ALGORITHM = 'HS256'
+JWT_EXPIRATION_DAYS = 7
+
+def generate_jwt_token(email: str, role: str = "user") -> str:
+    """Génère un JWT signé."""
+    if not JWT_SECRET:
+        return ""
+    payload = {
+        "email": email.lower().strip(),
+        "role": role,
+        "iat": datetime.now(timezone.utc),
+        "exp": datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRATION_DAYS),
+    }
+    return pyjwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 def is_super_admin_email(email: str) -> bool:
     """Vérifie si l'email est celui d'un Super Admin"""
@@ -255,8 +269,13 @@ async def process_google_session(request: Request, response: Response):
             path="/"
         )
         
+        # V133: Générer JWT signé pour l'utilisateur
+        role = "super_admin" if is_super_admin else "coach"
+        jwt_token = generate_jwt_token(email, role)
+
         return {
             "success": True,
+            "token": jwt_token,
             "user": {
                 "user_id": user_id,
                 "email": email,
@@ -265,7 +284,7 @@ async def process_google_session(request: Request, response: Response):
                 "is_coach": True
             }
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -552,8 +571,13 @@ async def login(request: Request, response: Response, user_data: LoginRequest):
 
         logger.info(f"[AUTH] User logged in: {email}")
 
+        # V133: Générer JWT signé
+        role = "super_admin" if is_super_admin_email(email) else "coach"
+        jwt_token = generate_jwt_token(email, role)
+
         return {
             "success": True,
+            "token": jwt_token,
             "user": {
                 "user_id": user_id,
                 "email": email,
@@ -803,7 +827,7 @@ async def check_partner_status(request: Request):
     try:
         body = await request.json()
         email = body.get("email", "").lower().strip()
-    except:
+    except Exception:
         email = request.headers.get('X-User-Email', '').lower().strip()
     
     if not email:

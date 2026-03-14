@@ -14,6 +14,12 @@ from datetime import datetime, timezone, timedelta
 import stripe
 import asyncio
 import json
+import jwt as pyjwt
+
+# V133: JWT Secret for token signing
+JWT_SECRET = os.environ.get('JWT_SECRET', '')
+JWT_ALGORITHM = 'HS256'
+JWT_EXPIRATION_DAYS = 7
 
 # Web Push imports
 try:
@@ -99,21 +105,52 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 
-# ── HELPER SÉCURITÉ : vérification authentification par header ──────────
+# ── HELPER SÉCURITÉ : vérification authentification ──────────
+# V133: JWT validation prioritaire, fallback X-User-Email pour compatibilité
 def require_auth(request: Request) -> str:
     """
-    Vérifie que le header X-User-Email est présent dans la requête.
+    Authentification multi-couche:
+    1. JWT dans Authorization: Bearer <token> (sécurisé, prioritaire)
+    2. Fallback: header X-User-Email (legacy, pour compatibilité)
     Retourne l'email (en minuscule, sans espaces) si valide.
-    Lève HTTP 401 si le header est absent ou vide.
-    Utilisé sur toutes les routes d'écriture (POST/PUT/DELETE).
+    Lève HTTP 401 si aucune authentification valide.
     """
+    # 1. Essayer JWT d'abord (méthode sécurisée)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer ") and JWT_SECRET:
+        token = auth_header[7:]
+        try:
+            payload = pyjwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            email = payload.get("email", "").lower().strip()
+            if email:
+                return email
+        except pyjwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token JWT expiré")
+        except pyjwt.InvalidTokenError:
+            # Token invalide — on essaie le fallback X-User-Email
+            pass
+
+    # 2. Fallback: X-User-Email (legacy — sera déprécié)
     email = request.headers.get("X-User-Email", "").lower().strip()
     if not email:
         raise HTTPException(
             status_code=401,
-            detail="Authentification requise : header X-User-Email manquant"
+            detail="Authentification requise"
         )
     return email
+
+
+def generate_jwt(email: str, role: str = "user") -> str:
+    """Génère un JWT signé contenant l'email et le rôle de l'utilisateur."""
+    if not JWT_SECRET:
+        return ""
+    payload = {
+        "email": email.lower().strip(),
+        "role": role,
+        "iat": datetime.now(timezone.utc),
+        "exp": datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRATION_DAYS),
+    }
+    return pyjwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
 # Créer l'application FastAPI (interne)
@@ -137,13 +174,11 @@ async def emit_new_message(session_id: str, message_data: dict):
 COACH_EMAIL = "contact.artboost@gmail.com"
 
 # === SYSTÈME MULTI-COACH v8.9 ===
-# Super Admin: Contrôle total sur les offres, les coachs et les tarifs
-# v9.5.6: Liste des Super Admins autorisés
-SUPER_ADMIN_EMAILS = [
-    "contact.artboost@gmail.com",
-    "afroboost.bassi@gmail.com"
-]
-SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"  # Legacy - pour compatibilité
+# V133: Super Admin emails chargés depuis variable d'environnement
+# Format: "email1@example.com,email2@example.com"
+_admin_emails_env = os.environ.get('ADMIN_EMAILS', 'contact.artboost@gmail.com,afroboost.bassi@gmail.com')
+SUPER_ADMIN_EMAILS = [e.strip().lower() for e in _admin_emails_env.split(',') if e.strip()]
+SUPER_ADMIN_EMAIL = SUPER_ADMIN_EMAILS[0] if SUPER_ADMIN_EMAILS else ""  # Legacy - compatibilité
 DEFAULT_COACH_ID = "bassi_default"  # ID par défaut pour les données existantes
 
 # Rôles disponibles
@@ -225,8 +260,11 @@ async def api_health_check():
     return await health_check()
 
 @fastapi_app.get("/api/debug/config")
-async def debug_config():
-    """Debug endpoint to check environment configuration (no secrets exposed)"""
+async def debug_config(request: Request):
+    """Debug endpoint — V133: protégé par auth admin"""
+    email = require_auth(request)
+    if not is_super_admin(email):
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
     mongo = os.environ.get('MONGO_URL', '')
     import re
     masked_mongo = re.sub(r'://([^:]+):([^@]+)@', r'://\1:****@', mongo) if mongo else 'NOT SET'
@@ -242,8 +280,11 @@ async def debug_config():
     })
 
 @fastapi_app.get("/api/debug/network")
-async def debug_network():
-    """Debug endpoint to test raw TCP connectivity to MongoDB shards"""
+async def debug_network(request: Request):
+    """Debug endpoint — V133: protégé par auth admin"""
+    email = require_auth(request)
+    if not is_super_admin(email):
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
     import socket
     import time
     results = {"dns_srv": [], "tcp_tests": [], "dns_txt": []}
@@ -2027,7 +2068,8 @@ async def api_deduct_credit(request: Request):
     try:
         body = await request.json()
         action = body.get("action", "action")
-    except:
+    except Exception as e:
+        logger.warning(f"[V133] Erreur parsing body action: {e}")
         action = "action"
     
     user_email = request.headers.get('X-User-Email', '').lower().strip()
@@ -5579,8 +5621,8 @@ async def generate_master_prompt(request: Request):
             concept = await db.concept.find_one({"id": "concept"}, {"_id": 0})
             if concept and concept.get("description"):
                 concept_text = concept["description"][:800]
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"[V133] Erreur chargement concept: {e}")
 
         # 2. Cours disponibles
         courses_text = ""
@@ -5597,8 +5639,8 @@ async def generate_master_prompt(request: Request):
                     if c.get('description'): line += f"\n  Description: {c['description'][:150]}"
                     lines.append(line)
                 courses_text = "\n".join(lines)
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"[V133] Erreur chargement courses: {e}")
 
         # 3. Offres (services + produits)
         offers_text = ""
@@ -5626,8 +5668,8 @@ async def generate_master_prompt(request: Request):
                         if stock >= 0: l += f" (Stock: {stock})"
                         lines.append(l)
                 offers_text = "\n".join(lines)
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"[V133] Erreur chargement offres: {e}")
 
         # 4. Promotions actives (UNIQUEMENT les promos publiques, pas les codes internes)
         promos_text = ""
@@ -5651,8 +5693,8 @@ async def generate_master_prompt(request: Request):
                     lines.append(line)
                 if lines:
                     promos_text = "\n".join(lines)
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"[V133] Erreur chargement promos: {e}")
 
         # 5. Articles de blog
         articles_text = ""
@@ -5666,8 +5708,8 @@ async def generate_master_prompt(request: Request):
                     elif a.get('content'): l += f": {a['content'][:100]}"
                     lines.append(l)
                 articles_text = "\n".join(lines)
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"[V133] Erreur chargement articles: {e}")
 
         # 6. Page partenaire (sales page)
         partner_text = ""
@@ -5679,8 +5721,8 @@ async def generate_master_prompt(request: Request):
                 if partner.get('description'): partner_text += f"Description: {partner['description'][:300]}\n"
                 if partner.get('features'):
                     partner_text += "Points forts: " + ", ".join(partner['features'][:5]) + "\n"
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"[V133] Erreur chargement partner page: {e}")
 
         # Assembler le Prompt Maître
         prompt = f"""Tu es l'assistant virtuel d'Afroboost, une expérience fitness unique combinant cardio, danse afrobeat et casques audio immersifs.
@@ -11366,7 +11408,8 @@ async def get_next_expiration(request: Request):
             days_left = (exp - now).days
             if days_left >= 0:
                 upcoming.append({"id": o["id"], "name": o.get("name", "?"), "expiration_date": exp_str, "days_left": days_left, "coach_id": o.get("coach_id", ""), "is_auto_prolong": o.get("is_auto_prolong", True)})
-        except:
+        except Exception as e:
+            logger.warning(f"[V133] Erreur parsing expiration offre {o.get('id', '?')}: {e}")
             continue
     upcoming.sort(key=lambda x: x["days_left"])
     return {"next": upcoming[0] if upcoming else None, "total_with_expiration": len(upcoming), "upcoming": upcoming[:5]}
@@ -11457,7 +11500,8 @@ async def update_platform_settings(request: Request):
     
     try:
         data = await request.json()
-    except:
+    except Exception as e:
+        logger.warning(f"[V133] JSON parse error: {e}")
         raise HTTPException(status_code=400, detail="Format JSON invalide")
     
     update_fields = {
@@ -11535,12 +11579,15 @@ init_payment_config_db(db)
 fastapi_app.include_router(checkout_router)
 init_checkout_db(db)
 
+# V133: CORS restreint — uniquement les domaines Afroboost autorisés
+_cors_default = "https://www.afroboost.com,https://afroboost.com,https://afroboost-v11-dev.vercel.app,http://localhost:3000"
+_cors_origins = os.environ.get('CORS_ORIGINS', _cors_default).split(',')
 fastapi_app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[o.strip() for o in _cors_origins if o.strip()],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-User-Email", "X-Requested-With"],
 )
 
 # Dynamic manifest.json endpoint for PWA

@@ -126,6 +126,10 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
 
           if (response.data.success) {
             console.log('✅ Authentification Google réussie:', response.data.user.email);
+            // V133: Stocker le JWT signé pour les requêtes sécurisées
+            if (response.data.token) {
+              localStorage.setItem('afroboost_jwt', response.data.token);
+            }
             onLogin(response.data.user);
             return;
           } else {
@@ -172,6 +176,10 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
 
       if (response.data.success) {
         console.log('✅ Connexion email réussie:', response.data.user.email);
+        // V133: Stocker le JWT
+        if (response.data.token) {
+          localStorage.setItem('afroboost_jwt', response.data.token);
+        }
         onLogin(response.data.user);
       }
     } catch (err) {
@@ -202,6 +210,10 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
 
       if (response.data.success) {
         console.log('✅ Inscription réussie:', response.data.user.email);
+        // V133: Stocker le JWT
+        if (response.data.token) {
+          localStorage.setItem('afroboost_jwt', response.data.token);
+        }
         onLogin(response.data.user);
       }
     } catch (err) {

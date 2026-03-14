@@ -2,10 +2,16 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import "@/App.css";
 import axios from "axios";
 
-// v62: Intercepteur global — injecte X-User-Email sur TOUTES les requêtes axios
+// V133: Intercepteur global — JWT prioritaire + fallback X-User-Email
 axios.interceptors.request.use((config) => {
-  if (!config.headers['X-User-Email']) {
-    try {
+  try {
+    // 1. JWT signé (méthode sécurisée, prioritaire)
+    const jwt = localStorage.getItem('afroboost_jwt');
+    if (jwt && !config.headers['Authorization']) {
+      config.headers['Authorization'] = 'Bearer ' + jwt;
+    }
+    // 2. Fallback X-User-Email (legacy, pour compatibilité)
+    if (!config.headers['X-User-Email']) {
       const saved = localStorage.getItem('afroboost_coach_user');
       if (saved) {
         const parsed = JSON.parse(saved);
@@ -13,8 +19,8 @@ axios.interceptors.request.use((config) => {
           config.headers['X-User-Email'] = parsed.email;
         }
       }
-    } catch (e) { /* ignore */ }
-  }
+    }
+  } catch (e) { /* ignore */ }
   return config;
 });
 console.log("🚀 V72 : Icône interactive avec compteur et animation Pulse activée");
@@ -3678,6 +3684,7 @@ function App() {
     localStorage.removeItem('afroboost_coach_user');
     localStorage.removeItem('afroboost_coach_tab');
     localStorage.removeItem('afroboost_coach_session');
+    localStorage.removeItem('afroboost_jwt');  // V133: Supprimer le JWT
     localStorage.removeItem(ADMIN_AUTH_TOKEN_KEY);
     sessionStorage.clear();
 
