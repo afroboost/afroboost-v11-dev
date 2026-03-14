@@ -16,10 +16,18 @@ import asyncio
 import json
 import jwt as pyjwt
 
-# V133: JWT Secret for token signing
+# V134: JWT Secret for token signing — WARNING logged at startup if missing
 JWT_SECRET = os.environ.get('JWT_SECRET', '')
 JWT_ALGORITHM = 'HS256'
 JWT_EXPIRATION_DAYS = 7
+JWT_STRICT_MODE = bool(JWT_SECRET)  # V134: Si JWT_SECRET est défini, fallback X-User-Email désactivé
+
+if not JWT_SECRET:
+    import logging as _startup_logging
+    _startup_logging.getLogger(__name__).warning(
+        "⚠️  [V134] JWT_SECRET non défini ! L'authentification JWT est INACTIVE. "
+        "Configurez JWT_SECRET dans les variables d'environnement Vercel pour sécuriser l'API."
+    )
 
 # Web Push imports
 try:
@@ -106,12 +114,14 @@ logger = logging.getLogger(__name__)
 
 
 # ── HELPER SÉCURITÉ : vérification authentification ──────────
-# V133: JWT validation prioritaire, fallback X-User-Email pour compatibilité
+# V134: JWT STRICT — si JWT_SECRET est défini, le fallback X-User-Email est DÉSACTIVÉ
 def require_auth(request: Request) -> str:
     """
-    Authentification multi-couche:
-    1. JWT dans Authorization: Bearer <token> (sécurisé, prioritaire)
-    2. Fallback: header X-User-Email (legacy, pour compatibilité)
+    V134 — Authentification sécurisée:
+    - Si JWT_SECRET est configuré (JWT_STRICT_MODE=True):
+      Seul le Bearer JWT est accepté. Le header X-User-Email est IGNORÉ.
+    - Si JWT_SECRET est absent (JWT_STRICT_MODE=False):
+      Le header X-User-Email est accepté (mode legacy/dev).
     Retourne l'email (en minuscule, sans espaces) si valide.
     Lève HTTP 401 si aucune authentification valide.
     """
@@ -125,12 +135,20 @@ def require_auth(request: Request) -> str:
             if email:
                 return email
         except pyjwt.ExpiredSignatureError:
-            raise HTTPException(status_code=401, detail="Token JWT expiré")
+            raise HTTPException(status_code=401, detail="Token JWT expiré — reconnectez-vous")
         except pyjwt.InvalidTokenError:
-            # Token invalide — on essaie le fallback X-User-Email
-            pass
+            if JWT_STRICT_MODE:
+                raise HTTPException(status_code=401, detail="Token JWT invalide")
+            # En mode non-strict, on essaie le fallback
 
-    # 2. Fallback: X-User-Email (legacy — sera déprécié)
+    # 2. Mode STRICT: JWT obligatoire, pas de fallback
+    if JWT_STRICT_MODE:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentification JWT requise"
+        )
+
+    # 3. Mode LEGACY (dev/sans JWT_SECRET): fallback X-User-Email
     email = request.headers.get("X-User-Email", "").lower().strip()
     if not email:
         raise HTTPException(
@@ -138,6 +156,15 @@ def require_auth(request: Request) -> str:
             detail="Authentification requise"
         )
     return email
+
+
+def require_auth_email(request: Request) -> str:
+    """
+    V134: Extraction sécurisée de l'email authentifié.
+    Utilise require_auth() puis retourne l'email.
+    Remplace les appels directs à request.headers.get('X-User-Email').
+    """
+    return require_auth(request)
 
 
 def generate_jwt(email: str, role: str = "user") -> str:
@@ -2065,35 +2092,31 @@ async def api_deduct_credit(request: Request):
     Utilisé par le frontend pour les actions consommant des crédits.
     Super Admin (afroboost.bassi@gmail.com) ne consomme jamais de crédits.
     """
+    # V134: Auth obligatoire pour déduire des crédits
+    user_email = require_auth(request)
+
     try:
         body = await request.json()
         action = body.get("action", "action")
     except Exception as e:
         logger.warning(f"[V133] Erreur parsing body action: {e}")
         action = "action"
-    
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
-    
-    if not user_email:
-        raise HTTPException(status_code=400, detail="Email non fourni")
-    
+
     result = await deduct_credit(user_email, action)
-    
+
     if not result.get("success"):
         raise HTTPException(status_code=402, detail=result.get("error", "Crédits insuffisants"))
-    
+
     return result
 
 @api_router.get("/credits/check")
 async def api_check_credits(request: Request):
     """
     Vérifie le solde de crédits d'un partenaire.
+    V134: Auth obligatoire.
     """
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
-    
-    if not user_email:
-        return {"has_credits": False, "credits": 0, "error": "Email non fourni"}
-    
+    user_email = require_auth(request)
+
     return await check_credits(user_email)
 
 @api_router.get("/users/{participant_id}/profile")
@@ -2263,10 +2286,10 @@ async def sanitize_data():
 
 @api_router.post("/campaigns")
 async def create_campaign(campaign: CampaignCreate, request: Request = None):
-    # v11: Récupérer le coach_id depuis le header
+    # V134: Authentification obligatoire via require_auth (JWT strict si activé)
     coach_email = ""
     if request:
-        coach_email = request.headers.get("X-User-Email", "").lower().strip()
+        coach_email = require_auth(request)
 
     # v13: Vérification crédits AVANT création (0 crédits = pas d'envoi)
     if coach_email and not is_super_admin(coach_email):
@@ -2312,12 +2335,20 @@ async def update_campaign(campaign_id: str, request: Request):
     """
     Met à jour une campagne existante (nom, message, horaire, canaux, etc.)
     Seules les campagnes draft/scheduled peuvent être modifiées.
+    V134: Vérifie que l'utilisateur JWT est bien le créateur de la campagne.
     """
+    # V134: Auth obligatoire
+    caller_email = require_auth(request)
     body = await request.json()
 
     existing = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Campaign not found")
+
+    # V134: Vérification propriétaire — seul le créateur ou un super admin peut modifier
+    campaign_owner = (existing.get("coach_id") or "").lower().strip()
+    if campaign_owner and caller_email != campaign_owner and not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Vous ne pouvez modifier que vos propres campagnes")
 
     # Empêcher la modification d'une campagne en cours d'envoi uniquement
     if existing.get("status") == "sending":
@@ -2485,19 +2516,30 @@ def format_phone_e164(phone: str, default_country: str = "+41") -> str:
 
 
 @api_router.post("/campaigns/{campaign_id}/launch")
-async def launch_campaign(campaign_id: str):
+async def launch_campaign(campaign_id: str, request: Request = None):
     """
     Lance une campagne immédiatement.
     - Internal: Envoi dans les conversations chat (groupes/utilisateurs)
     - WhatsApp: Envoi DIRECT via Twilio
     - Email: Envoi DIRECT via Resend
     - Instagram: Non supporté (manuel)
-    
+
+    V134: Vérifie que le caller est le propriétaire de la campagne.
     Chaque canal est indépendant: l'échec d'un envoi ne bloque pas les suivants.
     """
+    # V134: Auth obligatoire pour lancer
+    caller_email = ""
+    if request:
+        caller_email = require_auth(request)
+
     campaign = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
+
+    # V134: Vérification propriétaire — seul le créateur ou un super admin peut lancer
+    campaign_owner = (campaign.get("coach_id") or "").lower().strip()
+    if caller_email and campaign_owner and caller_email != campaign_owner and not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Vous ne pouvez lancer que vos propres campagnes")
 
     # v11: Vérification et déduction de crédits (coût × nombre de contacts)
     coach_email = campaign.get("coach_id", "")
@@ -3251,7 +3293,8 @@ async def get_payment_links(request: Request):
 
 @api_router.put("/payment-links")
 async def update_payment_links(links: PaymentLinksUpdate, request: Request):
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
+    # V134: Auth obligatoire pour modifier les payment links
+    user_email = require_auth(request)
     is_admin = is_super_admin(user_email)  # v9.5.6
     
     # ID de lien selon le coach

@@ -3,43 +3,202 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Afroboost — Reset</title>
+    <title>Afroboost — Mise à jour système</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-        .container { text-align: center; max-width: 400px; }
-        h1 { font-size: 24px; margin-bottom: 16px; }
-        p { font-size: 14px; color: #aaa; margin-bottom: 24px; line-height: 1.5; }
-        .status { background: #111; border: 1px solid #333; border-radius: 12px; padding: 20px; margin-bottom: 20px; text-align: left; font-size: 13px; line-height: 1.8; }
-        .ok { color: #4ade80; }
-        .err { color: #f87171; }
-        .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #555; border-top-color: #d91cd2; border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 8px; vertical-align: middle; }
+        body {
+            background: #000000;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+            overflow: hidden;
+        }
+
+        /* Fond animé subtil */
+        body::before {
+            content: '';
+            position: fixed;
+            top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background: radial-gradient(ellipse at center, rgba(217, 28, 210, 0.08) 0%, transparent 60%);
+            animation: pulse-bg 4s ease-in-out infinite;
+            z-index: 0;
+        }
+        @keyframes pulse-bg {
+            0%, 100% { opacity: 0.3; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.1); }
+        }
+
+        .container {
+            text-align: center;
+            max-width: 420px;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Logo */
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 24px;
+            border-radius: 20px;
+            animation: logo-glow 2s ease-in-out infinite;
+        }
+        @keyframes logo-glow {
+            0%, 100% { filter: drop-shadow(0 0 8px rgba(217, 28, 210, 0.4)); }
+            50% { filter: drop-shadow(0 0 20px rgba(217, 28, 210, 0.8)); }
+        }
+
+        h1 {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #fff 0%, #D91CD2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.5);
+            margin-bottom: 32px;
+            line-height: 1.5;
+        }
+
+        /* Barre de progression */
+        .progress-container {
+            background: rgba(255, 255, 255, 0.06);
+            border-radius: 100px;
+            height: 6px;
+            margin-bottom: 28px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #8b5cf6, #D91CD2);
+            border-radius: 100px;
+            transition: width 0.5s ease;
+        }
+
+        /* Status */
+        .status-box {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(217, 28, 210, 0.15);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 24px;
+            text-align: left;
+            font-size: 13px;
+            line-height: 2;
+            min-height: 80px;
+        }
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .status-item.ok { color: #4ade80; }
+        .status-item.err { color: #f87171; }
+        .status-item.pending { color: rgba(255, 255, 255, 0.35); }
+
+        /* Spinner */
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(217, 28, 210, 0.2);
+            border-top-color: #D91CD2;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            flex-shrink: 0;
+        }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .btn { display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #8b5cf6, #d91cd2); color: #fff; font-size: 16px; font-weight: 600; border: none; border-radius: 12px; cursor: pointer; text-decoration: none; margin-top: 12px; }
+
+        /* Message de redirection */
+        .redirect-msg {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.4);
+            margin-top: 16px;
+            display: none;
+        }
+        .redirect-msg .countdown {
+            color: #D91CD2;
+            font-weight: 600;
+        }
+
+        /* Bouton fallback */
+        .btn {
+            display: none;
+            margin: 16px auto 0;
+            padding: 14px 36px;
+            background: linear-gradient(135deg, #8b5cf6, #D91CD2);
+            color: #fff;
+            font-size: 15px;
+            font-weight: 600;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 20px rgba(217, 28, 210, 0.4);
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Reset Afroboost</h1>
-        <p>Nettoyage complet — le header HTTP Clear-Site-Data a déjà tout nettoyé côté navigateur. Vérification JS en cours...</p>
-        <div class="status" id="status">
-            <div><span class="spinner"></span> Nettoyage en cours...</div>
+        <img src="/logo192.png" alt="Afroboost" class="logo" />
+        <h1>Mise à jour du système Afroboost</h1>
+        <p class="subtitle">Nettoyage du cache en cours. Redémarrage imminent.</p>
+
+        <div class="progress-container">
+            <div class="progress-bar" id="progressBar"></div>
         </div>
-        <div id="done-section" style="display:none;">
-            <a href="/" class="btn">Ouvrir Afroboost</a>
-        </div>
+
+        <div class="status-box" id="status"></div>
+
+        <p class="redirect-msg" id="redirectMsg">
+            Redirection dans <span class="countdown" id="countdown">3</span>s...
+        </p>
+
+        <a href="/" class="btn" id="manualBtn">Ouvrir Afroboost</a>
     </div>
+
     <script>
+        // ES5 compatible — pas d'async/await, pas de const/let, pas d'arrow functions
         var statusEl = document.getElementById('status');
-        function log(msg, isError) {
-            var div = document.createElement('div');
-            div.className = isError ? 'err' : 'ok';
-            div.textContent = (isError ? '✗ ' : '✓ ') + msg;
-            statusEl.appendChild(div);
+        var progressBar = document.getElementById('progressBar');
+        var redirectMsg = document.getElementById('redirectMsg');
+        var countdownEl = document.getElementById('countdown');
+        var manualBtn = document.getElementById('manualBtn');
+        var stepsDone = 0;
+        var totalSteps = 4;
+
+        function updateProgress() {
+            stepsDone++;
+            var pct = Math.round((stepsDone / totalSteps) * 100);
+            progressBar.style.width = pct + '%';
         }
 
-        // ES5 compatible — pas d'async/await
+        function log(msg, isError) {
+            var div = document.createElement('div');
+            div.className = 'status-item ' + (isError ? 'err' : 'ok');
+            div.innerHTML = (isError ? '<span style="flex-shrink:0">&#10007;</span>' : '<span style="flex-shrink:0">&#10003;</span>') + ' ' + msg;
+            statusEl.appendChild(div);
+            updateProgress();
+        }
+
         function doReset() {
+            // Montrer le spinner initial
+            statusEl.innerHTML = '<div class="status-item pending"><span class="spinner"></span> Initialisation du nettoyage...</div>';
             var tasks = [];
 
             // 1. Unregister ALL service workers
@@ -48,12 +207,12 @@
                     navigator.serviceWorker.getRegistrations().then(function(regs) {
                         var unregs = regs.map(function(r) { return r.unregister(); });
                         return Promise.all(unregs).then(function() {
-                            log(regs.length + ' Service Worker(s) désinscrits');
+                            log(regs.length + ' Service Worker(s) supprime(s)');
                         });
-                    }).catch(function(e) { log('SW erreur: ' + e.message, true); })
+                    }).catch(function(e) { log('SW: ' + e.message, true); })
                 );
             } else {
-                log('Pas de Service Worker supporté');
+                log('Service Workers non supportes');
             }
 
             // 2. Delete ALL caches
@@ -62,15 +221,16 @@
                     caches.keys().then(function(names) {
                         var dels = names.map(function(n) { return caches.delete(n); });
                         return Promise.all(dels).then(function() {
-                            log(names.length + ' cache(s) supprimés');
+                            log(names.length + ' cache(s) nettoye(s)');
                         });
-                    }).catch(function(e) { log('Cache erreur: ' + e.message, true); })
+                    }).catch(function(e) { log('Cache: ' + e.message, true); })
                 );
             }
 
             // 3. Clear storage
-            try { localStorage.clear(); log('localStorage vidé'); } catch(e) { log('localStorage: ' + e.message, true); }
-            try { sessionStorage.clear(); log('sessionStorage vidé'); } catch(e) {}
+            try { localStorage.clear(); log('Stockage local reinitialise'); }
+            catch(e) { log('Stockage: ' + e.message, true); }
+            try { sessionStorage.clear(); } catch(e) {}
 
             // 4. Clear IndexedDB databases
             if (window.indexedDB && window.indexedDB.databases) {
@@ -79,22 +239,42 @@
                         dbs.forEach(function(db) {
                             window.indexedDB.deleteDatabase(db.name);
                         });
-                        log(dbs.length + ' base(s) IndexedDB supprimées');
+                        log(dbs.length + ' base(s) de donnees nettoyee(s)');
                     }).catch(function(e) { log('IndexedDB: ' + e.message, true); })
                 );
             }
 
+            // Supprimer le spinner initial
+            var spinnerDiv = statusEl.querySelector('.pending');
+            if (spinnerDiv) statusEl.removeChild(spinnerDiv);
+
             Promise.all(tasks).then(function() {
-                log('Nettoyage terminé !');
-                document.getElementById('done-section').style.display = 'block';
-                // Auto-redirect après 3s
-                setTimeout(function() {
-                    window.location.replace('/');
-                }, 3000);
+                progressBar.style.width = '100%';
+                startCountdown();
             }).catch(function() {
-                log('Nettoyage partiel — cliquez le bouton ci-dessous');
-                document.getElementById('done-section').style.display = 'block';
+                progressBar.style.width = '100%';
+                manualBtn.style.display = 'inline-block';
             });
+        }
+
+        function startCountdown() {
+            redirectMsg.style.display = 'block';
+            var seconds = 3;
+            countdownEl.textContent = seconds;
+            var timer = setInterval(function() {
+                seconds--;
+                if (seconds <= 0) {
+                    clearInterval(timer);
+                    countdownEl.textContent = '0';
+                    window.location.replace('/');
+                } else {
+                    countdownEl.textContent = seconds;
+                }
+            }, 1000);
+            // Bouton fallback au cas ou la redirection echoue
+            setTimeout(function() {
+                manualBtn.style.display = 'inline-block';
+            }, 4000);
         }
 
         doReset();

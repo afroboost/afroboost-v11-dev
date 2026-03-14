@@ -3,7 +3,7 @@
 // V124: Réécriture complète en ES5 (pas de const/let/arrow/optional chaining)
 // pour compatibilité maximale avec les anciens navigateurs mobiles
 
-var CACHE_NAME = 'afroboost-v133';
+var CACHE_NAME = 'afroboost-v134';
 
 // V128: Pre-cache résilient — l'installation du SW ne doit JAMAIS échouer
 // Sinon l'ancien SW cassé (V120 avec syntaxe ES6) reste actif = écran noir
