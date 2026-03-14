@@ -2624,6 +2624,8 @@ function App() {
   }, []);
 
   // PWA Install Prompt State
+  // V125: Stocker le prompt dans une ref ET un state pour ne jamais le perdre
+  const installPromptRef = useRef(null);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
@@ -2694,8 +2696,10 @@ function App() {
     const handleBeforeInstallPrompt = (e) => {
       // Prevent Chrome 67+ from automatically showing the prompt
       e.preventDefault();
-      // Store the event for later use
+      // V125: Stocker dans ref (stable) ET state (pour re-render)
+      installPromptRef.current = e;
       setInstallPrompt(e);
+      console.log('[V125] beforeinstallprompt capturé et stocké');
       // Check if user hasn't dismissed the banner before
       const dismissed = localStorage.getItem('af_pwa_dismissed');
       if (!dismissed) {
@@ -2725,26 +2729,42 @@ function App() {
   }, []);
 
   // Handle PWA install button click
+  // V125: Utilise installPromptRef comme backup fiable
   const handleInstallClick = async () => {
     if (isIOS) {
-      // For iOS, show instructions (can't auto-prompt)
       alert('Pour installer Afroboost sur iOS:\n\n1. Appuyez sur le bouton Partager (📤)\n2. Sélectionnez "Sur l\'écran d\'accueil"\n3. Appuyez sur "Ajouter"');
       return;
     }
-    
-    if (!installPrompt) return;
-    
-    // Show the install prompt
-    installPrompt.prompt();
-    
-    // Wait for user response
-    const { outcome } = await installPrompt.userChoice;
-    
-    if (outcome === 'accepted') {
-      console.log('PWA installed');
+
+    // V125: Utiliser la ref comme source principale (ne se perd pas lors des re-renders)
+    const prompt = installPromptRef.current || installPrompt;
+
+    if (!prompt) {
+      console.warn('[V125] installPrompt est null — tentative via menu navigateur');
+      alert('Pour installer Afroboost :\n\n1. Appuyez sur le menu Chrome (⋮) en haut à droite\n2. Sélectionnez "Installer l\'application"\n3. Confirmez l\'installation');
+      return;
     }
-    
-    // Clear the prompt
+
+    try {
+      // Show the install prompt
+      console.log('[V125] Affichage du prompt d\'installation...');
+      prompt.prompt();
+
+      // Wait for user response
+      const { outcome } = await prompt.userChoice;
+      console.log('[V125] Résultat installation:', outcome);
+
+      if (outcome === 'accepted') {
+        console.log('[V125] PWA installée avec succès !');
+      }
+    } catch (err) {
+      console.error('[V125] Erreur installation PWA:', err);
+      // Fallback: donner les instructions manuelles
+      alert('Installation automatique impossible.\n\nPour installer manuellement :\n1. Menu Chrome (⋮) → "Installer l\'application"');
+    }
+
+    // Clear the prompt (can only be used once)
+    installPromptRef.current = null;
     setInstallPrompt(null);
     setShowInstallBanner(false);
   };
