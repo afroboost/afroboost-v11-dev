@@ -553,6 +553,8 @@ class Campaign(BaseModel):
     # v11: Prompts indépendants par campagne
     systemPrompt: Optional[str] = None  # Instructions système IA pour cette campagne
     descriptionPrompt: Optional[str] = None  # Prompt de description/objectif spécifique
+    # V113: Choix de l'expéditeur WhatsApp — "twilio" (sandbox) ou "business" (numéro suisse perso)
+    senderType: Optional[str] = "twilio"  # "twilio" = sandbox/Twilio, "business" = +41 76 520 33 63
     coach_id: Optional[str] = None  # v11: Email du coach propriétaire
     results: List[dict] = []
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -579,6 +581,8 @@ class CampaignCreate(BaseModel):
     # v11: Prompts indépendants par campagne
     systemPrompt: Optional[str] = None
     descriptionPrompt: Optional[str] = None
+    # V113: Choix de l'expéditeur WhatsApp — "twilio" (sandbox) ou "business" (numéro suisse perso)
+    senderType: Optional[str] = "twilio"  # "twilio" = sandbox/Twilio, "business" = +41 76 520 33 63
 
 class Concept(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -2480,6 +2484,12 @@ async def launch_campaign(campaign_id: str):
     cta_type = campaign.get("ctaType", "")
     cta_text = campaign.get("ctaText", "")
     cta_link = campaign.get("ctaLink", "")
+
+    # V113: Déterminer le numéro expéditeur WhatsApp selon le senderType
+    sender_type = campaign.get("senderType", "twilio")
+    business_from_number = "+41765203363" if sender_type == "business" else None
+    if business_from_number:
+        logger.info(f"[CAMPAIGN-LAUNCH-V113] 🇨🇭 Mode Business: envoi depuis {business_from_number}")
     
     success_count = 0
     fail_count = 0
@@ -2704,7 +2714,8 @@ async def launch_campaign(campaign_id: str):
                     message=personalized_msg,
                     media_url=media_url if media_url else None,
                     campaign_id=campaign_id,
-                    campaign_name=campaign_name
+                    campaign_name=campaign_name,
+                    from_number_override=business_from_number  # V113: numéro business si sélectionné
                 )
 
                 if wa_response.get("status") == "success":
@@ -5555,10 +5566,77 @@ async def handle_whatsapp_webhook(webhook: WhatsAppWebhook):
     
     # Extraire le numéro de téléphone
     from_phone = webhook.From.replace("whatsapp:", "")
+    to_phone = getattr(webhook, 'To', '').replace("whatsapp:", "") if hasattr(webhook, 'To') else ""
     incoming_message = webhook.Body
-    
+
     logger.info(f"Incoming WhatsApp from {from_phone}: {incoming_message}")
-    
+
+    # V113: Si le message arrive sur le numéro Business (+41765203363), le stocker dans Conversations
+    business_number = "+41765203363"
+    is_business_reply = to_phone.replace(" ", "").replace("-", "") == business_number or not to_phone
+    if is_business_reply:
+        try:
+            normalized = from_phone.replace("+", "").replace(" ", "").replace("-", "")
+            # Chercher une session de conversation existante pour ce numéro WhatsApp
+            existing_session = await db.chat_sessions.find_one(
+                {"whatsappPhone": from_phone},
+                {"_id": 0, "id": 1}
+            )
+            if not existing_session:
+                # Chercher par numéro normalisé dans les users
+                wa_user = await db.users.find_one(
+                    {"$or": [
+                        {"whatsapp": {"$regex": normalized[-9:] + "$"}},
+                        {"phone": {"$regex": normalized[-9:] + "$"}}
+                    ]},
+                    {"_id": 0, "id": 1, "name": 1, "email": 1}
+                )
+                if wa_user:
+                    existing_session = await db.chat_sessions.find_one(
+                        {"$or": [
+                            {"participantEmail": wa_user.get("email")},
+                            {"participant_ids": wa_user.get("id")}
+                        ]},
+                        {"_id": 0, "id": 1}
+                    )
+
+            session_id = existing_session.get("id") if existing_session else None
+            if not session_id:
+                # Créer une nouvelle session pour ce numéro WhatsApp
+                session_id = str(uuid.uuid4())
+                await db.chat_sessions.insert_one({
+                    "id": session_id,
+                    "mode": "whatsapp",
+                    "whatsappPhone": from_phone,
+                    "participantName": from_phone,
+                    "participant_ids": [],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                })
+                logger.info(f"[V113-WEBHOOK] 📱 Nouvelle session WhatsApp créée pour {from_phone}: {session_id}")
+
+            # Insérer le message entrant dans chat_messages
+            msg_id = str(uuid.uuid4())
+            msg_ts = datetime.now(timezone.utc).isoformat()
+            await db.chat_messages.insert_one({
+                "id": msg_id,
+                "session_id": session_id,
+                "content": incoming_message,
+                "sender_type": "user",
+                "sender_name": from_phone,
+                "sender_id": from_phone,
+                "channel": "whatsapp",
+                "timestamp": msg_ts,
+                "created_at": msg_ts
+            })
+            await db.chat_sessions.update_one(
+                {"id": session_id},
+                {"$set": {"last_message_at": msg_ts, "updated_at": msg_ts}}
+            )
+            logger.info(f"[V113-WEBHOOK] 💬 Message WhatsApp sauvegardé dans Conversations: {session_id}")
+        except Exception as conv_err:
+            logger.error(f"[V113-WEBHOOK] ❌ Erreur sauvegarde conversation: {conv_err}")
+
     # Chercher le client dans les réservations
     client_name = None
     normalized_phone = from_phone.replace("+", "").replace(" ", "")
@@ -5664,26 +5742,32 @@ async def _get_twilio_config():
             return account_sid, auth_token, from_number
     
     return None, None, None
-async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = None, campaign_id: str = None, campaign_name: str = None) -> dict:
+async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = None, campaign_id: str = None, campaign_name: str = None, from_number_override: str = None) -> dict:
     """
     Fonction interne pour envoyer un message WhatsApp via Twilio.
     Utilisée par l'endpoint /send-whatsapp et par /campaigns/{id}/launch.
-    
+
     Args:
         to_phone: Numéro de téléphone du destinataire
         message: Corps du message
         media_url: URL d'un média à joindre (optionnel)
         campaign_id: ID de la campagne (pour logs d'erreurs)
         campaign_name: Nom de la campagne (pour logs d'erreurs)
-    
+        from_number_override: V113 — Numéro expéditeur alternatif (ex: +41765203363 pour BYON)
+
     Returns:
         dict avec status, sid (si succès), error (si échec), error_code (si Twilio)
     """
     import httpx
-    
+
     # Récupérer la config Twilio (priorité .env)
     account_sid, auth_token, from_number = await _get_twilio_config()
-    
+
+    # V113: Utiliser le numéro override si fourni (BYON / numéro business suisse)
+    if from_number_override:
+        from_number = from_number_override
+        logger.info(f"[WHATSAPP-V113] 🇨🇭 Override expéditeur: {from_number_override}")
+
     if not account_sid or not auth_token or not from_number:
         # V112: JAMAIS de mode simulé — erreur explicite si config manquante
         logger.error("[WHATSAPP-V112] ❌ Configuration Twilio manquante — ENVOI IMPOSSIBLE")

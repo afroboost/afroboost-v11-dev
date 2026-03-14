@@ -1,10 +1,11 @@
 /**
- * CampaignModal.js — v18: Tunnel de création en 3 étapes avec sélection contacts corrigée
+ * CampaignModal.js — v19 (V113): Tunnel de création en 3 étapes
  * Étape 1: Médias & Objectif (prompt système, objectif IA, message, média)
  * Étape 2: Contacts & Canaux (checkboxes multi-select, recherche, import, sync)
+ *          + Sélecteur d'expéditeur WhatsApp (Twilio sandbox vs numéro Business)
  * Étape 3: Confirmation & Coût (récapitulatif, programmation, coût crédits)
  *
- * v18 FIX: Sélection par checkboxes fonctionnelle, contacts unifiés (participants + users + groupes)
+ * V113: Ajout sélecteur expéditeur WhatsApp — numéro Afroboost (Twilio) ou numéro Business perso
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
@@ -664,6 +665,39 @@ export default function CampaignModal({
                   ))}
                 </div>
               </div>
+
+              {/* V113: Sélecteur d'expéditeur WhatsApp — visible uniquement si WhatsApp est activé */}
+              {newCampaign.channels?.whatsapp && (
+                <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '10px', background: 'rgba(37,211,102,0.06)', border: '1px solid rgba(37,211,102,0.18)' }}>
+                  <label style={{ display: 'block', color: '#4ade80', fontSize: '12px', fontWeight: 500, marginBottom: '8px' }}>📲 Expéditeur WhatsApp</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {[
+                      { key: 'twilio', label: '🌐 Numéro Afroboost (Twilio Sandbox)', desc: '+1 415 523 8886 — destinataires doivent rejoindre le sandbox' },
+                      { key: 'business', label: '🇨🇭 Mon numéro Business', desc: '+41 76 520 33 63 — numéro suisse direct, plus pro' }
+                    ].map(opt => (
+                      <button key={opt.key} type="button"
+                        onClick={() => setNewCampaign(prev => ({ ...prev, senderType: opt.key }))}
+                        style={{
+                          display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+                          padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', textAlign: 'left',
+                          background: (newCampaign.senderType || 'twilio') === opt.key ? 'rgba(37,211,102,0.12)' : 'rgba(255,255,255,0.04)',
+                          border: (newCampaign.senderType || 'twilio') === opt.key ? '1px solid rgba(37,211,102,0.5)' : '1px solid rgba(255,255,255,0.08)',
+                        }}>
+                        <span style={{
+                          fontSize: '13px', fontWeight: 600,
+                          color: (newCampaign.senderType || 'twilio') === opt.key ? '#4ade80' : 'rgba(255,255,255,0.7)'
+                        }}>{opt.label}</span>
+                        <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: '2px' }}>{opt.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {(newCampaign.senderType || 'twilio') === 'business' && (
+                    <p style={{ fontSize: '11px', color: '#fbbf24', marginTop: '8px', lineHeight: 1.4 }}>
+                      ⚠️ Le numéro Business nécessite un compte WhatsApp Business API vérifié via Meta/Twilio (BYON).
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* CTA — v16.3 */}
               <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '10px', background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>

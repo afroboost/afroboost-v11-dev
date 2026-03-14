@@ -1,8 +1,8 @@
 // Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v112';
-// V112: Activation réelle WhatsApp — zéro mode simulé, sandbox Twilio +14155238886,
+const CACHE_NAME = 'afroboost-v113';
+// V113: Sélection expéditeur WhatsApp — Twilio sandbox ou numéro Business suisse +41765203363
 // formatage suisse +41, statuts précis (Échoué/Partiel), polling temps réel 3s
 
 // Installation â skip waiting pour activer immÃ©diatement
