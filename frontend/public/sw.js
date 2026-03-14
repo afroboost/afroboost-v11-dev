@@ -3,7 +3,7 @@
 // V124: Réécriture complète en ES5 (pas de const/let/arrow/optional chaining)
 // pour compatibilité maximale avec les anciens navigateurs mobiles
 
-var CACHE_NAME = 'afroboost-v134';
+var CACHE_NAME = 'afroboost-v135';
 
 // V128: Pre-cache résilient — l'installation du SW ne doit JAMAIS échouer
 // Sinon l'ancien SW cassé (V120 avec syntaxe ES6) reste actif = écran noir
@@ -15,31 +15,36 @@ var PRECACHE_URLS = [
   '/manifest.json'
 ];
 
-// Installation — TOUJOURS réussir, même si le pre-cache échoue
+// V135: Installation "Install-Ready" — JAMAIS d'échec, même si le réseau est mort
+// Chaque URL est tentée individuellement avec fetch+put (plus robuste que cache.add)
+// Si tout échoue, le SW s'installe quand même = l'ancien SW cassé est remplacé
 self.addEventListener('install', function(event) {
-  console.log('[SW] V128 install — resilient pre-cache');
+  console.log('[SW] V135 install — Install-Ready strategy');
   event.waitUntil(
     caches.open(CACHE_NAME).then(function(cache) {
-      // V128: Cache chaque URL individuellement — si une échoue, les autres continuent
       var promises = PRECACHE_URLS.map(function(url) {
-        return cache.add(url).catch(function(err) {
-          console.warn('[SW] Pre-cache échoué pour ' + url + ':', err);
-          // On continue quand même — ne PAS rejeter la Promise
+        return fetch(url, { cache: 'no-store' }).then(function(response) {
+          if (response.ok) {
+            return cache.put(url, response);
+          }
+          console.warn('[SW] Réponse non-OK pour ' + url + ': ' + response.status);
+        }).catch(function(err) {
+          console.warn('[SW] Fetch échoué pour ' + url + ' — ignoré:', err.message || err);
         });
       });
       return Promise.all(promises);
     }).catch(function(err) {
-      // V128: Même si tout le cache échoue, on installe quand même le SW
-      console.warn('[SW] Cache open échoué, installation continue:', err);
+      console.warn('[SW] Cache open échoué — installation continue sans cache:', err);
     }).then(function() {
+      console.log('[SW] V135 skipWaiting — prise de contrôle immédiate');
       return self.skipWaiting();
     })
   );
 });
 
-// Activation — supprime TOUS les anciens caches + prend le contrôle immédiat
+// V135: Activation — purge nucléaire + claim + force-reload tous les clients
 self.addEventListener('activate', function(event) {
-  console.log('[SW] V128 activate — nuclear purge + claim');
+  console.log('[SW] V135 activate — nuclear purge + claim + reload');
   event.waitUntil(
     caches.keys().then(function(cacheNames) {
       return Promise.all(

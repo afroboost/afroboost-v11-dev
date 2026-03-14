@@ -1076,9 +1076,8 @@ async def get_courses():
 @api_router.post("/courses", response_model=Course)
 async def create_course(course: CourseCreate, request: Request):
     # Sécurité : vérifier que l'utilisateur est authentifié
-    require_auth(request)
     # v19: Auto-set coach_id depuis le header d'authentification
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    user_email = require_auth(request)
     course_data = course.model_dump()
     if user_email and not course_data.get("coach_id"):
         course_data["coach_id"] = user_email
@@ -1217,8 +1216,7 @@ async def get_offers():
 
 @api_router.post("/offers", response_model=Offer)
 async def create_offer(offer: OfferCreate, request: Request):
-    require_auth(request)
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    user_email = require_auth(request)
     offer_data = offer.model_dump()
     # v61: Blindage conversion durée — accepte string, int, vide, null
     raw_dv = offer_data.get("duration_value")
@@ -1283,8 +1281,7 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
 @api_router.delete("/offers/{offer_id}")
 async def delete_offer(offer_id: str, request: Request):
     """v20: Supprime une offre avec vérification d'ownership + nettoyage codes promo"""
-    require_auth(request)
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    user_email = require_auth(request)
 
     # v20: Vérifier que l'offre existe
     offer = await db.offers.find_one({"id": offer_id})
@@ -1331,7 +1328,10 @@ async def create_category(category: dict):
 @api_router.get("/users", response_model=List[User])
 async def get_users(request: Request):
     # Filtrage par coach_id si un coach est connecté (super_admin voit tout)
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        coach_email = require_auth(request)
+    except HTTPException:
+        coach_email = ""
     query = {}
     if coach_email and not is_super_admin(coach_email):
         # Un coach ne voit que ses propres utilisateurs (inscrits via son lien)
@@ -1509,9 +1509,7 @@ async def upload_coach_asset(
     import uuid
     import base64
 
-    coach_email = request.headers.get('X-User-Email', '').lower().strip()
-    if not coach_email:
-        raise HTTPException(status_code=401, detail="Email coach requis")
+    coach_email = require_auth(request)
 
     # Validation du type MIME
     allowed_types = {
@@ -1610,9 +1608,7 @@ async def upload_chunk(
     import uuid
     from bson.binary import Binary
 
-    coach_email = request.headers.get('X-User-Email', '').lower().strip()
-    if not coach_email:
-        raise HTTPException(status_code=401, detail="Email coach requis")
+    coach_email = require_auth(request)
 
     contents = await file.read()
     logger.info(f"[CHUNK-UPLOAD] Chunk {chunk_index + 1}/{total_chunks} pour {upload_id} ({len(contents)} bytes)")
@@ -3272,7 +3268,10 @@ async def mark_campaign_sent(campaign_id: str, data: dict):
 # v9.3.0: Isolation par coach_id
 @api_router.get("/payment-links")
 async def get_payment_links(request: Request):
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
+    try:
+        user_email = require_auth(request)
+    except HTTPException:
+        user_email = ""
     is_admin = is_super_admin(user_email)  # v9.5.6
 
     # Si pas d'email (visiteur sur la vitrine App.js), charger les liens admin
@@ -4022,13 +4021,10 @@ async def create_credit_checkout(request: Request):
     try:
         body = await request.json()
         pack_id = body.get("pack_id")
-        caller_email = request.headers.get('X-User-Email', '').lower().strip()
-        
+        caller_email = require_auth(request)
+
         if not pack_id:
             raise HTTPException(status_code=400, detail="pack_id requis")
-        
-        if not caller_email:
-            raise HTTPException(status_code=401, detail="Email utilisateur requis")
         
         # Super Admin ne paie jamais
         if is_super_admin(caller_email):
@@ -4123,7 +4119,10 @@ async def get_credit_packs():
 @api_router.get("/credit-transactions")
 async def get_credit_transactions(request: Request):
     """Retourne l'historique des achats de crédits (Admin: tous, Coach: les siens)"""
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
+    try:
+        user_email = require_auth(request)
+    except HTTPException:
+        user_email = ""
     is_admin = is_super_admin(user_email)
     
     query = {} if is_admin else {"coach_email": user_email}
@@ -4140,7 +4139,10 @@ async def get_credit_transactions(request: Request):
 # v9.3.0: Isolation par coach_id - chaque coach a sa propre configuration
 @api_router.get("/concept", response_model=Concept)
 async def get_concept(request: Request):
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
+    try:
+        user_email = require_auth(request)
+    except HTTPException:
+        user_email = ""
     is_admin = is_super_admin(user_email)  # v9.5.6
 
     # Si pas d'email (visiteur sur la vitrine App.js), charger le concept admin
@@ -4162,7 +4164,10 @@ async def get_concept(request: Request):
 
 @api_router.put("/concept")
 async def update_concept(concept: ConceptUpdate, request: Request):
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
+    try:
+        user_email = require_auth(request)
+    except HTTPException:
+        user_email = ""
     is_admin = is_super_admin(user_email)  # v9.5.6
     
     # Super Admin: concept global, Coach: concept personnel
@@ -4183,9 +4188,7 @@ async def update_concept(concept: ConceptUpdate, request: Request):
 async def update_coach_branding(request: Request):
     """Met à jour accent_color et logo_url du coach"""
     body = await request.json()
-    email = request.headers.get('X-User-Email', '').lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    email = require_auth(request)
 
     updates = {}
     if "accent_color" in body:
@@ -4214,9 +4217,7 @@ async def get_coach_branding(coach_email: str):
 async def update_coach_seo(request: Request):
     """Met à jour meta_title, meta_description, keywords du coach"""
     body = await request.json()
-    email = request.headers.get('X-User-Email', '').lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    email = require_auth(request)
 
     updates = {}
     for field in ["meta_title", "meta_description", "seo_keywords"]:
@@ -4351,8 +4352,7 @@ async def get_public_faqs(faq_type: str):
 @api_router.post("/admin/faqs")
 async def admin_create_faq(request: Request):
     """v102: SuperAdmin — creer une FAQ publique"""
-    require_auth(request)
-    email = request.headers.get('X-User-Email', '').lower().strip()
+    email = require_auth(request)
     if not is_super_admin(email):
         raise HTTPException(status_code=403, detail="SuperAdmin requis")
     body = await request.json()
@@ -4371,8 +4371,7 @@ async def admin_create_faq(request: Request):
 @api_router.put("/admin/faqs/{faq_id}")
 async def admin_update_faq(faq_id: str, request: Request):
     """v102: SuperAdmin — modifier une FAQ publique"""
-    require_auth(request)
-    email = request.headers.get('X-User-Email', '').lower().strip()
+    email = require_auth(request)
     if not is_super_admin(email):
         raise HTTPException(status_code=403, detail="SuperAdmin requis")
     body = await request.json()
@@ -4386,8 +4385,7 @@ async def admin_update_faq(faq_id: str, request: Request):
 @api_router.delete("/admin/faqs/{faq_id}")
 async def admin_delete_faq(faq_id: str, request: Request):
     """v102: SuperAdmin — supprimer une FAQ publique"""
-    require_auth(request)
-    email = request.headers.get('X-User-Email', '').lower().strip()
+    email = require_auth(request)
     if not is_super_admin(email):
         raise HTTPException(status_code=403, detail="SuperAdmin requis")
     await db.public_faqs.delete_one({"id": faq_id})
@@ -4406,9 +4404,7 @@ async def get_coach_faqs(coach_email: str):
 async def create_faq(request: Request):
     """Créer une FAQ"""
     body = await request.json()
-    email = request.headers.get('X-User-Email', '').lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    email = require_auth(request)
 
     faq = {
         "id": f"faq_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{os.urandom(3).hex()}",
@@ -4432,9 +4428,7 @@ async def create_faq(request: Request):
 async def update_faq(faq_id: str, request: Request):
     """Modifier une FAQ"""
     body = await request.json()
-    email = request.headers.get('X-User-Email', '').lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    email = require_auth(request)
 
     updates = {}
     for field in ["question", "answer", "category", "order"]:
@@ -4455,9 +4449,7 @@ async def update_faq(faq_id: str, request: Request):
 @api_router.delete("/coach/faq/{faq_id}")
 async def delete_faq(faq_id: str, request: Request):
     """Supprimer une FAQ"""
-    email = request.headers.get('X-User-Email', '').lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    email = require_auth(request)
 
     result = await db.faqs.delete_one({"id": faq_id, "coach_email": email})
     if result.deleted_count == 0:
@@ -4473,10 +4465,7 @@ async def check_duplicate_contacts(request: Request):
     body = await request.json()
     phones = [p.strip() for p in body.get("phones", []) if p.strip()]
     emails = [e.strip().lower() for e in body.get("emails", []) if e.strip()]
-    coach_email = request.headers.get('X-User-Email', '').lower().strip()
-
-    if not coach_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    coach_email = require_auth(request)
 
     existing_phones = set()
     existing_emails = set()
@@ -4514,9 +4503,7 @@ async def deduplicate_contacts(request: Request):
     """v104: Nettoie les doublons existants dans chat_participants.
     Fusionne par email (case-insensitive) ou phone normalisé.
     Garde le contact le plus ancien (created_at), met à jour avec les infos des doublons."""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    caller_email = require_auth(request)
 
     try:
         # Récupérer tous les contacts du coach
@@ -4613,9 +4600,7 @@ async def get_all_contacts_unified(request: Request):
     pour la sélection de destinataires dans les campagnes.
     Dédupliqué par email/phone. Retourne groupes + contacts individuels.
     """
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    caller_email = require_auth(request)
 
     try:
         contacts = []
@@ -4745,9 +4730,7 @@ async def bulk_import_contacts(request: Request):
     Accepte un tableau de {name, phone, email, source, tags}.
     Déduplique par phone/email. Retourne le nombre importé.
     """
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    caller_email = require_auth(request)
 
     body = await request.json()
     contacts_list = body.get("contacts", [])
@@ -4831,9 +4814,7 @@ GOOGLE_CONTACTS_SCOPES = "https://www.googleapis.com/auth/contacts.readonly"
 @api_router.get("/google-contacts/auth-url")
 async def get_google_contacts_auth_url(request: Request):
     """Génère l'URL d'autorisation Google pour la sync contacts"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    caller_email = require_auth(request)
 
     if not GOOGLE_CONTACTS_CLIENT_ID:
         raise HTTPException(status_code=503, detail="Google Contacts non configuré (GOOGLE_CONTACTS_CLIENT_ID manquant)")
@@ -4921,7 +4902,10 @@ async def google_contacts_callback(code: str = "", state: str = "", error: str =
 @api_router.get("/google-contacts/status")
 async def google_contacts_status(request: Request):
     """Vérifie si le coach a connecté Google Contacts"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        caller_email = require_auth(request)
+    except HTTPException:
+        caller_email = ""
     token_doc = await db.google_tokens.find_one({"coach_email": caller_email}, {"_id": 0})
     return {
         "connected": bool(token_doc and token_doc.get("refresh_token")),
@@ -4936,9 +4920,7 @@ async def sync_google_contacts(request: Request):
     Synchronise les contacts Google dans chat_participants.
     Utilise le refresh_token stocké pour obtenir un access_token frais.
     """
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    caller_email = require_auth(request)
 
     token_doc = await db.google_tokens.find_one({"coach_email": caller_email}, {"_id": 0})
     if not token_doc or not token_doc.get("refresh_token"):
@@ -5074,7 +5056,10 @@ async def sync_google_contacts(request: Request):
 @api_router.post("/contacts/add-tags")
 async def add_tags_to_contacts(request: Request):
     """Ajoute des tags à une liste de contacts (pour grouper/catégoriser)"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        caller_email = require_auth(request)
+    except HTTPException:
+        caller_email = ""
     body = await request.json()
     contact_ids = body.get("contact_ids", [])
     tags = body.get("tags", [])
@@ -5656,7 +5641,10 @@ async def generate_master_prompt(request: Request):
     Retourne le prompt généré prêt à être sauvegardé dans ai_config.systemPrompt
     """
     try:
-        user_email = request.headers.get("X-User-Email", "")
+        try:
+            user_email = require_auth(request)
+        except HTTPException:
+            user_email = ""
 
         # 1. Concept / Description du site
         concept_text = ""
@@ -6418,9 +6406,7 @@ async def test_ai_response(data: dict):
 @api_router.get("/leads")
 async def get_leads(request: Request):
     """Récupère les leads capturés via le widget IA — filtré par coach_id"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    caller_email = require_auth(request)
 
     # v68: Super Admin voit TOUS les leads, partenaire voit les siens
     if is_super_admin(caller_email):
@@ -6437,7 +6423,10 @@ async def create_lead(request: Request, lead: Lead):
     from datetime import datetime, timezone
 
     # v68: Récupérer le coach_id depuis le header ou le referer
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        caller_email = require_auth(request)
+    except HTTPException:
+        caller_email = ""
     # Si pas de header (widget public), utiliser DEFAULT_COACH_ID
     coach_id = caller_email if caller_email else DEFAULT_COACH_ID
 
@@ -6464,9 +6453,7 @@ async def create_lead(request: Request, lead: Lead):
 @api_router.delete("/leads/{lead_id}")
 async def delete_lead(lead_id: str, request: Request):
     """Supprime un lead — vérifie l'ownership"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    caller_email = require_auth(request)
 
     # v68: Super Admin peut supprimer n'importe quel lead, partenaire seulement les siens
     if is_super_admin(caller_email):
@@ -7057,7 +7044,10 @@ Si la question ne concerne pas un produit ou un cours Afroboost, réponds:
 @api_router.get("/chat/participants")
 async def get_chat_participants(request: Request):
     """Récupère les participants du chat (CRM) - Filtré par coach_id v8.9.5"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        caller_email = require_auth(request)
+    except HTTPException:
+        caller_email = ""
     
     # RÈGLE ANTI-CASSE BASSI: Super Admin voit TOUT
     if is_super_admin(caller_email):
@@ -7079,7 +7069,10 @@ async def get_chat_participant(participant_id: str):
 @api_router.post("/chat/participants")
 async def create_chat_participant(participant: ChatParticipantCreate, request: Request):
     """v104: Upsert contact — déduplique par email/phone, met à jour si existant"""
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        coach_email = require_auth(request)
+    except HTTPException:
+        coach_email = ""
     coach_id = coach_email if (coach_email and not is_super_admin(coach_email)) else DEFAULT_COACH_ID
 
     p = participant.model_dump()
@@ -7476,7 +7469,10 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
     # v14.7: Récupérer l'email du caller pour le filtrage
     caller_email = ""
     if request:
-        caller_email = request.headers.get("X-User-Email", "").lower().strip()
+        try:
+            caller_email = require_auth(request)
+        except HTTPException:
+            caller_email = ""
     
     # Base query
     query = {} if include_deleted else {"is_deleted": {"$ne": True}}
@@ -7575,9 +7571,12 @@ async def get_conversations_advanced(
     - has_more: Indique s'il y a plus de pages
     """
     import re
-    
+
     # v14.7: Récupérer l'email du caller pour le filtrage
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        caller_email = require_auth(request)
+    except HTTPException:
+        caller_email = ""
     
     # Limiter à 100 max
     limit = min(limit, 100)
@@ -8499,7 +8498,10 @@ async def generate_shareable_link(request: Request):
     welcome_message = body.get("welcome_message", "")
 
     # v14.7: Récupérer le coach_id pour l'étanchéité
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        coach_email = require_auth(request)
+    except HTTPException:
+        coach_email = ""
 
     # Créer une nouvelle session avec un token unique
     session = ChatSession(
@@ -9742,9 +9744,8 @@ async def send_group_message(request: Request):
 @api_router.post("/chat/groups")
 async def create_chat_group(request: Request):
     """v101: Créer un groupe de chat avec membres sélectionnés et prompt IA dédié"""
-    require_auth(request)
+    coach_email = require_auth(request)
     body = await request.json()
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
     name = body.get("name", "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Le nom du groupe est requis")
@@ -9794,7 +9795,10 @@ async def create_chat_group(request: Request):
 @api_router.get("/chat/groups")
 async def get_chat_groups(request: Request):
     """v108: Liste des groupes du coach — enrichi avec noms des membres"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        caller_email = require_auth(request)
+    except HTTPException:
+        caller_email = ""
     query = {"is_deleted": {"$ne": True}}
     if caller_email and not is_super_admin(caller_email):
         query["coach_id"] = caller_email
@@ -10345,7 +10349,10 @@ async def notify_coach_new_message(participant_name: str, message_preview: str, 
 @api_router.post("/campaigns/send-email")
 async def send_campaign_email(request: Request):
     """Envoie un email de campagne via Resend - v9.0.2: Déduit 1 crédit"""
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        coach_email = require_auth(request)
+    except HTTPException:
+        coach_email = ""
     if coach_email and not is_super_admin(coach_email):
         credit_check = await check_credits(coach_email)
         if not credit_check.get("has_credits"):
@@ -10584,7 +10591,10 @@ async def send_bulk_campaign_email(request: Request, background_tasks: Backgroun
     subject = body.get("subject", "Message d'Afroboost")
     message = body.get("message", "")
     media_url = body.get("media_url", None)
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        coach_email = require_auth(request)
+    except HTTPException:
+        coach_email = ""
     
     if not recipients:
         raise HTTPException(status_code=400, detail="Aucun destinataire")
@@ -10740,7 +10750,10 @@ async def cron_check_campaigns(request: Request):
     """
     # Vérification sécurité (Vercel cron envoie Authorization: Bearer <CRON_SECRET>)
     auth_header = request.headers.get("Authorization", "")
-    user_email = request.headers.get("X-User-Email", "").lower()
+    try:
+        user_email = require_auth(request)
+    except HTTPException:
+        user_email = ""
     cron_secret = os.environ.get("CRON_SECRET", "")
 
     is_vercel_cron = auth_header == f"Bearer {cron_secret}" if cron_secret else False
@@ -10930,7 +10943,10 @@ async def send_expired_no_credits_email(coach_email: str, offer_name: str):
 @api_router.post("/admin/test-expiry-email")
 async def test_expiry_email(request: Request):
     """V70: Envoie les 3 types d'emails de test au Super Admin. Ne touche PAS aux données réelles."""
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        user_email = require_auth(request)
+    except HTTPException:
+        user_email = ""
     if not is_super_admin(user_email):
         raise HTTPException(status_code=403, detail="Réservé au Super Admin")
     test_email = SUPER_ADMIN_EMAIL  # contact.artboost@gmail.com
@@ -10995,7 +11011,10 @@ _AI_COMMENTS_BANK = [
 @api_router.post("/admin/generate-social-proof")
 async def generate_social_proof(request: Request):
     """V71: Génère des commentaires IA (Super Admin uniquement). count=10 par défaut, max 50."""
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        user_email = require_auth(request)
+    except HTTPException:
+        user_email = ""
     if not is_super_admin(user_email):
         raise HTTPException(status_code=403, detail="Réservé au Super Admin")
 
@@ -11055,7 +11074,10 @@ async def like_comment(comment_id: str):
 @api_router.post("/admin/boost-likes")
 async def boost_likes(request: Request):
     """V71: Ajoute des likes en masse (Super Admin uniquement)."""
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        user_email = require_auth(request)
+    except HTTPException:
+        user_email = ""
     if not is_super_admin(user_email):
         raise HTTPException(status_code=403, detail="Réservé au Super Admin")
 
@@ -11076,7 +11098,10 @@ async def boost_likes(request: Request):
 @api_router.delete("/admin/comments")
 async def clear_comments(request: Request):
     """V71: Supprime tous les commentaires IA (Super Admin uniquement)."""
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        user_email = require_auth(request)
+    except HTTPException:
+        user_email = ""
     if not is_super_admin(user_email):
         raise HTTPException(status_code=403, detail="Réservé au Super Admin")
 
@@ -11087,7 +11112,10 @@ async def clear_comments(request: Request):
 @api_router.delete("/admin/comments/{comment_id}")
 async def delete_single_comment(comment_id: str, request: Request):
     """V77: Supprime un commentaire individuel (Super Admin uniquement)."""
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        user_email = require_auth(request)
+    except HTTPException:
+        user_email = ""
     if not is_super_admin(user_email):
         raise HTTPException(status_code=403, detail="Réservé au Super Admin")
     result = await db.comments.delete_one({"id": comment_id})
@@ -11099,7 +11127,10 @@ async def delete_single_comment(comment_id: str, request: Request):
 @api_router.post("/admin/comments/add")
 async def add_manual_comment(request: Request):
     """V79: Ajoute un commentaire manuellement (Super Admin uniquement)."""
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        user_email = require_auth(request)
+    except HTTPException:
+        user_email = ""
     if not is_super_admin(user_email):
         raise HTTPException(status_code=403, detail="Réservé au Super Admin")
     body = await request.json()
@@ -11134,7 +11165,10 @@ async def add_manual_comment(request: Request):
 @api_router.post("/admin/comments/{comment_id}/photo")
 async def update_comment_photo(comment_id: str, request: Request):
     """V77: Met à jour la photo de profil d'un commentaire (Super Admin uniquement)."""
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    try:
+        user_email = require_auth(request)
+    except HTTPException:
+        user_email = ""
     if not is_super_admin(user_email):
         raise HTTPException(status_code=403, detail="Réservé au Super Admin")
     body = await request.json()
@@ -11351,7 +11385,10 @@ async def cron_post_course_feedback(request: Request):
 async def check_expirations(request: Request):
     """Cron quotidien : rappels J-7 + prolongation auto J-0 des offres avec durée."""
     auth_header = request.headers.get("Authorization", "")
-    user_email = request.headers.get("X-User-Email", "").lower()
+    try:
+        user_email = require_auth(request)
+    except HTTPException:
+        user_email = ""
     cron_secret = os.environ.get("CRON_SECRET", "")
     is_vercel_cron = auth_header == f"Bearer {cron_secret}" if cron_secret else False
     is_admin = is_super_admin(user_email)
@@ -11429,9 +11466,7 @@ async def check_expirations(request: Request):
 @api_router.get("/offers/next-expiration")
 async def get_next_expiration(request: Request):
     """Retourne la prochaine date d'expiration d'offre pour le dashboard."""
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not user_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    user_email = require_auth(request)
     now = datetime.now(timezone.utc)
     # Super Admin voit toutes les offres, partenaire seulement les siennes
     query = {"expiration_date": {"$exists": True, "$ne": None}}
@@ -11495,7 +11530,10 @@ async def scheduler_emit_group_message(request: Request):
 @api_router.get("/platform-settings")
 async def get_platform_settings(request: Request):
     """Récupérer les paramètres globaux de la plateforme"""
-    user_email = request.headers.get('X-User-Email', '').lower()
+    try:
+        user_email = require_auth(request)
+    except HTTPException:
+        user_email = ""
     is_admin = is_super_admin(user_email)  # v9.5.6
     
     # Récupérer ou créer les settings
@@ -11535,7 +11573,10 @@ async def get_platform_settings(request: Request):
 @api_router.put("/platform-settings")
 async def update_platform_settings(request: Request):
     """Mettre à jour les paramètres globaux (Super Admin uniquement)"""
-    user_email = request.headers.get('X-User-Email', '').lower()
+    try:
+        user_email = require_auth(request)
+    except HTTPException:
+        user_email = ""
     
     # Vérification Super Admin v9.5.6
     if not is_super_admin(user_email):
