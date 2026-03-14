@@ -1,19 +1,35 @@
-// Service Worker Afroboost V57 â Nuclear cache-bust + Push Notifications
+// Service Worker Afroboost — Push Notifications + PWA Install
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
 
-const CACHE_NAME = 'afroboost-v120';
+const CACHE_NAME = 'afroboost-v123';
+// V123: Pre-cache offline shell pour satisfaire critères d'installation PWA Chrome
+// V122: SEO — titre et meta description optimisés pour Google
+// V121: Fix PWA install — manifest corrigé, URL propres sans query params
 // V120: Notifications push complètes — coach + abonné, badge PWA, toggle dans Chat
-// Push au coach pour messages et ventes, badge compteur sur icône PWA
 
-// Installation â skip waiting pour activer immÃ©diatement
+// V123: Ressources essentielles à pré-cacher pour le mode offline
+// Chrome EXIGE que le SW puisse servir start_url offline pour autoriser l'installation PWA
+const PRECACHE_URLS = [
+  '/',
+  '/index.html',
+  '/logo192.png',
+  '/logo512.png',
+  '/manifest.json'
+];
+
+// Installation — pré-cache les ressources essentielles + skip waiting
 self.addEventListener('install', (event) => {
-  console.log('[SW] V54 installe â skip waiting');
-  self.skipWaiting();
+  console.log('[SW] V123 install — pre-caching offline shell');
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(PRECACHE_URLS);
+    }).then(() => self.skipWaiting())
+  );
 });
 
-// Activation â supprime TOUS les anciens caches (nuclear purge)
+// Activation — supprime TOUS les anciens caches (nuclear purge)
 self.addEventListener('activate', (event) => {
-  console.log("[SW] V120 activate - nuclear purge + reload clients");
+  console.log("[SW] V123 activate - nuclear purge + claim clients");
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
@@ -28,22 +44,34 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch â network-first pour HTML, cache-first pour static assets
+// Fetch — network-first pour HTML, cache-first pour static assets
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // API calls â toujours rÃ©seau
+  // API calls — toujours réseau, pas d'interception
   if (url.pathname.startsWith('/api/')) return;
 
-  // HTML pages â toujours rÃ©seau (force reload)
+  // HTML pages / navigation — network-first avec fallback cache
   if (event.request.mode === 'navigate' || event.request.headers.get('accept')?.includes('text/html')) {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match(event.request))
+      fetch(event.request).then((response) => {
+        // V123: Mettre à jour le cache avec la dernière version de la page
+        if (response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      }).catch(() => {
+        // Offline: servir depuis le cache, ou fallback sur /index.html (SPA)
+        return caches.match(event.request).then((cached) => {
+          return cached || caches.match('/index.html');
+        });
+      })
     );
     return;
   }
 
-  // Static assets (JS/CSS avec hash) â cache-first
+  // Static assets (JS/CSS avec hash) — cache-first
   if (url.pathname.startsWith('/static/')) {
     event.respondWith(
       caches.match(event.request).then((cached) => {
@@ -59,6 +87,17 @@ self.addEventListener('fetch', (event) => {
     );
     return;
   }
+
+  // Autres ressources (images, fonts, etc.) — network-first avec cache
+  event.respondWith(
+    fetch(event.request).then((response) => {
+      if (response.ok) {
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+      }
+      return response;
+    }).catch(() => caches.match(event.request))
+  );
 });
 
 // V120: Compteur de notifications non lues pour badge PWA
@@ -162,4 +201,3 @@ self.addEventListener('message', (event) => {
     self.skipWaiting();
   }
 });
-// V88 deploy
