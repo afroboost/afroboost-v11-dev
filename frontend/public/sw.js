@@ -1,15 +1,12 @@
-// Service Worker Afroboost — Push Notifications + PWA Install
+// Service Worker Afroboost V124 — ES5 compatible pour tous les mobiles
 // IMPORTANT: Changer CACHE_NAME force le reload sur TOUS les appareils
+// V124: Réécriture complète en ES5 (pas de const/let/arrow/optional chaining)
+// pour compatibilité maximale avec les anciens navigateurs mobiles
 
-const CACHE_NAME = 'afroboost-v123';
-// V123: Pre-cache offline shell pour satisfaire critères d'installation PWA Chrome
-// V122: SEO — titre et meta description optimisés pour Google
-// V121: Fix PWA install — manifest corrigé, URL propres sans query params
-// V120: Notifications push complètes — coach + abonné, badge PWA, toggle dans Chat
+var CACHE_NAME = 'afroboost-v124';
 
-// V123: Ressources essentielles à pré-cacher pour le mode offline
-// Chrome EXIGE que le SW puisse servir start_url offline pour autoriser l'installation PWA
-const PRECACHE_URLS = [
+// Ressources pré-cachées pour le mode offline (critère PWA install Chrome)
+var PRECACHE_URLS = [
   '/',
   '/index.html',
   '/logo192.png',
@@ -17,53 +14,56 @@ const PRECACHE_URLS = [
   '/manifest.json'
 ];
 
-// Installation — pré-cache les ressources essentielles + skip waiting
-self.addEventListener('install', (event) => {
-  console.log('[SW] V123 install — pre-caching offline shell');
+// Installation — pré-cache les ressources essentielles
+self.addEventListener('install', function(event) {
+  console.log('[SW] V124 install — pre-caching offline shell');
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
+    caches.open(CACHE_NAME).then(function(cache) {
       return cache.addAll(PRECACHE_URLS);
-    }).then(() => self.skipWaiting())
+    }).then(function() {
+      return self.skipWaiting();
+    })
   );
 });
 
-// Activation — supprime TOUS les anciens caches (nuclear purge)
-self.addEventListener('activate', (event) => {
-  console.log("[SW] V123 activate - nuclear purge + claim clients");
+// Activation — supprime les anciens caches
+self.addEventListener('activate', function(event) {
+  console.log('[SW] V124 activate — nuclear purge + claim');
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
+    caches.keys().then(function(cacheNames) {
       return Promise.all(
         cacheNames
-          .filter((name) => name !== CACHE_NAME)
-          .map((name) => {
+          .filter(function(name) { return name !== CACHE_NAME; })
+          .map(function(name) {
             console.log('[SW] Suppression ancien cache:', name);
             return caches.delete(name);
           })
       );
-    }).then(() => clients.claim())
+    }).then(function() {
+      return clients.claim();
+    })
   );
 });
 
 // Fetch — network-first pour HTML, cache-first pour static assets
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
+self.addEventListener('fetch', function(event) {
+  var url = new URL(event.request.url);
 
-  // API calls — toujours réseau, pas d'interception
+  // API calls — toujours réseau
   if (url.pathname.startsWith('/api/')) return;
 
   // HTML pages / navigation — network-first avec fallback cache
-  if (event.request.mode === 'navigate' || event.request.headers.get('accept')?.includes('text/html')) {
+  var acceptHeader = event.request.headers.get('accept') || '';
+  if (event.request.mode === 'navigate' || acceptHeader.indexOf('text/html') !== -1) {
     event.respondWith(
-      fetch(event.request).then((response) => {
-        // V123: Mettre à jour le cache avec la dernière version de la page
+      fetch(event.request).then(function(response) {
         if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          var clone = response.clone();
+          caches.open(CACHE_NAME).then(function(cache) { cache.put(event.request, clone); });
         }
         return response;
-      }).catch(() => {
-        // Offline: servir depuis le cache, ou fallback sur /index.html (SPA)
-        return caches.match(event.request).then((cached) => {
+      }).catch(function() {
+        return caches.match(event.request).then(function(cached) {
           return cached || caches.match('/index.html');
         });
       })
@@ -74,12 +74,12 @@ self.addEventListener('fetch', (event) => {
   // Static assets (JS/CSS avec hash) — cache-first
   if (url.pathname.startsWith('/static/')) {
     event.respondWith(
-      caches.match(event.request).then((cached) => {
+      caches.match(event.request).then(function(cached) {
         if (cached) return cached;
-        return fetch(event.request).then((response) => {
+        return fetch(event.request).then(function(response) {
           if (response.ok) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+            var clone = response.clone();
+            caches.open(CACHE_NAME).then(function(cache) { cache.put(event.request, clone); });
           }
           return response;
         });
@@ -88,26 +88,28 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Autres ressources (images, fonts, etc.) — network-first avec cache
+  // Autres ressources — network-first avec cache
   event.respondWith(
-    fetch(event.request).then((response) => {
+    fetch(event.request).then(function(response) {
       if (response.ok) {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        var clone = response.clone();
+        caches.open(CACHE_NAME).then(function(cache) { cache.put(event.request, clone); });
       }
       return response;
-    }).catch(() => caches.match(event.request))
+    }).catch(function() {
+      return caches.match(event.request);
+    })
   );
 });
 
-// V120: Compteur de notifications non lues pour badge PWA
-let unreadCount = 0;
+// Compteur de notifications non lues pour badge PWA
+var unreadCount = 0;
 
 // Reception des notifications push
-self.addEventListener('push', (event) => {
+self.addEventListener('push', function(event) {
   console.log('[SW] Notification push recue');
 
-  let data = {
+  var data = {
     title: 'Afroboost',
     body: 'Nouveau message de votre coach',
     icon: '/logo192.png',
@@ -117,7 +119,7 @@ self.addEventListener('push', (event) => {
 
   if (event.data) {
     try {
-      const payload = event.data.json();
+      var payload = event.data.json();
       data = {
         title: payload.title || 'Afroboost',
         body: payload.body || payload.message || 'Nouveau message de votre coach',
@@ -126,17 +128,17 @@ self.addEventListener('push', (event) => {
         data: payload.data || { url: '/' }
       };
     } catch (e) {
-      const text = event.data.text();
+      var text = event.data.text();
       if (text) data.body = text;
     }
   }
 
-  const options = {
+  var options = {
     body: data.body,
     icon: data.icon,
     badge: data.badge,
     vibrate: [200, 100, 200],
-    tag: data.data?.type || 'afroboost-chat-sync',
+    tag: (data.data && data.data.type) ? data.data.type : 'afroboost-chat-sync',
     renotify: true,
     requireInteraction: false,
     silent: false,
@@ -147,34 +149,33 @@ self.addEventListener('push', (event) => {
     options.actions = [];
   }
 
-  // V120: Incrementer le badge PWA sur l'icone de l'app
   unreadCount++;
   event.waitUntil(
     Promise.all([
       self.registration.showNotification(data.title, options),
-      // Badge API (Chrome 81+, Edge 81+) — affiche un compteur sur l'icone PWA
-      navigator.setAppBadge ? navigator.setAppBadge(unreadCount).catch(() => {}) : Promise.resolve()
+      navigator.setAppBadge ? navigator.setAppBadge(unreadCount).catch(function() {}) : Promise.resolve()
     ])
   );
 });
 
 // Clic sur la notification
-self.addEventListener('notificationclick', (event) => {
+self.addEventListener('notificationclick', function(event) {
   event.notification.close();
-  // V120: Réinitialiser le badge au clic
   unreadCount = Math.max(0, unreadCount - 1);
   if (navigator.clearAppBadge && unreadCount === 0) {
-    navigator.clearAppBadge().catch(() => {});
+    navigator.clearAppBadge().catch(function() {});
   } else if (navigator.setAppBadge && unreadCount > 0) {
-    navigator.setAppBadge(unreadCount).catch(() => {});
+    navigator.setAppBadge(unreadCount).catch(function() {});
   }
 
-  const urlToOpen = event.notification.data?.url || '/';
+  var notifData = event.notification.data || {};
+  var urlToOpen = notifData.url || '/';
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true })
-      .then((clientList) => {
-        for (const client of clientList) {
-          if (client.url.includes(self.location.origin) && 'focus' in client) {
+      .then(function(clientList) {
+        for (var i = 0; i < clientList.length; i++) {
+          var client = clientList[i];
+          if (client.url.indexOf(self.location.origin) !== -1 && 'focus' in client) {
             return client.focus();
           }
         }
@@ -184,17 +185,16 @@ self.addEventListener('notificationclick', (event) => {
 });
 
 // Fermeture notification
-self.addEventListener('notificationclose', (event) => {
+self.addEventListener('notificationclose', function(event) {
   console.log('[SW] Notification fermee');
 });
 
 // Message du client
-self.addEventListener('message', (event) => {
+self.addEventListener('message', function(event) {
   console.log('[SW] Message recu:', event.data);
-  // V120: Reset badge quand l'app signale que le chat est ouvert
   if (event.data && event.data.type === 'CLEAR_BADGE') {
     unreadCount = 0;
-    if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => {});
+    if (navigator.clearAppBadge) navigator.clearAppBadge().catch(function() {});
     return;
   }
   if (event.data && event.data.type === 'SKIP_WAITING') {
