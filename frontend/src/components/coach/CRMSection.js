@@ -1324,7 +1324,7 @@ const CRMSection = ({
   }, [API_URL, selectedSession?.id, loadSessionMessages]);
 
   return (
-    <div style={{ background: '#000000', borderRadius: '20px', overflow: 'hidden' }}>
+    <div style={{ background: '#000000', borderRadius: '20px', overflow: 'hidden', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
       {/* v108: Modal for creating a new direct conversation */}
       {showNewConversationDialog && (
         <div style={{
@@ -1447,8 +1447,25 @@ const CRMSection = ({
         coachEmail={coachEmail}
       />
 
-      {/* V144: Main Conversations Grid — mobile-first responsive */}
-      <div style={{
+      {/* V145: Global mobile CSS + Conversations Grid */}
+      <style>{`
+        .crm-root, .crm-root * { box-sizing: border-box; }
+        .crm-root { width: 100%; max-width: 100%; overflow: hidden; }
+        @media (min-width: 1024px) {
+          .crm-grid-premium { grid-template-columns: 1fr 1fr !important; }
+        }
+        @media (max-width: 768px) {
+          .crm-conv-list { padding: 8px 4px !important; }
+          .crm-msg-detail { padding: 8px 4px !important; min-height: 300px !important; }
+          .crm-msg-header { flex-direction: column !important; align-items: flex-start !important; gap: 6px !important; }
+          .crm-toggle-pill { transform: scale(0.92); transform-origin: left; }
+          .crm-conv-actions { flex-direction: row !important; gap: 3px !important; }
+          .crm-input-row { gap: 4px !important; }
+          .crm-input-row input { min-width: 0 !important; font-size: 13px !important; }
+          .crm-input-row button { width: 30px !important; height: 30px !important; flex-shrink: 0 !important; }
+        }
+      `}</style>
+      <div className="crm-root" style={{
         display: 'grid',
         gridTemplateColumns: '1fr',
         gap: '0',
@@ -1457,32 +1474,21 @@ const CRMSection = ({
         background: '#111111',
         boxShadow: '0 0 25px rgba(217, 28, 210, 0.04)',
         overflow: 'hidden',
-        maxWidth: '100%',
       }}>
-        {/* V144: Comprehensive mobile responsive CSS */}
-        <style>{`
-          @media (min-width: 1024px) {
-            .crm-grid-premium { grid-template-columns: 1fr 1fr !important; }
-          }
-          @media (max-width: 768px) {
-            .crm-conv-list { padding: 10px 6px !important; }
-            .crm-msg-detail { padding: 10px 6px !important; min-height: 350px !important; }
-            .crm-msg-header { flex-direction: column !important; align-items: flex-start !important; gap: 8px !important; }
-            .crm-toggle-pill { transform: scale(0.95); transform-origin: left; }
-            .crm-msg-row { padding: 0 2px !important; }
-            .crm-conv-actions { flex-direction: row !important; gap: 6px !important; }
-          }
-        `}</style>
         <div className="crm-grid-premium" style={{
           display: 'grid',
           gridTemplateColumns: '1fr',
           gap: '0',
+          width: '100%',
+          minWidth: 0,
         }}>
-          {/* Left: Conversations List — v105 redesign, V143b mobile fix */}
+          {/* Left: Conversations List — V145 mobile fix */}
           <div className="crm-conv-list" style={{
-            padding: '16px 12px',
+            padding: '12px 8px',
             borderRight: '1px solid rgba(217, 28, 210, 0.08)',
             background: 'rgba(26, 26, 26, 0.4)',
+            minWidth: 0,
+            overflow: 'hidden',
           }}>
             {/* Header */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
@@ -1638,14 +1644,16 @@ const CRMSection = ({
             />
           </div>
 
-          {/* Right: Selected Conversation Messages — V143b mobile fix */}
+          {/* Right: Selected Conversation Messages — V145 mobile fix */}
           <div className="crm-msg-detail" style={{
-            padding: '16px 12px',
+            padding: '12px 8px',
             display: 'flex',
             flexDirection: 'column',
-            minHeight: '400px',
+            minHeight: '350px',
             borderTop: '1px solid rgba(217, 28, 210, 0.08)',
             background: 'rgba(26, 26, 26, 0.3)',
+            minWidth: 0,
+            overflow: 'hidden',
           }}>
             <style>{`
               @media (min-width: 1024px) {
@@ -1870,15 +1878,17 @@ const CRMSection = ({
                   )}
                 </div>
 
-                {/* V143b: Input — borderless + emoji picker, mobile-friendly */}
-                <div style={{
-                  paddingTop: '10px',
+                {/* V145: Input — mobile-friendly, no overflow */}
+                <div className="crm-input-row" style={{
+                  paddingTop: '8px',
                   borderTop: '1px solid rgba(255,255,255,0.06)',
                   display: 'flex',
-                  gap: '6px',
+                  gap: '4px',
                   alignItems: 'center',
                   position: 'relative',
                   flexWrap: 'nowrap',
+                  width: '100%',
+                  minWidth: 0,
                 }}>
                   {/* V143: Emoji picker for coach */}
                   <AfricanEmojiPicker
@@ -1894,14 +1904,14 @@ const CRMSection = ({
                     type="button"
                     onClick={() => setShowCoachEmojiPicker(!showCoachEmojiPicker)}
                     style={{
-                      width: '34px', height: '34px',
+                      width: '30px', height: '30px',
                       borderRadius: '50%',
                       background: showCoachEmojiPicker ? '#D91CD2' : 'transparent',
                       border: 'none',
                       cursor: 'pointer',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       flexShrink: 0,
-                      fontSize: '18px',
+                      fontSize: '16px',
                       transition: 'all 0.2s',
                     }}
                     title="Émojis Africains & Swahili"
@@ -1916,11 +1926,12 @@ const CRMSection = ({
                     placeholder="Votre message…"
                     style={{
                       flex: 1,
-                      padding: '10px 0',
+                      minWidth: 0,
+                      padding: '8px 4px',
                       background: 'transparent',
                       border: 'none',
                       color: '#fff',
-                      fontSize: '14px',
+                      fontSize: '13px',
                       outline: 'none',
                     }}
                     data-testid="coach-message-input"
