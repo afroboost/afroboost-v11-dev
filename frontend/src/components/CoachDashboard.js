@@ -5565,36 +5565,6 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               {tb.label}
             </button>
           ))}
-          
-          {/* Bouton Vue Visiteur - Ouvre la vitrine publique dans un nouvel onglet */}
-          <button
-            onClick={() => {
-              // v67: Super Admin → homepage publique, Partenaires → /coach/{username}
-              // VERROUILLÉ: aucun chemin ne génère /coach/bassi pour le Super Admin
-              const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
-              const isSA = SUPER_ADMIN_EMAILS.includes(safeCoachUser?.email?.toLowerCase());
-              const finalUrl = isSA
-                ? `${window.location.origin}/?visitor=true&t=${Date.now()}`
-                : `${coachVitrineUrl || window.location.origin}?t=${Date.now()}`;
-              console.log('[V67] Vue Visiteur → ', finalUrl);
-              window.open(finalUrl, '_blank');
-            }}
-            className="ml-auto px-3 py-2 rounded-lg text-xs sm:text-sm flex items-center gap-2 flex-shrink-0"
-            style={{
-              background: 'rgba(255,255,255,0.1)',
-              border: '1px solid rgba(255,255,255,0.2)',
-              color: 'white'
-            }}
-            title="Voir ma vitrine publique"
-            data-testid="coach-visitor-preview-toggle"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"></path>
-              <polyline points="15 3 21 3 21 9"></polyline>
-              <line x1="10" y1="14" x2="21" y2="3"></line>
-            </svg>
-            Vue Visiteur
-          </button>
         </div>
 
 
