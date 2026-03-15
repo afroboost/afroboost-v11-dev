@@ -665,7 +665,7 @@ const ConversationItem = memo(({
       onMouseLeave={(e) => { if (!isSelected && !isBulkChecked) { e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.04)'; e.currentTarget.style.boxShadow = 'none'; }}}
       data-testid={`conversation-${session.id}`}
     >
-      <div style={{ display: 'flex', alignItems: 'start', justifyContent: 'space-between', gap: '10px' }}>
+      <div style={{ display: 'flex', alignItems: 'start', justifyContent: 'space-between', gap: '8px', overflow: 'hidden' }}>
         {/* v38: Checkbox bulk select */}
         {bulkMode && (
           <div
@@ -684,12 +684,12 @@ const ConversationItem = memo(({
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {/* V143: Mode indicator — petit dot (violet=IA, ambre=Manuel) */}
+            {/* V144: Mode indicator dot — handles bot/ai/human modes */}
             <div style={{
               width: '8px', height: '8px', borderRadius: '50%',
-              background: session.mode === 'bot' ? '#8b5cf6' : '#f59e0b',
+              background: (session.mode === 'bot' || session.mode === 'ai' || session.is_ai_active) ? '#8b5cf6' : '#f59e0b',
               flexShrink: 0,
-              boxShadow: session.mode === 'bot' ? '0 0 6px rgba(139,92,246,0.5)' : '0 0 6px rgba(245,158,11,0.5)',
+              boxShadow: (session.mode === 'bot' || session.mode === 'ai' || session.is_ai_active) ? '0 0 6px rgba(139,92,246,0.5)' : '0 0 6px rgba(245,158,11,0.5)',
             }} />
             <p style={{ color: '#fff', fontSize: '13px', fontWeight: '500', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {session.participantName || session.participantEmail || 'Client'}
@@ -713,8 +713,8 @@ const ConversationItem = memo(({
             {session.lastMessage || 'Nouvelle conversation'}
           </p>
 
-          {/* WhatsApp + Email — compact */}
-          <div style={{ marginLeft: '16px', marginTop: '4px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+          {/* V144: WhatsApp + Email — compact, truncated on mobile */}
+          <div style={{ marginLeft: '16px', marginTop: '4px', display: 'flex', flexWrap: 'wrap', gap: '6px', overflow: 'hidden' }}>
             {session.participantWhatsapp && (
               <button
                 onClick={(e) => {
@@ -726,18 +726,19 @@ const ConversationItem = memo(({
                   background: 'none',
                   border: 'none',
                   color: 'rgba(34, 197, 94, 0.6)',
-                  fontSize: '11px',
+                  fontSize: '10px',
                   cursor: 'pointer',
                   padding: 0,
                   display: 'flex', alignItems: 'center', gap: '3px',
+                  whiteSpace: 'nowrap',
                 }}
                 title="Contacter sur WhatsApp"
               >
-                <Phone size={10} /> {session.participantWhatsapp}
+                <Phone size={9} /> {session.participantWhatsapp}
               </button>
             )}
             {session.participantEmail && session.participantEmail !== session.participantName && (
-              <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: '11px' }}>
+              <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '150px' }}>
                 {session.participantEmail}
               </span>
             )}
@@ -760,31 +761,30 @@ const ConversationItem = memo(({
           </div>
         </div>
 
-        {/* Actions — icônes compactes */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
-          {/* V143: Toggle Bot/Human — distinct icons (Wifi=IA, WifiOff=Human) */}
+        {/* V144: Actions — compact row for mobile, column for desktop */}
+        <div className="crm-conv-actions" style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center', flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
           <button
-            onClick={() => setSessionMode(session.id, session.mode === 'bot' ? 'human' : 'bot')}
+            onClick={() => {
+              // V144: mode can be 'bot'|'ai' or 'human' — normalize for setSessionMode
+              const isCurrentlyAI = session.mode === 'bot' || session.mode === 'ai' || session.is_ai_active;
+              setSessionMode(session.id, isCurrentlyAI ? 'human' : 'ai');
+            }}
             style={{
-              ...iconBtn(session.mode === 'bot' ? '#8b5cf6' : '#f59e0b'),
-              width: '30px', height: '30px',
-              background: session.mode === 'bot' ? 'rgba(139,92,246,0.12)' : 'rgba(245,158,11,0.12)',
+              ...iconBtn((session.mode === 'bot' || session.mode === 'ai' || session.is_ai_active) ? '#8b5cf6' : '#f59e0b'),
+              width: '28px', height: '28px',
+              background: (session.mode === 'bot' || session.mode === 'ai' || session.is_ai_active) ? 'rgba(139,92,246,0.12)' : 'rgba(245,158,11,0.12)',
               borderRadius: '8px',
             }}
-            title={session.mode === 'bot' ? 'Mode IA actif — cliquer pour passer en manuel' : 'Mode Manuel actif — cliquer pour passer en IA'}
-            onMouseEnter={(e) => e.currentTarget.style.boxShadow = session.mode === 'bot' ? GLOW.violetSoft : GLOW.amber}
-            onMouseLeave={(e) => e.currentTarget.style.boxShadow = 'none'}
+            title={(session.mode === 'bot' || session.mode === 'ai' || session.is_ai_active) ? 'Mode IA — cliquer pour manuel' : 'Manuel — cliquer pour IA'}
           >
-            {session.mode === 'bot' ? <Bot size={14} /> : <UserRound size={14} />}
+            {(session.mode === 'bot' || session.mode === 'ai' || session.is_ai_active) ? <Bot size={12} /> : <UserRound size={12} />}
           </button>
           <button
             onClick={() => deleteChatSession(session.id)}
-            style={{ ...iconBtn('rgba(239,68,68,0.6)'), width: '30px', height: '30px' }}
+            style={{ ...iconBtn('rgba(239,68,68,0.6)'), width: '28px', height: '28px' }}
             title="Supprimer"
-            onMouseEnter={(e) => { e.currentTarget.style.boxShadow = GLOW.red; e.currentTarget.style.color = '#ef4444'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.color = 'rgba(239,68,68,0.6)'; }}
           >
-            <Trash2 size={13} />
+            <Trash2 size={11} />
           </button>
         </div>
       </div>
@@ -1447,7 +1447,7 @@ const CRMSection = ({
         coachEmail={coachEmail}
       />
 
-      {/* V143b: Main Conversations Grid — mobile-first responsive */}
+      {/* V144: Main Conversations Grid — mobile-first responsive */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: '1fr',
@@ -1457,17 +1457,20 @@ const CRMSection = ({
         background: '#111111',
         boxShadow: '0 0 25px rgba(217, 28, 210, 0.04)',
         overflow: 'hidden',
+        maxWidth: '100%',
       }}>
-        {/* Responsive: 2 columns on desktop, 1 on mobile */}
+        {/* V144: Comprehensive mobile responsive CSS */}
         <style>{`
           @media (min-width: 1024px) {
             .crm-grid-premium { grid-template-columns: 1fr 1fr !important; }
           }
-          @media (max-width: 640px) {
-            .crm-conv-list { padding: 12px 8px !important; }
-            .crm-msg-detail { padding: 12px 8px !important; min-height: 400px !important; }
+          @media (max-width: 768px) {
+            .crm-conv-list { padding: 10px 6px !important; }
+            .crm-msg-detail { padding: 10px 6px !important; min-height: 350px !important; }
             .crm-msg-header { flex-direction: column !important; align-items: flex-start !important; gap: 8px !important; }
-            .crm-toggle-pill { transform: scale(0.9); }
+            .crm-toggle-pill { transform: scale(0.95); transform-origin: left; }
+            .crm-msg-row { padding: 0 2px !important; }
+            .crm-conv-actions { flex-direction: row !important; gap: 6px !important; }
           }
         `}</style>
         <div className="crm-grid-premium" style={{
@@ -1664,11 +1667,14 @@ const CRMSection = ({
                 }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <div style={{
-                        width: '8px', height: '8px', borderRadius: '50%',
-                        background: selectedSession.mode === 'bot' ? '#8b5cf6' : '#f59e0b',
-                        boxShadow: selectedSession.mode === 'bot' ? '0 0 6px rgba(139,92,246,0.5)' : '0 0 6px rgba(245,158,11,0.5)',
-                      }} />
+                      {(() => {
+                        const isAI = selectedSession.mode === 'bot' || selectedSession.mode === 'ai' || selectedSession.is_ai_active;
+                        return <div style={{
+                          width: '8px', height: '8px', borderRadius: '50%',
+                          background: isAI ? '#8b5cf6' : '#f59e0b',
+                          boxShadow: isAI ? '0 0 6px rgba(139,92,246,0.5)' : '0 0 6px rgba(245,158,11,0.5)',
+                        }} />;
+                      })()}
                       <p style={{ color: '#fff', fontSize: '14px', fontWeight: '500', margin: 0 }}>
                         {selectedSession.participantName || selectedSession.participantEmail || 'Client'}
                       </p>
@@ -1699,38 +1705,43 @@ const CRMSection = ({
                       overflow: 'hidden',
                       flexShrink: 0,
                     }}>
-                      {/* IA button */}
-                      <button
-                        onClick={() => { if (selectedSession.mode !== 'bot') handleToggleSelectedSessionAI(); }}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: '4px',
-                          padding: '6px 14px',
-                          border: 'none', cursor: 'pointer',
-                          fontSize: '11px', fontWeight: '600',
-                          background: selectedSession.mode === 'bot' ? '#8b5cf6' : 'transparent',
-                          color: selectedSession.mode === 'bot' ? '#fff' : 'rgba(255,255,255,0.3)',
-                          transition: 'all 0.25s ease',
-                          borderRadius: '20px 0 0 20px',
-                        }}
-                      >
-                        <Bot size={13} /> IA
-                      </button>
-                      {/* Manuel button */}
-                      <button
-                        onClick={() => { if (selectedSession.mode === 'bot') handleToggleSelectedSessionAI(); }}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: '4px',
-                          padding: '6px 14px',
-                          border: 'none', cursor: 'pointer',
-                          fontSize: '11px', fontWeight: '600',
-                          background: selectedSession.mode !== 'bot' ? '#f59e0b' : 'transparent',
-                          color: selectedSession.mode !== 'bot' ? '#000' : 'rgba(255,255,255,0.3)',
-                          transition: 'all 0.25s ease',
-                          borderRadius: '0 20px 20px 0',
-                        }}
-                      >
-                        <UserRound size={13} /> Manuel
-                      </button>
+                      {(() => {
+                        const isAI = selectedSession.mode === 'bot' || selectedSession.mode === 'ai' || selectedSession.is_ai_active;
+                        return <>
+                          {/* IA button */}
+                          <button
+                            onClick={() => { if (!isAI) handleToggleSelectedSessionAI(); }}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: '4px',
+                              padding: '6px 12px',
+                              border: 'none', cursor: 'pointer',
+                              fontSize: '11px', fontWeight: '600',
+                              background: isAI ? '#8b5cf6' : 'transparent',
+                              color: isAI ? '#fff' : 'rgba(255,255,255,0.3)',
+                              transition: 'all 0.25s ease',
+                              borderRadius: '20px 0 0 20px',
+                            }}
+                          >
+                            <Bot size={13} /> IA
+                          </button>
+                          {/* Manuel button */}
+                          <button
+                            onClick={() => { if (isAI) handleToggleSelectedSessionAI(); }}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: '4px',
+                              padding: '6px 12px',
+                              border: 'none', cursor: 'pointer',
+                              fontSize: '11px', fontWeight: '600',
+                              background: !isAI ? '#f59e0b' : 'transparent',
+                              color: !isAI ? '#000' : 'rgba(255,255,255,0.3)',
+                              transition: 'all 0.25s ease',
+                              borderRadius: '0 20px 20px 0',
+                            }}
+                          >
+                            <UserRound size={13} /> Manuel
+                          </button>
+                        </>;
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -1754,8 +1765,8 @@ const CRMSection = ({
                   </div>
                 )}
 
-                {/* V143: Messages — with deletion, filtered system messages */}
-                <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {/* V144: Messages — with deletion, filtered system messages, mobile overflow fix */}
+                <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '8px 0', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {sessionMessages.length === 0 ? (
                     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <p style={{ color: 'rgba(255,255,255,0.15)', fontSize: '13px' }}>Aucun message</p>
@@ -1799,13 +1810,13 @@ const CRMSection = ({
                             display: 'flex',
                             justifyContent: isClientMessage ? 'flex-start' : 'flex-end',
                             position: 'relative',
-                            group: 'message',
+                            overflow: 'hidden',
                           }}
                           className="crm-msg-row"
                         >
                           <div style={{
-                            maxWidth: '80%',
-                            padding: '10px 14px',
+                            maxWidth: 'min(80%, calc(100vw - 60px))',
+                            padding: '8px 12px',
                             borderRadius: isClientMessage ? '4px 16px 16px 16px' : '16px 4px 16px 16px',
                             background: isClientMessage
                               ? 'rgba(255,255,255,0.06)'

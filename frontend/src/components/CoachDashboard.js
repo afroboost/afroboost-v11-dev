@@ -5268,8 +5268,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         </svg>
       </button>
 
-      {/* v10.6: Container principal avec scroll */}
-      <div className="max-w-6xl mx-auto px-4" style={{ paddingTop: '60px', paddingBottom: '100px', overflowY: 'auto', minHeight: '100vh' }}>
+      {/* V144: Container principal avec scroll — mobile overflow fix */}
+      <div className="max-w-6xl mx-auto px-4" style={{ paddingTop: '60px', paddingBottom: '100px', overflowY: 'auto', overflowX: 'hidden', minHeight: '100vh', maxWidth: '100vw' }}>
         <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
           <div className="flex-1 min-w-0">
             {/* v9.1.3: Marque blanche - Affiche platform_name ou "Mon Espace Afroboost" */}
