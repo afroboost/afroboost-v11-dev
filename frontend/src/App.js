@@ -1278,10 +1278,12 @@ const OfferCardSlider = ({ offer, selected, onClick }) => {
           <div className="p-4 pb-5">
             <p className="font-semibold text-white mb-1" style={{ fontSize: '17px', lineHeight: '1.3' }}>{offer.name}</p>
             {offer.description && !showDescription && (
-              <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.45)', lineHeight: '1.4', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                {offer.description}{' '}
-                <span onClick={(e) => { e.stopPropagation(); setShowDescription(true); }} className="cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
-              </p>
+              <div className="mb-2">
+                <p className="text-xs" style={{ color: 'rgba(255,255,255,0.45)', lineHeight: '1.4', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                  {offer.description}
+                </p>
+                <span onClick={(e) => { e.stopPropagation(); setShowDescription(true); }} className="text-xs cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
+              </div>
             )}
             <div className="flex items-baseline gap-2">
               <span
