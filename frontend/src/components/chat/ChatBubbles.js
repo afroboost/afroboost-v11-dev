@@ -56,8 +56,9 @@ const renderTextWithLinks = (text) => {
           target="_blank"
           rel="noopener noreferrer"
           style={{
-            color: 'rgba(255,255,255,0.85)',
+            color: '#ffffff',
             textDecoration: 'underline',
+            fontWeight: '600',
             cursor: 'pointer',
           }}
           onClick={(e) => e.stopPropagation()}
