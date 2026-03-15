@@ -6501,27 +6501,32 @@ export const ChatWidget = () => {
                       customEmojis={coachCustomEmojis}
                     />
 
-                    {/* v154: Un seul bouton emoji — personnage noir */}
+                    {/* v154: Un seul bouton emoji — personnage noir souriant */}
                     <button
                       type="button"
                       onClick={() => setShowAfricanEmojiPicker(!showAfricanEmojiPicker)}
                       style={{
-                        width: '40px',
-                        height: '40px',
+                        width: '36px',
+                        height: '36px',
                         borderRadius: '50%',
-                        background: showAfricanEmojiPicker ? '#D91CD2' : 'rgba(255,255,255,0.1)',
+                        background: showAfricanEmojiPicker ? '#D91CD2' : 'transparent',
                         border: 'none',
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         flexShrink: 0,
-                        fontSize: '20px'
+                        padding: 0
                       }}
                       data-testid="emoji-btn"
                       title="Émojis"
                     >
-                      😊🏿
+                      <svg width="28" height="28" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="18" cy="18" r="16" fill="#6D4C41"/>
+                        <circle cx="12" cy="15" r="2" fill="#1a1a1a"/>
+                        <circle cx="24" cy="15" r="2" fill="#1a1a1a"/>
+                        <path d="M11 22 C14 27, 22 27, 25 22" stroke="#1a1a1a" strokeWidth="2" strokeLinecap="round" fill="none"/>
+                      </svg>
                     </button>
 
                     {/* v9.3.7: Icône Calendrier (Réservation) - TOUJOURS VISIBLE pour tous les utilisateurs */}
