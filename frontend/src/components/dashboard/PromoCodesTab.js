@@ -121,6 +121,53 @@ const PromoCodesTab = ({
     }
   };
 
+  // v150: Recherche multi-critères (code, nom, email, WhatsApp)
+  const filteredDiscountCodes = useMemo(() => {
+    if (!codesSearch) return discountCodes;
+    const q = codesSearch.toLowerCase().trim();
+
+    // Construire un lookup nom/whatsapp → emails à partir des contacts connus
+    const customerEmailsByNameOrPhone = new Map();
+    if (uniqueCustomers) {
+      uniqueCustomers.forEach(c => {
+        if (c.name) customerEmailsByNameOrPhone.set(c.name.toLowerCase(), c.email?.toLowerCase());
+        if (c.email) customerEmailsByNameOrPhone.set(c.email.toLowerCase(), c.email?.toLowerCase());
+      });
+    }
+
+    return discountCodes.filter(c => {
+      // 1. Recherche par code
+      if (c.code?.toLowerCase().includes(q)) return true;
+
+      // 2. Recherche par email assigné
+      if ((c.assignedEmail || '').toLowerCase().includes(q)) return true;
+      if (c.assignedEmails?.some(e => e.toLowerCase().includes(q))) return true;
+
+      // 3. Recherche par nom d'abonné (subscriptions)
+      const subs = codeSubscriptions[c.code];
+      if (subs?.some(sub =>
+        (sub.name || '').toLowerCase().includes(q) ||
+        (sub.email || '').toLowerCase().includes(q)
+      )) return true;
+
+      // 4. Recherche par nom de contact → trouver son email → vérifier si assigné au code
+      const allEmails = [
+        ...(c.assignedEmails || []),
+        ...(c.assignedEmail ? [c.assignedEmail] : [])
+      ].map(e => e.toLowerCase());
+
+      if (uniqueCustomers) {
+        const matchingCustomer = uniqueCustomers.find(cust =>
+          (cust.name || '').toLowerCase().includes(q) ||
+          (cust.email || '').toLowerCase().includes(q)
+        );
+        if (matchingCustomer && allEmails.includes(matchingCustomer.email?.toLowerCase())) return true;
+      }
+
+      return false;
+    });
+  }, [codesSearch, discountCodes, codeSubscriptions, uniqueCustomers]);
+
   // v104: Auto-remplir maxUses quand un article est sélectionné
   const resolvedSessionsFromOffer = useMemo(() => {
     if (!newCode.courses?.length) return null;
@@ -171,7 +218,7 @@ const PromoCodesTab = ({
         <div className="relative w-full sm:w-64">
           <input
             type="text"
-            placeholder="🔍 Rechercher un code..."
+            placeholder="🔍 Rechercher par code, nom, email, WhatsApp..."
             value={codesSearch}
             onChange={(e) => setCodesSearch(e.target.value)}
             className="w-full px-3 py-2 rounded-lg text-sm"
@@ -510,11 +557,7 @@ const PromoCodesTab = ({
       
       {/* ============ LISTE DES CODES ============ */}
       <div className="space-y-3" style={{ maxHeight: '400px', overflowY: 'auto' }}>
-        {(codesSearch ? discountCodes.filter(c =>
-          c.code?.toLowerCase().includes(codesSearch.toLowerCase()) ||
-          c.assignedEmails?.some(e => e.toLowerCase().includes(codesSearch.toLowerCase())) ||
-          (c.assignedEmail || '').toLowerCase().includes(codesSearch.toLowerCase())
-        ) : discountCodes).map(code => (
+        {filteredDiscountCodes.map(code => (
           <div 
             key={code.id} 
             className={`glass rounded-lg p-4 ${!code.active ? 'opacity-50' : ''}`}
@@ -634,9 +677,7 @@ const PromoCodesTab = ({
             </div>
           </div>
         ))}
-        {(codesSearch ? discountCodes.filter(c => 
-          c.code?.toLowerCase().includes(codesSearch.toLowerCase())
-        ) : discountCodes).length === 0 && (
+        {filteredDiscountCodes.length === 0 && (
           <p className="text-center py-8 text-white opacity-50">
             {codesSearch ? 'Aucun code trouvé' : t('noPromoCode')}
           </p>
