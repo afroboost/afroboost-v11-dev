@@ -1262,21 +1262,29 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
             update_data["duration_unit"] = None
         iap = update_data.get("is_auto_prolong")
         update_data["is_auto_prolong"] = iap not in (False, "false", "0", 0, None)
-        print(f"[V152 DEBUG] PUT /offers/{offer_id} duration_value={update_data.get('duration_value')} duration_unit={update_data.get('duration_unit')}")
+        # v152: Debug — vérifier que l'offre existe avant update
+        pre_check = await db.offers.find_one({"id": offer_id}, {"_id": 0, "id": 1, "name": 1})
+        all_ids = [o["id"] async for o in db.offers.find({}, {"id": 1, "_id": 0})]
+        print(f"[V152 DEBUG] PUT /offers/{offer_id} pre_check={pre_check} all_ids={all_ids}")
+        print(f"[V152 DEBUG] duration_value={update_data.get('duration_value')} duration_unit={update_data.get('duration_unit')}")
+        if not pre_check:
+            raise HTTPException(status_code=404, detail=f"Offre {offer_id} introuvable. IDs existants: {all_ids}")
         # v59: Recalculer expiration si durée modifiée
         if update_data.get("duration_value") and update_data.get("duration_unit"):
-            existing = await db.offers.find_one({"id": offer_id}, {"_id": 0})
-            created_at = (existing or {}).get("created_at") or datetime.utcnow().isoformat()
+            created_at = pre_check.get("created_at") or datetime.utcnow().isoformat()
             update_data["created_at"] = created_at
             update_data["expiration_date"] = calculate_expiration_date(created_at, update_data["duration_value"], update_data["duration_unit"])
             # Reset rappels si durée changée
-            if existing and (existing.get("duration_value") != update_data["duration_value"] or existing.get("duration_unit") != update_data["duration_unit"]):
+            if pre_check.get("duration_value") != update_data["duration_value"] or pre_check.get("duration_unit") != update_data["duration_unit"]:
                 update_data["last_reminded_date"] = None
                 update_data["last_prolonged_date"] = None
         else:
             update_data["expiration_date"] = None
-        await db.offers.update_one({"id": offer_id}, {"$set": update_data})
+        result = await db.offers.update_one({"id": offer_id}, {"$set": update_data})
+        print(f"[V152 DEBUG] update_one matched={result.matched_count} modified={result.modified_count}")
         updated = await db.offers.find_one({"id": offer_id}, {"_id": 0})
+        if not updated:
+            raise HTTPException(status_code=500, detail=f"Offre mise à jour mais introuvable après update. matched={result.matched_count}")
         return updated
     except HTTPException:
         raise
