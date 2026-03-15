@@ -1,9 +1,9 @@
-// GroupChatModule.js — v107.11: Groupes de chat avec prompt IA dédié + Chat intégré
-// CRUD via /chat/groups — Sélecteur membres, Prompt Système, Switch IA/Humain
-// V107.11: Ajout interface chat inline pour envoyer/lire messages dans le groupe
+// GroupChatModule.js — v155: Groupes de chat — CRUD complet + Edition + Ajout membres
+// V155: Fix création robuste + UI d'édition groupe (nom, prompt, membres, IA/Humain)
+// V107.11: Chat intégré inline dans chaque groupe
 
 import React, { useState, useEffect, useRef, memo, useCallback } from 'react';
-import { Users, Plus, X, Search, Check, Bot, UserCircle, Trash2, ChevronDown, ChevronUp, Copy, MessageSquare, Send, RefreshCw } from 'lucide-react';
+import { Users, Plus, X, Search, Check, Bot, UserCircle, Trash2, ChevronDown, ChevronUp, Copy, MessageSquare, Send, RefreshCw, Edit2, Save, UserPlus } from 'lucide-react';
 
 // === AI / Human Toggle Switch ===
 const AiHumanSwitch = memo(({ isAi, onToggle, size = 'normal' }) => {
@@ -253,8 +253,8 @@ const GroupChatPanel = memo(({ group, API, coachEmail, onClose }) => {
 });
 GroupChatPanel.displayName = 'GroupChatPanel';
 
-// === Group Card ===
-const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, onOpenChat, isActive, copiedId }) => {
+// === Group Card — V155: ajout bouton Modifier ===
+const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, onOpenChat, onEdit, isActive, copiedId }) => {
   const memberCount = (group.member_ids || []).length;
   // v108: Afficher les noms des membres résolus depuis members_info
   const membersInfo = group.members_info || [];
@@ -297,6 +297,15 @@ const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, onOpenChat, isA
         )}
       </div>
       <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+        {/* V155: Bouton Modifier */}
+        <button onClick={e => { e.stopPropagation(); onEdit(group); }}
+          title="Modifier le groupe"
+          style={{
+            background: 'none', border: 'none', padding: '4px', borderRadius: '6px',
+            color: 'rgba(255,255,255,0.3)', cursor: 'pointer', transition: 'all 0.2s',
+          }}>
+          <Edit2 size={14} />
+        </button>
         {/* V107.11: Bouton Chat */}
         <button onClick={e => { e.stopPropagation(); onOpenChat(group); }}
           title="Ouvrir le chat du groupe"
@@ -323,31 +332,34 @@ const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, onOpenChat, isA
 });
 GroupCard.displayName = 'GroupCard';
 
-// === Main GroupChatModule (autonome avec CRUD + Chat inline V107.11) ===
-const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
-  const [groups, setGroups] = useState([]);
+// === V155: Group Form — réutilisé pour Création ET Édition ===
+const GroupForm = memo(({
+  mode = 'create', // 'create' | 'edit'
+  initialName = '', initialPrompt = '', initialMembers = new Set(), initialIsAi = true,
+  contacts = [], API, coachEmail,
+  onSubmit, onCancel,
+}) => {
+  const [groupName, setGroupName] = useState(initialName);
+  const [systemPrompt, setSystemPrompt] = useState(initialPrompt);
+  const [selectedMembers, setSelectedMembers] = useState(initialMembers);
+  const [isAiActive, setIsAiActive] = useState(initialIsAi);
   const [loading, setLoading] = useState(false);
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [newGroupName, setNewGroupName] = useState('');
-  const [systemPrompt, setSystemPrompt] = useState('');
-  const [selectedMembers, setSelectedMembers] = useState(new Set());
-  const [isAiActive, setIsAiActive] = useState(true);
-  const [expanded, setExpanded] = useState(true);
-  const [activeGroupId, setActiveGroupId] = useState(null);
-  const [chatGroupId, setChatGroupId] = useState(null); // V107.11: groupe avec chat ouvert
-  const [copiedId, setCopiedId] = useState(null);
+  const [error, setError] = useState('');
   const [generatingPrompt, setGeneratingPrompt] = useState(false);
 
-  // v105: Générer un Prompt Maître IA basé sur le nom du groupe
+  const toggleMember = useCallback((memberId) => {
+    setSelectedMembers(prev => { const next = new Set(prev); if (next.has(memberId)) next.delete(memberId); else next.add(memberId); return next; });
+  }, []);
+
   const handleGeneratePrompt = async () => {
-    if (!newGroupName.trim() || !API) return;
+    if (!groupName.trim() || !API) return;
     setGeneratingPrompt(true);
     try {
       const res = await fetch(`${API}/ai/enhance-text`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail || '' },
         body: JSON.stringify({
-          text: `Génère un prompt système expert pour un assistant IA dans un groupe appelé "${newGroupName.trim()}". Le prompt doit définir la personnalité, le ton et l'expertise de l'IA. Style Afroboost : motivant, chaleureux, professionnel. Maximum 3 phrases.`,
+          text: `Génère un prompt système expert pour un assistant IA dans un groupe appelé "${groupName.trim()}". Le prompt doit définir la personnalité, le ton et l'expertise de l'IA. Style Afroboost : motivant, chaleureux, professionnel. Maximum 3 phrases.`,
           style: 'expert'
         }),
       });
@@ -356,9 +368,156 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
         const enhanced = data.enhanced_text || data.enhanced || data.text || data.result || '';
         if (enhanced) setSystemPrompt(enhanced);
       }
-    } catch (e) { console.error('[V105] Erreur génération prompt:', e); }
+    } catch (e) { console.error('[V155] Erreur génération prompt:', e); }
     setGeneratingPrompt(false);
   };
+
+  const handleSubmit = async () => {
+    if (!groupName.trim() || !API) return;
+    setLoading(true);
+    setError('');
+    try {
+      const result = await onSubmit({
+        name: groupName.trim(),
+        members: Array.from(selectedMembers),
+        system_prompt: systemPrompt.trim(),
+        is_ai_active: isAiActive,
+      });
+      if (result?.error) {
+        setError(result.error);
+      }
+    } catch (e) {
+      console.error(`[V155] Erreur ${mode} groupe:`, e);
+      setError(`Erreur: ${e.message || 'Veuillez réessayer'}`);
+    }
+    setLoading(false);
+  };
+
+  const isEdit = mode === 'edit';
+
+  return (
+    <div style={{
+      background: isEdit ? 'rgba(139,92,246,0.04)' : 'rgba(217,28,210,0.04)',
+      border: `1px solid ${isEdit ? 'rgba(139,92,246,0.2)' : 'rgba(217,28,210,0.15)'}`,
+      borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ color: isEdit ? '#8b5cf6' : '#D91CD2', fontSize: '12px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          {isEdit ? <><Edit2 size={12} /> Modifier le groupe</> : 'Nouveau groupe'}
+        </span>
+        <button onClick={onCancel} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', padding: '2px' }}>
+          <X size={14} />
+        </button>
+      </div>
+
+      {/* Error message */}
+      {error && (
+        <div style={{
+          padding: '8px 12px', borderRadius: '8px', background: 'rgba(239,68,68,0.1)',
+          border: '1px solid rgba(239,68,68,0.2)', color: '#ef4444', fontSize: '11px',
+        }}>
+          {error}
+        </div>
+      )}
+
+      {/* Nom */}
+      <div>
+        <label style={{ display: 'block', color: 'rgba(255,255,255,0.5)', fontSize: '10px', fontWeight: 600, marginBottom: '4px' }}>NOM DU GROUPE</label>
+        <input value={groupName} onChange={e => setGroupName(e.target.value)} placeholder="Ex: Marathon, Diete, VIP..."
+          style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
+          onFocus={e => e.target.style.borderColor = 'rgba(217,28,210,0.3)'}
+          onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.08)'} />
+      </div>
+
+      {/* Prompt Systeme IA */}
+      <div>
+        <label style={{ display: 'block', color: 'rgba(255,255,255,0.5)', fontSize: '10px', fontWeight: 600, marginBottom: '4px' }}>
+          PROMPT SYSTEME IA (personnalite de l'IA pour ce groupe)
+        </label>
+        <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)}
+          placeholder="Ex: Tu es un coach sportif expert en marathon. Reponds avec motivation et donne des plans d'entrainement personnalises..."
+          rows={3}
+          style={{
+            width: '100%', padding: '10px 12px', borderRadius: '8px', background: 'rgba(139,92,246,0.04)',
+            border: '1px solid rgba(139,92,246,0.15)', color: '#fff', fontSize: '12px', outline: 'none',
+            boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit',
+          }}
+          onFocus={e => e.target.style.borderColor = 'rgba(139,92,246,0.4)'}
+          onBlur={e => e.target.style.borderColor = 'rgba(139,92,246,0.15)'} />
+        {/* Bouton Générer Prompt Maître */}
+        <button onClick={handleGeneratePrompt} disabled={!groupName.trim() || generatingPrompt}
+          style={{
+            marginTop: '8px', padding: '10px 20px', borderRadius: '24px',
+            background: groupName.trim() && !generatingPrompt
+              ? 'linear-gradient(135deg, #D91CD2, #8b5cf6)'
+              : 'rgba(255,255,255,0.06)',
+            border: groupName.trim() && !generatingPrompt
+              ? '1px solid rgba(217,28,210,0.6)'
+              : '1px solid rgba(255,255,255,0.1)',
+            color: groupName.trim() && !generatingPrompt ? '#fff' : 'rgba(255,255,255,0.25)',
+            fontSize: '12px', fontWeight: '700', letterSpacing: '0.3px',
+            cursor: groupName.trim() && !generatingPrompt ? 'pointer' : 'not-allowed',
+            display: 'flex', alignItems: 'center', gap: '8px',
+            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+            width: 'fit-content',
+            boxShadow: groupName.trim() && !generatingPrompt
+              ? '0 0 20px rgba(217, 28, 210, 0.4), 0 0 40px rgba(217, 28, 210, 0.15), inset 0 1px 0 rgba(255,255,255,0.15)'
+              : 'none',
+            textShadow: groupName.trim() && !generatingPrompt ? '0 0 8px rgba(255,255,255,0.5)' : 'none',
+          }}
+          onMouseEnter={e => { if (groupName.trim() && !generatingPrompt) { e.currentTarget.style.boxShadow = '0 0 30px rgba(217, 28, 210, 0.6), 0 0 60px rgba(217, 28, 210, 0.25), inset 0 1px 0 rgba(255,255,255,0.2)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}}
+          onMouseLeave={e => { if (groupName.trim() && !generatingPrompt) { e.currentTarget.style.boxShadow = '0 0 20px rgba(217, 28, 210, 0.4), 0 0 40px rgba(217, 28, 210, 0.15), inset 0 1px 0 rgba(255,255,255,0.15)'; e.currentTarget.style.transform = 'translateY(0)'; }}}
+        >
+          {generatingPrompt ? '⏳ Génération en cours...' : '✨ Générer Prompt Maître'}
+        </button>
+      </div>
+
+      {/* Switch IA / Humain */}
+      <div style={{ display: 'flex', justifyContent: 'center' }}>
+        <AiHumanSwitch isAi={isAiActive} onToggle={() => setIsAiActive(!isAiActive)} size="small" />
+      </div>
+
+      {/* Selecteur de membres */}
+      <div>
+        <label style={{ display: 'block', color: 'rgba(255,255,255,0.5)', fontSize: '10px', fontWeight: 600, marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          {isEdit && <UserPlus size={10} />}
+          MEMBRES ({selectedMembers.size} selectionne{selectedMembers.size > 1 ? 's' : ''})
+        </label>
+        <MemberSelector contacts={contacts} selectedIds={selectedMembers} onToggleMember={toggleMember} />
+      </div>
+
+      {/* Bouton submit */}
+      <button onClick={handleSubmit} disabled={!groupName.trim() || loading} style={{
+        padding: '10px', borderRadius: '10px',
+        background: groupName.trim() && !loading
+          ? (isEdit ? 'linear-gradient(135deg, #8b5cf6, #D91CD2)' : 'linear-gradient(135deg, #D91CD2, #9333ea)')
+          : 'rgba(255,255,255,0.06)',
+        border: 'none', color: '#fff', fontSize: '12px', fontWeight: '700',
+        cursor: groupName.trim() && !loading ? 'pointer' : 'not-allowed', opacity: groupName.trim() && !loading ? 1 : 0.4,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+      }}>
+        {loading
+          ? (isEdit ? 'Sauvegarde...' : 'Creation...')
+          : isEdit
+            ? <><Save size={14} /> Sauvegarder les modifications</>
+            : <><Plus size={14} /> Creer le groupe</>
+        }
+      </button>
+    </div>
+  );
+});
+GroupForm.displayName = 'GroupForm';
+
+// === Main GroupChatModule (V155: CRUD complet + Edition) ===
+const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
+  const [groups, setGroups] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [editingGroup, setEditingGroup] = useState(null); // V155: groupe en cours d'édition
+  const [expanded, setExpanded] = useState(true);
+  const [activeGroupId, setActiveGroupId] = useState(null);
+  const [chatGroupId, setChatGroupId] = useState(null);
+  const [copiedId, setCopiedId] = useState(null);
 
   // Charger les groupes au mount
   useEffect(() => {
@@ -372,35 +531,80 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
     fetchGroups();
   }, [API, coachEmail]);
 
-  const toggleMember = useCallback((memberId) => {
-    setSelectedMembers(prev => { const next = new Set(prev); if (next.has(memberId)) next.delete(memberId); else next.add(memberId); return next; });
-  }, []);
-
-  const handleCreate = async () => {
-    if (!newGroupName.trim() || !API) return;
-    setLoading(true);
+  // V155: Création de groupe — avec feedback erreur
+  const handleCreate = async (formData) => {
+    if (!API) return { error: 'API non disponible' };
     try {
       const res = await fetch(`${API}/chat/groups`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail || '' },
-        body: JSON.stringify({ name: newGroupName.trim(), members: Array.from(selectedMembers), system_prompt: systemPrompt.trim(), is_ai_active: isAiActive }),
+        body: JSON.stringify({ name: formData.name, members: formData.members, system_prompt: formData.system_prompt, is_ai_active: formData.is_ai_active }),
       });
       if (res.ok) {
         const newGroup = await res.json();
         setGroups(prev => [newGroup, ...prev]);
-        setNewGroupName(''); setSystemPrompt(''); setSelectedMembers(new Set()); setIsAiActive(true); setShowCreateForm(false);
+        setShowCreateForm(false);
+        return {};
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        const errMsg = errData.detail || `Erreur ${res.status}`;
+        console.error('[V155] Erreur création groupe:', errMsg);
+        return { error: errMsg };
       }
-    } catch (e) { console.error('[V101] Erreur creation groupe:', e); }
-    setLoading(false);
+    } catch (e) {
+      console.error('[V155] Erreur réseau création groupe:', e);
+      return { error: `Erreur réseau: ${e.message}` };
+    }
+  };
+
+  // V155: Mise à jour de groupe
+  const handleUpdate = async (formData) => {
+    if (!API || !editingGroup) return { error: 'API non disponible' };
+    try {
+      const res = await fetch(`${API}/chat/groups/${editingGroup.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail || '' },
+        body: JSON.stringify({
+          name: formData.name,
+          member_ids: formData.members,
+          system_prompt: formData.system_prompt,
+          is_ai_active: formData.is_ai_active,
+        }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setGroups(prev => prev.map(g => g.id === editingGroup.id ? { ...g, ...updated } : g));
+        setEditingGroup(null);
+        return {};
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        const errMsg = errData.detail || `Erreur ${res.status}`;
+        console.error('[V155] Erreur mise à jour groupe:', errMsg);
+        return { error: errMsg };
+      }
+    } catch (e) {
+      console.error('[V155] Erreur réseau mise à jour groupe:', e);
+      return { error: `Erreur réseau: ${e.message}` };
+    }
   };
 
   const handleDelete = async (groupId) => {
     if (!API) return;
+    if (!window.confirm('Supprimer ce groupe ?')) return;
     try {
       await fetch(`${API}/chat/groups/${groupId}`, { method: 'DELETE', headers: { 'X-User-Email': coachEmail || '' } });
       setGroups(prev => prev.filter(g => g.id !== groupId));
-    } catch (e) { console.error('[V101] Erreur suppression groupe:', e); }
+      if (editingGroup?.id === groupId) setEditingGroup(null);
+      if (chatGroupId === groupId) setChatGroupId(null);
+    } catch (e) { console.error('[V155] Erreur suppression groupe:', e); }
   };
+
+  // V155: Ouvrir l'édition d'un groupe
+  const handleStartEdit = useCallback((group) => {
+    setEditingGroup(group);
+    setShowCreateForm(false); // Fermer le formulaire de création si ouvert
+    setChatGroupId(null); // Fermer le chat si ouvert
+  }, []);
 
   const handleCopyLink = (groupId, link) => {
     navigator.clipboard.writeText(link).catch(() => {});
@@ -434,10 +638,28 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
                   <GroupCard group={g} isActive={g.id === chatGroupId}
                     onSelect={(grp) => { setChatGroupId(prev => prev === grp.id ? null : grp.id); setActiveGroupId(grp.id); }}
                     onOpenChat={(grp) => setChatGroupId(prev => prev === grp.id ? null : grp.id)}
+                    onEdit={handleStartEdit}
                     onDelete={handleDelete}
                     onCopyLink={handleCopyLink} copiedId={copiedId} />
+
+                  {/* V155: Edit form inline sous le groupe sélectionné */}
+                  {editingGroup?.id === g.id && (
+                    <GroupForm
+                      mode="edit"
+                      initialName={g.name || ''}
+                      initialPrompt={g.system_prompt || ''}
+                      initialMembers={new Set(g.member_ids || [])}
+                      initialIsAi={g.is_ai_active !== false}
+                      contacts={contacts}
+                      API={API}
+                      coachEmail={coachEmail}
+                      onSubmit={handleUpdate}
+                      onCancel={() => setEditingGroup(null)}
+                    />
+                  )}
+
                   {/* V107.11: Chat panel inline sous le groupe actif */}
-                  {chatGroupId === g.id && (
+                  {chatGroupId === g.id && !editingGroup && (
                     <GroupChatPanel
                       group={g}
                       API={API}
@@ -457,7 +679,7 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
           )}
 
           {/* Bouton ou formulaire de creation */}
-          {!showCreateForm ? (
+          {!showCreateForm && !editingGroup ? (
             <button onClick={() => setShowCreateForm(true)} style={{
               width: '100%', padding: '10px', borderRadius: '10px',
               background: 'rgba(217,28,210,0.08)', border: '1px dashed rgba(217,28,210,0.25)',
@@ -469,94 +691,15 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
             >
               <Plus size={14} /> Creer un groupe
             </button>
-          ) : (
-            <div style={{
-              background: 'rgba(217,28,210,0.04)', border: '1px solid rgba(217,28,210,0.15)',
-              borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px',
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: '700' }}>Nouveau groupe</span>
-                <button onClick={() => setShowCreateForm(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', padding: '2px' }}>
-                  <X size={14} />
-                </button>
-              </div>
-
-              {/* Nom */}
-              <div>
-                <label style={{ display: 'block', color: 'rgba(255,255,255,0.5)', fontSize: '10px', fontWeight: 600, marginBottom: '4px' }}>NOM DU GROUPE</label>
-                <input value={newGroupName} onChange={e => setNewGroupName(e.target.value)} placeholder="Ex: Marathon, Diete, VIP..."
-                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
-                  onFocus={e => e.target.style.borderColor = 'rgba(217,28,210,0.3)'}
-                  onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.08)'} />
-              </div>
-
-              {/* Prompt Systeme IA */}
-              <div>
-                <label style={{ display: 'block', color: 'rgba(255,255,255,0.5)', fontSize: '10px', fontWeight: 600, marginBottom: '4px' }}>
-                  PROMPT SYSTEME IA (personnalite de l'IA pour ce groupe)
-                </label>
-                <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)}
-                  placeholder="Ex: Tu es un coach sportif expert en marathon. Reponds avec motivation et donne des plans d'entrainement personnalises..."
-                  rows={3}
-                  style={{
-                    width: '100%', padding: '10px 12px', borderRadius: '8px', background: 'rgba(139,92,246,0.04)',
-                    border: '1px solid rgba(139,92,246,0.15)', color: '#fff', fontSize: '12px', outline: 'none',
-                    boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit',
-                  }}
-                  onFocus={e => e.target.style.borderColor = 'rgba(139,92,246,0.4)'}
-                  onBlur={e => e.target.style.borderColor = 'rgba(139,92,246,0.15)'} />
-                {/* v106.1: Bouton Générer Prompt Maître — GLOW NÉON VIOLET */}
-                <button onClick={handleGeneratePrompt} disabled={!newGroupName.trim() || generatingPrompt}
-                  style={{
-                    marginTop: '8px', padding: '10px 20px', borderRadius: '24px',
-                    background: newGroupName.trim() && !generatingPrompt
-                      ? 'linear-gradient(135deg, #D91CD2, #8b5cf6)'
-                      : 'rgba(255,255,255,0.06)',
-                    border: newGroupName.trim() && !generatingPrompt
-                      ? '1px solid rgba(217,28,210,0.6)'
-                      : '1px solid rgba(255,255,255,0.1)',
-                    color: newGroupName.trim() && !generatingPrompt ? '#fff' : 'rgba(255,255,255,0.25)',
-                    fontSize: '12px', fontWeight: '700', letterSpacing: '0.3px',
-                    cursor: newGroupName.trim() && !generatingPrompt ? 'pointer' : 'not-allowed',
-                    display: 'flex', alignItems: 'center', gap: '8px',
-                    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                    width: 'fit-content',
-                    boxShadow: newGroupName.trim() && !generatingPrompt
-                      ? '0 0 20px rgba(217, 28, 210, 0.4), 0 0 40px rgba(217, 28, 210, 0.15), inset 0 1px 0 rgba(255,255,255,0.15)'
-                      : 'none',
-                    textShadow: newGroupName.trim() && !generatingPrompt ? '0 0 8px rgba(255,255,255,0.5)' : 'none',
-                  }}
-                  onMouseEnter={e => { if (newGroupName.trim() && !generatingPrompt) { e.currentTarget.style.boxShadow = '0 0 30px rgba(217, 28, 210, 0.6), 0 0 60px rgba(217, 28, 210, 0.25), inset 0 1px 0 rgba(255,255,255,0.2)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}}
-                  onMouseLeave={e => { if (newGroupName.trim() && !generatingPrompt) { e.currentTarget.style.boxShadow = '0 0 20px rgba(217, 28, 210, 0.4), 0 0 40px rgba(217, 28, 210, 0.15), inset 0 1px 0 rgba(255,255,255,0.15)'; e.currentTarget.style.transform = 'translateY(0)'; }}}
-                >
-                  {generatingPrompt ? '⏳ Génération en cours...' : '✨ Générer Prompt Maître'}
-                </button>
-              </div>
-
-              {/* Switch IA / Humain */}
-              <div style={{ display: 'flex', justifyContent: 'center' }}>
-                <AiHumanSwitch isAi={isAiActive} onToggle={() => setIsAiActive(!isAiActive)} size="small" />
-              </div>
-
-              {/* Selecteur de membres */}
-              <div>
-                <label style={{ display: 'block', color: 'rgba(255,255,255,0.5)', fontSize: '10px', fontWeight: 600, marginBottom: '4px' }}>
-                  MEMBRES ({selectedMembers.size} selectionne{selectedMembers.size > 1 ? 's' : ''})
-                </label>
-                <MemberSelector contacts={contacts} selectedIds={selectedMembers} onToggleMember={toggleMember} />
-              </div>
-
-              {/* Bouton creer */}
-              <button onClick={handleCreate} disabled={!newGroupName.trim() || loading} style={{
-                padding: '10px', borderRadius: '10px',
-                background: newGroupName.trim() ? 'linear-gradient(135deg, #D91CD2, #9333ea)' : 'rgba(255,255,255,0.06)',
-                border: 'none', color: '#fff', fontSize: '12px', fontWeight: '700',
-                cursor: newGroupName.trim() ? 'pointer' : 'not-allowed', opacity: newGroupName.trim() ? 1 : 0.4,
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-              }}>
-                {loading ? 'Creation...' : <><Plus size={14} /> Creer le groupe</>}
-              </button>
-            </div>
+          ) : showCreateForm && (
+            <GroupForm
+              mode="create"
+              contacts={contacts}
+              API={API}
+              coachEmail={coachEmail}
+              onSubmit={handleCreate}
+              onCancel={() => setShowCreateForm(false)}
+            />
           )}
         </div>
       )}
@@ -565,5 +708,5 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
 });
 
 GroupChatModule.displayName = 'GroupChatModule';
-export { AiHumanSwitch, MemberSelector, GroupCard, GroupChatPanel };
+export { AiHumanSwitch, MemberSelector, GroupCard, GroupChatPanel, GroupForm };
 export default GroupChatModule;
