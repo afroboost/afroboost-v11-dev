@@ -354,15 +354,38 @@ const InlineCtaButton = ({ label, url }) => {
  * Affiche le nom de l'expéditeur au-dessus de chaque bulle
  * Couleurs: Violet (#8B5CF6) pour le Coach, Gris foncé pour les membres/IA
  */
-const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUserId, profilePhotoUrl, onReservationClick, onZoomPhoto }) => {
+const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUserId, profilePhotoUrl, onReservationClick, onZoomPhoto, onDelete }) => {
   // v10.4: Fallback robuste pour texte (content, text, body - jamais vide)
   const messageText = msg.content || msg.text || msg.body || '';
   const htmlContent = parseMessageContent(messageText);
   const isOtherUser = isCommunity && msg.type === 'user' && msg.senderId && msg.senderId !== currentUserId;
-  
+
+  // v153: État pour afficher le bouton supprimer (long press mobile + hover desktop)
+  const [showDelete, setShowDelete] = React.useState(false);
+  const longPressTimer = React.useRef(null);
+
   // v10.3: RÉCAPITULATIF DE RÉSERVATION PREMIUM
   // v10.4: État local pour fermer/minimiser la carte
   const [isMinimized, setIsMinimized] = React.useState(false);
+
+  // v153: Message supprimé — afficher placeholder
+  if (msg.is_deleted) {
+    return (
+      <div style={{ alignSelf: isUser ? 'flex-end' : 'flex-start', maxWidth: '75%', opacity: 0.5 }}>
+        <div style={{
+          background: 'rgba(255,255,255,0.05)',
+          color: 'rgba(255,255,255,0.4)',
+          padding: '8px 14px',
+          borderRadius: '16px',
+          fontSize: '12px',
+          fontStyle: 'italic',
+          border: '1px dashed rgba(255,255,255,0.1)'
+        }}>
+          🗑️ Message supprimé
+        </div>
+      </div>
+    );
+  }
   
   if (msg.isReservationSummary && msg.reservationDetails) {
     const details = msg.reservationDetails;
@@ -550,6 +573,22 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
     );
   }
   
+  // v153: Handlers long press (mobile) + hover (desktop) pour bouton supprimer
+  const handleTouchStart = () => {
+    if (!onDelete) return;
+    longPressTimer.current = setTimeout(() => setShowDelete(true), 600);
+  };
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  };
+  const handleDeleteClick = (e) => {
+    e.stopPropagation();
+    if (window.confirm('Supprimer ce message ?')) {
+      onDelete(msg.id);
+      setShowDelete(false);
+    }
+  };
+
   // === DÉTECTION AUTOMATIQUE DES MÉDIAS DANS LE TEXTE ===
   const detectMediaInText = (text) => {
     if (!text) return null;
@@ -669,9 +708,29 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
           maxWidth: '320px',
           display: 'flex',
           flexDirection: 'column',
-          gap: '4px'
+          gap: '4px',
+          position: 'relative'
         }}
+        onMouseEnter={() => onDelete && setShowDelete(true)}
+        onMouseLeave={() => setShowDelete(false)}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
       >
+        {/* v153: Bouton supprimer sur média */}
+        {showDelete && onDelete && (
+          <button
+            onClick={handleDeleteClick}
+            style={{
+              position: 'absolute', top: '-8px', right: '-8px', zIndex: 20,
+              width: '28px', height: '28px', borderRadius: '50%',
+              background: 'rgba(239, 68, 68, 0.9)', border: '2px solid rgba(0,0,0,0.3)',
+              color: '#fff', fontSize: '14px', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.4)'
+            }}
+            title="Supprimer ce message"
+          >✕</button>
+        )}
         {/* Nom au-dessus si pas utilisateur */}
         {!isUser && (
           <div style={{
@@ -683,7 +742,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             {displayName}
           </div>
         )}
-        
+
         {/* Composant MediaMessage avec CTA */}
         <MediaMessage
           mediaUrl={hasMedia ? msg.media_url : null}
@@ -697,7 +756,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
   }
   
   // === MESSAGE STANDARD (sans média) ===
-  
+
   // v81: MESSAGE STANDARD ÉPURÉ — Bulles adaptatives style WhatsApp
   return (
     <div
@@ -708,9 +767,42 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
         display: 'flex',
         flexDirection: isUser ? 'row-reverse' : 'row',
         gap: '8px',
-        alignItems: 'flex-end'
+        alignItems: 'flex-end',
+        position: 'relative'
       }}
+      onMouseEnter={() => onDelete && setShowDelete(true)}
+      onMouseLeave={() => setShowDelete(false)}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
     >
+      {/* v153: Bouton supprimer — hover desktop / long press mobile */}
+      {showDelete && onDelete && (
+        <button
+          onClick={handleDeleteClick}
+          style={{
+            position: 'absolute',
+            top: '-8px',
+            [isUser ? 'left' : 'right']: '-8px',
+            width: '28px', height: '28px',
+            borderRadius: '50%',
+            background: 'rgba(239, 68, 68, 0.9)',
+            border: '2px solid rgba(0,0,0,0.3)',
+            color: '#fff',
+            fontSize: '14px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 20,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+            transition: 'transform 0.15s',
+          }}
+          title="Supprimer ce message"
+        >
+          ✕
+        </button>
+      )}
+
       {/* Avatar rond si disponible */}
       {getAvatar()}
 
@@ -819,11 +911,14 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
 const MemoizedMessageBubble = memo(MessageBubble, (prevProps, nextProps) => {
   // Si l'ID change, on doit re-rendre
   if (prevProps.msg.id !== nextProps.msg.id) return false;
-  
+
+  // v153: Si is_deleted change, on doit re-rendre
+  if (prevProps.msg.is_deleted !== nextProps.msg.is_deleted) return false;
+
   // Si l'avatar change (utilisateur a uploadé une nouvelle photo), on doit re-rendre
   if (prevProps.msg.senderPhotoUrl !== nextProps.msg.senderPhotoUrl) return false;
   if (prevProps.profilePhotoUrl !== nextProps.profilePhotoUrl) return false;
-  
+
   // Sinon, pas besoin de re-rendre (même message, même avatar)
   return true;
 });
