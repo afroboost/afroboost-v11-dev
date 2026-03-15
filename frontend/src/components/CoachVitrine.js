@@ -1235,8 +1235,21 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       <div style={{ position: 'relative', height: '180px', overflow: 'hidden' }}>
                         <img src={imageUrl} alt={offer.name} className="w-full h-full object-cover"
                           onError={(e) => { e.target.src = defaultImage; }} />
+                        {/* Photo Icon - Top Left */}
+                        <div className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center"
+                          style={{
+                            background: 'rgba(217, 28, 210, 0.85)',
+                            boxShadow: '0 0 12px rgba(217, 28, 210, 0.5)',
+                            border: '2px solid rgba(255, 255, 255, 0.3)'
+                          }}>
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                            <circle cx="8.5" cy="8.5" r="1.5"/>
+                            <polyline points="21 15 16 10 5 21"/>
+                          </svg>
+                        </div>
                         {offer.price === 0 && (
-                          <div className="absolute top-3 left-3 px-3 py-1 rounded-full text-xs font-bold text-white"
+                          <div className="absolute top-3 right-3 px-3 py-1 rounded-full text-xs font-bold text-white"
                             style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)' }}>
                             GRATUIT
                           </div>
@@ -1251,7 +1264,13 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                         )}
                       </div>
                       <div className="p-4">
-                        <p className="font-semibold text-white mb-2" style={{ fontSize: '16px' }}>{offer.name}</p>
+                        <p className="font-semibold text-white mb-1" style={{ fontSize: '16px' }}>{offer.name}</p>
+                        {offer.description && (
+                          <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.55)', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', lineHeight: '1.4' }}>
+                            {offer.description}{' '}
+                            <span className="cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
+                          </p>
+                        )}
                         <span className="text-xl font-bold" style={{ color: '#d91cd2' }}>
                           {offer.price === 0 ? 'Offert' : `CHF ${offer.price}.-`}
                         </span>
@@ -1308,15 +1327,34 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           <div style={{ position: 'relative', height: '180px', overflow: 'hidden' }}>
                             <img src={imageUrl} alt={offer.name} className="w-full h-full object-cover"
                               onError={(e) => { e.target.src = defaultImage; }} />
+                            {/* Photo Icon - Top Left */}
+                            <div className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center"
+                              style={{
+                                background: 'rgba(217, 28, 210, 0.85)',
+                                boxShadow: '0 0 12px rgba(217, 28, 210, 0.5)',
+                                border: '2px solid rgba(255, 255, 255, 0.3)'
+                              }}>
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                                <circle cx="8.5" cy="8.5" r="1.5"/>
+                                <polyline points="21 15 16 10 5 21"/>
+                              </svg>
+                            </div>
                             {offer.price === 0 && (
-                              <div className="absolute top-3 left-3 px-3 py-1 rounded-full text-xs font-bold text-white"
+                              <div className="absolute top-3 right-3 px-3 py-1 rounded-full text-xs font-bold text-white"
                                 style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)' }}>
                                 GRATUIT
                               </div>
                             )}
                           </div>
                           <div className="p-4">
-                            <p className="font-semibold text-white mb-2" style={{ fontSize: '16px' }}>{offer.name}</p>
+                            <p className="font-semibold text-white mb-1" style={{ fontSize: '16px' }}>{offer.name}</p>
+                            {offer.description && (
+                              <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.55)', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', lineHeight: '1.4' }}>
+                                {offer.description}{' '}
+                                <span className="cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
+                              </p>
+                            )}
                             <span className="text-xl font-bold" style={{ color: '#d91cd2' }}>
                               {offer.price === 0 ? 'Offert' : `CHF ${offer.price}.-`}
                             </span>

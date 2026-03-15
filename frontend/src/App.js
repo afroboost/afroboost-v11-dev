@@ -1043,25 +1043,32 @@ const OfferCard = ({ offer, selected, onClick }) => {
               </div>
             )}
             
-            {/* Info Icon (i) - Only if description exists */}
-            {offer.description && (
-              <div 
-                className="offer-info-btn"
-                onClick={toggleDescription}
-                data-testid={`offer-info-${offer.id}`}
-                title="Voir la description"
-              >
-                <InfoIcon />
-              </div>
-            )}
+            {/* Photo Icon - Top Left */}
+            <div
+              className="offer-info-btn"
+              style={{
+                left: '8px',
+                right: 'auto',
+                background: 'rgba(217, 28, 210, 0.85)',
+                boxShadow: '0 0 8px rgba(217, 28, 210, 0.5)',
+                border: 'none'
+              }}
+              title="Photo"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+            </div>
           </>
         ) : (
-          <div 
+          <div
             className="offer-description-panel"
             data-testid={`offer-description-panel-${offer.id}`}
           >
             <p className="offer-description-text">{offer.description}</p>
-            <button 
+            <button
               className="offer-close-btn"
               onClick={toggleDescription}
               data-testid={`offer-close-${offer.id}`}
@@ -1074,6 +1081,15 @@ const OfferCard = ({ offer, selected, onClick }) => {
       </div>
       <div className="offer-card-content">
         <h3 className="font-semibold text-white text-sm">{offer.name}</h3>
+        {offer.description && (
+          <p className="text-xs text-white/60 mt-1" style={{
+            overflow: 'hidden', textOverflow: 'ellipsis',
+            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical'
+          }}>
+            {offer.description}{' '}
+            <span onClick={toggleDescription} className="cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
+          </p>
+        )}
         <span className="font-bold" style={{ color: '#d91cd2', fontSize: '18px' }}>CHF {offer.price}.-</span>
       </div>
     </div>
@@ -1209,38 +1225,23 @@ const OfferCardSlider = ({ offer, selected, onClick }) => {
                   </div>
                 )}
 
-                {/* Zoom Button (Loupe) - Top Left */}
+                {/* Photo Icon - Top Left */}
                 <div
-                  className="absolute top-3 left-3 w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all hover:scale-110"
+                  className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-all hover:scale-110"
                   style={{
-                    background: 'rgba(0, 0, 0, 0.6)',
-                    backdropFilter: 'blur(4px)'
+                    background: 'rgba(217, 28, 210, 0.85)',
+                    boxShadow: '0 0 12px rgba(217, 28, 210, 0.5)',
+                    border: '2px solid rgba(255, 255, 255, 0.3)'
                   }}
                   onClick={toggleZoom}
-                  title="Agrandir l'image"
+                  title="Voir la photo"
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-                    <circle cx="11" cy="11" r="8"/>
-                    <path d="M21 21l-4.35-4.35"/>
-                    <path d="M11 8v6M8 11h6"/>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                    <polyline points="21 15 16 10 5 21"/>
                   </svg>
                 </div>
-
-                {/* Info Icon "i" - Top Right */}
-                {offer.description && (
-                  <div
-                    className="absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center cursor-pointer transition-all hover:scale-110"
-                    style={{
-                      background: 'rgba(217, 28, 210, 0.85)',
-                      boxShadow: '0 0 8px rgba(217, 28, 210, 0.5)'
-                    }}
-                    onClick={toggleDescription}
-                    data-testid={`offer-info-${offer.id}`}
-                    title="Voir la description"
-                  >
-                    <span className="text-white text-sm font-bold">i</span>
-                  </div>
-                )}
 
                 {/* Selected indicator */}
                 {selected && (
@@ -1278,7 +1279,8 @@ const OfferCardSlider = ({ offer, selected, onClick }) => {
             <p className="font-semibold text-white mb-1" style={{ fontSize: '17px', lineHeight: '1.3' }}>{offer.name}</p>
             {offer.description && !showDescription && (
               <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.45)', lineHeight: '1.4', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                {offer.description}
+                {offer.description}{' '}
+                <span onClick={(e) => { e.stopPropagation(); setShowDescription(true); }} className="cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
               </p>
             )}
             <div className="flex items-baseline gap-2">
