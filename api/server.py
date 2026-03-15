@@ -1203,7 +1203,7 @@ def calculate_expiration_date(from_date_str: str, duration_value: int, duration_
 # --- Offers ---
 @api_router.get("/offers", response_model=List[Offer])
 async def get_offers():
-    offers = await db.offers.find({}, {"_id": 0}).to_list(100)
+    offers = await db.offers.find({}).to_list(100)
     if not offers:
         default_offers = [
             {"id": str(uuid.uuid4()), "name": "Cours à l'unité", "price": 30, "thumbnail": "", "videoUrl": "", "description": "", "visible": True},
@@ -1212,7 +1212,17 @@ async def get_offers():
         ]
         await db.offers.insert_many(default_offers)
         return default_offers
-    return offers
+    # v152: Migration — ajouter un champ 'id' persistant si absent
+    result = []
+    for o in offers:
+        if "id" not in o or not o["id"]:
+            new_id = str(uuid.uuid4())
+            await db.offers.update_one({"_id": o["_id"]}, {"$set": {"id": new_id}})
+            o["id"] = new_id
+            print(f"[V152] Migrated offer '{o.get('name')}' → id={new_id}")
+        o.pop("_id", None)
+        result.append(o)
+    return result
 
 @api_router.post("/offers", response_model=Offer)
 async def create_offer(offer: OfferCreate, request: Request):
@@ -1244,7 +1254,7 @@ async def create_offer(offer: OfferCreate, request: Request):
     await db.offers.insert_one(offer_obj.model_dump())
     return offer_obj
 
-@api_router.put("/offers/{offer_id}")
+@api_router.put("/offers/{offer_id}", response_model=Offer)
 async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
     try:
         require_auth(request)
@@ -1262,29 +1272,22 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
             update_data["duration_unit"] = None
         iap = update_data.get("is_auto_prolong")
         update_data["is_auto_prolong"] = iap not in (False, "false", "0", 0, None)
-        # v152: Debug — vérifier que l'offre existe avant update
-        pre_check = await db.offers.find_one({"id": offer_id}, {"_id": 0, "id": 1, "name": 1})
-        all_ids = [o["id"] async for o in db.offers.find({}, {"id": 1, "_id": 0})]
-        print(f"[V152 DEBUG] PUT /offers/{offer_id} pre_check={pre_check} all_ids={all_ids}")
-        print(f"[V152 DEBUG] duration_value={update_data.get('duration_value')} duration_unit={update_data.get('duration_unit')}")
-        if not pre_check:
-            raise HTTPException(status_code=404, detail=f"Offre {offer_id} introuvable. IDs existants: {all_ids}")
+        # v152: Trouver l'offre existante (par id ou _id fallback)
+        existing = await db.offers.find_one({"id": offer_id})
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"Offre {offer_id} introuvable")
         # v59: Recalculer expiration si durée modifiée
         if update_data.get("duration_value") and update_data.get("duration_unit"):
-            created_at = pre_check.get("created_at") or datetime.utcnow().isoformat()
+            created_at = existing.get("created_at") or datetime.utcnow().isoformat()
             update_data["created_at"] = created_at
             update_data["expiration_date"] = calculate_expiration_date(created_at, update_data["duration_value"], update_data["duration_unit"])
-            # Reset rappels si durée changée
-            if pre_check.get("duration_value") != update_data["duration_value"] or pre_check.get("duration_unit") != update_data["duration_unit"]:
+            if existing.get("duration_value") != update_data["duration_value"] or existing.get("duration_unit") != update_data["duration_unit"]:
                 update_data["last_reminded_date"] = None
                 update_data["last_prolonged_date"] = None
         else:
             update_data["expiration_date"] = None
-        result = await db.offers.update_one({"id": offer_id}, {"$set": update_data})
-        print(f"[V152 DEBUG] update_one matched={result.matched_count} modified={result.modified_count}")
-        updated = await db.offers.find_one({"id": offer_id}, {"_id": 0})
-        if not updated:
-            raise HTTPException(status_code=500, detail=f"Offre mise à jour mais introuvable après update. matched={result.matched_count}")
+        await db.offers.update_one({"_id": existing["_id"]}, {"$set": update_data})
+        updated = await db.offers.find_one({"_id": existing["_id"]}, {"_id": 0})
         return updated
     except HTTPException:
         raise
@@ -1298,7 +1301,7 @@ async def delete_offer(offer_id: str, request: Request):
     """v20: Supprime une offre avec vérification d'ownership + nettoyage codes promo"""
     user_email = require_auth(request)
 
-    # v20: Vérifier que l'offre existe
+    # v152: Vérifier que l'offre existe (par id)
     offer = await db.offers.find_one({"id": offer_id})
     if not offer:
         raise HTTPException(status_code=404, detail="Offre non trouvée")
@@ -1309,8 +1312,8 @@ async def delete_offer(offer_id: str, request: Request):
         if offer_owner and offer_owner != user_email:
             raise HTTPException(status_code=403, detail="Vous ne pouvez supprimer que vos propres offres")
 
-    # 1. Supprimer l'offre
-    result = await db.offers.delete_one({"id": offer_id})
+    # 1. Supprimer l'offre (utiliser _id MongoDB pour fiabilité)
+    result = await db.offers.delete_one({"_id": offer["_id"]})
     logger.info(f"[DELETE-OFFER] {offer_id} supprimée par {user_email}, deleted_count={result.deleted_count}")
 
     # 2. Nettoyer les références dans les codes promo
