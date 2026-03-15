@@ -1903,7 +1903,10 @@ export const ChatWidget = () => {
     };
 
     refreshSubscriptionStatus();
-  }, []); // Exécuté une seule fois au montage
+    // V156.2: Rafraîchir toutes les 30s pour refléter les scans QR du coach
+    const interval = setInterval(refreshSubscriptionStatus, 30000);
+    return () => clearInterval(interval);
+  }, []); // Exécuté au montage + refresh périodique
 
   // === v8.9.9: Vérifier si l'utilisateur est un coach inscrit ===
   // v9.1.5: Amélioré pour détecter aussi les coachs via localStorage

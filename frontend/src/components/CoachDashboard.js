@@ -1629,6 +1629,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             message: data.message,
           });
         }
+        // V156.2: Recharger les réservations + codes promo pour refléter la déduction
+        loadReservations();
+        try {
+          const updatedCodes = await axios.get(`${API}/discount-codes`);
+          setDiscountCodes(updatedCodes.data);
+        } catch (e) { console.warn('[V156] Refresh codes:', e); }
         // Auto-close after 4 seconds
         setTimeout(() => {
           setShowScanner(false);

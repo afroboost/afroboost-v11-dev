@@ -167,7 +167,8 @@ async def get_reservations(request: Request, page: int = 1, limit: int = 20, all
         "offerName": 1, "totalPrice": 1, "quantity": 1, "validated": 1,
         "validatedAt": 1, "createdAt": 1, "selectedDates": 1, "selectedDatesText": 1,
         "selectedVariants": 1, "variantsText": 1, "isProduct": 1, "shippingStatus": 1,
-        "trackingNumber": 1, "promoCode": 1, "source": 1, "type": 1
+        "trackingNumber": 1, "promoCode": 1, "source": 1, "type": 1,
+        "subscriptionId": 1, "subscriptionInfo": 1
     }
     if all_data:
         reservations = await db.reservations.find(base_query, {"_id": 0}).sort("createdAt", -1).to_list(10000)
@@ -405,6 +406,39 @@ async def qr_scan_validate(request: Request):
         if not subscriber_name:
             email = discount.get("assignedEmail", "")
             subscriber_name = email.split("@")[0] if email else "Abonné"
+
+        # V156.2: Créer un enregistrement réservation pour que le check-in apparaisse
+        # dans la liste des réservations du coach
+        checkin_reservation = {
+            "id": str(uuid.uuid4()),
+            "reservationCode": f"QR-{code}-{new_used}",
+            "userName": subscriber_name,
+            "userEmail": discount.get("assignedEmail", ""),
+            "offerName": f"Abonnement {code}",
+            "courseName": "Séance abonnement",
+            "totalPrice": 0,
+            "quantity": 1,
+            "validated": True,
+            "validatedAt": now_iso,
+            "createdAt": now_iso,
+            "type": "qr_checkin",
+            "source": "qr_scan",
+            "promoCode": code,
+            "subscriptionInfo": {
+                "remaining": new_remaining,
+                "total": max_uses,
+                "used": new_used,
+            },
+        }
+        # Ajouter le coach_id depuis le header X-User-Email
+        coach_email = request.headers.get("X-User-Email", "").lower().strip()
+        if coach_email:
+            checkin_reservation["coach_id"] = coach_email
+        try:
+            await db.reservations.insert_one(checkin_reservation)
+            logger.info(f"[V156-QR] Check-in réservation créée: {checkin_reservation['reservationCode']}")
+        except Exception as e:
+            logger.warning(f"[V156-QR] Erreur création réservation check-in: {e}")
 
         logger.info(f"[V156-QR] Séance validée: {code} - {subscriber_name} ({new_remaining}/{max_uses} restantes)")
         return {

@@ -217,7 +217,14 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
           {r.subscriptionId && <span className="text-purple-400 ml-1">(abo lié)</span>}
         </p>
       )}
-      {r.source && <p>📍 Source: {r.source}</p>}
+      {r.subscriptionInfo && (
+        <p>🎟️ Séances: <span className="text-green-400 font-medium">{r.subscriptionInfo.remaining}/{r.subscriptionInfo.total}</span> restantes</p>
+      )}
+      {r.source === 'qr_scan' ? (
+        <p>📍 <span className="text-green-400">Check-in QR</span></p>
+      ) : r.source && (
+        <p>📍 Source: {r.source}</p>
+      )}
     </div>
     
     <div className="flex gap-2">
@@ -270,6 +277,12 @@ const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, 
         </div>
         {r.promoCode && (
           <span className="text-[10px] text-yellow-400/70">{r.promoCode}</span>
+        )}
+        {r.subscriptionInfo && (
+          <span className="text-[10px] text-green-400/70">{r.subscriptionInfo.remaining}/{r.subscriptionInfo.total} séances</span>
+        )}
+        {r.source === 'qr_scan' && (
+          <span className="text-[10px] text-green-400">Check-in QR</span>
         )}
       </div>
     </td>
