@@ -341,9 +341,15 @@ const OffersManager = ({
               </p>
             </div>
           )}
+          {/* v152: Texte d'aide selon l'état des champs */}
           {!newOffer.duration_value && !newOffer.duration_unit && (
             <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: '6px' }}>
               Laissez vide = offre sans limite de durée (illimitée)
+            </p>
+          )}
+          {((!newOffer.duration_value && newOffer.duration_unit) || (newOffer.duration_value && !newOffer.duration_unit)) && (
+            <p style={{ fontSize: '11px', color: '#f97316', marginTop: '6px' }}>
+              ⚠️ Veuillez remplir les deux champs (durée + unité) pour activer la validité
             </p>
           )}
         </div>

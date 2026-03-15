@@ -2134,7 +2134,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       variants: offer.variants || null,
       tva: offer.tva || 0,
       shippingCost: offer.shippingCost || 0,
-      stock: offer.stock ?? -1
+      stock: offer.stock ?? -1,
+      // v152: Charger les champs de durée de validité
+      duration_value: offer.duration_value || '',
+      duration_unit: offer.duration_unit || '',
+      is_auto_prolong: offer.is_auto_prolong !== false
     });
     setEditingOfferId(offer.id);
     // Scroll vers le formulaire
@@ -2143,10 +2147,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   // Annuler l'édition
   const cancelEditOffer = () => {
-    setNewOffer({ 
+    setNewOffer({
       name: "", price: 0, visible: true, description: "", keywords: "",
       images: ["", "", "", "", ""],
-      category: "service", isProduct: false, variants: null, tva: 0, shippingCost: 0, stock: -1
+      category: "service", isProduct: false, variants: null, tva: 0, shippingCost: 0, stock: -1,
+      // v152: Reset des champs de durée de validité
+      duration_value: '', duration_unit: '', is_auto_prolong: true
     });
     setEditingOfferId(null);
   };
