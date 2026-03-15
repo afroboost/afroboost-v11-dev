@@ -4,7 +4,7 @@
 // Photos cliquables avec lightbox
 
 import React, { useState, memo } from 'react';
-import { Check, CheckCheck, Clock, Bot, Image as ImageIcon, X } from 'lucide-react';
+import { Check, CheckCheck, Clock, Bot, Image as ImageIcon, X, Trash2 } from 'lucide-react';
 
 // === Photo Lightbox ===
 const PhotoLightbox = ({ src, alt, onClose }) => (
@@ -36,6 +36,38 @@ const PhotoLightbox = ({ src, alt, onClose }) => (
     />
   </div>
 );
+
+// === Helper: Render text with clickable links ===
+const renderTextWithLinks = (text) => {
+  if (!text) return null;
+
+  // Regex to match URLs (http://, https://, www.)
+  const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+)/g;
+  const parts = text.split(urlRegex);
+
+  return parts.map((part, index) => {
+    if (urlRegex.test(part)) {
+      // It's a URL
+      const href = part.startsWith('http') ? part : `https://${part}`;
+      return (
+        <a
+          key={index}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            color: 'rgba(255,255,255,0.85)',
+            textDecoration: 'underline',
+            cursor: 'pointer',
+          }}
+        >
+          {part}
+        </a>
+      );
+    }
+    return <span key={index}>{part}</span>;
+  });
+};
 
 // === Avatar Component ===
 const BubbleAvatar = memo(({ src, name, isCoach, onClick }) => {
@@ -86,18 +118,40 @@ const BubbleStatus = ({ timestamp, status, isCoach }) => {
 };
 
 // === Coach/AI Bubble (Violet #D91CD2) ===
-const CoachBubble = memo(({ message, avatar, name, onAvatarClick }) => {
+const CoachBubble = memo(({ message, avatar, name, onAvatarClick, onDelete }) => {
   const [lightbox, setLightbox] = useState(null);
+  const [showDelete, setShowDelete] = useState(false);
   const isAi = message.sender === 'ai' || message.type === 'ai';
   const hasImage = message.image || message.media_url;
 
   return (
     <>
       {lightbox && <PhotoLightbox src={lightbox} onClose={() => setLightbox(null)} />}
-      <div style={{
-        display: 'flex', gap: '8px', alignItems: 'flex-end',
-        maxWidth: '85%', alignSelf: 'flex-start',
-      }}>
+      <div
+        style={{
+          display: 'flex', gap: '8px', alignItems: 'flex-end',
+          maxWidth: '85%', alignSelf: 'flex-start',
+          position: 'relative',
+        }}
+        onMouseEnter={() => setShowDelete(true)}
+        onMouseLeave={() => setShowDelete(false)}
+      >
+        {showDelete && onDelete && (
+          <button
+            onClick={() => onDelete(message.id)}
+            style={{
+              position: 'absolute', bottom: '0', right: '-24px',
+              background: 'none', border: 'none', cursor: 'pointer',
+              opacity: 0.5, transition: 'opacity 0.2s',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              padding: '4px',
+            }}
+            onMouseEnter={(e) => e.target.style.opacity = '0.8'}
+            onMouseLeave={(e) => e.target.style.opacity = '0.5'}
+          >
+            <Trash2 size={14} color="rgba(255,255,255,0.6)" />
+          </button>
+        )}
         <BubbleAvatar src={avatar} name={name || 'Coach'} isCoach={true} onClick={onAvatarClick} />
         <div>
           {/* Name + AI badge */}
@@ -146,7 +200,11 @@ const CoachBubble = memo(({ message, avatar, name, onAvatarClick }) => {
               boxShadow: '0 2px 8px rgba(217,28,210,0.2)',
               wordBreak: 'break-word',
             }}>
-              {message.text}
+              {message.is_deleted ? (
+                <span style={{ fontStyle: 'italic', opacity: 0.7 }}>Message supprimé</span>
+              ) : (
+                renderTextWithLinks(message.text)
+              )}
             </div>
           )}
 
@@ -159,18 +217,40 @@ const CoachBubble = memo(({ message, avatar, name, onAvatarClick }) => {
 CoachBubble.displayName = 'CoachBubble';
 
 // === Member/Visitor Bubble (Anthracite #2A2A2A) ===
-const MemberBubble = memo(({ message, avatar, name, onAvatarClick }) => {
+const MemberBubble = memo(({ message, avatar, name, onAvatarClick, onDelete, isOwnMessage }) => {
   const [lightbox, setLightbox] = useState(null);
+  const [showDelete, setShowDelete] = useState(false);
   const hasImage = message.image || message.media_url;
 
   return (
     <>
       {lightbox && <PhotoLightbox src={lightbox} onClose={() => setLightbox(null)} />}
-      <div style={{
-        display: 'flex', gap: '8px', alignItems: 'flex-end',
-        flexDirection: 'row-reverse',
-        maxWidth: '85%', alignSelf: 'flex-end',
-      }}>
+      <div
+        style={{
+          display: 'flex', gap: '8px', alignItems: 'flex-end',
+          flexDirection: 'row-reverse',
+          maxWidth: '85%', alignSelf: 'flex-end',
+          position: 'relative',
+        }}
+        onMouseEnter={() => setShowDelete(true)}
+        onMouseLeave={() => setShowDelete(false)}
+      >
+        {showDelete && onDelete && isOwnMessage && (
+          <button
+            onClick={() => onDelete(message.id)}
+            style={{
+              position: 'absolute', bottom: '0', left: '-24px',
+              background: 'none', border: 'none', cursor: 'pointer',
+              opacity: 0.5, transition: 'opacity 0.2s',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              padding: '4px',
+            }}
+            onMouseEnter={(e) => e.target.style.opacity = '0.8'}
+            onMouseLeave={(e) => e.target.style.opacity = '0.5'}
+          >
+            <Trash2 size={14} color="rgba(255,255,255,0.6)" />
+          </button>
+        )}
         <BubbleAvatar src={avatar} name={name || 'Visiteur'} isCoach={false} onClick={onAvatarClick} />
         <div>
           {/* Name */}
@@ -209,7 +289,11 @@ const MemberBubble = memo(({ message, avatar, name, onAvatarClick }) => {
               boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
               wordBreak: 'break-word',
             }}>
-              {message.text}
+              {message.is_deleted ? (
+                <span style={{ fontStyle: 'italic', opacity: 0.7 }}>Message supprimé</span>
+              ) : (
+                renderTextWithLinks(message.text)
+              )}
             </div>
           )}
 
@@ -282,9 +366,10 @@ const TypingIndicator = memo(({ name }) => (
 TypingIndicator.displayName = 'TypingIndicator';
 
 // === Main ChatBubble dispatcher ===
-const ChatBubble = memo(({ message, coachAvatar, coachName, memberAvatar, memberName, onAvatarClick }) => {
+const ChatBubble = memo(({ message, coachAvatar, coachName, memberAvatar, memberName, onAvatarClick, onDelete, currentUserId }) => {
   const isCoach = message.type === 'ai' || message.sender === 'coach' || message.sender === 'ai';
   const isSystem = message.type === 'system' || message.type === 'info';
+  const isOwnMessage = currentUserId && message.sender_id === currentUserId;
 
   if (isSystem) return <SystemBubble message={message} />;
 
@@ -295,6 +380,7 @@ const ChatBubble = memo(({ message, coachAvatar, coachName, memberAvatar, member
         avatar={coachAvatar || '/logo192.png'}
         name={coachName || 'Afroboost'}
         onAvatarClick={() => onAvatarClick?.('coach')}
+        onDelete={onDelete}
       />
     );
   }
@@ -305,6 +391,8 @@ const ChatBubble = memo(({ message, coachAvatar, coachName, memberAvatar, member
       avatar={memberAvatar}
       name={memberName || message.sender_name}
       onAvatarClick={() => onAvatarClick?.('member', message.sender_id)}
+      onDelete={onDelete}
+      isOwnMessage={isOwnMessage}
     />
   );
 });

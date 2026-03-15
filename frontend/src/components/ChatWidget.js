@@ -30,6 +30,7 @@ import {
   SOUND_TYPES 
 } from '../services/SoundManager';
 import EmojiPicker from './EmojiPicker';
+import AfricanEmojiPicker from './chat/AfricanEmojiPicker';
 import SubscriberForm from './chat/SubscriberForm';
 import OnboardingTunnel from './chat/OnboardingTunnel';
 import PrivateChatView from './chat/PrivateChatView';
@@ -1085,7 +1086,8 @@ export const ChatWidget = () => {
   const [selectedCoachSession, setSelectedCoachSession] = useState(null); // Session sélectionnée par le coach
   const [isFullscreen, setIsFullscreen] = useState(getInitialFullscreen); // Mode plein écran (ABONNÉ = activé)
   const [showEmojiPicker, setShowEmojiPicker] = useState(false); // Sélecteur d'emojis (composant EmojiPicker)
-  
+  const [showAfricanEmojiPicker, setShowAfricanEmojiPicker] = useState(false); // Sélecteur d'emojis Africains
+
   // === FORMULAIRE ABONNÉ (4 champs: Nom, WhatsApp, Email, Code Promo) ===
   const [showSubscriberForm, setShowSubscriberForm] = useState(false); // Afficher le formulaire abonné
   const [subscriberFormData, setSubscriberFormData] = useState({ name: '', whatsapp: '', email: '', code: '' });
@@ -3607,6 +3609,17 @@ export const ChatWidget = () => {
   };
 
   // Envoyer un message au chat avec contexte de session
+  const handleDeleteMessage = async (messageId) => {
+    try {
+      await axios.put(`${API}/chat/messages/${messageId}/delete`);
+      // Remove from local state or mark as deleted
+      setMessages(prev => prev.map(m => m.id === messageId ? {...m, is_deleted: true, text: 'Message supprimé'} : m));
+      setGroupMessages(prev => prev.map(m => m.id === messageId ? {...m, is_deleted: true, text: 'Message supprimé'} : m));
+    } catch (err) {
+      console.error('Delete message error:', err);
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isLoading) return;
 
@@ -5532,6 +5545,7 @@ export const ChatWidget = () => {
                           isUser={msg.type === 'coach'}
                           onReservationClick={() => {}}
                           onZoomPhoto={(url) => setZoomedChatPhoto(url)}
+                          onDelete={(messageId) => handleDeleteMessage(messageId)}
                         />
                       ))}
                       <div ref={messagesEndRef} />
@@ -5989,6 +6003,7 @@ export const ChatWidget = () => {
                         profilePhotoUrl={profilePhoto}
                         onReservationClick={() => setShowReservationPanel(true)}
                         onZoomPhoto={(url) => setZoomedChatPhoto(url)}
+                        onDelete={(messageId) => handleDeleteMessage(messageId)}
                       />
                     </div>
                   ))}
@@ -6308,11 +6323,21 @@ export const ChatWidget = () => {
                   {/* === GAUCHE: Emoji + Réservations === */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
                     {/* === SÉLECTEUR D'EMOJIS (Composant externe) === */}
-                    <EmojiPicker 
+                    <EmojiPicker
                       isOpen={showEmojiPicker}
                       onClose={() => setShowEmojiPicker(false)}
                       onSelect={insertEmoji}
                       position="bottom"
+                    />
+
+                    {/* === SÉLECTEUR D'EMOJIS AFRICAINS === */}
+                    <AfricanEmojiPicker
+                      isOpen={showAfricanEmojiPicker}
+                      onSelect={(emoji) => {
+                        setInputMessage(prev => prev + emoji);
+                        setShowAfricanEmojiPicker(false);
+                      }}
+                      onClose={() => setShowAfricanEmojiPicker(false)}
                     />
                     
                     {/* Bouton Emoji */}
@@ -6336,7 +6361,29 @@ export const ChatWidget = () => {
                     >
                       😊
                     </button>
-                    
+
+                    {/* Bouton African Emoji Picker */}
+                    <button
+                      type="button"
+                      onClick={() => setShowAfricanEmojiPicker(!showAfricanEmojiPicker)}
+                      style={{
+                        width: '40px',
+                        height: '40px',
+                        borderRadius: '50%',
+                        background: showAfricanEmojiPicker ? '#9333ea' : 'rgba(255,255,255,0.1)',
+                        border: 'none',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                        fontSize: '18px'
+                      }}
+                      data-testid="african-emoji-btn"
+                    >
+                      🌍
+                    </button>
+
                     {/* v9.3.7: Icône Calendrier (Réservation) - TOUJOURS VISIBLE pour tous les utilisateurs */}
                     <button
                       type="button"

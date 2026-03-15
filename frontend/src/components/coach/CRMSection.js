@@ -1200,6 +1200,9 @@ const CRMSection = ({
     if (API_URL) loadUnified();
   }, [API_URL, coachEmail]);
 
+  // v108: State for new direct conversation dialog
+  const [showNewConversationDialog, setShowNewConversationDialog] = useState(false);
+
   // v105: Real-time polling — refresh conversations every 30s, messages every 15s
   useEffect(() => {
     if (!API_URL) return;
@@ -1255,8 +1258,122 @@ const CRMSection = ({
     setBulkSelected(new Set());
   }, []);
 
+  // v108: Create a new direct conversation with a participant
+  const createDirectConversation = useCallback(async (participantId, participantEmail, participantName) => {
+    if (!API_URL || !participantId) return;
+    try {
+      const sessionData = {
+        mode: 'ai',
+        is_ai_active: true,
+        title: `${participantName || participantEmail || 'Conversation'}`,
+        participant_ids: [participantId],
+      };
+      const res = await axios.post(`${API_URL}/chat/sessions`, sessionData, {
+        headers: { 'X-User-Email': coachEmail }
+      });
+      if (res.data?.id) {
+        // Load the new session
+        const newSession = res.data;
+        await loadSessionMessages(newSession.id);
+        // Reload conversations to show the new one
+        if (loadConversations) await loadConversations(false);
+        // Select the new session
+        setSelectedSession(newSession);
+      }
+    } catch (e) {
+      console.error('[V108] Erreur création conversation directe:', e);
+      alert('Erreur lors de la création de la conversation');
+    }
+  }, [API_URL, coachEmail, loadSessionMessages, loadConversations, setSelectedSession]);
+
+  // v108: Toggle AI/Human mode for the selected conversation
+  const handleToggleSelectedSessionAI = useCallback(async () => {
+    if (!selectedSession?.id || !API_URL) return;
+    try {
+      const res = await axios.post(`${API_URL}/chat/sessions/${selectedSession.id}/toggle-ai`, {}, {
+        headers: { 'X-User-Email': coachEmail }
+      });
+      if (res.data?.id) {
+        setSelectedSession(res.data);
+      }
+    } catch (e) {
+      console.error('[V108] Erreur toggle IA:', e);
+    }
+  }, [selectedSession?.id, API_URL, coachEmail, setSelectedSession]);
+
   return (
     <div style={{ background: '#000000', borderRadius: '20px', overflow: 'hidden' }}>
+      {/* v108: Modal for creating a new direct conversation */}
+      {showNewConversationDialog && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 1000, backdropFilter: 'blur(4px)',
+        }} onClick={() => setShowNewConversationDialog(false)}>
+          <div style={{
+            background: '#111111', border: '1px solid rgba(217,28,210,0.2)', borderRadius: '16px',
+            padding: '20px', width: '90%', maxWidth: '500px', maxHeight: '80vh', overflowY: 'auto',
+            boxShadow: '0 10px 40px rgba(217,28,210,0.2)',
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: '700', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <MessageCircle size={18} style={{ color: '#D91CD2' }} />
+                Nouvelle conversation
+              </h3>
+              <button onClick={() => setShowNewConversationDialog(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: '20px', padding: '0' }}>
+                ×
+              </button>
+            </div>
+
+            {unifiedContacts.length === 0 ? (
+              <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '13px', textAlign: 'center', padding: '20px' }}>
+                Aucun contact disponible
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {unifiedContacts.map(contact => (
+                  <button
+                    key={contact.id || contact.email}
+                    onClick={() => {
+                      createDirectConversation(contact.id || contact.email, contact.email, contact.name);
+                      setShowNewConversationDialog(false);
+                    }}
+                    style={{
+                      padding: '12px 14px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(217,28,210,0.15)',
+                      borderRadius: '10px', cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s',
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(217,28,210,0.1)';
+                      e.currentTarget.style.borderColor = 'rgba(217,28,210,0.3)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                      e.currentTarget.style.borderColor = 'rgba(217,28,210,0.15)';
+                    }}
+                  >
+                    <div style={{
+                      width: '36px', height: '36px', borderRadius: '50%',
+                      background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', display: 'flex',
+                      alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: '700', flexShrink: 0,
+                    }}>
+                      {(contact.name || contact.email || '?')[0].toUpperCase()}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ color: '#fff', fontSize: '13px', fontWeight: '600', margin: 0 }}>
+                        {contact.name || 'Sans nom'}
+                      </p>
+                      <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {contact.email || contact.whatsapp || '—'}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       {/* Banner Permission */}
       <NotificationBanner
         showPermissionBanner={showPermissionBanner}
@@ -1351,6 +1468,19 @@ const CRMSection = ({
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                {/* v108: Create new direct conversation */}
+                <button
+                  onClick={() => setShowNewConversationDialog(true)}
+                  style={{
+                    ...iconBtn('rgba(255,255,255,0.3)'),
+                    width: '28px', height: '28px',
+                  }}
+                  title="Nouvelle conversation"
+                  onMouseEnter={(e) => { e.currentTarget.style.color = '#D91CD2'; e.currentTarget.style.boxShadow = GLOW.violetSoft; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.3)'; e.currentTarget.style.boxShadow = 'none'; }}
+                >
+                  <MessageCircle size={14} />
+                </button>
                 {/* v38: Toggle bulk mode */}
                 <button
                   onClick={() => bulkMode ? exitBulkMode() : setBulkMode(true)}
@@ -1527,16 +1657,38 @@ const CRMSection = ({
                       </p>
                     )}
                   </div>
-                  <span style={{
-                    fontSize: '11px',
-                    color: selectedSession.mode === 'bot' ? '#8b5cf6' : '#22c55e',
-                    fontWeight: '500',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                  }}>
-                    {selectedSession.mode === 'bot' ? <><Bot size={12} /> IA</> : <><User size={12} /> Manuel</>}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    {/* AI/Human toggle button */}
+                    <button
+                      onClick={handleToggleSelectedSessionAI}
+                      style={{
+                        ...iconBtn(selectedSession.mode === 'bot' ? '#8b5cf6' : '#22c55e'),
+                        width: '32px', height: '32px',
+                        background: selectedSession.mode === 'bot' ? 'rgba(139,92,246,0.1)' : 'rgba(34,197,94,0.1)',
+                      }}
+                      title={selectedSession.mode === 'bot' ? 'Passer en manuel' : 'Passer en IA'}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = selectedSession.mode === 'bot' ? '#8b5cf6' : '#22c55e';
+                        e.currentTarget.style.boxShadow = selectedSession.mode === 'bot' ? GLOW.violetSoft : GLOW.green;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = selectedSession.mode === 'bot' ? '#8b5cf6' : '#22c55e';
+                        e.currentTarget.style.boxShadow = 'none';
+                      }}
+                    >
+                      {selectedSession.mode === 'bot' ? <Bot size={16} /> : <User size={16} />}
+                    </button>
+                    <span style={{
+                      fontSize: '11px',
+                      color: selectedSession.mode === 'bot' ? '#8b5cf6' : '#22c55e',
+                      fontWeight: '500',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                    }}>
+                      {selectedSession.mode === 'bot' ? <><Bot size={12} /> IA</> : <><User size={12} /> Manuel</>}
+                    </span>
+                  </div>
                 </div>
 
                 {/* v100: Réponses tunnel (si disponibles) */}
