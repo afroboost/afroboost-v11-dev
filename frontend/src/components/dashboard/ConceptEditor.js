@@ -931,15 +931,16 @@ const ConceptEditor = ({
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {getHeroVideos().map((video, idx) => (
                 <div key={idx} style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '8px 12px', borderRadius: '8px',
+                  display: 'flex', flexDirection: 'column', gap: '8px',
+                  padding: '10px 12px', borderRadius: '8px',
                   background: video.is_visible === false ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.04)',
                   border: `1px solid ${video.is_visible === false ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.08)'}`
                 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ color: '#D91CD2', fontSize: '11px', fontWeight: 600 }}>#{idx + 1}</span>
-                      <span style={{ color: '#fff', fontSize: '12px' }}>{video.title || video.description || 'Sans titre'}</span>
+                  {/* Titre + infos */}
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: 700 }}>#{idx + 1}</span>
+                      <span style={{ color: '#fff', fontSize: '12px', fontWeight: 500 }}>{video.title || video.description || 'Sans titre'}</span>
                       {(video.price || 0) > 0 && (
                         <span style={{ color: '#22c55e', fontSize: '11px', fontWeight: 600 }}>{video.price} CHF</span>
                       )}
@@ -947,11 +948,12 @@ const ConceptEditor = ({
                         <span style={{ color: '#ef4444', fontSize: '10px' }}>🚫 MASQUÉE</span>
                       )}
                     </div>
-                    <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px', wordBreak: 'break-all' }}>
-                      {video.url?.substring(0, 60)}{video.url?.length > 60 ? '...' : ''}
+                    <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px', wordBreak: 'break-all', display: 'block', marginTop: '4px' }}>
+                      {video.url?.substring(0, 50)}{video.url?.length > 50 ? '...' : ''}
                     </span>
                   </div>
-                  <div style={{ display: 'flex', gap: '4px', marginLeft: '8px' }}>
+                  {/* Boutons actions */}
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                     {/* Toggle invisible */}
                     <button
                       type="button"
@@ -960,28 +962,29 @@ const ConceptEditor = ({
                         background: video.is_visible === false ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
                         border: `1px solid ${video.is_visible === false ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
                         color: video.is_visible === false ? '#22c55e' : '#ef4444',
-                        fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
+                        fontSize: '11px', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', gap: '4px'
                       }}
                       title={video.is_visible === false ? 'Rendre visible' : 'Masquer'}
                     >
-                      {video.is_visible === false ? '👁️' : '🚫'}
+                      {video.is_visible === false ? '👁️ Afficher' : '🚫 Masquer'}
                     </button>
                     {/* Copier le lien */}
                     <button
                       type="button"
                       onClick={() => {
                         const baseUrl = window.location.origin;
-                        const videoLink = `${baseUrl}/video/${encodeURIComponent(video.url || '')}`;
                         navigator.clipboard.writeText(video.url?.startsWith('/api/') ? `${baseUrl}${video.url}` : (video.url || ''));
                         alert('Lien copié !');
                       }}
                       style={{
                         background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)',
-                        color: '#a78bfa', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
+                        color: '#a78bfa', fontSize: '11px', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', gap: '4px'
                       }}
                       title="Copier le lien direct"
                     >
-                      🔗
+                      🔗 Copier
                     </button>
                     {/* Supprimer */}
                     <button
@@ -993,11 +996,12 @@ const ConceptEditor = ({
                       }}
                       style={{
                         background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
-                        color: '#ef4444', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
+                        color: '#ef4444', fontSize: '11px', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', gap: '4px'
                       }}
                       title="Supprimer"
                     >
-                      🗑️
+                      🗑️ Suppr.
                     </button>
                   </div>
                 </div>
