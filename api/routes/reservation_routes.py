@@ -292,6 +292,140 @@ async def validate_reservation(reservation_code: str):
     )
     return {"success": True, "message": "Réservation validée", "reservation": reservation}
 
+
+# === V156: Endpoint unifié QR scan — gère codes abonnement ET codes réservation ===
+@reservation_router.post("/qr/scan-validate")
+async def qr_scan_validate(request: Request):
+    """
+    V156: Validation unifiée par scan QR.
+    Accepte un code qui peut être:
+    - Un code de réservation (AF1368C426, etc.) → valide la réservation
+    - Un code d'abonnement (BASSBOOSTX-11, etc.) → valide une séance de l'abonnement
+    """
+    body = await request.json()
+    code = (body.get("code", "") or "").strip().upper()
+    if not code:
+        raise HTTPException(status_code=400, detail="Code requis")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # === 1. Essayer comme code de réservation ===
+    reservation = await db.reservations.find_one({"reservationCode": code}, {"_id": 0})
+    if reservation:
+        if reservation.get("validated"):
+            return {
+                "success": False,
+                "type": "reservation",
+                "message": f"Réservation déjà validée le {reservation.get('validatedAt', 'N/A')[:10]}",
+                "reservation": reservation
+            }
+        await db.reservations.update_one(
+            {"reservationCode": code},
+            {"$set": {"validated": True, "validatedAt": now_iso}}
+        )
+        reservation["validated"] = True
+        reservation["validatedAt"] = now_iso
+        logger.info(f"[V156-QR] Réservation validée: {code} ({reservation.get('userName', 'N/A')})")
+        return {
+            "success": True,
+            "type": "reservation",
+            "message": "Réservation validée !",
+            "reservation": reservation
+        }
+
+    # === 2. Essayer comme code d'abonnement (discount_codes / subscriptions) ===
+    # 2a. Chercher dans discount_codes (codes promo = codes abonnement)
+    discount = await db.discount_codes.find_one(
+        {"code": {"$regex": f"^{code}$", "$options": "i"}},
+        {"_id": 0}
+    )
+    if discount:
+        max_uses = discount.get("maxUses", 0)
+        used = discount.get("used", 0)
+        remaining = max(0, max_uses - used)
+        is_active = discount.get("active", False)
+
+        if not is_active:
+            return {
+                "success": False,
+                "type": "subscription",
+                "message": f"Abonnement {code} désactivé",
+                "subscriber": {"code": code, "name": discount.get("name", ""), "remaining": 0}
+            }
+        if remaining <= 0:
+            return {
+                "success": False,
+                "type": "subscription",
+                "message": f"Plus de séances restantes ({used}/{max_uses} utilisées)",
+                "subscriber": {"code": code, "name": discount.get("name", ""), "remaining": 0}
+            }
+
+        # Déduire 1 séance
+        new_used = used + 1
+        new_remaining = max(0, max_uses - new_used)
+        await db.discount_codes.update_one(
+            {"code": {"$regex": f"^{code}$", "$options": "i"}},
+            {"$set": {"used": new_used, "updated_at": now_iso}}
+        )
+
+        # Aussi mettre à jour dans subscriptions si existe
+        sub = await db.subscriptions.find_one(
+            {"code": {"$regex": f"^{code}$", "$options": "i"}, "status": "active"},
+            {"_id": 0}
+        )
+        if sub:
+            sub_remaining = max(0, sub.get("remaining_sessions", 0) - 1)
+            sub_update = {
+                "remaining_sessions": sub_remaining,
+                "used_sessions": sub.get("used_sessions", 0) + 1,
+                "updated_at": now_iso,
+            }
+            if sub_remaining <= 0:
+                sub_update["status"] = "completed"
+            await db.subscriptions.update_one(
+                {"code": {"$regex": f"^{code}$", "$options": "i"}, "status": "active"},
+                {"$set": sub_update}
+            )
+
+        # Enregistrer la validation QR dans l'historique
+        qr_validation = {
+            "id": str(uuid.uuid4()),
+            "code": code,
+            "type": "session_checkin",
+            "validated_at": now_iso,
+            "sessions_remaining": new_remaining,
+            "sessions_total": max_uses,
+        }
+        try:
+            await db.qr_validations.insert_one(qr_validation)
+        except Exception:
+            pass
+
+        subscriber_name = discount.get("name", "")
+        if not subscriber_name:
+            email = discount.get("assignedEmail", "")
+            subscriber_name = email.split("@")[0] if email else "Abonné"
+
+        logger.info(f"[V156-QR] Séance validée: {code} - {subscriber_name} ({new_remaining}/{max_uses} restantes)")
+        return {
+            "success": True,
+            "type": "subscription",
+            "message": f"Séance validée ! {new_remaining}/{max_uses} restantes",
+            "subscriber": {
+                "code": code,
+                "name": subscriber_name,
+                "email": discount.get("assignedEmail", ""),
+                "remaining": new_remaining,
+                "total": max_uses,
+                "used": new_used,
+            }
+        }
+
+    # === 3. Rien trouvé ===
+    logger.warning(f"[V156-QR] Code introuvable: {code}")
+    raise HTTPException(status_code=404, detail=f"Code '{code}' non trouvé (ni réservation, ni abonnement)")
+
+
 @reservation_router.delete("/reservations/{reservation_id}")
 async def delete_reservation(reservation_id: str):
     """Supprime une réservation"""

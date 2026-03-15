@@ -184,22 +184,33 @@ export const QRScannerModal = ({ onClose, onValidate, scanResult, scanError, onM
     }
   };
 
-  // Handle QR code detection
+  // Handle QR code detection — V156: Support codes abonnement (?qr=CODE) + réservation
   const handleQrCodeSuccess = (decodedText) => {
-    // QR code detected - extract reservation code from URL
     let code = decodedText;
-    if (decodedText.includes('/validate/')) {
-      code = decodedText.split('/validate/').pop().toUpperCase();
-    } else if (decodedText.includes('AFR-')) {
-      // Extract AFR-XXXXXX pattern
-      const match = decodedText.match(/AFR-[A-Z0-9]+/i);
+
+    // V156: Extraire le code depuis URL ?qr=CODE (QR abonnement côté abonné)
+    if (decodedText.includes('?qr=')) {
+      try {
+        const url = new URL(decodedText);
+        code = url.searchParams.get('qr')?.toUpperCase() || decodedText;
+      } catch {
+        // Fallback regex si URL invalide
+        const qrMatch = decodedText.match(/[?&]qr=([^&]+)/i);
+        if (qrMatch) code = qrMatch[1].toUpperCase();
+      }
+    } else if (decodedText.includes('/validate/')) {
+      // URL de validation réservation: .../reservations/{code}/validate
+      code = decodedText.split('/validate/').pop().split('/')[0].split('?')[0].toUpperCase();
+    } else if (decodedText.match(/AF[A-Z0-9]+/i)) {
+      // Code de réservation direct (AF1368C426, etc.)
+      const match = decodedText.match(/AF[A-Z0-9]{6,}/i);
       if (match) code = match[0].toUpperCase();
     }
-    
+
     // Stop scanning and validate
     stopScanning();
     if (code) {
-      onValidate(code);
+      onValidate(code.trim());
     }
   };
 
@@ -262,15 +273,25 @@ export const QRScannerModal = ({ onClose, onValidate, scanResult, scanError, onM
           <button onClick={handleClose} className="text-2xl text-white hover:text-purple-400">×</button>
         </div>
         
-        {/* Success Result */}
+        {/* Success Result — V156: gère réservation ET abonnement */}
         {scanResult?.success && (
           <div className="p-4 rounded-lg bg-green-600/30 border border-green-500 mb-4 animate-pulse">
             <div className="flex items-center gap-3">
               <span className="text-5xl">✅</span>
               <div>
-                <p className="text-white font-bold text-xl">Ticket validé !</p>
+                <p className="text-white font-bold text-xl">
+                  {scanResult.subscriptionInfo ? 'Séance validée !' : 'Ticket validé !'}
+                </p>
                 <p className="text-green-300 text-lg">{scanResult.reservation?.userName}</p>
                 <p className="text-green-300 text-sm">{scanResult.reservation?.reservationCode}</p>
+                {scanResult.subscriptionInfo && (
+                  <p className="text-green-200 text-sm font-bold mt-1">
+                    {scanResult.subscriptionInfo.remaining}/{scanResult.subscriptionInfo.total} séances restantes
+                  </p>
+                )}
+                {scanResult.message && !scanResult.subscriptionInfo && (
+                  <p className="text-green-200 text-xs mt-1">{scanResult.message}</p>
+                )}
               </div>
             </div>
           </div>

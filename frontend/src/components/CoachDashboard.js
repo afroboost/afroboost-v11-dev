@@ -1604,24 +1604,44 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   };
 
   // Validate reservation by code (for QR scanner)
+  // V156: Validation unifiée QR — gère codes réservation ET codes abonnement
   const validateReservation = async (code) => {
     try {
-      const response = await axios.post(`${API}/reservations/${code}/validate`);
-      if (response.data.success) {
-        setScanResult({ success: true, reservation: response.data.reservation });
-        // Update local state
-        setReservations(reservations.map(r => 
-          r.reservationCode === code ? { ...r, validated: true } : r
-        ));
-        // Auto-close after 3 seconds
+      const response = await axios.post(`${API}/qr/scan-validate`, { code });
+      const data = response.data;
+
+      if (data.success) {
+        if (data.type === 'reservation') {
+          // Code de réservation classique
+          setScanResult({ success: true, reservation: data.reservation });
+          setReservations(reservations.map(r =>
+            r.reservationCode === code ? { ...r, validated: true } : r
+          ));
+        } else if (data.type === 'subscription') {
+          // Code d'abonnement — afficher les infos abonné
+          setScanResult({
+            success: true,
+            reservation: {
+              userName: data.subscriber?.name || 'Abonné',
+              reservationCode: code,
+            },
+            subscriptionInfo: data.subscriber,
+            message: data.message,
+          });
+        }
+        // Auto-close after 4 seconds
         setTimeout(() => {
           setShowScanner(false);
           setScanResult(null);
-        }, 3000);
+        }, 4000);
+      } else {
+        // Réponse 200 mais success=false (ex: déjà validé, plus de séances)
+        setScanError(data.message || 'Validation impossible');
+        setTimeout(() => setScanError(null), 4000);
       }
     } catch (err) {
       setScanError(err.response?.data?.detail || 'Code non trouvé');
-      setTimeout(() => setScanError(null), 3000);
+      setTimeout(() => setScanError(null), 4000);
     }
   };
 
