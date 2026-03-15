@@ -6222,6 +6222,118 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   setCourses={setCourses}
                   section="audio"
                 />
+
+                {/* v154: Section Emojis Personnalisés */}
+                <div style={{
+                  borderRadius: '16px',
+                  padding: '20px',
+                  background: 'linear-gradient(180deg, rgba(15,5,25,0.6) 0%, rgba(5,0,15,0.8) 100%)',
+                  border: '1px solid rgba(217,28,210,0.2)',
+                  marginTop: '20px'
+                }}>
+                  <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '10px', margin: '0 0 12px 0' }}>
+                    <span style={{ fontSize: '24px' }}>😊</span> Emojis Personnalisés
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: 'rgba(217,28,210,0.7)', background: 'rgba(217,28,210,0.1)', padding: '2px 8px', borderRadius: '8px' }}>
+                      {customEmojis.length} emoji{customEmojis.length !== 1 ? 's' : ''}
+                    </span>
+                  </h2>
+                  <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: '0 0 16px 0' }}>
+                    Uploadez vos propres emojis. Ils apparaîtront dans le chat de vos abonnés sous l'onglet ⭐ Coach.
+                  </p>
+
+                  {/* Upload form */}
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <input
+                      type="text"
+                      placeholder="Nom de l'emoji"
+                      value={newEmojiName}
+                      onChange={(e) => setNewEmojiName(e.target.value)}
+                      className="neon-input"
+                      style={{ padding: '10px 14px', borderRadius: '10px', fontSize: '13px', flex: '1', minWidth: '120px' }}
+                    />
+                    <input
+                      type="file"
+                      accept="image/png,image/jpg,image/jpeg,image/gif,image/webp"
+                      ref={emojiInputRef}
+                      onChange={(e) => {
+                        if (e.target.files[0] && newEmojiName.trim()) {
+                          uploadCustomEmoji(e.target.files[0]);
+                        } else if (e.target.files[0]) {
+                          alert("Veuillez d'abord entrer un nom pour l'emoji");
+                          e.target.value = "";
+                        }
+                      }}
+                      style={{ display: 'none' }}
+                    />
+                    <button
+                      onClick={() => {
+                        if (!newEmojiName.trim()) {
+                          alert("Veuillez entrer un nom pour l'emoji");
+                          return;
+                        }
+                        emojiInputRef.current?.click();
+                      }}
+                      style={{
+                        padding: '10px 20px',
+                        borderRadius: '10px',
+                        background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                        border: 'none',
+                        color: '#fff',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      📤 Uploader
+                    </button>
+                  </div>
+
+                  {/* Emoji grid */}
+                  {customEmojis.length > 0 ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))', gap: '8px' }}>
+                      {customEmojis.map((emoji) => (
+                        <div
+                          key={emoji.id}
+                          style={{
+                            background: 'rgba(255,255,255,0.05)',
+                            borderRadius: '10px',
+                            padding: '8px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: '4px',
+                            position: 'relative'
+                          }}
+                        >
+                          <img
+                            src={emoji.image_data}
+                            alt={emoji.name}
+                            style={{ width: '40px', height: '40px', objectFit: 'contain' }}
+                          />
+                          <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)', textAlign: 'center', wordBreak: 'break-all' }}>
+                            {emoji.name}
+                          </span>
+                          <button
+                            onClick={() => deleteCustomEmoji(emoji.id)}
+                            style={{
+                              position: 'absolute', top: '2px', right: '2px',
+                              width: '18px', height: '18px', borderRadius: '50%',
+                              background: 'rgba(239,68,68,0.8)', border: 'none',
+                              color: '#fff', fontSize: '10px', cursor: 'pointer',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center'
+                            }}
+                            title="Supprimer"
+                          >✕</button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: '20px', color: 'rgba(255,255,255,0.3)', fontSize: '13px' }}>
+                      Aucun emoji personnalisé. Uploadez votre premier emoji ci-dessus !
+                    </div>
+                  )}
+                </div>
               </>
             )}
 

@@ -165,7 +165,7 @@ const CategoryTab = memo(({ icon, label, isActive, onClick }) => (
 ));
 CategoryTab.displayName = 'CategoryTab';
 
-const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose, position }) => {
+const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose, position, customEmojis = [] }) => {
   const [activeCategory, setActiveCategory] = useState('expressions');
 
   if (!isOpen) return null;
@@ -181,6 +181,7 @@ const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose, position }) => {
 
   const currentCategory = EMOJI_CATEGORIES[activeCategory];
   const isSwahili = activeCategory === 'swahili';
+  const isCoachCustom = activeCategory === 'coach_custom';
 
   // Determine position style based on context (dashboard vs widget)
   const posStyle = position === 'above-input'
@@ -263,6 +264,16 @@ const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose, position }) => {
           scrollBehavior: 'smooth',
         }}
       >
+        {/* v154: Onglet Coach custom en premier si des emojis existent */}
+        {customEmojis.length > 0 && (
+          <CategoryTab
+            key="coach_custom"
+            icon="⭐"
+            label="Coach"
+            isActive={activeCategory === 'coach_custom'}
+            onClick={() => setActiveCategory('coach_custom')}
+          />
+        )}
         {Object.entries(EMOJI_CATEGORIES).map(([key, category]) => (
           <CategoryTab
             key={key}
@@ -287,21 +298,53 @@ const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose, position }) => {
           ),
         }}
       >
-        {isSwahili
-          ? currentCategory.emojis.map((phrase, index) => (
-              <SwahiliButton
-                key={`swahili-${index}`}
-                phrase={phrase}
-                onSelect={handleSelectEmoji}
-              />
+        {/* v154: Coach custom emojis tab */}
+        {isCoachCustom
+          ? customEmojis.map((emoji, index) => (
+              <button
+                key={`coach-${index}`}
+                onClick={() => handleSelectEmoji(`[emoji:${emoji.id}]`)}
+                style={{
+                  border: '1px solid rgba(217, 28, 210, 0.15)',
+                  background: 'rgba(217, 28, 210, 0.06)',
+                  cursor: 'pointer',
+                  padding: '6px',
+                  borderRadius: '8px',
+                  transition: 'all 0.2s ease',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '48px',
+                  height: '48px',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(217, 28, 210, 0.2)';
+                  e.currentTarget.style.transform = 'scale(1.1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(217, 28, 210, 0.06)';
+                  e.currentTarget.style.transform = 'scale(1)';
+                }}
+                title={emoji.name}
+              >
+                <img src={emoji.image_data} alt={emoji.name} style={{ width: '32px', height: '32px', objectFit: 'contain' }} />
+              </button>
             ))
-          : currentCategory.emojis.map((emoji, index) => (
-              <EmojiButton
-                key={`${activeCategory}-${index}`}
-                emoji={emoji}
-                onSelect={handleSelectEmoji}
-              />
-            ))
+          : isSwahili
+            ? currentCategory.emojis.map((phrase, index) => (
+                <SwahiliButton
+                  key={`swahili-${index}`}
+                  phrase={phrase}
+                  onSelect={handleSelectEmoji}
+                />
+              ))
+            : currentCategory.emojis.map((emoji, index) => (
+                <EmojiButton
+                  key={`${activeCategory}-${index}`}
+                  emoji={emoji}
+                  onSelect={handleSelectEmoji}
+                />
+              ))
         }
       </div>
 

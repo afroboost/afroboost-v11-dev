@@ -29,7 +29,6 @@ import {
   playSoundIfAllowed,
   SOUND_TYPES 
 } from '../services/SoundManager';
-import EmojiPicker from './EmojiPicker';
 import AfricanEmojiPicker from './chat/AfricanEmojiPicker';
 import SubscriberForm from './chat/SubscriberForm';
 import OnboardingTunnel from './chat/OnboardingTunnel';
@@ -1180,8 +1179,15 @@ export const ChatWidget = () => {
   const [coachSessions, setCoachSessions] = useState([]); // Liste des sessions pour le coach
   const [selectedCoachSession, setSelectedCoachSession] = useState(null); // Session sélectionnée par le coach
   const [isFullscreen, setIsFullscreen] = useState(getInitialFullscreen); // Mode plein écran (ABONNÉ = activé)
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false); // Sélecteur d'emojis (composant EmojiPicker)
-  const [showAfricanEmojiPicker, setShowAfricanEmojiPicker] = useState(false); // Sélecteur d'emojis Africains
+  const [showAfricanEmojiPicker, setShowAfricanEmojiPicker] = useState(false); // v154: Sélecteur d'emojis unifié
+  const [coachCustomEmojis, setCoachCustomEmojis] = useState([]); // v154: Emojis personnalisés du coach
+
+  // v154: Charger les emojis personnalisés du coach
+  useEffect(() => {
+    axios.get(`${API}/chat/emojis`).then(res => {
+      if (Array.isArray(res.data)) setCoachCustomEmojis(res.data);
+    }).catch(() => {});
+  }, []);
 
   // === FORMULAIRE ABONNÉ (4 champs: Nom, WhatsApp, Email, Code Promo) ===
   const [showSubscriberForm, setShowSubscriberForm] = useState(false); // Afficher le formulaire abonné
@@ -6479,47 +6485,23 @@ export const ChatWidget = () => {
                 >
                   {/* === GAUCHE: Emoji + Réservations === */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                    {/* === SÉLECTEUR D'EMOJIS (Composant externe) === */}
-                    <EmojiPicker
-                      isOpen={showEmojiPicker}
-                      onClose={() => setShowEmojiPicker(false)}
-                      onSelect={insertEmoji}
-                      position="bottom"
-                    />
-
-                    {/* === SÉLECTEUR D'EMOJIS AFRICAINS === */}
+                    {/* v154: Sélecteur d'emojis unifié (Africain + Coach custom) */}
                     <AfricanEmojiPicker
                       isOpen={showAfricanEmojiPicker}
                       onSelect={(emoji) => {
-                        setInputMessage(prev => prev + emoji);
+                        // Si c'est un tag [emoji:...], l'insérer tel quel
+                        if (typeof emoji === 'string' && emoji.startsWith('[emoji:')) {
+                          setInputMessage(prev => prev + emoji);
+                        } else {
+                          setInputMessage(prev => prev + emoji);
+                        }
                         setShowAfricanEmojiPicker(false);
                       }}
                       onClose={() => setShowAfricanEmojiPicker(false)}
+                      customEmojis={coachCustomEmojis}
                     />
-                    
-                    {/* Bouton Emoji */}
-                    <button
-                      type="button"
-                      onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                      style={{
-                        width: '40px',
-                        height: '40px',
-                        borderRadius: '50%',
-                        background: showEmojiPicker ? '#9333ea' : 'rgba(255,255,255,0.1)',
-                        border: 'none',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                        fontSize: '18px'
-                      }}
-                      data-testid="emoji-btn"
-                    >
-                      😊
-                    </button>
 
-                    {/* Bouton African Emoji Picker — V143: smiley icon */}
+                    {/* v154: Un seul bouton emoji — personnage noir */}
                     <button
                       type="button"
                       onClick={() => setShowAfricanEmojiPicker(!showAfricanEmojiPicker)}
@@ -6534,12 +6516,12 @@ export const ChatWidget = () => {
                         alignItems: 'center',
                         justifyContent: 'center',
                         flexShrink: 0,
-                        fontSize: '18px'
+                        fontSize: '20px'
                       }}
-                      data-testid="african-emoji-btn"
-                      title="Émojis Africains & Swahili"
+                      data-testid="emoji-btn"
+                      title="Émojis"
                     >
-                      😜
+                      😊🏿
                     </button>
 
                     {/* v9.3.7: Icône Calendrier (Réservation) - TOUJOURS VISIBLE pour tous les utilisateurs */}
