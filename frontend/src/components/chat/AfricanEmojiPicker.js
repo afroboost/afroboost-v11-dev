@@ -1,32 +1,64 @@
-// AfricanEmojiPicker.js — African-themed emoji picker component
-// Dark theme (#1a1a2e) with cultural emojis and expressions
-// Categories: Expressions, Danses & Musique, Sport & Énergie, Coeur & Amour, Afrique, Réactions
+// AfricanEmojiPicker.js — V143: African-themed emoji picker with Swahili greetings
+// Dark theme (#1a1a2e) with cultural emojis, expressions, and Swahili phrases
+// Categories use emoji icons in tabs (not text labels)
 
 import React, { useState, memo } from 'react';
 import { X } from 'lucide-react';
 
 const EMOJI_CATEGORIES = {
   expressions: {
+    icon: '😊',
     label: 'Expressions',
     emojis: ['😊', '😄', '😂', '🤣', '😍', '🥰', '😘', '😎', '🤩', '😇', '🙏🏿', '👏🏿', '💪🏿', '🤝🏿', '👊🏿', '✊🏿', '🤟🏿', '👋🏿', '🙌🏿', '💃🏿'],
   },
+  swahili: {
+    icon: '🗣️',
+    label: 'Swahili',
+    emojis: [
+      { text: 'Jambo!', desc: 'Bonjour' },
+      { text: 'Habari?', desc: 'Comment ça va?' },
+      { text: 'Asante', desc: 'Merci' },
+      { text: 'Karibu', desc: 'Bienvenue' },
+      { text: 'Pole pole', desc: 'Doucement' },
+      { text: 'Hakuna Matata', desc: 'Pas de souci' },
+      { text: 'Sawa sawa', desc: "D'accord" },
+      { text: 'Mambo!', desc: 'Salut!' },
+      { text: 'Harambee!', desc: 'Ensemble!' },
+      { text: 'Ujamaa', desc: 'Solidarité' },
+      { text: 'Umoja', desc: 'Unité' },
+      { text: 'Tutaonana', desc: 'À bientôt' },
+      { text: 'Rafiki', desc: 'Ami(e)' },
+      { text: 'Amani', desc: 'Paix' },
+      { text: 'Upendo', desc: 'Amour' },
+      { text: 'Kwaheri', desc: 'Au revoir' },
+      { text: 'Ndiyo!', desc: 'Oui!' },
+      { text: 'Tuko pamoja', desc: 'On est ensemble' },
+      { text: 'Maisha', desc: 'La vie' },
+      { text: 'Nguvu', desc: 'Force' },
+    ],
+  },
   dances: {
-    label: 'Danses & Musique',
+    icon: '🥁',
+    label: 'Musique',
     emojis: ['💃🏿', '🕺🏿', '🎶', '🎵', '🥁', '🎺', '🎧', '🎤', '🎼', '🪘', '🎉', '🎊', '🪩', '🎭', '🎪'],
   },
   sport: {
-    label: 'Sport & Énergie',
+    icon: '💪🏿',
+    label: 'Énergie',
     emojis: ['🏋🏿', '🏃🏿‍♂️', '🏃🏿‍♀️', '💪🏿', '🔥', '⚡', '💥', '🏆', '🥇', '🎯', '💫', '✨', '🌟', '⭐', '🚀'],
   },
   love: {
-    label: 'Coeur & Amour',
+    icon: '❤️',
+    label: 'Amour',
     emojis: ['❤️', '🧡', '💛', '💚', '💜', '🖤', '💗', '💖', '💝', '💞', '🫶🏿', '💕', '💓', '🤎', '♥️'],
   },
   africa: {
+    icon: '🌍',
     label: 'Afrique',
     emojis: ['🌍', '🦁', '🐘', '🦒', '🦓', '🌴', '🌺', '🥭', '🍌', '🥥', '☀️', '🌅', '🏔️', '🛖', '🧺'],
   },
   reactions: {
+    icon: '👍🏿',
     label: 'Réactions',
     emojis: ['👍🏿', '👎🏿', '👀', '😮', '🫣', '😤', '😢', '🥺', '🤔', '😏', '🙄', '💯', '‼️', '❓', '🆗'],
   },
@@ -50,12 +82,12 @@ const EmojiButton = memo(({ emoji, onSelect }) => (
       height: '40px',
     }}
     onMouseEnter={(e) => {
-      e.target.style.background = 'rgba(217, 28, 210, 0.2)';
-      e.target.style.transform = 'scale(1.15)';
+      e.currentTarget.style.background = 'rgba(217, 28, 210, 0.2)';
+      e.currentTarget.style.transform = 'scale(1.15)';
     }}
     onMouseLeave={(e) => {
-      e.target.style.background = 'transparent';
-      e.target.style.transform = 'scale(1)';
+      e.currentTarget.style.background = 'transparent';
+      e.currentTarget.style.transform = 'scale(1)';
     }}
   >
     {emoji}
@@ -63,38 +95,77 @@ const EmojiButton = memo(({ emoji, onSelect }) => (
 ));
 EmojiButton.displayName = 'EmojiButton';
 
-const CategoryTab = memo(({ label, isActive, onClick }) => (
+// Swahili phrase button - wider, shows text + translation
+const SwahiliButton = memo(({ phrase, onSelect }) => (
+  <button
+    onClick={() => onSelect(phrase.text)}
+    style={{
+      border: '1px solid rgba(217, 28, 210, 0.15)',
+      background: 'rgba(217, 28, 210, 0.06)',
+      cursor: 'pointer',
+      padding: '8px 12px',
+      borderRadius: '10px',
+      transition: 'all 0.2s ease',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'flex-start',
+      gap: '2px',
+      width: '100%',
+    }}
+    onMouseEnter={(e) => {
+      e.currentTarget.style.background = 'rgba(217, 28, 210, 0.15)';
+      e.currentTarget.style.borderColor = 'rgba(217, 28, 210, 0.4)';
+      e.currentTarget.style.transform = 'scale(1.02)';
+    }}
+    onMouseLeave={(e) => {
+      e.currentTarget.style.background = 'rgba(217, 28, 210, 0.06)';
+      e.currentTarget.style.borderColor = 'rgba(217, 28, 210, 0.15)';
+      e.currentTarget.style.transform = 'scale(1)';
+    }}
+  >
+    <span style={{ color: '#fff', fontSize: '14px', fontWeight: '600' }}>{phrase.text}</span>
+    <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px' }}>{phrase.desc}</span>
+  </button>
+));
+SwahiliButton.displayName = 'SwahiliButton';
+
+const CategoryTab = memo(({ icon, label, isActive, onClick }) => (
   <button
     onClick={onClick}
+    title={label}
     style={{
       border: 'none',
       background: isActive ? '#D91CD2' : 'rgba(255,255,255,0.05)',
       color: '#fff',
-      padding: '8px 16px',
-      borderRadius: '6px',
+      padding: '6px 10px',
+      borderRadius: '8px',
       cursor: 'pointer',
-      fontSize: '13px',
-      fontWeight: isActive ? '600' : '500',
+      fontSize: '18px',
       transition: 'all 0.2s ease',
       whiteSpace: 'nowrap',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      minWidth: '36px',
+      height: '36px',
     }}
     onMouseEnter={(e) => {
       if (!isActive) {
-        e.target.style.background = 'rgba(255,255,255,0.1)';
+        e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
       }
     }}
     onMouseLeave={(e) => {
       if (!isActive) {
-        e.target.style.background = 'rgba(255,255,255,0.05)';
+        e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
       }
     }}
   >
-    {label}
+    {icon}
   </button>
 ));
 CategoryTab.displayName = 'CategoryTab';
 
-const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose }) => {
+const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose, position }) => {
   const [activeCategory, setActiveCategory] = useState('expressions');
 
   if (!isOpen) return null;
@@ -108,14 +179,18 @@ const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose }) => {
     }
   };
 
-  const currentEmojis = EMOJI_CATEGORIES[activeCategory]?.emojis || [];
+  const currentCategory = EMOJI_CATEGORIES[activeCategory];
+  const isSwahili = activeCategory === 'swahili';
+
+  // Determine position style based on context (dashboard vs widget)
+  const posStyle = position === 'above-input'
+    ? { position: 'absolute', bottom: '100%', left: '0', marginBottom: '8px' }
+    : { position: 'fixed', bottom: '80px', right: '16px' };
 
   return (
     <div
       style={{
-        position: 'fixed',
-        bottom: '80px',
-        right: '16px',
+        ...posStyle,
         zIndex: 9999,
         background: '#1a1a2e',
         border: '1px solid rgba(217, 28, 210, 0.2)',
@@ -123,12 +198,13 @@ const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose }) => {
         boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
         backdropFilter: 'blur(8px)',
         padding: '12px',
-        width: '280px',
+        width: '300px',
         maxHeight: '400px',
         display: 'flex',
         flexDirection: 'column',
         animation: 'slideUp 0.2s ease',
       }}
+      onClick={(e) => e.stopPropagation()}
     >
       {/* Header with close button */}
       <div
@@ -136,7 +212,7 @@ const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose }) => {
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          marginBottom: '12px',
+          marginBottom: '10px',
           paddingBottom: '8px',
           borderBottom: '1px solid rgba(255,255,255,0.1)',
         }}
@@ -148,7 +224,7 @@ const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose }) => {
             fontWeight: '600',
           }}
         >
-          Émojis Africains
+          {isSwahili ? '🗣️ Salutations Swahili' : '✨ Émojis Africains'}
         </span>
         <button
           onClick={onClose}
@@ -166,22 +242,22 @@ const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose }) => {
             transition: 'all 0.2s ease',
           }}
           onMouseEnter={(e) => {
-            e.target.style.background = 'rgba(217, 28, 210, 0.3)';
+            e.currentTarget.style.background = 'rgba(217, 28, 210, 0.3)';
           }}
           onMouseLeave={(e) => {
-            e.target.style.background = 'rgba(255,255,255,0.05)';
+            e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
           }}
         >
           <X size={16} />
         </button>
       </div>
 
-      {/* Category Tabs */}
+      {/* Category Tabs — emoji icons */}
       <div
         style={{
           display: 'flex',
-          gap: '6px',
-          marginBottom: '12px',
+          gap: '4px',
+          marginBottom: '10px',
           overflowX: 'auto',
           paddingBottom: '4px',
           scrollBehavior: 'smooth',
@@ -190,6 +266,7 @@ const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose }) => {
         {Object.entries(EMOJI_CATEGORIES).map(([key, category]) => (
           <CategoryTab
             key={key}
+            icon={category.icon}
             label={category.label}
             isActive={activeCategory === key}
             onClick={() => setActiveCategory(key)}
@@ -197,28 +274,38 @@ const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose }) => {
         ))}
       </div>
 
-      {/* Emoji Grid */}
+      {/* Content Grid */}
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(5, 1fr)',
-          gap: '4px',
           overflowY: 'auto',
           overflowX: 'hidden',
-          maxHeight: '300px',
+          maxHeight: '280px',
           padding: '4px',
+          ...(isSwahili
+            ? { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }
+            : { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px' }
+          ),
         }}
       >
-        {currentEmojis.map((emoji, index) => (
-          <EmojiButton
-            key={`${activeCategory}-${index}`}
-            emoji={emoji}
-            onSelect={handleSelectEmoji}
-          />
-        ))}
+        {isSwahili
+          ? currentCategory.emojis.map((phrase, index) => (
+              <SwahiliButton
+                key={`swahili-${index}`}
+                phrase={phrase}
+                onSelect={handleSelectEmoji}
+              />
+            ))
+          : currentCategory.emojis.map((emoji, index) => (
+              <EmojiButton
+                key={`${activeCategory}-${index}`}
+                emoji={emoji}
+                onSelect={handleSelectEmoji}
+              />
+            ))
+        }
       </div>
 
-      {/* Add CSS animation via style tag if needed */}
+      {/* CSS animation */}
       <style>{`
         @keyframes slideUp {
           from {

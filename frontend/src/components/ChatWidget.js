@@ -6362,7 +6362,7 @@ export const ChatWidget = () => {
                       😊
                     </button>
 
-                    {/* Bouton African Emoji Picker */}
+                    {/* Bouton African Emoji Picker — V143: smiley icon */}
                     <button
                       type="button"
                       onClick={() => setShowAfricanEmojiPicker(!showAfricanEmojiPicker)}
@@ -6370,7 +6370,7 @@ export const ChatWidget = () => {
                         width: '40px',
                         height: '40px',
                         borderRadius: '50%',
-                        background: showAfricanEmojiPicker ? '#9333ea' : 'rgba(255,255,255,0.1)',
+                        background: showAfricanEmojiPicker ? '#D91CD2' : 'rgba(255,255,255,0.1)',
                         border: 'none',
                         cursor: 'pointer',
                         display: 'flex',
@@ -6380,8 +6380,9 @@ export const ChatWidget = () => {
                         fontSize: '18px'
                       }}
                       data-testid="african-emoji-btn"
+                      title="Émojis Africains & Swahili"
                     >
-                      🌍
+                      😜
                     </button>
 
                     {/* v9.3.7: Icône Calendrier (Réservation) - TOUJOURS VISIBLE pour tous les utilisateurs */}

@@ -3,81 +3,352 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Afroboost — Reset</title>
+    <title>Afroboost — Mise à jour système</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-        .container { text-align: center; max-width: 400px; }
-        h1 { font-size: 24px; margin-bottom: 16px; }
-        p { font-size: 14px; color: #aaa; margin-bottom: 24px; line-height: 1.5; }
-        .status { background: #111; border: 1px solid #333; border-radius: 12px; padding: 20px; margin-bottom: 20px; text-align: left; font-size: 13px; line-height: 1.8; }
-        .ok { color: #4ade80; }
-        .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #555; border-top-color: #d91cd2; border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 8px; vertical-align: middle; }
+        body {
+            background: #000000;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+            overflow-x: hidden;
+        }
+        body::before {
+            content: '';
+            position: fixed;
+            top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background: radial-gradient(ellipse at center, rgba(217, 28, 210, 0.08) 0%, transparent 60%);
+            animation: pulse-bg 4s ease-in-out infinite;
+            z-index: 0;
+        }
+        @keyframes pulse-bg {
+            0%, 100% { opacity: 0.3; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.1); }
+        }
+        .container {
+            text-align: center;
+            max-width: 440px;
+            position: relative;
+            z-index: 1;
+        }
+        .logo {
+            width: 80px; height: 80px;
+            margin: 0 auto 24px;
+            border-radius: 20px;
+            animation: logo-glow 2s ease-in-out infinite;
+        }
+        @keyframes logo-glow {
+            0%, 100% { filter: drop-shadow(0 0 8px rgba(217, 28, 210, 0.4)); }
+            50% { filter: drop-shadow(0 0 20px rgba(217, 28, 210, 0.8)); }
+        }
+        h1 {
+            font-size: 22px; font-weight: 700; margin-bottom: 8px;
+            background: linear-gradient(135deg, #fff 0%, #D91CD2 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+        }
+        .subtitle {
+            font-size: 14px; color: rgba(255,255,255,0.5); margin-bottom: 28px; line-height: 1.5;
+        }
+        .progress-container {
+            background: rgba(255,255,255,0.06); border-radius: 100px; height: 6px;
+            margin-bottom: 24px; overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%; width: 0%;
+            background: linear-gradient(90deg, #8b5cf6, #D91CD2);
+            border-radius: 100px; transition: width 0.4s ease;
+        }
+        .status-box {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(217,28,210,0.15);
+            border-radius: 16px; padding: 16px 20px;
+            margin-bottom: 20px; text-align: left;
+            font-size: 13px; line-height: 2; min-height: 60px;
+            max-height: 220px; overflow-y: auto;
+        }
+        .status-item { display: flex; align-items: center; gap: 10px; }
+        .status-item.ok { color: #4ade80; }
+        .status-item.err { color: #f87171; }
+        .status-item.pending { color: rgba(255,255,255,0.35); }
+        .spinner {
+            display: inline-block; width: 14px; height: 14px;
+            border: 2px solid rgba(217,28,210,0.2); border-top-color: #D91CD2;
+            border-radius: 50%; animation: spin 0.6s linear infinite; flex-shrink: 0;
+        }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .btn { display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #8b5cf6, #d91cd2); color: #fff; font-size: 16px; font-weight: 600; border: none; border-radius: 12px; cursor: pointer; text-decoration: none; margin-top: 12px; }
+        .redirect-msg {
+            font-size: 13px; color: rgba(255,255,255,0.4); margin-top: 12px; display: none;
+        }
+        .redirect-msg .countdown { color: #D91CD2; font-weight: 600; }
+        .btn {
+            display: inline-block; margin: 10px 6px 0;
+            padding: 14px 32px;
+            background: linear-gradient(135deg, #8b5cf6, #D91CD2);
+            color: #fff; font-size: 15px; font-weight: 600;
+            border: none; border-radius: 12px; cursor: pointer;
+            text-decoration: none; transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 20px rgba(217,28,210,0.4);
+        }
+        .btn-danger {
+            background: linear-gradient(135deg, #dc2626, #b91c1c);
+            box-shadow: 0 4px 24px rgba(220, 38, 38, 0.4);
+        }
+        .btn-outline {
+            background: transparent;
+            border: 1.5px solid rgba(217,28,210,0.5);
+            color: #D91CD2;
+        }
+        .hidden { display: none; }
+        .section-divider {
+            height: 1px;
+            background: rgba(217,28,210,0.12);
+            margin: 20px 0;
+        }
+        .chrome-reset-box {
+            margin-top: 20px;
+            padding: 20px;
+            background: rgba(220, 38, 38, 0.06);
+            border: 2px solid rgba(220, 38, 38, 0.3);
+            border-radius: 16px;
+            text-align: left;
+        }
+        .chrome-reset-box h3 {
+            font-size: 16px;
+            color: #f87171;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+        .chrome-reset-box ol {
+            font-size: 14px;
+            color: rgba(255,255,255,0.7);
+            line-height: 2.2;
+            padding-left: 22px;
+            margin: 0;
+        }
+        .chrome-reset-box ol strong {
+            color: #D91CD2;
+        }
+        .success-msg {
+            display: none;
+            margin-top: 16px;
+            padding: 14px 20px;
+            background: rgba(74, 222, 128, 0.08);
+            border: 1px solid rgba(74, 222, 128, 0.2);
+            border-radius: 12px;
+            color: #4ade80;
+            font-size: 14px;
+            line-height: 1.5;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Reset Afroboost</h1>
-        <p>Nettoyage complet du cache et du Service Worker...</p>
-        <div class="status" id="status">
-            <div><span class="spinner"></span> Désinscription des Service Workers...</div>
+        <img src="/logo192.png" alt="Afroboost" class="logo" />
+        <h1>Mise à jour V140</h1>
+        <p class="subtitle">Nettoyage du cache en cours. Redémarrage imminent.</p>
+
+        <div class="progress-container">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+
+        <div class="status-box" id="status"></div>
+
+        <p class="redirect-msg" id="redirectMsg">
+            Redirection dans <span class="countdown" id="countdown">3</span>s...
+        </p>
+
+        <div id="btns" class="hidden">
+            <a href="/" class="btn">Ouvrir Afroboost</a>
+        </div>
+
+        <div class="section-divider" id="divider" style="display:none;"></div>
+
+        <!-- V140: SECTION PRINCIPALE — Reset Chrome complet pour débloquer l'installation -->
+        <div id="chromeResetSection" style="display:none;">
+            <div class="chrome-reset-box">
+                <h3>L'app ne s'installe pas ?</h3>
+                <p style="font-size: 13px; color: rgba(255,255,255,0.5); margin-bottom: 14px; text-align: center;">
+                    Chrome garde en mémoire les anciens essais.<br>
+                    Il faut effacer les données Chrome pour ce site :
+                </p>
+                <ol>
+                    <li>Ouvrez <strong>Chrome</strong> sur votre téléphone</li>
+                    <li>Tapez dans la barre d'adresse :<br>
+                        <code style="display:inline-block;margin:4px 0;padding:6px 12px;background:rgba(255,255,255,0.08);border-radius:8px;color:#D91CD2;font-size:13px;user-select:all;-webkit-user-select:all;">chrome://settings/content/all</code>
+                    </li>
+                    <li>Cherchez <strong>afroboost</strong></li>
+                    <li>Appuyez dessus, puis <strong>Supprimer les données</strong></li>
+                    <li>Revenez sur <strong>www.afroboost.com</strong></li>
+                    <li>Le bouton <strong>"Installer"</strong> apparaîtra !</li>
+                </ol>
+            </div>
+
+            <button class="btn btn-danger" id="nuclearBtn" onclick="nuclearReset()" style="margin-top: 16px; width: 100%; font-size: 17px; padding: 18px 24px; text-transform: uppercase; letter-spacing: 0.5px;">
+                RESET TOTAL + OUVRIR AFROBOOST
+            </button>
+            <p style="font-size: 11px; color: rgba(255,255,255,0.3); margin-top: 6px;">
+                Purge SW + caches + stockage, puis ouvre une page fraîche
+            </p>
+        </div>
+
+        <div class="success-msg" id="successMsg">
+            Système purifié. Vous pouvez maintenant réinstaller l'application.
         </div>
     </div>
+
     <script>
+        // ES5 compatible — V140
         var statusEl = document.getElementById('status');
-        function log(msg) {
-            var div = document.createElement('div');
-            div.className = 'ok';
-            div.textContent = '✓ ' + msg;
-            statusEl.appendChild(div);
+        var progressBar = document.getElementById('progressBar');
+        var redirectMsg = document.getElementById('redirectMsg');
+        var countdownEl = document.getElementById('countdown');
+        var btnsEl = document.getElementById('btns');
+        var dividerEl = document.getElementById('divider');
+        var stepsDone = 0;
+        var totalSteps = 4;
+
+        function updateProgress() {
+            stepsDone++;
+            var pct = Math.min(100, Math.round((stepsDone / totalSteps) * 100));
+            progressBar.style.width = pct + '%';
         }
-        (async function() {
+
+        function log(msg, isError) {
+            var div = document.createElement('div');
+            div.className = 'status-item ' + (isError ? 'err' : 'ok');
+            div.innerHTML = (isError ? '<span style="flex-shrink:0">&#10007;</span>' : '<span style="flex-shrink:0">&#10003;</span>') + ' ' + msg;
+            statusEl.appendChild(div);
+            updateProgress();
+        }
+
+        // === NETTOYAGE STANDARD (auto au chargement) ===
+        function doReset() {
+            statusEl.innerHTML = '<div class="status-item pending"><span class="spinner"></span> Initialisation...</div>';
+            var tasks = [];
+
             // 1. Unregister ALL service workers
-            try {
-                if ('serviceWorker' in navigator) {
-                    var regs = await navigator.serviceWorker.getRegistrations();
-                    for (var i = 0; i < regs.length; i++) {
-                        await regs[i].unregister();
-                    }
-                    log(regs.length + ' Service Worker(s) désinscrits');
-                } else {
-                    log('Pas de Service Worker supporté');
-                }
-            } catch(e) { log('SW erreur: ' + e.message); }
+            if ('serviceWorker' in navigator) {
+                tasks.push(
+                    navigator.serviceWorker.getRegistrations().then(function(regs) {
+                        var unregs = regs.map(function(r) { return r.unregister(); });
+                        return Promise.all(unregs).then(function() {
+                            log(regs.length + ' Service Worker(s) supprime(s)');
+                        });
+                    }).catch(function(e) { log('SW: ' + e.message, true); })
+                );
+            } else {
+                log('Service Workers non supportes');
+            }
 
             // 2. Delete ALL caches
-            try {
-                if ('caches' in window) {
-                    var names = await caches.keys();
-                    for (var j = 0; j < names.length; j++) {
-                        await caches.delete(names[j]);
-                    }
-                    log(names.length + ' cache(s) supprimés');
-                } else {
-                    log('Pas de Cache API');
-                }
-            } catch(e) { log('Cache erreur: ' + e.message); }
+            if ('caches' in window) {
+                tasks.push(
+                    caches.keys().then(function(names) {
+                        var dels = names.map(function(n) { return caches.delete(n); });
+                        return Promise.all(dels).then(function() {
+                            log(names.length + ' cache(s) nettoye(s)');
+                        });
+                    }).catch(function(e) { log('Cache: ' + e.message, true); })
+                );
+            }
 
-            // 3. Clear localStorage
-            try {
-                localStorage.clear();
-                log('localStorage vidé');
-            } catch(e) { log('localStorage erreur: ' + e.message); }
+            // 3. Clear storage
+            try { localStorage.clear(); log('Stockage local reinitialise'); }
+            catch(e) { log('Stockage: ' + e.message, true); }
+            try { sessionStorage.clear(); } catch(e) {}
 
-            // 4. Clear sessionStorage
-            try {
-                sessionStorage.clear();
-                log('sessionStorage vidé');
-            } catch(e) {}
+            // 4. Clear IndexedDB
+            if (window.indexedDB && window.indexedDB.databases) {
+                tasks.push(
+                    window.indexedDB.databases().then(function(dbs) {
+                        dbs.forEach(function(db) {
+                            window.indexedDB.deleteDatabase(db.name);
+                        });
+                        log(dbs.length + ' base(s) IndexedDB nettoyee(s)');
+                    }).catch(function(e) { log('IndexedDB: ' + e.message, true); })
+                );
+            }
 
-            // 5. Done — redirect
-            log('Nettoyage terminé ! Redirection dans 3s...');
-            setTimeout(function() {
-                window.location.replace('/');
-            }, 3000);
-        })();
+            // Supprimer le spinner
+            var spinnerDiv = statusEl.querySelector('.pending');
+            if (spinnerDiv) statusEl.removeChild(spinnerDiv);
+
+            Promise.all(tasks).then(function() {
+                progressBar.style.width = '100%';
+                showAllSections();
+            }).catch(function() {
+                progressBar.style.width = '100%';
+                showAllSections();
+            });
+        }
+
+        function showAllSections() {
+            btnsEl.classList.remove('hidden');
+            dividerEl.style.display = 'block';
+            document.getElementById('chromeResetSection').style.display = 'block';
+        }
+
+        // V140: NUCLEAR RESET — purge maximale puis redirection fraîche
+        function nuclearReset() {
+            var btn = document.getElementById('nuclearBtn');
+            btn.disabled = true;
+            btn.textContent = 'PURGE EN COURS...';
+            btn.style.opacity = '0.6';
+
+            var tasks = [];
+
+            // 1. Désenregistrer TOUS les Service Workers
+            if ('serviceWorker' in navigator) {
+                tasks.push(
+                    navigator.serviceWorker.getRegistrations().then(function(regs) {
+                        return Promise.all(regs.map(function(r) { return r.unregister(); }));
+                    }).catch(function() {})
+                );
+            }
+
+            // 2. Purger TOUS les caches
+            if ('caches' in window) {
+                tasks.push(
+                    caches.keys().then(function(names) {
+                        return Promise.all(names.map(function(n) { return caches.delete(n); }));
+                    }).catch(function() {})
+                );
+            }
+
+            // 3. Vider tout le storage
+            try { localStorage.clear(); } catch(e) {}
+            try { sessionStorage.clear(); } catch(e) {}
+
+            // 4. Purger IndexedDB
+            if (window.indexedDB && window.indexedDB.databases) {
+                tasks.push(
+                    window.indexedDB.databases().then(function(dbs) {
+                        dbs.forEach(function(db) { window.indexedDB.deleteDatabase(db.name); });
+                    }).catch(function() {})
+                );
+            }
+
+            // 5. Rediriger vers une page fraîche
+            Promise.all(tasks).then(function() {
+                btn.textContent = 'REDIRECTION...';
+                // Force fresh load sans SW
+                window.location.replace('/?fresh=' + Date.now());
+            }).catch(function() {
+                btn.textContent = 'REDIRECTION...';
+                window.location.replace('/?fresh=' + Date.now());
+            });
+        }
+
+        // Lancer le nettoyage standard au chargement
+        doReset();
     </script>
 </body>
 </html>

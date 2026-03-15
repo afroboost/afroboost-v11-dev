@@ -371,7 +371,16 @@ const ChatBubble = memo(({ message, coachAvatar, coachName, memberAvatar, member
   const isSystem = message.type === 'system' || message.type === 'info';
   const isOwnMessage = currentUserId && message.sender_id === currentUserId;
 
-  if (isSystem) return <SystemBubble message={message} />;
+  if (isSystem) {
+    // V143: Filter out noisy mode-switching system messages
+    const sysText = (message.text || '').toLowerCase();
+    if (sysText.includes('humain a pris') || sysText.includes('ia est de retour') ||
+        sysText.includes('mode humain') || sysText.includes('mode ia') ||
+        sysText.includes('conseiller humain') || sysText.includes('assistant ia')) {
+      return null;
+    }
+    return <SystemBubble message={message} />;
+  }
 
   if (isCoach) {
     return (

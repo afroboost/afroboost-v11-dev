@@ -37,6 +37,7 @@ const LEAD_TYPES = [
   { value: 'participant', label: 'Participant', color: '#22c55e', icon: '🏃' },
   { value: 'partner', label: 'Partenaire', color: '#f59e0b', icon: '🤝' },
   { value: 'collaboration', label: 'Collaboration', color: '#3b82f6', icon: '🎯' },
+  { value: 'group', label: 'Groupe', color: '#ec4899', icon: '👥' },
   { value: 'question', label: 'Question', color: '#a78bfa', icon: '❓' },
 ];
 
@@ -985,8 +986,8 @@ const SmartLinksSection = ({
         </div>
       )}
 
-      {/* Links grid — responsive: 1 col mobile, 2 cols desktop */}
-      <div style={{ padding: '16px 20px' }}>
+      {/* V143: Links grid — responsive, scrollable with max-height */}
+      <div style={{ padding: '16px 20px', maxHeight: '500px', overflowY: 'auto' }}>
         {filteredLinks.length === 0 && (
           <div style={{
             textAlign: 'center', padding: '48px 20px',
