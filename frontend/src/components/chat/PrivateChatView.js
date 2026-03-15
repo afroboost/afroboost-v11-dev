@@ -12,6 +12,7 @@
  */
 
 import React, { memo } from 'react';
+import { renderTextWithLinks } from './ChatBubbles'; // V156.3: Liens cliquables
 
 /**
  * Composant de la fenêtre de chat privé
@@ -130,7 +131,7 @@ const PrivateChatView = ({
                 borderRadius: msg.isMine ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
                 fontSize: '13px'
               }}>
-                {msg.text}
+                {renderTextWithLinks(msg.text)}
               </div>
             </div>
           ))

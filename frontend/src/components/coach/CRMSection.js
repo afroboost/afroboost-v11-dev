@@ -8,6 +8,7 @@ import axios from 'axios';
 import { ChevronDown, Trash2, Send, Copy, Check, ExternalLink, Phone, Edit2, Save, X, MessageCircle, Link2, Users, Bell, Zap, Search, RefreshCw, Bot, UserRound, Wifi, WifiOff } from 'lucide-react';
 import SmartLinksSection from './SmartLinksSection'; // v98: Liens Intelligents
 import GroupChatModule from './GroupChatModule'; // v100: Groupes de chat
+import { renderTextWithLinks } from '../chat/ChatBubbles'; // V156.3: Liens cliquables
 import AfricanEmojiPicker from '../chat/AfricanEmojiPicker'; // V143: Emoji picker for coach
 
 // ====== STYLES PREMIUM PARTAGÉS ======
@@ -1857,7 +1858,7 @@ const CRMSection = ({
                               )}
                             </div>
                             <p style={{ fontSize: '13px', margin: 0, lineHeight: '1.5', wordBreak: 'break-word', fontStyle: isDeleted ? 'italic' : 'normal', opacity: isDeleted ? 0.5 : 1 }}>
-                              {isDeleted ? 'Message supprimé' : msgText}
+                              {isDeleted ? 'Message supprimé' : renderTextWithLinks(msgText)}
                             </p>
                             <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.35)', margin: '6px 0 0', textAlign: 'right' }}>
                               {(() => {

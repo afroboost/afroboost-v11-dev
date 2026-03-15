@@ -37,17 +37,17 @@ const PhotoLightbox = ({ src, alt, onClose }) => (
   </div>
 );
 
-// === Helper: Render text with clickable links ===
+// === Helper: Render text with clickable links (shared utility) ===
 const renderTextWithLinks = (text) => {
   if (!text) return null;
 
   // Regex to match URLs (http://, https://, www.)
-  const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+)/g;
-  const parts = text.split(urlRegex);
+  const urlPattern = /(https?:\/\/[^\s<>"{}|\\^`[\]]+|www\.[^\s<>"{}|\\^`[\]]+)/gi;
+  const parts = text.split(urlPattern);
 
   return parts.map((part, index) => {
-    if (urlRegex.test(part)) {
-      // It's a URL
+    // Check if part matches URL pattern (use fresh regex to avoid lastIndex issues)
+    if (/^(https?:\/\/|www\.)/i.test(part)) {
       const href = part.startsWith('http') ? part : `https://${part}`;
       return (
         <a
@@ -60,6 +60,7 @@ const renderTextWithLinks = (text) => {
             textDecoration: 'underline',
             cursor: 'pointer',
           }}
+          onClick={(e) => e.stopPropagation()}
         >
           {part}
         </a>
@@ -407,5 +408,5 @@ const ChatBubble = memo(({ message, coachAvatar, coachName, memberAvatar, member
 });
 ChatBubble.displayName = 'ChatBubble';
 
-export { CoachBubble, MemberBubble, SystemBubble, TypingIndicator, PhotoLightbox, BubbleAvatar };
+export { CoachBubble, MemberBubble, SystemBubble, TypingIndicator, PhotoLightbox, BubbleAvatar, renderTextWithLinks };
 export default ChatBubble;

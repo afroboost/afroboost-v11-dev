@@ -4,6 +4,7 @@
 
 import React, { useState, useEffect, useRef, memo, useCallback } from 'react';
 import { Users, Plus, X, Search, Check, Bot, UserCircle, Trash2, ChevronDown, ChevronUp, Copy, MessageSquare, Send, RefreshCw, Edit2, Save, UserPlus } from 'lucide-react';
+import { renderTextWithLinks } from '../chat/ChatBubbles';
 
 // === AI / Human Toggle Switch ===
 const AiHumanSwitch = memo(({ isAi, onToggle, size = 'normal' }) => {
@@ -205,7 +206,7 @@ const GroupChatPanel = memo(({ group, API, coachEmail, onClose }) => {
                   {isCoach ? 'Vous' : isAI ? 'IA' : (msg.sender_name || 'Membre')}
                 </p>
                 <p style={{ fontSize: '12px', color: '#fff', margin: 0, lineHeight: '1.4', wordBreak: 'break-word' }}>
-                  {msg.content || msg.text || msg.message || ''}
+                  {renderTextWithLinks(msg.content || msg.text || msg.message || '')}
                 </p>
                 <p style={{ fontSize: '9px', color: 'rgba(255,255,255,0.3)', margin: '4px 0 0', textAlign: 'right' }}>
                   {(() => {
