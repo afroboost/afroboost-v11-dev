@@ -260,9 +260,15 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
 
 @promo_router.put("/{code_id}")
 async def update_discount_code(code_id: str, updates: dict):
-    """Met à jour un code promo"""
-    await _db.discount_codes.update_one({"id": code_id}, {"$set": updates})
-    updated = await _db.discount_codes.find_one({"id": code_id}, {"_id": 0})
+    """Met à jour un code promo — cherche par id OU par code"""
+    # Try by id first, then by code (case-insensitive)
+    existing = await _db.discount_codes.find_one({"id": code_id})
+    if not existing:
+        existing = await _db.discount_codes.find_one({"code": {"$regex": f"^{code_id}$", "$options": "i"}})
+    if not existing:
+        return {"error": "Code not found"}
+    await _db.discount_codes.update_one({"_id": existing["_id"]}, {"$set": updates})
+    updated = await _db.discount_codes.find_one({"_id": existing["_id"]}, {"_id": 0})
     return updated
 
 
