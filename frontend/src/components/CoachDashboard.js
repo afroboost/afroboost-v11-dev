@@ -5422,11 +5422,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   <span className="text-white/80 text-xs">Quick</span>
                 </button>
                 
-                {/* Menu Quick Control - FIXÉ pour mobile */}
+                {/* Menu Quick Control - V156.4: Responsive mobile */}
                 {showQuickControl && (
-                  <div 
-                    className="absolute left-1/2 transform -translate-x-1/2 mt-2 w-64 rounded-xl overflow-hidden z-50"
-                    style={{ 
+                  <div
+                    className="fixed sm:absolute left-4 right-4 sm:left-1/2 sm:right-auto sm:transform sm:-translate-x-1/2 mt-2 sm:w-64 rounded-xl overflow-hidden z-50"
+                    style={{
                       background: 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(10,5,20,0.99) 100%)',
                       border: '1px solid rgba(217,28,210,0.3)',
                       boxShadow: '0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(217,28,210,0.2)'
