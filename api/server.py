@@ -1272,10 +1272,13 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
             update_data["duration_unit"] = None
         iap = update_data.get("is_auto_prolong")
         update_data["is_auto_prolong"] = iap not in (False, "false", "0", 0, None)
-        # v152: Trouver l'offre existante (par id ou _id fallback)
+        # v152: Trouver l'offre existante (par id)
         existing = await db.offers.find_one({"id": offer_id})
         if not existing:
             raise HTTPException(status_code=404, detail=f"Offre {offer_id} introuvable")
+        # v152: Préserver coach_id existant (le frontend ne l'envoie pas)
+        if not update_data.get("coach_id") and existing.get("coach_id"):
+            update_data["coach_id"] = existing["coach_id"]
         # v59: Recalculer expiration si durée modifiée
         if update_data.get("duration_value") and update_data.get("duration_unit"):
             created_at = existing.get("created_at") or datetime.utcnow().isoformat()
