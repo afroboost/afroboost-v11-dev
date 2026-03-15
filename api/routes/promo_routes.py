@@ -642,3 +642,18 @@ async def sync_subscriptions_for_email(data: dict):
         "skipped": skipped,
         "message": f"{len(created)} abonnement(s) créé(s), {len(skipped)} déjà existant(s)"
     }
+
+
+# === V156: Admin — update subscription by id ===
+@promo_router.put("/subscriptions/{sub_id}")
+async def update_subscription(sub_id: str, updates: dict):
+    """Met à jour un abonnement par son id"""
+    existing = await _db.subscriptions.find_one({"id": sub_id})
+    if not existing:
+        return {"error": "Subscription not found"}
+    allowed = {"remaining_sessions", "used_sessions", "status", "updated_at"}
+    safe_updates = {k: v for k, v in updates.items() if k in allowed}
+    safe_updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await _db.subscriptions.update_one({"_id": existing["_id"]}, {"$set": safe_updates})
+    updated = await _db.subscriptions.find_one({"_id": existing["_id"]}, {"_id": 0})
+    return updated
