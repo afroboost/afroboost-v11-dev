@@ -4803,6 +4803,32 @@ async def bulk_import_contacts(request: Request):
     }
 
 
+# V146: Suppression en masse de contacts
+@api_router.post("/contacts/bulk-delete")
+async def bulk_delete_contacts(request: Request):
+    """V146: Supprime une liste de contacts par ID (chat_participants + users)."""
+    caller_email = require_auth(request)
+    body = await request.json()
+    contact_ids = body.get("ids", [])
+
+    if not contact_ids or not isinstance(contact_ids, list):
+        raise HTTPException(status_code=400, detail="ids (liste) requis")
+
+    deleted_count = 0
+    for cid in contact_ids:
+        # Supprimer de chat_participants
+        r1 = await db.chat_participants.delete_one({"id": cid})
+        if r1.deleted_count > 0:
+            deleted_count += r1.deleted_count
+            continue
+        # Fallback: supprimer de users
+        r2 = await db.users.delete_one({"id": cid})
+        deleted_count += r2.deleted_count
+
+    logger.info(f"[V146] Supprimé {deleted_count}/{len(contact_ids)} contacts par {caller_email}")
+    return {"success": True, "deleted": deleted_count, "requested": len(contact_ids)}
+
+
 # ============================================================
 # GOOGLE CONTACTS SYNC — v18: OAuth2 + People API
 # ============================================================
