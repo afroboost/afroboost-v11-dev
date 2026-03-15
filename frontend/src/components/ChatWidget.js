@@ -1777,7 +1777,15 @@ export const ChatWidget = () => {
         });
 
         if (res.data?.success) {
-          const allSubs = res.data?.subscriptions || (res.data?.subscription ? [res.data.subscription] : []);
+          const rawSubs = res.data?.subscriptions || (res.data?.subscription ? [res.data.subscription] : []);
+          // v151: Déduplication par code (filet de sécurité côté frontend)
+          const seen = new Set();
+          const allSubs = rawSubs.filter(s => {
+            const key = (s.code || '').toUpperCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
           // Mettre à jour le profil avec le premier abonnement (rétro-compatible) + liste complète
           const updatedProfile = {
             ...afroboostProfile,
@@ -1786,7 +1794,7 @@ export const ChatWidget = () => {
           };
           localStorage.setItem(AFROBOOST_PROFILE_KEY, JSON.stringify(updatedProfile));
           setAfroboostProfile(updatedProfile);
-          console.log('[SUBSCRIPTION v95] Tous les abonnements chargés:', allSubs.length, 'actif(s)');
+          console.log('[SUBSCRIPTION v151] Abonnements vérifiés:', allSubs.length, 'actif(s)');
         }
       } catch (err) {
         console.log('[SUBSCRIPTION v95] Erreur chargement statut:', err.message);
@@ -1903,18 +1911,26 @@ export const ChatWidget = () => {
     setReservationError('');
     setSelectedSubscription(null);
 
-    // v95: Charger TOUS les abonnements actifs de l'utilisateur
+    // v95/v151: Charger les abonnements actifs de l'utilisateur (filtrés par le backend)
     if (afroboostProfile?.email) {
       axios.get(`${API}/discount-codes/subscriptions/status`, {
         params: { email: afroboostProfile.email }
       }).then(res => {
-        const subs = res.data?.subscriptions || (res.data?.subscription ? [res.data.subscription] : []);
+        const rawSubs = res.data?.subscriptions || (res.data?.subscription ? [res.data.subscription] : []);
+        // v151: Déduplication frontend par code (filet de sécurité)
+        const seen = new Set();
+        const subs = rawSubs.filter(s => {
+          const key = (s.code || '').toUpperCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
         setUserSubscriptions(subs);
         // Si un seul abonnement, le sélectionner automatiquement
         if (subs.length === 1) {
           setSelectedSubscription(subs[0]);
         }
-        console.log('[SUBSCRIPTIONS] v95:', subs.length, 'abonnement(s) actif(s)');
+        console.log('[SUBSCRIPTIONS] v151:', subs.length, 'abonnement(s) vérifié(s)');
       }).catch(err => {
         console.log('[SUBSCRIPTIONS] Erreur chargement:', err.message);
         setUserSubscriptions([]);

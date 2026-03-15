@@ -438,7 +438,7 @@ async def use_discount_code(code_id: str):
 # === v11.4: ENDPOINTS SUBSCRIPTIONS (ABONNEMENTS) ===
 @promo_router.get("/subscriptions/status")
 async def get_subscription_status(email: str = "", code: str = ""):
-    """Récupère le statut d'abonnement d'un utilisateur v11.4 — v95: retourne TOUS les abonnements actifs"""
+    """Récupère le statut d'abonnement d'un utilisateur v11.4 — v95/v151: retourne UNIQUEMENT les abonnements dont le code promo est encore actif et assigné"""
     if not email and not code:
         return {"success": False, "message": "Email ou code requis"}
 
@@ -452,6 +452,50 @@ async def get_subscription_status(email: str = "", code: str = ""):
     all_subs = await _db.subscriptions.find(query, {"_id": 0}).to_list(50)
 
     if not all_subs:
+        return {
+            "success": False,
+            "hasSubscription": False,
+            "message": "Aucun abonnement actif"
+        }
+
+    # v151: FILTRAGE — ne garder que les abonnements dont le code promo est encore actif
+    # ET assigné à cet utilisateur (ou sans restriction d'email)
+    verified_subs = []
+    seen_codes = set()  # Déduplication par code
+    user_email = email.lower().strip() if email else ""
+
+    for sub in all_subs:
+        sub_code = sub.get("code", "")
+        if not sub_code:
+            continue
+
+        # Déduplier par code (garder le premier = le plus ancien)
+        code_key = sub_code.upper()
+        if code_key in seen_codes:
+            continue
+
+        # Vérifier que le discount_code existe et est encore actif
+        discount = await _db.discount_codes.find_one({
+            "code": {"$regex": f"^{sub_code}$", "$options": "i"},
+            "active": True
+        }, {"_id": 0, "assignedEmail": 1, "active": 1})
+
+        if not discount:
+            # Code promo désactivé ou supprimé → ignorer cette subscription
+            logger.info(f"[SUBSCRIPTION v151] Ignoré {sub_code} pour {user_email}: code promo inactif/supprimé")
+            continue
+
+        # Vérifier que le code est bien assigné à cet utilisateur (si assignedEmail est défini)
+        assigned = (discount.get("assignedEmail") or "").lower().strip()
+        if assigned and user_email and assigned != user_email:
+            # Code assigné à quelqu'un d'autre → ignorer
+            logger.info(f"[SUBSCRIPTION v151] Ignoré {sub_code} pour {user_email}: assigné à {assigned}")
+            continue
+
+        seen_codes.add(code_key)
+        verified_subs.append(sub)
+
+    if not verified_subs:
         return {
             "success": False,
             "hasSubscription": False,
@@ -477,8 +521,8 @@ async def get_subscription_status(email: str = "", code: str = ""):
     return {
         "success": True,
         "hasSubscription": True,
-        "subscription": format_sub(all_subs[0]),
-        "subscriptions": [format_sub(s) for s in all_subs]
+        "subscription": format_sub(verified_subs[0]),
+        "subscriptions": [format_sub(s) for s in verified_subs]
     }
 
 
