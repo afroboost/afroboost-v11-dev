@@ -1265,14 +1265,14 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       </div>
                       <div className="p-4">
                         <p className="font-semibold text-white mb-1" style={{ fontSize: '16px' }}>{offer.name}</p>
-                        {offer.description && (
-                          <div className="mb-2">
+                        <div className="mb-2">
+                          {offer.description && (
                             <p className="text-xs" style={{ color: 'rgba(255,255,255,0.55)', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', lineHeight: '1.4' }}>
                               {offer.description}
                             </p>
-                            <span className="text-xs cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
-                          </div>
-                        )}
+                          )}
+                          <span className="text-xs cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
+                        </div>
                         <span className="text-xl font-bold" style={{ color: '#d91cd2' }}>
                           {offer.price === 0 ? 'Offert' : `CHF ${offer.price}.-`}
                         </span>
@@ -1351,14 +1351,14 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           </div>
                           <div className="p-4">
                             <p className="font-semibold text-white mb-1" style={{ fontSize: '16px' }}>{offer.name}</p>
-                            {offer.description && (
-                              <div className="mb-2">
+                            <div className="mb-2">
+                              {offer.description && (
                                 <p className="text-xs" style={{ color: 'rgba(255,255,255,0.55)', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', lineHeight: '1.4' }}>
                                   {offer.description}
                                 </p>
-                                <span className="text-xs cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
-                              </div>
-                            )}
+                              )}
+                              <span className="text-xs cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
+                            </div>
                             <span className="text-xl font-bold" style={{ color: '#d91cd2' }}>
                               {offer.price === 0 ? 'Offert' : `CHF ${offer.price}.-`}
                             </span>

@@ -1277,11 +1277,13 @@ const OfferCardSlider = ({ offer, selected, onClick }) => {
           {/* Content Section — V119.1: plus d'espace, extrait de description */}
           <div className="p-4 pb-5">
             <p className="font-semibold text-white mb-1" style={{ fontSize: '17px', lineHeight: '1.3' }}>{offer.name}</p>
-            {offer.description && !showDescription && (
+            {!showDescription && (
               <div className="mb-2">
-                <p className="text-xs" style={{ color: 'rgba(255,255,255,0.45)', lineHeight: '1.4', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                  {offer.description}
-                </p>
+                {offer.description && (
+                  <p className="text-xs" style={{ color: 'rgba(255,255,255,0.45)', lineHeight: '1.4', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                    {offer.description}
+                  </p>
+                )}
                 <span onClick={(e) => { e.stopPropagation(); setShowDescription(true); }} className="text-xs cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
               </div>
             )}
@@ -5066,29 +5068,33 @@ function App() {
               position: 'fixed', inset: 0, zIndex: 9999,
               background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              padding: '20px', cursor: 'pointer'
+              padding: '16px', cursor: 'pointer',
+              overflowY: 'auto', WebkitOverflowScrolling: 'touch'
             }}
           >
+            {/* Bouton fermer FIXE en haut à droite — toujours visible sur mobile */}
+            <button
+              onClick={() => setAudioLightbox(null)}
+              style={{
+                position: 'fixed', top: '16px', right: '16px', zIndex: 10000,
+                width: '44px', height: '44px', borderRadius: '50%',
+                background: 'rgba(217, 28, 210, 0.9)', border: '2px solid rgba(255,255,255,0.3)',
+                color: '#fff', fontSize: '20px', fontWeight: 700, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 0 20px rgba(217, 28, 210, 0.5), 0 4px 12px rgba(0,0,0,0.5)'
+              }}
+            >✕</button>
             <div
               onClick={(e) => e.stopPropagation()}
               style={{
                 maxWidth: '400px', width: '100%', borderRadius: '20px',
                 background: 'rgba(20,10,30,0.95)', border: '1px solid rgba(217,28,210,0.3)',
-                padding: '24px', cursor: 'default', position: 'relative',
-                boxShadow: '0 0 40px rgba(217,28,210,0.2)'
+                padding: '24px', paddingTop: '20px', cursor: 'default', position: 'relative',
+                boxShadow: '0 0 40px rgba(217,28,210,0.2)',
+                maxHeight: '85vh', overflowY: 'auto', WebkitOverflowScrolling: 'touch',
+                margin: 'auto'
               }}
             >
-              {/* Bouton fermer */}
-              <button
-                onClick={() => setAudioLightbox(null)}
-                style={{
-                  position: 'absolute', top: '12px', right: '12px',
-                  width: '32px', height: '32px', borderRadius: '50%',
-                  background: 'rgba(255,255,255,0.1)', border: 'none',
-                  color: '#fff', fontSize: '16px', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center'
-                }}
-              >✕</button>
               {/* Image grande */}
               {audioLightbox.cover_url ? (
                 <img
@@ -5120,7 +5126,7 @@ function App() {
               )}
               {audioLightbox.description && (
                 <p style={{
-                  color: 'rgba(255,255,255,0.7)', fontSize: '13px', lineHeight: '1.5',
+                  color: 'rgba(255,255,255,0.7)', fontSize: '13px', lineHeight: '1.6',
                   margin: '12px 0 0 0', whiteSpace: 'pre-wrap'
                 }}>
                   {audioLightbox.description}
