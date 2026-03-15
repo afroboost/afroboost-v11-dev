@@ -2828,26 +2828,62 @@ export const ChatWidget = () => {
         if (data.messages && data.messages.length > 0) {
           console.log(`[RAMASSER] ${data.count} message(s) recupere(s)`);
           setMessages(prev => {
-            // ANTI-DOUBLONS: Set avec id ET _id
+            // V146: ANTI-DOUBLONS AMÉLIORÉ — vérifie ID + contenu pour détecter les messages optimistes
             const existingIds = new Set(prev.flatMap(m => [m.id, m._id].filter(Boolean)));
-            const newMsgs = data.messages.filter(m => {
+            // V146: Collecter le texte des messages optimistes (temp_user_*) pour éviter les doublons
+            const pendingTexts = new Set(
+              prev.filter(m => m.id && m.id.startsWith('temp_user_')).map(m => (m.text || '').trim().toLowerCase())
+            );
+
+            let updatedPrev = [...prev];
+            const trulyNew = [];
+
+            for (const m of data.messages) {
               const msgId = m.id || m._id;
-              return msgId && !existingIds.has(msgId);
-            });
-            if (newMsgs.length > 0) {
-              console.log(`[RAMASSER] ${newMsgs.length} NOUVEAUX messages ajoutes`);
+              if (!msgId) continue;
+
+              // Cas 1: ID déjà connu → skip
+              if (existingIds.has(msgId)) continue;
+
+              // V146: Cas 2: Message serveur correspondant à un message optimiste temp_user_*
+              const msgText = (m.text || m.content || '').trim().toLowerCase();
+              const isSameUser = m.sender_type === 'user' || m.type === 'user';
+              if (isSameUser && pendingTexts.has(msgText)) {
+                // Remplacer le temp_user_ par le vrai ID serveur (pas d'ajout = pas de doublon)
+                const tempIdx = updatedPrev.findIndex(p =>
+                  p.id && p.id.startsWith('temp_user_') && (p.text || '').trim().toLowerCase() === msgText
+                );
+                if (tempIdx !== -1) {
+                  updatedPrev[tempIdx] = { ...updatedPrev[tempIdx], id: msgId, created_at: m.created_at };
+                  pendingTexts.delete(msgText); // Ne matcher qu'une fois
+                  existingIds.add(msgId);
+                  console.log(`[V146] Remplacé temp_user → ${msgId}`);
+                  continue;
+                }
+              }
+
+              // Cas 3: Vraiment nouveau
+              trulyNew.push(m);
+              existingIds.add(msgId);
+            }
+
+            if (trulyNew.length > 0) {
+              console.log(`[RAMASSER] ${trulyNew.length} NOUVEAUX messages ajoutes`);
               // v87: Son notification pour les nouveaux messages (campagne ou coach)
-              const hasCampaignMsg = newMsgs.some(m =>
+              const hasCampaignMsg = trulyNew.some(m =>
                 (m.sender_id && m.sender_id.startsWith('coach-campaign')) || m.campaign_id
               );
-              const hasCoachMsg = newMsgs.some(m => m.sender_type === 'coach');
+              const hasCoachMsg = trulyNew.some(m => m.sender_type === 'coach');
               if (hasCampaignMsg || hasCoachMsg) {
                 try { playSoundIfEnabled('coach'); } catch(e) {}
               } else {
                 try { playSoundIfEnabled('message'); } catch(e) {}
               }
-              return [...prev, ...newMsgs].sort((a, b) => (a.created_at || '0').localeCompare(b.created_at || '0'));
+              return [...updatedPrev, ...trulyNew].sort((a, b) => (a.created_at || '0').localeCompare(b.created_at || '0'));
             }
+
+            // V146: Même si pas de trulyNew, on peut avoir remplacé des temp → retourner updatedPrev
+            if (updatedPrev !== prev) return updatedPrev;
             return prev;
           });
         }
@@ -2872,11 +2908,21 @@ export const ChatWidget = () => {
             const data = await fallback.json();
             if (Array.isArray(data) && data.length > 0) {
               setMessages(prev => {
-                const existingIds = new Set(prev.map(m => m.id));
-                const newMsgs = data.filter(m => m.id && !existingIds.has(m.id));
+                const existingIds = new Set(prev.flatMap(m => [m.id, m._id].filter(Boolean)));
+                // V146: Aussi vérifier les messages optimistes par contenu
+                const pendingTexts = new Set(
+                  prev.filter(m => m.id && m.id.startsWith('temp_user_')).map(m => (m.text || '').trim().toLowerCase())
+                );
+                const newMsgs = data.filter(m => {
+                  if (!m.id || existingIds.has(m.id)) return false;
+                  // V146: Skip si c'est un doublon d'un message optimiste
+                  const mText = (m.text || m.content || '').trim().toLowerCase();
+                  if ((m.sender_type === 'user' || m.type === 'user') && pendingTexts.has(mText)) return false;
+                  return true;
+                });
                 if (newMsgs.length > 0) {
                   console.log(`[RAMASSER-FALLBACK] ${newMsgs.length} messages récupérés`);
-                  return [...prev, ...newMsgs].sort((a, b) => 
+                  return [...prev, ...newMsgs].sort((a, b) =>
                     (a.created_at || '0').localeCompare(b.created_at || '0')
                   );
                 }

@@ -8007,8 +8007,10 @@ async def get_group_messages(limit: int = 100):
 # === ENDPOINT SYNC "RAMASSER" ===
 @api_router.get("/messages/sync")
 async def sync_messages(session_id: str, since: Optional[str] = None, limit: int = 100):
-    """RAMASSER: Messages de la session OU messages de groupe (broadcast). Tri deterministe."""
-    base_query = {"is_deleted": {"$ne": True}, "$or": [{"session_id": session_id}, {"broadcast": True}, {"type": "group"}]}
+    """V146: RAMASSER — Messages UNIQUEMENT de la session demandée. Plus de fuite broadcast/group."""
+    # V146: FIX — Ne plus inclure broadcast/group dans les sessions privées
+    # Chaque session ne reçoit QUE ses propres messages (isolation stricte)
+    base_query = {"is_deleted": {"$ne": True}, "session_id": session_id}
     if since:
         try:
             if 'Z' in since: since = since.replace('Z', '+00:00')
@@ -9702,26 +9704,29 @@ async def send_coach_response(request: Request):
             asyncio.create_task(send_backup_email(participant_id, message_text))
     return {"success": True, "message_id": coach_message.id, "mode": session.get("mode")}
 
-# v8.6: Envoi message de groupe a tous les abonnes
+# v8.6 / V146: Envoi message de groupe — utilise le session_id du groupe si fourni
 @api_router.post("/chat/group-message")
 async def send_group_message(request: Request):
-    """Envoie un message a tous les abonnes actifs (is_group=True)"""
+    """V146: Envoie un message dans un groupe spécifique (ou broadcast legacy)."""
     body = await request.json()
     message_text = body.get("message", "").strip()
     coach_name = body.get("coach_name", "Coach Bassi")
     media_url = body.get("media_url")
-    
+    group_session_id = body.get("session_id")  # V146: session_id du groupe si disponible
+
     if not message_text:
         raise HTTPException(status_code=400, detail="message requis")
-    
+
     # Recuperer tous les participants actifs
     participants = await db.chat_participants.find({}, {"_id": 0, "id": 1, "email": 1, "name": 1}).to_list(500)
     if not participants:
         return {"success": False, "error": "Aucun abonne"}
-    
-    # Creer le message de groupe (session_id = "group")
+
+    # V146: Utiliser le session_id du groupe si fourni, sinon fallback "group" (legacy)
+    effective_session_id = group_session_id or "group"
+
     group_msg = EnhancedChatMessage(
-        session_id="group", sender_id="coach", sender_name=coach_name,
+        session_id=effective_session_id, sender_id="coach", sender_name=coach_name,
         sender_type="coach", content=message_text, mode="community", is_group=True
     )
     await db.chat_messages.insert_one(group_msg.model_dump())

@@ -262,12 +262,12 @@ const CampaignManager = ({
   };
 
   return (
-    <div className="card-gradient rounded-xl p-4 sm:p-6">
+    <div className="card-gradient rounded-xl" style={{ padding: '6px', boxSizing: 'border-box', width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
       {creditBlockMessage}
 
-      {/* Header simplifié */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-        <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: 600, margin: 0 }}>📢 Campagnes</h2>
+      {/* V146: Header simplifié — responsive */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+        <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, margin: 0 }}>📢 Campagnes</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           {/* Scheduler health badge */}
           {(() => {

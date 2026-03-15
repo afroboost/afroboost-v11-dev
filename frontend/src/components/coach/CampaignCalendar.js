@@ -116,42 +116,41 @@ export default function CampaignCalendar({
   const closeContextMenu = () => setContextMenu(null);
 
   return (
-    <div style={{ marginBottom: '16px', padding: '16px', borderRadius: '12px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(139,92,246,0.2)' }}
+    <div style={{ marginBottom: '16px', padding: '4px', borderRadius: '12px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(139,92,246,0.2)', boxSizing: 'border-box', width: '100%', maxWidth: '100%', overflow: 'hidden' }}
       onClick={closeContextMenu}>
 
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-        <button type="button" onClick={() => setCurrentDate(new Date(year, month - 1, 1))}
-          style={{ background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.3)', color: '#fff', borderRadius: '8px', padding: '6px 14px', fontSize: '14px', cursor: 'pointer' }}>◀</button>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ color: '#fff', fontWeight: 600, fontSize: '15px' }}>📅 {MONTHS_FR[month]} {year}</div>
-          {monthStats.total > 0 && (
-            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', marginTop: '2px' }}>
-              {monthStats.total} campagne{monthStats.total > 1 ? 's' : ''}
-              {monthStats.scheduled > 0 && <span style={{ color: '#3b82f6' }}> • {monthStats.scheduled} prog.</span>}
-              {monthStats.completed > 0 && <span style={{ color: '#22c55e' }}> • {monthStats.completed} ok</span>}
-            </div>
-          )}
-        </div>
-        <div style={{ display: 'flex', gap: '6px' }}>
+      {/* V146: Header responsive — wrap sur mobile */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: '1 1 auto', minWidth: 0, justifyContent: 'center' }}>
+          <button type="button" onClick={() => setCurrentDate(new Date(year, month - 1, 1))}
+            style={{ background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.3)', color: '#fff', borderRadius: '8px', padding: '6px 10px', fontSize: '14px', cursor: 'pointer', flexShrink: 0 }}>◀</button>
+          <div style={{ textAlign: 'center', minWidth: 0 }}>
+            <div style={{ color: '#fff', fontWeight: 600, fontSize: '14px', whiteSpace: 'nowrap' }}>📅 {MONTHS_FR[month]} {year}</div>
+            {monthStats.total > 0 && (
+              <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)', marginTop: '2px' }}>
+                {monthStats.total} campagne{monthStats.total > 1 ? 's' : ''}
+                {monthStats.completed > 0 && <span style={{ color: '#22c55e' }}> • {monthStats.completed} ok</span>}
+              </div>
+            )}
+          </div>
           <button type="button" onClick={() => setCurrentDate(new Date())}
-            style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', color: '#c4b5fd', borderRadius: '8px', padding: '5px 10px', fontSize: '11px', cursor: 'pointer' }}>Auj.</button>
+            style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', color: '#c4b5fd', borderRadius: '8px', padding: '5px 8px', fontSize: '11px', cursor: 'pointer', flexShrink: 0 }}>Auj.</button>
           <button type="button" onClick={() => onDayClick?.(makeDateStr(today.getDate()))}
-            style={{ background: 'linear-gradient(135deg, #9333ea, #6366f1)', border: 'none', color: '#fff', borderRadius: '8px', padding: '5px 12px', fontSize: '11px', cursor: 'pointer', fontWeight: 600 }}>+ Créer</button>
+            style={{ background: 'linear-gradient(135deg, #9333ea, #6366f1)', border: 'none', color: '#fff', borderRadius: '8px', padding: '5px 10px', fontSize: '11px', cursor: 'pointer', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap' }}>+ Créer</button>
           <button type="button" onClick={() => setCurrentDate(new Date(year, month + 1, 1))}
-            style={{ background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.3)', color: '#fff', borderRadius: '8px', padding: '6px 14px', fontSize: '14px', cursor: 'pointer' }}>▶</button>
+            style={{ background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.3)', color: '#fff', borderRadius: '8px', padding: '6px 10px', fontSize: '14px', cursor: 'pointer', flexShrink: 0 }}>▶</button>
         </div>
       </div>
 
-      {/* Day names */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '2px' }}>
+      {/* V146: Day names — responsive */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '1px', marginBottom: '1px' }}>
         {DAYS_FR.map(d => (
-          <div key={d} style={{ textAlign: 'center', fontSize: '10px', color: 'rgba(255,255,255,0.35)', fontWeight: 600, padding: '4px 0' }}>{d}</div>
+          <div key={d} style={{ textAlign: 'center', fontSize: '10px', color: 'rgba(255,255,255,0.35)', fontWeight: 600, padding: '3px 0', overflow: 'hidden' }}>{d}</div>
         ))}
       </div>
 
-      {/* Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
+      {/* V146: Grid — responsive cells */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '1px' }}>
         {calendarDays.map((day, idx) => {
           const dayCampaigns = day ? (campaignsByDay[day] || []) : [];
           const isDragTarget = dragOverDay === day;
@@ -164,11 +163,12 @@ export default function CampaignCalendar({
               onDragLeave={handleDragLeave}
               onDrop={(e) => handleDrop(e, day)}
               style={{
-                minHeight: '56px', padding: '3px', borderRadius: '6px',
+                minHeight: '48px', padding: '2px', borderRadius: '6px',
                 cursor: day ? 'pointer' : 'default',
                 background: isDragTarget ? 'rgba(139,92,246,0.3)' : todayBool ? 'rgba(139,92,246,0.2)' : day ? 'rgba(255,255,255,0.02)' : 'transparent',
                 border: isDragTarget ? '2px dashed #9333ea' : todayBool ? '2px solid rgba(139,92,246,0.5)' : day ? '1px solid rgba(255,255,255,0.05)' : 'none',
-                transition: 'all 0.15s'
+                transition: 'all 0.15s',
+                overflow: 'hidden', minWidth: 0, boxSizing: 'border-box'
               }}>
               {day && (
                 <>
@@ -184,10 +184,11 @@ export default function CampaignCalendar({
                         onContextMenu={(e) => handleContextMenu(e, c)}
                         title={`${c.name} (${sc.label}) — Glisser pour déplacer`}
                         style={{
-                          fontSize: '9px', lineHeight: '1.2', padding: '2px 4px', marginBottom: '1px',
+                          fontSize: '8px', lineHeight: '1.2', padding: '1px 3px', marginBottom: '1px',
                           borderRadius: '3px', background: sc.bg, borderLeft: `2px solid ${sc.border}`,
                           color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                          cursor: 'grab', opacity: draggedCampaign?.id === c.id ? 0.4 : 1
+                          cursor: 'grab', opacity: draggedCampaign?.id === c.id ? 0.4 : 1,
+                          maxWidth: '100%', boxSizing: 'border-box'
                         }}>
                         {c.name}
                       </div>
@@ -203,15 +204,14 @@ export default function CampaignCalendar({
         })}
       </div>
 
-      {/* Legend */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '10px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+      {/* V146: Legend — responsive wrap */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px', paddingTop: '6px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
         {Object.entries(STATUS_COLORS).filter(([k]) => k !== 'sent').map(([key, val]) => (
-          <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: val.border }} />
-            <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)' }}>{val.label}</span>
+          <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+            <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: val.border, flexShrink: 0 }} />
+            <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)' }}>{val.label}</span>
           </div>
         ))}
-        <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', marginLeft: 'auto' }}>Glisser pour déplacer • Clic droit pour dupliquer</span>
       </div>
 
       {/* Context Menu */}

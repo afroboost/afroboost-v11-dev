@@ -169,6 +169,8 @@ html, body {
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.9) 0%, rgba(40, 10, 35, 0.6) 100%);
   border: 1px solid color-mix(in srgb, var(--primary-color) 20%, transparent);
   box-shadow: 0 0 15px var(--glow-color), inset 0 0 30px rgba(0, 0, 0, 0.3);
+  box-sizing: border-box;
+  max-width: 100%;
 }
 
 /* v13.5: Container sans glow pour grands conteneurs */
@@ -549,6 +551,18 @@ html, body {
   }
   .success-overlay .ticket-capture-zone {
     padding: 12px !important;
+  }
+  /* V146: Force containment sur mobile — empêche tout débordement dans le dashboard coach */
+  .section-gradient .card-gradient {
+    box-shadow: none !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+  }
+  .section-gradient {
+    padding: 2px !important;
+    overflow-x: hidden !important;
+    box-sizing: border-box !important;
   }
 }
 

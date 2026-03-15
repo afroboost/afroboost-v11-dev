@@ -4821,7 +4821,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // (Mais normalement dashboardReady passe à true après 100ms)
   
   return (
-    <div className="w-full min-h-screen p-6 section-gradient">
+    <div className="w-full min-h-screen section-gradient" style={{ padding: '4px', boxSizing: 'border-box', overflowX: 'hidden', maxWidth: '100vw' }}>
       {/* QR Scanner Modal with Camera Support */}
       {showScanner && (
         <QRScannerModal 
@@ -5269,7 +5269,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       </button>
 
       {/* V145: Container principal — mobile width fix */}
-      <div className="max-w-6xl mx-auto" style={{ paddingTop: '60px', paddingBottom: '100px', paddingLeft: '8px', paddingRight: '8px', overflowY: 'auto', overflowX: 'hidden', minHeight: '100vh', width: '100%', boxSizing: 'border-box' }}>
+      <div className="max-w-6xl mx-auto" style={{ paddingTop: '60px', paddingBottom: '100px', paddingLeft: '4px', paddingRight: '4px', overflowX: 'hidden', minHeight: '100vh', width: '100%', boxSizing: 'border-box' }}>
         <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
           <div className="flex-1 min-w-0">
             {/* v9.1.3: Marque blanche - Affiche platform_name ou "Mon Espace Afroboost" */}
