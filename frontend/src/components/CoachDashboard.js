@@ -5198,23 +5198,54 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         />
       )}
 
-      {/* v9.5.7: BOUTON DÉCONNEXION FIXED - Toujours visible en haut à droite */}
-      <button 
-        onClick={handleSecureLogout} 
-        className="flex items-center gap-1 px-3 py-2 rounded-lg text-white text-xs font-medium shadow-lg"
-        style={{ 
-          position: 'fixed',
-          top: '12px',
-          right: '12px',
-          zIndex: 9999,
-          background: 'rgba(239, 68, 68, 0.9)', 
-          border: '1px solid rgba(239, 68, 68, 0.8)',
-          backdropFilter: 'blur(8px)'
-        }}
-        data-testid="coach-logout-fixed"
-      >
-        🚪 Déconnexion
-      </button>
+      {/* V143b: Vue Visiteur + Déconnexion — FIXED top-right, side by side */}
+      <div style={{
+        position: 'fixed',
+        top: '12px',
+        right: '12px',
+        zIndex: 9999,
+        display: 'flex',
+        gap: '8px',
+        alignItems: 'center',
+      }}>
+        <button
+          onClick={() => {
+            const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+            const isSA = SUPER_ADMIN_EMAILS.includes(safeCoachUser?.email?.toLowerCase());
+            const finalUrl = isSA
+              ? `${window.location.origin}/?visitor=true&t=${Date.now()}`
+              : `${coachVitrineUrl || window.location.origin}?t=${Date.now()}`;
+            window.open(finalUrl, '_blank');
+          }}
+          className="flex items-center gap-1 px-3 py-2 rounded-lg text-white text-xs font-medium shadow-lg"
+          style={{
+            background: 'rgba(139, 92, 246, 0.85)',
+            border: '1px solid rgba(217, 28, 210, 0.6)',
+            backdropFilter: 'blur(8px)'
+          }}
+          title="Voir ma vitrine publique"
+          data-testid="coach-visitor-preview-fixed"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"></path>
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <line x1="10" y1="14" x2="21" y2="3"></line>
+          </svg>
+          Vue Visiteur
+        </button>
+        <button
+          onClick={handleSecureLogout}
+          className="flex items-center gap-1 px-3 py-2 rounded-lg text-white text-xs font-medium shadow-lg"
+          style={{
+            background: 'rgba(239, 68, 68, 0.9)',
+            border: '1px solid rgba(239, 68, 68, 0.8)',
+            backdropFilter: 'blur(8px)'
+          }}
+          data-testid="coach-logout-fixed"
+        >
+          🚪 Déconnexion
+        </button>
+      </div>
       
       {/* v10.6: BOUTON RETOUR - Icône flèche en haut à gauche */}
       <button 

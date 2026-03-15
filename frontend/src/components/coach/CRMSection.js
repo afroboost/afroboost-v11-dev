@@ -648,7 +648,7 @@ const ConversationItem = memo(({
         loadSessionMessages(session.id);
       }}
       style={{
-        padding: '12px 14px',
+        padding: '10px 10px',
         borderRadius: '12px',
         cursor: 'pointer',
         transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -659,6 +659,7 @@ const ConversationItem = memo(({
         borderLeftColor: isBulkChecked ? '#ef4444' : isSelected ? '#D91CD2' : 'transparent',
         boxShadow: isSelected ? '0 0 15px rgba(217, 28, 210, 0.08), inset 0 0 20px rgba(217, 28, 210, 0.03)' : 'none',
         marginBottom: '4px',
+        overflow: 'hidden',
       }}
       onMouseEnter={(e) => { if (!isSelected && !isBulkChecked) { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.borderColor = 'rgba(217, 28, 210, 0.15)'; e.currentTarget.style.boxShadow = '0 0 10px rgba(217, 28, 210, 0.05)'; }}}
       onMouseLeave={(e) => { if (!isSelected && !isBulkChecked) { e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.04)'; e.currentTarget.style.boxShadow = 'none'; }}}
@@ -1446,7 +1447,7 @@ const CRMSection = ({
         coachEmail={coachEmail}
       />
 
-      {/* Main Conversations Grid — v105 redesign */}
+      {/* V143b: Main Conversations Grid — mobile-first responsive */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: '1fr',
@@ -1457,10 +1458,16 @@ const CRMSection = ({
         boxShadow: '0 0 25px rgba(217, 28, 210, 0.04)',
         overflow: 'hidden',
       }}>
-        {/* Responsive: on larger screens, use 2 columns */}
+        {/* Responsive: 2 columns on desktop, 1 on mobile */}
         <style>{`
           @media (min-width: 1024px) {
             .crm-grid-premium { grid-template-columns: 1fr 1fr !important; }
+          }
+          @media (max-width: 640px) {
+            .crm-conv-list { padding: 12px 8px !important; }
+            .crm-msg-detail { padding: 12px 8px !important; min-height: 400px !important; }
+            .crm-msg-header { flex-direction: column !important; align-items: flex-start !important; gap: 8px !important; }
+            .crm-toggle-pill { transform: scale(0.9); }
           }
         `}</style>
         <div className="crm-grid-premium" style={{
@@ -1468,9 +1475,9 @@ const CRMSection = ({
           gridTemplateColumns: '1fr',
           gap: '0',
         }}>
-          {/* Left: Conversations List — v105 redesign */}
-          <div style={{
-            padding: '20px',
+          {/* Left: Conversations List — v105 redesign, V143b mobile fix */}
+          <div className="crm-conv-list" style={{
+            padding: '16px 12px',
             borderRight: '1px solid rgba(217, 28, 210, 0.08)',
             background: 'rgba(26, 26, 26, 0.4)',
           }}>
@@ -1628,12 +1635,12 @@ const CRMSection = ({
             />
           </div>
 
-          {/* Right: Selected Conversation Messages — v105 redesign */}
-          <div style={{
-            padding: '20px',
+          {/* Right: Selected Conversation Messages — V143b mobile fix */}
+          <div className="crm-msg-detail" style={{
+            padding: '16px 12px',
             display: 'flex',
             flexDirection: 'column',
-            minHeight: '500px',
+            minHeight: '400px',
             borderTop: '1px solid rgba(217, 28, 210, 0.08)',
             background: 'rgba(26, 26, 26, 0.3)',
           }}>
@@ -1644,21 +1651,23 @@ const CRMSection = ({
             `}</style>
             {selectedSession ? (
               <>
-                {/* Header conversation */}
-                <div className="crm-msg-panel" style={{
+                {/* V143b: Header conversation — wraps on mobile */}
+                <div className="crm-msg-panel crm-msg-header" style={{
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
-                  paddingBottom: '14px',
+                  paddingBottom: '12px',
                   borderBottom: '1px solid rgba(217, 28, 210, 0.1)',
-                  marginBottom: '14px',
+                  marginBottom: '12px',
+                  flexWrap: 'wrap',
+                  gap: '8px',
                 }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <div style={{
                         width: '8px', height: '8px', borderRadius: '50%',
-                        background: selectedSession.mode === 'bot' ? '#8b5cf6' : '#22c55e',
-                        boxShadow: selectedSession.mode === 'bot' ? '0 0 6px rgba(139,92,246,0.5)' : '0 0 6px rgba(34,197,94,0.5)',
+                        background: selectedSession.mode === 'bot' ? '#8b5cf6' : '#f59e0b',
+                        boxShadow: selectedSession.mode === 'bot' ? '0 0 6px rgba(139,92,246,0.5)' : '0 0 6px rgba(245,158,11,0.5)',
                       }} />
                       <p style={{ color: '#fff', fontSize: '14px', fontWeight: '500', margin: 0 }}>
                         {selectedSession.participantName || selectedSession.participantEmail || 'Client'}
@@ -1679,8 +1688,8 @@ const CRMSection = ({
                     )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {/* V143: AI/Human mode toggle — clear pill indicator + distinct icons */}
-                    <div style={{
+                    {/* V143b: AI/Human mode toggle — compact pill for mobile */}
+                    <div className="crm-toggle-pill" style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: '0',
@@ -1688,6 +1697,7 @@ const CRMSection = ({
                       background: 'rgba(255,255,255,0.04)',
                       border: '1px solid rgba(255,255,255,0.08)',
                       overflow: 'hidden',
+                      flexShrink: 0,
                     }}>
                       {/* IA button */}
                       <button
@@ -1849,14 +1859,15 @@ const CRMSection = ({
                   )}
                 </div>
 
-                {/* V143: Input — borderless + emoji picker */}
+                {/* V143b: Input — borderless + emoji picker, mobile-friendly */}
                 <div style={{
-                  paddingTop: '14px',
+                  paddingTop: '10px',
                   borderTop: '1px solid rgba(255,255,255,0.06)',
                   display: 'flex',
-                  gap: '8px',
+                  gap: '6px',
                   alignItems: 'center',
                   position: 'relative',
+                  flexWrap: 'nowrap',
                 }}>
                   {/* V143: Emoji picker for coach */}
                   <AfricanEmojiPicker
@@ -1903,14 +1914,14 @@ const CRMSection = ({
                     }}
                     data-testid="coach-message-input"
                   />
-                  {/* v106.1: Bouton Réécrire IA — GLOW NÉON VIOLET */}
+                  {/* v106.1: Bouton Réécrire IA — V143b: compact for mobile */}
                   <button
                     onClick={handleRewriteAI}
                     disabled={!coachMessage.trim() || rewritingAI}
                     title="✨ Réécrire avec l'IA Afroboost"
                     style={{
-                      width: '38px', height: '38px',
-                      borderRadius: '12px',
+                      width: '34px', height: '34px',
+                      borderRadius: '10px',
                       border: coachMessage.trim() && !rewritingAI
                         ? '1px solid rgba(217, 28, 210, 0.5)'
                         : '1px solid rgba(255,255,255,0.08)',
@@ -1936,8 +1947,8 @@ const CRMSection = ({
                     disabled={!coachMessage.trim()}
                     style={{
                       ...iconBtn('#D91CD2'),
-                      width: '38px',
-                      height: '38px',
+                      width: '34px',
+                      height: '34px',
                       opacity: !coachMessage.trim() ? 0.25 : 1,
                       transition: 'all 0.25s',
                     }}

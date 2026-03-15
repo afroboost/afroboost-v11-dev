@@ -986,8 +986,8 @@ const SmartLinksSection = ({
         </div>
       )}
 
-      {/* V143: Links grid — responsive, scrollable with max-height */}
-      <div style={{ padding: '16px 20px', maxHeight: '500px', overflowY: 'auto' }}>
+      {/* V143b: Links grid — responsive, scrollable, mobile-friendly */}
+      <div style={{ padding: '12px 10px', maxHeight: '500px', overflowY: 'auto' }}>
         {filteredLinks.length === 0 && (
           <div style={{
             textAlign: 'center', padding: '48px 20px',
