@@ -1244,39 +1244,46 @@ async def create_offer(offer: OfferCreate, request: Request):
     await db.offers.insert_one(offer_obj.model_dump())
     return offer_obj
 
-@api_router.put("/offers/{offer_id}", response_model=Offer)
+@api_router.put("/offers/{offer_id}")
 async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
-    require_auth(request)
-    update_data = offer.model_dump()
-    # v61: Blindage conversion durée
-    raw_dv = update_data.get("duration_value")
-    if raw_dv is not None and raw_dv != "" and raw_dv is not False:
-        try:
-            update_data["duration_value"] = int(raw_dv)
-        except (ValueError, TypeError):
+    try:
+        require_auth(request)
+        update_data = offer.model_dump()
+        # v61: Blindage conversion durée
+        raw_dv = update_data.get("duration_value")
+        if raw_dv is not None and raw_dv != "" and raw_dv is not False:
+            try:
+                update_data["duration_value"] = int(raw_dv)
+            except (ValueError, TypeError):
+                update_data["duration_value"] = None
+        else:
             update_data["duration_value"] = None
-    else:
-        update_data["duration_value"] = None
-    if not update_data.get("duration_unit") or update_data["duration_unit"] == "":
-        update_data["duration_unit"] = None
-    iap = update_data.get("is_auto_prolong")
-    update_data["is_auto_prolong"] = iap not in (False, "false", "0", 0, None)
-    print(f"[V61 DEBUG] PUT /offers/{offer_id} duration_value={update_data.get('duration_value')} duration_unit={update_data.get('duration_unit')}")
-    # v59: Recalculer expiration si durée modifiée
-    if update_data.get("duration_value") and update_data.get("duration_unit"):
-        existing = await db.offers.find_one({"id": offer_id}, {"_id": 0})
-        created_at = (existing or {}).get("created_at") or datetime.utcnow().isoformat()
-        update_data["created_at"] = created_at
-        update_data["expiration_date"] = calculate_expiration_date(created_at, update_data["duration_value"], update_data["duration_unit"])
-        # Reset rappels si durée changée
-        if existing and (existing.get("duration_value") != update_data["duration_value"] or existing.get("duration_unit") != update_data["duration_unit"]):
-            update_data["last_reminded_date"] = None
-            update_data["last_prolonged_date"] = None
-    else:
-        update_data["expiration_date"] = None
-    await db.offers.update_one({"id": offer_id}, {"$set": update_data})
-    updated = await db.offers.find_one({"id": offer_id}, {"_id": 0})
-    return updated
+        if not update_data.get("duration_unit") or update_data["duration_unit"] == "":
+            update_data["duration_unit"] = None
+        iap = update_data.get("is_auto_prolong")
+        update_data["is_auto_prolong"] = iap not in (False, "false", "0", 0, None)
+        print(f"[V152 DEBUG] PUT /offers/{offer_id} duration_value={update_data.get('duration_value')} duration_unit={update_data.get('duration_unit')}")
+        # v59: Recalculer expiration si durée modifiée
+        if update_data.get("duration_value") and update_data.get("duration_unit"):
+            existing = await db.offers.find_one({"id": offer_id}, {"_id": 0})
+            created_at = (existing or {}).get("created_at") or datetime.utcnow().isoformat()
+            update_data["created_at"] = created_at
+            update_data["expiration_date"] = calculate_expiration_date(created_at, update_data["duration_value"], update_data["duration_unit"])
+            # Reset rappels si durée changée
+            if existing and (existing.get("duration_value") != update_data["duration_value"] or existing.get("duration_unit") != update_data["duration_unit"]):
+                update_data["last_reminded_date"] = None
+                update_data["last_prolonged_date"] = None
+        else:
+            update_data["expiration_date"] = None
+        await db.offers.update_one({"id": offer_id}, {"$set": update_data})
+        updated = await db.offers.find_one({"id": offer_id}, {"_id": 0})
+        return updated
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"[V152 ERROR] PUT /offers/{offer_id}: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Erreur update offre: {str(e)}")
 
 @api_router.delete("/offers/{offer_id}")
 async def delete_offer(offer_id: str, request: Request):
