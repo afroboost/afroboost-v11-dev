@@ -3826,8 +3826,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         setCampaigns([res.data, ...campaigns]);
         addCampaignLog(res.data.id, `Campagne "${newCampaign.name}" créée (${targetIds.length} destinataire(s))`, 'success');
 
-        // v13: Auto-launch immediate campaigns
-        if (targetIds.length > 0) {
+        // v13+V159: Auto-launch immediate campaigns (internal OR email/whatsapp)
+        const hasEmailOrWhatsappTargets = (campaignData.channels.email || campaignData.channels.whatsapp) && (campaignData.targetType === "all" || campaignData.selectedContacts.length > 0);
+        if (targetIds.length > 0 || hasEmailOrWhatsappTargets) {
           try {
             addCampaignLog(res.data.id, '🚀 Lancement automatique en cours...', 'info');
             const launchRes = await axios.post(`${API}/campaigns/${res.data.id}/launch`);

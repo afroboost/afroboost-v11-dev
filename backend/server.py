@@ -1865,16 +1865,43 @@ async def launch_campaign(campaign_id: str):
             results.append(internal_result)
     
     # ==================== ENVOI WHATSAPP/EMAIL (via contacts CRM) ====================
-    # Get contacts based on targetType (pour les canaux WhatsApp/Email)
+    # V159: Chercher dans users + reservations + chat_participants pour couvrir tous les CRM
     contacts = []
     if channels.get("whatsapp") or channels.get("email"):
         if campaign.get("targetType") == "all":
-            contacts = await db.users.find({}, {"_id": 0}).to_list(1000)
+            # Récupérer TOUS les contacts de toutes les sources
+            users_list = await db.users.find({}, {"_id": 0}).to_list(1000)
+            contacts_map = {}
+            for u in users_list:
+                email = u.get("email", "")
+                if email and email not in contacts_map:
+                    contacts_map[email] = u
+            # Aussi chercher dans les réservations
+            reservations_list = await db.reservations.find({}, {"_id": 0, "userId": 1, "userName": 1, "userEmail": 1, "userWhatsapp": 1}).to_list(2000)
+            for r in reservations_list:
+                email = r.get("userEmail", "")
+                if email and email not in contacts_map:
+                    contacts_map[email] = {"id": r.get("userId", ""), "name": r.get("userName", ""), "email": email, "whatsapp": r.get("userWhatsapp", "")}
+            contacts = list(contacts_map.values())
         else:
             selected_ids = campaign.get("selectedContacts", [])
             if selected_ids:
+                # Chercher dans users d'abord
                 contacts = await db.users.find({"id": {"$in": selected_ids}}, {"_id": 0}).to_list(1000)
+                found_ids = {c.get("id") for c in contacts}
+                # IDs pas trouvés dans users? Chercher dans reservations
+                missing_ids = [sid for sid in selected_ids if sid not in found_ids]
+                if missing_ids:
+                    reservations_list = await db.reservations.find({"userId": {"$in": missing_ids}}, {"_id": 0}).to_list(500)
+                    seen_emails = set()
+                    for r in reservations_list:
+                        email = r.get("userEmail", "")
+                        if email and email not in seen_emails:
+                            seen_emails.add(email)
+                            contacts.append({"id": r.get("userId", ""), "name": r.get("userName", ""), "email": email, "whatsapp": r.get("userWhatsapp", "")})
     
+    logger.info(f"[CAMPAIGN-LAUNCH] 📧 Contacts trouvés pour email/whatsapp: {len(contacts)} (targetType={campaign.get('targetType')}, selectedContacts={len(campaign.get('selectedContacts', []))})")
+
     for contact in contacts:
         contact_id = contact.get("id", "")
         contact_name = contact.get("name", "")
