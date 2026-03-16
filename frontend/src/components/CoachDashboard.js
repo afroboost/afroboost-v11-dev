@@ -6421,6 +6421,61 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   coachEmail={safeCoachUser?.email}
                   t={t}
                 />
+
+                {/* V157: Lien Association Afroboosteur */}
+                {isSuperAdmin && (
+                  <div style={{
+                    background: 'rgba(139, 92, 246, 0.08)',
+                    border: '1px solid rgba(139, 92, 246, 0.25)',
+                    borderRadius: '12px',
+                    padding: '16px 20px',
+                    marginTop: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    flexWrap: 'wrap'
+                  }}>
+                    <span style={{ fontSize: '1.3rem' }}>🏛️</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: '0.95rem', marginBottom: '2px' }}>
+                        Association Afroboosteur
+                      </div>
+                      <a
+                        href="https://www.afroboosteur.com"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          color: '#a78bfa',
+                          textDecoration: 'underline',
+                          fontSize: '0.88rem',
+                          fontWeight: 500,
+                          wordBreak: 'break-all'
+                        }}
+                      >
+                        www.afroboosteur.com
+                      </a>
+                    </div>
+                    <a
+                      href="https://www.afroboosteur.com"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        background: 'rgba(139, 92, 246, 0.3)',
+                        color: '#e2e8f0',
+                        border: '1px solid rgba(139, 92, 246, 0.4)',
+                        borderRadius: '8px',
+                        padding: '8px 16px',
+                        fontSize: '0.85rem',
+                        fontWeight: 600,
+                        textDecoration: 'none',
+                        cursor: 'pointer',
+                        transition: 'background 0.2s'
+                      }}
+                    >
+                      Visiter ↗
+                    </a>
+                  </div>
+                )}
               </>
             )}
 

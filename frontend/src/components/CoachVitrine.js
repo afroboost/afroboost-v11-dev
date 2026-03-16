@@ -768,36 +768,38 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               );
             }
 
-            // === VIDEO (uploadée ou externe) — v29.5 AUTOPLAY + FALLBACK VISUEL ===
+            // === VIDEO (uploadée ou externe) — V157 OPTIMIZED LOADING ===
             if (heroMediaType === 'video') {
               return (
                 <div className="absolute inset-0" key={`vid-wrap-${activeVideoIndex}`}>
-                  {/* v29.5: Gradient VISIBLE par défaut — se cache quand la vidéo charge */}
+                  {/* V157: Gradient placeholder — attractive while video loads, smooth fade-out */}
                   <div id={`vid-fallback-${activeVideoIndex}`} className="absolute inset-0" style={{
                     background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.7) 0%, rgba(217, 28, 210, 0.5) 50%, rgba(30, 0, 50, 0.95) 100%)',
-                    zIndex: 2, transition: 'opacity 0.5s ease'
+                    zIndex: 2, transition: 'opacity 0.8s ease-out'
                   }}>
                     <div className="absolute inset-0 flex items-center justify-center flex-col gap-3">
                       <div style={{
                         width: '64px', height: '64px', borderRadius: '50%',
                         background: 'rgba(217, 28, 210, 0.7)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        boxShadow: '0 0 25px rgba(217, 28, 210, 0.4)'
+                        boxShadow: '0 0 25px rgba(217, 28, 210, 0.4)',
+                        animation: 'pulse 2s ease-in-out infinite'
                       }}>
                         <svg width="22" height="26" viewBox="0 0 28 32" fill="none">
                           <path d="M28 16L0 32V0L28 16Z" fill="white"/>
                         </svg>
                       </div>
-                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem' }}>Chargement vidéo...</span>
+                      <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.85rem', fontWeight: 500 }}>Chargement vidéo...</span>
                     </div>
                   </div>
+                  <style>{`@keyframes pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.08); opacity: 0.85; } }`}</style>
                   <video
                     key={`vid-${activeVideoIndex}`}
                     autoPlay
                     muted
                     loop={!isVideoPremium}
                     playsInline
-                    preload="auto"
+                    preload="metadata"
                     className="absolute inset-0 w-full h-full object-cover"
                     style={{ filter: 'brightness(0.7)', zIndex: 1 }}
                     onTimeUpdate={handleHeroTimeUpdate}
@@ -809,8 +811,12 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           el.src = heroVideoUrl;
                           el.load();
                         }
+                        // V157: Switch to full preload once metadata loaded
+                        el.addEventListener('loadedmetadata', () => {
+                          el.preload = 'auto';
+                        }, { once: true });
                         const tryPlay = (attempt) => {
-                          if (attempt > 8) return;
+                          if (attempt > 12) return;
                           setTimeout(() => {
                             if (el.paused && el.readyState >= 2) {
                               el.muted = true;
@@ -821,13 +827,13 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                             } else if (el.paused) {
                               tryPlay(attempt + 1);
                             }
-                          }, attempt * 300);
+                          }, attempt * 250);
                         };
                         tryPlay(0);
                       }
                     }}
                     onCanPlay={(e) => {
-                      console.log('[V29.5] Video canplay');
+                      console.log('[V157] Video canplay — hiding fallback');
                       const loader = document.getElementById('hero-media-loader');
                       if (loader) loader.style.display = 'none';
                       if (e.target.paused) { e.target.muted = true; e.target.play().catch(() => {}); }
@@ -835,9 +841,10 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       if (fb) { fb.style.opacity = '0'; fb.style.pointerEvents = 'none'; }
                     }}
                     onError={(e) => {
-                      console.error('[V29.5] Video error:', e.target.error);
+                      console.error('[V157] Video error:', e.target.error);
                       const loader = document.getElementById('hero-media-loader');
                       if (loader) loader.style.display = 'none';
+                      // V157: Keep gradient visible on error so user sees something nice
                     }}
                   />
                 </div>
