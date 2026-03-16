@@ -1776,8 +1776,18 @@ async def launch_campaign(campaign_id: str):
     results = []
     channels = campaign.get("channels", {})
     message_content = campaign.get("message", "")
-    media_url = campaign.get("mediaUrl", "")
+    raw_media_url = campaign.get("mediaUrl", "")
     campaign_name = campaign.get("name", "Campagne")
+
+    # V159: Convertir Google Drive URL en lien direct pour WhatsApp/Email
+    import re as re_mod
+    media_url = raw_media_url
+    _drive_m = re_mod.search(r'drive\.google\.com/file/d/([a-zA-Z0-9_-]+)', media_url or "")
+    if _drive_m:
+        media_url = f"https://drive.google.com/uc?export=view&id={_drive_m.group(1)}"
+    _drive_o = re_mod.search(r'drive\.google\.com/open\?id=([a-zA-Z0-9_-]+)', media_url or "")
+    if _drive_o:
+        media_url = f"https://drive.google.com/uc?export=view&id={_drive_o.group(1)}"
     target_ids = campaign.get("targetIds", [])
     
     success_count = 0
@@ -1945,6 +1955,37 @@ async def launch_campaign(campaign_id: str):
                     subject = f"📢 {campaign_name}"
                     first_name = contact_name.split()[0] if contact_name else "ami(e)"
                     
+                    # V159: Convertir Google Drive URL en lien direct
+                    import re as re_mod
+                    resolved_media = media_url or ""
+                    drive_match = re_mod.search(r'drive\.google\.com/file/d/([a-zA-Z0-9_-]+)', resolved_media)
+                    if drive_match:
+                        resolved_media = f"https://drive.google.com/uc?export=view&id={drive_match.group(1)}"
+                    drive_open_match = re_mod.search(r'drive\.google\.com/open\?id=([a-zA-Z0-9_-]+)', resolved_media)
+                    if drive_open_match:
+                        resolved_media = f"https://drive.google.com/uc?export=view&id={drive_open_match.group(1)}"
+
+                    # V159: Détecter YouTube pour thumbnail
+                    yt_match = re_mod.search(r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/shorts/)([a-zA-Z0-9_-]{11})', resolved_media)
+
+                    # V159: Construire le bloc média HTML
+                    media_html = ""
+                    if resolved_media:
+                        if yt_match:
+                            yt_thumb = f"https://img.youtube.com/vi/{yt_match.group(1)}/hqdefault.jpg"
+                            yt_link = f"https://www.youtube.com/watch?v={yt_match.group(1)}"
+                            media_html = f'''<div style="padding:0 20px 16px;">
+<a href="{yt_link}" target="_blank" style="display:block;position:relative;border-radius:8px;overflow:hidden;">
+<img src="{yt_thumb}" alt="Vidéo" style="width:100%;height:auto;display:block;border-radius:8px;" />
+<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:50px;height:36px;background:rgba(255,0,0,0.85);border-radius:8px;text-align:center;line-height:36px;">
+<span style="color:#fff;font-size:18px;">▶</span>
+</div>
+</a></div>'''
+                        else:
+                            media_html = f'''<div style="padding:0 20px 16px;">
+<img src="{resolved_media}" alt="Media" style="width:100%;height:auto;display:block;border-radius:8px;max-height:400px;object-fit:cover;" />
+</div>'''
+
                     html_content = f"""<!DOCTYPE html>
 <html lang="fr">
 <head><meta charset="utf-8"><title>Message Afroboost</title></head>
@@ -1953,6 +1994,7 @@ async def launch_campaign(campaign_id: str):
 <div style="background:#9333EA;padding:16px 20px;text-align:center;">
 <span style="color:#fff;font-size:22px;font-weight:bold;">Afroboost</span>
 </div>
+{media_html}
 <div style="padding:20px;color:#fff;font-size:14px;line-height:1.6;">
 <p>Salut {first_name},</p>
 {message_content.replace(chr(10), '<br>')}

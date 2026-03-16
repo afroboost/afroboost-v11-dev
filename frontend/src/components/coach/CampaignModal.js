@@ -253,6 +253,24 @@ export default function CampaignModal({
   // YouTube detection for preview
   const ytMatch = (newCampaign.mediaUrl || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
 
+  // V159: Google Drive detection & conversion
+  const convertGoogleDriveUrl = function(url) {
+    if (!url) return url;
+    // Format: https://drive.google.com/file/d/{FILE_ID}/view...
+    var driveFileMatch = url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (driveFileMatch) {
+      return 'https://drive.google.com/uc?export=view&id=' + driveFileMatch[1];
+    }
+    // Format: https://drive.google.com/open?id={FILE_ID}
+    var driveOpenMatch = url.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
+    if (driveOpenMatch) {
+      return 'https://drive.google.com/uc?export=view&id=' + driveOpenMatch[1];
+    }
+    return url;
+  };
+  const isGoogleDrive = /drive\.google\.com/.test(newCampaign.mediaUrl || '');
+  const resolvedMediaUrl = convertGoogleDriveUrl(newCampaign.mediaUrl || '');
+
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
@@ -405,9 +423,18 @@ export default function CampaignModal({
                   type="url"
                   value={newCampaign.mediaUrl || ''}
                   onChange={e => setNewCampaign(prev => ({ ...prev, mediaUrl: e.target.value }))}
-                  placeholder="https://youtube.com/... ou URL image"
+                  placeholder="YouTube, Google Drive ou URL image directe"
                   style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(139,92,246,0.3)', color: '#fff', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
                 />
+                {/* V159: Google Drive hint */}
+                {isGoogleDrive && (
+                  <div style={{ marginTop: '6px', padding: '6px 10px', borderRadius: '6px', background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', fontSize: '11px', color: '#60a5fa' }}>
+                    📁 Lien Google Drive détecté — conversion automatique en lien direct
+                    <div style={{ marginTop: '2px', fontSize: '10px', color: 'rgba(96,165,250,0.7)' }}>
+                      Assurez-vous que le fichier est partagé en mode "Tout le monde avec le lien"
+                    </div>
+                  </div>
+                )}
                 {/* Preview */}
                 {newCampaign.mediaUrl && (
                   <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'center' }}>
@@ -424,7 +451,7 @@ export default function CampaignModal({
                           </div>
                         </div>
                       ) : (
-                        <img src={newCampaign.mediaUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.target.style.display = 'none'; }} />
+                        <img src={resolvedMediaUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.target.parentElement.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:rgba(255,255,255,0.4);font-size:11px;text-align:center;padding:8px">Aperçu non disponible<br/>Le média sera visible dans l\'email</div>'; }} />
                       )}
                     </div>
                   </div>
