@@ -1784,10 +1784,10 @@ async def launch_campaign(campaign_id: str):
     media_url = raw_media_url
     _drive_m = re_mod.search(r'drive\.google\.com/file/d/([a-zA-Z0-9_-]+)', media_url or "")
     if _drive_m:
-        media_url = f"https://drive.google.com/uc?export=view&id={_drive_m.group(1)}"
+        media_url = f"https://lh3.googleusercontent.com/d/{_drive_m.group(1)}=w1000"
     _drive_o = re_mod.search(r'drive\.google\.com/open\?id=([a-zA-Z0-9_-]+)', media_url or "")
     if _drive_o:
-        media_url = f"https://drive.google.com/uc?export=view&id={_drive_o.group(1)}"
+        media_url = f"https://lh3.googleusercontent.com/d/{_drive_o.group(1)}=w1000"
     target_ids = campaign.get("targetIds", [])
     
     success_count = 0
@@ -1960,10 +1960,10 @@ async def launch_campaign(campaign_id: str):
                     resolved_media = media_url or ""
                     drive_match = re_mod.search(r'drive\.google\.com/file/d/([a-zA-Z0-9_-]+)', resolved_media)
                     if drive_match:
-                        resolved_media = f"https://drive.google.com/uc?export=view&id={drive_match.group(1)}"
+                        resolved_media = f"https://lh3.googleusercontent.com/d/{drive_match.group(1)}=w1000"
                     drive_open_match = re_mod.search(r'drive\.google\.com/open\?id=([a-zA-Z0-9_-]+)', resolved_media)
                     if drive_open_match:
-                        resolved_media = f"https://drive.google.com/uc?export=view&id={drive_open_match.group(1)}"
+                        resolved_media = f"https://lh3.googleusercontent.com/d/{drive_open_match.group(1)}=w1000"
 
                     # V159: Détecter YouTube pour thumbnail
                     yt_match = re_mod.search(r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/shorts/)([a-zA-Z0-9_-]{11})', resolved_media)

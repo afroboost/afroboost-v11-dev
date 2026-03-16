@@ -259,12 +259,12 @@ export default function CampaignModal({
     // Format: https://drive.google.com/file/d/{FILE_ID}/view...
     var driveFileMatch = url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
     if (driveFileMatch) {
-      return 'https://drive.google.com/uc?export=view&id=' + driveFileMatch[1];
+      return 'https://lh3.googleusercontent.com/d/' + driveFileMatch[1] + '=w1000';
     }
     // Format: https://drive.google.com/open?id={FILE_ID}
     var driveOpenMatch = url.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
     if (driveOpenMatch) {
-      return 'https://drive.google.com/uc?export=view&id=' + driveOpenMatch[1];
+      return 'https://lh3.googleusercontent.com/d/' + driveOpenMatch[1] + '=w1000';
     }
     return url;
   };

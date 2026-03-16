@@ -123,7 +123,7 @@ export const parseMediaUrl = (url) => {
         platform: 'google_drive',
         fileId,
         // Lien direct pour téléchargement/affichage
-        directUrl: `https://drive.google.com/uc?export=view&id=${fileId}`,
+        directUrl: `https://lh3.googleusercontent.com/d/${fileId}=w1000`,
         // Miniature (peut ne pas fonctionner pour tous les fichiers)
         thumbnailUrl: `https://drive.google.com/thumbnail?id=${fileId}&sz=w400`,
         // Lien de prévisualisation dans Drive

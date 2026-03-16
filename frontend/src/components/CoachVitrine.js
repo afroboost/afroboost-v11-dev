@@ -17,6 +17,53 @@ import AudioPlayer from "./AudioPlayer"; // v17.4
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
 
+// === V159: COUNTDOWN TIMER pour vitrine (ES5-compatible) ===
+var VitrineCountdown = function VitrineCountdown(props) {
+  var offer = props.offer;
+  var initialRemaining = function() {
+    if (!offer.countdown_enabled || !offer.countdown_date) return 0;
+    var endStr = offer.countdown_date + 'T' + (offer.countdown_time || '23:59') + ':00';
+    var end = new Date(endStr).getTime();
+    return Math.max(0, Math.floor((end - Date.now()) / 1000));
+  };
+  var remainingState = useState(initialRemaining);
+  var remaining = remainingState[0];
+  var setRemaining = remainingState[1];
+
+  useEffect(function() {
+    if (!offer.countdown_enabled || !offer.countdown_date) return;
+    var endStr = offer.countdown_date + 'T' + (offer.countdown_time || '23:59') + ':00';
+    var endTime = new Date(endStr).getTime();
+    var interval = setInterval(function() {
+      var diff = Math.max(0, Math.floor((endTime - Date.now()) / 1000));
+      setRemaining(diff);
+      if (diff <= 0) clearInterval(interval);
+    }, 1000);
+    return function() { clearInterval(interval); };
+  }, [offer.countdown_date, offer.countdown_time, offer.countdown_enabled]);
+
+  if (!offer.countdown_enabled || !offer.countdown_date) return null;
+  if (remaining <= 0) {
+    return (
+      <div style={{ marginTop: '8px', padding: '6px 12px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', fontSize: '11px', color: '#f87171', textAlign: 'center', fontWeight: 600 }}>
+        Cette offre est terminée
+      </div>
+    );
+  }
+  var days = Math.floor(remaining / 86400);
+  var hours = Math.floor((remaining % 86400) / 3600);
+  var minutes = Math.floor((remaining % 3600) / 60);
+  var seconds = remaining % 60;
+  var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+  var text = offer.countdown_text || "L'OFFRE FINIT DANS :";
+  return (
+    <div style={{ marginTop: '8px', padding: '8px 12px', borderRadius: '10px', background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(239, 68, 68, 0.1) 100%)', border: '1px solid rgba(245, 158, 11, 0.35)', textAlign: 'center' }}>
+      <div style={{ fontSize: '10px', color: '#f59e0b', fontWeight: 700, letterSpacing: '0.5px', marginBottom: '4px', textTransform: 'uppercase' }}>{text}</div>
+      <div style={{ fontSize: '15px', color: '#fff', fontWeight: 800, fontFamily: "'Courier New', monospace", letterSpacing: '1px' }}>{pad(days)}j {pad(hours)}h {pad(minutes)}m {pad(seconds)}s</div>
+    </div>
+  );
+};
+
 // === UTILITAIRES VIDEO ===
 const getYoutubeId = (url) => {
   if (!url) return null;
@@ -1289,6 +1336,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                             <span>Valable {offer.duration_value} {offer.duration_unit === 'days' ? 'jour(s)' : offer.duration_unit === 'weeks' ? 'semaine(s)' : 'mois'}</span>
                           </div>
                         )}
+                        {/* V159: Countdown Timer côté client */}
+                        <VitrineCountdown offer={offer} />
                       </div>
                     </div>
                   </div>
@@ -1375,6 +1424,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                                 <span>Valable {offer.duration_value} {offer.duration_unit === 'days' ? 'jour(s)' : offer.duration_unit === 'weeks' ? 'semaine(s)' : 'mois'}</span>
                               </div>
                             )}
+                            {/* V159: Countdown Timer côté client */}
+                            <VitrineCountdown offer={offer} />
                           </div>
                         </div>
                       </div>

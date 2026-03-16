@@ -55,7 +55,7 @@ def get_media_type(url: str) -> Dict[str, Any]:
                 "type": "drive",
                 "platform": "google_drive",
                 "file_id": file_id,
-                "direct_url": f"https://drive.google.com/uc?export=view&id={file_id}",
+                "direct_url": f"https://lh3.googleusercontent.com/d/{file_id}=w1000",
                 "thumbnail_url": f"https://drive.google.com/thumbnail?id={file_id}&sz=w400",
                 "embed_url": f"https://drive.google.com/file/d/{file_id}/preview"
             }
