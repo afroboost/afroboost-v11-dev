@@ -456,6 +456,15 @@ class Offer(BaseModel):
     tva: float = 0.0  # TVA percentage
     shippingCost: float = 0.0  # Frais de port
     stock: int = -1  # -1 = unlimited
+    # v59: Durée de validité & prolongation automatique
+    duration_value: Optional[int] = None
+    duration_unit: Optional[str] = None
+    is_auto_prolong: bool = True
+    # V159: Compte à rebours
+    countdown_enabled: bool = False
+    countdown_text: Optional[str] = ""
+    countdown_date: Optional[str] = ""
+    countdown_time: Optional[str] = "23:59"
 
 class OfferCreate(BaseModel):
     name: str
@@ -473,6 +482,15 @@ class OfferCreate(BaseModel):
     tva: float = 0.0
     shippingCost: float = 0.0
     stock: int = -1
+    # v59: Durée de validité
+    duration_value: Optional[int] = None
+    duration_unit: Optional[str] = None
+    is_auto_prolong: bool = True
+    # V159: Compte à rebours
+    countdown_enabled: bool = False
+    countdown_text: Optional[str] = ""
+    countdown_date: Optional[str] = ""
+    countdown_time: Optional[str] = "23:59"
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")

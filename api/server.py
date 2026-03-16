@@ -445,6 +445,11 @@ class Offer(BaseModel):
     expiration_date: Optional[str] = None # ISO datetime d'expiration calculée
     last_reminded_date: Optional[str] = None   # date dernier rappel J-7
     last_prolonged_date: Optional[str] = None  # date dernière prolongation
+    # V159: Compte à rebours
+    countdown_enabled: bool = False
+    countdown_text: Optional[str] = ""
+    countdown_date: Optional[str] = ""
+    countdown_time: Optional[str] = "23:59"
 
 class OfferCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -468,6 +473,11 @@ class OfferCreate(BaseModel):
     duration_value: Optional[Union[int, str]] = None
     duration_unit: Optional[str] = None
     is_auto_prolong: Union[bool, str] = True
+    # V159: Compte à rebours
+    countdown_enabled: bool = False
+    countdown_text: Optional[str] = ""
+    countdown_date: Optional[str] = ""
+    countdown_time: Optional[str] = "23:59"
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
