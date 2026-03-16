@@ -2924,6 +2924,15 @@ async def launch_campaign(campaign_id: str, request: Request = None):
 <a href="{site_url}/#devenir-coach" style="display:inline-block;padding:14px 32px;background:#9333EA;color:#fff;font-size:15px;font-weight:bold;text-decoration:none;border-radius:8px;">{cta_text or 'Réserver'}</a>
 </div>"""
 
+                    # V159: Convertir Google Drive URL en lien direct AVANT le template
+                    import re as re_gd
+                    _gd_file = re_gd.search(r'drive\.google\.com/file/d/([a-zA-Z0-9_-]+)', media_url or "")
+                    _gd_open = re_gd.search(r'drive\.google\.com/open\?id=([a-zA-Z0-9_-]+)', media_url or "")
+                    if _gd_file:
+                        media_url = f"https://lh3.googleusercontent.com/d/{_gd_file.group(1)}=w1000"
+                    elif _gd_open:
+                        media_url = f"https://lh3.googleusercontent.com/d/{_gd_open.group(1)}=w1000"
+
                     # V108.5: Construire le bloc média HTML — avec preview vidéo améliorée
                     media_html = ""
                     app_url = "https://www.afroboost.com"
@@ -2975,8 +2984,8 @@ async def launch_campaign(campaign_id: str, request: Request = None):
 </td></tr>
 </table>
 </div>'''
-                        elif any(media_url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
-                            media_html = f'<div style="padding:0;"><img src="{media_url}" alt="Média" style="width:100%;max-height:300px;object-fit:cover;" /></div>'
+                        elif any(media_url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']) or 'lh3.googleusercontent.com' in media_url:
+                            media_html = f'<div style="padding:0;"><img src="{media_url}" alt="Média" style="width:100%;max-height:300px;object-fit:cover;border-radius:0;" /></div>'
                         elif 'youtube.com' in media_url or 'youtu.be' in media_url:
                             # V109: YouTube → chercher/créer slug dans media_links → ouvrir MediaViewer
                             import re as re_yt
