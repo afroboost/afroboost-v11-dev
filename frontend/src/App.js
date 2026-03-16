@@ -999,6 +999,49 @@ const CloseIcon = () => (
   </svg>
 );
 
+// === V159: Countdown Timer for offers ===
+const OfferCountdown = ({ offer }) => {
+  const [remaining, setRemaining] = useState(() => {
+    if (!offer.countdown_enabled || !offer.countdown_date) return 0;
+    const endStr = offer.countdown_date + 'T' + (offer.countdown_time || '23:59') + ':00';
+    return Math.max(0, Math.floor((new Date(endStr).getTime() - Date.now()) / 1000));
+  });
+
+  useEffect(() => {
+    if (!offer.countdown_enabled || !offer.countdown_date) return;
+    const endStr = offer.countdown_date + 'T' + (offer.countdown_time || '23:59') + ':00';
+    const endTime = new Date(endStr).getTime();
+    setRemaining(Math.max(0, Math.floor((endTime - Date.now()) / 1000)));
+    const interval = setInterval(() => {
+      const diff = Math.max(0, Math.floor((endTime - Date.now()) / 1000));
+      setRemaining(diff);
+      if (diff <= 0) clearInterval(interval);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [offer.countdown_date, offer.countdown_time, offer.countdown_enabled]);
+
+  if (!offer.countdown_enabled || !offer.countdown_date) return null;
+  if (remaining <= 0) {
+    return (
+      <div style={{ marginTop: '8px', padding: '6px 12px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', fontSize: '11px', color: '#f87171', textAlign: 'center', fontWeight: 600 }}>
+        Offre expirée
+      </div>
+    );
+  }
+  const d = Math.floor(remaining / 86400);
+  const h = Math.floor((remaining % 86400) / 3600);
+  const m = Math.floor((remaining % 3600) / 60);
+  const s = remaining % 60;
+  const pad = (n) => n < 10 ? '0' + n : '' + n;
+  const text = offer.countdown_text || "L'OFFRE FINIT DANS :";
+  return (
+    <div data-countdown="active" style={{ marginTop: '8px', padding: '8px 12px', borderRadius: '10px', background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(239, 68, 68, 0.1) 100%)', border: '1px solid rgba(245, 158, 11, 0.35)', textAlign: 'center' }}>
+      <div style={{ fontSize: '10px', color: '#f59e0b', fontWeight: 700, letterSpacing: '0.5px', marginBottom: '4px', textTransform: 'uppercase' }}>{text}</div>
+      <div style={{ fontSize: '15px', color: '#fff', fontWeight: 800, fontFamily: "'Courier New', monospace", letterSpacing: '1px' }}>{pad(d)}j {pad(h)}h {pad(m)}m {pad(s)}s</div>
+    </div>
+  );
+};
+
 // Offer Card - Clean Design with Full Image + Info icon + Discrete dots navigation
 const OfferCard = ({ offer, selected, onClick }) => {
   const [showDescription, setShowDescription] = useState(false);
@@ -1091,6 +1134,7 @@ const OfferCard = ({ offer, selected, onClick }) => {
           </p>
         )}
         <span className="font-bold" style={{ color: '#d91cd2', fontSize: '18px' }}>CHF {offer.price}.-</span>
+        <OfferCountdown offer={offer} />
       </div>
     </div>
   );
@@ -1304,6 +1348,7 @@ const OfferCardSlider = ({ offer, selected, onClick }) => {
             {offer.isProduct && offer.shippingCost > 0 && (
               <p className="text-xs text-white opacity-50 mt-1">+ CHF {offer.shippingCost} frais de port</p>
             )}
+            <OfferCountdown offer={offer} />
           </div>
         </div>
       </div>
