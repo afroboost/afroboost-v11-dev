@@ -137,13 +137,13 @@ const CoursesManager = ({
       {/* Liste des cours avec scroll */}
       <div style={{ maxHeight: '600px', overflowY: 'auto', paddingRight: '8px' }} className="custom-scrollbar">
         {courses.filter(c => !c.archived).map((course, idx) => (
-          <div key={course.id} className="glass rounded-lg p-4 mb-4 relative">
-            {/* Actions: Dupliquer + Archiver */}
-            <div className="absolute top-2 right-2 flex gap-1">
+          <div key={course.id} className="glass rounded-lg p-3 sm:p-4 mb-4">
+            {/* V158: Actions en ligne au-dessus du formulaire sur mobile */}
+            <div className="flex justify-end gap-1 mb-2">
               {/* Bouton dupliquer */}
               <button
                 onClick={() => duplicateCourse(course)}
-                className="p-2 rounded-lg hover:bg-purple-500/30 transition-colors"
+                className="p-1.5 sm:p-2 rounded-lg hover:bg-purple-500/30 transition-colors"
                 style={{ color: 'rgba(139, 92, 246, 0.8)' }}
                 title="Dupliquer ce cours"
                 data-testid={`duplicate-course-${course.id}`}
@@ -155,7 +155,7 @@ const CoursesManager = ({
               {/* Bouton archiver */}
               <button
                 onClick={() => archiveCourse(course)}
-                className="p-2 rounded-lg hover:bg-orange-500/30 transition-colors"
+                className="p-1.5 sm:p-2 rounded-lg hover:bg-orange-500/30 transition-colors"
                 style={{ color: 'rgba(249, 115, 22, 0.8)' }}
                 title="Archiver ce cours"
                 data-testid={`archive-course-${course.id}`}
@@ -166,7 +166,7 @@ const CoursesManager = ({
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pr-16">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
               <div>
                 <label className="block mb-1 text-white text-xs opacity-70">{t('courseName')}</label>
                 <input
@@ -228,7 +228,7 @@ const CoursesManager = ({
                   className="w-full px-3 py-2 rounded-lg neon-input text-sm"
                 />
               </div>
-              <div className="md:col-span-2">
+              <div className="sm:col-span-2">
                 <label className="block mb-1 text-white text-xs opacity-70">{t('mapsLink')}</label>
                 <input
                   type="url"
@@ -392,13 +392,13 @@ const CoursesManager = ({
       {/* Formulaire Ajout */}
       <form onSubmit={addCourse} className="glass rounded-lg p-4 mt-4">
         <h3 className="text-white mb-4 font-semibold text-sm">{t('addCourse')}</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <input
             type="text"
             placeholder={t('courseName')}
             value={newCourse.name}
             onChange={e => setNewCourse({ ...newCourse, name: e.target.value })}
-            className="px-3 py-2 rounded-lg neon-input text-sm"
+            className="px-3 py-2 rounded-lg neon-input text-sm w-full"
             required
           />
           <input
@@ -406,12 +406,12 @@ const CoursesManager = ({
             placeholder={t('location')}
             value={newCourse.locationName}
             onChange={e => setNewCourse({ ...newCourse, locationName: e.target.value })}
-            className="px-3 py-2 rounded-lg neon-input text-sm"
+            className="px-3 py-2 rounded-lg neon-input text-sm w-full"
           />
           <select
             value={newCourse.weekday}
             onChange={e => setNewCourse({ ...newCourse, weekday: parseInt(e.target.value) })}
-            className="px-3 py-2 rounded-lg neon-input text-sm"
+            className="px-3 py-2 rounded-lg neon-input text-sm w-full"
           >
             {WEEKDAYS_MAP[lang].map((d, i) => <option key={i} value={i}>{d}</option>)}
           </select>
@@ -419,7 +419,7 @@ const CoursesManager = ({
             type="time"
             value={newCourse.time}
             onChange={e => setNewCourse({ ...newCourse, time: e.target.value })}
-            className="px-3 py-2 rounded-lg neon-input text-sm"
+            className="px-3 py-2 rounded-lg neon-input text-sm w-full"
           />
         </div>
         <button type="submit" className="btn-primary px-4 py-2 rounded-lg mt-4 text-sm">{t('add')}</button>
