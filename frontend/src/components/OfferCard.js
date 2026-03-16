@@ -1,6 +1,73 @@
 // OfferCard.js - Composants de rendu des offres avec multi-images
 // Compatible Vercel - Extrait de App.js pour architecture modulaire
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+
+// === V159: COUNTDOWN TIMER COMPONENT (ES5-compatible logic) ===
+var CountdownTimer = function CountdownTimer(props) {
+  var offer = props.offer;
+  var initialRemaining = function() {
+    if (!offer.countdown_enabled || !offer.countdown_date) return 0;
+    var endStr = offer.countdown_date + 'T' + (offer.countdown_time || '23:59') + ':00';
+    var end = new Date(endStr).getTime();
+    var now = Date.now();
+    return Math.max(0, Math.floor((end - now) / 1000));
+  };
+
+  var remainingState = useState(initialRemaining);
+  var remaining = remainingState[0];
+  var setRemaining = remainingState[1];
+
+  useEffect(function() {
+    if (!offer.countdown_enabled || !offer.countdown_date) return;
+    var endStr = offer.countdown_date + 'T' + (offer.countdown_time || '23:59') + ':00';
+    var endTime = new Date(endStr).getTime();
+    var interval = setInterval(function() {
+      var now = Date.now();
+      var diff = Math.max(0, Math.floor((endTime - now) / 1000));
+      setRemaining(diff);
+      if (diff <= 0) clearInterval(interval);
+    }, 1000);
+    return function() { clearInterval(interval); };
+  }, [offer.countdown_date, offer.countdown_time, offer.countdown_enabled]);
+
+  if (!offer.countdown_enabled || !offer.countdown_date || remaining <= 0) {
+    if (offer.countdown_enabled && offer.countdown_date && remaining <= 0) {
+      return (
+        <div style={{
+          marginTop: '8px', padding: '6px 12px', borderRadius: '8px',
+          background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)',
+          fontSize: '11px', color: '#f87171', textAlign: 'center', fontWeight: 600
+        }}>
+          Cette offre est terminée
+        </div>
+      );
+    }
+    return null;
+  }
+
+  var days = Math.floor(remaining / 86400);
+  var hours = Math.floor((remaining % 86400) / 3600);
+  var minutes = Math.floor((remaining % 3600) / 60);
+  var seconds = remaining % 60;
+  var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+  var text = offer.countdown_text || "L'OFFRE FINIT DANS :";
+
+  return (
+    <div style={{
+      marginTop: '8px', padding: '8px 12px', borderRadius: '10px',
+      background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(239, 68, 68, 0.1) 100%)',
+      border: '1px solid rgba(245, 158, 11, 0.35)',
+      textAlign: 'center'
+    }}>
+      <div style={{ fontSize: '10px', color: '#f59e0b', fontWeight: 700, letterSpacing: '0.5px', marginBottom: '4px', textTransform: 'uppercase' }}>
+        {text}
+      </div>
+      <div style={{ fontSize: '15px', color: '#fff', fontWeight: 800, fontFamily: "'Courier New', monospace", letterSpacing: '1px' }}>
+        {pad(days)}j {pad(hours)}h {pad(minutes)}m {pad(seconds)}s
+      </div>
+    </div>
+  );
+};
 
 // === ICONS ===
 const InfoIcon = () => (
@@ -119,6 +186,8 @@ export const OfferCard = ({ offer, selected, onClick }) => {
           </p>
         )}
         <span className="font-bold" style={{ color: '#d91cd2', fontSize: '18px' }}>CHF {offer.price}.-</span>
+        {/* V159: Countdown Timer */}
+        <CountdownTimer offer={offer} />
       </div>
     </div>
   );
@@ -359,6 +428,8 @@ export const OfferCardSlider = ({ offer, selected, onClick }) => {
                 <span>Valable {offer.duration_value} {offer.duration_unit === 'days' ? 'jour(s)' : offer.duration_unit === 'weeks' ? 'semaine(s)' : 'mois'}</span>
               </div>
             )}
+            {/* V159: Countdown Timer */}
+            <CountdownTimer offer={offer} />
           </div>
         </div>
       </div>

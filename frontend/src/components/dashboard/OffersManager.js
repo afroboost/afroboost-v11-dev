@@ -354,6 +354,68 @@ const OffersManager = ({
           )}
         </div>
 
+        {/* === V159: COMPTE À REBOURS === */}
+        <div style={{ marginTop: '14px', padding: '14px', borderRadius: '10px', border: '2px solid #f59e0b', background: 'rgba(245, 158, 11, 0.08)', boxShadow: '0 0 12px rgba(245, 158, 11, 0.2)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <p style={{ fontSize: '14px', color: '#f59e0b', fontWeight: 'bold', margin: 0 }}>⏳ COMPTE À REBOURS</p>
+            <div
+              className={`switch ${newOffer.countdown_enabled ? 'active' : ''}`}
+              onClick={function() { setNewOffer(Object.assign({}, newOffer, { countdown_enabled: !newOffer.countdown_enabled })); }}
+              data-testid="countdown-toggle"
+              style={{ flexShrink: 0 }}
+            />
+          </div>
+          {newOffer.countdown_enabled && (
+            <div>
+              <div style={{ marginBottom: '10px' }}>
+                <label style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', display: 'block', marginBottom: '4px' }}>Texte affiché</label>
+                <input
+                  type="text"
+                  placeholder="L'OFFRE FINIT DANS :"
+                  value={newOffer.countdown_text || ''}
+                  onChange={function(e) { setNewOffer(Object.assign({}, newOffer, { countdown_text: e.target.value })); }}
+                  className="w-full px-3 py-3 rounded-lg neon-input text-sm"
+                />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', display: 'block', marginBottom: '4px' }}>Date de fin</label>
+                  <input
+                    type="date"
+                    value={newOffer.countdown_date || ''}
+                    onChange={function(e) { setNewOffer(Object.assign({}, newOffer, { countdown_date: e.target.value })); }}
+                    className="w-full px-3 py-3 rounded-lg neon-input text-sm"
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', display: 'block', marginBottom: '4px' }}>Heure de fin</label>
+                  <input
+                    type="time"
+                    value={newOffer.countdown_time || '23:59'}
+                    onChange={function(e) { setNewOffer(Object.assign({}, newOffer, { countdown_time: e.target.value })); }}
+                    className="w-full px-3 py-3 rounded-lg neon-input text-sm"
+                  />
+                </div>
+              </div>
+              {newOffer.countdown_date && (
+                <p style={{ fontSize: '11px', color: '#f59e0b', marginTop: '8px', opacity: 0.9 }}>
+                  ⏳ Compte à rebours jusqu'au {new Date(newOffer.countdown_date + 'T' + (newOffer.countdown_time || '23:59')).toLocaleDateString('fr-CH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} à {newOffer.countdown_time || '23:59'}
+                </p>
+              )}
+              {!newOffer.countdown_date && (
+                <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: '8px' }}>
+                  Choisissez une date et heure de fin pour activer le compteur
+                </p>
+              )}
+            </div>
+          )}
+          {!newOffer.countdown_enabled && (
+            <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: '0' }}>
+              Activez pour créer une offre limitée dans le temps
+            </p>
+          )}
+        </div>
+
         {/* 5 Champs d'images */}
         <div className="mt-4">
           <label className="text-xs text-white opacity-60 mb-2 block">📷 Images (max 5 URLs)</label>

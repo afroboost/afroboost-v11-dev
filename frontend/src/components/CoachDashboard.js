@@ -2164,7 +2164,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // v152: Charger les champs de durée de validité
       duration_value: offer.duration_value || '',
       duration_unit: offer.duration_unit || '',
-      is_auto_prolong: offer.is_auto_prolong !== false
+      is_auto_prolong: offer.is_auto_prolong !== false,
+      // V159: Countdown
+      countdown_enabled: offer.countdown_enabled || false,
+      countdown_text: offer.countdown_text || '',
+      countdown_date: offer.countdown_date || '',
+      countdown_time: offer.countdown_time || '23:59'
     });
     setEditingOfferId(offer.id);
     // Scroll vers le formulaire
@@ -2178,7 +2183,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       images: ["", "", "", "", ""],
       category: "service", isProduct: false, variants: null, tva: 0, shippingCost: 0, stock: -1,
       // v152: Reset des champs de durée de validité
-      duration_value: '', duration_unit: '', is_auto_prolong: true
+      duration_value: '', duration_unit: '', is_auto_prolong: true,
+      countdown_enabled: false, countdown_text: '', countdown_date: '', countdown_time: '23:59'
     });
     setEditingOfferId(null);
   };
@@ -2211,7 +2217,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         stock: parseInt(newOffer.stock) || -1,
         duration_value: cleanDurationValue,
         duration_unit: cleanDurationUnit,
-        is_auto_prolong: newOffer.is_auto_prolong !== false
+        is_auto_prolong: newOffer.is_auto_prolong !== false,
+        // V159: Countdown
+        countdown_enabled: newOffer.countdown_enabled || false,
+        countdown_text: newOffer.countdown_text || '',
+        countdown_date: newOffer.countdown_date || '',
+        countdown_time: newOffer.countdown_time || '23:59'
       };
       console.log("[V61] Sending offerData:", JSON.stringify(offerData));
 
@@ -2239,7 +2250,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         name: "", price: 0, visible: true, description: "",
         images: ["", "", "", "", ""],
         category: "service", isProduct: false, variants: null, tva: 0, shippingCost: 0, stock: -1,
-        duration_value: '', duration_unit: '', is_auto_prolong: true
+        duration_value: '', duration_unit: '', is_auto_prolong: true,
+        countdown_enabled: false, countdown_text: '', countdown_date: '', countdown_time: '23:59'
       });
     } catch (err) {
       console.error("[V61] Erreur offre:", err);
