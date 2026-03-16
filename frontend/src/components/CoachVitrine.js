@@ -799,6 +799,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   alt={displayName}
                   className="absolute inset-0 w-full h-full object-cover"
                   style={{ filter: 'brightness(0.75)' }}
+                  fetchpriority="high"
+                  loading="eager"
                   onLoad={() => {
                     console.log('[VITRINE-MEDIA] ✅ Image chargée:', heroVideoUrl);
                     const loader = document.getElementById('hero-media-loader');

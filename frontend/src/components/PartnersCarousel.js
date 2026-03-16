@@ -331,9 +331,9 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   return (
     <div 
       className="snap-start snap-always w-full flex-shrink-0 relative"
-      style={{ 
+      style={{
         height: '100%',
-        background: '#000000'
+        background: 'linear-gradient(180deg, #0a0a1a 0%, #1a0a2e 50%, #0a0a1a 100%)'
       }}
       data-testid={`partner-card-${partner.id || partner.email}`}
     >
@@ -361,6 +361,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                       alt={displayName}
                       className="absolute inset-0 w-full h-full object-cover"
                       style={{ filter: 'brightness(0.75)' }}
+                      fetchpriority="high"
+                      loading="eager"
                       onError={() => setActiveHeroIdx(prev => (prev + 1) % heroSlidesCount)}
                     />
                   ) : currentHeroType === 'video' ? (
@@ -386,7 +388,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                       </div>
                       <video
                         key={`hero-vid-${activeHeroIdx}`}
-                        autoPlay muted loop={!isCurrentHeroPremium} playsInline preload="auto"
+                        autoPlay muted loop={!isCurrentHeroPremium} playsInline preload="metadata"
                         className="absolute inset-0 w-full h-full object-cover"
                         style={{ filter: 'brightness(0.7)', zIndex: 1 }}
                         onTimeUpdate={handleVideoTimeUpdate}
@@ -423,11 +425,13 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                       {!ytPlaying ? (
                         <>
                           <img
-                            src={`https://img.youtube.com/vi/${currentYoutubeId}/0.jpg`}
+                            src={`https://img.youtube.com/vi/${currentYoutubeId}/hqdefault.jpg`}
                             alt={displayName}
                             className="absolute inset-0 w-full h-full object-cover"
                             style={{ filter: 'brightness(0.85)' }}
-                            onError={(e) => { e.target.src = `https://img.youtube.com/vi/${currentYoutubeId}/hqdefault.jpg`; }}
+                            fetchpriority="high"
+                            loading="eager"
+                            onError={(e) => { e.target.src = `https://img.youtube.com/vi/${currentYoutubeId}/0.jpg`; }}
                           />
                           <div
                             className="absolute inset-0 flex items-center justify-center cursor-pointer"
@@ -671,6 +675,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                   alt={displayName}
                   className="absolute inset-0 w-full h-full object-cover"
                   style={{ filter: 'brightness(0.75)' }}
+                  fetchpriority="high"
+                  loading="eager"
                   onError={() => setHasError(true)}
                 />
               ) : activeMedia.isDirectVideo ? (
@@ -696,7 +702,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                   playsInline
                   className="absolute inset-0 w-full h-full object-cover"
                   onError={() => setHasError(true)}
-                  preload="auto"
+                  preload="metadata"
                   style={{ filter: 'brightness(0.8)' }}
                   src={activeMedia.url.startsWith('/api/') ? `${BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '')}${activeMedia.url}` : activeMedia.url}
                   onCanPlay={(e) => {
@@ -1234,7 +1240,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
   
   if (loading) {
     return (
-      <div className="flex items-center justify-center w-full h-full" style={{ background: '#000000' }}>
+      <div className="flex items-center justify-center w-full h-full" style={{ background: 'linear-gradient(180deg, #0a0a1a 0%, #1a0a2e 50%, #0a0a1a 100%)' }}>
         <div className="text-center">
           <div className="animate-spin w-10 h-10 border-3 rounded-full mx-auto mb-3" style={{ borderColor: 'var(--primary-color, #D91CD2)', borderTopColor: 'transparent' }}></div>
           <p className="text-white/50 text-sm">Chargement...</p>
@@ -1250,7 +1256,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
   return (
     <div 
       className="relative w-full h-full"
-      style={{ background: '#000000' }}
+      style={{ background: 'linear-gradient(180deg, #0a0a1a 0%, #1a0a2e 50%, #0a0a1a 100%)' }}
       data-testid="partners-reels-section"
     >
       {/* v9.6.6: HEADER avec icônes bien alignées (Loupe + Traduction) */}
