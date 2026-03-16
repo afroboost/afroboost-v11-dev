@@ -5498,69 +5498,72 @@ function App() {
           </div>
         )}
 
-        {/* V157: Footer restructuré — design propre et professionnel */}
-        <footer className="mt-12 mb-8" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '32px' }}>
-          <div className="max-w-lg mx-auto px-4">
-            {/* Logo + Nom + Sous-titre */}
-            <div className="flex items-center justify-center gap-3 mb-2">
-              <img src="/logo192.png" alt="Afroboost" style={{ width: '32px', height: '32px', borderRadius: '8px' }} onError={(e) => { e.target.style.display = 'none'; }} />
-              <span className="text-white font-bold text-base tracking-wide">Afroboost</span>
-            </div>
-            <p className="text-white/40 text-xs text-center mb-5">{t('platform')}</p>
+        {/* V158: Footer redesign — aéré, pleine largeur, professionnel */}
+        <footer style={{ marginTop: '60px', paddingBottom: '40px' }}>
+          {/* Séparateur subtil pleine largeur */}
+          <div style={{ height: '1px', background: 'linear-gradient(90deg, transparent 5%, rgba(139, 92, 246, 0.2) 30%, rgba(217, 28, 210, 0.15) 70%, transparent 95%)', marginBottom: '48px' }} />
 
-            {/* Logos de paiement */}
-            {(concept.paymentTwint || concept.paymentPaypal || concept.paymentCreditCard) && (
-              <div className="flex justify-center items-center gap-6 mb-5" data-testid="payment-logos-footer">
-                {concept.paymentTwint && (
-                  <div style={{ height: '24px', display: 'flex', alignItems: 'center', opacity: 0.6 }} title="Twint">
-                    <svg width="60" height="24" viewBox="0 0 120 40" fill="white">
-                      <text x="0" y="28" fontFamily="Arial, sans-serif" fontSize="24" fontWeight="bold" fill="white">TWINT</text>
-                    </svg>
-                  </div>
-                )}
-                {concept.paymentPaypal && (
-                  <img src="https://upload.wikimedia.org/wikipedia/commons/b/b5/PayPal.svg" alt="PayPal" style={{ height: '22px', filter: 'brightness(0) invert(1)', opacity: 0.6 }} title="PayPal" onError={(e) => { e.target.style.display = 'none'; }} />
-                )}
-                {concept.paymentCreditCard && (
-                  <div className="flex items-center gap-2">
-                    <img src="https://upload.wikimedia.org/wikipedia/commons/5/5e/Visa_Inc._logo.svg" alt="Visa" style={{ height: '18px', filter: 'brightness(0) invert(1)', opacity: 0.6 }} title="Visa" onError={(e) => { e.target.style.display = 'none'; }} />
-                    <img src="https://upload.wikimedia.org/wikipedia/commons/2/2a/Mastercard-logo.svg" alt="Mastercard" style={{ height: '20px', filter: 'brightness(0) invert(1)', opacity: 0.6 }} title="Mastercard" onError={(e) => { e.target.style.display = 'none'; }} />
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Séparateur */}
-            <div style={{ height: '1px', background: 'rgba(255,255,255,0.06)', margin: '0 auto 16px', maxWidth: '200px' }} />
-
-            {/* Liens navigation */}
-            <div className="flex justify-center items-center flex-wrap gap-x-3 gap-y-2 mb-4" style={{ fontFamily: "'Inter', -apple-system, sans-serif", fontWeight: 300, fontSize: '12px', letterSpacing: '0.5px' }}>
-              {concept.externalLink1Url && concept.externalLink1Title && (
-                <>
-                  <a href={concept.externalLink1Url} target="_blank" rel="noopener noreferrer" className="text-white hover:text-pink-400 transition-colors" style={{ opacity: 0.6 }} data-testid="external-link-1">{concept.externalLink1Title}</a>
-                  <span className="text-white" style={{ opacity: 0.2 }}>·</span>
-                </>
-              )}
-              {concept.externalLink2Url && concept.externalLink2Title && (
-                <>
-                  <a href={concept.externalLink2Url} target="_blank" rel="noopener noreferrer" className="text-white hover:text-pink-400 transition-colors" style={{ opacity: 0.6 }} data-testid="external-link-2">{concept.externalLink2Title}</a>
-                  <span className="text-white" style={{ opacity: 0.2 }}>·</span>
-                </>
-              )}
-              {(deferredPrompt || isIOS) && !window.matchMedia('(display-mode: standalone)').matches && (
-                <>
-                  <button onClick={handleInstallClick} className="text-white hover:text-pink-400 transition-colors" style={{ opacity: 0.6, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 'inherit', fontSize: 'inherit', letterSpacing: 'inherit' }} data-testid="footer-install-link">Installer Afroboost</button>
-                  <span className="text-white" style={{ opacity: 0.2 }}>·</span>
-                </>
-              )}
-              <a href="https://www.afroboosteur.com" target="_blank" rel="noopener noreferrer" className="text-white hover:text-pink-400 transition-colors" style={{ opacity: 0.6 }}>Association</a>
-            </div>
-
-            {/* Copyright */}
-            <p className="text-center">
-              <span onClick={handleCopyrightClick} className="copyright-secret text-white cursor-pointer" style={{ opacity: 0.35, fontSize: '11px' }} data-testid="copyright-secret">{t('copyright')}</span>
-            </p>
+          {/* Logo + Nom */}
+          <div className="flex items-center justify-center gap-3" style={{ marginBottom: '8px' }}>
+            <img src="/logo192.png" alt="Afroboost" style={{ width: '36px', height: '36px', borderRadius: '10px' }} onError={(e) => { e.target.style.display = 'none'; }} />
+            <span className="text-white font-bold" style={{ fontSize: '1.15rem', letterSpacing: '0.5px' }}>Afroboost</span>
           </div>
+
+          {/* Sous-titre */}
+          <p className="text-center" style={{ color: 'rgba(255,255,255,0.35)', fontSize: '0.8rem', marginBottom: '32px', letterSpacing: '0.3px' }}>{t('platform')}</p>
+
+          {/* Liens navigation — espacés verticalement */}
+          <div className="flex justify-center items-center flex-wrap gap-x-5 gap-y-3" style={{ marginBottom: '32px', padding: '0 24px' }}>
+            {concept.externalLink1Url && concept.externalLink1Title && (
+              <a href={concept.externalLink1Url} target="_blank" rel="noopener noreferrer" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.82rem', textDecoration: 'none', transition: 'color 0.2s' }} data-testid="external-link-1"
+                onMouseEnter={(e) => e.target.style.color = '#d946ef'}
+                onMouseLeave={(e) => e.target.style.color = 'rgba(255,255,255,0.5)'}
+              >{concept.externalLink1Title}</a>
+            )}
+            {concept.externalLink2Url && concept.externalLink2Title && (
+              <a href={concept.externalLink2Url} target="_blank" rel="noopener noreferrer" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.82rem', textDecoration: 'none', transition: 'color 0.2s' }} data-testid="external-link-2"
+                onMouseEnter={(e) => e.target.style.color = '#d946ef'}
+                onMouseLeave={(e) => e.target.style.color = 'rgba(255,255,255,0.5)'}
+              >{concept.externalLink2Title}</a>
+            )}
+            {(deferredPrompt || isIOS) && !window.matchMedia('(display-mode: standalone)').matches && (
+              <button onClick={handleInstallClick} style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.82rem', background: 'none', border: 'none', cursor: 'pointer', transition: 'color 0.2s' }} data-testid="footer-install-link"
+                onMouseEnter={(e) => e.target.style.color = '#d946ef'}
+                onMouseLeave={(e) => e.target.style.color = 'rgba(255,255,255,0.5)'}
+              >Installer l'app</button>
+            )}
+            <a href="https://www.afroboosteur.com" target="_blank" rel="noopener noreferrer" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.82rem', textDecoration: 'none', transition: 'color 0.2s' }}
+              onMouseEnter={(e) => e.target.style.color = '#d946ef'}
+              onMouseLeave={(e) => e.target.style.color = 'rgba(255,255,255,0.5)'}
+            >Association</a>
+          </div>
+
+          {/* Moyens de paiement — ligne séparée avec espacement */}
+          {(concept.paymentTwint || concept.paymentPaypal || concept.paymentCreditCard) && (
+            <div className="flex justify-center items-center gap-8" style={{ marginBottom: '32px' }} data-testid="payment-logos-footer">
+              {concept.paymentTwint && (
+                <div style={{ display: 'flex', alignItems: 'center', opacity: 0.35 }} title="Twint">
+                  <svg width="52" height="20" viewBox="0 0 120 40" fill="white">
+                    <text x="0" y="28" fontFamily="Arial, sans-serif" fontSize="24" fontWeight="bold" fill="white">TWINT</text>
+                  </svg>
+                </div>
+              )}
+              {concept.paymentPaypal && (
+                <img src="https://upload.wikimedia.org/wikipedia/commons/b/b5/PayPal.svg" alt="PayPal" style={{ height: '18px', filter: 'brightness(0) invert(1)', opacity: 0.35 }} title="PayPal" onError={(e) => { e.target.style.display = 'none'; }} />
+              )}
+              {concept.paymentCreditCard && (
+                <div className="flex items-center gap-3">
+                  <img src="https://upload.wikimedia.org/wikipedia/commons/5/5e/Visa_Inc._logo.svg" alt="Visa" style={{ height: '16px', filter: 'brightness(0) invert(1)', opacity: 0.35 }} title="Visa" onError={(e) => { e.target.style.display = 'none'; }} />
+                  <img src="https://upload.wikimedia.org/wikipedia/commons/2/2a/Mastercard-logo.svg" alt="Mastercard" style={{ height: '18px', filter: 'brightness(0) invert(1)', opacity: 0.35 }} title="Mastercard" onError={(e) => { e.target.style.display = 'none'; }} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Copyright */}
+          <p className="text-center" style={{ marginTop: '8px' }}>
+            <span onClick={handleCopyrightClick} className="copyright-secret" style={{ color: 'rgba(255,255,255,0.25)', fontSize: '0.7rem', cursor: 'pointer', letterSpacing: '0.3px' }} data-testid="copyright-secret">{t('copyright')}</span>
+          </p>
         </footer>
         
         {/* v9.5.6: ScrollIndicator supprimé - le flux Reels gère le scroll */}
