@@ -3049,13 +3049,20 @@ async def launch_campaign(campaign_id: str, request: Request = None):
                         # Since we can't detect video vs image from Drive URL alone,
                         # show a clickable image that links to Drive preview (works for both)
                         if _is_google_drive:
+                            # V150: Gmail-compatible play button overlay using background-image on <td>
+                            # Gmail strips position:absolute/relative, so we use table bg technique
                             media_html = f'''<div style="padding:0;text-align:center;">
-<a href="{_gd_view_url}" target="_blank" style="text-decoration:none;display:block;position:relative;max-width:440px;margin:0 auto;">
-<img src="{_gd_thumbnail}" alt="Média Afroboost" style="width:100%;border-radius:8px;display:block;" />
-<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:64px;height:64px;border-radius:50%;background:rgba(217,28,210,0.9);text-align:center;">
-<table cellpadding="0" cellspacing="0" border="0" width="64" height="64"><tr><td align="center" valign="middle" style="color:#ffffff;font-size:28px;font-family:Arial,sans-serif;">&#9658;</td></tr></table>
-</div>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:440px;margin:0 auto;">
+<tr>
+<td background="{_gd_thumbnail}" bgcolor="#1a1a2e" width="440" height="248" valign="middle" align="center" style="background-image:url({_gd_thumbnail});background-size:cover;background-position:center center;background-repeat:no-repeat;border-radius:8px;">
+<a href="{_gd_view_url}" target="_blank" style="display:block;text-decoration:none;">
+<table cellpadding="0" cellspacing="0" border="0" width="100%" height="248"><tr><td align="center" valign="middle" height="248">
+<table cellpadding="0" cellspacing="0" border="0"><tr><td width="64" height="64" align="center" valign="middle" bgcolor="#D91CD2" style="border-radius:50%;background-color:rgba(217,28,210,0.9);color:#ffffff;font-size:28px;font-family:Arial,sans-serif;">&#9658;</td></tr></table>
+</td></tr></table>
 </a>
+</td>
+</tr>
+</table>
 <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:12px;">
 <tr><td align="center">
 <a href="{_gd_view_url}" target="_blank" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#D91CD2,#8b5cf6);color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir le média</a>
@@ -3083,14 +3090,19 @@ async def launch_campaign(campaign_id: str, request: Request = None):
                                 logger.warning(f"[CAMPAIGN-EMAIL] Erreur lookup media_link: {ml_err}")
 
                             if video_thumbnail:
-                                # V149: Thumbnail + bouton play centré violet
+                                # V150: Gmail-compatible thumbnail + play button using background-image on <td>
                                 media_html = f'''<div style="padding:0;text-align:center;">
-<a href="{video_click_url}" style="text-decoration:none;display:block;position:relative;max-width:440px;margin:0 auto;">
-<img src="{video_thumbnail}" alt="Vidéo Afroboost" style="width:100%;border-radius:8px;display:block;" />
-<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:64px;height:64px;border-radius:50%;background:rgba(217,28,210,0.9);text-align:center;">
-<table cellpadding="0" cellspacing="0" border="0" width="64" height="64"><tr><td align="center" valign="middle" style="color:#ffffff;font-size:28px;font-family:Arial,sans-serif;">&#9658;</td></tr></table>
-</div>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:440px;margin:0 auto;">
+<tr>
+<td background="{video_thumbnail}" bgcolor="#1a1a2e" width="440" height="248" valign="middle" align="center" style="background-image:url({video_thumbnail});background-size:cover;background-position:center center;background-repeat:no-repeat;border-radius:8px;">
+<a href="{video_click_url}" style="display:block;text-decoration:none;">
+<table cellpadding="0" cellspacing="0" border="0" width="100%" height="248"><tr><td align="center" valign="middle" height="248">
+<table cellpadding="0" cellspacing="0" border="0"><tr><td width="64" height="64" align="center" valign="middle" bgcolor="#D91CD2" style="border-radius:50%;background-color:rgba(217,28,210,0.9);color:#ffffff;font-size:28px;font-family:Arial,sans-serif;">&#9658;</td></tr></table>
+</td></tr></table>
 </a>
+</td>
+</tr>
+</table>
 <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:12px;">
 <tr><td align="center">
 <a href="{video_click_url}" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#D91CD2,#8b5cf6);color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir la vidéo</a>
@@ -3161,14 +3173,19 @@ async def launch_campaign(campaign_id: str, request: Request = None):
                                     yt_click_url = media_url  # fallback vers YouTube direct
 
                             if yt_thumbnail:
-                                # V149: YouTube thumbnail + bouton play violet centré
+                                # V150: Gmail-compatible YouTube thumbnail + play button using background-image on <td>
                                 media_html = f'''<div style="padding:0;text-align:center;">
-<a href="{yt_click_url}" style="text-decoration:none;display:block;position:relative;max-width:440px;margin:0 auto;">
-<img src="{yt_thumbnail}" alt="Vidéo Afroboost" style="width:100%;border-radius:8px;display:block;" />
-<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:64px;height:64px;border-radius:50%;background:rgba(217,28,210,0.9);text-align:center;">
-<table cellpadding="0" cellspacing="0" border="0" width="64" height="64"><tr><td align="center" valign="middle" style="color:#ffffff;font-size:28px;font-family:Arial,sans-serif;">&#9658;</td></tr></table>
-</div>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:440px;margin:0 auto;">
+<tr>
+<td background="{yt_thumbnail}" bgcolor="#1a1a2e" width="440" height="248" valign="middle" align="center" style="background-image:url({yt_thumbnail});background-size:cover;background-position:center center;background-repeat:no-repeat;border-radius:8px;">
+<a href="{yt_click_url}" style="display:block;text-decoration:none;">
+<table cellpadding="0" cellspacing="0" border="0" width="100%" height="248"><tr><td align="center" valign="middle" height="248">
+<table cellpadding="0" cellspacing="0" border="0"><tr><td width="64" height="64" align="center" valign="middle" bgcolor="#D91CD2" style="border-radius:50%;background-color:rgba(217,28,210,0.9);color:#ffffff;font-size:28px;font-family:Arial,sans-serif;">&#9658;</td></tr></table>
+</td></tr></table>
 </a>
+</td>
+</tr>
+</table>
 <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:12px;">
 <tr><td align="center">
 <a href="{yt_click_url}" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#D91CD2,#8b5cf6);color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir la vidéo</a>
