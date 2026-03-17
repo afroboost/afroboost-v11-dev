@@ -148,16 +148,9 @@
             <div style="color:#FFFFFF;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:22px;font-weight:600;text-align:center;margin-bottom:32px;padding:0 24px;letter-spacing:0.3px;line-height:1.4;">
                 Tu es lanc&eacute;, ne l&acirc;che rien &#x1F4AA;
             </div>
-            <!-- Barre de progression -->
-            <div style="width:70%;max-width:400px;height:6px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;position:relative;">
-                <div id="af-splash-bar" style="width:0%;height:100%;border-radius:3px;background:#D91CD2;box-shadow:0 0 12px rgba(217,28,210,0.6),0 0 24px rgba(217,28,210,0.3);transition:width 0.4s ease;"></div>
-            </div>
-            <!-- Pourcentage -->
-            <div id="af-splash-pct" style="color:#D91CD2;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:18px;font-weight:600;margin-top:18px;letter-spacing:0.5px;">Chargement... 0%</div>
-            <style>
-                @keyframes af-glow{0%,100%{box-shadow:0 0 12px rgba(217,28,210,0.6),0 0 24px rgba(217,28,210,0.3);}50%{box-shadow:0 0 18px rgba(217,28,210,0.8),0 0 36px rgba(217,28,210,0.5);}}
-                #af-splash-bar{animation:af-glow 1.5s ease-in-out infinite;}
-            </style>
+            <!-- V155: Barre de progression supprimée -->
+            <div id="af-splash-bar" style="display:none;"></div>
+            <div id="af-splash-pct" style="display:none;"></div>
         </div>
         <!-- V149.1: API globale pour le progrès réel (appelée par PartnersCarousel) -->
         <script>
