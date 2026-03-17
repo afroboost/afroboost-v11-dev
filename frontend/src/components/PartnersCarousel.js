@@ -179,6 +179,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   const [videoReady, setVideoReady] = useState(false); // V153: video playing
   const [loadComplete, setLoadComplete] = useState(false); // V153: all media preloaded
   var preloadedBlobRef = useRef(null); // V153: blob URL for pre-fetched video
+  var mediaLoadedOnceRef = useRef(false); // V149.2b: prevent re-loading after first success
   const lastClickTime = useRef(0);
   const clickCount = useRef(0);
   const clickTimer = useRef(null);
@@ -212,12 +213,17 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
     return -1;
   }, [heroVideosSorted]);
 
-  // V153+V149.2: Pre-load ALL hero media (images + video chunks) with real progress tracking
+  // V153+V149.2b: Pre-load ALL hero media (images + video chunks) with real progress tracking
   // Progress is reported to HTML splash screen via window.__updateSplashProgress()
   // Splash is dismissed via window.__dismissSplash() only when ALL media is loaded
+  // V149.2b: Runs ONCE — subsequent re-renders won't re-trigger loading or hide the video
   useEffect(function() {
+    // V149.2b: Already loaded successfully? Skip — don't re-run and risk hiding video
+    if (mediaLoadedOnceRef.current) return;
+
     if (!isVisible) {
       setLoadComplete(true);
+      mediaLoadedOnceRef.current = true;
       if (typeof window.__dismissSplash === 'function') window.__dismissSplash();
       return;
     }
@@ -227,9 +233,6 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
       console.log('[V149.2] No hero data yet, waiting for API...');
       return;
     }
-
-    // V149.2: Reset loadComplete when starting a new load cycle with real data
-    setLoadComplete(false);
 
     var canceled = false;
     var base = BACKEND_URL || window.location.origin;
@@ -340,7 +343,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
     Promise.all([Promise.all(imagePromises), videoPromise])
       .then(function() {
         if (canceled) return;
-        console.log('[V149.1] All hero media loaded — dismissing splash');
+        console.log('[V149.2b] All hero media loaded — dismissing splash');
+        mediaLoadedOnceRef.current = true;
         setLoadComplete(true);
         if (typeof window.__updateSplashProgress === 'function') {
           window.__updateSplashProgress(100);
@@ -351,7 +355,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
       })
       .catch(function() {
         if (canceled) return;
-        console.warn('[V149.1] Some media failed — dismissing splash anyway');
+        console.warn('[V149.2b] Some media failed — dismissing splash anyway');
+        mediaLoadedOnceRef.current = true;
         setLoadComplete(true);
         if (typeof window.__dismissSplash === 'function') {
           window.__dismissSplash();
@@ -360,7 +365,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
 
     return function() {
       canceled = true;
-      if (preloadedBlobRef.current) {
+      // V149.2b: Don't revoke blob URL if loading succeeded — video needs it
+      if (preloadedBlobRef.current && !mediaLoadedOnceRef.current) {
         URL.revokeObjectURL(preloadedBlobRef.current);
         preloadedBlobRef.current = null;
       }
