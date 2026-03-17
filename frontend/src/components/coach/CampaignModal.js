@@ -73,6 +73,10 @@ export default function CampaignModal({
   const [importedContacts, setImportedContacts] = useState([]);
   const [showImportPreview, setShowImportPreview] = useState(false);
 
+  // V154: Category filter for campaign targeting
+  const [campaignCategories, setCampaignCategories] = useState([]);
+  const [categoryFilter, setCategoryFilter] = useState([]);
+
   // v18: Load unified contacts when step 2 opens
   const loadUnifiedContacts = useCallback(async () => {
     if (!API) return;
@@ -82,6 +86,15 @@ export default function CampaignModal({
       const res = await axios.get(`${API}/contacts/all`, { headers });
       if (res.data.success) {
         setAllContacts(res.data.contacts || []);
+        // V154: Also load categories
+        try {
+          var catRes = await axios.get(API + '/contact-categories', { headers: headers });
+          if (catRes.data.success) {
+            setCampaignCategories(catRes.data.categories || []);
+          }
+        } catch (catErr) {
+          console.error('Load campaign categories error:', catErr);
+        }
       }
     } catch (err) {
       // Fallback to activeConversations
@@ -175,7 +188,7 @@ export default function CampaignModal({
     setSelectedRecipients([]);
   };
 
-  // Filtered contacts for display
+  // Filtered contacts for display — V154: ajout filtre catégories
   const filteredContacts = allContacts.filter(c => {
     const matchSearch = !contactSearch ||
       (c.name || '').toLowerCase().includes(contactSearch.toLowerCase()) ||
@@ -185,7 +198,9 @@ export default function CampaignModal({
       contactFilter === 'all' ? true :
       contactFilter === 'group' ? c.type === 'group' :
       c.type === 'user';
-    return matchSearch && matchFilter;
+    var matchCat = categoryFilter.length === 0 ? true :
+      (c.categories && categoryFilter.some(function(catId) { return c.categories.indexOf(catId) !== -1; }));
+    return matchSearch && matchFilter && matchCat;
   });
 
   // v13: Calcul coût et blocage crédits
@@ -544,6 +559,39 @@ export default function CampaignModal({
                   ))}
                 </div>
               </div>
+
+              {/* V154: Category filter for campaign targeting */}
+              {campaignCategories.length > 0 && (
+                <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', alignSelf: 'center', marginRight: '2px' }}>Catégories:</span>
+                  {campaignCategories.map(function(cat) {
+                    var isActive = categoryFilter.indexOf(cat.id) !== -1;
+                    return (
+                      <button key={cat.id} type="button" onClick={function() {
+                        setCategoryFilter(function(prev) {
+                          return isActive ? prev.filter(function(id) { return id !== cat.id; }) : prev.concat([cat.id]);
+                        });
+                      }} style={{
+                        padding: '3px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
+                        background: isActive ? cat.color + '30' : 'rgba(255,255,255,0.04)',
+                        border: '1px solid ' + (isActive ? cat.color + '66' : 'rgba(255,255,255,0.08)'),
+                        color: isActive ? cat.color : 'rgba(255,255,255,0.4)'
+                      }}>
+                        {cat.icon} {cat.name}
+                      </button>
+                    );
+                  })}
+                  {categoryFilter.length > 0 && (
+                    <button type="button" onClick={function() { setCategoryFilter([]); }} style={{
+                      padding: '3px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
+                      background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                      color: '#ef4444'
+                    }}>
+                      ✕ Reset
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Contacts List with Checkboxes */}
               <div style={{

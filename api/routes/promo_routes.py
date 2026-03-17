@@ -108,6 +108,7 @@ class DiscountCode(BaseModel):
     used: int = 0
     active: bool = True
     coach_id: Optional[str] = None  # v9.3.0: Isolation par coach
+    targetCategories: Optional[List[str]] = []  # V154: Ciblage par catégories
 
 
 class DiscountCodeCreate(BaseModel):
@@ -119,6 +120,7 @@ class DiscountCodeCreate(BaseModel):
     courses: List[str] = []
     maxUses: Optional[int] = None
     coach_id: Optional[str] = None  # v9.3.0: Isolation par coach
+    targetCategories: Optional[List[str]] = []  # V154: Ciblage par catégories
 
 
 # === v104: HELPER — Résoudre les détails de l'offre liée à un code ===

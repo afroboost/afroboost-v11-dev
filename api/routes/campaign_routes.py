@@ -45,6 +45,9 @@ class CampaignCreate(BaseModel):
     # v11: Prompts indépendants par campagne
     systemPrompt: Optional[str] = None
     descriptionPrompt: Optional[str] = None
+    # V154: Ciblage par catégories de contacts
+    targetCategories: Optional[List[str]] = []
+    categoryFilterMode: str = "any"  # "any" = OR, "all" = AND
 
 # === ENDPOINTS CAMPAGNES ===
 @campaign_router.get("/campaigns")

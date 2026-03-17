@@ -81,6 +81,10 @@ const PromoCodesTab = ({
   const fileInputRef = useRef(null);
   const [copiedCodeId, setCopiedCodeId] = useState(null); // v14.0: État pour bouton "Copié"
 
+  // V154: Category targeting for promo codes
+  var [promoCategories, setPromoCategories] = useState([]);
+  var [selectedTargetCategories, setSelectedTargetCategories] = useState([]);
+
   // v95: Charger les subscriptions par code pour afficher séances restantes
   const [codeSubscriptions, setCodeSubscriptions] = useState({});
   useEffect(() => {
@@ -100,6 +104,17 @@ const PromoCodesTab = ({
     };
     if (discountCodes?.length > 0) loadSubscriptions();
   }, [discountCodes]);
+
+  // V154: Load categories for targeting
+  useEffect(function() {
+    axios.get(API + '/contact-categories', {
+      headers: { 'X-User-Email': '' }
+    }).then(function(res) {
+      if (res.data.success) {
+        setPromoCategories(res.data.categories || []);
+      }
+    }).catch(function() {});
+  }, []);
 
   // v14.0: Fonction pour copier le code dans le presse-papier
   const copyCodeToClipboard = async (code) => {
@@ -198,6 +213,14 @@ const PromoCodesTab = ({
       return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('fr-CH');
     } catch { return '—'; }
   };
+
+  // V154: Reset selectedTargetCategories when form is cleared or editing is cancelled
+  useEffect(function() {
+    // Reset when not editing
+    if (!editingCode) {
+      setSelectedTargetCategories([]);
+    }
+  }, [editingCode]);
 
   return (
     <div className="card-gradient rounded-xl p-4 sm:p-6" data-testid="promo-codes-tab">
@@ -301,7 +324,14 @@ const PromoCodesTab = ({
       )}
       
       {/* Formulaire de création de code - COMPLET */}
-      <form onSubmit={addCode} className="mb-6 p-4 rounded-lg glass">
+      <form onSubmit={function(e) {
+        // V154: Add targetCategories to form submission
+        setNewCode(function(prev) {
+          return { ...prev, targetCategories: selectedTargetCategories };
+        });
+        // Call the original addCode handler
+        addCode(e);
+      }} className="mb-6 p-4 rounded-lg glass">
         {/* v104: Bandeau mode édition avec email bénéficiaire */}
         {editingCode && (
           <div className="mb-4 p-3 rounded-lg flex items-center gap-3 flex-wrap" style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
@@ -535,7 +565,40 @@ const PromoCodesTab = ({
             )}
           </div>
         </div>
-        
+
+        {/* V154: Ciblage par catégories */}
+        {promoCategories.length > 0 && (
+          <div style={{ marginTop: '12px', marginBottom: '12px' }}>
+            <label style={{ color: 'rgba(255,255,255,0.6)', fontSize: '11px', fontWeight: 500, display: 'block', marginBottom: '6px' }}>
+              🎯 Ciblage par catégorie (optionnel)
+            </label>
+            <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+              {promoCategories.map(function(cat) {
+                var isActive = selectedTargetCategories.indexOf(cat.id) !== -1;
+                return (
+                  <button key={cat.id} type="button" onClick={function() {
+                    setSelectedTargetCategories(function(prev) {
+                      return isActive ? prev.filter(function(id) { return id !== cat.id; }) : prev.concat([cat.id]);
+                    });
+                  }} style={{
+                    padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 500, cursor: 'pointer',
+                    background: isActive ? cat.color + '30' : 'rgba(255,255,255,0.04)',
+                    border: '1px solid ' + (isActive ? cat.color + '66' : 'rgba(255,255,255,0.08)'),
+                    color: isActive ? cat.color : 'rgba(255,255,255,0.4)'
+                  }}>
+                    {cat.icon} {cat.name}
+                  </button>
+                );
+              })}
+            </div>
+            {selectedTargetCategories.length > 0 && (
+              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', margin: '4px 0 0 0' }}>
+                Ce code sera réservé aux contacts de ces catégories
+              </p>
+            )}
+          </div>
+        )}
+
         <button
           type="submit"
           className="btn-primary px-6 py-2 rounded-lg text-sm flex items-center gap-2"

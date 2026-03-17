@@ -28,6 +28,16 @@ export default function ContactsManager({ API, coachEmail }) {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [deleting, setDeleting] = useState(false);
 
+  // V154: Catégories de contacts
+  const [categories, setCategories] = useState([]);
+  const [filterCategory, setFilterCategory] = useState('all');
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  const [newCatColor, setNewCatColor] = useState('#8B5CF6');
+  const [newCatIcon, setNewCatIcon] = useState('📋');
+  const [editingCat, setEditingCat] = useState(null);
+  const [assigningCategory, setAssigningCategory] = useState(false);
+
   const headers = { 'X-User-Email': coachEmail || '' };
 
   const loadContacts = useCallback(async () => {
@@ -44,6 +54,18 @@ export default function ContactsManager({ API, coachEmail }) {
     }
   }, [API, coachEmail]);
 
+  // V154: Load categories
+  const loadCategories = useCallback(async () => {
+    try {
+      var res = await axios.get(API + '/contact-categories', { headers: headers });
+      if (res.data.success) {
+        setCategories(res.data.categories || []);
+      }
+    } catch (err) {
+      console.error('Load categories error:', err);
+    }
+  }, [API, coachEmail]);
+
   const checkGoogleStatus = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/google-contacts/status`, { headers });
@@ -56,7 +78,8 @@ export default function ContactsManager({ API, coachEmail }) {
   useEffect(() => {
     loadContacts();
     checkGoogleStatus();
-  }, [loadContacts, checkGoogleStatus]);
+    loadCategories();
+  }, [loadContacts, checkGoogleStatus, loadCategories]);
 
   // Google OAuth
   const connectGoogle = async () => {
@@ -209,16 +232,21 @@ export default function ContactsManager({ API, coachEmail }) {
       return;
     }
 
-    const header = 'Nom,Email,Téléphone,Source,Tags';
-    const rows = contactsToExport.map(c =>
-      [
-        `"${(c.name || '').replace(/"/g, '""')}"`,
-        `"${(c.email || '').replace(/"/g, '""')}"`,
-        `"${(c.phone || '').replace(/"/g, '""')}"`,
-        `"${(c.source || '').replace(/"/g, '""')}"`,
-        `"${(c.tags || []).join(', ')}"`
-      ].join(',')
-    );
+    const header = 'Nom,Email,Téléphone,Source,Tags,Catégories';
+    const rows = contactsToExport.map(c => {
+      var catNames = (c.categories || []).map(function(catId) {
+        var cat = categories.find(function(ct) { return ct.id === catId; });
+        return cat ? cat.name : '';
+      }).filter(Boolean).join(', ');
+      return [
+        '"' + (c.name || '').replace(/"/g, '""') + '"',
+        '"' + (c.email || '').replace(/"/g, '""') + '"',
+        '"' + (c.phone || '').replace(/"/g, '""') + '"',
+        '"' + (c.source || '').replace(/"/g, '""') + '"',
+        '"' + (c.tags || []).join(', ') + '"',
+        '"' + catNames + '"'
+      ].join(',');
+    });
 
     const csv = [header, ...rows].join('\n');
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -234,7 +262,77 @@ export default function ContactsManager({ API, coachEmail }) {
     setImportResult({ imported: 0, message: `📥 ${contactsToExport.length} contact(s) exporté(s) en CSV` });
   };
 
-  // Filtered contacts
+  // V154: Create category
+  var createCategory = async function() {
+    if (!newCatName.trim()) return;
+    try {
+      var res = await axios.post(API + '/contact-categories', {
+        name: newCatName.trim(),
+        color: newCatColor,
+        icon: newCatIcon
+      }, { headers: headers });
+      if (res.data.success) {
+        setNewCatName('');
+        setNewCatIcon('📋');
+        loadCategories();
+      }
+    } catch (err) {
+      var msg = (err.response && err.response.data && err.response.data.detail) || 'Erreur';
+      alert(msg);
+    }
+  };
+
+  // V154: Delete category
+  var deleteCategory = async function(catId) {
+    if (!window.confirm('Supprimer cette catégorie ? Les contacts ne seront pas supprimés.')) return;
+    try {
+      await axios.delete(API + '/contact-categories/' + catId, { headers: headers });
+      loadCategories();
+      loadContacts();
+    } catch (err) {
+      console.error('Delete category error:', err);
+    }
+  };
+
+  // V154: Assign categories to selected contacts
+  var assignCategoryToSelected = async function(catId) {
+    if (selectedIds.size === 0) return;
+    setAssigningCategory(true);
+    try {
+      await axios.post(API + '/contacts/set-categories', {
+        contact_ids: Array.from(selectedIds),
+        category_ids: [catId],
+        mode: 'add'
+      }, { headers: headers });
+      setImportResult({ imported: 0, message: '✅ Catégorie assignée à ' + selectedIds.size + ' contact(s)' });
+      loadContacts();
+    } catch (err) {
+      setImportResult({ imported: 0, message: '❌ Erreur assignation catégorie' });
+    } finally {
+      setAssigningCategory(false);
+    }
+  };
+
+  // V154: Remove category from selected contacts
+  var removeCategoryFromSelected = async function(catId) {
+    if (selectedIds.size === 0) return;
+    setAssigningCategory(true);
+    try {
+      await axios.post(API + '/contacts/set-categories', {
+        contact_ids: Array.from(selectedIds),
+        category_ids: [catId],
+        mode: 'remove'
+      }, { headers: headers });
+      setImportResult({ imported: 0, message: '✅ Catégorie retirée de ' + selectedIds.size + ' contact(s)' });
+      loadContacts();
+    } catch (err) {
+      setImportResult({ imported: 0, message: '❌ Erreur retrait catégorie' });
+    } finally {
+      setAssigningCategory(false);
+    }
+  };
+
+  // Filtered contacts — V154: ajout filtre catégorie
   const filtered = contacts.filter(c => {
     const matchSearch = !searchQuery ||
       (c.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -245,7 +343,10 @@ export default function ContactsManager({ API, coachEmail }) {
       filterType === 'group' ? c.type === 'group' :
       filterType === 'google' ? c.source === 'google' :
       c.type === 'user';
-    return matchSearch && matchType;
+    var matchCategory = filterCategory === 'all' ? true :
+      filterCategory === '__uncategorized__' ? (!c.categories || c.categories.length === 0) :
+      (c.categories && c.categories.indexOf(filterCategory) !== -1);
+    return matchSearch && matchType && matchCategory;
   });
 
   const groupsCount = contacts.filter(c => c.type === 'group').length;
@@ -386,6 +487,26 @@ export default function ContactsManager({ API, coachEmail }) {
           }}>
             📥 Exporter la sélection
           </button>
+          {/* V154: Category assignment for selected */}
+          {categories.length > 0 && (
+            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+              <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>Catégorie:</span>
+              {categories.slice(0, 4).map(function(cat) {
+                return (
+                  <button key={cat.id} onClick={function() { assignCategoryToSelected(cat.id); }}
+                    disabled={assigningCategory}
+                    title={'Ajouter ' + cat.name}
+                    style={{
+                      padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: 600,
+                      background: cat.color + '20', border: '1px solid ' + cat.color + '44',
+                      color: cat.color, cursor: assigningCategory ? 'not-allowed' : 'pointer'
+                    }}>
+                    {cat.icon}+
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <button onClick={() => setSelectedIds(new Set())} style={{
             padding: '6px 10px', borderRadius: '8px', fontSize: '11px',
             background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)',
@@ -439,6 +560,121 @@ export default function ContactsManager({ API, coachEmail }) {
           ))}
         </div>
       </div>
+
+      {/* V154: Category filter pills */}
+      {categories.length > 0 && (
+        <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '10px', marginTop: '6px' }}>
+          <button onClick={() => setFilterCategory('all')} style={{
+            padding: '4px 10px', borderRadius: '14px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
+            background: filterCategory === 'all' ? 'rgba(217,28,210,0.25)' : 'rgba(255,255,255,0.04)',
+            border: filterCategory === 'all' ? '1px solid rgba(217,28,210,0.5)' : '1px solid rgba(255,255,255,0.08)',
+            color: filterCategory === 'all' ? '#D91CD2' : 'rgba(255,255,255,0.45)'
+          }}>Toutes catégories</button>
+          {categories.map(function(cat) {
+            return (
+              <button key={cat.id} onClick={function() { setFilterCategory(filterCategory === cat.id ? 'all' : cat.id); }} style={{
+                padding: '4px 10px', borderRadius: '14px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
+                background: filterCategory === cat.id ? cat.color + '33' : 'rgba(255,255,255,0.04)',
+                border: '1px solid ' + (filterCategory === cat.id ? cat.color + '88' : 'rgba(255,255,255,0.08)'),
+                color: filterCategory === cat.id ? cat.color : 'rgba(255,255,255,0.45)'
+              }}>
+                {cat.icon} {cat.name}
+              </button>
+            );
+          })}
+          <button onClick={function() { setFilterCategory(filterCategory === '__uncategorized__' ? 'all' : '__uncategorized__'); }} style={{
+            padding: '4px 10px', borderRadius: '14px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
+            background: filterCategory === '__uncategorized__' ? 'rgba(156,163,175,0.25)' : 'rgba(255,255,255,0.04)',
+            border: filterCategory === '__uncategorized__' ? '1px solid rgba(156,163,175,0.5)' : '1px solid rgba(255,255,255,0.08)',
+            color: filterCategory === '__uncategorized__' ? '#9CA3AF' : 'rgba(255,255,255,0.45)'
+          }}>
+            ❓ Sans catégorie
+          </button>
+          <button onClick={function() { setShowCategoryManager(!showCategoryManager); }} style={{
+            padding: '4px 10px', borderRadius: '14px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
+            background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)',
+            color: '#c4b5fd'
+          }}>
+            ⚙️ Gérer
+          </button>
+        </div>
+      )}
+
+      {/* V154: Category Manager */}
+      {showCategoryManager && (
+        <div style={{
+          padding: '14px', borderRadius: '12px', marginBottom: '12px',
+          background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.25)'
+        }}>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: '#c4b5fd', marginBottom: '10px' }}>
+            ⚙️ Gérer les catégories
+          </div>
+          {/* Existing categories */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
+            {categories.map(function(cat) {
+              return (
+                <div key={cat.id} style={{
+                  display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px',
+                  borderRadius: '8px', background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.06)'
+                }}>
+                  <span style={{ fontSize: '16px' }}>{cat.icon}</span>
+                  <span style={{ flex: 1, fontSize: '12px', color: cat.color, fontWeight: 600 }}>{cat.name}</span>
+                  <div style={{
+                    width: '14px', height: '14px', borderRadius: '50%',
+                    background: cat.color, flexShrink: 0
+                  }} />
+                  {!cat.is_default && (
+                    <button onClick={function() { deleteCategory(cat.id); }} style={{
+                      background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
+                      color: '#f87171', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
+                    }}>✕</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {/* Add new category */}
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <select value={newCatIcon} onChange={function(e) { setNewCatIcon(e.target.value); }}
+              style={{
+                padding: '8px', borderRadius: '8px', fontSize: '16px', width: '50px',
+                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                color: '#fff', cursor: 'pointer'
+              }}>
+              {['📋', '🎓', '🤝', '🏢', '🎵', '💼', '🏋️', '🎨', '🎯', '💡', '🌍', '⭐'].map(function(icon) {
+                return <option key={icon} value={icon}>{icon}</option>;
+              })}
+            </select>
+            <input
+              value={newCatName}
+              onChange={function(e) { setNewCatName(e.target.value); }}
+              placeholder="Nom de la catégorie"
+              onKeyDown={function(e) { if (e.key === 'Enter') { e.preventDefault(); createCategory(); } }}
+              style={{
+                flex: 1, padding: '8px 12px', borderRadius: '8px', fontSize: '12px',
+                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.15)',
+                color: '#fff', outline: 'none', minWidth: '100px'
+              }}
+            />
+            <input
+              type="color"
+              value={newCatColor}
+              onChange={function(e) { setNewCatColor(e.target.value); }}
+              style={{ width: '32px', height: '32px', border: 'none', borderRadius: '8px', cursor: 'pointer', background: 'transparent' }}
+            />
+            <button onClick={createCategory} disabled={!newCatName.trim()} style={{
+              padding: '8px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
+              background: newCatName.trim() ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.05)',
+              border: '1px solid ' + (newCatName.trim() ? 'rgba(34,197,94,0.5)' : 'rgba(255,255,255,0.1)'),
+              color: newCatName.trim() ? '#22c55e' : 'rgba(255,255,255,0.3)',
+              cursor: newCatName.trim() ? 'pointer' : 'not-allowed'
+            }}>
+              + Ajouter
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* V146: Sélectionner tout checkbox */}
       {filtered.some(c => c.type !== 'group') && (
@@ -511,6 +747,25 @@ export default function ContactsManager({ API, coachEmail }) {
                     {isGroup ? `${c.member_count || 0} membres` : [c.email, c.phone].filter(Boolean).join(' • ') || 'Pas de coordonnées'}
                   </div>
                 </div>
+                {/* V154: Category badges */}
+                {c.categories && c.categories.length > 0 && (
+                  <div style={{ display: 'flex', gap: '3px', flexShrink: 0 }}>
+                    {c.categories.slice(0, 2).map(function(catId) {
+                      var cat = categories.find(function(ct) { return ct.id === catId; });
+                      if (!cat) return null;
+                      return (
+                        <span key={catId} style={{
+                          padding: '2px 6px', borderRadius: '8px', fontSize: '9px', fontWeight: 600,
+                          background: cat.color + '22', color: cat.color,
+                          border: '1px solid ' + cat.color + '44'
+                        }}>{cat.icon} {cat.name}</span>
+                      );
+                    })}
+                    {c.categories.length > 2 && (
+                      <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)' }}>+{c.categories.length - 2}</span>
+                    )}
+                  </div>
+                )}
                 {c.tags?.length > 0 && (
                   <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                     {c.tags.slice(0, 2).map(t => (

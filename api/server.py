@@ -59,6 +59,8 @@ from api.routes.cinetpay_routes import router as cinetpay_router, init_db as ini
 # v15.0: Import routes paiement multi-vendeurs
 from api.routes.payment_config_routes import router as payment_config_router, init_db as init_payment_config_db
 from api.routes.checkout_routes import router as checkout_router, init_db as init_checkout_db
+# V154: Import routes catégories contacts
+from api.routes.contact_categories_routes import category_router, init_category_db
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -4961,7 +4963,8 @@ async def get_all_contacts_unified(request: Request):
                 "phone": phone or None,
                 "email": email or None,
                 "source": p.get("source", "import"),
-                "tags": p.get("tags", [])
+                "tags": p.get("tags", []),
+                "categories": p.get("categories", [])
             })
 
         # 3. USERS — Utilisateurs de l'app (ceux pas déjà dans participants)
@@ -5068,6 +5071,7 @@ async def bulk_import_contacts(request: Request):
                 "source": source,
                 "coach_id": caller_email if not is_super_admin(caller_email) else DEFAULT_COACH_ID,
                 "tags": c.get("tags", []),
+                "categories": c.get("categories", []),
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "last_seen_at": datetime.now(timezone.utc).isoformat()
             }
@@ -11977,6 +11981,10 @@ fastapi_app.include_router(payment_config_router)
 init_payment_config_db(db)
 fastapi_app.include_router(checkout_router)
 init_checkout_db(db)
+
+# V154: Include contact categories routes
+fastapi_app.include_router(category_router, prefix="/api")
+init_category_db(db)
 
 # V133: CORS restreint — uniquement les domaines Afroboost autorisés
 _cors_default = "https://www.afroboost.com,https://afroboost.com,https://afroboost-v11-dev.vercel.app,http://localhost:3000"

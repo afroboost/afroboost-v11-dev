@@ -41,10 +41,13 @@ export function parseCSV(text) {
       const nameIdx = headers.findIndex(h => ['name', 'nom', 'prenom', 'firstname', 'full_name', 'fullname'].includes(h));
       const phoneIdx = headers.findIndex(h => ['phone', 'tel', 'telephone', 'mobile', 'whatsapp', 'numero'].includes(h));
       const emailIdx = headers.findIndex(h => ['email', 'mail', 'e-mail', 'courriel'].includes(h));
+      // V154: Detect category column
+      const catIdx = headers.findIndex(h => ['categorie', 'catégorie', 'catégories', 'categories', 'category'].includes(h));
 
       name = nameIdx >= 0 ? cols[nameIdx] || '' : '';
       phone = phoneIdx >= 0 ? cols[phoneIdx] || '' : '';
       email = emailIdx >= 0 ? cols[emailIdx] || '' : '';
+      var categoryRaw = catIdx >= 0 ? (cols[catIdx] || '') : '';
     } else {
       // Heuristic: detect phone (starts with + or digits), email (contains @), rest is name
       for (const col of cols) {
@@ -62,7 +65,12 @@ export function parseCSV(text) {
     phone = phone.replace(/[\s()./-]/g, '');
 
     if (name || phone || email) {
-      contacts.push({ name: name || 'Sans nom', phone, email });
+      var contact = { name: name || 'Sans nom', phone, email };
+      // V154: Include category names from CSV (will be matched to IDs on import)
+      if (typeof categoryRaw === 'string' && categoryRaw) {
+        contact.categoryNames = categoryRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+      }
+      contacts.push(contact);
     }
   }
 
