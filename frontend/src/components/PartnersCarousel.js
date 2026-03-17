@@ -615,9 +615,10 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                           pointerEvents: videoReady ? 'none' : 'auto'
                         }} />
                       )}
-                      {/* V153: Video with chunk-based preloading — blob URL from parallel chunk fetches, retries up to 60 attempts */}
-                      <video
-                        key={`hero-vid-${activeHeroIdx}`}
+                      {/* V153: Only render video element AFTER chunks are loaded (blob ready) or loading failed */}
+                      {/* This prevents useless range requests while chunks are being fetched in parallel */}
+                      {loadComplete && <video
+                        key={`hero-vid-${activeHeroIdx}-${preloadedBlobRef.current ? 'blob' : 'range'}`}
                         autoPlay muted loop={!isCurrentHeroPremium} playsInline preload="auto"
                         className="absolute inset-0 w-full h-full object-cover"
                         style={{ filter: 'brightness(0.7)', zIndex: 1 }}
@@ -665,7 +666,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                           console.warn('[V153] Video error slot', activeHeroIdx, '— staying on poster image');
                           setVideoReady(false);
                         }}
-                      />
+                      />}
                     </div>
                   ) : currentHeroType === 'youtube' && currentYoutubeId ? (
                     <div className="absolute inset-0 overflow-hidden">
