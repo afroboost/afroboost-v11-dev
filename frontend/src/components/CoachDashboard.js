@@ -1558,6 +1558,37 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     loadData();
   }, []);
 
+  // V153: Warm up Vercel edge cache for hero video chunks
+  // When admin loads dashboard, fetch all video chunks in background
+  // so visitors get instant video loading from edge cache
+  useEffect(function() {
+    if (!concept || !concept.heroVideos || concept.heroVideos.length === 0) return;
+    var videos = concept.heroVideos;
+    for (var i = 0; i < videos.length; i++) {
+      var url = videos[i] && videos[i].url ? videos[i].url : '';
+      if (!url.startsWith('/api/files/')) continue;
+      var match = url.match(/\/api\/files\/([a-zA-Z0-9]+)\//);
+      if (!match) continue;
+      var fileId = match[1];
+      var isVideo = url.match(/\.(mp4|webm|mov|avi|mkv)(\?|$)/i) || videos[i].type === 'upload' || videos[i].type === 'video' || url.includes('/video_');
+      if (!isVideo) continue;
+      // Warm up this video's chunks
+      (function(fid) {
+        fetch(API + '/video-chunks/' + fid + '/info')
+          .then(function(r) { return r.json(); })
+          .then(function(info) {
+            console.log('[V153-WARMUP] Warming ' + info.total_chunks + ' chunks for video ' + fid);
+            for (var c = 0; c < info.total_chunks; c++) {
+              fetch(API + '/video-chunks/' + fid + '/' + c)
+                .then(function() { /* just warm the cache */ })
+                .catch(function() { /* ignore errors */ });
+            }
+          })
+          .catch(function(err) { console.warn('[V153-WARMUP] Failed for ' + fid + ':', err); });
+      })(fileId);
+    }
+  }, [concept]);
+
   // Fonction de nettoyage manuel (peut être appelée depuis l'interface)
   const manualSanitize = async () => {
     try {

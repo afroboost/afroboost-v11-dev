@@ -2133,6 +2133,87 @@ async def serve_uploaded_file(file_id: str, filename: str, request: Request = No
         logger.error(f"[FILE-SERVE] ❌ Erreur servant {file_id}: {type(e).__name__}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lecture fichier: {type(e).__name__}: {str(e)}")
 
+# === V153: Video chunk endpoints for CDN-cached parallel loading ===
+# Problem: Vercel serverless reads ENTIRE MongoDB document (~10MB) per range request → ~40s for video
+# Solution: Return individual 2MB chunks as 200 responses (reliably cached by Vercel edge CDN via s-maxage).
+# Frontend fetches all chunks in parallel → first visitor ~5-8s, subsequent visitors <1s (edge cache).
+CHUNK_SIZE_V153 = 2 * 1024 * 1024  # 2MB chunks
+
+@api_router.get("/video-chunks/{file_id}/info")
+async def video_chunks_info(file_id: str):
+    """V153: Return video metadata for chunk-based parallel loading"""
+    from fastapi.responses import JSONResponse
+    try:
+        file_doc = await db.uploaded_files.find_one({"file_id": file_id})
+        if not file_doc:
+            raise HTTPException(status_code=404, detail="File not found")
+        raw_data = file_doc.get("data")
+        if raw_data is None:
+            raise HTTPException(status_code=500, detail="No data field")
+        if hasattr(raw_data, 'read'):
+            file_bytes = raw_data.read()
+        elif isinstance(raw_data, bytes):
+            file_bytes = raw_data
+        else:
+            file_bytes = bytes(raw_data)
+        file_size = len(file_bytes)
+        total_chunks = (file_size + CHUNK_SIZE_V153 - 1) // CHUNK_SIZE_V153
+        content_type = file_doc.get("content_type", "video/mp4")
+        logger.info(f"[V153] Video info: {file_id} = {file_size} bytes, {total_chunks} chunks")
+        return JSONResponse(
+            content={"file_size": file_size, "total_chunks": total_chunks, "chunk_size": CHUNK_SIZE_V153, "content_type": content_type},
+            headers={"Cache-Control": "public, s-maxage=31536000, max-age=31536000, immutable"}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[V153] Error getting video info {file_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/video-chunks/{file_id}/{chunk_idx}")
+async def serve_video_chunk(file_id: str, chunk_idx: int):
+    """V153: Serve individual 2MB video chunk with 200 status for reliable Vercel edge CDN caching"""
+    from fastapi.responses import Response
+    try:
+        file_doc = await db.uploaded_files.find_one({"file_id": file_id})
+        if not file_doc:
+            raise HTTPException(status_code=404, detail="File not found")
+        raw_data = file_doc.get("data")
+        if raw_data is None:
+            raise HTTPException(status_code=500, detail="No data field")
+        if hasattr(raw_data, 'read'):
+            file_bytes = raw_data.read()
+        elif isinstance(raw_data, bytes):
+            file_bytes = raw_data
+        else:
+            file_bytes = bytes(raw_data)
+        file_size = len(file_bytes)
+        start = chunk_idx * CHUNK_SIZE_V153
+        if start >= file_size:
+            raise HTTPException(status_code=404, detail=f"Chunk {chunk_idx} out of range")
+        end = min(start + CHUNK_SIZE_V153, file_size)
+        chunk = file_bytes[start:end]
+        total_chunks = (file_size + CHUNK_SIZE_V153 - 1) // CHUNK_SIZE_V153
+        content_type = file_doc.get("content_type", "video/mp4")
+        logger.info(f"[V153] Chunk {chunk_idx}/{total_chunks} of {file_id}: {len(chunk)} bytes")
+        return Response(
+            content=chunk,
+            status_code=200,
+            media_type=content_type,
+            headers={
+                "Cache-Control": "public, s-maxage=31536000, max-age=31536000, immutable",
+                "Content-Length": str(len(chunk)),
+                "X-Chunk-Index": str(chunk_idx),
+                "X-Total-Chunks": str(total_chunks),
+                "X-File-Size": str(file_size),
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[V153] Error serving chunk {chunk_idx} of {file_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # === v9.3.1: VÉRIFICATION PARTENAIRE (CÔTÉ SERVEUR) ===
 @api_router.get("/check-partner/{email}")
 async def check_if_partner(email: str):
