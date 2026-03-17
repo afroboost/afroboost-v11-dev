@@ -999,48 +999,106 @@ const CloseIcon = () => (
   </svg>
 );
 
-// === V159: Countdown Timer for offers ===
-const OfferCountdown = ({ offer }) => {
-  const [remaining, setRemaining] = useState(() => {
-    if (!offer.countdown_enabled || !offer.countdown_date) return 0;
-    const endStr = offer.countdown_date + 'T' + (offer.countdown_time || '23:59') + ':00';
+// === V145: Shared countdown hook (ES5-compatible) ===
+function useCountdownRemaining(offer) {
+  var enabled = offer && offer.countdown_enabled && offer.countdown_date;
+  var computeEnd = function() {
+    if (!enabled) return 0;
+    var endStr = offer.countdown_date + 'T' + (offer.countdown_time || '23:59') + ':00';
     return Math.max(0, Math.floor((new Date(endStr).getTime() - Date.now()) / 1000));
-  });
+  };
+  var ref = useState(function() { return computeEnd(); });
+  var remaining = ref[0];
+  var setRemaining = ref[1];
 
-  useEffect(() => {
-    if (!offer.countdown_enabled || !offer.countdown_date) return;
-    const endStr = offer.countdown_date + 'T' + (offer.countdown_time || '23:59') + ':00';
-    const endTime = new Date(endStr).getTime();
+  useEffect(function() {
+    if (!enabled) return;
+    var endStr = offer.countdown_date + 'T' + (offer.countdown_time || '23:59') + ':00';
+    var endTime = new Date(endStr).getTime();
     setRemaining(Math.max(0, Math.floor((endTime - Date.now()) / 1000)));
-    const interval = setInterval(() => {
-      const diff = Math.max(0, Math.floor((endTime - Date.now()) / 1000));
+    var interval = setInterval(function() {
+      var diff = Math.max(0, Math.floor((endTime - Date.now()) / 1000));
       setRemaining(diff);
       if (diff <= 0) clearInterval(interval);
     }, 1000);
-    return () => clearInterval(interval);
+    return function() { clearInterval(interval); };
   }, [offer.countdown_date, offer.countdown_time, offer.countdown_enabled]);
+
+  return remaining;
+}
+
+function countdownPad(n) { return n < 10 ? '0' + n : '' + n; }
+function countdownParts(remaining) {
+  return {
+    d: Math.floor(remaining / 86400),
+    h: Math.floor((remaining % 86400) / 3600),
+    m: Math.floor((remaining % 3600) / 60),
+    s: remaining % 60
+  };
+}
+
+// === V145: Sticky Countdown Bar (top of page) ===
+function StickyCountdownBar(props) {
+  var offers = props.offers || [];
+  // Find first offer with active countdown
+  var activeOffer = null;
+  for (var i = 0; i < offers.length; i++) {
+    if (offers[i].countdown_enabled && offers[i].countdown_date) {
+      activeOffer = offers[i];
+      break;
+    }
+  }
+  var remaining = useCountdownRemaining(activeOffer || {});
+
+  if (!activeOffer || remaining <= 0) return null;
+  var p = countdownParts(remaining);
+  var text = activeOffer.countdown_text || 'OFFRE LIMITÉE';
+
+  return React.createElement('div', {
+    'data-sticky-countdown': 'active',
+    style: {
+      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 10000,
+      background: '#000000',
+      borderBottom: '2px solid #D91CD2',
+      padding: '10px 16px',
+      textAlign: 'center',
+      fontFamily: "system-ui, sans-serif",
+      boxShadow: '0 4px 20px rgba(217, 28, 210, 0.3)'
+    }
+  },
+    React.createElement('span', { style: { color: '#fff', fontSize: '14px', fontWeight: 600 } }, '\uD83D\uDD25 ' + text + ' : '),
+    React.createElement('span', { style: { color: '#D91CD2', fontSize: '16px', fontWeight: 800, fontFamily: "'Courier New', monospace", letterSpacing: '1.5px' } },
+      countdownPad(p.d) + 'j ' + countdownPad(p.h) + 'h ' + countdownPad(p.m) + 'm ' + countdownPad(p.s) + 's'
+    ),
+    React.createElement('span', { style: { color: '#fff', fontSize: '14px', fontWeight: 600 } }, ' — Réserve vite ! \uD83D\uDE80')
+  );
+}
+
+// === V145: Countdown Timer for offer cards (Neon Violet style) ===
+function OfferCountdown(props) {
+  var offer = props.offer;
+  var remaining = useCountdownRemaining(offer);
 
   if (!offer.countdown_enabled || !offer.countdown_date) return null;
   if (remaining <= 0) {
-    return (
-      <div style={{ marginTop: '8px', padding: '6px 12px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', fontSize: '11px', color: '#f87171', textAlign: 'center', fontWeight: 600 }}>
-        Offre expirée
-      </div>
-    );
+    return React.createElement('div', {
+      style: { marginTop: '8px', padding: '6px 12px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', fontSize: '11px', color: '#f87171', textAlign: 'center', fontWeight: 600 }
+    }, 'Offre expirée');
   }
-  const d = Math.floor(remaining / 86400);
-  const h = Math.floor((remaining % 86400) / 3600);
-  const m = Math.floor((remaining % 3600) / 60);
-  const s = remaining % 60;
-  const pad = (n) => n < 10 ? '0' + n : '' + n;
-  const text = offer.countdown_text || "L'OFFRE FINIT DANS :";
-  return (
-    <div data-countdown="active" style={{ marginTop: '8px', padding: '8px 12px', borderRadius: '10px', background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(239, 68, 68, 0.1) 100%)', border: '1px solid rgba(245, 158, 11, 0.35)', textAlign: 'center' }}>
-      <div style={{ fontSize: '10px', color: '#f59e0b', fontWeight: 700, letterSpacing: '0.5px', marginBottom: '4px', textTransform: 'uppercase' }}>{text}</div>
-      <div style={{ fontSize: '15px', color: '#fff', fontWeight: 800, fontFamily: "'Courier New', monospace", letterSpacing: '1px' }}>{pad(d)}j {pad(h)}h {pad(m)}m {pad(s)}s</div>
-    </div>
+  var p = countdownParts(remaining);
+  var text = offer.countdown_text || "L'OFFRE FINIT DANS :";
+  return React.createElement('div', {
+    'data-countdown': 'active',
+    style: { marginTop: '8px', padding: '10px 14px', borderRadius: '10px', background: '#000000', border: '2px solid #D91CD2', textAlign: 'center', boxShadow: '0 0 15px rgba(217, 28, 210, 0.4), inset 0 0 15px rgba(217, 28, 210, 0.1)' }
+  },
+    React.createElement('div', {
+      style: { fontSize: '11px', color: '#D91CD2', fontWeight: 700, letterSpacing: '0.5px', marginBottom: '4px', textTransform: 'uppercase' }
+    }, text),
+    React.createElement('div', {
+      style: { fontSize: '18px', color: '#D91CD2', fontWeight: 800, fontFamily: "'Courier New', monospace", letterSpacing: '2px', textShadow: '0 0 10px rgba(217, 28, 210, 0.6)' }
+    }, countdownPad(p.d) + 'j ' + countdownPad(p.h) + 'h ' + countdownPad(p.m) + 'm ' + countdownPad(p.s) + 's')
   );
-};
+}
 
 // Offer Card - Clean Design with Full Image + Info icon + Discrete dots navigation
 const OfferCard = ({ offer, selected, onClick }) => {
@@ -4182,8 +4240,13 @@ function App() {
     return <MediaViewer slug={mediaSlug} />;
   }
 
+  // V145: Check if any offer has active countdown for sticky bar padding
+  var hasActiveCountdown = offers.some(function(o) { return o.countdown_enabled && o.countdown_date; });
+
   return (
-    <div className="w-full min-h-screen relative section-gradient" style={{ fontFamily: 'system-ui, sans-serif' }}>
+    <div className="w-full min-h-screen relative section-gradient" style={{ fontFamily: 'system-ui, sans-serif', paddingTop: hasActiveCountdown ? '44px' : '0px' }}>
+      {/* V145: Sticky Countdown Bar — top of page */}
+      <StickyCountdownBar offers={offers} />
       <LanguageSelector lang={lang} setLang={setLang} />
 
       {/* V93.5: Bouton flottant "Retour au dashboard" en mode Vue Visiteur */}
