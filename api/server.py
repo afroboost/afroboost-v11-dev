@@ -2065,33 +2065,46 @@ async def serve_uploaded_file(file_id: str, filename: str, request: Request = No
 
         logger.info(f"[FILE-SERVE] ✅ Servant {original_name}: {file_size} bytes, type={content_type}")
 
-        # V148: Support Range requests pour vidéos — permet le streaming instantané
+        # V151: Smart video serving — ALWAYS use 206 partial responses for videos
+        # Vercel serverless has a 4.5MB response body limit. Large videos MUST be
+        # served in chunks via Range requests. Even without Range header, we send
+        # the first chunk as 206 to trigger the browser's range request mode.
+        CHUNK_SIZE = 2 * 1024 * 1024  # 2MB per chunk — well under 4.5MB limit
         range_header = request.headers.get("range") if request else None
-        if range_header and content_type.startswith("video/"):
-            try:
-                range_spec = range_header.replace("bytes=", "").strip()
-                parts = range_spec.split("-")
-                start = int(parts[0]) if parts[0] else 0
-                end = int(parts[1]) if parts[1] else file_size - 1
-                end = min(end, file_size - 1)
-                chunk = file_bytes[start:end + 1]
-                logger.info(f"[FILE-SERVE] 📡 Range {start}-{end}/{file_size} ({len(chunk)} bytes)")
-                return Response(
-                    content=chunk,
-                    status_code=206,
-                    media_type=content_type,
-                    headers={
-                        "Content-Range": f"bytes {start}-{end}/{file_size}",
-                        "Accept-Ranges": "bytes",
-                        "Content-Length": str(len(chunk)),
-                        "Cache-Control": "public, max-age=31536000, immutable",
-                    }
-                )
-            except Exception as range_err:
-                logger.warning(f"[FILE-SERVE] ⚠️ Range parse error: {range_err}")
-                # Fall through to normal serve
 
-        # Pour les fichiers > 3MB, utiliser StreamingResponse
+        if content_type.startswith("video/"):
+            start = 0
+            end = min(CHUNK_SIZE - 1, file_size - 1)
+
+            if range_header:
+                try:
+                    range_spec = range_header.replace("bytes=", "").strip()
+                    parts = range_spec.split("-")
+                    start = int(parts[0]) if parts[0] else 0
+                    end = int(parts[1]) if len(parts) > 1 and parts[1] else min(start + CHUNK_SIZE - 1, file_size - 1)
+                    end = min(end, file_size - 1)
+                except Exception as range_err:
+                    logger.warning(f"[FILE-SERVE] ⚠️ Range parse error: {range_err}")
+                    start = 0
+                    end = min(CHUNK_SIZE - 1, file_size - 1)
+            else:
+                logger.info(f"[FILE-SERVE] 🎬 Video {file_size} bytes — no Range header, forcing 206 with first {CHUNK_SIZE} bytes")
+
+            chunk = file_bytes[start:end + 1]
+            logger.info(f"[FILE-SERVE] 📡 Video range {start}-{end}/{file_size} ({len(chunk)} bytes)")
+            return Response(
+                content=chunk,
+                status_code=206,
+                media_type=content_type,
+                headers={
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(len(chunk)),
+                    "Cache-Control": "public, max-age=31536000, immutable",
+                }
+            )
+
+        # Pour les fichiers non-vidéo > 3MB, utiliser StreamingResponse
         if file_size > 3 * 1024 * 1024:
             return StreamingResponse(
                 io.BytesIO(file_bytes),
