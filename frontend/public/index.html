@@ -142,146 +142,47 @@
     <body>
         <noscript>You need to enable JavaScript to run this app.</noscript>
         <!-- V149.1: Splash Screen PWA — attend le VRAI chargement des médias, pas un timer fixe -->
-        <!-- Fail-safe: si le JS échoue, le site s'affiche normalement après 20s max -->
-        <div id="af-splash" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#000000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:99999;transition:opacity 0.6s ease;opacity:1;">
-            <!-- Phrase motivante -->
-            <div style="color:#FFFFFF;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:22px;font-weight:600;text-align:center;margin-bottom:32px;padding:0 24px;letter-spacing:0.3px;line-height:1.4;">
-                Tu es lanc&eacute;, ne l&acirc;che rien &#x1F4AA;
-            </div>
-            <!-- V155: Barre de progression supprimée -->
-            <div id="af-splash-bar" style="display:none;"></div>
-            <div id="af-splash-pct" style="display:none;"></div>
-        </div>
-        <!-- V149.1: API globale pour le progrès réel (appelée par PartnersCarousel) -->
+        <!-- V156: Splash screen supprimé — page d'accueil directe -->
+        <!-- APIs globales conservées (no-op) pour éviter les erreurs JS dans PartnersCarousel -->
         <script>
-            (function(){
-                var bar = document.getElementById('af-splash-bar');
-                var pctEl = document.getElementById('af-splash-pct');
-                var current = 0;
-                var target = 15;
-                var ticker = null;
-
-                function render(val) {
-                    current = val;
-                    var rounded = Math.round(val);
-                    if (bar) bar.style.width = rounded + '%';
-                    if (pctEl) pctEl.textContent = 'Chargement... ' + rounded + '%';
-                }
-
-                // V149.2: Trickle animation — barre avance toujours, jamais bloquée
-                function startTicker() {
-                    if (ticker) return;
-                    ticker = setInterval(function() {
-                        if (current < target) {
-                            // Rattrape la cible rapidement (+2% par tick)
-                            render(Math.min(current + 2, target));
-                        } else if (current < 90) {
-                            // Trickle lent : +0.3% par 300ms (~1%/sec) — ne dépasse jamais 90%
-                            render(Math.min(current + 0.3, 90));
-                        }
-                    }, 300);
-                }
-
-                // Démarrer à 15% après 300ms
-                setTimeout(function() { render(15); startTicker(); }, 300);
-
-                // API globale : mise à jour du progrès réel (appelée par PartnersCarousel)
-                window.__updateSplashProgress = function(percent) {
-                    try {
-                        var p = Math.min(100, Math.max(0, Math.round(percent)));
-                        target = p;
-                        if (p > current) render(p);
-                        if (p >= 100 && ticker) { clearInterval(ticker); ticker = null; }
-                    } catch(e) {}
-                };
-            })();
+            window.__updateSplashProgress = function() {};
+            window.__dismissSplash = function() {};
         </script>
         <div id="root"></div>
-        <!-- V149.1: Splash dismissal — attend le VRAI chargement des médias -->
+        <!-- Fail-safe: si React ne monte pas, auto-recovery -->
         <script>
             (function() {
-                var splash = document.getElementById('af-splash');
-                var splashDismissed = false;
                 var resetKey = 'af_auto_reset_v149';
-
-                // V149.1: Dismiss le splash UNIQUEMENT quand les médias sont chargés
-                // Appelé par PartnersCarousel quand images + vidéo chunks sont prêts
-                window.__dismissSplash = function() {
-                    if (splashDismissed || !splash) return;
-                    splashDismissed = true;
-                    // Remplir la barre à 100%
-                    var bar = document.getElementById('af-splash-bar');
-                    var pct = document.getElementById('af-splash-pct');
-                    if (bar) bar.style.width = '100%';
-                    var pctD = document.getElementById('af-splash-pct');
-                    if (pctD) pctD.textContent = "C'est parti ! 100%";
-                    // Fade out après 400ms (temps pour voir le 100%)
-                    setTimeout(function() {
-                        if (splash) {
-                            splash.style.opacity = '0';
-                            splash.style.pointerEvents = 'none';
-                            setTimeout(function() {
-                                if (splash && splash.parentNode) splash.parentNode.removeChild(splash);
-                            }, 700);
-                        }
-                    }, 400);
-                };
-
-                // Fail-safe: Cacher le splash après 20s max (si chargement trop long)
-                setTimeout(function() {
-                    if (!splashDismissed && splash) {
-                        console.warn('[V149] Fail-safe: splash dismissed after 20s timeout');
-                        window.__dismissSplash();
-                    }
-                }, 20000);
-
                 // PHASE 1 (5s) : Si React ne monte pas, tenter un auto-nettoyage + reload
                 setTimeout(function() {
                     var root = document.getElementById('root');
-                    if (root && root.firstChild) return; // OK
-
+                    if (root && root.firstChild) return;
                     if (sessionStorage.getItem(resetKey)) {
-                        // Déjà tenté un reset → montrer lien de réparation
-                        if (splash) {
-                            splash.innerHTML = '<div style="text-align:center;padding:24px;"><div style="color:#fff;font-size:16px;margin-bottom:16px;">Probl&egrave;me d&eacute;tect&eacute;</div><a href="/reset.html" style="color:#d91cd2;text-decoration:underline;font-size:15px;font-weight:600;">Appuyez ici pour r&eacute;parer</a></div>';
-                        }
+                        var fb = document.createElement('div');
+                        fb.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center;z-index:99999;';
+                        fb.innerHTML = '<div style="text-align:center;padding:24px;"><div style="color:#fff;font-size:16px;margin-bottom:16px;">Probl&egrave;me d&eacute;tect&eacute;</div><a href="/reset.html" style="color:#d91cd2;text-decoration:underline;font-size:15px;font-weight:600;">Appuyez ici pour r&eacute;parer</a></div>';
+                        document.body.appendChild(fb);
                         return;
                     }
-
                     try { sessionStorage.setItem(resetKey, '1'); } catch(e) {}
                     var tasks = [];
                     if ('serviceWorker' in navigator) {
-                        tasks.push(
-                            navigator.serviceWorker.getRegistrations().then(function(regs) {
-                                var unregs = [];
-                                for (var i = 0; i < regs.length; i++) { unregs.push(regs[i].unregister()); }
-                                return Promise.all(unregs);
-                            }).catch(function() {})
-                        );
+                        tasks.push(navigator.serviceWorker.getRegistrations().then(function(regs) {
+                            var u = []; for (var i = 0; i < regs.length; i++) { u.push(regs[i].unregister()); } return Promise.all(u);
+                        }).catch(function() {}));
                     }
                     if ('caches' in window) {
-                        tasks.push(
-                            caches.keys().then(function(names) {
-                                var dels = [];
-                                for (var i = 0; i < names.length; i++) { dels.push(caches.delete(names[i])); }
-                                return Promise.all(dels);
-                            }).catch(function() {})
-                        );
+                        tasks.push(caches.keys().then(function(names) {
+                            var d = []; for (var i = 0; i < names.length; i++) { d.push(caches.delete(names[i])); } return Promise.all(d);
+                        }).catch(function() {}));
                     }
-                    Promise.all(tasks).then(function() {
-                        window.location.reload(true);
-                    }).catch(function() {
-                        window.location.reload(true);
-                    });
+                    Promise.all(tasks).then(function() { window.location.reload(true); }).catch(function() { window.location.reload(true); });
                 }, 5000);
-
-                // PHASE 2 (10s) : Si toujours rien après le reload, rediriger vers /reset.html
+                // PHASE 2 (10s)
                 setTimeout(function() {
                     var root = document.getElementById('root');
                     if (root && root.firstChild) return;
-                    setTimeout(function() {
-                        window.location.replace('/reset.html');
-                    }, 1000);
+                    setTimeout(function() { window.location.replace('/reset.html'); }, 1000);
                 }, 10000);
             })();
         </script>

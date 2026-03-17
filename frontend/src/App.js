@@ -2262,7 +2262,7 @@ const ConfirmPaymentOverlay = ({ t, onConfirm, onCancel }) => (
 // Main App
 function App() {
   const [lang, setLang] = useState(localStorage.getItem("af_lang") || "fr");
-  const [showSplash, setShowSplash] = useState(true);
+  const [showSplash, setShowSplash] = useState(false); // V156: Splash supprimé — toujours false
   const [showCoachLogin, setShowCoachLogin] = useState(false);
   
   // === PERSISTANCE SESSION COACH ===
@@ -3403,18 +3403,7 @@ function App() {
     }
   }, [concept.defaultLandingSection, coachMode, showSplash]);
 
-  // V149.1: Splash dismissed by PartnersCarousel when ALL media is actually loaded
-  // Listen for splash DOM removal to sync React state (showSplash gates other features)
-  useEffect(() => {
-    var checkInterval = setInterval(() => {
-      var splash = document.getElementById('af-splash');
-      if (!splash || splash.style.opacity === '0') {
-        setShowSplash(false);
-        clearInterval(checkInterval);
-      }
-    }, 500);
-    return () => clearInterval(checkInterval);
-  }, []);
+  // V156: Splash supprimé — plus besoin de listener
 
   // LOGIQUE CODE PROMO: Validation en temps réel - Case Insensitive avec trim
   useEffect(() => {
