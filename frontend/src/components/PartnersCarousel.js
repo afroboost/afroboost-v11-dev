@@ -119,13 +119,26 @@ const detectHeroMediaType = (video) => {
   return 'unknown';
 };
 
-// v31: Résoudre URL complète pour /api/files/
-const resolveHeroUrl = (url, cacheBuster) => {
+// V148: Résoudre URL complète pour /api/files/ — SANS cache buster (fichiers immutables via ID)
+const resolveHeroUrl = (url) => {
   if (!url) return '';
   if (url.startsWith('/api/files/')) {
-    const base = BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '');
-    return `${base}${url}?v=${cacheBuster}`;
+    var base = BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+    return base + url;
   }
+  return url;
+};
+
+// V148: URL optimisée pour images — compressée JPEG via backend (~100KB au lieu de 1.5MB)
+var resolveOptimizedImageUrl = function(url) {
+  if (!url) return '';
+  // Extraire le file_id de /api/files/{file_id}/{filename}
+  var match = url.match(/\/api\/files\/([a-zA-Z0-9]+)\//);
+  if (match) {
+    var base = BACKEND_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+    return base + '/api/files/' + match[1] + '/optimized?w=1200&q=80';
+  }
+  // Pour les URLs externes, retourner tel quel
   return url;
 };
 
@@ -169,7 +182,6 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
 
   // v31: Carousel multi-slots — utiliser TOUS les heroVideos (pas juste [0])
   const [activeHeroIdx, setActiveHeroIdx] = useState(0);
-  const [cacheBusterTs] = useState(() => Date.now());
 
   // v34: Preview 30s — overlay achat pour vidéos premium
   const [showPreviewOverlay, setShowPreviewOverlay] = useState(false);
@@ -192,7 +204,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   // v31: Résoudre le média courant du carousel
   const currentHero = heroVideosSorted[activeHeroIdx] || heroVideosSorted[0] || null;
   const currentHeroType = detectHeroMediaType(currentHero);
-  const currentHeroUrl = resolveHeroUrl(currentHero?.url || '', cacheBusterTs);
+  const currentHeroUrl = resolveHeroUrl(currentHero?.url || '');
   const currentYoutubeId = getYoutubeId(currentHeroUrl);
 
   // v34: Vérifier si la vidéo courante est premium (a un prix > 0)
@@ -357,13 +369,20 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                   {currentHeroType === 'image' ? (
                     <img
                       key={`hero-img-${activeHeroIdx}`}
-                      src={currentHeroUrl}
+                      src={resolveOptimizedImageUrl(currentHero?.url || '') || currentHeroUrl}
                       alt={displayName}
                       className="absolute inset-0 w-full h-full object-cover"
                       style={{ filter: 'brightness(0.75)' }}
                       fetchpriority="high"
                       loading="eager"
-                      onError={() => setActiveHeroIdx(prev => (prev + 1) % heroSlidesCount)}
+                      onError={(e) => {
+                        // V148: Fallback to original URL if optimized fails
+                        if (e.target.src !== currentHeroUrl) {
+                          e.target.src = currentHeroUrl;
+                        } else {
+                          setActiveHeroIdx(function(prev) { return (prev + 1) % heroSlidesCount; });
+                        }
+                      }}
                     />
                   ) : currentHeroType === 'video' ? (
                     <div className="absolute inset-0" key={`hero-vid-wrap-${activeHeroIdx}`}>
@@ -388,7 +407,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                       </div>
                       <video
                         key={`hero-vid-${activeHeroIdx}`}
-                        autoPlay muted loop={!isCurrentHeroPremium} playsInline preload="metadata"
+                        autoPlay muted loop={!isCurrentHeroPremium} playsInline preload="auto"
                         className="absolute inset-0 w-full h-full object-cover"
                         style={{ filter: 'brightness(0.7)', zIndex: 1 }}
                         onTimeUpdate={handleVideoTimeUpdate}
@@ -397,17 +416,17 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                             el.setAttribute('webkit-playsinline', 'true');
                             el.setAttribute('x5-video-player-type', 'h5');
                             if (el.src !== currentHeroUrl) { el.src = currentHeroUrl; el.load(); }
-                            const tryPlay = (attempt) => {
-                              if (attempt > 8) return;
-                              setTimeout(() => {
+                            var tryPlay = function(attempt) {
+                              if (attempt > 12) return;
+                              setTimeout(function() {
                                 if (el.paused && el.readyState >= 2) {
                                   el.muted = true;
-                                  el.play().then(() => {
-                                    const fb = document.getElementById(`hero-fb-${activeHeroIdx}`);
+                                  el.play().then(function() {
+                                    var fb = document.getElementById('hero-fb-' + activeHeroIdx);
                                     if (fb) { fb.style.opacity = '0'; fb.style.pointerEvents = 'none'; }
-                                  }).catch(() => tryPlay(attempt + 1));
+                                  }).catch(function() { tryPlay(attempt + 1); });
                                 } else if (el.paused) { tryPlay(attempt + 1); }
-                              }, attempt * 300);
+                              }, attempt < 3 ? 100 : 400);
                             };
                             tryPlay(0);
                           }
@@ -1108,6 +1127,36 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
         
         setPartners(data);
         setFilteredPartners(data); // v9.5.3: Initialiser filteredPartners
+
+        // V148: Preload first partner's hero media for instant display
+        if (data.length > 0) {
+          var firstPartner = data[0];
+          var heroVids = getHeroVideosOrdered(firstPartner.heroVideos || []);
+          if (heroVids.length > 0) {
+            var firstHero = heroVids[0];
+            var mediaType = detectHeroMediaType(firstHero);
+            var heroUrl = resolveHeroUrl(firstHero.url || '');
+            if (mediaType === 'image' && heroUrl) {
+              // Preload optimized image
+              var optimUrl = resolveOptimizedImageUrl(firstHero.url || '');
+              if (optimUrl) {
+                var link = document.createElement('link');
+                link.rel = 'preload';
+                link.as = 'image';
+                link.href = optimUrl;
+                document.head.appendChild(link);
+                console.log('[V148-PRELOAD] 🚀 Preloading optimized hero image:', optimUrl.substring(0, 80));
+              }
+            } else if (mediaType === 'video' && heroUrl) {
+              var link2 = document.createElement('link');
+              link2.rel = 'preload';
+              link2.as = 'video';
+              link2.href = heroUrl;
+              document.head.appendChild(link2);
+              console.log('[V148-PRELOAD] 🚀 Preloading hero video:', heroUrl.substring(0, 80));
+            }
+          }
+        }
         
         const initialMuted = {};
         const initialPaused = {};

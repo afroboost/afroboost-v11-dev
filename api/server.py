@@ -1945,12 +1945,89 @@ def mp4_faststart(data: bytes) -> bytes:
         logger.warning(f"[FASTSTART] ⚠️ Erreur faststart, retour original: {e}")
         return data
 
+# === V148: OPTIMIZED IMAGE ENDPOINT — sert des images compressées JPEG pour le hero ===
+@api_router.get("/files/{file_id}/optimized")
+async def serve_optimized_image(file_id: str, w: int = 1200, q: int = 80):
+    """
+    V148: Sert une version optimisée (compressée JPEG) d'une image uploadée.
+    Paramètres: w=largeur max (défaut 1200px), q=qualité JPEG (défaut 80).
+    Réduit les PNG de 1.5MB à ~100-200KB pour un chargement instantané du hero.
+    """
+    from fastapi.responses import Response
+    import io
+
+    try:
+        file_doc = await db.uploaded_files.find_one({"file_id": file_id})
+        if not file_doc:
+            raise HTTPException(status_code=404, detail="Fichier non trouvé")
+
+        raw_data = file_doc.get("data")
+        if raw_data is None:
+            raise HTTPException(status_code=404, detail="Données manquantes")
+
+        if hasattr(raw_data, 'read'):
+            file_bytes = raw_data.read()
+        elif isinstance(raw_data, bytes):
+            file_bytes = raw_data
+        else:
+            file_bytes = bytes(raw_data)
+
+        content_type = file_doc.get("content_type", "")
+
+        # Seulement pour les images
+        if not content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="Ce endpoint est réservé aux images")
+
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(file_bytes))
+
+        # Convertir RGBA → RGB si nécessaire (pour JPEG)
+        if img.mode in ('RGBA', 'P', 'LA'):
+            background = Image.new('RGB', img.size, (0, 0, 0))
+            if img.mode == 'P':
+                img = img.convert('RGBA')
+            if img.mode in ('RGBA', 'LA'):
+                background.paste(img, mask=img.split()[-1])
+            img = background
+
+        # Redimensionner si plus large que w
+        if img.width > w:
+            ratio = w / img.width
+            new_h = int(img.height * ratio)
+            img = img.resize((w, new_h), Image.LANCZOS)
+
+        # Compresser en JPEG
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=q, optimize=True)
+        optimized_bytes = buf.getvalue()
+
+        logger.info(f"[V148-OPTIM] {file_id}: {len(file_bytes)} → {len(optimized_bytes)} bytes ({int(len(optimized_bytes)/1024)}KB, {w}px, q={q})")
+
+        return Response(
+            content=optimized_bytes,
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "Content-Length": str(len(optimized_bytes)),
+                "X-Original-Size": str(len(file_bytes)),
+                "X-Optimized-Size": str(len(optimized_bytes)),
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[V148-OPTIM] Erreur: {type(e).__name__}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur optimisation: {str(e)}")
+
 # === v17.5: SERVING FICHIERS DEPUIS MONGODB ===
 @api_router.get("/files/{file_id}/{filename}")
-async def serve_uploaded_file(file_id: str, filename: str):
+async def serve_uploaded_file(file_id: str, filename: str, request: Request = None):
     """
     Sert un fichier uploadé depuis MongoDB.
     v18.3: Faststart MP4 automatique + StreamingResponse pour gros fichiers
+    V148: Support Range requests pour streaming vidéo instantané
     Cache-Control: 1 an (les fichiers sont immutables via leur ID unique)
     """
     from fastapi.responses import Response, StreamingResponse
@@ -1981,17 +2058,38 @@ async def serve_uploaded_file(file_id: str, filename: str):
 
         content_type = file_doc.get("content_type", "application/octet-stream")
 
-        # v29.4: mp4_faststart DÉSACTIVÉ — corrompait les fichiers MP4
-        # Le moov atom est généralement déjà en position correcte pour les vidéos modernes
-        # if content_type.startswith('video/') and len(file_bytes) < 50 * 1024 * 1024:
-        #     file_bytes = mp4_faststart(file_bytes)
-
         # Sanitize filename pour header HTTP (latin-1 safe)
         raw_name = file_doc.get("original_name", filename)
         original_name = raw_name.encode('ascii', 'replace').decode('ascii').replace('?', '_')
         file_size = len(file_bytes)
 
         logger.info(f"[FILE-SERVE] ✅ Servant {original_name}: {file_size} bytes, type={content_type}")
+
+        # V148: Support Range requests pour vidéos — permet le streaming instantané
+        range_header = request.headers.get("range") if request else None
+        if range_header and content_type.startswith("video/"):
+            try:
+                range_spec = range_header.replace("bytes=", "").strip()
+                parts = range_spec.split("-")
+                start = int(parts[0]) if parts[0] else 0
+                end = int(parts[1]) if parts[1] else file_size - 1
+                end = min(end, file_size - 1)
+                chunk = file_bytes[start:end + 1]
+                logger.info(f"[FILE-SERVE] 📡 Range {start}-{end}/{file_size} ({len(chunk)} bytes)")
+                return Response(
+                    content=chunk,
+                    status_code=206,
+                    media_type=content_type,
+                    headers={
+                        "Content-Range": f"bytes {start}-{end}/{file_size}",
+                        "Accept-Ranges": "bytes",
+                        "Content-Length": str(len(chunk)),
+                        "Cache-Control": "public, max-age=31536000, immutable",
+                    }
+                )
+            except Exception as range_err:
+                logger.warning(f"[FILE-SERVE] ⚠️ Range parse error: {range_err}")
+                # Fall through to normal serve
 
         # Pour les fichiers > 3MB, utiliser StreamingResponse
         if file_size > 3 * 1024 * 1024:

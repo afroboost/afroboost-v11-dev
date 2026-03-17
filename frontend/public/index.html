@@ -30,7 +30,11 @@
         <!-- Additional SEO -->
         <meta name="keywords" content="afroboost, fitness, casque audio, danse, afrobeat, cardio, réservation, cours" />
         <meta name="author" content="Afroboost" />
-        <meta name="version" content="138" />
+        <meta name="version" content="148" />
+        <!-- V148: Preload API endpoint for instant hero display -->
+        <link rel="preconnect" href="https://www.afroboost.com" />
+        <link rel="dns-prefetch" href="https://www.afroboost.com" />
+        <link rel="preload" href="/api/partners/active" as="fetch" crossorigin="anonymous" />
         <script>
             // V139: Force update + version check + auto-purge
             (function() {
