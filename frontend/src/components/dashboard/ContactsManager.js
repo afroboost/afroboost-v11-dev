@@ -489,23 +489,43 @@ export default function ContactsManager({ API, coachEmail }) {
           </button>
           {/* V154: Category assignment for selected */}
           {categories.length > 0 && (
-            <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap' }}>Ajouter catégorie:</span>
-              {categories.map(function(cat) {
-                return (
-                  <button key={cat.id} onClick={function() { assignCategoryToSelected(cat.id); }}
-                    disabled={assigningCategory}
-                    title={'Ajouter « ' + cat.name + ' » aux contacts sélectionnés'}
-                    style={{
-                      padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 600,
-                      background: cat.color + '20', border: '1px solid ' + cat.color + '44',
-                      color: cat.color, cursor: assigningCategory ? 'not-allowed' : 'pointer',
-                      display: 'inline-flex', alignItems: 'center', gap: '3px'
-                    }}>
-                    {cat.icon} {cat.name}
-                  </button>
-                );
-              })}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '11px', color: 'rgba(34,197,94,0.7)', whiteSpace: 'nowrap', fontWeight: 600 }}>+ Ajouter:</span>
+                {categories.map(function(cat) {
+                  return (
+                    <button key={cat.id} onClick={function() { assignCategoryToSelected(cat.id); }}
+                      disabled={assigningCategory}
+                      title={'Ajouter « ' + cat.name + ' »'}
+                      style={{
+                        padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 600,
+                        background: cat.color + '20', border: '1px solid ' + cat.color + '44',
+                        color: cat.color, cursor: assigningCategory ? 'not-allowed' : 'pointer',
+                        display: 'inline-flex', alignItems: 'center', gap: '3px'
+                      }}>
+                      {cat.icon} {cat.name}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '11px', color: 'rgba(239,68,68,0.7)', whiteSpace: 'nowrap', fontWeight: 600 }}>− Retirer:</span>
+                {categories.map(function(cat) {
+                  return (
+                    <button key={cat.id} onClick={function() { removeCategoryFromSelected(cat.id); }}
+                      disabled={assigningCategory}
+                      title={'Retirer « ' + cat.name + ' »'}
+                      style={{
+                        padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 600,
+                        background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+                        color: '#f87171', cursor: assigningCategory ? 'not-allowed' : 'pointer',
+                        display: 'inline-flex', alignItems: 'center', gap: '3px'
+                      }}>
+                      {cat.icon} {cat.name}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
           <button onClick={() => setSelectedIds(new Set())} style={{
