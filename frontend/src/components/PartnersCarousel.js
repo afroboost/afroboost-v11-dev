@@ -178,8 +178,6 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   const [ytPlaying, setYtPlaying] = useState(false);
   const [videoReady, setVideoReady] = useState(false); // V153: video playing
   const [loadComplete, setLoadComplete] = useState(false); // V153: all media preloaded
-  const [preloaderGone, setPreloaderGone] = useState(false); // V153: preloader removed from DOM
-  const [loadProgress, setLoadProgress] = useState(0); // V153: 0-100 loading progress
   var preloadedBlobRef = useRef(null); // V153: blob URL for pre-fetched video
   const lastClickTime = useRef(0);
   const clickCount = useRef(0);
@@ -214,115 +212,53 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
     return -1;
   }, [heroVideosSorted]);
 
-  // V153: Pre-load all hero media via chunk endpoint with progress tracking
-  // Images load via new Image(), video loads via parallel chunk fetches → assembled into blob URL
+  // V153: Pre-load video via parallel chunk fetches → assembled into blob URL
   // Chunks return 200 with s-maxage → cached by Vercel edge CDN for instant subsequent loads
+  // V149: Visual preloader replaced by HTML splash screen in index.html
   useEffect(function() {
-    if (!isVisible || heroSlidesCount === 0) {
+    if (!isVisible || !videoSlideUrl) {
       setLoadComplete(true);
-      setPreloaderGone(true);
-      return;
-    }
-    // If no video slide, skip preloader (images are fast enough)
-    if (!videoSlideUrl) {
-      setLoadComplete(true);
-      setTimeout(function() { setPreloaderGone(true); }, 100);
       return;
     }
 
-    var imageSlides = [];
-    for (var i = 0; i < heroVideosSorted.length; i++) {
-      if (detectHeroMediaType(heroVideosSorted[i]) === 'image') {
-        imageSlides.push(heroVideosSorted[i]);
-      }
-    }
-
-    var imagesLoaded = 0;
-    var videoChunkTotal = 1;
-    var videoChunksLoaded = 0;
     var canceled = false;
-
-    function recalcProgress() {
-      if (canceled) return;
-      var realTotal = imageSlides.length + videoChunkTotal;
-      var realDone = imagesLoaded + videoChunksLoaded;
-      setLoadProgress(Math.min(100, Math.round((realDone / realTotal) * 100)));
-    }
-
-    function checkAllDone() {
-      if (canceled) return;
-      var realTotal = imageSlides.length + videoChunkTotal;
-      var realDone = imagesLoaded + videoChunksLoaded;
-      if (realDone >= realTotal) {
-        console.log('[V153] All media loaded! images=' + imagesLoaded + ' chunks=' + videoChunksLoaded);
-        setLoadProgress(100);
-        setLoadComplete(true);
-        setTimeout(function() { if (!canceled) setPreloaderGone(true); }, 800);
-      }
-    }
-
-    // Pre-load hero images
-    for (var j = 0; j < imageSlides.length; j++) {
-      var img = new Image();
-      img.onload = function() { imagesLoaded++; recalcProgress(); checkAllDone(); };
-      img.onerror = function() { imagesLoaded++; recalcProgress(); checkAllDone(); };
-      img.src = resolveOptimizedImageUrl(imageSlides[j].url || '') || resolveHeroUrl(imageSlides[j].url || '');
-    }
-
-    // Pre-load video via chunk endpoint (parallel fetches)
     var fileIdMatch = videoSlideUrl.match(/\/api\/files\/([a-zA-Z0-9]+)\//);
-    if (fileIdMatch) {
-      var fileId = fileIdMatch[1];
-      var base = BACKEND_URL || window.location.origin;
+    if (!fileIdMatch) { setLoadComplete(true); return; }
 
-      fetch(base + '/api/video-chunks/' + fileId + '/info')
-        .then(function(r) { return r.json(); })
-        .then(function(info) {
+    var fileId = fileIdMatch[1];
+    var base = BACKEND_URL || window.location.origin;
+
+    fetch(base + '/api/video-chunks/' + fileId + '/info')
+      .then(function(r) { return r.json(); })
+      .then(function(info) {
+        if (canceled) return;
+        console.log('[V153] Video: ' + info.file_size + ' bytes, ' + info.total_chunks + ' chunks');
+        var chunkPromises = [];
+        for (var c = 0; c < info.total_chunks; c++) {
+          chunkPromises.push(
+            fetch(base + '/api/video-chunks/' + fileId + '/' + c)
+              .then(function(r) { return r.arrayBuffer(); })
+          );
+        }
+        return Promise.all(chunkPromises).then(function(chunks) {
           if (canceled) return;
-          videoChunkTotal = info.total_chunks || 1;
-          recalcProgress();
-          console.log('[V153] Video: ' + info.file_size + ' bytes, ' + info.total_chunks + ' chunks');
-
-          var chunkPromises = [];
-          for (var c = 0; c < info.total_chunks; c++) {
-            chunkPromises.push(
-              fetch(base + '/api/video-chunks/' + fileId + '/' + c)
-                .then(function(r) {
-                  if (canceled) return null;
-                  videoChunksLoaded++;
-                  recalcProgress();
-                  return r.arrayBuffer();
-                })
-            );
+          var validChunks = [];
+          for (var k = 0; k < chunks.length; k++) {
+            if (chunks[k]) validChunks.push(chunks[k]);
           }
-
-          return Promise.all(chunkPromises).then(function(chunks) {
-            if (canceled) return;
-            var validChunks = [];
-            for (var k = 0; k < chunks.length; k++) {
-              if (chunks[k]) validChunks.push(chunks[k]);
-            }
-            if (validChunks.length === info.total_chunks) {
-              var blob = new Blob(validChunks, { type: info.content_type || 'video/mp4' });
-              preloadedBlobRef.current = URL.createObjectURL(blob);
-              console.log('[V153] Video assembled from ' + info.total_chunks + ' chunks, blob URL ready');
-            }
-            checkAllDone();
-          });
-        })
-        .catch(function(err) {
-          if (canceled) return;
-          console.warn('[V153] Chunk loading failed, falling back to range requests:', err);
-          videoChunksLoaded = videoChunkTotal;
-          recalcProgress();
-          checkAllDone();
+          if (validChunks.length === info.total_chunks) {
+            var blob = new Blob(validChunks, { type: info.content_type || 'video/mp4' });
+            preloadedBlobRef.current = URL.createObjectURL(blob);
+            console.log('[V153] Video assembled from ' + info.total_chunks + ' chunks, blob URL ready');
+          }
+          setLoadComplete(true);
         });
-    } else {
-      // Not an API file URL, skip chunk loading
-      videoChunksLoaded = videoChunkTotal;
-      recalcProgress();
-      checkAllDone();
-    }
+      })
+      .catch(function(err) {
+        if (canceled) return;
+        console.warn('[V153] Chunk loading failed, falling back to range requests:', err);
+        setLoadComplete(true);
+      });
 
     return function() {
       canceled = true;
@@ -331,7 +267,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
         preloadedBlobRef.current = null;
       }
     };
-  }, [videoSlideUrl, isVisible, heroSlidesCount]);
+  }, [videoSlideUrl, isVisible]);
 
   // v31: Auto-rotation toutes les 8s quand il y a plusieurs slots
   useEffect(() => {
@@ -509,50 +445,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
       }}
       data-testid={`partner-card-${partner.id || partner.email}`}
     >
-      {/* V153: Preloader with progress bar — covers card until all media loaded */}
-      {!preloaderGone && videoSlideUrl && (
-        <div style={{
-          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-          zIndex: 50,
-          background: 'linear-gradient(180deg, #0a0a1a 0%, #1a0a2e 50%, #0a0a1a 100%)',
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          opacity: loadComplete ? 0 : 1,
-          transition: 'opacity 0.8s ease',
-          pointerEvents: loadComplete ? 'none' : 'auto'
-        }}>
-          <div style={{
-            width: '64px', height: '64px', borderRadius: '50%',
-            background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            marginBottom: '24px',
-            boxShadow: '0 0 40px rgba(217, 28, 210, 0.4)',
-            animation: 'pulse 2s ease-in-out infinite'
-          }}>
-            <span style={{ color: '#fff', fontSize: '28px', fontWeight: 'bold', fontFamily: 'Arial, sans-serif' }}>A</span>
-          </div>
-          <div style={{
-            width: '220px', height: '4px', borderRadius: '2px',
-            background: 'rgba(255,255,255,0.12)',
-            overflow: 'hidden', marginBottom: '16px'
-          }}>
-            <div style={{
-              height: '100%', borderRadius: '2px',
-              background: 'linear-gradient(90deg, #D91CD2, #8b5cf6)',
-              width: loadProgress + '%',
-              transition: 'width 0.4s ease'
-            }} />
-          </div>
-          <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: '12px', fontFamily: 'Arial, sans-serif', margin: 0 }}>
-            Chargement... {loadProgress}%
-          </p>
-          <style>{'\
-            @keyframes pulse {\
-              0%, 100% { transform: scale(1); box-shadow: 0 0 40px rgba(217,28,210,0.4); }\
-              50% { transform: scale(1.05); box-shadow: 0 0 60px rgba(217,28,210,0.6); }\
-            }\
-          '}</style>
-        </div>
-      )}
+      {/* V149: Splash screen visual is now in index.html — no React preloader needed */}
       {/* v10.0: STYLE INSTAGRAM REELS - ZÉRO VIDE - Vidéo plein écran */}
       <div
         className="absolute inset-0"

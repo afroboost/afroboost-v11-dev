@@ -3403,7 +3403,17 @@ function App() {
     }
   }, [concept.defaultLandingSection, coachMode, showSplash]);
 
-  useEffect(() => { const timer = setTimeout(() => setShowSplash(false), 1500); return () => clearTimeout(timer); }, []);
+  // V149: Splash screen timing — aligned with HTML splash in index.html (2.5s min + fade)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowSplash(false);
+      // V149: Dismiss the HTML splash screen from index.html
+      if (typeof window.__dismissSplash === 'function') {
+        window.__dismissSplash();
+      }
+    }, 2800);
+    return () => clearTimeout(timer);
+  }, []);
 
   // LOGIQUE CODE PROMO: Validation en temps réel - Case Insensitive avec trim
   useEffect(() => {
@@ -3971,7 +3981,8 @@ function App() {
     console.log('[APP] ↩️ Retour au site (session conservée)');
   };
 
-  if (showSplash) return <SplashScreen logoUrl={concept.logoUrl} />;
+  // V149: HTML splash screen in index.html replaces React SplashScreen
+  // App renders behind the splash — data loads while splash is visible
   if (showCoachLogin) return <CoachLoginModal t={t} onLogin={handleGoogleLogin} onCancel={() => { setShowCoachLogin(false); setLoginWelcomeMessage(null); }} welcomeMessage={loginWelcomeMessage} />;
   
   // Page "Devenir Coach"
