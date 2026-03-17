@@ -1040,7 +1040,6 @@ function countdownParts(remaining) {
 // === V145: Sticky Countdown Bar (top of page) ===
 function StickyCountdownBar(props) {
   var offers = props.offers || [];
-  // Find first offer with active countdown
   var activeOffer = null;
   for (var i = 0; i < offers.length; i++) {
     if (offers[i].countdown_enabled && offers[i].countdown_date) {
@@ -1053,24 +1052,20 @@ function StickyCountdownBar(props) {
   if (!activeOffer || remaining <= 0) return null;
   var p = countdownParts(remaining);
   var text = activeOffer.countdown_text || 'OFFRE LIMITÉE';
+  var timerStr = countdownPad(p.d) + 'j ' + countdownPad(p.h) + 'h ' + countdownPad(p.m) + 'm ' + countdownPad(p.s) + 's';
 
-  return React.createElement('div', {
-    'data-sticky-countdown': 'active',
-    style: {
+  return (
+    <div data-sticky-countdown="active" style={{
       position: 'fixed', top: 0, left: 0, right: 0, zIndex: 10000,
-      background: '#000000',
-      borderBottom: '2px solid #D91CD2',
-      padding: '10px 16px',
-      textAlign: 'center',
-      fontFamily: "system-ui, sans-serif",
+      background: '#000000', borderBottom: '2px solid #D91CD2',
+      padding: '10px 16px', textAlign: 'center',
+      fontFamily: 'system-ui, sans-serif',
       boxShadow: '0 4px 20px rgba(217, 28, 210, 0.3)'
-    }
-  },
-    React.createElement('span', { style: { color: '#fff', fontSize: '14px', fontWeight: 600 } }, '\uD83D\uDD25 ' + text + ' : '),
-    React.createElement('span', { style: { color: '#D91CD2', fontSize: '16px', fontWeight: 800, fontFamily: "'Courier New', monospace", letterSpacing: '1.5px' } },
-      countdownPad(p.d) + 'j ' + countdownPad(p.h) + 'h ' + countdownPad(p.m) + 'm ' + countdownPad(p.s) + 's'
-    ),
-    React.createElement('span', { style: { color: '#fff', fontSize: '14px', fontWeight: 600 } }, ' — Réserve vite ! \uD83D\uDE80')
+    }}>
+      <span style={{ color: '#fff', fontSize: '14px', fontWeight: 600 }}>{'\uD83D\uDD25'} {text} : </span>
+      <span style={{ color: '#D91CD2', fontSize: '16px', fontWeight: 800, fontFamily: "'Courier New', monospace", letterSpacing: '1.5px' }}>{timerStr}</span>
+      <span style={{ color: '#fff', fontSize: '14px', fontWeight: 600 }}> — Réserve vite ! {'\uD83D\uDE80'}</span>
+    </div>
   );
 }
 
@@ -1081,22 +1076,20 @@ function OfferCountdown(props) {
 
   if (!offer.countdown_enabled || !offer.countdown_date) return null;
   if (remaining <= 0) {
-    return React.createElement('div', {
-      style: { marginTop: '8px', padding: '6px 12px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', fontSize: '11px', color: '#f87171', textAlign: 'center', fontWeight: 600 }
-    }, 'Offre expirée');
+    return (
+      <div style={{ marginTop: '8px', padding: '6px 12px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', fontSize: '11px', color: '#f87171', textAlign: 'center', fontWeight: 600 }}>
+        Offre expirée
+      </div>
+    );
   }
   var p = countdownParts(remaining);
   var text = offer.countdown_text || "L'OFFRE FINIT DANS :";
-  return React.createElement('div', {
-    'data-countdown': 'active',
-    style: { marginTop: '8px', padding: '10px 14px', borderRadius: '10px', background: '#000000', border: '2px solid #D91CD2', textAlign: 'center', boxShadow: '0 0 15px rgba(217, 28, 210, 0.4), inset 0 0 15px rgba(217, 28, 210, 0.1)' }
-  },
-    React.createElement('div', {
-      style: { fontSize: '11px', color: '#D91CD2', fontWeight: 700, letterSpacing: '0.5px', marginBottom: '4px', textTransform: 'uppercase' }
-    }, text),
-    React.createElement('div', {
-      style: { fontSize: '18px', color: '#D91CD2', fontWeight: 800, fontFamily: "'Courier New', monospace", letterSpacing: '2px', textShadow: '0 0 10px rgba(217, 28, 210, 0.6)' }
-    }, countdownPad(p.d) + 'j ' + countdownPad(p.h) + 'h ' + countdownPad(p.m) + 'm ' + countdownPad(p.s) + 's')
+  var timerStr = countdownPad(p.d) + 'j ' + countdownPad(p.h) + 'h ' + countdownPad(p.m) + 'm ' + countdownPad(p.s) + 's';
+  return (
+    <div data-countdown="active" style={{ marginTop: '8px', padding: '10px 14px', borderRadius: '10px', background: '#000000', border: '2px solid #D91CD2', textAlign: 'center', boxShadow: '0 0 15px rgba(217, 28, 210, 0.4), inset 0 0 15px rgba(217, 28, 210, 0.1)' }}>
+      <div style={{ fontSize: '11px', color: '#D91CD2', fontWeight: 700, letterSpacing: '0.5px', marginBottom: '4px', textTransform: 'uppercase' }}>{text}</div>
+      <div style={{ fontSize: '18px', color: '#D91CD2', fontWeight: 800, fontFamily: "'Courier New', monospace", letterSpacing: '2px', textShadow: '0 0 10px rgba(217, 28, 210, 0.6)' }}>{timerStr}</div>
+    </div>
   );
 }
 
