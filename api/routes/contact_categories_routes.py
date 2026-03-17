@@ -188,6 +188,31 @@ async def set_contact_categories(request: Request):
 
     updated = 0
     for cid in contact_ids:
+        # V154b: Vérifier si le contact existe dans chat_participants
+        existing = await db.chat_participants.find_one({"id": cid}, {"_id": 0, "id": 1})
+        if not existing:
+            # Contact vient peut-être de la collection users — le copier dans chat_participants
+            user = await db.users.find_one({"id": cid}, {"_id": 0})
+            if user:
+                from datetime import datetime, timezone
+                new_participant = {
+                    "id": cid,
+                    "name": user.get("name") or user.get("email", ""),
+                    "email": (user.get("email") or "").lower().strip(),
+                    "whatsapp": None,
+                    "phone": None,
+                    "source": "app",
+                    "coach_id": caller_email,
+                    "tags": [],
+                    "categories": [],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "last_seen_at": datetime.now(timezone.utc).isoformat()
+                }
+                await db.chat_participants.insert_one(new_participant)
+                logger.info(f"[CATEGORIES] Contact app_user copié dans chat_participants: {cid}")
+            else:
+                continue  # Contact introuvable, skip
+
         if mode == "set":
             result = await db.chat_participants.update_one(
                 {"id": cid},

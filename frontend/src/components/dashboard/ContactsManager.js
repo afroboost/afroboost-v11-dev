@@ -489,19 +489,20 @@ export default function ContactsManager({ API, coachEmail }) {
           </button>
           {/* V154: Category assignment for selected */}
           {categories.length > 0 && (
-            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-              <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>Catégorie:</span>
-              {categories.slice(0, 4).map(function(cat) {
+            <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap' }}>Ajouter catégorie:</span>
+              {categories.map(function(cat) {
                 return (
                   <button key={cat.id} onClick={function() { assignCategoryToSelected(cat.id); }}
                     disabled={assigningCategory}
-                    title={'Ajouter ' + cat.name}
+                    title={'Ajouter « ' + cat.name + ' » aux contacts sélectionnés'}
                     style={{
-                      padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: 600,
+                      padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 600,
                       background: cat.color + '20', border: '1px solid ' + cat.color + '44',
-                      color: cat.color, cursor: assigningCategory ? 'not-allowed' : 'pointer'
+                      color: cat.color, cursor: assigningCategory ? 'not-allowed' : 'pointer',
+                      display: 'inline-flex', alignItems: 'center', gap: '3px'
                     }}>
-                    {cat.icon}+
+                    {cat.icon} {cat.name}
                   </button>
                 );
               })}
