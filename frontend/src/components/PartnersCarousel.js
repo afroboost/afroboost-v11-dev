@@ -212,7 +212,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
     return -1;
   }, [heroVideosSorted]);
 
-  // V153+V149.1: Pre-load ALL hero media (images + video chunks) with real progress tracking
+  // V153+V149.2: Pre-load ALL hero media (images + video chunks) with real progress tracking
   // Progress is reported to HTML splash screen via window.__updateSplashProgress()
   // Splash is dismissed via window.__dismissSplash() only when ALL media is loaded
   useEffect(function() {
@@ -222,17 +222,26 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
       return;
     }
 
+    // V149.2: If no hero slides data yet (API still loading), DON'T dismiss splash — wait
+    if (!heroVideosSorted || heroVideosSorted.length === 0) {
+      console.log('[V149.2] No hero data yet, waiting for API...');
+      return;
+    }
+
+    // V149.2: Reset loadComplete when starting a new load cycle with real data
+    setLoadComplete(false);
+
     var canceled = false;
     var base = BACKEND_URL || window.location.origin;
     var totalItems = 0;
     var loadedItems = 0;
 
-    // V149.1: Update splash progress
+    // V149.2: Update splash progress
     var updateProgress = function() {
       if (canceled) return;
       if (totalItems === 0) return;
       var pct = Math.round((loadedItems / totalItems) * 100);
-      console.log('[V149.1] Progress: ' + loadedItems + '/' + totalItems + ' (' + pct + '%)');
+      console.log('[V149.2] Progress: ' + loadedItems + '/' + totalItems + ' (' + pct + '%)');
       if (typeof window.__updateSplashProgress === 'function') {
         window.__updateSplashProgress(pct);
       }
@@ -243,7 +252,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
       updateProgress();
     };
 
-    // V149.1: Collect all hero image URLs to preload
+    // V149.2: Collect all hero image URLs to preload
     var imageUrls = [];
     for (var i = 0; i < heroVideosSorted.length; i++) {
       var mediaType = detectHeroMediaType(heroVideosSorted[i]);
@@ -253,18 +262,16 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
       }
     }
 
-    // V149.1: Start with images count, video chunks will be added after info fetch
-    totalItems = imageUrls.length + (videoSlideUrl ? 1 : 0); // 1 placeholder for video info fetch
+    // V149.2: Count items to load
+    totalItems = imageUrls.length + (videoSlideUrl ? 1 : 0); // 1 placeholder for video info
     if (totalItems === 0) {
+      // Hero data exists but no images or videos (unlikely) — dismiss splash
       setLoadComplete(true);
       if (typeof window.__dismissSplash === 'function') window.__dismissSplash();
       return;
     }
 
-    // Set initial progress (15% to show activity)
-    if (typeof window.__updateSplashProgress === 'function') {
-      window.__updateSplashProgress(15);
-    }
+    console.log('[V149.2] Starting media preload: ' + imageUrls.length + ' images, ' + (videoSlideUrl ? '1 video' : 'no video'));
 
     // V149.1: Preload images via new Image()
     var imagePromises = [];
