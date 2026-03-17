@@ -176,7 +176,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   const videoRef = useRef(null);
   const [hasError, setHasError] = useState(false);
   const [ytPlaying, setYtPlaying] = useState(false);
-  const [videoReady, setVideoReady] = useState(false); // V151: video loaded and playing
+  const [videoReady, setVideoReady] = useState(false); // V152: video buffered and playing
+  const preloadVideoRef = useRef(null); // V152: hidden video element for background buffering
   const lastClickTime = useRef(0);
   const clickCount = useRef(0);
   const clickTimer = useRef(null);
@@ -192,6 +193,62 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   // v32: Utiliser l'ordre de la BDD tel quel (pas de tri automatique)
   const heroVideosSorted = useMemo(() => getHeroVideosOrdered(partner.heroVideos || []), [partner.heroVideos]);
   const heroSlidesCount = heroVideosSorted.length;
+
+  // V152: Find the video slide URL and pre-buffer it in background immediately
+  const videoSlideUrl = useMemo(function() {
+    for (var i = 0; i < heroVideosSorted.length; i++) {
+      if (detectHeroMediaType(heroVideosSorted[i]) === 'video') {
+        return resolveHeroUrl(heroVideosSorted[i].url || '');
+      }
+    }
+    return '';
+  }, [heroVideosSorted]);
+
+  const videoSlideIdx = useMemo(function() {
+    for (var i = 0; i < heroVideosSorted.length; i++) {
+      if (detectHeroMediaType(heroVideosSorted[i]) === 'video') return i;
+    }
+    return -1;
+  }, [heroVideosSorted]);
+
+  // V152: Start pre-buffering the video immediately on mount (hidden element)
+  useEffect(function() {
+    if (!videoSlideUrl || !isVisible) return;
+    // Create hidden video element to start buffering in background
+    var vid = document.createElement('video');
+    vid.muted = true;
+    vid.playsInline = true;
+    vid.preload = 'auto';
+    vid.setAttribute('webkit-playsinline', 'true');
+    vid.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
+    vid.src = videoSlideUrl;
+    document.body.appendChild(vid);
+    preloadVideoRef.current = vid;
+
+    vid.addEventListener('canplay', function() {
+      console.log('[V152] Pre-buffer: video canplay reached, readyState=' + vid.readyState);
+    });
+    vid.addEventListener('canplaythrough', function() {
+      console.log('[V152] Pre-buffer: video fully buffered!');
+    });
+    vid.addEventListener('error', function() {
+      console.warn('[V152] Pre-buffer: video error during background loading');
+    });
+
+    // Start loading
+    vid.load();
+    console.log('[V152] Pre-buffer: started background loading for', videoSlideUrl);
+
+    return function() {
+      if (vid && vid.parentNode) {
+        vid.pause();
+        vid.removeAttribute('src');
+        vid.load();
+        vid.parentNode.removeChild(vid);
+      }
+      preloadVideoRef.current = null;
+    };
+  }, [videoSlideUrl, isVisible]);
 
   // v31: Auto-rotation toutes les 8s quand il y a plusieurs slots
   useEffect(() => {
@@ -250,10 +307,16 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   }, [ytPlaying, isCurrentHeroPremium]);
 
   // v34: Reset overlay quand on change de slot
-  // V151: Reset video ready state on slide change
-  useEffect(() => {
+  // V152: Don't reset videoReady if pre-buffered video is ready
+  useEffect(function() {
     setShowPreviewOverlay(false);
-    setVideoReady(false);
+    // Only reset videoReady if the pre-buffer video isn't ready yet
+    if (preloadVideoRef.current && preloadVideoRef.current.readyState >= 3) {
+      // Video is already buffered from background loading — keep ready state
+      console.log('[V152] Slide changed, pre-buffered video ready, keeping videoReady=true');
+    } else {
+      setVideoReady(false);
+    }
   }, [activeHeroIdx]);
 
   // Fallback: si pas de heroVideos, utiliser l'ancien système mono-média
@@ -427,7 +490,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                           pointerEvents: videoReady ? 'none' : 'auto'
                         }} />
                       )}
-                      {/* V151: Video loads automatically in background — no click needed */}
+                      {/* V152: Video with pre-buffering — uses background-loaded data, retries up to 60 attempts */}
                       <video
                         key={`hero-vid-${activeHeroIdx}`}
                         autoPlay muted loop={!isCurrentHeroPremium} playsInline preload="auto"
@@ -438,20 +501,32 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                           if (el) {
                             el.setAttribute('webkit-playsinline', 'true');
                             el.setAttribute('x5-video-player-type', 'h5');
-                            if (el.src !== currentHeroUrl) { el.src = currentHeroUrl; el.load(); }
+                            // V152: Check if pre-buffered video has data — transfer src
+                            var preVid = preloadVideoRef.current;
+                            if (preVid && preVid.readyState >= 2 && preVid.src) {
+                              console.log('[V152] Using pre-buffered video, readyState=' + preVid.readyState);
+                              if (el.src !== preVid.src) {
+                                el.src = preVid.src;
+                                el.load();
+                              }
+                            } else if (el.src !== currentHeroUrl) {
+                              el.src = currentHeroUrl;
+                              el.load();
+                            }
                             var tryPlay = function(attempt) {
-                              if (attempt > 15) {
-                                console.warn('[V151] Video failed to load after 15 attempts, staying on poster');
+                              if (attempt > 60) {
+                                console.warn('[V152] Video failed to load after 60 attempts (~30s), staying on poster');
                                 return;
                               }
                               setTimeout(function() {
                                 if (el.paused && el.readyState >= 2) {
                                   el.muted = true;
                                   el.play().then(function() {
+                                    console.log('[V152] Video playing! attempt=' + attempt);
                                     setVideoReady(true);
                                   }).catch(function() { tryPlay(attempt + 1); });
                                 } else if (el.paused) { tryPlay(attempt + 1); }
-                              }, attempt < 3 ? 150 : 500);
+                              }, attempt < 5 ? 200 : 500);
                             };
                             tryPlay(0);
                           }
@@ -467,7 +542,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                           }
                         }}
                         onError={function() {
-                          console.warn('[V151] Video error slot', activeHeroIdx, '— staying on poster image');
+                          console.warn('[V152] Video error slot', activeHeroIdx, '— staying on poster image');
                           setVideoReady(false);
                         }}
                       />
