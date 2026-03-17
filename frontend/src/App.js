@@ -1037,7 +1037,7 @@ function countdownParts(remaining) {
   };
 }
 
-// === V146: Sticky Countdown Bar — AGGRESSIVE visibility ===
+// === V146.1: Sticky Countdown Bar — mobile-responsive + aggressive ===
 function StickyCountdownBar(props) {
   var offers = props.offers || [];
   var activeOffer = null;
@@ -1058,19 +1058,20 @@ function StickyCountdownBar(props) {
     <div data-sticky-countdown="active" style={{
       position: 'fixed', top: 0, left: 0, right: 0, zIndex: 10000,
       background: '#000000', borderBottom: '3px solid #D91CD2',
-      height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: '0 20px', textAlign: 'center',
+      minHeight: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      flexWrap: 'wrap', gap: '2px 6px',
+      padding: '6px 12px', textAlign: 'center',
       fontFamily: 'system-ui, sans-serif',
       boxShadow: '0 4px 25px rgba(217, 28, 210, 0.5)'
     }}>
-      <span style={{ color: '#FFFFFF', fontSize: '18px', fontWeight: 700 }}>{'\uD83D\uDD25'} {text} : </span>
-      <span style={{ color: '#D91CD2', fontSize: '22px', fontWeight: 900, fontFamily: "'Courier New', monospace", letterSpacing: '2px', textShadow: '0 0 10px #D91CD2, 0 0 20px #D91CD2, 0 0 40px rgba(217,28,210,0.4)' }}>{timerStr}</span>
-      <span style={{ color: '#FFFFFF', fontSize: '18px', fontWeight: 700 }}> — Réserve vite ! {'\uD83D\uDE80'}</span>
+      <span style={{ color: '#FFFFFF', fontSize: 'clamp(13px, 3.5vw, 18px)', fontWeight: 700, whiteSpace: 'nowrap' }}>{'\uD83D\uDD25'} {text} :</span>
+      <span style={{ color: '#D91CD2', fontSize: 'clamp(16px, 4.5vw, 22px)', fontWeight: 900, fontFamily: "'Courier New', monospace", letterSpacing: '2px', textShadow: '0 0 10px #D91CD2, 0 0 20px #D91CD2, 0 0 40px rgba(217,28,210,0.4)', whiteSpace: 'nowrap' }}>{timerStr}</span>
+      <span style={{ color: '#FFFFFF', fontSize: 'clamp(13px, 3.5vw, 18px)', fontWeight: 700, whiteSpace: 'nowrap' }}>— Réserve vite ! {'\uD83D\uDE80'}</span>
     </div>
   );
 }
 
-// === V146: Card Countdown — BIG & FLASHY neon violet ===
+// === V146.1: Card Countdown — BIG & FLASHY neon violet (label blanc) ===
 function OfferCountdown(props) {
   var offer = props.offer;
   var remaining = useCountdownRemaining(offer);
@@ -1088,7 +1089,7 @@ function OfferCountdown(props) {
   var timerStr = countdownPad(p.d) + 'j ' + countdownPad(p.h) + 'h ' + countdownPad(p.m) + 'm ' + countdownPad(p.s) + 's';
   return (
     <div data-countdown="active" style={{ marginTop: '10px', padding: '14px 10px', borderRadius: '12px', background: '#000000', border: '2px solid #D91CD2', textAlign: 'center', boxShadow: '0 0 20px rgba(217, 28, 210, 0.5), inset 0 0 20px rgba(217, 28, 210, 0.15)', width: '100%', boxSizing: 'border-box' }}>
-      <div style={{ fontSize: '13px', color: '#FFD600', fontWeight: 800, letterSpacing: '1px', marginBottom: '6px', textTransform: 'uppercase', textShadow: '0 0 6px rgba(255,214,0,0.4)' }}>{text}</div>
+      <div style={{ fontSize: '13px', color: '#FFFFFF', fontWeight: 800, letterSpacing: '1px', marginBottom: '6px', textTransform: 'uppercase' }}>{text}</div>
       <div style={{ fontSize: '22px', color: '#D91CD2', fontWeight: 900, fontFamily: "'Courier New', monospace", letterSpacing: '2.5px', textShadow: '0 0 10px #D91CD2, 0 0 20px #D91CD2, 0 0 40px rgba(217,28,210,0.3)' }}>{timerStr}</div>
     </div>
   );
@@ -4238,7 +4239,7 @@ function App() {
   var hasActiveCountdown = offers.some(function(o) { return o.countdown_enabled && o.countdown_date; });
 
   return (
-    <div className="w-full min-h-screen relative section-gradient" style={{ fontFamily: 'system-ui, sans-serif', paddingTop: hasActiveCountdown ? '50px' : '0px' }}>
+    <div className="w-full min-h-screen relative section-gradient" style={{ fontFamily: 'system-ui, sans-serif', paddingTop: hasActiveCountdown ? '56px' : '0px' }}>
       {/* V145: Sticky Countdown Bar — top of page */}
       <StickyCountdownBar offers={offers} />
       <LanguageSelector lang={lang} setLang={setLang} />
