@@ -2744,7 +2744,9 @@ async def launch_campaign(campaign_id: str, request: Request = None):
     # On essaie d'abord par ID utilisateur, puis par email via chat_sessions
     contacts = []
     if channels.get("whatsapp") or channels.get("email"):
-        if campaign.get("targetType") == "all":
+        # V159-FIX: Si des targetIds spécifiques sont fournis, les utiliser MÊME si targetType=="all"
+        # Cela évite d'envoyer à tous les contacts quand l'utilisateur a sélectionné des destinataires précis
+        if campaign.get("targetType") == "all" and not valid_target_ids and not campaign.get("selectedContacts"):
             contacts = await db.users.find({}, {"_id": 0}).to_list(1000)
         else:
             contact_ids = valid_target_ids if valid_target_ids else campaign.get("selectedContacts", [])
@@ -2924,20 +2926,46 @@ async def launch_campaign(campaign_id: str, request: Request = None):
 <a href="{site_url}/#devenir-coach" style="display:inline-block;padding:14px 32px;background:#9333EA;color:#fff;font-size:15px;font-weight:bold;text-decoration:none;border-radius:8px;">{cta_text or 'Réserver'}</a>
 </div>"""
 
-                    # V159: Convertir Google Drive URL en lien direct AVANT le template
+                    # V159+V162: Google Drive URL handling — images → lh3, videos → clickable preview
                     import re as re_gd
                     _gd_file = re_gd.search(r'drive\.google\.com/file/d/([a-zA-Z0-9_-]+)', media_url or "")
                     _gd_open = re_gd.search(r'drive\.google\.com/open\?id=([a-zA-Z0-9_-]+)', media_url or "")
-                    if _gd_file:
-                        media_url = f"https://lh3.googleusercontent.com/d/{_gd_file.group(1)}=w1000"
-                    elif _gd_open:
-                        media_url = f"https://lh3.googleusercontent.com/d/{_gd_open.group(1)}=w1000"
+                    _gd_id = (_gd_file.group(1) if _gd_file else _gd_open.group(1) if _gd_open else None)
+                    _is_google_drive = bool(_gd_id)
+                    _original_drive_url = media_url if _is_google_drive else None
+                    # For Google Drive: create lh3 thumbnail URL (works for images, can serve as video thumbnail)
+                    if _gd_id:
+                        _gd_thumbnail = f"https://lh3.googleusercontent.com/d/{_gd_id}=w1000"
+                        # V162: Keep original Drive URL for video playback link
+                        _gd_preview_url = f"https://drive.google.com/file/d/{_gd_id}/preview"
+                        _gd_view_url = f"https://drive.google.com/file/d/{_gd_id}/view"
+                        # Only convert to lh3 for non-video (pure image) display
+                        # We'll handle this in the media HTML block below
+                        media_url = _gd_thumbnail  # default to lh3 for image display
 
                     # V108.5: Construire le bloc média HTML — avec preview vidéo améliorée
                     media_html = ""
                     app_url = "https://www.afroboost.com"
                     if media_url:
-                        if any(media_url.lower().endswith(ext) for ext in ['.mp4', '.webm', '.mov']):
+                        # V162: Google Drive files → clickable thumbnail with play button + Drive link
+                        # Since we can't detect video vs image from Drive URL alone,
+                        # show a clickable image that links to Drive preview (works for both)
+                        if _is_google_drive:
+                            media_html = f'''<div style="padding:0;text-align:center;">
+<a href="{_gd_view_url}" target="_blank" style="text-decoration:none;display:block;position:relative;">
+<img src="{_gd_thumbnail}" alt="Média Afroboost" style="width:100%;max-width:440px;border-radius:8px;display:block;margin:0 auto;" />
+<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:64px;height:64px;border-radius:50%;background:rgba(233,30,99,0.85);line-height:64px;text-align:center;">
+<span style="color:#fff;font-size:28px;margin-left:4px;">&#9658;</span>
+</div>
+</a>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:12px;">
+<tr><td align="center">
+<a href="{_gd_view_url}" target="_blank" style="display:inline-block;padding:12px 28px;background:#E91E63;color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir le média</a>
+</td></tr>
+</table>
+</div>'''
+                            logger.info(f"[CAMPAIGN-EMAIL] Google Drive media detected, ID={_gd_id}, view_url={_gd_view_url}")
+                        elif any(media_url.lower().endswith(ext) for ext in ['.mp4', '.webm', '.mov']):
                             # V108.5: Pour MP4, chercher thumbnail dans media_links + afficher preview cliquable
                             video_thumbnail = None
                             video_click_url = media_url

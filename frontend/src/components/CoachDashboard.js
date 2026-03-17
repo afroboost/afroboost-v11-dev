@@ -3637,19 +3637,28 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     );
   }, [allContacts, contactSearchQuery]);
 
-  // Toggle contact selection
+  // Toggle contact selection — V159-FIX: auto-set targetType
   const toggleContactForCampaign = (contactId) => {
-    setSelectedContactsForCampaign(prev => 
-      prev.includes(contactId) ? prev.filter(id => id !== contactId) : [...prev, contactId]
-    );
+    setSelectedContactsForCampaign(prev => {
+      const next = prev.includes(contactId) ? prev.filter(id => id !== contactId) : [...prev, contactId];
+      // Auto-switch targetType based on selection
+      if (next.length > 0 && next.length < allContacts.length) {
+        setNewCampaign(c => ({ ...c, targetType: "selected" }));
+      } else if (next.length === 0 || next.length === allContacts.length) {
+        setNewCampaign(c => ({ ...c, targetType: "all" }));
+      }
+      return next;
+    });
   };
 
   // Select/Deselect all contacts
   const toggleAllContacts = () => {
     if (selectedContactsForCampaign.length === allContacts.length) {
       setSelectedContactsForCampaign([]);
+      setNewCampaign(c => ({ ...c, targetType: "all" }));
     } else {
       setSelectedContactsForCampaign(allContacts.map(c => c.id));
+      setNewCampaign(c => ({ ...c, targetType: "all" }));
     }
   };
 
