@@ -212,52 +212,143 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
     return -1;
   }, [heroVideosSorted]);
 
-  // V153: Pre-load video via parallel chunk fetches → assembled into blob URL
-  // Chunks return 200 with s-maxage → cached by Vercel edge CDN for instant subsequent loads
-  // V149: Visual preloader replaced by HTML splash screen in index.html
+  // V153+V149.1: Pre-load ALL hero media (images + video chunks) with real progress tracking
+  // Progress is reported to HTML splash screen via window.__updateSplashProgress()
+  // Splash is dismissed via window.__dismissSplash() only when ALL media is loaded
   useEffect(function() {
-    if (!isVisible || !videoSlideUrl) {
+    if (!isVisible) {
       setLoadComplete(true);
+      if (typeof window.__dismissSplash === 'function') window.__dismissSplash();
       return;
     }
 
     var canceled = false;
-    var fileIdMatch = videoSlideUrl.match(/\/api\/files\/([a-zA-Z0-9]+)\//);
-    if (!fileIdMatch) { setLoadComplete(true); return; }
-
-    var fileId = fileIdMatch[1];
     var base = BACKEND_URL || window.location.origin;
+    var totalItems = 0;
+    var loadedItems = 0;
 
-    fetch(base + '/api/video-chunks/' + fileId + '/info')
-      .then(function(r) { return r.json(); })
-      .then(function(info) {
+    // V149.1: Update splash progress
+    var updateProgress = function() {
+      if (canceled) return;
+      if (totalItems === 0) return;
+      var pct = Math.round((loadedItems / totalItems) * 100);
+      console.log('[V149.1] Progress: ' + loadedItems + '/' + totalItems + ' (' + pct + '%)');
+      if (typeof window.__updateSplashProgress === 'function') {
+        window.__updateSplashProgress(pct);
+      }
+    };
+
+    var onItemLoaded = function() {
+      loadedItems++;
+      updateProgress();
+    };
+
+    // V149.1: Collect all hero image URLs to preload
+    var imageUrls = [];
+    for (var i = 0; i < heroVideosSorted.length; i++) {
+      var mediaType = detectHeroMediaType(heroVideosSorted[i]);
+      if (mediaType === 'image') {
+        var imgUrl = resolveOptimizedImageUrl(heroVideosSorted[i].url || '') || resolveHeroUrl(heroVideosSorted[i].url || '');
+        if (imgUrl) imageUrls.push(imgUrl);
+      }
+    }
+
+    // V149.1: Start with images count, video chunks will be added after info fetch
+    totalItems = imageUrls.length + (videoSlideUrl ? 1 : 0); // 1 placeholder for video info fetch
+    if (totalItems === 0) {
+      setLoadComplete(true);
+      if (typeof window.__dismissSplash === 'function') window.__dismissSplash();
+      return;
+    }
+
+    // Set initial progress (15% to show activity)
+    if (typeof window.__updateSplashProgress === 'function') {
+      window.__updateSplashProgress(15);
+    }
+
+    // V149.1: Preload images via new Image()
+    var imagePromises = [];
+    for (var j = 0; j < imageUrls.length; j++) {
+      imagePromises.push(new Promise(function(resolve) {
+        var img = new Image();
+        img.onload = function() { onItemLoaded(); resolve(true); };
+        img.onerror = function() { onItemLoaded(); resolve(false); };
+        img.src = imageUrls[j];
+      }));
+    }
+
+    // V153+V149.1: Video chunk loading with progress
+    var videoPromise;
+    if (videoSlideUrl) {
+      var fileIdMatch = videoSlideUrl.match(/\/api\/files\/([a-zA-Z0-9]+)\//);
+      if (!fileIdMatch) {
+        // No valid file ID — count video placeholder as loaded
+        onItemLoaded();
+        videoPromise = Promise.resolve();
+      } else {
+        var fileId = fileIdMatch[1];
+        videoPromise = fetch(base + '/api/video-chunks/' + fileId + '/info')
+          .then(function(r) { return r.json(); })
+          .then(function(info) {
+            if (canceled) return;
+            console.log('[V153] Video: ' + info.file_size + ' bytes, ' + info.total_chunks + ' chunks');
+            // V149.1: Replace the 1 video placeholder with actual chunk count
+            totalItems = imageUrls.length + info.total_chunks;
+            updateProgress();
+
+            var chunkPromises = [];
+            for (var c = 0; c < info.total_chunks; c++) {
+              chunkPromises.push(
+                fetch(base + '/api/video-chunks/' + fileId + '/' + c)
+                  .then(function(r) { return r.arrayBuffer(); })
+                  .then(function(buf) { onItemLoaded(); return buf; })
+                  .catch(function(err) { onItemLoaded(); return null; })
+              );
+            }
+            return Promise.all(chunkPromises).then(function(chunks) {
+              if (canceled) return;
+              var validChunks = [];
+              for (var k = 0; k < chunks.length; k++) {
+                if (chunks[k]) validChunks.push(chunks[k]);
+              }
+              if (validChunks.length === info.total_chunks) {
+                var blob = new Blob(validChunks, { type: info.content_type || 'video/mp4' });
+                preloadedBlobRef.current = URL.createObjectURL(blob);
+                console.log('[V153] Video assembled from ' + info.total_chunks + ' chunks, blob URL ready');
+              }
+            });
+          })
+          .catch(function(err) {
+            if (canceled) return;
+            console.warn('[V153] Chunk loading failed, falling back to range requests:', err);
+            // Count video as loaded even on error so splash dismisses
+            onItemLoaded();
+          });
+      }
+    } else {
+      videoPromise = Promise.resolve();
+    }
+
+    // V149.1: Wait for ALL media (images + video) then dismiss splash
+    Promise.all([Promise.all(imagePromises), videoPromise])
+      .then(function() {
         if (canceled) return;
-        console.log('[V153] Video: ' + info.file_size + ' bytes, ' + info.total_chunks + ' chunks');
-        var chunkPromises = [];
-        for (var c = 0; c < info.total_chunks; c++) {
-          chunkPromises.push(
-            fetch(base + '/api/video-chunks/' + fileId + '/' + c)
-              .then(function(r) { return r.arrayBuffer(); })
-          );
-        }
-        return Promise.all(chunkPromises).then(function(chunks) {
-          if (canceled) return;
-          var validChunks = [];
-          for (var k = 0; k < chunks.length; k++) {
-            if (chunks[k]) validChunks.push(chunks[k]);
-          }
-          if (validChunks.length === info.total_chunks) {
-            var blob = new Blob(validChunks, { type: info.content_type || 'video/mp4' });
-            preloadedBlobRef.current = URL.createObjectURL(blob);
-            console.log('[V153] Video assembled from ' + info.total_chunks + ' chunks, blob URL ready');
-          }
-          setLoadComplete(true);
-        });
-      })
-      .catch(function(err) {
-        if (canceled) return;
-        console.warn('[V153] Chunk loading failed, falling back to range requests:', err);
+        console.log('[V149.1] All hero media loaded — dismissing splash');
         setLoadComplete(true);
+        if (typeof window.__updateSplashProgress === 'function') {
+          window.__updateSplashProgress(100);
+        }
+        if (typeof window.__dismissSplash === 'function') {
+          window.__dismissSplash();
+        }
+      })
+      .catch(function() {
+        if (canceled) return;
+        console.warn('[V149.1] Some media failed — dismissing splash anyway');
+        setLoadComplete(true);
+        if (typeof window.__dismissSplash === 'function') {
+          window.__dismissSplash();
+        }
       });
 
     return function() {
@@ -267,7 +358,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
         preloadedBlobRef.current = null;
       }
     };
-  }, [videoSlideUrl, isVisible]);
+  }, [videoSlideUrl, isVisible, heroVideosSorted]);
 
   // v31: Auto-rotation toutes les 8s quand il y a plusieurs slots
   useEffect(() => {

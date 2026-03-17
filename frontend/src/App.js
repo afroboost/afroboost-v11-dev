@@ -3403,16 +3403,17 @@ function App() {
     }
   }, [concept.defaultLandingSection, coachMode, showSplash]);
 
-  // V149: Splash screen timing — aligned with HTML splash in index.html (2.5s min + fade)
+  // V149.1: Splash dismissed by PartnersCarousel when ALL media is actually loaded
+  // Listen for splash DOM removal to sync React state (showSplash gates other features)
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowSplash(false);
-      // V149: Dismiss the HTML splash screen from index.html
-      if (typeof window.__dismissSplash === 'function') {
-        window.__dismissSplash();
+    var checkInterval = setInterval(() => {
+      var splash = document.getElementById('af-splash');
+      if (!splash || splash.style.opacity === '0') {
+        setShowSplash(false);
+        clearInterval(checkInterval);
       }
-    }, 2800);
-    return () => clearTimeout(timer);
+    }, 500);
+    return () => clearInterval(checkInterval);
   }, []);
 
   // LOGIQUE CODE PROMO: Validation en temps réel - Case Insensitive avec trim
