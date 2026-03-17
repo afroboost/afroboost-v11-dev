@@ -3050,15 +3050,15 @@ async def launch_campaign(campaign_id: str, request: Request = None):
                         # show a clickable image that links to Drive preview (works for both)
                         if _is_google_drive:
                             media_html = f'''<div style="padding:0;text-align:center;">
-<a href="{_gd_view_url}" target="_blank" style="text-decoration:none;display:block;position:relative;">
-<img src="{_gd_thumbnail}" alt="Média Afroboost" style="width:100%;max-width:440px;border-radius:8px;display:block;margin:0 auto;" />
-<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:64px;height:64px;border-radius:50%;background:rgba(233,30,99,0.85);line-height:64px;text-align:center;">
-<span style="color:#fff;font-size:28px;margin-left:4px;">&#9658;</span>
+<a href="{_gd_view_url}" target="_blank" style="text-decoration:none;display:block;position:relative;max-width:440px;margin:0 auto;">
+<img src="{_gd_thumbnail}" alt="Média Afroboost" style="width:100%;border-radius:8px;display:block;" />
+<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:64px;height:64px;border-radius:50%;background:rgba(217,28,210,0.9);text-align:center;">
+<table cellpadding="0" cellspacing="0" border="0" width="64" height="64"><tr><td align="center" valign="middle" style="color:#ffffff;font-size:28px;font-family:Arial,sans-serif;">&#9658;</td></tr></table>
 </div>
 </a>
 <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:12px;">
 <tr><td align="center">
-<a href="{_gd_view_url}" target="_blank" style="display:inline-block;padding:12px 28px;background:#E91E63;color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir le média</a>
+<a href="{_gd_view_url}" target="_blank" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#D91CD2,#8b5cf6);color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir le média</a>
 </td></tr>
 </table>
 </div>'''
@@ -3083,30 +3083,33 @@ async def launch_campaign(campaign_id: str, request: Request = None):
                                 logger.warning(f"[CAMPAIGN-EMAIL] Erreur lookup media_link: {ml_err}")
 
                             if video_thumbnail:
-                                # Thumbnail trouvée → afficher image cliquable avec bouton play
+                                # V149: Thumbnail + bouton play centré violet
                                 media_html = f'''<div style="padding:0;text-align:center;">
-<a href="{video_click_url}" style="text-decoration:none;display:block;position:relative;">
-<img src="{video_thumbnail}" alt="Vidéo Afroboost" style="width:100%;max-width:440px;border-radius:8px;display:block;margin:0 auto;" />
+<a href="{video_click_url}" style="text-decoration:none;display:block;position:relative;max-width:440px;margin:0 auto;">
+<img src="{video_thumbnail}" alt="Vidéo Afroboost" style="width:100%;border-radius:8px;display:block;" />
+<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:64px;height:64px;border-radius:50%;background:rgba(217,28,210,0.9);text-align:center;">
+<table cellpadding="0" cellspacing="0" border="0" width="64" height="64"><tr><td align="center" valign="middle" style="color:#ffffff;font-size:28px;font-family:Arial,sans-serif;">&#9658;</td></tr></table>
+</div>
 </a>
 <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:12px;">
 <tr><td align="center">
-<a href="{video_click_url}" style="display:inline-block;padding:12px 28px;background:#E91E63;color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir la vidéo</a>
+<a href="{video_click_url}" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#D91CD2,#8b5cf6);color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir la vidéo</a>
 </td></tr>
 </table>
 </div>'''
                             else:
-                                # Pas de thumbnail → bouton play visible sur fond sombre
+                                # V149: Pas de thumbnail → bouton play violet centré sur fond sombre
                                 media_html = f'''<div style="padding:20px;text-align:center;background:#1a1a2e;border-radius:8px;margin:10px;">
 <table cellpadding="0" cellspacing="0" border="0" width="100%">
 <tr><td align="center" style="padding:20px 0;">
 <a href="{video_click_url}" style="text-decoration:none;">
-<div style="width:64px;height:64px;border-radius:50%;background:#E91E63;display:inline-block;line-height:64px;text-align:center;">
-<span style="color:#fff;font-size:28px;margin-left:4px;">&#9658;</span>
+<div style="width:64px;height:64px;border-radius:50%;background:#D91CD2;display:inline-block;text-align:center;">
+<table cellpadding="0" cellspacing="0" border="0" width="64" height="64"><tr><td align="center" valign="middle" style="color:#ffffff;font-size:28px;font-family:Arial,sans-serif;">&#9658;</td></tr></table>
 </div>
 </a>
 </td></tr>
 <tr><td align="center">
-<a href="{video_click_url}" style="display:inline-block;padding:12px 28px;background:#E91E63;color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir la vidéo</a>
+<a href="{video_click_url}" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#D91CD2,#8b5cf6);color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir la vidéo</a>
 </td></tr>
 </table>
 </div>'''
@@ -3158,18 +3161,22 @@ async def launch_campaign(campaign_id: str, request: Request = None):
                                     yt_click_url = media_url  # fallback vers YouTube direct
 
                             if yt_thumbnail:
+                                # V149: YouTube thumbnail + bouton play violet centré
                                 media_html = f'''<div style="padding:0;text-align:center;">
-<a href="{yt_click_url}" style="text-decoration:none;display:block;position:relative;">
-<img src="{yt_thumbnail}" alt="Vidéo Afroboost" style="width:100%;max-width:440px;border-radius:8px;display:block;margin:0 auto;" />
+<a href="{yt_click_url}" style="text-decoration:none;display:block;position:relative;max-width:440px;margin:0 auto;">
+<img src="{yt_thumbnail}" alt="Vidéo Afroboost" style="width:100%;border-radius:8px;display:block;" />
+<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:64px;height:64px;border-radius:50%;background:rgba(217,28,210,0.9);text-align:center;">
+<table cellpadding="0" cellspacing="0" border="0" width="64" height="64"><tr><td align="center" valign="middle" style="color:#ffffff;font-size:28px;font-family:Arial,sans-serif;">&#9658;</td></tr></table>
+</div>
 </a>
 <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:12px;">
 <tr><td align="center">
-<a href="{yt_click_url}" style="display:inline-block;padding:12px 28px;background:#E91E63;color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir la vidéo</a>
+<a href="{yt_click_url}" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#D91CD2,#8b5cf6);color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir la vidéo</a>
 </td></tr>
 </table>
 </div>'''
                             else:
-                                media_html = f'<div style="padding:10px 20px;text-align:center;"><a href="{yt_click_url}" style="display:inline-block;padding:12px 28px;background:#E91E63;color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir la vidéo</a></div>'
+                                media_html = f'<div style="padding:10px 20px;text-align:center;"><a href="{yt_click_url}" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#D91CD2,#8b5cf6);color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">&#9658; Voir la vidéo</a></div>'
                         else:
                             # V108.5: Lien média générique (ni vidéo, ni image, ni YouTube)
                             media_html = f'''<div style="padding:16px;text-align:center;">
@@ -10674,7 +10681,7 @@ async def send_campaign_email(request: Request):
 <!-- Bouton "Voir la vidéo" -->
 <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:15px;">
 <tr><td align="center">
-<a href="{click_url}" style="display:inline-block;padding:12px 28px;background:#E91E63;color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">
+<a href="{click_url}" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#D91CD2,#8b5cf6);color:#ffffff;text-decoration:none;border-radius:8px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">
 &#9658; Voir la vidéo
 </a>
 </td></tr>
