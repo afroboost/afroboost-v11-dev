@@ -176,6 +176,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   const videoRef = useRef(null);
   const [hasError, setHasError] = useState(false);
   const [ytPlaying, setYtPlaying] = useState(false);
+  const [videoPlaying, setVideoPlaying] = useState(false); // V148: uploaded video play-on-click
   const lastClickTime = useRef(0);
   const clickCount = useRef(0);
   const clickTimer = useRef(null);
@@ -207,6 +208,19 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   const currentHeroUrl = resolveHeroUrl(currentHero?.url || '');
   const currentYoutubeId = getYoutubeId(currentHeroUrl);
 
+  // V148: Poster image for video slides — use first image from heroVideos as poster
+  const videoPosterUrl = useMemo(function() {
+    if (currentHeroType !== 'video') return '';
+    // Find first image in heroVideos to use as poster
+    for (var i = 0; i < heroVideosSorted.length; i++) {
+      var mediaType = detectHeroMediaType(heroVideosSorted[i]);
+      if (mediaType === 'image') {
+        return resolveOptimizedImageUrl(heroVideosSorted[i].url || '') || resolveHeroUrl(heroVideosSorted[i].url || '');
+      }
+    }
+    return '';
+  }, [currentHeroType, heroVideosSorted]);
+
   // v34: Vérifier si la vidéo courante est premium (a un prix > 0)
   const currentHeroPrice = currentHero?.price || 0;
   const isCurrentHeroPremium = currentHeroPrice > 0;
@@ -236,8 +250,10 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   }, [ytPlaying, isCurrentHeroPremium]);
 
   // v34: Reset overlay quand on change de slot
+  // V148: Reset video playing state on slide change
   useEffect(() => {
     setShowPreviewOverlay(false);
+    setVideoPlaying(false);
   }, [activeHeroIdx]);
 
   // Fallback: si pas de heroVideos, utiliser l'ancien système mono-média
@@ -386,58 +402,103 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                     />
                   ) : currentHeroType === 'video' ? (
                     <div className="absolute inset-0" key={`hero-vid-wrap-${activeHeroIdx}`}>
-                      {/* v31: Gradient fallback visible par défaut */}
-                      <div id={`hero-fb-${activeHeroIdx}`} className="absolute inset-0" style={{
-                        background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.7) 0%, rgba(217, 28, 210, 0.5) 50%, rgba(30, 0, 50, 0.95) 100%)',
-                        zIndex: 2, transition: 'opacity 0.5s ease'
-                      }}>
-                        <div className="absolute inset-0 flex items-center justify-center flex-col gap-3">
-                          <div style={{
-                            width: '64px', height: '64px', borderRadius: '50%',
-                            background: 'rgba(217, 28, 210, 0.7)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            boxShadow: '0 0 25px rgba(217, 28, 210, 0.4)'
-                          }}>
-                            <svg width="22" height="26" viewBox="0 0 28 32" fill="none">
-                              <path d="M28 16L0 32V0L28 16Z" fill="white"/>
-                            </svg>
+                      {/* V148: Poster-first approach — show image poster, load video on click */}
+                      {!videoPlaying ? (
+                        <>
+                          {/* Poster image (optimized) or gradient fallback */}
+                          {videoPosterUrl ? (
+                            <img
+                              src={videoPosterUrl}
+                              alt={displayName}
+                              className="absolute inset-0 w-full h-full object-cover"
+                              style={{ filter: 'brightness(0.75)', zIndex: 1 }}
+                              fetchpriority="high"
+                              loading="eager"
+                            />
+                          ) : (
+                            <div className="absolute inset-0" style={{
+                              background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.7) 0%, rgba(217, 28, 210, 0.5) 50%, rgba(30, 0, 50, 0.95) 100%)',
+                              zIndex: 1
+                            }} />
+                          )}
+                          {/* Play button overlay */}
+                          <div
+                            className="absolute inset-0 flex items-center justify-center cursor-pointer"
+                            style={{ zIndex: 3 }}
+                            onClick={function(e) { e.stopPropagation(); setVideoPlaying(true); }}
+                          >
+                            <div style={{
+                              width: '80px', height: '80px', borderRadius: '50%',
+                              background: 'rgba(217, 28, 210, 0.85)',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              boxShadow: '0 0 30px rgba(217, 28, 210, 0.6), 0 0 60px rgba(217, 28, 210, 0.3)',
+                              backdropFilter: 'blur(4px)', transition: 'transform 0.2s ease'
+                            }}>
+                              <svg width="36" height="36" viewBox="0 0 24 24" fill="white">
+                                <polygon points="6 3 20 12 6 21 6 3" />
+                              </svg>
+                            </div>
                           </div>
-                          <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem' }}>Chargement vidéo...</span>
-                        </div>
-                      </div>
-                      <video
-                        key={`hero-vid-${activeHeroIdx}`}
-                        autoPlay muted loop={!isCurrentHeroPremium} playsInline preload="auto"
-                        className="absolute inset-0 w-full h-full object-cover"
-                        style={{ filter: 'brightness(0.7)', zIndex: 1 }}
-                        onTimeUpdate={handleVideoTimeUpdate}
-                        ref={(el) => {
-                          if (el) {
-                            el.setAttribute('webkit-playsinline', 'true');
-                            el.setAttribute('x5-video-player-type', 'h5');
-                            if (el.src !== currentHeroUrl) { el.src = currentHeroUrl; el.load(); }
-                            var tryPlay = function(attempt) {
-                              if (attempt > 12) return;
-                              setTimeout(function() {
-                                if (el.paused && el.readyState >= 2) {
-                                  el.muted = true;
-                                  el.play().then(function() {
-                                    var fb = document.getElementById('hero-fb-' + activeHeroIdx);
-                                    if (fb) { fb.style.opacity = '0'; fb.style.pointerEvents = 'none'; }
-                                  }).catch(function() { tryPlay(attempt + 1); });
-                                } else if (el.paused) { tryPlay(attempt + 1); }
-                              }, attempt < 3 ? 100 : 400);
-                            };
-                            tryPlay(0);
-                          }
-                        }}
-                        onCanPlay={(e) => {
-                          if (e.target.paused) { e.target.muted = true; e.target.play().catch(() => {}); }
-                          const fb = document.getElementById(`hero-fb-${activeHeroIdx}`);
-                          if (fb) { fb.style.opacity = '0'; fb.style.pointerEvents = 'none'; }
-                        }}
-                        onError={() => console.error('[V31] Video error slot', activeHeroIdx)}
-                      />
+                        </>
+                      ) : (
+                        <>
+                          {/* V148: Video loads only after user clicks play */}
+                          <div id={`hero-fb-${activeHeroIdx}`} className="absolute inset-0" style={{
+                            background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.7) 0%, rgba(217, 28, 210, 0.5) 50%, rgba(30, 0, 50, 0.95) 100%)',
+                            zIndex: 2, transition: 'opacity 0.5s ease'
+                          }}>
+                            <div className="absolute inset-0 flex items-center justify-center flex-col gap-3">
+                              <div style={{
+                                width: '64px', height: '64px', borderRadius: '50%',
+                                background: 'rgba(217, 28, 210, 0.7)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                boxShadow: '0 0 25px rgba(217, 28, 210, 0.4)'
+                              }}>
+                                <svg width="22" height="26" viewBox="0 0 28 32" fill="none">
+                                  <path d="M28 16L0 32V0L28 16Z" fill="white"/>
+                                </svg>
+                              </div>
+                              <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem' }}>Chargement vidéo...</span>
+                            </div>
+                          </div>
+                          <video
+                            key={`hero-vid-${activeHeroIdx}`}
+                            autoPlay muted loop={!isCurrentHeroPremium} playsInline preload="auto"
+                            className="absolute inset-0 w-full h-full object-cover"
+                            style={{ filter: 'brightness(0.7)', zIndex: 1 }}
+                            onTimeUpdate={handleVideoTimeUpdate}
+                            ref={function(el) {
+                              if (el) {
+                                el.setAttribute('webkit-playsinline', 'true');
+                                el.setAttribute('x5-video-player-type', 'h5');
+                                if (el.src !== currentHeroUrl) { el.src = currentHeroUrl; el.load(); }
+                                var tryPlay = function(attempt) {
+                                  if (attempt > 12) return;
+                                  setTimeout(function() {
+                                    if (el.paused && el.readyState >= 2) {
+                                      el.muted = true;
+                                      el.play().then(function() {
+                                        var fb = document.getElementById('hero-fb-' + activeHeroIdx);
+                                        if (fb) { fb.style.opacity = '0'; fb.style.pointerEvents = 'none'; }
+                                      }).catch(function() { tryPlay(attempt + 1); });
+                                    } else if (el.paused) { tryPlay(attempt + 1); }
+                                  }, attempt < 3 ? 100 : 400);
+                                };
+                                tryPlay(0);
+                              }
+                            }}
+                            onCanPlay={function(e) {
+                              if (e.target.paused) { e.target.muted = true; e.target.play().catch(function() {}); }
+                              var fb = document.getElementById('hero-fb-' + activeHeroIdx);
+                              if (fb) { fb.style.opacity = '0'; fb.style.pointerEvents = 'none'; }
+                            }}
+                            onError={function() {
+                              console.error('[V148] Video error slot', activeHeroIdx, '— falling back to poster');
+                              setVideoPlaying(false);
+                            }}
+                          />
+                        </>
+                      )}
                     </div>
                   ) : currentHeroType === 'youtube' && currentYoutubeId ? (
                     <div className="absolute inset-0 overflow-hidden">
