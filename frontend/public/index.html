@@ -141,8 +141,8 @@
     </head>
     <body>
         <noscript>You need to enable JavaScript to run this app.</noscript>
-        <!-- V149: Splash Screen PWA — écran de démarrage classe avec barre de progression violette -->
-        <!-- Fail-safe: si le JS échoue, le site s'affiche normalement (le splash est juste un overlay) -->
+        <!-- V149.1: Splash Screen PWA — attend le VRAI chargement des médias, pas un timer fixe -->
+        <!-- Fail-safe: si le JS échoue, le site s'affiche normalement après 20s max -->
         <div id="af-splash" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#000000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:99999;transition:opacity 0.6s ease;opacity:1;">
             <!-- Phrase motivante -->
             <div style="color:#FFFFFF;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:22px;font-weight:600;text-align:center;margin-bottom:32px;padding:0 24px;letter-spacing:0.3px;line-height:1.4;">
@@ -150,79 +150,69 @@
             </div>
             <!-- Barre de progression -->
             <div style="width:70%;max-width:400px;height:6px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;position:relative;">
-                <div id="af-splash-bar" style="width:0%;height:100%;border-radius:3px;background:#D91CD2;box-shadow:0 0 12px rgba(217,28,210,0.6),0 0 24px rgba(217,28,210,0.3);transition:width 2.5s ease-in-out;"></div>
+                <div id="af-splash-bar" style="width:0%;height:100%;border-radius:3px;background:#D91CD2;box-shadow:0 0 12px rgba(217,28,210,0.6),0 0 24px rgba(217,28,210,0.3);transition:width 0.4s ease;"></div>
             </div>
+            <!-- Pourcentage -->
+            <div id="af-splash-pct" style="color:#FFFFFF;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:18px;font-weight:600;margin-top:18px;letter-spacing:0.5px;">Chargement... 0%</div>
             <style>
                 @keyframes af-glow{0%,100%{box-shadow:0 0 12px rgba(217,28,210,0.6),0 0 24px rgba(217,28,210,0.3);}50%{box-shadow:0 0 18px rgba(217,28,210,0.8),0 0 36px rgba(217,28,210,0.5);}}
                 #af-splash-bar{animation:af-glow 1.5s ease-in-out infinite;}
             </style>
         </div>
-        <!-- V149: Lancer l'animation de la barre dès que le DOM est prêt -->
+        <!-- V149.1: API globale pour le progrès réel (appelée par PartnersCarousel) -->
         <script>
             (function(){
-                try {
-                    var bar = document.getElementById('af-splash-bar');
-                    if (bar) {
-                        // Petit délai pour que le navigateur rende le 0% d'abord
-                        setTimeout(function(){ bar.style.width = '75%'; }, 50);
-                    }
-                } catch(e) {}
+                var bar = document.getElementById('af-splash-bar');
+                var pct = document.getElementById('af-splash-pct');
+                // Petite animation initiale pendant que React charge (0 → 15%)
+                try { if (bar) setTimeout(function(){ bar.style.width = '15%'; if (pct) pct.textContent = 'Chargement... 15%'; }, 300); } catch(e) {}
+                // API globale : mise à jour du progrès réel
+                window.__updateSplashProgress = function(percent) {
+                    try {
+                        var p = Math.min(100, Math.max(0, Math.round(percent)));
+                        if (bar) bar.style.width = p + '%';
+                        if (pct) pct.textContent = 'Chargement... ' + p + '%';
+                    } catch(e) {}
+                };
             })();
         </script>
         <div id="root"></div>
-        <!-- V149: Splash screen dismissal — min 2.5s + fade out, avec fail-safe anti-écran noir -->
+        <!-- V149.1: Splash dismissal — attend le VRAI chargement des médias -->
         <script>
             (function() {
                 var splash = document.getElementById('af-splash');
-                var splashStart = Date.now();
                 var splashDismissed = false;
                 var resetKey = 'af_auto_reset_v149';
 
-                // V149: Fonction pour dismisser le splash avec fade out
-                // Appelée par App.js via window.__dismissSplash() ou automatiquement
+                // V149.1: Dismiss le splash UNIQUEMENT quand les médias sont chargés
+                // Appelé par PartnersCarousel quand images + vidéo chunks sont prêts
                 window.__dismissSplash = function() {
                     if (splashDismissed || !splash) return;
                     splashDismissed = true;
-                    var elapsed = Date.now() - splashStart;
-                    var remaining = Math.max(0, 2500 - elapsed); // Garantir 2.5s minimum
+                    // Remplir la barre à 100%
+                    var bar = document.getElementById('af-splash-bar');
+                    var pct = document.getElementById('af-splash-pct');
+                    if (bar) bar.style.width = '100%';
+                    if (pct) pct.textContent = "C'est parti ! 100%";
+                    // Fade out après 400ms (temps pour voir le 100%)
                     setTimeout(function() {
-                        if (!splash) return;
-                        // Remplir la barre à 100% avant de fade out
-                        var bar = document.getElementById('af-splash-bar');
-                        if (bar) bar.style.width = '100%';
-                        // Fade out après 300ms (temps pour voir le 100%)
-                        setTimeout(function() {
-                            if (splash) {
-                                splash.style.opacity = '0';
-                                splash.style.pointerEvents = 'none';
-                                // Retirer du DOM après la transition
-                                setTimeout(function() {
-                                    if (splash && splash.parentNode) splash.parentNode.removeChild(splash);
-                                }, 700);
-                            }
-                        }, 300);
-                    }, remaining);
+                        if (splash) {
+                            splash.style.opacity = '0';
+                            splash.style.pointerEvents = 'none';
+                            setTimeout(function() {
+                                if (splash && splash.parentNode) splash.parentNode.removeChild(splash);
+                            }, 700);
+                        }
+                    }, 400);
                 };
 
-                // Fallback: MutationObserver détecte quand React monte
-                try {
-                    var observer = new MutationObserver(function() {
-                        var root = document.getElementById('root');
-                        if (root && root.firstChild) {
-                            window.__dismissSplash();
-                            observer.disconnect();
-                        }
-                    });
-                    var root = document.getElementById('root');
-                    if (root) observer.observe(root, { childList: true });
-                } catch(e) {}
-
-                // Fail-safe: Cacher le splash après 6s max (même si React n'a pas appelé dismiss)
+                // Fail-safe: Cacher le splash après 20s max (si chargement trop long)
                 setTimeout(function() {
                     if (!splashDismissed && splash) {
+                        console.warn('[V149] Fail-safe: splash dismissed after 20s timeout');
                         window.__dismissSplash();
                     }
-                }, 6000);
+                }, 20000);
 
                 // PHASE 1 (5s) : Si React ne monte pas, tenter un auto-nettoyage + reload
                 setTimeout(function() {
