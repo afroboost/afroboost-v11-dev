@@ -1071,7 +1071,17 @@ function StickyCountdownBar(props) {
   );
 }
 
-// === V146.1: Card Countdown — BIG & FLASHY neon violet (label blanc) ===
+// === V147: Card Countdown — Violet button, white text, blinking promo ===
+// Inject blink keyframes once
+(function() {
+  if (typeof document !== 'undefined' && !document.getElementById('v147-blink-css')) {
+    var s = document.createElement('style');
+    s.id = 'v147-blink-css';
+    s.textContent = '@keyframes v147blink{0%,100%{opacity:1}50%{opacity:0.2}}';
+    document.head.appendChild(s);
+  }
+})();
+
 function OfferCountdown(props) {
   var offer = props.offer;
   var remaining = useCountdownRemaining(offer);
@@ -1088,9 +1098,9 @@ function OfferCountdown(props) {
   var text = offer.countdown_text || "L'OFFRE FINIT DANS :";
   var timerStr = countdownPad(p.d) + 'j ' + countdownPad(p.h) + 'h ' + countdownPad(p.m) + 'm ' + countdownPad(p.s) + 's';
   return (
-    <div data-countdown="active" style={{ marginTop: '10px', padding: '14px 10px', borderRadius: '12px', background: '#000000', border: '2px solid #D91CD2', textAlign: 'center', boxShadow: '0 0 20px rgba(217, 28, 210, 0.5), inset 0 0 20px rgba(217, 28, 210, 0.15)', width: '100%', boxSizing: 'border-box' }}>
-      <div style={{ fontSize: '13px', color: '#FFFFFF', fontWeight: 800, letterSpacing: '1px', marginBottom: '6px', textTransform: 'uppercase' }}>{text}</div>
-      <div style={{ fontSize: '22px', color: '#D91CD2', fontWeight: 900, fontFamily: "'Courier New', monospace", letterSpacing: '2.5px', textShadow: '0 0 10px #D91CD2, 0 0 20px #D91CD2, 0 0 40px rgba(217,28,210,0.3)' }}>{timerStr}</div>
+    <div data-countdown="active" style={{ marginTop: '10px', padding: '14px 10px', borderRadius: '12px', background: 'linear-gradient(135deg, #D91CD2 0%, #a716a1 100%)', textAlign: 'center', boxShadow: '0 0 20px rgba(217, 28, 210, 0.6), 0 0 40px rgba(217, 28, 210, 0.3), inset 0 1px 0 rgba(255,255,255,0.2)', width: '100%', boxSizing: 'border-box' }}>
+      <div style={{ fontSize: '13px', color: '#FFFFFF', fontWeight: 800, letterSpacing: '1px', marginBottom: '6px', textTransform: 'uppercase', animation: 'v147blink 0.8s ease-in-out infinite' }}>{text}</div>
+      <div style={{ fontSize: '22px', color: '#FFFFFF', fontWeight: 900, fontFamily: "'Courier New', monospace", letterSpacing: '2.5px', textShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>{timerStr}</div>
     </div>
   );
 }
