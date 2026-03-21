@@ -6,7 +6,61 @@
  * - Recherche, tags, catégories
  * - V146: Sélection multiple, suppression en masse, export CSV
  */
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, 
+  // V161: Birthday Calendar states
+  const [birthdayMonth, setBirthdayMonth] = React.useState(new Date().getMonth());
+  const [birthdayYear, setBirthdayYear] = React.useState(new Date().getFullYear());
+  const [birthdayData, setBirthdayData] = React.useState([]);
+  const [birthdayLoading, setBirthdayLoading] = React.useState(false);
+
+  // V161: Fetch birthdays for all participants
+  const fetchBirthdays = React.useCallback(async () => {
+    setBirthdayLoading(true);
+    try {
+      const res = await fetch(API + '/chat/participants');
+      const data = await res.json();
+      const withBday = (Array.isArray(data) ? data : []).filter(function(p) { return p.birthday; });
+      setBirthdayData(withBday);
+    } catch (err) { console.error('[V161] Birthday fetch error:', err); }
+    setBirthdayLoading(false);
+  }, [API]);
+
+  React.useEffect(function() {
+    if (filterType === 'birthday') fetchBirthdays();
+  }, [filterType, fetchBirthdays]);
+
+  // V161: Calendar helper
+  const getBirthdayCalendar = function() {
+    var year = birthdayYear;
+    var month = birthdayMonth;
+    var firstDay = new Date(year, month, 1).getDay();
+    var daysInMonth = new Date(year, month + 1, 0).getDate();
+    var adjustedFirst = firstDay === 0 ? 6 : firstDay - 1;
+    var weeks = [];
+    var day = 1;
+    for (var w = 0; w < 6; w++) {
+      var week = [];
+      for (var d = 0; d < 7; d++) {
+        if ((w === 0 && d < adjustedFirst) || day > daysInMonth) {
+          week.push(null);
+        } else {
+          var mm = String(month + 1).padStart(2, '0');
+          var dd = String(day).padStart(2, '0');
+          var key = mm + '-' + dd;
+          var matches = birthdayData.filter(function(p) { return p.birthday === key; });
+          week.push({ day: day, matches: matches });
+          day++;
+        }
+      }
+      weeks.push(week);
+      if (day > daysInMonth) break;
+    }
+    return weeks;
+  };
+
+  var monthNames = ['Janvier','F\u00e9vrier','Mars','Avril','Mai','Juin','Juillet','Ao\u00fbt','Septembre','Octobre','Novembre','D\u00e9cembre'];
+
+useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { parseContacts } from '../../utils/contactParser';
 
@@ -551,6 +605,113 @@ export default function ContactsManager({ API, coachEmail }) {
         </div>
       )}
 
+      {/* V161: Birthday Calendar View */}
+      {filterType === 'birthday' ? (
+        <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '16px', padding: '20px', border: '1px solid rgba(217,28,210,0.3)' }}>
+          {/* Header with month navigation */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+            <button onClick={() => { var m = birthdayMonth - 1; if (m < 0) { setBirthdayMonth(11); setBirthdayYear(birthdayYear - 1); } else setBirthdayMonth(m); }}
+              style={{ background: 'rgba(217,28,210,0.2)', border: '1px solid rgba(217,28,210,0.4)', borderRadius: '10px', padding: '8px 16px', color: '#fff', cursor: 'pointer', fontSize: '16px' }}>
+              &#9664;
+            </button>
+            <h3 style={{ color: '#fff', margin: 0, fontSize: '20px', fontWeight: 'bold' }}>
+              <span role="img" aria-label="calendar">&#x1F4C5;</span> {monthNames[birthdayMonth]} {birthdayYear}
+            </h3>
+            <button onClick={() => { var m = birthdayMonth + 1; if (m > 11) { setBirthdayMonth(0); setBirthdayYear(birthdayYear + 1); } else setBirthdayMonth(m); }}
+              style={{ background: 'rgba(217,28,210,0.2)', border: '1px solid rgba(217,28,210,0.4)', borderRadius: '10px', padding: '8px 16px', color: '#fff', cursor: 'pointer', fontSize: '16px' }}>
+              &#9654;
+            </button>
+          </div>
+
+          {birthdayLoading ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: 'rgba(255,255,255,0.5)' }}>Chargement...</div>
+          ) : (
+            <>
+              {/* Stats */}
+              <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                <div style={{ background: 'rgba(217,28,210,0.15)', border: '1px solid rgba(217,28,210,0.3)', borderRadius: '12px', padding: '12px 20px', flex: 1, minWidth: '120px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#D91CD2' }}>{birthdayData.length}</div>
+                  <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>Anniversaires enregistr\u00e9s</div>
+                </div>
+                <div style={{ background: 'rgba(217,28,210,0.15)', border: '1px solid rgba(217,28,210,0.3)', borderRadius: '12px', padding: '12px 20px', flex: 1, minWidth: '120px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#D91CD2' }}>
+                    {birthdayData.filter(function(p) { var mm = String(birthdayMonth + 1).padStart(2, '0'); return p.birthday && p.birthday.startsWith(mm + '-'); }).length}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>Ce mois-ci</div>
+                </div>
+              </div>
+
+              {/* Calendar Grid */}
+              <div style={{ borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(217,28,210,0.2)' }}>
+                {/* Day headers */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', background: 'rgba(217,28,210,0.2)' }}>
+                  {['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'].map(function(d) {
+                    return <div key={d} style={{ padding: '10px 4px', textAlign: 'center', color: '#D91CD2', fontSize: '12px', fontWeight: 'bold' }}>{d}</div>;
+                  })}
+                </div>
+                {/* Weeks */}
+                {getBirthdayCalendar().map(function(week, wi) {
+                  return (
+                    <div key={wi} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
+                      {week.map(function(cell, di) {
+                        var isToday = cell && cell.day === new Date().getDate() && birthdayMonth === new Date().getMonth() && birthdayYear === new Date().getFullYear();
+                        var hasBirthday = cell && cell.matches && cell.matches.length > 0;
+                        return (
+                          <div key={di} style={{
+                            minHeight: '70px', padding: '4px', borderBottom: '1px solid rgba(217,28,210,0.1)',
+                            borderRight: di < 6 ? '1px solid rgba(217,28,210,0.1)' : 'none',
+                            background: hasBirthday ? 'rgba(217,28,210,0.15)' : isToday ? 'rgba(124,58,237,0.15)' : 'transparent'
+                          }}>
+                            {cell && (
+                              <>
+                                <div style={{ fontSize: '12px', color: isToday ? '#a855f7' : 'rgba(255,255,255,0.5)', fontWeight: isToday ? 'bold' : 'normal', marginBottom: '2px' }}>
+                                  {cell.day}
+                                </div>
+                                {cell.matches.map(function(m, mi) {
+                                  return (
+                                    <div key={mi} style={{
+                                      fontSize: '11px', color: '#fff', background: 'linear-gradient(135deg, #D91CD2, #a855f7)',
+                                      borderRadius: '6px', padding: '2px 6px', marginBottom: '2px', whiteSpace: 'nowrap',
+                                      overflow: 'hidden', textOverflow: 'ellipsis'
+                                    }}>
+                                      &#x1F382; {m.name}
+                                    </div>
+                                  );
+                                })}
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Birthday list for this month */}
+              {birthdayData.filter(function(p) { var mm = String(birthdayMonth + 1).padStart(2, '0'); return p.birthday && p.birthday.startsWith(mm + '-'); }).length > 0 && (
+                <div style={{ marginTop: '16px' }}>
+                  <h4 style={{ color: '#D91CD2', fontSize: '14px', marginBottom: '8px' }}>&#x1F389; Anniversaires en {monthNames[birthdayMonth]}</h4>
+                  {birthdayData.filter(function(p) { var mm = String(birthdayMonth + 1).padStart(2, '0'); return p.birthday && p.birthday.startsWith(mm + '-'); })
+                    .sort(function(a, b) { return a.birthday.localeCompare(b.birthday); })
+                    .map(function(p, i) {
+                      return (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', background: 'rgba(217,28,210,0.1)', borderRadius: '10px', marginBottom: '6px' }}>
+                          <span style={{ fontSize: '20px' }}>&#x1F382;</span>
+                          <div>
+                            <div style={{ color: '#fff', fontSize: '14px', fontWeight: 'bold' }}>{p.name}</div>
+                            <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px' }}>Le {parseInt(p.birthday.split('-')[1])} {monthNames[birthdayMonth]}</div>
+                          </div>
+                        </div>
+                      );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      ) : (
+      <>
       {/* Search + Filters */}
       <div style={{ marginBottom: '12px' }}>
         <input
@@ -568,7 +729,8 @@ export default function ContactsManager({ API, coachEmail }) {
             { key: 'all', label: 'Tous' },
             { key: 'group', label: '👥 Groupes' },
             { key: 'user', label: '👤 Contacts' },
-            { key: 'google', label: '🔵 Google' }
+            { key: 'google', label: '🔵 Google' },
+            { key: 'birthday', label: '🎂 Anniversaires' }
           ].map(f => (
             <button key={f.key} onClick={() => setFilterType(f.key)} style={{
               padding: '5px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: 500, cursor: 'pointer',
@@ -817,6 +979,8 @@ export default function ContactsManager({ API, coachEmail }) {
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }
