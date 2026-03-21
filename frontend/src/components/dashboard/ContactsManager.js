@@ -64,12 +64,10 @@ export default function ContactsManager({ API, coachEmail }) {
       .catch(function() { setBirthdayLoading(false); });
   }, [API]);
 
-  // V161: Load birthdays when tab selected
   React.useEffect(function() {
     if (filterType === 'birthday') { fetchBirthdays(); }
   }, [filterType, fetchBirthdays]);
 
-  // V161: Birthday calendar helper
   var getBirthdayCalendar = function() {
     var firstDay = new Date(birthdayYear, birthdayMonth, 1).getDay();
     var daysInMonth = new Date(birthdayYear, birthdayMonth + 1, 0).getDate();
@@ -638,15 +636,9 @@ export default function ContactsManager({ API, coachEmail }) {
       {filterType === 'birthday' ? (
         <div style={{ padding: '15px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '15px' }}>
-            <button onClick={function() { var m = birthdayMonth - 1; if (m < 0) { setBirthdayMonth(11); setBirthdayYear(birthdayYear - 1); } else { setBirthdayMonth(m); } }} style={{ background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontSize: '16px' }}>
-              \u25C0
-            </button>
-            <span style={{ color: '#fff', fontSize: '16px', fontWeight: 'bold' }}>
-              {monthNames[birthdayMonth]} {birthdayYear}
-            </span>
-            <button onClick={function() { var m = birthdayMonth + 1; if (m > 11) { setBirthdayMonth(0); setBirthdayYear(birthdayYear + 1); } else { setBirthdayMonth(m); } }} style={{ background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontSize: '16px' }}>
-              \u25B6
-            </button>
+            <button onClick={function() { var m = birthdayMonth - 1; if (m < 0) { setBirthdayMonth(11); setBirthdayYear(birthdayYear - 1); } else { setBirthdayMonth(m); } }} style={{ background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontSize: '16px' }}>\u25C0</button>
+            <span style={{ color: '#fff', fontSize: '16px', fontWeight: 'bold' }}>{monthNames[birthdayMonth]} {birthdayYear}</span>
+            <button onClick={function() { var m = birthdayMonth + 1; if (m > 11) { setBirthdayMonth(0); setBirthdayYear(birthdayYear + 1); } else { setBirthdayMonth(m); } }} style={{ background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontSize: '16px' }}>\u25B6</button>
           </div>
           <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
             <div style={{ flex: 1, background: 'rgba(139,92,246,0.15)', borderRadius: '10px', padding: '10px', textAlign: 'center' }}>
@@ -654,64 +646,20 @@ export default function ContactsManager({ API, coachEmail }) {
               <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '10px' }}>Total</div>
             </div>
             <div style={{ flex: 1, background: 'rgba(217,28,210,0.15)', borderRadius: '10px', padding: '10px', textAlign: 'center' }}>
-              <div style={{ color: '#D91CD2', fontSize: '20px', fontWeight: 'bold' }}>
-                {birthdayData.filter(function(p) { var mm = String(birthdayMonth + 1).padStart(2, '0'); return p.birthday && p.birthday.substring(0, 2) === mm; }).length}
-              </div>
+              <div style={{ color: '#D91CD2', fontSize: '20px', fontWeight: 'bold' }}>{birthdayData.filter(function(p) { var mm = String(birthdayMonth + 1).padStart(2, '0'); return p.birthday && p.birthday.substring(0, 2) === mm; }).length}</div>
               <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '10px' }}>Ce mois</div>
             </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '15px' }}>
-            {['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'].map(function(d) {
-              return React.createElement('div', { key: d, style: { textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: '10px', padding: '5px' } }, d);
-            })}
-            {getBirthdayCalendar().map(function(week, wi) {
-              return week.map(function(cell, ci) {
-                if (!cell) return React.createElement('div', { key: 'e' + wi + ci, style: { padding: '5px', minHeight: '35px' } });
-                var hasBday = cell.matches && cell.matches.length > 0;
-                return React.createElement('div', {
-                  key: 'c' + wi + ci,
-                  style: {
-                    padding: '3px',
-                    minHeight: '35px',
-                    textAlign: 'center',
-                    borderRadius: '6px',
-                    background: hasBday ? 'rgba(217,28,210,0.25)' : 'rgba(255,255,255,0.03)',
-                    border: hasBday ? '1px solid rgba(217,28,210,0.5)' : '1px solid transparent'
-                  }
-                },
-                  React.createElement('div', { style: { color: '#fff', fontSize: '11px' } }, cell.day),
-                  hasBday ? cell.matches.map(function(m) {
-                    return React.createElement('div', { key: m.id, style: { fontSize: '8px', color: '#D91CD2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, '\uD83C\uDF82 ' + (m.name || '').split(' ')[0]);
-                  }) : null
-                );
-              });
-            })}
+            {['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'].map(function(d) { return React.createElement('div', { key: d, style: { textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: '10px', padding: '5px' } }, d); })}
+            {getBirthdayCalendar().map(function(week, wi) { return week.map(function(cell, ci) { if (!cell) return React.createElement('div', { key: 'e'+wi+ci, style: { padding: '5px', minHeight: '35px' } }); var hasBday = cell.matches && cell.matches.length > 0; return React.createElement('div', { key: 'c'+wi+ci, style: { padding: '3px', minHeight: '35px', textAlign: 'center', borderRadius: '6px', background: hasBday ? 'rgba(217,28,210,0.25)' : 'rgba(255,255,255,0.03)', border: hasBday ? '1px solid rgba(217,28,210,0.5)' : '1px solid transparent' } }, React.createElement('div', { style: { color: '#fff', fontSize: '11px' } }, cell.day), hasBday ? cell.matches.map(function(m) { return React.createElement('div', { key: m.id, style: { fontSize: '8px', color: '#D91CD2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, '\uD83C\uDF82 ' + (m.name || '').split(' ')[0]); }) : null); }); })}
           </div>
-          <div style={{ marginTop: '10px' }}>
-            <div style={{ color: '#c4b5fd', fontSize: '12px', fontWeight: 'bold', marginBottom: '8px' }}>
-              Anniversaires en {monthNames[birthdayMonth]}
-            </div>
-            {birthdayData.filter(function(p) {
-              var mm = String(birthdayMonth + 1).padStart(2, '0');
-              return p.birthday && p.birthday.substring(0, 2) === mm;
-            }).sort(function(a, b) { return a.birthday.localeCompare(b.birthday); }).map(function(p) {
-              return React.createElement('div', {
-                key: p.id,
-                style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', marginBottom: '4px' }
-              },
-                React.createElement('span', { style: { fontSize: '16px' } }, '\uD83C\uDF82'),
-                React.createElement('span', { style: { color: '#fff', fontSize: '12px', flex: 1 } }, p.name || 'Membre'),
-                React.createElement('span', { style: { color: '#D91CD2', fontSize: '11px' } }, p.birthday)
-              );
-            })}
-            {birthdayData.filter(function(p) { var mm = String(birthdayMonth + 1).padStart(2, '0'); return p.birthday && p.birthday.substring(0, 2) === mm; }).length === 0 ? (
-              React.createElement('div', { style: { color: 'rgba(255,255,255,0.4)', fontSize: '12px', textAlign: 'center', padding: '20px' } }, 'Aucun anniversaire ce mois')
-            ) : null}
-          </div>
+          <div style={{ color: '#c4b5fd', fontSize: '12px', fontWeight: 'bold', marginBottom: '8px' }}>Anniversaires en {monthNames[birthdayMonth]}</div>
+          {birthdayData.filter(function(p) { var mm = String(birthdayMonth + 1).padStart(2, '0'); return p.birthday && p.birthday.substring(0, 2) === mm; }).map(function(p) { return React.createElement('div', { key: p.id, style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', marginBottom: '4px' } }, React.createElement('span', { style: { fontSize: '16px' } }, '\uD83C\uDF82'), React.createElement('span', { style: { color: '#fff', fontSize: '12px', flex: 1 } }, p.name || 'Membre'), React.createElement('span', { style: { color: '#D91CD2', fontSize: '11px' } }, p.birthday)); })}
           {birthdayLoading ? React.createElement('div', { style: { color: '#D91CD2', textAlign: 'center', padding: '20px' } }, 'Chargement...') : null}
         </div>
-      ) : (
-        <React.Fragment>
+      ) : null}
+      <div style={{ display: filterType === 'birthday' ? 'none' : 'block' }}>
 
       {/* V154: Category filter pills */}
       {categories.length > 0 && (
@@ -948,8 +896,7 @@ export default function ContactsManager({ API, coachEmail }) {
           </div>
         )}
       </div>
-      </React.Fragment>
-      )}
+      </div>
       </div>
     </div>
   );
