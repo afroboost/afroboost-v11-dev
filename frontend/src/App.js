@@ -2873,39 +2873,47 @@ function App() {
     };
   }, []);
 
-  // V141: Handle PWA install button click — avec overlay de progression
+  // V159: Handle PWA install button click — direct prompt trigger
   const handleInstallClick = async () => {
     if (isIOS) {
       setInstallStatus('waiting');
       return;
     }
 
-    // Triple source pour le prompt — state React, global, ou fallback
-    const prompt = deferredPrompt || window.__pwaInstallPrompt;
+    // V159: Triple source pour le prompt — state React, global, ou re-check global
+    var prompt = deferredPrompt || window.__pwaInstallPrompt;
+
+    // V159: Si pas de prompt immédiat, attendre 500ms (Chrome peut le déclencher tardivement)
+    if (!prompt) {
+      console.log('[V159] No prompt yet, waiting 500ms...');
+      await new Promise(function(resolve) { setTimeout(resolve, 500); });
+      prompt = window.__pwaInstallPrompt;
+    }
 
     if (prompt) {
       try {
         setInstallStatus('installing');
+        console.log('[V159] Triggering install prompt directly!');
         prompt.prompt();
         var result = await prompt.userChoice;
         if (result.outcome === 'accepted') {
-          // L'event 'appinstalled' va gérer le succès
-          // Mais montrons 'installing' en attendant
+          console.log('[V159] User accepted install');
           setShowInstallBanner(false);
         } else {
+          console.log('[V159] User dismissed install');
           setInstallStatus(null);
         }
         setDeferredPrompt(null);
         window.__pwaInstallPrompt = null;
       } catch (err) {
-        console.error('[V141] Erreur prompt:', err);
+        console.error('[V159] Prompt error:', err);
         setDeferredPrompt(null);
         window.__pwaInstallPrompt = null;
-        // Fallback: afficher les instructions visuelles
         setInstallStatus('waiting');
       }
     } else {
-      // Pas de prompt disponible — afficher l'overlay d'instructions
+      // V159: Pas de prompt — le navigateur ne supporte pas l'install OU déjà installé
+      console.log('[V159] No install prompt available — showing manual instructions');
       setInstallStatus('waiting');
     }
   };
@@ -4318,7 +4326,7 @@ function App() {
             <div className="flex items-center gap-2">
               <span className="text-sm">{isIOS ? '📤' : '📲'}</span>
               <p className="text-white text-xs opacity-80">
-                {isIOS ? 'Ajoutez Afroboost à votre écran' : deferredPrompt ? 'Installer l\'app Afroboost' : 'Menu Chrome (⋮) → Installer l\'app'}
+                {isIOS ? 'Ajoutez Afroboost à votre écran' : 'Installer l\'app Afroboost'}
               </p>
             </div>
             <div className="flex items-center gap-2">
