@@ -711,7 +711,7 @@ export default function ContactsManager({ API, coachEmail }) {
           {birthdayLoading ? React.createElement('div', { style: { color: '#D91CD2', textAlign: 'center', padding: '20px' } }, 'Chargement...') : null}
         </div>
       ) : (
-        <>
+        <React.Fragment>
 
       {/* V154: Category filter pills */}
       {categories.length > 0 && (
@@ -948,7 +948,7 @@ export default function ContactsManager({ API, coachEmail }) {
           </div>
         )}
       </div>
-      </>
+      </React.Fragment>
       )}
       </div>
     </div>
