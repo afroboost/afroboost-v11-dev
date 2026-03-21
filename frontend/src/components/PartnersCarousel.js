@@ -178,7 +178,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   const [ytPlaying, setYtPlaying] = useState(false);
   const [videoReady, setVideoReady] = useState(false); // V153: video playing
   const [loadComplete, setLoadComplete] = useState(false); // V153: all media preloaded
-  var preloadedBlobRef = useRef(null); // V153: blob URL for pre-fetched video
+  var preloadedBlobRef = useRef({}); // V158: map {slideIdx: blobUrl} — one blob per video slide
   var mediaLoadedOnceRef = useRef(false); // V149.2b: prevent re-loading after first success
   const lastClickTime = useRef(0);
   const clickCount = useRef(0);
@@ -196,22 +196,20 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   const heroVideosSorted = useMemo(() => getHeroVideosOrdered(partner.heroVideos || []), [partner.heroVideos]);
   const heroSlidesCount = heroVideosSorted.length;
 
-  // V152: Find the video slide URL and pre-buffer it in background immediately
-  const videoSlideUrl = useMemo(function() {
+  // V158: Find ALL video slides and their URLs for preloading
+  const videoSlidesMap = useMemo(function() {
+    var map = {};
     for (var i = 0; i < heroVideosSorted.length; i++) {
       if (detectHeroMediaType(heroVideosSorted[i]) === 'video') {
-        return resolveHeroUrl(heroVideosSorted[i].url || '');
+        map[i] = resolveHeroUrl(heroVideosSorted[i].url || '');
       }
     }
-    return '';
+    return map;
   }, [heroVideosSorted]);
-
-  const videoSlideIdx = useMemo(function() {
-    for (var i = 0; i < heroVideosSorted.length; i++) {
-      if (detectHeroMediaType(heroVideosSorted[i]) === 'video') return i;
-    }
-    return -1;
-  }, [heroVideosSorted]);
+  // V158: backward-compat aliases
+  var videoSlideKeys = Object.keys(videoSlidesMap);
+  var videoSlideUrl = videoSlideKeys.length > 0 ? videoSlidesMap[videoSlideKeys[0]] : '';
+  var videoSlideIdx = videoSlideKeys.length > 0 ? parseInt(videoSlideKeys[0]) : -1;
 
   // V153+V149.2b: Pre-load ALL hero media (images + video chunks) with real progress tracking
   // Progress is reported to HTML splash screen via window.__updateSplashProgress()
@@ -323,8 +321,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
               }
               if (validChunks.length === info.total_chunks) {
                 var blob = new Blob(validChunks, { type: info.content_type || 'video/mp4' });
-                preloadedBlobRef.current = URL.createObjectURL(blob);
-                console.log('[V153] Video assembled from ' + info.total_chunks + ' chunks, blob URL ready');
+                preloadedBlobRef.current[videoSlideIdx] = URL.createObjectURL(blob);
+                console.log('[V158] Video slide ' + videoSlideIdx + ': assembled from ' + info.total_chunks + ' chunks');
               }
             });
           })
@@ -365,10 +363,14 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
 
     return function() {
       canceled = true;
-      // V149.2b: Don't revoke blob URL if loading succeeded — video needs it
-      if (preloadedBlobRef.current && !mediaLoadedOnceRef.current) {
-        URL.revokeObjectURL(preloadedBlobRef.current);
-        preloadedBlobRef.current = null;
+      // V158: Revoke all blob URLs if loading was cancelled
+      if (!mediaLoadedOnceRef.current) {
+        var blobMap = preloadedBlobRef.current || {};
+        var bk = Object.keys(blobMap);
+        for (var bi = 0; bi < bk.length; bi++) {
+          if (blobMap[bk[bi]]) URL.revokeObjectURL(blobMap[bk[bi]]);
+        }
+        preloadedBlobRef.current = {};
       }
     };
   }, [videoSlideUrl, isVisible, heroVideosSorted]);
@@ -429,15 +431,10 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
     return () => { if (ytTimerRef.current) clearTimeout(ytTimerRef.current); };
   }, [ytPlaying, isCurrentHeroPremium]);
 
-  // v34: Reset overlay quand on change de slot
-  // V153: If blob URL is ready from chunk preloading, keep videoReady
+  // V158: ALWAYS reset videoReady on slide change so poster shows during transition
   useEffect(function() {
     setShowPreviewOverlay(false);
-    if (preloadedBlobRef.current) {
-      console.log('[V153] Slide changed, blob URL ready, keeping videoReady');
-    } else {
-      setVideoReady(false);
-    }
+    setVideoReady(false);
   }, [activeHeroIdx]);
 
   // Fallback: si pas de heroVideos, utiliser l'ancien système mono-média
@@ -615,7 +612,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                       {/* V153: Only render video element AFTER chunks are loaded (blob ready) or loading failed */}
                       {/* This prevents useless range requests while chunks are being fetched in parallel */}
                       {loadComplete && <video
-                        key={`hero-vid-${activeHeroIdx}-${preloadedBlobRef.current ? 'blob' : 'range'}`}
+                        key={`hero-vid-${activeHeroIdx}`}
                         autoPlay muted loop={!isCurrentHeroPremium} playsInline preload="auto"
                         className="absolute inset-0 w-full h-full object-cover"
                         style={{ filter: 'brightness(0.7)', zIndex: 1 }}
@@ -624,10 +621,10 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                           if (el) {
                             el.setAttribute('webkit-playsinline', 'true');
                             el.setAttribute('x5-video-player-type', 'h5');
-                            // V153: Use preloaded blob URL if available (instant from memory)
-                            var videoSrc = preloadedBlobRef.current || currentHeroUrl;
+                            // V158: Use preloaded blob for THIS slide index
+                            var videoSrc = (preloadedBlobRef.current && preloadedBlobRef.current[activeHeroIdx]) || currentHeroUrl;
                             if (el.src !== videoSrc) {
-                              console.log('[V153] Setting video src:', preloadedBlobRef.current ? 'blob URL (instant)' : 'direct URL (range requests)');
+                              console.log('[V158] Video slide ' + activeHeroIdx + ':', (preloadedBlobRef.current && preloadedBlobRef.current[activeHeroIdx]) ? 'blob' : 'range');
                               el.src = videoSrc;
                               el.load();
                             }
