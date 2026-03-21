@@ -1142,6 +1142,51 @@ export const ChatWidget = () => {
     return null;
   });
   const [showMenu, setShowMenu] = useState(false);
+  // V160: Birthday states
+  var _bd160 = useState(false); var showBirthdayModal = _bd160[0]; var setShowBirthdayModal = _bd160[1];
+  var _bd161 = useState(""); var birthdayMonth = _bd161[0]; var setBirthdayMonth = _bd161[1];
+  var _bd162 = useState(""); var birthdayDay = _bd162[0]; var setBirthdayDay = _bd162[1];
+  var _bd163 = useState(null); var todayBirthdays = _bd163[0]; var setTodayBirthdays = _bd163[1];
+  var _bd164 = useState(false); var birthdaySaved = _bd164[0]; var setBirthdaySaved = _bd164[1];
+
+  // V160: Check today's birthdays on mount
+  useEffect(function() {
+    var checkBirthdays = function() {
+      fetch(API + '/birthdays/today')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.birthdays && data.birthdays.length > 0) {
+            setTodayBirthdays(data.birthdays);
+          }
+        })
+        .catch(function(err) { console.log('[V160] Birthday check error:', err); });
+    };
+    checkBirthdays();
+    // Re-check every hour
+    var interval = setInterval(checkBirthdays, 3600000);
+    return function() { clearInterval(interval); };
+  }, []);
+
+  // V160: Save birthday
+  var handleSaveBirthday = function() {
+    if (!birthdayMonth || !birthdayDay || !participantId) return;
+    var mm = birthdayMonth.padStart(2, '0');
+    var dd = birthdayDay.padStart(2, '0');
+    var birthday = mm + '-' + dd;
+    fetch(API + '/chat/participants/' + participantId + '/birthday', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ birthday: birthday })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.success) {
+        setBirthdaySaved(true);
+        setTimeout(function() { setShowBirthdayModal(false); setBirthdaySaved(false); }, 2000);
+      }
+    })
+    .catch(function(err) { console.error('[V160] Save birthday error:', err); });
+  };
   const [isCommunityMode, setIsCommunityMode] = useState(false);
   const [chatMode, setChatMode] = useState('private'); // v8.6: 'private' ou 'group'
   const [groupMessages, setGroupMessages] = useState([]); // v8.6: Messages de groupe
@@ -4714,7 +4759,24 @@ export const ChatWidget = () => {
                         </button>
                       )}
 
-                      <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
+                      
+                      {/* V160: Date de naissance */}
+                      <button
+                        onClick={function() { setShowBirthdayModal(true); setShowMenu(false); }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '8px',
+                          width: '100%', padding: '8px 12px',
+                          background: 'none', border: 'none', color: '#fff',
+                          cursor: 'pointer', fontSize: '13px', textAlign: 'left',
+                          borderRadius: '6px'
+                        }}
+                        onMouseOver={function(e) { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; }}
+                        onMouseOut={function(e) { e.currentTarget.style.background = 'none'; }}
+                      >
+                        <span role="img" aria-label="birthday">&#x1F382;</span> Date de naissance
+                      </button>
+
+<div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
                       
                       {/* Toggle Son (icône haut-parleur filaire) */}
                       <button
@@ -6716,7 +6778,133 @@ export const ChatWidget = () => {
           from { transform: scale(0.5); opacity: 0; }
           to { transform: scale(1); opacity: 1; }
         }
+      
+        @keyframes birthdaySlide {
+          from { transform: translateX(-50%) translateY(-20px); opacity: 0; }
+          to { transform: translateX(-50%) translateY(0); opacity: 1; }
+        }
       `}</style>
+
+      {/* V160: Birthday Announcement Banner */}
+      {todayBirthdays && todayBirthdays.length > 0 && (
+        <div style={{
+          position: 'fixed', top: '60px', left: '50%', transform: 'translateX(-50%)',
+          background: 'linear-gradient(135deg, #7c3aed, #a855f7)',
+          color: '#fff', padding: '12px 24px', borderRadius: '16px',
+          boxShadow: '0 4px 20px rgba(124,58,237,0.4)',
+          zIndex: 10000, display: 'flex', alignItems: 'center', gap: '10px',
+          maxWidth: '90vw', animation: 'birthdaySlide 0.5s ease-out'
+        }}>
+          <span style={{ fontSize: '28px' }}>&#x1F389;</span>
+          <div>
+            <div style={{ fontWeight: 'bold', fontSize: '14px' }}>
+              {"C'est l'anniversaire de " + todayBirthdays.map(function(b) { return b.name; }).join(', ') + " !"}
+            </div>
+            <div style={{ fontSize: '12px', opacity: 0.9 }}>
+              Souhaitez-lui un joyeux anniversaire !
+            </div>
+          </div>
+          <button onClick={function() { setTodayBirthdays(null); }} style={{
+            background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff',
+            borderRadius: '50%', width: '24px', height: '24px', cursor: 'pointer',
+            fontSize: '14px', marginLeft: '8px'
+          }}>&#x2715;</button>
+        </div>
+      )}
+
+      {/* V160: Birthday Date Picker Modal */}
+      {showBirthdayModal && ReactDOM.createPortal(
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.6)', zIndex: 99999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }} onClick={function() { setShowBirthdayModal(false); }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #1a1a2e, #2d1b4e)',
+            borderRadius: '20px', padding: '28px', width: '320px',
+            boxShadow: '0 8px 32px rgba(124,58,237,0.3)',
+            border: '1px solid rgba(124,58,237,0.3)'
+          }} onClick={function(e) { e.stopPropagation(); }}>
+            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+              <span style={{ fontSize: '40px' }}>&#x1F382;</span>
+              <h3 style={{ color: '#fff', margin: '10px 0 5px', fontSize: '18px' }}>Date de naissance</h3>
+              <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px', margin: 0 }}>
+                Pour recevoir un message le jour J !
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', marginBottom: '6px', display: 'block' }}>Mois</label>
+                <select
+                  value={birthdayMonth}
+                  onChange={function(e) { setBirthdayMonth(e.target.value); }}
+                  style={{
+                    width: '100%', padding: '10px', borderRadius: '10px',
+                    background: 'rgba(124,58,237,0.2)', border: '1px solid rgba(124,58,237,0.4)',
+                    color: '#fff', fontSize: '14px', outline: 'none'
+                  }}
+                >
+                  <option value="" style={{background:'#1a1a2e'}}>--</option>
+                  <option value="1" style={{background:'#1a1a2e'}}>Janvier</option>
+                  <option value="2" style={{background:'#1a1a2e'}}>F\u00e9vrier</option>
+                  <option value="3" style={{background:'#1a1a2e'}}>Mars</option>
+                  <option value="4" style={{background:'#1a1a2e'}}>Avril</option>
+                  <option value="5" style={{background:'#1a1a2e'}}>Mai</option>
+                  <option value="6" style={{background:'#1a1a2e'}}>Juin</option>
+                  <option value="7" style={{background:'#1a1a2e'}}>Juillet</option>
+                  <option value="8" style={{background:'#1a1a2e'}}>Ao\u00fbt</option>
+                  <option value="9" style={{background:'#1a1a2e'}}>Septembre</option>
+                  <option value="10" style={{background:'#1a1a2e'}}>Octobre</option>
+                  <option value="11" style={{background:'#1a1a2e'}}>Novembre</option>
+                  <option value="12" style={{background:'#1a1a2e'}}>D\u00e9cembre</option>
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', marginBottom: '6px', display: 'block' }}>Jour</label>
+                <select
+                  value={birthdayDay}
+                  onChange={function(e) { setBirthdayDay(e.target.value); }}
+                  style={{
+                    width: '100%', padding: '10px', borderRadius: '10px',
+                    background: 'rgba(124,58,237,0.2)', border: '1px solid rgba(124,58,237,0.4)',
+                    color: '#fff', fontSize: '14px', outline: 'none'
+                  }}
+                >
+                  <option value="" style={{background:'#1a1a2e'}}>--</option>
+                  {Array.from({length: 31}, function(_, i) { return i + 1; }).map(function(d) {
+                    return React.createElement('option', {key: d, value: String(d), style:{background:'#1a1a2e'}}, d);
+                  })}
+                </select>
+              </div>
+            </div>
+            {birthdaySaved ? (
+              <div style={{
+                background: 'rgba(34,197,94,0.2)', border: '1px solid rgba(34,197,94,0.4)',
+                borderRadius: '12px', padding: '12px', textAlign: 'center',
+                color: '#22c55e', fontSize: '14px'
+              }}>
+                &#x2705; Date enregistr\u00e9e !
+              </div>
+            ) : (
+              <button
+                onClick={handleSaveBirthday}
+                disabled={!birthdayMonth || !birthdayDay}
+                style={{
+                  width: '100%', padding: '12px', borderRadius: '12px',
+                  background: birthdayMonth && birthdayDay ? 'linear-gradient(135deg, #7c3aed, #a855f7)' : 'rgba(124,58,237,0.3)',
+                  border: 'none', color: '#fff', fontSize: '15px',
+                  fontWeight: 'bold', cursor: birthdayMonth && birthdayDay ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.3s'
+                }}
+              >
+                Enregistrer
+              </button>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
+
     </>
   );
 };

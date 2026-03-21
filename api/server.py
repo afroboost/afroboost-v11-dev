@@ -892,6 +892,7 @@ class ChatParticipant(BaseModel):
     link_token: Optional[str] = None  # Token du lien via lequel l'utilisateur est arrivé
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     last_seen_at: Optional[str] = None
+    birthday: Optional[str] = None  # V160: Date de naissance (format MM-DD)
 
 class ChatParticipantCreate(BaseModel):
     name: str
@@ -899,6 +900,7 @@ class ChatParticipantCreate(BaseModel):
     email: Optional[str] = ""
     source: str = "chat_afroboost"
     link_token: Optional[str] = None
+    birthday: Optional[str] = None  # V160: Date de naissance (format MM-DD)
 
 class ChatSession(BaseModel):
     """Session de chat avec gestion des modes et participants"""
@@ -7491,6 +7493,48 @@ async def update_chat_participant(participant_id: str, update_data: dict):
     )
     updated = await db.chat_participants.find_one({"id": participant_id}, {"_id": 0})
     return updated
+
+# ────────── V160: Anniversaires ──────────
+
+@api_router.get("/birthdays/today")
+async def get_todays_birthdays():
+    """V160: Retourne les participants dont c'est l'anniversaire aujourd'hui"""
+    today = datetime.now(timezone.utc).strftime("%m-%d")
+    logger.info(f"[V160] Checking birthdays for {today}")
+    
+    # Chercher dans chat_participants
+    participants = await db.chat_participants.find(
+        {"birthday": today},
+        {"_id": 0, "id": 1, "name": 1, "birthday": 1}
+    ).to_list(100)
+    
+    return {"date": today, "birthdays": participants, "count": len(participants)}
+
+@api_router.put("/chat/participants/{participant_id}/birthday")
+async def update_participant_birthday(participant_id: str, data: dict):
+    """V160: Met a jour la date de naissance d'un participant (format MM-DD)"""
+    birthday = data.get("birthday")
+    if not birthday:
+        raise HTTPException(status_code=400, detail="birthday field required (format MM-DD)")
+    
+    # Valider le format MM-DD
+    try:
+        month, day = birthday.split("-")
+        if not (1 <= int(month) <= 12 and 1 <= int(day) <= 31):
+            raise ValueError()
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Format invalide. Utilisez MM-DD (ex: 03-15)")
+    
+    result = await db.chat_participants.update_one(
+        {"id": participant_id},
+        {"$set": {"birthday": birthday}}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Participant non trouve")
+    
+    logger.info(f"[V160] Birthday updated for {participant_id}: {birthday}")
+    return {"success": True, "participant_id": participant_id, "birthday": birthday}
 
 @api_router.delete("/chat/participants/{participant_id}")
 async def delete_chat_participant(participant_id: str):
