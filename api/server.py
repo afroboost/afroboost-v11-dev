@@ -1949,11 +1949,11 @@ def mp4_faststart(data: bytes) -> bytes:
 
 # === V148: OPTIMIZED IMAGE ENDPOINT — sert des images compressées JPEG pour le hero ===
 @api_router.get("/files/{file_id}/optimized")
-async def serve_optimized_image(file_id: str, w: int = 1200, q: int = 80):
+async def serve_optimized_image(file_id: str, w: int = 1200, q: int = 80, fmt: str = "auto", request: Request = None):
     """
-    V148: Sert une version optimisée (compressée JPEG) d'une image uploadée.
-    Paramètres: w=largeur max (défaut 1200px), q=qualité JPEG (défaut 80).
-    Réduit les PNG de 1.5MB à ~100-200KB pour un chargement instantané du hero.
+    V148+V157: Sert une version optimisée d'une image uploadée.
+    Paramètres: w=largeur max (défaut 1200px), q=qualité (défaut 80), fmt=format (auto/webp/jpeg).
+    V157: Support WebP (~30% plus léger que JPEG) avec détection Accept header.
     """
     from fastapi.responses import Response
     import io
@@ -1999,28 +1999,44 @@ async def serve_optimized_image(file_id: str, w: int = 1200, q: int = 80):
             new_h = int(img.height * ratio)
             img = img.resize((w, new_h), Image.LANCZOS)
 
-        # Compresser en JPEG
+        # V157: Déterminer le format de sortie (WebP si supporté, sinon JPEG)
+        use_webp = False
+        if fmt == "webp":
+            use_webp = True
+        elif fmt == "auto" and request:
+            accept = request.headers.get("accept", "")
+            if "image/webp" in accept:
+                use_webp = True
+
         buf = io.BytesIO()
-        img.save(buf, format='JPEG', quality=q, optimize=True)
+        if use_webp:
+            img.save(buf, format='WEBP', quality=q, method=4)
+            out_media = "image/webp"
+            out_fmt = "webp"
+        else:
+            img.save(buf, format='JPEG', quality=q, optimize=True)
+            out_media = "image/jpeg"
+            out_fmt = "jpeg"
         optimized_bytes = buf.getvalue()
 
-        logger.info(f"[V148-OPTIM] {file_id}: {len(file_bytes)} → {len(optimized_bytes)} bytes ({int(len(optimized_bytes)/1024)}KB, {w}px, q={q})")
+        logger.info(f"[V157-OPTIM] {file_id}: {len(file_bytes)} → {len(optimized_bytes)} bytes ({int(len(optimized_bytes)/1024)}KB, {w}px, q={q}, fmt={out_fmt})")
 
         return Response(
             content=optimized_bytes,
-            media_type="image/jpeg",
+            media_type=out_media,
             headers={
                 "Cache-Control": "public, max-age=31536000, immutable",
                 "Content-Length": str(len(optimized_bytes)),
                 "X-Original-Size": str(len(file_bytes)),
                 "X-Optimized-Size": str(len(optimized_bytes)),
+                "Vary": "Accept",
             }
         )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[V148-OPTIM] Erreur: {type(e).__name__}: {str(e)}")
+        logger.error(f"[V157-OPTIM] Erreur: {type(e).__name__}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur optimisation: {str(e)}")
 
 # === v17.5: SERVING FICHIERS DEPUIS MONGODB ===

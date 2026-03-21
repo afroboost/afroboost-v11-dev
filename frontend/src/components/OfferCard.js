@@ -110,9 +110,10 @@ export const OfferCard = ({ offer, selected, onClick }) => {
         {!showDescription ? (
           <>
             <img 
-              src={currentImage} 
-              alt={offer.name} 
+              src={currentImage}
+              alt={offer.name}
               className="offer-card-image"
+              loading="lazy"
               onError={(e) => { e.target.src = defaultImage; }}
             />
             
@@ -302,10 +303,11 @@ export const OfferCardSlider = ({ offer, selected, onClick }) => {
             {!showDescription ? (
               <>
                 <img 
-                  src={currentImage} 
-                  alt={offer.name} 
+                  src={currentImage}
+                  alt={offer.name}
                   className="w-full h-full"
                   style={{ objectFit: 'cover', objectPosition: 'center', height: '250px' }}
+                  loading="lazy"
                   onError={(e) => { e.target.src = defaultImage; }}
                 />
                 

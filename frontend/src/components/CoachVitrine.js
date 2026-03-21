@@ -1045,6 +1045,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             {coach.logo_url || coach.photo_url ? (
               <img src={coach.logo_url || coach.photo_url} alt={displayName}
                 className="w-10 h-10 rounded-full object-cover"
+                loading="lazy"
                 style={{ border: '2px solid #D91CD2' }} />
             ) : (
               <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold"
@@ -1163,6 +1164,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 {coach.photo_url || coach.logo_url ? (
                   <img src={coach.photo_url || coach.logo_url} alt={displayName}
                     className="w-14 h-14 rounded-full object-cover"
+                    loading="lazy"
                     style={{ border: '2px solid rgba(217, 28, 210, 0.4)' }} />
                 ) : (
                   <div className="w-14 h-14 rounded-full flex items-center justify-center text-lg font-bold"
@@ -1290,6 +1292,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       }}>
                       <div style={{ position: 'relative', height: '180px', overflow: 'hidden' }}>
                         <img src={imageUrl} alt={offer.name} className="w-full h-full object-cover"
+                          loading="lazy"
                           onError={(e) => { e.target.src = defaultImage; }} />
                         {/* Photo Icon - Top Left */}
                         <div className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center"
@@ -1386,6 +1389,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           }}>
                           <div style={{ position: 'relative', height: '180px', overflow: 'hidden' }}>
                             <img src={imageUrl} alt={offer.name} className="w-full h-full object-cover"
+                              loading="lazy"
                               onError={(e) => { e.target.src = defaultImage; }} />
                             {/* Photo Icon - Top Left */}
                             <div className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center"

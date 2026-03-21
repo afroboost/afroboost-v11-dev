@@ -146,7 +146,7 @@ const OffersManager = ({
               {/* Image et nom */}
               <div className="flex items-center gap-3 mb-3">
                 {offer.images?.[0] || offer.thumbnail ? (
-                  <img src={offer.images?.[0] || offer.thumbnail} alt="" className="w-16 h-16 rounded-lg object-cover flex-shrink-0" />
+                  <img src={offer.images?.[0] || offer.thumbnail} alt="" className="w-16 h-16 rounded-lg object-cover flex-shrink-0" loading="lazy" />
                 ) : (
                   <div className="w-16 h-16 rounded-lg bg-purple-900/30 flex items-center justify-center text-2xl flex-shrink-0">🎧</div>
                 )}
@@ -216,7 +216,7 @@ const OffersManager = ({
               <div className="flex justify-between items-start mb-3">
                 <div className="flex items-center gap-3">
                   {offer.images?.[0] || offer.thumbnail ? (
-                    <img src={offer.images?.[0] || offer.thumbnail} alt="" className="w-12 h-12 rounded-lg object-cover" />
+                    <img src={offer.images?.[0] || offer.thumbnail} alt="" className="w-12 h-12 rounded-lg object-cover" loading="lazy" />
                   ) : (
                     <div className="w-12 h-12 rounded-lg bg-purple-900/30 flex items-center justify-center text-2xl">🎧</div>
                   )}
