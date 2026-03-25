@@ -147,6 +147,8 @@ const PromoCodesTab = ({
       uniqueCustomers.forEach(c => {
         if (c.name) customerEmailsByNameOrPhone.set(c.name.toLowerCase(), c.email?.toLowerCase());
         if (c.email) customerEmailsByNameOrPhone.set(c.email.toLowerCase(), c.email?.toLowerCase());
+        if (c.phone) customerEmailsByNameOrPhone.set(c.phone.replace(/\D/g, ''), c.email?.toLowerCase());
+        if (c.whatsapp) customerEmailsByNameOrPhone.set(c.whatsapp.replace(/\D/g, ''), c.email?.toLowerCase());
       });
     }
 
@@ -285,6 +287,7 @@ const PromoCodesTab = ({
         </button>
       </div>
       
+      {!codesSearch && (<>
       {/* Manual Contact Form */}
       {showManualContactForm && (
         <form onSubmit={addManualContact} className="mb-6 p-4 rounded-lg border border-green-500/30" style={{ background: 'rgba(34, 197, 94, 0.1)' }}>
@@ -617,9 +620,10 @@ const PromoCodesTab = ({
           )}
         </button>
       </form>
+      </>)}
       
       {/* ============ LISTE DES CODES ============ */}
-      <div className="space-y-3" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+      <div className="space-y-3" style={{ maxHeight: codesSearch ? '80vh' : '400px', overflowY: 'auto' }}>
         {filteredDiscountCodes.map(code => (
           <div 
             key={code.id} 
