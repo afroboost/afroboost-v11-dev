@@ -12075,6 +12075,102 @@ init_checkout_db(db)
 fastapi_app.include_router(category_router, prefix="/api")
 init_category_db(db)
 
+
+# v162: One-time UTF-8 double-encoding fix endpoint
+@_app.get("/api/fix-utf8-data")
+async def fix_utf8_data(secret: str = ""):
+    """Fix double-encoded UTF-8 data in MongoDB collections"""
+    if secret != "afroboost162fix":
+        return {"error": "Unauthorized"}
+    
+    def fix_double_encoding(text):
+        if not isinstance(text, str):
+            return text
+        try:
+            return text.encode("latin-1").decode("utf-8")
+        except (UnicodeDecodeError, UnicodeEncodeError):
+            return text
+    
+    def has_double_encoding(text):
+        if not isinstance(text, str):
+            return False
+        return "\u00c3" in text.encode("unicode_escape").decode("ascii").lower()
+    
+    results = {}
+    
+    # Fix contact_categories
+    cats = await db.contact_categories.find({}).to_list(500)
+    cat_fixed = 0
+    for cat in cats:
+        name = cat.get("name", "")
+        if has_double_encoding(name):
+            new_name = fix_double_encoding(name)
+            await db.contact_categories.update_one(
+                {"_id": cat["_id"]},
+                {"$set": {"name": new_name}}
+            )
+            cat_fixed += 1
+    results["contact_categories"] = cat_fixed
+    
+    # Fix contact_groups
+    groups = await db.contact_groups.find({}).to_list(500)
+    grp_fixed = 0
+    for grp in groups:
+        name = grp.get("name", "")
+        desc = grp.get("description", "")
+        updates = {}
+        if has_double_encoding(name):
+            updates["name"] = fix_double_encoding(name)
+        if has_double_encoding(desc):
+            updates["description"] = fix_double_encoding(desc)
+        if updates:
+            await db.contact_groups.update_one({"_id": grp["_id"]}, {"$set": updates})
+            grp_fixed += 1
+    results["contact_groups"] = grp_fixed
+    
+    # Fix chat_participants names
+    participants = await db.chat_participants.find({}).to_list(5000)
+    part_fixed = 0
+    for p in participants:
+        updates = {}
+        for field in ["name", "firstName", "lastName", "category"]:
+            val = p.get(field, "")
+            if has_double_encoding(val):
+                updates[field] = fix_double_encoding(val)
+        if updates:
+            await db.chat_participants.update_one({"_id": p["_id"]}, {"$set": updates})
+            part_fixed += 1
+    results["chat_participants"] = part_fixed
+    
+    # Fix subscriptions offer_name
+    subs = await db.subscriptions.find({}).to_list(5000)
+    sub_fixed = 0
+    for s in subs:
+        offer_name = s.get("offer_name", "")
+        if has_double_encoding(offer_name):
+            await db.subscriptions.update_one(
+                {"_id": s["_id"]},
+                {"$set": {"offer_name": fix_double_encoding(offer_name)}}
+            )
+            sub_fixed += 1
+    results["subscriptions"] = sub_fixed
+    
+    # Fix reservations
+    reservations = await db.reservations.find({}).to_list(5000)
+    res_fixed = 0
+    for r in reservations:
+        updates = {}
+        for field in ["client_name", "sessionTitle", "notes"]:
+            val = r.get(field, "")
+            if has_double_encoding(val):
+                updates[field] = fix_double_encoding(val)
+        if updates:
+            await db.reservations.update_one({"_id": r["_id"]}, {"$set": updates})
+            res_fixed += 1
+    results["reservations"] = res_fixed
+    
+    return {"status": "done", "fixed": results}
+
 # V133: CORS restreint â uniquement les domaines Afroboost autorisÃ©s
 _cors_default = "https://www.afroboost.com,https://afroboost.com,https://afroboost-v11-dev.vercel.app,http://localhost:3000"
 _cors_origins = os.environ.get('CORS_ORIGINS', _cors_default).split(',')
