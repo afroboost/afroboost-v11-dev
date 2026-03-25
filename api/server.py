@@ -213,17 +213,6 @@ async def emit_new_message(session_id: str, message_data: dict):
 # === CONSTANTE EMAIL COACH ===
 COACH_EMAIL = "contact.artboost@gmail.com"
 
-# v162: Fix double-encoded UTF-8 helper
-def _fix_utf8(text):
-    if not isinstance(text, str) or not text:
-        return text, False
-    try:
-        fixed = text.encode("latin-1").decode("utf-8")
-        return fixed, fixed != text
-    except Exception:
-        return text, False
-
-
 # === SYSTÃME MULTI-COACH v8.9 ===
 # V133: Super Admin emails chargÃ©s depuis variable d'environnement
 # Format: "email1@example.com,email2@example.com"
@@ -7429,20 +7418,6 @@ async def get_chat_participants(request: Request):
         participants = await db.chat_participants.find(
             {"coach_id": caller_email}, {"_id": 0}
         ).to_list(1000) if caller_email else []
-    # v162: Auto-fix double-encoded UTF-8 names
-    _utf8_fixes = []
-    for _p in participants:
-        _upd = {}
-        for _f in ["name", "firstName", "lastName"]:
-            _val, _chg = _fix_utf8(_p.get(_f, ""))
-            if _chg:
-                _p[_f] = _val
-                _upd[_f] = _val
-        if _upd and _p.get("id"):
-            _utf8_fixes.append(db.chat_participants.update_one({"id": _p["id"]}, {"$set": _upd}))
-    if _utf8_fixes:
-        import asyncio as _aio
-        _aio.ensure_future(_aio.gather(*_utf8_fixes))
     return participants
 
 @api_router.get("/chat/participants/{participant_id}")
@@ -12099,62 +12074,6 @@ init_checkout_db(db)
 # V154: Include contact categories routes
 fastapi_app.include_router(category_router, prefix="/api")
 init_category_db(db)
-
-
-# v162: One-time UTF-8 double-encoding fix endpoint (minimal)
-@_app.get("/api/fix-utf8-data")
-async def fix_utf8_data(secret: str = "", col: str = "categories"):
-    if secret != "afroboost162fix":
-        return {"error": "Unauthorized"}
-    def fix_text(text):
-        if not isinstance(text, str) or not text:
-            return text, False
-        try:
-            fixed = text.encode("latin-1").decode("utf-8")
-            return fixed, fixed != text
-        except Exception:
-            return text, False
-    n = 0
-    details = []
-    if col == "categories":
-        docs = await db.contact_categories.find({}).to_list(100)
-        for d in docs:
-            name, changed = fix_text(d.get("name", ""))
-            if changed:
-                await db.contact_categories.update_one({"_id": d["_id"]}, {"$set": {"name": name}})
-                details.append(d.get("name") + " -> " + name)
-                n += 1
-    elif col == "groups":
-        docs = await db.contact_groups.find({}).to_list(100)
-        for d in docs:
-            updates = {}
-            for f in ["name", "description"]:
-                val, changed = fix_text(d.get(f, ""))
-                if changed:
-                    updates[f] = val
-            if updates:
-                await db.contact_groups.update_one({"_id": d["_id"]}, {"$set": updates})
-                details.append(d.get("name", "") + " -> " + updates.get("name", "ok"))
-                n += 1
-    elif col == "participants":
-        docs = await db.chat_participants.find({}).to_list(200)
-        for d in docs:
-            updates = {}
-            for f in ["name", "firstName", "lastName"]:
-                val, changed = fix_text(d.get(f, ""))
-                if changed:
-                    updates[f] = val
-            if updates:
-                await db.chat_participants.update_one({"_id": d["_id"]}, {"$set": updates})
-                n += 1
-    elif col == "subscriptions":
-        docs = await db.subscriptions.find({}).to_list(200)
-        for d in docs:
-            val, changed = fix_text(d.get("offer_name", ""))
-            if changed:
-                await db.subscriptions.update_one({"_id": d["_id"]}, {"$set": {"offer_name": val}})
-                n += 1
-    return {"status": "done", "collection": col, "fixed": n, "details": details}
 
 # V133: CORS restreint â uniquement les domaines Afroboost autorisÃ©s
 _cors_default = "https://www.afroboost.com,https://afroboost.com,https://afroboost-v11-dev.vercel.app,http://localhost:3000"
