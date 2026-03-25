@@ -7,6 +7,18 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# v162: Auto-fix double-encoded UTF-8 on read
+def _fix_utf8(text):
+    if not isinstance(text, str) or not text:
+        return text, False
+    try:
+        fixed = text.encode("latin-1").decode("utf-8")
+        return fixed, fixed != text
+    except Exception:
+        return text, False
+
+
+
 SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"
 
 def is_super_admin(email: str) -> bool:
@@ -64,6 +76,15 @@ async def get_contact_categories(request: Request):
             ).to_list(100)
 
         # Trier par order
+        # v162: Fix double-encoded UTF-8 names in DB
+        for cat in existing:
+            fixed_name, was_broken = _fix_utf8(cat.get("name", ""))
+            if was_broken:
+                cat["name"] = fixed_name
+                await db.contact_categories.update_one(
+                    {"id": cat.get("id")}, {"$set": {"name": fixed_name}}
+                )
+
         existing.sort(key=lambda x: x.get("order", 99))
         return {"success": True, "categories": existing}
 

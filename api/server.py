@@ -213,6 +213,17 @@ async def emit_new_message(session_id: str, message_data: dict):
 # === CONSTANTE EMAIL COACH ===
 COACH_EMAIL = "contact.artboost@gmail.com"
 
+# v162: Fix double-encoded UTF-8 helper
+def _fix_utf8(text):
+    if not isinstance(text, str) or not text:
+        return text, False
+    try:
+        fixed = text.encode("latin-1").decode("utf-8")
+        return fixed, fixed != text
+    except Exception:
+        return text, False
+
+
 # === SYSTÃME MULTI-COACH v8.9 ===
 # V133: Super Admin emails chargÃ©s depuis variable d'environnement
 # Format: "email1@example.com,email2@example.com"
@@ -7418,6 +7429,20 @@ async def get_chat_participants(request: Request):
         participants = await db.chat_participants.find(
             {"coach_id": caller_email}, {"_id": 0}
         ).to_list(1000) if caller_email else []
+    # v162: Auto-fix double-encoded UTF-8 names
+    _utf8_fixes = []
+    for _p in participants:
+        _upd = {}
+        for _f in ["name", "firstName", "lastName"]:
+            _val, _chg = _fix_utf8(_p.get(_f, ""))
+            if _chg:
+                _p[_f] = _val
+                _upd[_f] = _val
+        if _upd and _p.get("id"):
+            _utf8_fixes.append(db.chat_participants.update_one({"id": _p["id"]}, {"$set": _upd}))
+    if _utf8_fixes:
+        import asyncio as _aio
+        _aio.ensure_future(_aio.gather(*_utf8_fixes))
     return participants
 
 @api_router.get("/chat/participants/{participant_id}")
