@@ -121,13 +121,17 @@ class DiscountCodeCreate(BaseModel):
     maxUses: Optional[int] = None
     coach_id: Optional[str] = None  # v9.3.0: Isolation par coach
     targetCategories: Optional[List[str]] = []  # V154: Ciblage par catégories
+    offerName: Optional[str] = None  # v162: Nom de l'offre depuis le frontend
 
 
 # === v104: HELPER — Résoudre les détails de l'offre liée à un code ===
-async def _resolve_offer_details(courses_list, max_uses):
+async def _resolve_offer_details(courses_list, max_uses, offer_name_override=None):
     """Détermine le nombre de séances et le nom de l'offre en se basant sur l'article autorisé.
     Règle v104: Plus de défaut 10 séances. Le crédit vient de l'article ou de maxUses."""
     offer_name = "Abonnement"
+    # v162: Utiliser le nom fourni par le frontend en priorite
+    if offer_name_override:
+        offer_name = offer_name_override
     offer_price = None
     total_sessions = max_uses  # Utiliser maxUses tel quel (peut être None)
 
@@ -206,6 +210,9 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
     if not is_super_admin and user_email:
         code_data["coach_id"] = user_email
 
+    # v162: Stocker le nom de l'offre dans le code promo
+    if code.offerName:
+        code_data["offerName"] = code.offerName
     code_obj = DiscountCode(**code_data)
     await _db.discount_codes.insert_one(code_obj.model_dump())
 
@@ -214,7 +221,7 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
     assigned_email = (code.assignedEmail or "").lower().strip()
     if assigned_email:
         code_str = code.code.upper().strip()
-        total_sessions, offer_name, offer_price = await _resolve_offer_details(code.courses, code.maxUses)
+        total_sessions, offer_name, offer_price = await _resolve_offer_details(code.courses, code.maxUses, getattr(code, "offerName", None))
 
         # Vérifier qu'il n'y a pas déjà un abonnement actif pour ce code + email
         existing = await _db.subscriptions.find_one({

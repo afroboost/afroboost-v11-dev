@@ -1758,7 +1758,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         type: newCode.type, value: parseFloat(newCode.value),
         assignedEmail: beneficiaryEmail,
         courses: newCode.courses, maxUses: newCode.maxUses ? parseInt(newCode.maxUses) : null,
-        expiresAt: newCode.expiresAt || null
+        expiresAt: newCode.expiresAt || null,
+        offerName: (newCode.courses && newCode.courses.length > 0 && offers.find(function(o) { return o.id === newCode.courses[0]; })) ? offers.find(function(o) { return o.id === newCode.courses[0]; }).name : null
       });
       setDiscountCodes([...discountCodes, response.data]);
       setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "" });
@@ -1800,7 +1801,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           assignedEmail: beneficiaryEmail,
           courses: newCode.courses, // Cours ET produits autorisés
           maxUses: newCode.maxUses ? parseInt(newCode.maxUses) : null,
-          expiresAt: newCode.expiresAt || null
+          expiresAt: newCode.expiresAt || null,
+          offerName: (newCode.courses && newCode.courses.length > 0 && offers.find(function(o) { return o.id === newCode.courses[0]; })) ? offers.find(function(o) { return o.id === newCode.courses[0]; }).name : null
         });
         createdCodes.push(response.data);
       }
