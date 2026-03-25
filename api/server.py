@@ -4950,7 +4950,7 @@ async def get_all_contacts_unified(request: Request):
             title = (session.get("title") or "").strip()
             mode = session.get("mode", "user")
             if title or mode in ["community", "vip", "promo", "group"]:
-                mode_names = {"community": "CommunautÃ©", "vip": "VIP", "promo": "Offres SpÃ©ciales", "group": "Groupe"}
+                mode_names = {"community": "Communauté", "vip": "VIP", "promo": "Offres Spéciales", "group": "Groupe"}
                 contacts.append({
                     "id": session.get("id", ""),
                     "name": title or mode_names.get(mode, f"Groupe {mode}"),
@@ -4964,7 +4964,7 @@ async def get_all_contacts_unified(request: Request):
 
         # Groupes standards si manquants
         existing_ids = set(c["id"] for c in contacts)
-        for gid, gname in [("community", "CommunautÃ© GÃ©nÃ©rale"), ("vip", "Groupe VIP"), ("promo", "Offres SpÃ©ciales")]:
+        for gid, gname in [("community", "Communauté Générale"), ("vip", "Groupe VIP"), ("promo", "Offres Spéciales")]:
             if gid not in existing_ids:
                 contacts.append({
                     "id": gid, "name": gname, "type": "group",
@@ -7797,9 +7797,9 @@ async def join_group_automatically(request: GroupJoinRequest):
             # VÃ©rifier si c'est un mode standard (community, vip, promo)
             if group_id in ["community", "vip", "promo"]:
                 mode_titles = {
-                    "community": "CommunautÃ© GÃ©nÃ©rale",
+                    "community": "Communauté Générale",
                     "vip": "Groupe VIP",
-                    "promo": "Offres SpÃ©ciales"
+                    "promo": "Offres Spéciales"
                 }
                 group_session = {
                     "id": f"group_{group_id}_{uuid.uuid4().hex[:8]}",
