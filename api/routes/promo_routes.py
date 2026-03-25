@@ -660,7 +660,7 @@ async def update_subscription(sub_id: str, updates: dict):
     existing = await _db.subscriptions.find_one({"id": sub_id})
     if not existing:
         return {"error": "Subscription not found"}
-    allowed = {"remaining_sessions", "used_sessions", "status", "updated_at"}
+    allowed = {"remaining_sessions", "used_sessions", "status", "updated_at", "offer_name", "offer_price"}
     safe_updates = {k: v for k, v in updates.items() if k in allowed}
     safe_updates["updated_at"] = datetime.now(timezone.utc).isoformat()
     await _db.subscriptions.update_one({"_id": existing["_id"]}, {"$set": safe_updates})
