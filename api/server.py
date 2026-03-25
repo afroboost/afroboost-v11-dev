@@ -4028,6 +4028,24 @@ async def stripe_webhook(request: Request):
                     )
                 except Exception as push_err:
                     logger.warning(f"[PUSH-COACH] Push vente error: {push_err}")
+                # v162: Email preuve de vente au coach
+                try:
+                    coach_sale_html = f"""<div style="font-family:Arial;max-width:600px;margin:0 auto;background:#1a1a2e;color:#fff;padding:24px;border-radius:12px">
+                        <div style="text-align:center;padding:16px 0">
+                            <h2 style="color:#d91cd2">Nouvelle vente Afroboost</h2>
+                        </div>
+                        <div style="background:#16213e;border-radius:8px;padding:16px;margin:12px 0">
+                            <p><strong>Client:</strong> {metadata.get("customer_name", "N/A")} ({customer_email})</p>
+                            <p><strong>Offre:</strong> {product_name}</p>
+                            <p><strong>Seances:</strong> {sessions_count}</p>
+                            <p><strong>Code:</strong> {new_code}</p>
+                            <p><strong>Date:</strong> {datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M")}</p>
+                        </div>
+                    </div>"""
+                    await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost <notifications@afroboosteur.com>", "to": [COACH_EMAIL], "subject": f"Vente - {metadata.get('customer_name', 'Client')} - {product_name}", "html": coach_sale_html})
+                    logger.info(f"[EMAIL] Preuve de vente envoyee au coach pour {customer_email}")
+                except Exception as coach_mail_err:
+                    logger.warning(f"[EMAIL] Erreur envoi preuve vente coach: {coach_mail_err}")
         elif event.type == 'checkout.session.expired':
             session = event.data.object
             await db.payment_transactions.update_one({"session_id": session.id}, {"$set": {"status": "expired", "webhook_received_at": datetime.now(timezone.utc).isoformat()}})

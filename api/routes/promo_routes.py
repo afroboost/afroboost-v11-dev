@@ -78,6 +78,36 @@ async def _send_welcome_email(user_email: str, user_name: str, code_str: str, of
     except Exception as e:
         logger.warning(f"[EMAIL] Erreur envoi bienvenue: {e}")
 
+# v162: Email preuve de vente au coach
+async def _send_coach_sale_email(coach_email, customer_email, customer_name, code_str, offer_name, total_sessions):
+    """Envoie un email de preuve de vente au coach"""
+    if not _RESEND_OK or not _RESEND_KEY:
+        return
+    resend.api_key = _RESEND_KEY
+    html = f"""<div style="font-family:Arial;max-width:600px;margin:0 auto;background:#1a1a2e;color:#fff;padding:24px;border-radius:12px">
+        <div style="text-align:center;padding:16px 0">
+            <h2 style="color:#d91cd2">Nouvelle souscription Afroboost</h2>
+        </div>
+        <div style="background:#16213e;border-radius:8px;padding:16px;margin:12px 0">
+            <p><strong>Client:</strong> {customer_name} ({customer_email})</p>
+            <p><strong>Offre:</strong> {offer_name}</p>
+            <p><strong>Seances:</strong> {total_sessions}</p>
+            <p><strong>Code:</strong> {code_str}</p>
+            <p><strong>Source:</strong> Code promo admin</p>
+            <p><strong>Date:</strong> {datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M")}</p>
+        </div>
+    </div>"""
+    try:
+        await asyncio.to_thread(resend.Emails.send, {
+            "from": "Afroboost <notifications@afroboosteur.com>",
+            "to": [coach_email],
+            "subject": f"Souscription - {customer_name} - {offer_name}",
+            "html": html
+        })
+        logger.info(f"[EMAIL] Preuve de vente envoyee au coach pour {customer_email}")
+    except Exception as e:
+        logger.warning(f"[EMAIL] Erreur envoi preuve vente coach: {e}")
+
 # Super Admin email - pas de filtre
 SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"
 
@@ -263,6 +293,12 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
                 assigned_email, assigned_email.split("@")[0],
                 code_str, offer_name, total_sessions
             ))
+            # v162: Email preuve de vente au coach
+            coach_email = code_data.get("coach_id") or SUPER_ADMIN_EMAIL
+            asyncio.create_task(_send_coach_sale_email(
+                coach_email, assigned_email, assigned_email.split("@")[0],
+                code_str, offer_name, total_sessions
+            ))
 
     return code_obj
 
@@ -397,6 +433,12 @@ async def validate_discount_code(data: dict):
                 # v96: Email de bienvenue à la première activation
                 asyncio.create_task(_send_welcome_email(
                     user_email, user_name or user_email.split("@")[0],
+                    code_str, offer_name, total_sessions
+                ))
+                # v162: Email preuve de vente au coach (batch path)
+                coach_email_batch = code.get("coach_id") or SUPER_ADMIN_EMAIL
+                asyncio.create_task(_send_coach_sale_email(
+                    coach_email_batch, user_email, user_name or user_email.split("@")[0],
                     code_str, offer_name, total_sessions
                 ))
             else:
