@@ -1,4 +1,4 @@
-# reservation_routes.py - Routes réservations v9.5.8 → v96: Email confirmation
+# reservation_routes.py - Routes rÃ©servations v9.5.8 â v96: Email confirmation
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -10,7 +10,7 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# === v96: Email confirmation après réservation ===
+# === v96: Email confirmation aprÃ¨s rÃ©servation ===
 try:
     import resend
     _RESEND_OK = True
@@ -21,14 +21,14 @@ _RESEND_KEY = os.environ.get('RESEND_API_KEY', '')
 
 
 async def _send_reservation_email(user_email: str, user_name: str, reservation_data: dict, subscription_info: dict = None):
-    """Envoie un email de confirmation après réservation"""
+    """Envoie un email de confirmation aprÃ¨s rÃ©servation"""
     if not _RESEND_OK or not _RESEND_KEY:
-        logger.warning("[EMAIL] Resend non disponible — email non envoyé")
+        logger.warning("[EMAIL] Resend non disponible â email non envoyÃ©")
         return
     resend.api_key = _RESEND_KEY
 
     res_code = reservation_data.get("reservationCode", "N/A")
-    offer = reservation_data.get("offerName", "Réservation")
+    offer = reservation_data.get("offerName", "RÃ©servation")
     course = reservation_data.get("courseName", "")
     price = reservation_data.get("totalPrice", 0)
     promo = reservation_data.get("promoCode", "")
@@ -43,25 +43,25 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
         code = subscription_info.get("code", promo)
         sub_html = f"""
         <div style="background:rgba(147,51,234,0.15);border:1px solid rgba(147,51,234,0.3);border-radius:8px;padding:14px;margin:16px 0;">
-            <p style="margin:0;color:#a855f7;font-size:13px;">Ton crédit restant</p>
-            <p style="margin:4px 0 0;color:#fff;font-size:18px;font-weight:bold;">{remaining}/{total} séances</p>
+            <p style="margin:0;color:#a855f7;font-size:13px;">Ton crÃ©dit restant</p>
+            <p style="margin:4px 0 0;color:#fff;font-size:18px;font-weight:bold;">{remaining}/{total} sÃ©ances</p>
             <p style="margin:4px 0 0;color:#888;font-size:12px;">Code : {code}</p>
         </div>"""
 
-    # QR Code de la réservation
+    # QR Code de la rÃ©servation
     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://afroboost.com/api/reservations/{res_code}/validate&format=png"
 
     html = f"""<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0a0a0a;">
         <div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:24px;text-align:center;">
-            <h1 style="color:white;margin:0;font-size:22px;">Réservation confirmée !</h1>
+            <h1 style="color:white;margin:0;font-size:22px;">RÃ©servation confirmÃ©e !</h1>
         </div>
         <div style="padding:24px;color:#fff;">
             <p style="color:#a855f7;font-size:16px;line-height:1.6;">
-                Merci {user_name} pour ta réservation ! Voici le récapitulatif :
+                Merci {user_name} pour ta rÃ©servation ! Voici le rÃ©capitulatif :
             </p>
             <div style="background:rgba(217,28,210,0.1);border:1px solid rgba(217,28,210,0.3);border-radius:12px;padding:20px;margin:20px 0;">
                 <table style="width:100%;color:#fff;font-size:14px;">
-                    <tr><td style="color:#888;padding:6px 0;">Référence</td><td style="font-weight:bold;color:#d91cd2;">{res_code}</td></tr>
+                    <tr><td style="color:#888;padding:6px 0;">RÃ©fÃ©rence</td><td style="font-weight:bold;color:#d91cd2;">{res_code}</td></tr>
                     <tr><td style="color:#888;padding:6px 0;">Offre</td><td>{offer}</td></tr>
                     {"<tr><td style='color:#888;padding:6px 0;'>Cours</td><td>" + course + "</td></tr>" if course else ""}
                     {"<tr><td style='color:#888;padding:6px 0;'>Dates</td><td>" + dates_text + "</td></tr>" if dates_text else ""}
@@ -71,14 +71,14 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
             </div>
             {sub_html}
             <div style="text-align:center;margin:24px 0;">
-                <p style="color:#888;margin-bottom:12px;font-size:13px;">Ton QR Code de réservation</p>
+                <p style="color:#888;margin-bottom:12px;font-size:13px;">Ton QR Code de rÃ©servation</p>
                 <img src="{qr_url}" alt="QR Code" width="140" height="140" style="background:white;padding:8px;border-radius:8px;display:block;margin:0 auto;"/>
-                <p style="color:#a855f7;font-size:12px;margin-top:8px;">Présente ce QR Code à l'entrée.</p>
+                <p style="color:#a855f7;font-size:12px;margin-top:8px;">PrÃ©sente ce QR Code Ã  l'entrÃ©e.</p>
             </div>
             <div style="text-align:center;margin:24px 0;">
-                <a href="https://afroboost.com" style="display:inline-block;background:#d91cd2;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;">Accéder à mon espace</a>
+                <a href="https://afroboost.com" style="display:inline-block;background:#d91cd2;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;">AccÃ©der Ã  mon espace</a>
             </div>
-            <p style="color:#666;font-size:11px;text-align:center;margin-top:24px;">Conserve cet email. À très vite chez Afroboost !</p>
+            <p style="color:#666;font-size:11px;text-align:center;margin-top:24px;">Conserve cet email. Ã trÃ¨s vite chez Afroboost !</p>
         </div>
     </div>"""
 
@@ -86,10 +86,10 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
         await asyncio.to_thread(resend.Emails.send, {
             "from": "Afroboost <notifications@afroboosteur.com>",
             "to": [user_email],
-            "subject": f"Réservation confirmée — {res_code}",
+            "subject": f"RÃ©servation confirmÃ©e â {res_code}",
             "html": html
         })
-        logger.info(f"[EMAIL] Confirmation envoyée à {user_email} pour {res_code}")
+        logger.info(f"[EMAIL] Confirmation envoyÃ©e Ã  {user_email} pour {res_code}")
     except Exception as e:
         logger.warning(f"[EMAIL] Erreur envoi confirmation: {e}")
 
@@ -101,11 +101,11 @@ SUPER_ADMIN_EMAILS = [
 SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"  # Legacy
 
 def is_super_admin(email: str) -> bool:
-    """Vérifie si l'email est celui d'un Super Admin"""
+    """VÃ©rifie si l'email est celui d'un Super Admin"""
     return email and email.lower().strip() in [e.lower() for e in SUPER_ADMIN_EMAILS]
 
 def get_coach_filter(email: str) -> dict:
-    """Retourne le filtre MongoDB pour l'isolation des données coach"""
+    """Retourne le filtre MongoDB pour l'isolation des donnÃ©es coach"""
     if is_super_admin(email):
         return {}  # Super Admin voit tout
     return {"coach_id": email.lower().strip()}
@@ -113,14 +113,14 @@ def get_coach_filter(email: str) -> dict:
 # Router
 reservation_router = APIRouter(tags=["reservations"])
 
-# Variable db sera injectée depuis server.py
+# Variable db sera injectÃ©e depuis server.py
 db = None
 
 def init_reservation_db(database):
     global db
     db = database
 
-# === MODÈLES ===
+# === MODÃLES ===
 class ReservationBase(BaseModel):
     userName: str
     userEmail: str
@@ -138,7 +138,7 @@ class ReservationBase(BaseModel):
     isProduct: bool = False
     promoCode: Optional[str] = None
     discountCode: Optional[str] = None
-    subscriptionId: Optional[str] = None  # v95: ID de l'abonnement utilisé
+    subscriptionId: Optional[str] = None  # v95: ID de l'abonnement utilisÃ©
     source: Optional[str] = "website"
     type: Optional[str] = "ticket"
 
@@ -155,10 +155,10 @@ class Reservation(ReservationBase):
     trackingNumber: Optional[str] = None
     coach_id: Optional[str] = None
 
-# === ENDPOINTS RÉSERVATIONS ===
+# === ENDPOINTS RÃSERVATIONS ===
 @reservation_router.get("/reservations")
 async def get_reservations(request: Request, page: int = 1, limit: int = 20, all_data: bool = False):
-    """Get reservations with pagination - Filtré par coach_id"""
+    """Get reservations with pagination - FiltrÃ© par coach_id"""
     caller_email = request.headers.get("X-User-Email", "").lower().strip()
     base_query = {} if is_super_admin(caller_email) else {"coach_id": caller_email} if caller_email else {"coach_id": "__no_access__"}
     projection = {
@@ -183,14 +183,14 @@ async def get_reservations(request: Request, page: int = 1, limit: int = 20, all
 
 @reservation_router.post("/reservations", response_model=Reservation)
 async def create_reservation(reservation: ReservationCreate, request: Request):
-    """Créer une réservation - Vérifie la validité du code et déduit 1 séance v11.4"""
+    """CrÃ©er une rÃ©servation - VÃ©rifie la validitÃ© du code et dÃ©duit 1 sÃ©ance v11.4"""
     promo_code = reservation.promoCode or reservation.discountCode
     user_email = reservation.userEmail.lower().strip() if reservation.userEmail else ""
     
-    # === v95: VÉRIFIER ET DÉDUIRE UNE SÉANCE — support subscriptionId pour choix multi-abo ===
+    # === v95: VÃRIFIER ET DÃDUIRE UNE SÃANCE â support subscriptionId pour choix multi-abo ===
     subscription_id = getattr(reservation, 'subscriptionId', None)
     if user_email:
-        # v95: Si subscriptionId fourni, cibler cet abonnement spécifique
+        # v95: Si subscriptionId fourni, cibler cet abonnement spÃ©cifique
         if subscription_id:
             query = {"id": subscription_id, "email": user_email, "status": "active"}
         else:
@@ -203,10 +203,10 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
         if subscription:
             remaining = subscription.get("remaining_sessions", 0)
             if remaining <= 0:
-                logger.warning(f"[RESERVATION] {user_email} - Plus de séances disponibles")
-                raise HTTPException(status_code=400, detail="Plus de séances disponibles dans votre abonnement")
+                logger.warning(f"[RESERVATION] {user_email} - Plus de sÃ©ances disponibles")
+                raise HTTPException(status_code=400, detail="Plus de sÃ©ances disponibles dans votre abonnement")
             
-            # Déduire 1 séance
+            # DÃ©duire 1 sÃ©ance
             new_remaining = remaining - 1
             new_used = subscription.get("used_sessions", 0) + 1
             
@@ -223,23 +223,23 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
                 {"id": subscription.get("id")},
                 {"$set": update_data}
             )
-            # v95: Mémoriser le subscriptionId utilisé pour la traçabilité
+            # v95: MÃ©moriser le subscriptionId utilisÃ© pour la traÃ§abilitÃ©
             subscription_id = subscription.get("id")
-            logger.info(f"[RESERVATION] Séance déduite: {user_email} - {new_remaining} restantes (sub: {subscription_id})")
+            logger.info(f"[RESERVATION] SÃ©ance dÃ©duite: {user_email} - {new_remaining} restantes (sub: {subscription_id})")
 
     if promo_code:
         discount = await db.discount_codes.find_one({"code": {"$regex": f"^{promo_code}$", "$options": "i"}, "active": True}, {"_id": 0})
         if discount:
-            # v95: Incrémenter le compteur d'utilisation du code promo
+            # v95: IncrÃ©menter le compteur d'utilisation du code promo
             await db.discount_codes.update_one(
                 {"id": discount.get("id")},
                 {"$inc": {"used": 1}}
             )
-            logger.info(f"[RESERVATION] Code promo {promo_code} utilisé (compteur incrémenté)")
+            logger.info(f"[RESERVATION] Code promo {promo_code} utilisÃ© (compteur incrÃ©mentÃ©)")
         else:
             logger.info(f"[RESERVATION] Code promo invalide: {promo_code}")
 
-    # Créer la réservation avec coach_id par défaut
+    # CrÃ©er la rÃ©servation avec coach_id par dÃ©faut
     caller_email = request.headers.get("X-User-Email", "").lower().strip() if request else None
     reservation_data = Reservation(
         userName=reservation.userName, userEmail=reservation.userEmail, userWhatsapp=reservation.userWhatsapp,
@@ -252,8 +252,19 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
         coach_id=caller_email if caller_email and not is_super_admin(caller_email) else "bassi_default"
     ).model_dump()
     await db.reservations.insert_one(reservation_data)
+
+    # v162: Auto-valider si une seance a ete deduite d'un abonnement actif
+    if subscription_id:
+        validated_at = datetime.now(timezone.utc).isoformat()
+        await db.reservations.update_one(
+            {"reservationCode": reservation_data.get("reservationCode")},
+            {"$set": {"validated": True, "validatedAt": validated_at}}
+        )
+        reservation_data["validated"] = True
+        reservation_data["validatedAt"] = validated_at
+        logger.info(f"[RESERVATION] Auto-validee (seance deduite): {reservation_data.get('reservationCode')}")
     reservation_data.pop("_id", None)
-    logger.info(f"[RESERVATION] Créée: {reservation_data.get('reservationCode')} pour {user_email}")
+    logger.info(f"[RESERVATION] CrÃ©Ã©e: {reservation_data.get('reservationCode')} pour {user_email}")
 
     # v96: Envoyer email de confirmation
     if user_email:
@@ -268,7 +279,7 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
 
 @reservation_router.put("/reservations/{reservation_id}/tracking")
 async def update_reservation_tracking(reservation_id: str, request: Request):
-    """Met à jour les informations de suivi d'une réservation"""
+    """Met Ã  jour les informations de suivi d'une rÃ©servation"""
     body = await request.json()
     tracking_number = body.get("trackingNumber")
     shipping_status = body.get("shippingStatus", "shipped")
@@ -277,7 +288,7 @@ async def update_reservation_tracking(reservation_id: str, request: Request):
         {"$set": {"trackingNumber": tracking_number, "shippingStatus": shipping_status, "updatedAt": datetime.now(timezone.utc).isoformat()}}
     )
     if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Réservation non trouvée")
+        raise HTTPException(status_code=404, detail="RÃ©servation non trouvÃ©e")
     updated = await db.reservations.find_one({"id": reservation_id}, {"_id": 0})
     return {"success": True, "reservation": updated}
 
@@ -286,22 +297,22 @@ async def validate_reservation(reservation_code: str):
     """Validate a reservation by QR code scan"""
     reservation = await db.reservations.find_one({"reservationCode": reservation_code}, {"_id": 0})
     if not reservation:
-        raise HTTPException(status_code=404, detail="Réservation non trouvée")
+        raise HTTPException(status_code=404, detail="RÃ©servation non trouvÃ©e")
     await db.reservations.update_one(
         {"reservationCode": reservation_code},
         {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
     )
-    return {"success": True, "message": "Réservation validée", "reservation": reservation}
+    return {"success": True, "message": "RÃ©servation validÃ©e", "reservation": reservation}
 
 
-# === V156: Endpoint unifié QR scan — gère codes abonnement ET codes réservation ===
+# === V156: Endpoint unifiÃ© QR scan â gÃ¨re codes abonnement ET codes rÃ©servation ===
 @reservation_router.post("/qr/scan-validate")
 async def qr_scan_validate(request: Request):
     """
-    V156: Validation unifiée par scan QR.
-    Accepte un code qui peut être:
-    - Un code de réservation (AF1368C426, etc.) → valide la réservation
-    - Un code d'abonnement (BASSBOOSTX-11, etc.) → valide une séance de l'abonnement
+    V156: Validation unifiÃ©e par scan QR.
+    Accepte un code qui peut Ãªtre:
+    - Un code de rÃ©servation (AF1368C426, etc.) â valide la rÃ©servation
+    - Un code d'abonnement (BASSBOOSTX-11, etc.) â valide une sÃ©ance de l'abonnement
     """
     body = await request.json()
     code = (body.get("code", "") or "").strip().upper()
@@ -310,14 +321,14 @@ async def qr_scan_validate(request: Request):
 
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # === 1. Essayer comme code de réservation ===
+    # === 1. Essayer comme code de rÃ©servation ===
     reservation = await db.reservations.find_one({"reservationCode": code}, {"_id": 0})
     if reservation:
         if reservation.get("validated"):
             return {
                 "success": False,
                 "type": "reservation",
-                "message": f"Réservation déjà validée le {reservation.get('validatedAt', 'N/A')[:10]}",
+                "message": f"RÃ©servation dÃ©jÃ  validÃ©e le {reservation.get('validatedAt', 'N/A')[:10]}",
                 "reservation": reservation
             }
         await db.reservations.update_one(
@@ -326,11 +337,11 @@ async def qr_scan_validate(request: Request):
         )
         reservation["validated"] = True
         reservation["validatedAt"] = now_iso
-        logger.info(f"[V156-QR] Réservation validée: {code} ({reservation.get('userName', 'N/A')})")
+        logger.info(f"[V156-QR] RÃ©servation validÃ©e: {code} ({reservation.get('userName', 'N/A')})")
         return {
             "success": True,
             "type": "reservation",
-            "message": "Réservation validée !",
+            "message": "RÃ©servation validÃ©e !",
             "reservation": reservation
         }
 
@@ -350,18 +361,18 @@ async def qr_scan_validate(request: Request):
             return {
                 "success": False,
                 "type": "subscription",
-                "message": f"Abonnement {code} désactivé",
+                "message": f"Abonnement {code} dÃ©sactivÃ©",
                 "subscriber": {"code": code, "name": discount.get("name", ""), "remaining": 0}
             }
         if remaining <= 0:
             return {
                 "success": False,
                 "type": "subscription",
-                "message": f"Plus de séances restantes ({used}/{max_uses} utilisées)",
+                "message": f"Plus de sÃ©ances restantes ({used}/{max_uses} utilisÃ©es)",
                 "subscriber": {"code": code, "name": discount.get("name", ""), "remaining": 0}
             }
 
-        # Déduire 1 séance
+        # DÃ©duire 1 sÃ©ance
         new_used = used + 1
         new_remaining = max(0, max_uses - new_used)
         await db.discount_codes.update_one(
@@ -369,7 +380,7 @@ async def qr_scan_validate(request: Request):
             {"$set": {"used": new_used, "updated_at": now_iso}}
         )
 
-        # Aussi mettre à jour dans subscriptions si existe
+        # Aussi mettre Ã  jour dans subscriptions si existe
         sub = await db.subscriptions.find_one(
             {"code": {"$regex": f"^{code}$", "$options": "i"}, "status": "active"},
             {"_id": 0}
@@ -405,17 +416,17 @@ async def qr_scan_validate(request: Request):
         subscriber_name = discount.get("name", "")
         if not subscriber_name:
             email = discount.get("assignedEmail", "")
-            subscriber_name = email.split("@")[0] if email else "Abonné"
+            subscriber_name = email.split("@")[0] if email else "AbonnÃ©"
 
-        # V156.2: Créer un enregistrement réservation pour que le check-in apparaisse
-        # dans la liste des réservations du coach
+        # V156.2: CrÃ©er un enregistrement rÃ©servation pour que le check-in apparaisse
+        # dans la liste des rÃ©servations du coach
         checkin_reservation = {
             "id": str(uuid.uuid4()),
             "reservationCode": f"QR-{code}-{new_used}",
             "userName": subscriber_name,
             "userEmail": discount.get("assignedEmail", ""),
             "offerName": f"Abonnement {code}",
-            "courseName": "Séance abonnement",
+            "courseName": "SÃ©ance abonnement",
             "totalPrice": 0,
             "quantity": 1,
             "validated": True,
@@ -436,15 +447,15 @@ async def qr_scan_validate(request: Request):
             checkin_reservation["coach_id"] = coach_email
         try:
             await db.reservations.insert_one(checkin_reservation)
-            logger.info(f"[V156-QR] Check-in réservation créée: {checkin_reservation['reservationCode']}")
+            logger.info(f"[V156-QR] Check-in rÃ©servation crÃ©Ã©e: {checkin_reservation['reservationCode']}")
         except Exception as e:
-            logger.warning(f"[V156-QR] Erreur création réservation check-in: {e}")
+            logger.warning(f"[V156-QR] Erreur crÃ©ation rÃ©servation check-in: {e}")
 
-        logger.info(f"[V156-QR] Séance validée: {code} - {subscriber_name} ({new_remaining}/{max_uses} restantes)")
+        logger.info(f"[V156-QR] SÃ©ance validÃ©e: {code} - {subscriber_name} ({new_remaining}/{max_uses} restantes)")
         return {
             "success": True,
             "type": "subscription",
-            "message": f"Séance validée ! {new_remaining}/{max_uses} restantes",
+            "message": f"SÃ©ance validÃ©e ! {new_remaining}/{max_uses} restantes",
             "subscriber": {
                 "code": code,
                 "name": subscriber_name,
@@ -455,20 +466,20 @@ async def qr_scan_validate(request: Request):
             }
         }
 
-    # === 3. Rien trouvé ===
+    # === 3. Rien trouvÃ© ===
     logger.warning(f"[V156-QR] Code introuvable: {code}")
-    raise HTTPException(status_code=404, detail=f"Code '{code}' non trouvé (ni réservation, ni abonnement)")
+    raise HTTPException(status_code=404, detail=f"Code '{code}' non trouvÃ© (ni rÃ©servation, ni abonnement)")
 
 
 @reservation_router.delete("/reservations/{reservation_id}")
 async def delete_reservation(reservation_id: str):
-    """Supprime une réservation"""
+    """Supprime une rÃ©servation"""
     await db.reservations.delete_one({"id": reservation_id})
     return {"success": True}
 
 @reservation_router.post("/check-reservation-eligibility")
 async def check_reservation_eligibility(request: Request):
-    """Vérifie si un utilisateur peut réserver (abonné actif ou code promo valide)"""
+    """VÃ©rifie si un utilisateur peut rÃ©server (abonnÃ© actif ou code promo valide)"""
     body = await request.json()
     email = body.get("email", "").lower().strip()
     code = body.get("code", "").strip()
@@ -479,21 +490,21 @@ async def check_reservation_eligibility(request: Request):
         discount = await db.discount_codes.find_one({"code": {"$regex": f"^{code}$", "$options": "i"}, "active": True}, {"_id": 0})
         if discount:
             return {"eligible": True, "discount": discount, "type": "discount_code"}
-    # Chercher par email (abonné actif)
+    # Chercher par email (abonnÃ© actif)
     if email:
         subscriber = await db.chat_participants.find_one({"email": {"$regex": f"^{email}$", "$options": "i"}}, {"_id": 0})
         if subscriber and subscriber.get("isSubscriber"):
             return {"eligible": True, "subscriber": {"name": subscriber.get("name"), "email": subscriber.get("email")}, "type": "subscriber"}
-    return {"eligible": False, "reason": "Aucun abonnement ou code valide trouvé"}
+    return {"eligible": False, "reason": "Aucun abonnement ou code valide trouvÃ©"}
 
 
-# === v107: Vérifier si une séance vient de se terminer (pour déclencher la demande d'avis) ===
-SESSION_DURATION_MINUTES = 90  # Durée par défaut d'une séance Afroboost
+# === v107: VÃ©rifier si une sÃ©ance vient de se terminer (pour dÃ©clencher la demande d'avis) ===
+SESSION_DURATION_MINUTES = 90  # DurÃ©e par dÃ©faut d'une sÃ©ance Afroboost
 
 @reservation_router.get("/reservations/ended-for-review")
 async def check_ended_session_for_review(email: str = "", code: str = ""):
-    """V107: Vérifie si l'abonné a une séance récemment terminée qui mérite un avis.
-    Retourne has_ended_session=true si une séance a fini dans les 6 dernières heures."""
+    """V107: VÃ©rifie si l'abonnÃ© a une sÃ©ance rÃ©cemment terminÃ©e qui mÃ©rite un avis.
+    Retourne has_ended_session=true si une sÃ©ance a fini dans les 6 derniÃ¨res heures."""
     from datetime import timedelta
 
     if not email and not code:
@@ -503,7 +514,7 @@ async def check_ended_session_for_review(email: str = "", code: str = ""):
     now = datetime.now(timezone.utc)
     six_hours_ago = (now - timedelta(hours=6)).isoformat()
 
-    # Chercher les réservations confirmées récentes de cet abonné
+    # Chercher les rÃ©servations confirmÃ©es rÃ©centes de cet abonnÃ©
     query = {"feedback_sent": {"$ne": True}}
     if email:
         query["userEmail"] = {"$regex": f"^{email}$", "$options": "i"}
@@ -517,11 +528,11 @@ async def check_ended_session_for_review(email: str = "", code: str = ""):
         if session_end is None:
             continue
 
-        # La séance doit être terminée (now > session_end) mais pas trop ancienne (< 6h)
+        # La sÃ©ance doit Ãªtre terminÃ©e (now > session_end) mais pas trop ancienne (< 6h)
         if session_end <= now and session_end.isoformat() >= six_hours_ago:
             return {
                 "has_ended_session": True,
-                "session_name": res.get("courseName") or res.get("offerName") or "Séance",
+                "session_name": res.get("courseName") or res.get("offerName") or "SÃ©ance",
                 "session_end": session_end.isoformat(),
                 "reservation_id": res.get("id")
             }
@@ -530,11 +541,11 @@ async def check_ended_session_for_review(email: str = "", code: str = ""):
 
 
 def _calculate_session_end(reservation: dict) -> datetime:
-    """Calcule l'heure de fin d'une séance à partir des données de réservation.
-    Retourne un datetime UTC ou None si impossible à déterminer."""
+    """Calcule l'heure de fin d'une sÃ©ance Ã  partir des donnÃ©es de rÃ©servation.
+    Retourne un datetime UTC ou None si impossible Ã  dÃ©terminer."""
     from datetime import timedelta
 
-    # Méthode 1: Utiliser le champ 'datetime' (datetime complet de la séance)
+    # MÃ©thode 1: Utiliser le champ 'datetime' (datetime complet de la sÃ©ance)
     dt_str = reservation.get("datetime")
     if dt_str and isinstance(dt_str, str):
         try:
@@ -545,7 +556,7 @@ def _calculate_session_end(reservation: dict) -> datetime:
         except Exception:
             pass
 
-    # Méthode 2: Combiner selectedDates[0] + courseTime
+    # MÃ©thode 2: Combiner selectedDates[0] + courseTime
     selected_dates = reservation.get("selectedDates") or []
     course_time = reservation.get("courseTime")  # ex: "18:30"
 
@@ -561,11 +572,11 @@ def _calculate_session_end(reservation: dict) -> datetime:
         except Exception:
             pass
 
-    # Méthode 3: Utiliser selectedDates[0] seul (sans heure, on suppose fin de journée)
+    # MÃ©thode 3: Utiliser selectedDates[0] seul (sans heure, on suppose fin de journÃ©e)
     if selected_dates:
         try:
             date_str = selected_dates[0][:10]
-            # Pas d'heure connue → on suppose séance en soirée (20:00 fin)
+            # Pas d'heure connue â on suppose sÃ©ance en soirÃ©e (20:00 fin)
             session_end = datetime.fromisoformat(f"{date_str}T20:00:00+00:00")
             return session_end
         except Exception:
