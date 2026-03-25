@@ -1,10 +1,10 @@
 /**
- * ContactsManager.js â V146: Gestion centralisÃ©e des contacts
- * - Liste unifiÃ©e (participants + users + groupes)
+ * ContactsManager.js â V146: Gestion centralisée des contacts
+ * - Liste unifiée (participants + users + groupes)
  * - Sync Google Contacts OAuth2
  * - Import CSV/vCard
- * - Recherche, tags, catÃ©gories
- * - V146: SÃ©lection multiple, suppression en masse, export CSV
+ * - Recherche, tags, catégories
+ * - V146: Sélection multiple, suppression en masse, export CSV
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
@@ -24,11 +24,11 @@ export default function ContactsManager({ API, coachEmail }) {
   const [deduping, setDeduping] = useState(false);
   const importRef = useRef(null);
 
-  // V146: SÃ©lection multiple
+  // V146: Sélection multiple
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [deleting, setDeleting] = useState(false);
 
-  // V154: CatÃ©gories de contacts
+  // V154: Catégories de contacts
   const [categories, setCategories] = useState([]);
   const [filterCategory, setFilterCategory] = useState('all');
   const [showCategoryManager, setShowCategoryManager] = useState(false);
@@ -155,13 +155,13 @@ export default function ContactsManager({ API, coachEmail }) {
   const syncGoogleContacts = async () => {
     setSyncing(true);
     setSyncProgress(10);
-    setSyncMessage('Connexion Ã  Google...');
+    setSyncMessage('Connexion à Google...');
     try {
       setSyncProgress(30);
-      setSyncMessage('RÃ©cupÃ©ration des contacts...');
+      setSyncMessage('Récupération des contacts...');
       const res = await axios.post(`${API}/google-contacts/sync`, {}, { headers });
       setSyncProgress(90);
-      setSyncMessage(res.data.message || 'Sync terminÃ©e');
+      setSyncMessage(res.data.message || 'Sync terminée');
       setTimeout(() => {
         setSyncProgress(100);
         loadContacts();
@@ -187,7 +187,7 @@ export default function ContactsManager({ API, coachEmail }) {
       const text = evt.target.result;
       const parsed = parseContacts(text, file.name);
       if (parsed.length === 0) {
-        setImportResult({ imported: 0, message: 'â Aucun contact trouvÃ© dans le fichier' });
+        setImportResult({ imported: 0, message: 'â Aucun contact trouvé dans le fichier' });
         return;
       }
       try {
@@ -199,7 +199,7 @@ export default function ContactsManager({ API, coachEmail }) {
           imported: res.data.imported,
           duplicates: res.data.duplicates,
           errors: res.data.errors,
-          message: `â ${res.data.imported} importÃ©s, ${res.data.duplicates} doublons ignorÃ©s`
+          message: `â ${res.data.imported} importés, ${res.data.duplicates} doublons ignorés`
         });
         loadContacts();
       } catch (err) {
@@ -210,25 +210,25 @@ export default function ContactsManager({ API, coachEmail }) {
     e.target.value = '';
   };
 
-  // DÃ©dupliquer
+  // Dédupliquer
   const deduplicateContacts = async () => {
     setDeduping(true);
     try {
       const res = await axios.post(`${API}/contacts/deduplicate`, {}, { headers });
       if (res.data.success) {
-        setImportResult({ imported: 0, message: `â ${res.data.merged} doublons fusionnÃ©s (${res.data.total_before} â ${res.data.total_after} contacts)` });
+        setImportResult({ imported: 0, message: `â ${res.data.merged} doublons fusionnés (${res.data.total_before} â ${res.data.total_after} contacts)` });
         loadContacts();
       } else {
         setImportResult({ imported: 0, message: 'â Erreur: ' + (res.data.error || 'inconnue') });
       }
     } catch (err) {
-      setImportResult({ imported: 0, message: 'â Erreur dÃ©dup: ' + (err.response?.data?.detail || err.message) });
+      setImportResult({ imported: 0, message: 'â Erreur dédup: ' + (err.response?.data?.detail || err.message) });
     } finally {
       setDeduping(false);
     }
   };
 
-  // V146: Toggle sÃ©lection d'un contact
+  // V146: Toggle sélection d'un contact
   const toggleSelect = (id) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -238,7 +238,7 @@ export default function ContactsManager({ API, coachEmail }) {
     });
   };
 
-  // V146: SÃ©lectionner/DÃ©sÃ©lectionner tous les contacts visibles
+  // V146: Sélectionner/Désélectionner tous les contacts visibles
   const toggleSelectAll = () => {
     const visibleIds = filtered.filter(c => c.type !== 'group').map(c => c.id);
     const allSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
@@ -249,10 +249,10 @@ export default function ContactsManager({ API, coachEmail }) {
     }
   };
 
-  // V146: Supprimer les contacts sÃ©lectionnÃ©s
+  // V146: Supprimer les contacts sélectionnés
   const deleteSelected = async () => {
     if (selectedIds.size === 0) return;
-    const confirm = window.confirm(`Supprimer ${selectedIds.size} contact(s) ? Cette action est irrÃ©versible.`);
+    const confirm = window.confirm(`Supprimer ${selectedIds.size} contact(s) ? Cette action est irréversible.`);
     if (!confirm) return;
 
     setDeleting(true);
@@ -261,7 +261,7 @@ export default function ContactsManager({ API, coachEmail }) {
         ids: Array.from(selectedIds)
       }, { headers });
       if (res.data.success) {
-        setImportResult({ imported: 0, message: `ðï¸ ${res.data.deleted} contact(s) supprimÃ©(s)` });
+        setImportResult({ imported: 0, message: `ðï¸ ${res.data.deleted} contact(s) supprimé(s)` });
         setSelectedIds(new Set());
         loadContacts();
       }
@@ -279,11 +279,11 @@ export default function ContactsManager({ API, coachEmail }) {
       : filtered.filter(c => c.type !== 'group');
 
     if (contactsToExport.length === 0) {
-      setImportResult({ imported: 0, message: 'â ï¸ Aucun contact Ã  exporter' });
+      setImportResult({ imported: 0, message: 'â ï¸ Aucun contact à exporter' });
       return;
     }
 
-    const header = 'Nom,Email,TÃ©lÃ©phone,Source,Tags,CatÃ©gories';
+    const header = 'Nom,Email,Téléphone,Source,Tags,Catégories';
     const rows = contactsToExport.map(c => {
       var catNames = (c.categories || []).map(function(catId) {
         var cat = categories.find(function(ct) { return ct.id === catId; });
@@ -310,7 +310,7 @@ export default function ContactsManager({ API, coachEmail }) {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    setImportResult({ imported: 0, message: `ð¥ ${contactsToExport.length} contact(s) exportÃ©(s) en CSV` });
+    setImportResult({ imported: 0, message: `ð¥ ${contactsToExport.length} contact(s) exporté(s) en CSV` });
   };
 
   // V154: Create category
@@ -335,7 +335,7 @@ export default function ContactsManager({ API, coachEmail }) {
 
   // V154: Delete category
   var deleteCategory = async function(catId) {
-    if (!window.confirm('Supprimer cette catÃ©gorie ? Les contacts ne seront pas supprimÃ©s.')) return;
+    if (!window.confirm('Supprimer cette catégorie ? Les contacts ne seront pas supprimés.')) return;
     try {
       await axios.delete(API + '/contact-categories/' + catId, { headers: headers });
       loadCategories();
@@ -355,10 +355,10 @@ export default function ContactsManager({ API, coachEmail }) {
         category_ids: [catId],
         mode: 'add'
       }, { headers: headers });
-      setImportResult({ imported: 0, message: 'â CatÃ©gorie assignÃ©e Ã  ' + selectedIds.size + ' contact(s)' });
+      setImportResult({ imported: 0, message: 'â Catégorie assignée à ' + selectedIds.size + ' contact(s)' });
       loadContacts();
     } catch (err) {
-      setImportResult({ imported: 0, message: 'â Erreur assignation catÃ©gorie' });
+      setImportResult({ imported: 0, message: 'â Erreur assignation catégorie' });
     } finally {
       setAssigningCategory(false);
     }
@@ -374,16 +374,16 @@ export default function ContactsManager({ API, coachEmail }) {
         category_ids: [catId],
         mode: 'remove'
       }, { headers: headers });
-      setImportResult({ imported: 0, message: 'â CatÃ©gorie retirÃ©e de ' + selectedIds.size + ' contact(s)' });
+      setImportResult({ imported: 0, message: 'â Catégorie retirée de ' + selectedIds.size + ' contact(s)' });
       loadContacts();
     } catch (err) {
-      setImportResult({ imported: 0, message: 'â Erreur retrait catÃ©gorie' });
+      setImportResult({ imported: 0, message: 'â Erreur retrait catégorie' });
     } finally {
       setAssigningCategory(false);
     }
   };
 
-  // Filtered contacts â V154: ajout filtre catÃ©gorie
+  // Filtered contacts â V154: ajout filtre catégorie
   const filtered = contacts.filter(c => {
     const matchSearch = !searchQuery ||
       (c.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -483,11 +483,11 @@ export default function ContactsManager({ API, coachEmail }) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: syncing ? '10px' : '0', flexWrap: 'wrap', gap: '8px' }}>
           <div>
             <span style={{ fontSize: '13px', fontWeight: 600, color: '#fff' }}>
-              {googleStatus.connected ? 'â Google Contacts connectÃ©' : 'ð Connecter Google Contacts'}
+              {googleStatus.connected ? 'â Google Contacts connecté' : 'ð Connecter Google Contacts'}
             </span>
             {googleStatus.last_sync && (
               <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginLeft: '8px' }}>
-                DerniÃ¨re sync: {new Date(googleStatus.last_sync).toLocaleDateString('fr-FR')}
+                Dernière sync: {new Date(googleStatus.last_sync).toLocaleDateString('fr-FR')}
               </span>
             )}
           </div>
@@ -515,7 +515,7 @@ export default function ContactsManager({ API, coachEmail }) {
         </div>
         {!googleStatus.configured && (
           <p style={{ fontSize: '11px', color: '#f59e0b', margin: '8px 0 0 0' }}>
-            â ï¸ Google OAuth non configurÃ©. Ajoutez GOOGLE_CONTACTS_CLIENT_ID dans les variables Vercel.
+            â ï¸ Google OAuth non configuré. Ajoutez GOOGLE_CONTACTS_CLIENT_ID dans les variables Vercel.
           </p>
         )}
         {syncing && (
@@ -561,7 +561,7 @@ export default function ContactsManager({ API, coachEmail }) {
         </button>
       </div>
 
-      {/* V146: Barre d'actions sÃ©lection */}
+      {/* V146: Barre d'actions sélection */}
       {selectedIds.size > 0 && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px',
@@ -570,7 +570,7 @@ export default function ContactsManager({ API, coachEmail }) {
           flexWrap: 'wrap'
         }}>
           <span style={{ fontSize: '13px', color: '#fff', fontWeight: 600 }}>
-            {selectedIds.size} sÃ©lectionnÃ©{selectedIds.size > 1 ? 's' : ''}
+            {selectedIds.size} sélectionné{selectedIds.size > 1 ? 's' : ''}
           </span>
           <button onClick={deleteSelected} disabled={deleting} style={{
             padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
@@ -584,7 +584,7 @@ export default function ContactsManager({ API, coachEmail }) {
             background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.4)',
             color: '#60a5fa', cursor: 'pointer'
           }}>
-            ð¥ Exporter la sÃ©lection
+            ð¥ Exporter la sélection
           </button>
           {/* V154: Category assignment for selected */}
           {categories.length > 0 && (
@@ -595,7 +595,7 @@ export default function ContactsManager({ API, coachEmail }) {
                   return (
                     <button key={cat.id} onClick={function() { assignCategoryToSelected(cat.id); }}
                       disabled={assigningCategory}
-                      title={'Ajouter Â« ' + cat.name + ' Â»'}
+                      title={'Ajouter « ' + cat.name + ' »'}
                       style={{
                         padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 600,
                         background: cat.color + '20', border: '1px solid ' + cat.color + '44',
@@ -613,7 +613,7 @@ export default function ContactsManager({ API, coachEmail }) {
                   return (
                     <button key={cat.id} onClick={function() { removeCategoryFromSelected(cat.id); }}
                       disabled={assigningCategory}
-                      title={'Retirer Â« ' + cat.name + ' Â»'}
+                      title={'Retirer « ' + cat.name + ' »'}
                       style={{
                         padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 600,
                         background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
@@ -653,7 +653,7 @@ export default function ContactsManager({ API, coachEmail }) {
       {/* Search + Filters */}
       <div style={{ marginBottom: '12px' }}>
         <input
-          placeholder="ð Rechercher par nom, email, tÃ©lÃ©phone..."
+          placeholder="ð Rechercher par nom, email, téléphone..."
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           style={{
@@ -690,7 +690,7 @@ export default function ContactsManager({ API, coachEmail }) {
             background: filterCategory === 'all' ? 'rgba(217,28,210,0.25)' : 'rgba(255,255,255,0.04)',
             border: filterCategory === 'all' ? '1px solid rgba(217,28,210,0.5)' : '1px solid rgba(255,255,255,0.08)',
             color: filterCategory === 'all' ? '#D91CD2' : 'rgba(255,255,255,0.45)'
-          }}>Toutes catÃ©gories</button>
+          }}>Toutes catégories</button>
           {categories.map(function(cat) {
             return (
               <button key={cat.id} onClick={function() { setFilterCategory(filterCategory === cat.id ? 'all' : cat.id); }} style={{
@@ -709,14 +709,14 @@ export default function ContactsManager({ API, coachEmail }) {
             border: filterCategory === '__uncategorized__' ? '1px solid rgba(156,163,175,0.5)' : '1px solid rgba(255,255,255,0.08)',
             color: filterCategory === '__uncategorized__' ? '#9CA3AF' : 'rgba(255,255,255,0.45)'
           }}>
-            â Sans catÃ©gorie
+            â Sans catégorie
           </button>
           <button onClick={function() { setShowCategoryManager(!showCategoryManager); }} style={{
             padding: '4px 10px', borderRadius: '14px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
             background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)',
             color: '#c4b5fd'
           }}>
-            âï¸ GÃ©rer
+            âï¸ Gérer
           </button>
         </div>
       )}
@@ -728,7 +728,7 @@ export default function ContactsManager({ API, coachEmail }) {
           background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.25)'
         }}>
           <div style={{ fontSize: '13px', fontWeight: 600, color: '#c4b5fd', marginBottom: '10px' }}>
-            âï¸ GÃ©rer les catÃ©gories
+            âï¸ Gérer les catégories
           </div>
           {/* Existing categories */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
@@ -770,7 +770,7 @@ export default function ContactsManager({ API, coachEmail }) {
             <input
               value={newCatName}
               onChange={function(e) { setNewCatName(e.target.value); }}
-              placeholder="Nom de la catÃ©gorie"
+              placeholder="Nom de la catégorie"
               onKeyDown={function(e) { if (e.key === 'Enter') { e.preventDefault(); createCategory(); } }}
               style={{
                 flex: 1, padding: '8px 12px', borderRadius: '8px', fontSize: '12px',
@@ -797,7 +797,7 @@ export default function ContactsManager({ API, coachEmail }) {
         </div>
       )}
 
-      {/* V146: SÃ©lectionner tout checkbox */}
+      {/* V146: Sélectionner tout checkbox */}
       {filtered.some(c => c.type !== 'group') && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px',
@@ -811,7 +811,7 @@ export default function ContactsManager({ API, coachEmail }) {
             style={{ width: '16px', height: '16px', accentColor: '#8b5cf6', cursor: 'pointer' }}
           />
           <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)', fontWeight: 500 }}>
-            SÃ©lectionner tout ({visibleUserIds.length})
+            Sélectionner tout ({visibleUserIds.length})
           </span>
         </div>
       )}
@@ -829,7 +829,7 @@ export default function ContactsManager({ API, coachEmail }) {
           </div>
         ) : filtered.length === 0 ? (
           <div style={{ padding: '30px', textAlign: 'center', color: 'rgba(255,255,255,0.4)' }}>
-            {searchQuery ? 'Aucun rÃ©sultat' : 'Aucun contact'}
+            {searchQuery ? 'Aucun résultat' : 'Aucun contact'}
           </div>
         ) : (
           filtered.slice(0, 200).map((c, i) => {
@@ -845,7 +845,7 @@ export default function ContactsManager({ API, coachEmail }) {
               }}
                 onClick={() => { if (!isGroup) toggleSelect(c.id); }}
               >
-                {/* V146: Checkbox de sÃ©lection (pas pour les groupes) */}
+                {/* V146: Checkbox de sélection (pas pour les groupes) */}
                 {!isGroup ? (
                   <input
                     type="checkbox"
@@ -865,7 +865,7 @@ export default function ContactsManager({ API, coachEmail }) {
                     {c.name || 'Sans nom'}
                   </div>
                   <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {isGroup ? `${c.member_count || 0} membres` : [c.email, c.phone].filter(Boolean).join(' â¢ ') || 'Pas de coordonnÃ©es'}
+                    {isGroup ? `${c.member_count || 0} membres` : [c.email, c.phone].filter(Boolean).join(' â¢ ') || 'Pas de coordonnées'}
                   </div>
                 </div>
                 {/* V154: Category badges */}
