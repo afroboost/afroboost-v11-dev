@@ -12076,73 +12076,60 @@ fastapi_app.include_router(category_router, prefix="/api")
 init_category_db(db)
 
 
-# v162: One-time UTF-8 double-encoding fix endpoint
+# v162: One-time UTF-8 double-encoding fix endpoint (minimal)
 @_app.get("/api/fix-utf8-data")
-async def fix_utf8_data(secret: str = ""):
+async def fix_utf8_data(secret: str = "", col: str = "categories"):
     if secret != "afroboost162fix":
         return {"error": "Unauthorized"}
     def fix_text(text):
-        if not isinstance(text, str):
+        if not isinstance(text, str) or not text:
             return text, False
         try:
             fixed = text.encode("latin-1").decode("utf-8")
             return fixed, fixed != text
         except Exception:
             return text, False
-    results = {}
-    try:
-        cats = await db.contact_categories.find({}).to_list(500)
-        n = 0
-        for cat in cats:
-            name, changed = fix_text(cat.get("name", ""))
+    n = 0
+    details = []
+    if col == "categories":
+        docs = await db.contact_categories.find({}).to_list(100)
+        for d in docs:
+            name, changed = fix_text(d.get("name", ""))
             if changed:
-                await db.contact_categories.update_one({"_id": cat["_id"]}, {"$set": {"name": name}})
+                await db.contact_categories.update_one({"_id": d["_id"]}, {"$set": {"name": name}})
+                details.append(d.get("name") + " -> " + name)
                 n += 1
-        results["categories"] = n
-    except Exception as e:
-        results["categories_err"] = str(e)
-    try:
-        groups = await db.contact_groups.find({}).to_list(500)
-        n = 0
-        for g in groups:
+    elif col == "groups":
+        docs = await db.contact_groups.find({}).to_list(100)
+        for d in docs:
             updates = {}
             for f in ["name", "description"]:
-                val, changed = fix_text(g.get(f, ""))
+                val, changed = fix_text(d.get(f, ""))
                 if changed:
                     updates[f] = val
             if updates:
-                await db.contact_groups.update_one({"_id": g["_id"]}, {"$set": updates})
+                await db.contact_groups.update_one({"_id": d["_id"]}, {"$set": updates})
+                details.append(d.get("name", "") + " -> " + updates.get("name", "ok"))
                 n += 1
-        results["groups"] = n
-    except Exception as e:
-        results["groups_err"] = str(e)
-    try:
-        parts = await db.chat_participants.find({}).to_list(1000)
-        n = 0
-        for p in parts:
+    elif col == "participants":
+        docs = await db.chat_participants.find({}).to_list(200)
+        for d in docs:
             updates = {}
             for f in ["name", "firstName", "lastName"]:
-                val, changed = fix_text(p.get(f, ""))
+                val, changed = fix_text(d.get(f, ""))
                 if changed:
                     updates[f] = val
             if updates:
-                await db.chat_participants.update_one({"_id": p["_id"]}, {"$set": updates})
+                await db.chat_participants.update_one({"_id": d["_id"]}, {"$set": updates})
                 n += 1
-        results["participants"] = n
-    except Exception as e:
-        results["participants_err"] = str(e)
-    try:
-        subs = await db.subscriptions.find({}).to_list(1000)
-        n = 0
-        for s in subs:
-            val, changed = fix_text(s.get("offer_name", ""))
+    elif col == "subscriptions":
+        docs = await db.subscriptions.find({}).to_list(200)
+        for d in docs:
+            val, changed = fix_text(d.get("offer_name", ""))
             if changed:
-                await db.subscriptions.update_one({"_id": s["_id"]}, {"$set": {"offer_name": val}})
+                await db.subscriptions.update_one({"_id": d["_id"]}, {"$set": {"offer_name": val}})
                 n += 1
-        results["subscriptions"] = n
-    except Exception as e:
-        results["subscriptions_err"] = str(e)
-    return {"status": "done", "fixed": results}
+    return {"status": "done", "collection": col, "fixed": n, "details": details}
 
 # V133: CORS restreint â uniquement les domaines Afroboost autorisÃ©s
 _cors_default = "https://www.afroboost.com,https://afroboost.com,https://afroboost-v11-dev.vercel.app,http://localhost:3000"
