@@ -1,5 +1,5 @@
 /**
- * ContactsManager.js â V146: Gestion centralisée des contacts
+ * ContactsManager.js — V146: Gestion centralisée des contacts
  * - Liste unifiée (participants + users + groupes)
  * - Sync Google Contacts OAuth2
  * - Import CSV/vCard
@@ -34,7 +34,7 @@ export default function ContactsManager({ API, coachEmail }) {
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [newCatName, setNewCatName] = useState('');
   const [newCatColor, setNewCatColor] = useState('#8B5CF6');
-  const [newCatIcon, setNewCatIcon] = useState('ð');
+  const [newCatIcon, setNewCatIcon] = useState('📋');
   const [editingCat, setEditingCat] = useState(null);
   const [assigningCategory, setAssigningCategory] = useState(false);
 
@@ -173,7 +173,7 @@ export default function ContactsManager({ API, coachEmail }) {
         }, 1500);
       }, 500);
     } catch (err) {
-      setSyncMessage('â ' + (err.response?.data?.detail || 'Erreur sync'));
+      setSyncMessage('❌ ' + (err.response?.data?.detail || 'Erreur sync'));
       setTimeout(() => { setSyncing(false); setSyncProgress(0); setSyncMessage(''); }, 3000);
     }
   };
@@ -187,7 +187,7 @@ export default function ContactsManager({ API, coachEmail }) {
       const text = evt.target.result;
       const parsed = parseContacts(text, file.name);
       if (parsed.length === 0) {
-        setImportResult({ imported: 0, message: 'â Aucun contact trouvé dans le fichier' });
+        setImportResult({ imported: 0, message: '❌ Aucun contact trouvé dans le fichier' });
         return;
       }
       try {
@@ -199,11 +199,11 @@ export default function ContactsManager({ API, coachEmail }) {
           imported: res.data.imported,
           duplicates: res.data.duplicates,
           errors: res.data.errors,
-          message: `â ${res.data.imported} importés, ${res.data.duplicates} doublons ignorés`
+          message: `✅ ${res.data.imported} importés, ${res.data.duplicates} doublons ignorés`
         });
         loadContacts();
       } catch (err) {
-        setImportResult({ imported: 0, message: 'â Erreur import: ' + (err.response?.data?.detail || err.message) });
+        setImportResult({ imported: 0, message: '❌ Erreur import: ' + (err.response?.data?.detail || err.message) });
       }
     };
     reader.readAsText(file);
@@ -216,13 +216,13 @@ export default function ContactsManager({ API, coachEmail }) {
     try {
       const res = await axios.post(`${API}/contacts/deduplicate`, {}, { headers });
       if (res.data.success) {
-        setImportResult({ imported: 0, message: `â ${res.data.merged} doublons fusionnés (${res.data.total_before} â ${res.data.total_after} contacts)` });
+        setImportResult({ imported: 0, message: `✅ ${res.data.merged} doublons fusionnés (${res.data.total_before} → ${res.data.total_after} contacts)` });
         loadContacts();
       } else {
-        setImportResult({ imported: 0, message: 'â Erreur: ' + (res.data.error || 'inconnue') });
+        setImportResult({ imported: 0, message: '❌ Erreur: ' + (res.data.error || 'inconnue') });
       }
     } catch (err) {
-      setImportResult({ imported: 0, message: 'â Erreur dédup: ' + (err.response?.data?.detail || err.message) });
+      setImportResult({ imported: 0, message: '❌ Erreur dédup: ' + (err.response?.data?.detail || err.message) });
     } finally {
       setDeduping(false);
     }
@@ -261,12 +261,12 @@ export default function ContactsManager({ API, coachEmail }) {
         ids: Array.from(selectedIds)
       }, { headers });
       if (res.data.success) {
-        setImportResult({ imported: 0, message: `ðï¸ ${res.data.deleted} contact(s) supprimé(s)` });
+        setImportResult({ imported: 0, message: `🗑️ ${res.data.deleted} contact(s) supprimé(s)` });
         setSelectedIds(new Set());
         loadContacts();
       }
     } catch (err) {
-      setImportResult({ imported: 0, message: 'â Erreur suppression: ' + (err.response?.data?.detail || err.message) });
+      setImportResult({ imported: 0, message: '❌ Erreur suppression: ' + (err.response?.data?.detail || err.message) });
     } finally {
       setDeleting(false);
     }
@@ -279,7 +279,7 @@ export default function ContactsManager({ API, coachEmail }) {
       : filtered.filter(c => c.type !== 'group');
 
     if (contactsToExport.length === 0) {
-      setImportResult({ imported: 0, message: 'â ï¸ Aucun contact à exporter' });
+      setImportResult({ imported: 0, message: '⚠️ Aucun contact à exporter' });
       return;
     }
 
@@ -310,7 +310,7 @@ export default function ContactsManager({ API, coachEmail }) {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    setImportResult({ imported: 0, message: `ð¥ ${contactsToExport.length} contact(s) exporté(s) en CSV` });
+    setImportResult({ imported: 0, message: `📥 ${contactsToExport.length} contact(s) exporté(s) en CSV` });
   };
 
   // V154: Create category
@@ -324,7 +324,7 @@ export default function ContactsManager({ API, coachEmail }) {
       }, { headers: headers });
       if (res.data.success) {
         setNewCatName('');
-        setNewCatIcon('ð');
+        setNewCatIcon('📋');
         loadCategories();
       }
     } catch (err) {
@@ -355,10 +355,10 @@ export default function ContactsManager({ API, coachEmail }) {
         category_ids: [catId],
         mode: 'add'
       }, { headers: headers });
-      setImportResult({ imported: 0, message: 'â Catégorie assignée à ' + selectedIds.size + ' contact(s)' });
+      setImportResult({ imported: 0, message: '✅ Catégorie assignée à ' + selectedIds.size + ' contact(s)' });
       loadContacts();
     } catch (err) {
-      setImportResult({ imported: 0, message: 'â Erreur assignation catégorie' });
+      setImportResult({ imported: 0, message: '❌ Erreur assignation catégorie' });
     } finally {
       setAssigningCategory(false);
     }
@@ -374,16 +374,16 @@ export default function ContactsManager({ API, coachEmail }) {
         category_ids: [catId],
         mode: 'remove'
       }, { headers: headers });
-      setImportResult({ imported: 0, message: 'â Catégorie retirée de ' + selectedIds.size + ' contact(s)' });
+      setImportResult({ imported: 0, message: '✅ Catégorie retirée de ' + selectedIds.size + ' contact(s)' });
       loadContacts();
     } catch (err) {
-      setImportResult({ imported: 0, message: 'â Erreur retrait catégorie' });
+      setImportResult({ imported: 0, message: '❌ Erreur retrait catégorie' });
     } finally {
       setAssigningCategory(false);
     }
   };
 
-  // Filtered contacts â V154: ajout filtre catégorie
+  // Filtered contacts — V154: ajout filtre catégorie
   const filtered = contacts.filter(c => {
     const matchSearch = !searchQuery ||
       (c.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -483,7 +483,7 @@ export default function ContactsManager({ API, coachEmail }) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: syncing ? '10px' : '0', flexWrap: 'wrap', gap: '8px' }}>
           <div>
             <span style={{ fontSize: '13px', fontWeight: 600, color: '#fff' }}>
-              {googleStatus.connected ? 'â Google Contacts connecté' : 'ð Connecter Google Contacts'}
+              {googleStatus.connected ? '✅ Google Contacts connecté' : '🔗 Connecter Google Contacts'}
             </span>
             {googleStatus.last_sync && (
               <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginLeft: '8px' }}>
@@ -499,7 +499,7 @@ export default function ContactsManager({ API, coachEmail }) {
                 background: googleStatus.configured ? 'linear-gradient(135deg, #4285f4, #34a853)' : 'rgba(255,255,255,0.1)',
                 color: '#fff', opacity: googleStatus.configured ? 1 : 0.5
               }}>
-                ð Connecter
+                🔗 Connecter
               </button>
             ) : (
               <button onClick={syncGoogleContacts} disabled={syncing} style={{
@@ -508,14 +508,14 @@ export default function ContactsManager({ API, coachEmail }) {
                 background: syncing ? 'rgba(34,197,94,0.2)' : 'linear-gradient(135deg, #22c55e, #16a34a)',
                 color: '#fff'
               }}>
-                {syncing ? 'â³ Sync en cours...' : 'ð Synchroniser'}
+                {syncing ? '⏳ Sync en cours...' : '🔄 Synchroniser'}
               </button>
             )}
           </div>
         </div>
         {!googleStatus.configured && (
           <p style={{ fontSize: '11px', color: '#f59e0b', margin: '8px 0 0 0' }}>
-            â ï¸ Google OAuth non configuré. Ajoutez GOOGLE_CONTACTS_CLIENT_ID dans les variables Vercel.
+            ⚠️ Google OAuth non configuré. Ajoutez GOOGLE_CONTACTS_CLIENT_ID dans les variables Vercel.
           </p>
         )}
         {syncing && (
@@ -536,28 +536,28 @@ export default function ContactsManager({ API, coachEmail }) {
           background: 'rgba(217,28,210,0.08)', border: '1px dashed rgba(217,28,210,0.4)',
           color: '#D91CD2', cursor: 'pointer', minWidth: '120px'
         }}>
-          ð¤ Importer CSV / vCard
+          📤 Importer CSV / vCard
         </button>
         <button onClick={exportCSV} title="Exporter en CSV" style={{
           padding: '10px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,
           background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)',
           color: '#60a5fa', cursor: 'pointer'
         }}>
-          ð¥ Export
+          📥 Export
         </button>
         <button onClick={deduplicateContacts} disabled={deduping} title="Fusionner les doublons" style={{
           padding: '10px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,
           background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)',
           color: '#f59e0b', cursor: deduping ? 'not-allowed' : 'pointer'
         }}>
-          {deduping ? 'â³' : 'ð§¹'}
+          {deduping ? '⏳' : '🧹'}
         </button>
         <button onClick={loadContacts} disabled={loading} style={{
           padding: '10px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,
           background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)',
           color: '#c4b5fd', cursor: 'pointer'
         }}>
-          ð
+          🔄
         </button>
       </div>
 
@@ -577,14 +577,14 @@ export default function ContactsManager({ API, coachEmail }) {
             background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.5)',
             color: '#f87171', cursor: deleting ? 'not-allowed' : 'pointer'
           }}>
-            {deleting ? 'â³ Suppression...' : 'ðï¸ Supprimer'}
+            {deleting ? '⏳ Suppression...' : '🗑️ Supprimer'}
           </button>
           <button onClick={exportCSV} style={{
             padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
             background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.4)',
             color: '#60a5fa', cursor: 'pointer'
           }}>
-            ð¥ Exporter la sélection
+            📥 Exporter la sélection
           </button>
           {/* V154: Category assignment for selected */}
           {categories.length > 0 && (
@@ -608,7 +608,7 @@ export default function ContactsManager({ API, coachEmail }) {
                 })}
               </div>
               <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '11px', color: 'rgba(239,68,68,0.7)', whiteSpace: 'nowrap', fontWeight: 600 }}>â Retirer:</span>
+                <span style={{ fontSize: '11px', color: 'rgba(239,68,68,0.7)', whiteSpace: 'nowrap', fontWeight: 600 }}>− Retirer:</span>
                 {categories.map(function(cat) {
                   return (
                     <button key={cat.id} onClick={function() { removeCategoryFromSelected(cat.id); }}
@@ -632,7 +632,7 @@ export default function ContactsManager({ API, coachEmail }) {
             background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)',
             color: 'rgba(255,255,255,0.6)', cursor: 'pointer', marginLeft: 'auto'
           }}>
-            â Annuler
+            ✕ Annuler
           </button>
         </div>
       )}
@@ -640,8 +640,8 @@ export default function ContactsManager({ API, coachEmail }) {
       {importResult && (
         <div style={{
           padding: '10px', borderRadius: '8px', marginBottom: '12px',
-          background: importResult.message?.includes('â') || importResult.message?.includes('ðï¸') || importResult.message?.includes('ð¥') ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-          border: `1px solid ${importResult.message?.includes('â') || importResult.message?.includes('ðï¸') || importResult.message?.includes('ð¥') ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`
+          background: importResult.message?.includes('✅') || importResult.message?.includes('🗑️') || importResult.message?.includes('📥') ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+          border: `1px solid ${importResult.message?.includes('✅') || importResult.message?.includes('🗑️') || importResult.message?.includes('📥') ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`
         }}>
           <p style={{ fontSize: '12px', color: '#fff', margin: 0 }}>{importResult.message}</p>
           <button onClick={() => setImportResult(null)} style={{
@@ -653,7 +653,7 @@ export default function ContactsManager({ API, coachEmail }) {
       {/* Search + Filters */}
       <div style={{ marginBottom: '12px' }}>
         <input
-          placeholder="ð Rechercher par nom, email, téléphone..."
+          placeholder="🔍 Rechercher par nom, email, téléphone..."
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           style={{
@@ -665,9 +665,9 @@ export default function ContactsManager({ API, coachEmail }) {
         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
           {[
             { key: 'all', label: 'Tous' },
-            { key: 'group', label: 'ð¥ Groupes' },
-            { key: 'user', label: 'ð¤ Contacts' },
-            { key: 'google', label: 'ðµ Google' }
+            { key: 'group', label: '👥 Groupes' },
+            { key: 'user', label: '👤 Contacts' },
+            { key: 'google', label: '🔵 Google' }
             ,{ key: 'birthday', label: '\uD83C\uDF82 Anniversaires' }
           ].map(f => (
             <button key={f.key} onClick={() => setFilterType(f.key)} style={{
@@ -709,14 +709,14 @@ export default function ContactsManager({ API, coachEmail }) {
             border: filterCategory === '__uncategorized__' ? '1px solid rgba(156,163,175,0.5)' : '1px solid rgba(255,255,255,0.08)',
             color: filterCategory === '__uncategorized__' ? '#9CA3AF' : 'rgba(255,255,255,0.45)'
           }}>
-            â Sans catégorie
+            ❓ Sans catégorie
           </button>
           <button onClick={function() { setShowCategoryManager(!showCategoryManager); }} style={{
             padding: '4px 10px', borderRadius: '14px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
             background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)',
             color: '#c4b5fd'
           }}>
-            âï¸ Gérer
+            ⚙️ Gérer
           </button>
         </div>
       )}
@@ -728,7 +728,7 @@ export default function ContactsManager({ API, coachEmail }) {
           background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.25)'
         }}>
           <div style={{ fontSize: '13px', fontWeight: 600, color: '#c4b5fd', marginBottom: '10px' }}>
-            âï¸ Gérer les catégories
+            ⚙️ Gérer les catégories
           </div>
           {/* Existing categories */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
@@ -749,7 +749,7 @@ export default function ContactsManager({ API, coachEmail }) {
                     <button onClick={function() { deleteCategory(cat.id); }} style={{
                       background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
                       color: '#f87171', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
-                    }}>â</button>
+                    }}>✕</button>
                   )}
                 </div>
               );
@@ -763,7 +763,7 @@ export default function ContactsManager({ API, coachEmail }) {
                 background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
                 color: '#fff', cursor: 'pointer'
               }}>
-              {['ð', 'ð', 'ð¤', 'ð¢', 'ðµ', 'ð¼', 'ðï¸', 'ð¨', 'ð¯', 'ð¡', 'ð', 'â­'].map(function(icon) {
+              {['📋', '🎓', '🤝', '🏢', '🎵', '💼', '🏋️', '🎨', '🎯', '💡', '🌍', '⭐'].map(function(icon) {
                 return <option key={icon} value={icon}>{icon}</option>;
               })}
             </select>
@@ -825,7 +825,7 @@ export default function ContactsManager({ API, coachEmail }) {
       }}>
         {loading ? (
           <div style={{ padding: '30px', textAlign: 'center', color: 'rgba(255,255,255,0.4)' }}>
-            â³ Chargement...
+            ⏳ Chargement...
           </div>
         ) : filtered.length === 0 ? (
           <div style={{ padding: '30px', textAlign: 'center', color: 'rgba(255,255,255,0.4)' }}>
@@ -858,14 +858,14 @@ export default function ContactsManager({ API, coachEmail }) {
                   <span style={{ width: '16px', flexShrink: 0 }} />
                 )}
                 <span style={{ fontSize: '16px', width: '24px', textAlign: 'center', flexShrink: 0 }}>
-                  {isGroup ? 'ð¥' : c.source === 'google' ? 'ðµ' : 'ð¤'}
+                  {isGroup ? '👥' : c.source === 'google' ? '🔵' : '👤'}
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '13px', color: '#fff', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {c.name || 'Sans nom'}
                   </div>
                   <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {isGroup ? `${c.member_count || 0} membres` : [c.email, c.phone].filter(Boolean).join(' â¢ ') || 'Pas de coordonnées'}
+                    {isGroup ? `${c.member_count || 0} membres` : [c.email, c.phone].filter(Boolean).join(' • ') || 'Pas de coordonnées'}
                   </div>
                 </div>
                 {/* V154: Category badges */}
