@@ -3478,7 +3478,8 @@ export const ChatWidget = () => {
   // v162: Charger les réservations pour le dashboard coach
   var loadCoachReservations = function() {
     axios.get(API + '/reservations').then(function(res) {
-      setCoachReservations(res.data || []);
+      var d = res.data;
+      setCoachReservations(Array.isArray(d) ? d : (d && Array.isArray(d.data) ? d.data : []));
     }).catch(function(err) { console.error('[v162] Reservations load error:', err); });
   };
 
