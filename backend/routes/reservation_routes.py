@@ -298,7 +298,7 @@ async def delete_reservation(reservation_id: str):
     await db.reservations.delete_one({"id": reservation_id})
     return {"success": True}
 
-# === STAFF ACCESS: Validation QR uniquement (pas d'accès chat/péglages) ===
+# === STAFF ACCESS: Validation QR uniquement (pas d'accès chat/réglages) ===
 @reservation_router.post("/staff/validate")
 async def staff_validate_reservation(request: Request):
     """Endpoint simplifié pour le staff — valide une réservation par code QR.
