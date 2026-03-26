@@ -1232,6 +1232,11 @@ export const ChatWidget = () => {
   var _cqrCam = useState(false); var qrCameraActive = _cqrCam[0]; var setQrCameraActive = _cqrCam[1];
   var _cqrErr = useState(''); var qrCameraError = _cqrErr[0]; var setQrCameraError = _cqrErr[1];
   var qrScannerRef = useRef(null);
+  // v162k: Staff mode (no access to Conversations)
+  var _csm = useState(false); var isStaffMode = _csm[0]; var setIsStaffMode = _csm[1];
+  var _csl = useState(false); var showStaffLogin = _csl[0]; var setShowStaffLogin = _csl[1];
+  var _csCode = useState(''); var staffCode = _csCode[0]; var setStaffCode = _csCode[1];
+  var _csErr = useState(''); var staffLoginError = _csErr[0]; var setStaffLoginError = _csErr[1];
   // v162f: Coach profile photo
   var _cpro = useState(null); var coachProfile = _cpro[0]; var setCoachProfile = _cpro[1];
   // v162f: Coach emoji picker toggle (separate from chat emoji picker)
@@ -3596,6 +3601,34 @@ export const ChatWidget = () => {
     return '';
   };
 
+  // v162k: Staff login function
+  var handleStaffLogin = function() {
+    if (!staffCode.trim()) return;
+    setStaffLoginError('');
+    axios.post(API + '/staff/login', { code: staffCode.trim() })
+      .then(function(res) {
+        if (res.data && res.data.success) {
+          setIsStaffMode(true);
+          setShowStaffLogin(false);
+          setStaffCode('');
+          setCoachDashTab('reservations');
+          localStorage.setItem('afroboost_staff_mode', 'true');
+          loadCoachReservations();
+        }
+      })
+      .catch(function(err) {
+        var msg = (err.response && err.response.data && err.response.data.detail) || 'Code invalide';
+        setStaffLoginError(msg);
+      });
+  };
+
+  // v162k: Staff logout
+  var handleStaffLogout = function() {
+    setIsStaffMode(false);
+    localStorage.removeItem('afroboost_staff_mode');
+    setCoachDashTab('conversations');
+  };
+
   // v162f: Load coach profile on mount (for photo)
   var loadCoachProfile = function() {
     var email = getCoachEmail();
@@ -5659,59 +5692,101 @@ export const ChatWidget = () => {
                   alignItems: 'center'
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {/* Coach avatar — click to upload, long-press/right-click to zoom */}
-                    <label style={{ cursor: 'pointer', position: 'relative' }}>
+                    {/* Coach avatar — click to zoom, small edit icon to change photo */}
+                    <div style={{ position: 'relative', cursor: 'pointer' }}>
                       {coachProfile && coachProfile.photo_url ? (
                         <img src={coachProfile.photo_url} alt="Coach"
-                          onClick={function(e) { e.preventDefault(); setZoomedChatPhoto(coachProfile.photo_url); }}
+                          onClick={function() { setZoomedChatPhoto(coachProfile.photo_url); }}
                           style={{
                             width: '30px', height: '30px', borderRadius: '50%', objectFit: 'cover',
                             border: '2px solid #d91cd2', cursor: 'pointer'
                           }} />
                       ) : (
-                        <div style={{
-                          width: '30px', height: '30px', borderRadius: '50%',
-                          background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          fontSize: '13px', color: '#fff'
-                        }}>📷</div>
+                        <label style={{ cursor: 'pointer' }}>
+                          <div style={{
+                            width: '30px', height: '30px', borderRadius: '50%',
+                            background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: '13px', color: '#fff'
+                          }}>📷</div>
+                          <input type="file" accept="image/*" style={{ display: 'none' }} id="coach-photo-input"
+                            onChange={function(e) {
+                              var file = e.target.files && e.target.files[0];
+                              if (!file || file.size > 2 * 1024 * 1024) {
+                                if (file) alert('Image trop grande (max 2 Mo)');
+                                return;
+                              }
+                              var reader = new FileReader();
+                              reader.onload = function(ev) {
+                                var base64 = ev.target.result;
+                                var img = new Image();
+                                img.onload = function() {
+                                  var canvas = document.createElement('canvas');
+                                  var size = Math.min(img.width, img.height, 200);
+                                  canvas.width = size; canvas.height = size;
+                                  var ctx = canvas.getContext('2d');
+                                  var sx = (img.width - size) / 2, sy = (img.height - size) / 2;
+                                  ctx.drawImage(img, sx, sy, size, size, 0, 0, size, size);
+                                  var resized = canvas.toDataURL('image/jpeg', 0.8);
+                                  axios.put(API + '/coach-profile', { photo_url: resized }, {
+                                    headers: { 'X-User-Email': getCoachEmail() }
+                                  }).then(function() {
+                                    setCoachProfile(function(prev) { return Object.assign({}, prev, { photo_url: resized }); });
+                                  }).catch(function() { alert('Erreur upload photo'); });
+                                };
+                                img.src = base64;
+                              };
+                              reader.readAsDataURL(file);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
                       )}
-                      <input type="file" accept="image/*" style={{ display: 'none' }}
-                        onChange={function(e) {
-                          var file = e.target.files && e.target.files[0];
-                          if (!file || file.size > 2 * 1024 * 1024) {
-                            if (file) alert('Image trop grande (max 2 Mo)');
-                            return;
-                          }
-                          var reader = new FileReader();
-                          reader.onload = function(ev) {
-                            var base64 = ev.target.result;
-                            // Resize to max 200x200 for storage
-                            var img = new Image();
-                            img.onload = function() {
-                              var canvas = document.createElement('canvas');
-                              var size = Math.min(img.width, img.height, 200);
-                              canvas.width = size; canvas.height = size;
-                              var ctx = canvas.getContext('2d');
-                              var sx = (img.width - size) / 2, sy = (img.height - size) / 2;
-                              ctx.drawImage(img, sx, sy, size, size, 0, 0, size, size);
-                              var resized = canvas.toDataURL('image/jpeg', 0.8);
-                              // Save to backend
-                              axios.put(API + '/coach-profile', { photo_url: resized }, {
-                                headers: { 'X-User-Email': getCoachEmail() }
-                              }).then(function() {
-                                setCoachProfile(function(prev) { return Object.assign({}, prev, { photo_url: resized }); });
-                              }).catch(function() { alert('Erreur upload photo'); });
-                            };
-                            img.src = base64;
-                          };
-                          reader.readAsDataURL(file);
-                          e.target.value = '';
-                        }}
-                      />
-                    </label>
-                    <span style={{ color: '#d91cd2', fontSize: '12px', fontWeight: 'bold' }}>
-                      Mode Coach
+                      {/* Small edit pencil overlay when photo exists */}
+                      {coachProfile && coachProfile.photo_url && (
+                        <label style={{
+                          position: 'absolute', bottom: '-2px', right: '-2px',
+                          width: '14px', height: '14px', borderRadius: '50%',
+                          background: '#d91cd2', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          cursor: 'pointer', border: '1px solid #1a1a2e'
+                        }}>
+                          <span style={{ fontSize: '8px', color: '#fff', lineHeight: 1 }}>✎</span>
+                          <input type="file" accept="image/*" style={{ display: 'none' }}
+                            onChange={function(e) {
+                              var file = e.target.files && e.target.files[0];
+                              if (!file || file.size > 2 * 1024 * 1024) {
+                                if (file) alert('Image trop grande (max 2 Mo)');
+                                return;
+                              }
+                              var reader = new FileReader();
+                              reader.onload = function(ev) {
+                                var base64 = ev.target.result;
+                                var img = new Image();
+                                img.onload = function() {
+                                  var canvas = document.createElement('canvas');
+                                  var size = Math.min(img.width, img.height, 200);
+                                  canvas.width = size; canvas.height = size;
+                                  var ctx = canvas.getContext('2d');
+                                  var sx = (img.width - size) / 2, sy = (img.height - size) / 2;
+                                  ctx.drawImage(img, sx, sy, size, size, 0, 0, size, size);
+                                  var resized = canvas.toDataURL('image/jpeg', 0.8);
+                                  axios.put(API + '/coach-profile', { photo_url: resized }, {
+                                    headers: { 'X-User-Email': getCoachEmail() }
+                                  }).then(function() {
+                                    setCoachProfile(function(prev) { return Object.assign({}, prev, { photo_url: resized }); });
+                                  }).catch(function() { alert('Erreur upload photo'); });
+                                };
+                                img.src = base64;
+                              };
+                              reader.readAsDataURL(file);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                      )}
+                    </div>
+                    <span style={{ color: isStaffMode ? '#f59e0b' : '#d91cd2', fontSize: '12px', fontWeight: 'bold' }}>
+                      {isStaffMode ? 'Mode Staff' : 'Mode Coach'}
                     </span>
                   </div>
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }} className="coach-icons-menu">
@@ -5801,6 +5876,64 @@ export const ChatWidget = () => {
                             boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
                           }}
                         >
+                          {/* v162k: Toggle Accès Staff (restreint aux réservations + scanner) */}
+                          {!isStaffMode && (
+                          <button
+                            onClick={function() {
+                              setShowCoachMenu(false);
+                              setShowStaffLogin(true);
+                              setStaffLoginError('');
+                              setStaffCode('');
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '10px 14px',
+                              textAlign: 'left',
+                              fontSize: '12px',
+                              color: '#f59e0b',
+                              background: 'none',
+                              border: 'none',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px'
+                            }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                            </svg>
+                            Accès Staff
+                          </button>
+                          )}
+                          {isStaffMode && (
+                          <button
+                            onClick={function() {
+                              setShowCoachMenu(false);
+                              handleStaffLogout();
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '10px 14px',
+                              textAlign: 'left',
+                              fontSize: '12px',
+                              color: '#22c55e',
+                              background: 'none',
+                              border: 'none',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px'
+                            }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                            </svg>
+                            Mode Coach (complet)
+                          </button>
+                          )}
+                          <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }} />
                           {/* Toggle Vue Visiteur (Admin) */}
                           <button
                             onClick={() => {
@@ -5906,6 +6039,65 @@ export const ChatWidget = () => {
                 </div>
                 )}
 
+                {/* v162k: Staff login modal */}
+                {showStaffLogin && (
+                  <div style={{
+                    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                    background: 'rgba(0,0,0,0.85)', zIndex: 200,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    flexDirection: 'column', gap: '12px', padding: '20px'
+                  }}>
+                    <div style={{ color: '#f59e0b', fontSize: '14px', fontWeight: 'bold' }}>
+                      Accès Staff
+                    </div>
+                    <div style={{ color: '#888', fontSize: '11px', textAlign: 'center', maxWidth: '240px' }}>
+                      Entrez le code d'accès staff pour un accès limité (Réservations + Scanner uniquement)
+                    </div>
+                    <input
+                      type="text"
+                      value={staffCode}
+                      onChange={function(e) { setStaffCode(e.target.value); setStaffLoginError(''); }}
+                      onKeyPress={function(e) { if (e.key === 'Enter') handleStaffLogin(); }}
+                      placeholder="Code d'accès"
+                      style={{
+                        width: '100%', maxWidth: '220px', padding: '10px 14px',
+                        borderRadius: '8px', border: '1px solid rgba(245,158,11,0.4)',
+                        background: 'rgba(245,158,11,0.08)', color: '#fff',
+                        fontSize: '14px', textAlign: 'center', letterSpacing: '2px',
+                        outline: 'none'
+                      }}
+                      autoFocus
+                    />
+                    {staffLoginError && (
+                      <div style={{ color: '#ef4444', fontSize: '11px' }}>{staffLoginError}</div>
+                    )}
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button onClick={function() { setShowStaffLogin(false); }} style={{
+                        padding: '8px 16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)',
+                        background: 'none', color: '#888', fontSize: '12px', cursor: 'pointer'
+                      }}>Annuler</button>
+                      <button onClick={handleStaffLogin} style={{
+                        padding: '8px 16px', borderRadius: '8px', border: 'none',
+                        background: '#f59e0b', color: '#000', fontSize: '12px', cursor: 'pointer',
+                        fontWeight: 'bold'
+                      }}>Connexion</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* v162k: Staff mode header badge */}
+                {isStaffMode && !selectedCoachSession && (
+                  <div style={{
+                    background: 'rgba(245,158,11,0.15)', padding: '6px 12px',
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    borderBottom: '1px solid rgba(245,158,11,0.2)'
+                  }}>
+                    <span style={{ color: '#f59e0b', fontSize: '11px', fontWeight: 'bold' }}>
+                      Mode Staff — Réservations uniquement
+                    </span>
+                  </div>
+                )}
+
                 {/* v162: Mini-dashboard tabs */}
                 {!selectedCoachSession ? (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -5915,7 +6107,10 @@ export const ChatWidget = () => {
                         { key: 'conversations', label: 'Conversations', icon: '💬' },
                         { key: 'reservations', label: 'Réservations', icon: '📅' },
                         { key: 'scanner', label: 'Scanner QR', icon: '📷' }
-                      ].map(function(tab) {
+                      ].filter(function(tab) {
+                        if (isStaffMode && tab.key === 'conversations') return false;
+                        return true;
+                      }).map(function(tab) {
                         return React.createElement('button', {
                           key: tab.key,
                           onClick: function() {
