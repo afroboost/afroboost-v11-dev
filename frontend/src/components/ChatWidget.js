@@ -3522,41 +3522,54 @@ export const ChatWidget = () => {
   var startQrCamera = function() {
     setQrCameraError('');
     setQrScanResult(null);
+    // Clear the container first (html5-qrcode needs it empty)
+    var container = document.getElementById('qr-reader-container');
+    if (container) container.innerHTML = '';
+    setQrCameraActive(true); // Show container as active BEFORE starting
     loadQrScannerLib(function() {
       try {
         if (qrScannerRef.current) {
           try { qrScannerRef.current.stop(); } catch(e) {}
         }
-        var scanner = new window.Html5Qrcode('qr-reader-container');
-        qrScannerRef.current = scanner;
-        scanner.start(
-          { facingMode: 'environment' },
-          { fps: 10, qrbox: { width: 200, height: 200 }, aspectRatio: 1.0 },
-          function(decodedText) {
-            // QR code scanned successfully
-            setQrScanCode(decodedText.toUpperCase());
-            try { scanner.stop(); } catch(e) {}
+        // Small delay to ensure React has rendered the container visible
+        setTimeout(function() {
+          var scanner = new window.Html5Qrcode('qr-reader-container');
+          qrScannerRef.current = scanner;
+          scanner.start(
+            { facingMode: 'environment' },
+            { fps: 10, qrbox: { width: 180, height: 180 }, aspectRatio: 1.0 },
+            function(decodedText) {
+              // QR code scanned successfully
+              setQrScanCode(decodedText.toUpperCase());
+              try { scanner.stop(); } catch(e) {}
+              setQrCameraActive(false);
+              // Auto-validate
+              axios.post(API + '/reservations/staff/validate', { code: decodedText.trim() })
+                .then(function(res) {
+                  setQrScanResult(res.data);
+                  if (res.data.success) setQrScanCode('');
+                })
+                .catch(function(err) {
+                  var msg = (err.response && err.response.data && err.response.data.detail) || 'Erreur de validation';
+                  setQrScanResult({ success: false, message: msg });
+                });
+            },
+            function() {} // ignore scan errors (no QR found in frame)
+          ).catch(function(err) {
+            var errMsg = err && err.message ? err.message : String(err);
+            if (errMsg.indexOf('Permission') >= 0 || errMsg.indexOf('NotAllowed') >= 0) {
+              setQrCameraError('Autorisez l\'accès à la caméra dans les paramètres de votre navigateur');
+            } else if (errMsg.indexOf('NotFound') >= 0 || errMsg.indexOf('device') >= 0) {
+              setQrCameraError('Aucune caméra détectée sur cet appareil');
+            } else {
+              setQrCameraError('Caméra: ' + errMsg);
+            }
             setQrCameraActive(false);
-            // Auto-validate
-            axios.post(API + '/reservations/staff/validate', { code: decodedText.trim() })
-              .then(function(res) {
-                setQrScanResult(res.data);
-                if (res.data.success) setQrScanCode('');
-              })
-              .catch(function(err) {
-                var msg = (err.response && err.response.data && err.response.data.detail) || 'Erreur de validation';
-                setQrScanResult({ success: false, message: msg });
-              });
-          },
-          function() {} // ignore scan errors (no QR found in frame)
-        ).then(function() {
-          setQrCameraActive(true);
-        }).catch(function(err) {
-          setQrCameraError('Caméra non disponible: ' + (err.message || err));
-          setQrCameraActive(false);
-        });
+          });
+        }, 300);
       } catch(e) {
         setQrCameraError('Erreur scanner: ' + e.message);
+        setQrCameraActive(false);
       }
     });
   };
@@ -5881,19 +5894,22 @@ export const ChatWidget = () => {
                         Aucune conversation active
                       </div>
                     ) : (
-                      coachSessions.map(session => (
+                      coachSessions.map(function(session) { return (
                         <div
                           key={session.id}
-                          onClick={() => loadCoachSessionMessages(session)}
                           style={{
                             background: 'rgba(255,255,255,0.05)',
                             border: '1px solid rgba(255,255,255,0.1)',
                             borderRadius: '8px',
                             padding: '10px',
                             marginBottom: '8px',
-                            cursor: 'pointer'
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: '8px'
                           }}
                         >
+                          <div style={{ flex: 1 }} onClick={function() { loadCoachSessionMessages(session); }}>
                           <div style={{ color: '#fff', fontSize: '13px', fontWeight: '500' }}>
                             {session.participantName || session.title || 'Visiteur anonyme'}
                           </div>
@@ -5907,8 +5923,34 @@ export const ChatWidget = () => {
                               {session.lastMessage}
                             </div>
                           )}
+                          </div>
+                          {/* v162g: Delete conversation button */}
+                          <button
+                            onClick={function(e) {
+                              e.stopPropagation();
+                              if (window.confirm('Supprimer cette conversation ?')) {
+                                axios.delete(API + '/chat/sessions/' + session.id, {
+                                  headers: { 'X-User-Email': localStorage.getItem('coach_email') || '' }
+                                }).then(function() {
+                                  loadCoachSessions();
+                                }).catch(function(err) {
+                                  console.error('Delete error:', err);
+                                  alert('Erreur de suppression');
+                                });
+                              }
+                            }}
+                            title="Supprimer"
+                            style={{
+                              background: 'none', border: 'none', cursor: 'pointer',
+                              color: '#666', fontSize: '16px', padding: '4px',
+                              flexShrink: 0, alignSelf: 'center', opacity: 0.6,
+                              transition: 'opacity 0.2s'
+                            }}
+                            onMouseOver={function(e) { e.target.style.opacity = '1'; e.target.style.color = '#ef4444'; }}
+                            onMouseOut={function(e) { e.target.style.opacity = '0.6'; e.target.style.color = '#666'; }}
+                          >🗑️</button>
                         </div>
-                      ))
+                      ); })
                     )}
                   </div>
                     )}
@@ -5953,21 +5995,26 @@ export const ChatWidget = () => {
                     {/* Tab: Scanner QR */}
                     {coachDashTab === 'scanner' && (
                     <div style={{ flex: 1, padding: '16px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', overflowY: 'auto' }}>
-                      {/* Camera scanner zone */}
+                      {/* Camera scanner zone — always in DOM for html5-qrcode */}
                       <div id="qr-reader-container" style={{
-                        width: '100%', maxWidth: '280px', minHeight: qrCameraActive ? '280px' : '0',
+                        width: '100%', maxWidth: '280px', minHeight: '220px',
                         borderRadius: '12px', overflow: 'hidden',
-                        display: qrCameraActive ? 'block' : 'none'
-                      }}></div>
-                      {!qrCameraActive && (
-                        <button onClick={startQrCamera} style={{
-                          padding: '12px 20px', borderRadius: '10px', border: '2px dashed rgba(217,28,210,0.5)',
-                          background: 'rgba(217,28,210,0.08)', color: '#d91cd2', fontSize: '14px',
-                          cursor: 'pointer', width: '100%', maxWidth: '280px', textAlign: 'center'
-                        }}>
-                          📷 Ouvrir la caméra
-                        </button>
-                      )}
+                        background: qrCameraActive ? '#000' : 'rgba(255,255,255,0.03)',
+                        border: qrCameraActive ? 'none' : '2px dashed rgba(217,28,210,0.3)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        position: 'relative'
+                      }}>
+                        {!qrCameraActive && (
+                          <button onClick={startQrCamera} style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            color: '#d91cd2', fontSize: '14px', textAlign: 'center',
+                            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px'
+                          }}>
+                            <span style={{ fontSize: '40px' }}>📷</span>
+                            <span>Appuyez pour scanner</span>
+                          </button>
+                        )}
+                      </div>
                       {qrCameraActive && (
                         <button onClick={stopQrCamera} style={{
                           padding: '8px 16px', borderRadius: '8px', border: 'none',
@@ -6081,16 +6128,17 @@ export const ChatWidget = () => {
                       flexDirection: 'column', 
                       gap: '8px' 
                     }}>
-                      {messages.map((msg, idx) => (
+                      {messages.map(function(msg, idx) { return (
                         <MemoizedMessageBubble
                           key={msg.id || idx}
                           msg={msg}
                           isUser={msg.type === 'coach'}
-                          onReservationClick={() => {}}
-                          onZoomPhoto={(url) => setZoomedChatPhoto(url)}
-                          onDelete={(messageId) => handleDeleteMessage(messageId)}
+                          profilePhotoUrl={msg.type === 'coach' && coachProfile ? coachProfile.photo_url : null}
+                          onReservationClick={function() {}}
+                          onZoomPhoto={function(url) { setZoomedChatPhoto(url); }}
+                          onDelete={function(messageId) { handleDeleteMessage(messageId); }}
                         />
-                      ))}
+                      ); })}
                       <div ref={messagesEndRef} />
                     </div>
 

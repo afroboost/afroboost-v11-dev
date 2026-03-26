@@ -6777,6 +6777,30 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
     return enriched_sessions
 
 # === CRM AVANCÉ - HISTORIQUE CONVERSATIONS ===
+# v162g: Supprimer (soft-delete) une session de chat
+@api_router.delete("/chat/sessions/{session_id}")
+async def delete_chat_session(session_id: str, request: Request):
+    """Soft-delete une session de chat (marque is_deleted=True)"""
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+
+    # Vérifier que la session existe
+    session = await db.chat_sessions.find_one({"id": session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session non trouvée")
+
+    # Vérifier les permissions (coach propriétaire ou super admin)
+    if not is_super_admin(caller_email) and session.get("coach_id") != caller_email:
+        raise HTTPException(status_code=403, detail="Non autorisé")
+
+    # Soft delete
+    await db.chat_sessions.update_one(
+        {"id": session_id},
+        {"$set": {"is_deleted": True, "deleted_at": datetime.utcnow().isoformat(), "deleted_by": caller_email}}
+    )
+
+    logger.info(f"[DELETE-SESSION] Session {session_id} soft-deleted by {caller_email}")
+    return {"success": True, "message": "Conversation supprimée"}
+
 @api_router.get("/conversations")
 async def get_conversations_advanced(
     request: Request,
