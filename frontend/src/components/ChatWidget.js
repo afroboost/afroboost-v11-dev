@@ -1223,6 +1223,11 @@ export const ChatWidget = () => {
   });
   const [coachSessions, setCoachSessions] = useState([]); // Liste des sessions pour le coach
   const [selectedCoachSession, setSelectedCoachSession] = useState(null); // Session sélectionnée par le coach
+  // v162: Mini-dashboard tabs
+  var _ctab = useState('conversations'); var coachDashTab = _ctab[0]; var setCoachDashTab = _ctab[1];
+  var _cres = useState([]); var coachReservations = _cres[0]; var setCoachReservations = _cres[1];
+  var _cqr = useState(''); var qrScanCode = _cqr[0]; var setQrScanCode = _cqr[1];
+  var _cqrR = useState(null); var qrScanResult = _cqrR[0]; var setQrScanResult = _cqrR[1];
   const [isFullscreen, setIsFullscreen] = useState(getInitialFullscreen); // Mode plein écran (ABONNÉ = activé)
   const [showAfricanEmojiPicker, setShowAfricanEmojiPicker] = useState(false); // v154: Sélecteur d'emojis unifié
   const [coachCustomEmojis, setCoachCustomEmojis] = useState([]); // v154: Emojis personnalisés du coach
@@ -3470,6 +3475,28 @@ export const ChatWidget = () => {
     }
   };
 
+  // v162: Charger les réservations pour le dashboard coach
+  var loadCoachReservations = function() {
+    axios.get(API + '/reservations').then(function(res) {
+      setCoachReservations(res.data || []);
+    }).catch(function(err) { console.error('[v162] Reservations load error:', err); });
+  };
+
+  // v162: Valider un QR code réservation
+  var handleQrValidation = function() {
+    if (!qrScanCode.trim()) return;
+    setQrScanResult(null);
+    axios.post(API + '/reservations/staff/validate', { code: qrScanCode.trim() })
+      .then(function(res) {
+        setQrScanResult(res.data);
+        if (res.data.success) setQrScanCode('');
+      })
+      .catch(function(err) {
+        var msg = (err.response && err.response.data && err.response.data.detail) || 'Erreur de validation';
+        setQrScanResult({ success: false, message: msg });
+      });
+  };
+
   // === MODE COACH: Charger les messages d'une session ===
   const loadCoachSessionMessages = async (session) => {
     setSelectedCoachSession(session);
@@ -4926,8 +4953,8 @@ export const ChatWidget = () => {
                 </div>
               )}
               
-              {/* Menu burger - VISIBLE UNIQUEMENT POUR LE COACH/ADMIN (masque en mode Vue Visiteur) */}
-              {(step === 'chat' || step === 'coach') && isCoachMode && !isVisitorPreview && (
+              {/* Menu burger - VISIBLE UNIQUEMENT EN MODE CHAT (le panel coach a son propre menu) */}
+              {step === 'chat' && isCoachMode && !isVisitorPreview && (
                 <div className="relative">
                   <button
                     onClick={() => setShowMenu(!showMenu)}
@@ -5693,9 +5720,40 @@ export const ChatWidget = () => {
                 </div>
                 )}
 
-                {/* Liste des sessions ou messages */}
+                {/* v162: Mini-dashboard tabs */}
                 {!selectedCoachSession ? (
-                  <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                    {/* Tab bar */}
+                    <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.1)', flexShrink: 0 }}>
+                      {[
+                        { key: 'conversations', label: 'Conversations', icon: '💬' },
+                        { key: 'reservations', label: 'Réservations', icon: '📅' },
+                        { key: 'scanner', label: 'Scanner QR', icon: '📷' }
+                      ].map(function(tab) {
+                        return React.createElement('button', {
+                          key: tab.key,
+                          onClick: function() {
+                            setCoachDashTab(tab.key);
+                            if (tab.key === 'reservations') loadCoachReservations();
+                          },
+                          style: {
+                            flex: 1,
+                            padding: '8px 4px',
+                            fontSize: '11px',
+                            color: coachDashTab === tab.key ? '#d91cd2' : '#888',
+                            background: 'none',
+                            border: 'none',
+                            borderBottom: coachDashTab === tab.key ? '2px solid #d91cd2' : '2px solid transparent',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s'
+                          }
+                        }, tab.icon + ' ' + tab.label);
+                      })}
+                    </div>
+
+                    {/* Tab: Conversations */}
+                    {coachDashTab === 'conversations' && (
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
                     <div style={{ color: '#fff', fontSize: '12px', marginBottom: '12px', opacity: 0.7 }}>
                       Conversations actives ({coachSessions.length})
                     </div>
@@ -5718,16 +5776,128 @@ export const ChatWidget = () => {
                           }}
                         >
                           <div style={{ color: '#fff', fontSize: '13px', fontWeight: '500' }}>
-                            {session.title || `Session ${(session.id || 'unknown').slice(0, 8)}`}
+                            {session.participantName || session.title || 'Visiteur anonyme'}
                           </div>
                           <div style={{ color: '#888', fontSize: '11px', marginTop: '4px' }}>
-                            {session.mode === 'human' ? 'Mode Humain' : session.mode === 'community' ? 'Communauté' : 'IA'}
+                            {session.participantEmail ? session.participantEmail : (session.mode === 'human' ? 'Mode Humain' : session.mode === 'community' ? 'Communauté' : 'IA')}
                             {' • '}
                             {new Date(session.created_at).toLocaleDateString('fr-FR')}
                           </div>
+                          {session.lastMessage && (
+                            <div style={{ color: '#aaa', fontSize: '11px', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '220px' }}>
+                              {session.lastMessage}
+                            </div>
+                          )}
                         </div>
                       ))
                     )}
+                  </div>
+                    )}
+
+                    {/* Tab: Réservations */}
+                    {coachDashTab === 'reservations' && (
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+                      <div style={{ color: '#fff', fontSize: '12px', marginBottom: '12px', opacity: 0.7 }}>
+                        Réservations récentes ({coachReservations.length})
+                      </div>
+                      {coachReservations.length === 0 ? (
+                        <div style={{ color: '#fff', opacity: 0.5, textAlign: 'center', padding: '20px', fontSize: '13px' }}>
+                          Aucune réservation
+                        </div>
+                      ) : (
+                        coachReservations.slice(0, 30).map(function(r, idx) {
+                          return React.createElement('div', {
+                            key: r.reservationCode || idx,
+                            style: {
+                              background: r.validated ? 'rgba(34,197,94,0.1)' : 'rgba(255,255,255,0.05)',
+                              border: '1px solid ' + (r.validated ? 'rgba(34,197,94,0.3)' : 'rgba(255,255,255,0.1)'),
+                              borderRadius: '8px',
+                              padding: '10px',
+                              marginBottom: '8px'
+                            }
+                          },
+                            React.createElement('div', { style: { color: '#fff', fontSize: '13px', fontWeight: '500' } },
+                              (r.userName || 'Inconnu') + (r.validated ? ' ✅' : ' ⏳')
+                            ),
+                            React.createElement('div', { style: { color: '#888', fontSize: '11px', marginTop: '4px' } },
+                              (r.courseName || r.offerName || '') + ' • ' + (r.selectedDatesText || '')
+                            ),
+                            React.createElement('div', { style: { color: '#666', fontSize: '10px', marginTop: '2px' } },
+                              'Code: ' + (r.reservationCode || '') + (r.validatedAt ? ' • Validé le ' + new Date(r.validatedAt).toLocaleDateString('fr-FR') : '')
+                            )
+                          );
+                        })
+                      )}
+                    </div>
+                    )}
+
+                    {/* Tab: Scanner QR */}
+                    {coachDashTab === 'scanner' && (
+                    <div style={{ flex: 1, padding: '20px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                      <div style={{ color: '#fff', fontSize: '14px', fontWeight: '500' }}>Scanner / Valider un code</div>
+                      <div style={{ color: '#888', fontSize: '12px', textAlign: 'center' }}>
+                        Entrez le code de réservation pour valider la présence
+                      </div>
+                      <input
+                        type="text"
+                        value={qrScanCode}
+                        onChange={function(e) { setQrScanCode(e.target.value.toUpperCase()); }}
+                        onKeyDown={function(e) { if (e.key === 'Enter') handleQrValidation(); }}
+                        placeholder="CODE RÉSERVATION"
+                        style={{
+                          width: '100%',
+                          maxWidth: '250px',
+                          padding: '12px 16px',
+                          borderRadius: '8px',
+                          border: '1px solid rgba(255,255,255,0.2)',
+                          background: 'rgba(255,255,255,0.05)',
+                          color: '#fff',
+                          fontSize: '16px',
+                          textAlign: 'center',
+                          letterSpacing: '2px',
+                          outline: 'none'
+                        }}
+                      />
+                      <button
+                        onClick={handleQrValidation}
+                        disabled={!qrScanCode.trim()}
+                        style={{
+                          padding: '10px 24px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          background: qrScanCode.trim() ? '#d91cd2' : 'rgba(255,255,255,0.1)',
+                          color: '#fff',
+                          fontSize: '14px',
+                          cursor: qrScanCode.trim() ? 'pointer' : 'default',
+                          fontWeight: '500'
+                        }}
+                      >
+                        Valider la présence
+                      </button>
+                      {qrScanResult && (
+                        <div style={{
+                          padding: '12px 16px',
+                          borderRadius: '8px',
+                          background: qrScanResult.success ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
+                          border: '1px solid ' + (qrScanResult.success ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'),
+                          color: qrScanResult.success ? '#22c55e' : '#ef4444',
+                          fontSize: '13px',
+                          textAlign: 'center',
+                          width: '100%',
+                          maxWidth: '250px'
+                        }}>
+                          {qrScanResult.success ? '✅ ' : '❌ '}
+                          {qrScanResult.message}
+                          {qrScanResult.userName && (
+                            <div style={{ color: '#fff', marginTop: '4px', fontSize: '12px' }}>
+                              {qrScanResult.userName} {qrScanResult.courseName ? '— ' + qrScanResult.courseName : ''}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    )}
+
                   </div>
                 ) : (
                   <>
@@ -5752,7 +5922,7 @@ export const ChatWidget = () => {
                         ← Retour
                       </button>
                       <span style={{ color: '#fff', fontSize: '12px' }}>
-                        {selectedCoachSession.title || `Session ${(selectedCoachSession.id || 'unknown').slice(0, 8)}`}
+                        {selectedCoachSession.participantName || selectedCoachSession.title || 'Visiteur anonyme'}
                       </span>
                     </div>
 
