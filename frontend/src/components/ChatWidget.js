@@ -3582,9 +3582,26 @@ export const ChatWidget = () => {
     setQrCameraActive(false);
   };
 
+  // v162i: Helper to get coach email from localStorage
+  var getCoachEmail = function() {
+    try {
+      var profile = getStoredProfile();
+      if (profile && profile.email) return profile.email;
+      var coachUserStr = localStorage.getItem('afroboost_coach_user');
+      if (coachUserStr) {
+        var coachUser = JSON.parse(coachUserStr);
+        if (coachUser && coachUser.email) return coachUser.email;
+      }
+    } catch(e) {}
+    return '';
+  };
+
   // v162f: Load coach profile on mount (for photo)
   var loadCoachProfile = function() {
-    axios.get(API + '/coach-profile').then(function(res) {
+    var email = getCoachEmail();
+    axios.get(API + '/coach-profile', {
+      headers: { 'X-User-Email': email }
+    }).then(function(res) {
       setCoachProfile(res.data || null);
     }).catch(function() {});
   };
@@ -5681,7 +5698,7 @@ export const ChatWidget = () => {
                               var resized = canvas.toDataURL('image/jpeg', 0.8);
                               // Save to backend
                               axios.put(API + '/coach-profile', { photo_url: resized }, {
-                                headers: { 'X-User-Email': localStorage.getItem('coach_email') || '' }
+                                headers: { 'X-User-Email': getCoachEmail() }
                               }).then(function() {
                                 setCoachProfile(function(prev) { return Object.assign({}, prev, { photo_url: resized }); });
                               }).catch(function() { alert('Erreur upload photo'); });
@@ -5935,28 +5952,30 @@ export const ChatWidget = () => {
                       coachSessions.map(function(session) { return (
                         <div
                           key={session.id}
-                          onClick={function() { loadCoachSessionMessages(session); }}
+                          onClick={function(e) { if (e.currentTarget._lpFired) { e.currentTarget._lpFired = false; return; } loadCoachSessionMessages(session); }}
                           onTouchStart={function(e) {
+                            var el = e.currentTarget;
+                            el._lpFired = false;
                             var t = setTimeout(function() {
-                              // Long press detected
+                              el._lpFired = true;
                               if (window.confirm('Supprimer cette conversation avec ' + (session.participantName || 'Visiteur anonyme') + ' ?')) {
                                 axios.delete(API + '/chat/sessions/' + session.id, {
-                                  headers: { 'X-User-Email': localStorage.getItem('coach_email') || '' }
+                                  headers: { 'X-User-Email': getCoachEmail() }
                                 }).then(function() { loadCoachSessions(); })
-                                  .catch(function() { alert('Erreur de suppression'); });
+                                  .catch(function(err) { alert('Erreur: ' + ((err.response && err.response.data && err.response.data.detail) || 'Suppression impossible')); });
                               }
                             }, 800);
-                            e.target._lpTimer = t;
+                            el._lpTimer = t;
                           }}
-                          onTouchEnd={function(e) { if (e.target._lpTimer) clearTimeout(e.target._lpTimer); }}
-                          onTouchMove={function(e) { if (e.target._lpTimer) clearTimeout(e.target._lpTimer); }}
+                          onTouchEnd={function(e) { var el = e.currentTarget; if (el._lpTimer) clearTimeout(el._lpTimer); }}
+                          onTouchMove={function(e) { var el = e.currentTarget; if (el._lpTimer) clearTimeout(el._lpTimer); el._lpFired = false; }}
                           onContextMenu={function(e) {
                             e.preventDefault();
                             if (window.confirm('Supprimer cette conversation avec ' + (session.participantName || 'Visiteur anonyme') + ' ?')) {
                               axios.delete(API + '/chat/sessions/' + session.id, {
-                                headers: { 'X-User-Email': localStorage.getItem('coach_email') || '' }
+                                headers: { 'X-User-Email': getCoachEmail() }
                               }).then(function() { loadCoachSessions(); })
-                                .catch(function() { alert('Erreur de suppression'); });
+                                .catch(function(err) { alert('Erreur: ' + ((err.response && err.response.data && err.response.data.detail) || 'Suppression impossible')); });
                             }
                           }}
                           style={{
@@ -6043,41 +6062,6 @@ export const ChatWidget = () => {
                             background: 'rgba(217,28,210,0.06)', color: '#d91cd2',
                             fontSize: '13px', cursor: 'pointer', textAlign: 'center'
                           }}>📷 Caméra</button>
-                          <label style={{
-                            flex: 1, padding: '14px 8px', borderRadius: '10px',
-                            border: '2px dashed rgba(139,92,246,0.4)',
-                            background: 'rgba(139,92,246,0.06)', color: '#8b5cf6',
-                            fontSize: '13px', cursor: 'pointer', textAlign: 'center'
-                          }}>
-                            🖼️ Image
-                            <input type="file" accept="image/*" style={{ display: 'none' }}
-                              onChange={function(e) {
-                                var file = e.target.files && e.target.files[0];
-                                if (!file) return;
-                                setQrCameraError('');
-                                setQrScanResult(null);
-                                loadQrScannerLib(function() {
-                                  var scanner = new window.Html5Qrcode('qr-reader-container');
-                                  scanner.scanFile(file, true).then(function(decodedText) {
-                                    setQrScanCode(decodedText.toUpperCase());
-                                    // Auto-validate
-                                    axios.post(API + '/reservations/staff/validate', { code: decodedText.trim() })
-                                      .then(function(res) {
-                                        setQrScanResult(res.data);
-                                        if (res.data.success) setQrScanCode('');
-                                      })
-                                      .catch(function(err) {
-                                        var msg = (err.response && err.response.data && err.response.data.detail) || 'Erreur';
-                                        setQrScanResult({ success: false, message: msg });
-                                      });
-                                  }).catch(function() {
-                                    setQrCameraError('Aucun QR code trouvé dans cette image');
-                                  });
-                                });
-                                e.target.value = '';
-                              }}
-                            />
-                          </label>
                         </div>
                       )}
                       {qrCameraActive && (
