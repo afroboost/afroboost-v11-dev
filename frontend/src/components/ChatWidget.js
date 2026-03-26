@@ -1237,6 +1237,9 @@ export const ChatWidget = () => {
   var _csl = useState(false); var showStaffLogin = _csl[0]; var setShowStaffLogin = _csl[1];
   var _csCode = useState(''); var staffCode = _csCode[0]; var setStaffCode = _csCode[1];
   var _csErr = useState(''); var staffLoginError = _csErr[0]; var setStaffLoginError = _csErr[1];
+  // v162l: Staff modal mode: 'enter' (enter staff), 'unlock' (return to coach), 'change' (change code)
+  var _csMod = useState('enter'); var staffModalMode = _csMod[0]; var setStaffModalMode = _csMod[1];
+  var _csNew = useState(''); var staffNewCode = _csNew[0]; var setStaffNewCode = _csNew[1];
   // v162f: Coach profile photo
   var _cpro = useState(null); var coachProfile = _cpro[0]; var setCoachProfile = _cpro[1];
   // v162f: Coach emoji picker toggle (separate from chat emoji picker)
@@ -3601,32 +3604,64 @@ export const ChatWidget = () => {
     return '';
   };
 
-  // v162k: Staff login function
-  var handleStaffLogin = function() {
+  // v162l: Staff code action (enter staff, unlock coach, change code)
+  var handleStaffAction = function() {
     if (!staffCode.trim()) return;
     setStaffLoginError('');
-    axios.post(API + '/staff/login', { code: staffCode.trim() })
-      .then(function(res) {
-        if (res.data && res.data.success) {
-          setIsStaffMode(true);
+
+    if (staffModalMode === 'enter') {
+      // Enter staff mode
+      axios.post(API + '/staff/login', { code: staffCode.trim() })
+        .then(function(res) {
+          if (res.data && res.data.success) {
+            setIsStaffMode(true);
+            setShowStaffLogin(false);
+            setStaffCode('');
+            setCoachDashTab('reservations');
+            localStorage.setItem('afroboost_staff_mode', 'true');
+            loadCoachReservations();
+          }
+        })
+        .catch(function(err) {
+          var msg = (err.response && err.response.data && err.response.data.detail) || 'Code invalide';
+          setStaffLoginError(msg);
+        });
+    } else if (staffModalMode === 'unlock') {
+      // Unlock coach mode — verify same code
+      axios.post(API + '/staff/login', { code: staffCode.trim() })
+        .then(function(res) {
+          if (res.data && res.data.success) {
+            setIsStaffMode(false);
+            setShowStaffLogin(false);
+            setStaffCode('');
+            localStorage.removeItem('afroboost_staff_mode');
+            setCoachDashTab('conversations');
+          }
+        })
+        .catch(function(err) {
+          setStaffLoginError('Code incorrect');
+        });
+    } else if (staffModalMode === 'change') {
+      // Change code — first verify current code, then set new one
+      if (!staffNewCode.trim()) { setStaffLoginError('Entrez le nouveau code'); return; }
+      axios.post(API + '/staff/login', { code: staffCode.trim() })
+        .then(function() {
+          // Current code is valid, update to new code
+          return axios.put(API + '/platform-settings', { staff_access_code: staffNewCode.trim() }, {
+            headers: { 'X-User-Email': getCoachEmail() }
+          });
+        })
+        .then(function() {
           setShowStaffLogin(false);
           setStaffCode('');
-          setCoachDashTab('reservations');
-          localStorage.setItem('afroboost_staff_mode', 'true');
-          loadCoachReservations();
-        }
-      })
-      .catch(function(err) {
-        var msg = (err.response && err.response.data && err.response.data.detail) || 'Code invalide';
-        setStaffLoginError(msg);
-      });
-  };
-
-  // v162k: Staff logout
-  var handleStaffLogout = function() {
-    setIsStaffMode(false);
-    localStorage.removeItem('afroboost_staff_mode');
-    setCoachDashTab('conversations');
+          setStaffNewCode('');
+          alert('Code staff modifié avec succès !');
+        })
+        .catch(function(err) {
+          var msg = (err.response && err.response.data && err.response.data.detail) || 'Code actuel incorrect';
+          setStaffLoginError(msg);
+        });
+    }
   };
 
   // v162f: Load coach profile on mount (for photo)
@@ -5881,9 +5916,10 @@ export const ChatWidget = () => {
                           <button
                             onClick={function() {
                               setShowCoachMenu(false);
-                              setShowStaffLogin(true);
-                              setStaffLoginError('');
+                              setStaffModalMode('enter');
                               setStaffCode('');
+                              setStaffLoginError('');
+                              setShowStaffLogin(true);
                             }}
                             style={{
                               width: '100%',
@@ -5906,11 +5942,46 @@ export const ChatWidget = () => {
                             Accès Staff
                           </button>
                           )}
+                          {/* v162l: Changer code Staff (only in coach mode) */}
+                          {!isStaffMode && (
+                          <button
+                            onClick={function() {
+                              setShowCoachMenu(false);
+                              setStaffModalMode('change');
+                              setStaffCode('');
+                              setStaffNewCode('');
+                              setStaffLoginError('');
+                              setShowStaffLogin(true);
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '10px 14px',
+                              textAlign: 'left',
+                              fontSize: '12px',
+                              color: '#888',
+                              background: 'none',
+                              border: 'none',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px'
+                            }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="12" r="3"></circle>
+                              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                            </svg>
+                            Changer code Staff
+                          </button>
+                          )}
                           {isStaffMode && (
                           <button
                             onClick={function() {
                               setShowCoachMenu(false);
-                              handleStaffLogout();
+                              setStaffModalMode('unlock');
+                              setStaffCode('');
+                              setStaffLoginError('');
+                              setShowStaffLogin(true);
                             }}
                             style={{
                               width: '100%',
@@ -5930,7 +6001,7 @@ export const ChatWidget = () => {
                               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                               <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                             </svg>
-                            Mode Coach (complet)
+                            Débloquer Coach
                           </button>
                           )}
                           <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }} />
@@ -6039,7 +6110,7 @@ export const ChatWidget = () => {
                 </div>
                 )}
 
-                {/* v162k: Staff login modal */}
+                {/* v162l: Staff code modal (enter/unlock/change) */}
                 {showStaffLogin && (
                   <div style={{
                     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
@@ -6047,27 +6118,47 @@ export const ChatWidget = () => {
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     flexDirection: 'column', gap: '12px', padding: '20px'
                   }}>
-                    <div style={{ color: '#f59e0b', fontSize: '14px', fontWeight: 'bold' }}>
-                      Accès Staff
+                    <div style={{
+                      color: staffModalMode === 'unlock' ? '#22c55e' : staffModalMode === 'change' ? '#8b5cf6' : '#f59e0b',
+                      fontSize: '14px', fontWeight: 'bold'
+                    }}>
+                      {staffModalMode === 'enter' ? 'Accès Staff' : staffModalMode === 'unlock' ? 'Débloquer Mode Coach' : 'Changer le code Staff'}
                     </div>
                     <div style={{ color: '#888', fontSize: '11px', textAlign: 'center', maxWidth: '240px' }}>
-                      Entrez le code d'accès staff pour un accès limité (Réservations + Scanner uniquement)
+                      {staffModalMode === 'enter' ? 'Entrez le code pour un accès limité (Réservations + Scanner)' :
+                       staffModalMode === 'unlock' ? 'Entrez le code pour retrouver l\'accès complet' :
+                       'Entrez le code actuel puis le nouveau code'}
                     </div>
                     <input
                       type="text"
                       value={staffCode}
                       onChange={function(e) { setStaffCode(e.target.value); setStaffLoginError(''); }}
-                      onKeyPress={function(e) { if (e.key === 'Enter') handleStaffLogin(); }}
-                      placeholder="Code d'accès"
+                      onKeyPress={function(e) { if (e.key === 'Enter') { if (staffModalMode !== 'change') handleStaffAction(); } }}
+                      placeholder={staffModalMode === 'change' ? 'Code actuel' : 'Code d\'accès'}
                       style={{
                         width: '100%', maxWidth: '220px', padding: '10px 14px',
-                        borderRadius: '8px', border: '1px solid rgba(245,158,11,0.4)',
-                        background: 'rgba(245,158,11,0.08)', color: '#fff',
-                        fontSize: '14px', textAlign: 'center', letterSpacing: '2px',
-                        outline: 'none'
+                        borderRadius: '8px',
+                        border: '1px solid ' + (staffModalMode === 'unlock' ? 'rgba(34,197,94,0.4)' : staffModalMode === 'change' ? 'rgba(139,92,246,0.4)' : 'rgba(245,158,11,0.4)'),
+                        background: staffModalMode === 'unlock' ? 'rgba(34,197,94,0.08)' : staffModalMode === 'change' ? 'rgba(139,92,246,0.08)' : 'rgba(245,158,11,0.08)',
+                        color: '#fff', fontSize: '14px', textAlign: 'center', letterSpacing: '2px', outline: 'none'
                       }}
                       autoFocus
                     />
+                    {staffModalMode === 'change' && (
+                      <input
+                        type="text"
+                        value={staffNewCode}
+                        onChange={function(e) { setStaffNewCode(e.target.value); setStaffLoginError(''); }}
+                        onKeyPress={function(e) { if (e.key === 'Enter') handleStaffAction(); }}
+                        placeholder="Nouveau code"
+                        style={{
+                          width: '100%', maxWidth: '220px', padding: '10px 14px',
+                          borderRadius: '8px', border: '1px solid rgba(139,92,246,0.4)',
+                          background: 'rgba(139,92,246,0.08)', color: '#fff',
+                          fontSize: '14px', textAlign: 'center', letterSpacing: '2px', outline: 'none'
+                        }}
+                      />
+                    )}
                     {staffLoginError && (
                       <div style={{ color: '#ef4444', fontSize: '11px' }}>{staffLoginError}</div>
                     )}
@@ -6076,11 +6167,12 @@ export const ChatWidget = () => {
                         padding: '8px 16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)',
                         background: 'none', color: '#888', fontSize: '12px', cursor: 'pointer'
                       }}>Annuler</button>
-                      <button onClick={handleStaffLogin} style={{
+                      <button onClick={handleStaffAction} style={{
                         padding: '8px 16px', borderRadius: '8px', border: 'none',
-                        background: '#f59e0b', color: '#000', fontSize: '12px', cursor: 'pointer',
-                        fontWeight: 'bold'
-                      }}>Connexion</button>
+                        background: staffModalMode === 'unlock' ? '#22c55e' : staffModalMode === 'change' ? '#8b5cf6' : '#f59e0b',
+                        color: staffModalMode === 'unlock' ? '#fff' : '#000',
+                        fontSize: '12px', cursor: 'pointer', fontWeight: 'bold'
+                      }}>{staffModalMode === 'enter' ? 'Connexion' : staffModalMode === 'unlock' ? 'Débloquer' : 'Modifier'}</button>
                     </div>
                   </div>
                 )}
