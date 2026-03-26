@@ -15,12 +15,13 @@ import {
   getNotificationPermissionStatus,
   unlockAudio
 } from '../services/notificationService';
-import { 
-  isPushSupported, 
-  promptForNotifications, 
+import {
+  isPushSupported,
+  promptForNotifications,
   registerServiceWorker,
   isSubscribed,
-  subscribeToPush
+  subscribeToPush,
+  unsubscribeFromPush
 } from '../services/pushNotificationService';
 import { 
   isInSilenceHours, 
@@ -28,7 +29,7 @@ import {
   playSoundIfAllowed,
   SOUND_TYPES 
 } from '../services/SoundManager';
-import EmojiPicker from './EmojiPicker';
+import AfricanEmojiPicker from './chat/AfricanEmojiPicker';
 import SubscriberForm from './chat/SubscriberForm';
 import OnboardingTunnel from './chat/OnboardingTunnel';
 import PrivateChatView from './chat/PrivateChatView';
@@ -352,15 +353,38 @@ const InlineCtaButton = ({ label, url }) => {
  * Affiche le nom de l'expéditeur au-dessus de chaque bulle
  * Couleurs: Violet (#8B5CF6) pour le Coach, Gris foncé pour les membres/IA
  */
-const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUserId, profilePhotoUrl, onReservationClick, onZoomPhoto }) => {
+const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUserId, profilePhotoUrl, onReservationClick, onZoomPhoto, onDelete }) => {
   // v10.4: Fallback robuste pour texte (content, text, body - jamais vide)
   const messageText = msg.content || msg.text || msg.body || '';
   const htmlContent = parseMessageContent(messageText);
   const isOtherUser = isCommunity && msg.type === 'user' && msg.senderId && msg.senderId !== currentUserId;
-  
+
+  // v153: État pour afficher le bouton supprimer (long press mobile + hover desktop)
+  const [showDelete, setShowDelete] = React.useState(false);
+  const longPressTimer = React.useRef(null);
+
   // v10.3: RÉCAPITULATIF DE RÉSERVATION PREMIUM
   // v10.4: État local pour fermer/minimiser la carte
   const [isMinimized, setIsMinimized] = React.useState(false);
+
+  // v153: Message supprimé — afficher placeholder
+  if (msg.is_deleted) {
+    return (
+      <div style={{ alignSelf: isUser ? 'flex-end' : 'flex-start', maxWidth: '75%', opacity: 0.5 }}>
+        <div style={{
+          background: 'rgba(255,255,255,0.05)',
+          color: 'rgba(255,255,255,0.4)',
+          padding: '8px 14px',
+          borderRadius: '16px',
+          fontSize: '12px',
+          fontStyle: 'italic',
+          border: '1px dashed rgba(255,255,255,0.1)'
+        }}>
+          🗑️ Message supprimé
+        </div>
+      </div>
+    );
+  }
   
   if (msg.isReservationSummary && msg.reservationDetails) {
     const details = msg.reservationDetails;
@@ -548,6 +572,22 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
     );
   }
   
+  // v153: Handlers long press (mobile) + hover (desktop) pour bouton supprimer
+  const handleTouchStart = () => {
+    if (!onDelete) return;
+    longPressTimer.current = setTimeout(() => setShowDelete(true), 600);
+  };
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  };
+  const handleDeleteClick = (e) => {
+    e.stopPropagation();
+    if (window.confirm('Supprimer ce message ?')) {
+      onDelete(msg.id);
+      setShowDelete(false);
+    }
+  };
+
   // === DÉTECTION AUTOMATIQUE DES MÉDIAS DANS LE TEXTE ===
   const detectMediaInText = (text) => {
     if (!text) return null;
@@ -667,9 +707,29 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
           maxWidth: '320px',
           display: 'flex',
           flexDirection: 'column',
-          gap: '4px'
+          gap: '4px',
+          position: 'relative'
         }}
+        onMouseEnter={() => onDelete && setShowDelete(true)}
+        onMouseLeave={() => setShowDelete(false)}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
       >
+        {/* v153: Bouton supprimer sur média */}
+        {showDelete && onDelete && (
+          <button
+            onClick={handleDeleteClick}
+            style={{
+              position: 'absolute', top: '-8px', right: '-8px', zIndex: 20,
+              width: '28px', height: '28px', borderRadius: '50%',
+              background: 'rgba(239, 68, 68, 0.9)', border: '2px solid rgba(0,0,0,0.3)',
+              color: '#fff', fontSize: '14px', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.4)'
+            }}
+            title="Supprimer ce message"
+          >✕</button>
+        )}
         {/* Nom au-dessus si pas utilisateur */}
         {!isUser && (
           <div style={{
@@ -681,7 +741,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             {displayName}
           </div>
         )}
-        
+
         {/* Composant MediaMessage avec CTA */}
         <MediaMessage
           mediaUrl={hasMedia ? msg.media_url : null}
@@ -695,7 +755,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
   }
   
   // === MESSAGE STANDARD (sans média) ===
-  
+
   // v81: MESSAGE STANDARD ÉPURÉ — Bulles adaptatives style WhatsApp
   return (
     <div
@@ -706,9 +766,42 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
         display: 'flex',
         flexDirection: isUser ? 'row-reverse' : 'row',
         gap: '8px',
-        alignItems: 'flex-end'
+        alignItems: 'flex-end',
+        position: 'relative'
       }}
+      onMouseEnter={() => onDelete && setShowDelete(true)}
+      onMouseLeave={() => setShowDelete(false)}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
     >
+      {/* v153: Bouton supprimer — hover desktop / long press mobile */}
+      {showDelete && onDelete && (
+        <button
+          onClick={handleDeleteClick}
+          style={{
+            position: 'absolute',
+            top: '-8px',
+            [isUser ? 'left' : 'right']: '-8px',
+            width: '28px', height: '28px',
+            borderRadius: '50%',
+            background: 'rgba(239, 68, 68, 0.9)',
+            border: '2px solid rgba(0,0,0,0.3)',
+            color: '#fff',
+            fontSize: '14px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 20,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+            transition: 'transform 0.15s',
+          }}
+          title="Supprimer ce message"
+        >
+          ✕
+        </button>
+      )}
+
       {/* Avatar rond si disponible */}
       {getAvatar()}
 
@@ -817,11 +910,14 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
 const MemoizedMessageBubble = memo(MessageBubble, (prevProps, nextProps) => {
   // Si l'ID change, on doit re-rendre
   if (prevProps.msg.id !== nextProps.msg.id) return false;
-  
+
+  // v153: Si is_deleted change, on doit re-rendre
+  if (prevProps.msg.is_deleted !== nextProps.msg.is_deleted) return false;
+
   // Si l'avatar change (utilisateur a uploadé une nouvelle photo), on doit re-rendre
   if (prevProps.msg.senderPhotoUrl !== nextProps.msg.senderPhotoUrl) return false;
   if (prevProps.profilePhotoUrl !== nextProps.profilePhotoUrl) return false;
-  
+
   // Sinon, pas besoin de re-rendre (même message, même avatar)
   return true;
 });
@@ -1046,6 +1142,51 @@ export const ChatWidget = () => {
     return null;
   });
   const [showMenu, setShowMenu] = useState(false);
+  // V160: Birthday states
+  var _bd160 = useState(false); var showBirthdayModal = _bd160[0]; var setShowBirthdayModal = _bd160[1];
+  var _bd161 = useState(""); var birthdayMonth = _bd161[0]; var setBirthdayMonth = _bd161[1];
+  var _bd162 = useState(""); var birthdayDay = _bd162[0]; var setBirthdayDay = _bd162[1];
+  var _bd163 = useState(null); var todayBirthdays = _bd163[0]; var setTodayBirthdays = _bd163[1];
+  var _bd164 = useState(false); var birthdaySaved = _bd164[0]; var setBirthdaySaved = _bd164[1];
+
+  // V160: Check today's birthdays on mount
+  useEffect(function() {
+    var checkBirthdays = function() {
+      fetch(API + '/birthdays/today')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.birthdays && data.birthdays.length > 0) {
+            setTodayBirthdays(data.birthdays);
+          }
+        })
+        .catch(function(err) { console.log('[V160] Birthday check error:', err); });
+    };
+    checkBirthdays();
+    // Re-check every hour
+    var interval = setInterval(checkBirthdays, 3600000);
+    return function() { clearInterval(interval); };
+  }, []);
+
+  // V160: Save birthday
+  var handleSaveBirthday = function() {
+    if (!birthdayMonth || !birthdayDay || !participantId) return;
+    var mm = birthdayMonth.padStart(2, '0');
+    var dd = birthdayDay.padStart(2, '0');
+    var birthday = mm + '-' + dd;
+    fetch(API + '/chat/participants/' + participantId + '/birthday', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ birthday: birthday })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.success) {
+        setBirthdaySaved(true);
+        setTimeout(function() { setShowBirthdayModal(false); setBirthdaySaved(false); }, 2000);
+      }
+    })
+    .catch(function(err) { console.error('[V160] Save birthday error:', err); });
+  };
   const [isCommunityMode, setIsCommunityMode] = useState(false);
   const [chatMode, setChatMode] = useState('private'); // v8.6: 'private' ou 'group'
   const [groupMessages, setGroupMessages] = useState([]); // v8.6: Messages de groupe
@@ -1055,7 +1196,7 @@ export const ChatWidget = () => {
   const [lastMessageCount, setLastMessageCount] = useState(0);
   const [privateChatTarget, setPrivateChatTarget] = useState(null);
   const [messageCount, setMessageCount] = useState(0); // Compteur de messages pour prompt notif
-  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(() => isSubscribed()); // V120: init depuis localStorage
   const [unreadCount, setUnreadCount] = useState(0); // v9.4.0: Compteur de messages non lus pour badge
   const [hasNewMessage, setHasNewMessage] = useState(false); // v9.4.0: Indicateur de nouveau message
   const [isCoachMode, setIsCoachMode] = useState(() => {
@@ -1083,8 +1224,16 @@ export const ChatWidget = () => {
   const [coachSessions, setCoachSessions] = useState([]); // Liste des sessions pour le coach
   const [selectedCoachSession, setSelectedCoachSession] = useState(null); // Session sélectionnée par le coach
   const [isFullscreen, setIsFullscreen] = useState(getInitialFullscreen); // Mode plein écran (ABONNÉ = activé)
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false); // Sélecteur d'emojis (composant EmojiPicker)
-  
+  const [showAfricanEmojiPicker, setShowAfricanEmojiPicker] = useState(false); // v154: Sélecteur d'emojis unifié
+  const [coachCustomEmojis, setCoachCustomEmojis] = useState([]); // v154: Emojis personnalisés du coach
+
+  // v154: Charger les emojis personnalisés du coach
+  useEffect(() => {
+    axios.get(`${API}/chat/emojis`).then(res => {
+      if (Array.isArray(res.data)) setCoachCustomEmojis(res.data);
+    }).catch(() => {});
+  }, []);
+
   // === FORMULAIRE ABONNÉ (4 champs: Nom, WhatsApp, Email, Code Promo) ===
   const [showSubscriberForm, setShowSubscriberForm] = useState(false); // Afficher le formulaire abonné
   const [subscriberFormData, setSubscriberFormData] = useState({ name: '', whatsapp: '', email: '', code: '' });
@@ -1201,9 +1350,6 @@ export const ChatWidget = () => {
   // === MENU UTILISATEUR (Partage + Mode Visiteur) ===
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showCoachMenu, setShowCoachMenu] = useState(false); // Menu coach minimaliste
-  const [coachChatView, setCoachChatView] = useState('conversations'); // 'conversations' | 'reservations' | 'scanner'
-  const [coachReservations, setCoachReservations] = useState([]); // Réservations récentes pour le mini-dashboard
-  const [showQRScannerChat, setShowQRScannerChat] = useState(false); // QR Scanner dans le chat
   const [linkCopied, setLinkCopied] = useState(false);
   const [isVisitorMode, setIsVisitorMode] = useState(false); // Mode visiteur (chat réduit mais profil conservé)
   const [isVisitorPreview, setIsVisitorPreview] = useState(false); // Admin: aperçu mode visiteur
@@ -1261,6 +1407,43 @@ export const ChatWidget = () => {
     localStorage.setItem('afroboost_sound_enabled', String(newValue));
     console.log('[SOUND] 🔊', newValue ? 'Activé' : 'Désactivé');
   };
+
+  // V120: Toggle notifications push
+  const togglePush = async () => {
+    if (pushEnabled) {
+      // Désactiver
+      await unsubscribeFromPush(participantId);
+      setPushEnabled(false);
+      console.log('[PUSH] 🔕 Désactivé');
+    } else {
+      // Activer — demander permission + souscrire
+      if (!participantId) return;
+      const permission = await Notification.requestPermission();
+      if (permission === 'granted') {
+        const ok = await subscribeToPush(participantId);
+        setPushEnabled(ok);
+        console.log('[PUSH] 🔔', ok ? 'Activé' : 'Échec');
+      }
+    }
+  };
+
+  // V120: Clear badge quand le chat est ouvert/visible
+  useEffect(() => {
+    const clearBadge = () => {
+      if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => {});
+      // Signaler au SW de remettre le compteur à 0
+      if (navigator.serviceWorker?.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_BADGE' });
+      }
+    };
+    // Clear badge au montage et quand on revient sur l'onglet
+    clearBadge();
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') clearBadge();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
   
   // === WRAPPER SIMPLIFIÉ (délègue à SoundManager) ===
   const playSoundIfEnabled = useCallback((type = SOUND_TYPES.MESSAGE) => {
@@ -1287,15 +1470,26 @@ export const ChatWidget = () => {
     }
   }, []);
 
-  // V107.12: Charger messages d'un groupe spécifique
+  // V108.4: Charger messages d'un groupe spécifique — avec formatage unifié
   const loadGroupSessionMessages = useCallback(async (sessionId) => {
     if (!sessionId) return;
     setGroupLoading(true);
     try {
       const res = await axios.get(`${API}/chat/sessions/${sessionId}/messages`);
-      setGroupMessages(res.data || []);
+      // V108.4: Formater les messages serveur → format client unifié
+      const formatted = (res.data || []).map(m => ({
+        id: m.id,
+        type: m.type || (m.sender_type === 'user' ? 'user' : m.sender_type === 'coach' ? 'coach' : 'ai'),
+        text: m.content || m.text || '',
+        sender: m.sender_name || m.sender || '',
+        senderId: m.sender_id || m.senderId || '',
+        created_at: m.created_at,
+        media_url: m.media_url || null,
+        is_group: true
+      }));
+      setGroupMessages(formatted);
     } catch (err) {
-      console.warn('[V107.12] Erreur chargement messages groupe:', err);
+      console.warn('[V108.4] Erreur chargement messages groupe:', err);
     }
     setGroupLoading(false);
   }, []);
@@ -1729,7 +1923,15 @@ export const ChatWidget = () => {
         });
 
         if (res.data?.success) {
-          const allSubs = res.data?.subscriptions || (res.data?.subscription ? [res.data.subscription] : []);
+          const rawSubs = res.data?.subscriptions || (res.data?.subscription ? [res.data.subscription] : []);
+          // v151: Déduplication par code (filet de sécurité côté frontend)
+          const seen = new Set();
+          const allSubs = rawSubs.filter(s => {
+            const key = (s.code || '').toUpperCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
           // Mettre à jour le profil avec le premier abonnement (rétro-compatible) + liste complète
           const updatedProfile = {
             ...afroboostProfile,
@@ -1738,7 +1940,7 @@ export const ChatWidget = () => {
           };
           localStorage.setItem(AFROBOOST_PROFILE_KEY, JSON.stringify(updatedProfile));
           setAfroboostProfile(updatedProfile);
-          console.log('[SUBSCRIPTION v95] Tous les abonnements chargés:', allSubs.length, 'actif(s)');
+          console.log('[SUBSCRIPTION v151] Abonnements vérifiés:', allSubs.length, 'actif(s)');
         }
       } catch (err) {
         console.log('[SUBSCRIPTION v95] Erreur chargement statut:', err.message);
@@ -1746,7 +1948,10 @@ export const ChatWidget = () => {
     };
 
     refreshSubscriptionStatus();
-  }, []); // Exécuté une seule fois au montage
+    // V156.2: Rafraîchir toutes les 30s pour refléter les scans QR du coach
+    const interval = setInterval(refreshSubscriptionStatus, 30000);
+    return () => clearInterval(interval);
+  }, []); // Exécuté au montage + refresh périodique
 
   // === v8.9.9: Vérifier si l'utilisateur est un coach inscrit ===
   // v9.1.5: Amélioré pour détecter aussi les coachs via localStorage
@@ -1855,18 +2060,26 @@ export const ChatWidget = () => {
     setReservationError('');
     setSelectedSubscription(null);
 
-    // v95: Charger TOUS les abonnements actifs de l'utilisateur
+    // v95/v151: Charger les abonnements actifs de l'utilisateur (filtrés par le backend)
     if (afroboostProfile?.email) {
       axios.get(`${API}/discount-codes/subscriptions/status`, {
         params: { email: afroboostProfile.email }
       }).then(res => {
-        const subs = res.data?.subscriptions || (res.data?.subscription ? [res.data.subscription] : []);
+        const rawSubs = res.data?.subscriptions || (res.data?.subscription ? [res.data.subscription] : []);
+        // v151: Déduplication frontend par code (filet de sécurité)
+        const seen = new Set();
+        const subs = rawSubs.filter(s => {
+          const key = (s.code || '').toUpperCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
         setUserSubscriptions(subs);
         // Si un seul abonnement, le sélectionner automatiquement
         if (subs.length === 1) {
           setSelectedSubscription(subs[0]);
         }
-        console.log('[SUBSCRIPTIONS] v95:', subs.length, 'abonnement(s) actif(s)');
+        console.log('[SUBSCRIPTIONS] v151:', subs.length, 'abonnement(s) vérifié(s)');
       }).catch(err => {
         console.log('[SUBSCRIPTIONS] Erreur chargement:', err.message);
         setUserSubscriptions([]);
@@ -2780,26 +2993,62 @@ export const ChatWidget = () => {
         if (data.messages && data.messages.length > 0) {
           console.log(`[RAMASSER] ${data.count} message(s) recupere(s)`);
           setMessages(prev => {
-            // ANTI-DOUBLONS: Set avec id ET _id
+            // V146: ANTI-DOUBLONS AMÉLIORÉ — vérifie ID + contenu pour détecter les messages optimistes
             const existingIds = new Set(prev.flatMap(m => [m.id, m._id].filter(Boolean)));
-            const newMsgs = data.messages.filter(m => {
+            // V146: Collecter le texte des messages optimistes (temp_user_*) pour éviter les doublons
+            const pendingTexts = new Set(
+              prev.filter(m => m.id && m.id.startsWith('temp_user_')).map(m => (m.text || '').trim().toLowerCase())
+            );
+
+            let updatedPrev = [...prev];
+            const trulyNew = [];
+
+            for (const m of data.messages) {
               const msgId = m.id || m._id;
-              return msgId && !existingIds.has(msgId);
-            });
-            if (newMsgs.length > 0) {
-              console.log(`[RAMASSER] ${newMsgs.length} NOUVEAUX messages ajoutes`);
+              if (!msgId) continue;
+
+              // Cas 1: ID déjà connu → skip
+              if (existingIds.has(msgId)) continue;
+
+              // V146: Cas 2: Message serveur correspondant à un message optimiste temp_user_*
+              const msgText = (m.text || m.content || '').trim().toLowerCase();
+              const isSameUser = m.sender_type === 'user' || m.type === 'user';
+              if (isSameUser && pendingTexts.has(msgText)) {
+                // Remplacer le temp_user_ par le vrai ID serveur (pas d'ajout = pas de doublon)
+                const tempIdx = updatedPrev.findIndex(p =>
+                  p.id && p.id.startsWith('temp_user_') && (p.text || '').trim().toLowerCase() === msgText
+                );
+                if (tempIdx !== -1) {
+                  updatedPrev[tempIdx] = { ...updatedPrev[tempIdx], id: msgId, created_at: m.created_at };
+                  pendingTexts.delete(msgText); // Ne matcher qu'une fois
+                  existingIds.add(msgId);
+                  console.log(`[V146] Remplacé temp_user → ${msgId}`);
+                  continue;
+                }
+              }
+
+              // Cas 3: Vraiment nouveau
+              trulyNew.push(m);
+              existingIds.add(msgId);
+            }
+
+            if (trulyNew.length > 0) {
+              console.log(`[RAMASSER] ${trulyNew.length} NOUVEAUX messages ajoutes`);
               // v87: Son notification pour les nouveaux messages (campagne ou coach)
-              const hasCampaignMsg = newMsgs.some(m =>
+              const hasCampaignMsg = trulyNew.some(m =>
                 (m.sender_id && m.sender_id.startsWith('coach-campaign')) || m.campaign_id
               );
-              const hasCoachMsg = newMsgs.some(m => m.sender_type === 'coach');
+              const hasCoachMsg = trulyNew.some(m => m.sender_type === 'coach');
               if (hasCampaignMsg || hasCoachMsg) {
                 try { playSoundIfEnabled('coach'); } catch(e) {}
               } else {
                 try { playSoundIfEnabled('message'); } catch(e) {}
               }
-              return [...prev, ...newMsgs].sort((a, b) => (a.created_at || '0').localeCompare(b.created_at || '0'));
+              return [...updatedPrev, ...trulyNew].sort((a, b) => (a.created_at || '0').localeCompare(b.created_at || '0'));
             }
+
+            // V146: Même si pas de trulyNew, on peut avoir remplacé des temp → retourner updatedPrev
+            if (updatedPrev !== prev) return updatedPrev;
             return prev;
           });
         }
@@ -2824,11 +3073,21 @@ export const ChatWidget = () => {
             const data = await fallback.json();
             if (Array.isArray(data) && data.length > 0) {
               setMessages(prev => {
-                const existingIds = new Set(prev.map(m => m.id));
-                const newMsgs = data.filter(m => m.id && !existingIds.has(m.id));
+                const existingIds = new Set(prev.flatMap(m => [m.id, m._id].filter(Boolean)));
+                // V146: Aussi vérifier les messages optimistes par contenu
+                const pendingTexts = new Set(
+                  prev.filter(m => m.id && m.id.startsWith('temp_user_')).map(m => (m.text || '').trim().toLowerCase())
+                );
+                const newMsgs = data.filter(m => {
+                  if (!m.id || existingIds.has(m.id)) return false;
+                  // V146: Skip si c'est un doublon d'un message optimiste
+                  const mText = (m.text || m.content || '').trim().toLowerCase();
+                  if ((m.sender_type === 'user' || m.type === 'user') && pendingTexts.has(mText)) return false;
+                  return true;
+                });
                 if (newMsgs.length > 0) {
                   console.log(`[RAMASSER-FALLBACK] ${newMsgs.length} messages récupérés`);
-                  return [...prev, ...newMsgs].sort((a, b) => 
+                  return [...prev, ...newMsgs].sort((a, b) =>
                     (a.created_at || '0').localeCompare(b.created_at || '0')
                   );
                 }
@@ -3211,33 +3470,6 @@ export const ChatWidget = () => {
     }
   };
 
-  // === MODE COACH: Charger les réservations récentes pour le mini-dashboard ===
-  var loadCoachReservations = async function() {
-    try {
-      var res = await axios.get(API + '/reservations?limit=20');
-      var data = Array.isArray(res.data) ? res.data : (res.data.reservations || []);
-      setCoachReservations(data);
-    } catch (err) {
-      console.error('Error loading coach reservations:', err);
-    }
-  };
-
-  // === MODE COACH: Valider une réservation via QR code ===
-  var handleQRValidation = async function(code) {
-    try {
-      var res = await axios.post(API + '/reservations/' + code + '/validate');
-      if (res.data && res.data.success !== false) {
-        alert('Réservation validée pour ' + (res.data.userName || 'le participant'));
-        loadCoachReservations();
-      } else {
-        alert('Code non reconnu ou déjà validé');
-      }
-    } catch (err) {
-      alert('Erreur: ' + (err.response?.data?.detail || 'Code invalide'));
-    }
-    setShowQRScannerChat(false);
-  };
-
   // === MODE COACH: Charger les messages d'une session ===
   const loadCoachSessionMessages = async (session) => {
     setSelectedCoachSession(session);
@@ -3588,6 +3820,17 @@ export const ChatWidget = () => {
   };
 
   // Envoyer un message au chat avec contexte de session
+  const handleDeleteMessage = async (messageId) => {
+    try {
+      await axios.put(`${API}/chat/messages/${messageId}/delete`);
+      // Remove from local state or mark as deleted
+      setMessages(prev => prev.map(m => m.id === messageId ? {...m, is_deleted: true, text: 'Message supprimé'} : m));
+      setGroupMessages(prev => prev.map(m => m.id === messageId ? {...m, is_deleted: true, text: 'Message supprimé'} : m));
+    } catch (err) {
+      console.error('Delete message error:', err);
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isLoading) return;
 
@@ -3596,9 +3839,71 @@ export const ChatWidget = () => {
     // Ajouter le senderId + un ID temporaire pour identifier les messages de l'utilisateur actuel
     const tempUserMsgId = `temp_user_${Date.now()}`;
 
-    // V107.12: Déterminer la cible (groupe ou privé)
-    const isGroupMode = chatMode === 'group' && selectedGroup;
+    // V108.5: Déterminer la cible (groupe ou privé) — détection robuste
+    const isGroupMode = !!(selectedGroup && selectedGroup.session_id && (chatMode === 'group' || selectedGroup.id));
     const targetMessages = isGroupMode ? setGroupMessages : setMessages;
+
+    // V108.5: Log systématique pour debug (toujours, pas seulement en mode groupe)
+    console.log('[V108.5] handleSendMessage:', {
+      chatMode, isGroupMode,
+      selectedGroup: selectedGroup?.name || null,
+      session_id: selectedGroup?.session_id || null,
+      participantId: participantId || 'NULL!',
+      hasSessionData: !!sessionData,
+      message: userMessage.substring(0, 20)
+    });
+
+    // V108.5: Si mode groupe mais participantId manquant, tenter récupération
+    let effectiveParticipantId = participantId;
+    if (isGroupMode && !effectiveParticipantId) {
+      console.warn('[V108.5] participantId NULL en mode groupe — tentative récupération...');
+      try {
+        const savedIdentity = localStorage.getItem('afroboost_identity');
+        const savedClient = localStorage.getItem('af_chat_client');
+        if (savedIdentity || savedClient) {
+          const data = JSON.parse(savedIdentity || savedClient);
+          effectiveParticipantId = data?.participantId || null;
+          console.log('[V108.5] Récupéré participantId depuis localStorage:', effectiveParticipantId);
+        }
+      } catch (e) { console.error('[V108.5] Erreur récup localStorage:', e); }
+
+      // Si toujours null, tenter smart-entry auto avec le profil
+      if (!effectiveParticipantId && afroboostProfile?.email) {
+        console.log('[V108.5] Tentative auto-registration via smart-entry...');
+        try {
+          const regRes = await axios.post(`${API}/chat/smart-entry`, {
+            name: afroboostProfile.name || 'Abonné',
+            email: afroboostProfile.email,
+            whatsapp: afroboostProfile.whatsapp || ''
+          });
+          if (regRes.data?.participant?.id) {
+            effectiveParticipantId = regRes.data.participant.id;
+            setParticipantId(effectiveParticipantId);
+            // Sauvegarder pour les prochaines fois
+            localStorage.setItem('afroboost_identity', JSON.stringify({
+              firstName: afroboostProfile.name,
+              email: afroboostProfile.email,
+              participantId: effectiveParticipantId,
+              savedAt: new Date().toISOString()
+            }));
+            console.log('[V108.5] Auto-registration OK! participantId:', effectiveParticipantId);
+          }
+        } catch (regErr) {
+          console.error('[V108.5] Auto-registration FAILED:', regErr);
+        }
+      }
+
+      if (!effectiveParticipantId) {
+        console.error('[V108.5] IMPOSSIBLE de récupérer participantId!');
+        targetMessages(prev => [...prev, {
+          id: `err_nopid_${Date.now()}`,
+          type: 'ai',
+          text: "Erreur: votre session n'est pas initialisée. Essayez de recharger la page ou de vous reconnecter."
+        }]);
+        setIsLoading(false);
+        return;
+      }
+    }
 
     targetMessages(prev => [...prev, { id: tempUserMsgId, type: 'user', text: userMessage, senderId: participantId }]);
     setLastMessageCount(prev => prev + 1);
@@ -3606,33 +3911,51 @@ export const ChatWidget = () => {
     setIsLoading(true);
 
     try {
-      // V107.12: Si mode groupe avec un groupe sélectionné, envoyer au session du groupe
-      if (isGroupMode && participantId) {
-        const response = await axios.post(`${API}/chat/ai-response`, {
-          session_id: selectedGroup.session_id,
-          participant_id: participantId,
-          message: userMessage
-        });
+      // V108.5: Si mode groupe avec un groupe sélectionné, envoyer au session du groupe
+      if (isGroupMode && effectiveParticipantId) {
+        console.log('[V108.5] Envoi message groupe:', { session_id: selectedGroup.session_id, participant_id: effectiveParticipantId, group_name: selectedGroup.name });
+        try {
+          const response = await axios.post(`${API}/chat/ai-response`, {
+            session_id: selectedGroup.session_id,
+            participant_id: effectiveParticipantId,
+            message: userMessage
+          });
 
-        // Mettre à jour l'ID temporaire
-        if (response.data.user_message_id) {
+          console.log('[V108.3] Réponse groupe:', response.data);
+
+          // Mettre à jour l'ID temporaire
+          if (response.data.user_message_id) {
+            targetMessages(prev => prev.map(m =>
+              m.id === tempUserMsgId ? { ...m, id: response.data.user_message_id } : m
+            ));
+          }
+
+          if (response.data.response) {
+            playSoundIfEnabled('message');
+            targetMessages(prev => [...prev, {
+              id: response.data.ai_message_id || `ai_${Date.now()}`,
+              type: 'ai',
+              text: response.data.response
+            }]);
+          } else if (!response.data.ai_active) {
+            targetMessages(prev => [...prev, {
+              id: `wait_${Date.now()}`,
+              type: 'ai',
+              text: "Message envoyé au groupe ! Le coach et les autres membres le verront."
+            }]);
+          }
+        } catch (groupErr) {
+          console.error('[V108.3] ERREUR envoi groupe:', groupErr?.response?.status, groupErr?.response?.data, groupErr);
+          // V108.3: Afficher l'erreur dans les messages du GROUPE (pas privé)
           targetMessages(prev => prev.map(m =>
-            m.id === tempUserMsgId ? { ...m, id: response.data.user_message_id } : m
+            m.id === tempUserMsgId
+              ? { ...m, text: `${userMessage} (erreur envoi)`, error: true }
+              : m
           ));
-        }
-
-        if (response.data.response) {
-          playSoundIfEnabled('message');
           targetMessages(prev => [...prev, {
-            id: response.data.ai_message_id || `ai_${Date.now()}`,
+            id: `grp_error_${Date.now()}`,
             type: 'ai',
-            text: response.data.response
-          }]);
-        } else if (!response.data.ai_active) {
-          targetMessages(prev => [...prev, {
-            id: `wait_${Date.now()}`,
-            type: 'ai',
-            text: "Message envoyé au groupe ! Le coach et les autres membres le verront."
+            text: `Erreur d'envoi: ${groupErr?.response?.data?.detail || 'Vérifie ta connexion et réessaie.'}`,
           }]);
         }
 
@@ -4436,7 +4759,24 @@ export const ChatWidget = () => {
                         </button>
                       )}
 
-                      <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
+                      
+                      {/* V160: Date de naissance */}
+                      <button
+                        onClick={function() { setShowBirthdayModal(true); setShowMenu(false); }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '8px',
+                          width: '100%', padding: '8px 12px',
+                          background: 'none', border: 'none', color: '#fff',
+                          cursor: 'pointer', fontSize: '13px', textAlign: 'left',
+                          borderRadius: '6px'
+                        }}
+                        onMouseOver={function(e) { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; }}
+                        onMouseOut={function(e) { e.currentTarget.style.background = 'none'; }}
+                      >
+                        <span role="img" aria-label="birthday">&#x1F382;</span> Date de naissance
+                      </button>
+
+<div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
                       
                       {/* Toggle Son (icône haut-parleur filaire) */}
                       <button
@@ -4497,7 +4837,35 @@ export const ChatWidget = () => {
                         </svg>
                         {silenceAutoEnabled ? 'Silence Auto (actif)' : `Silence Auto (${getSilenceHoursLabel()})`}
                       </button>
-                      
+
+                      {/* V120: Toggle Notifications Push */}
+                      {isPushSupported() && (
+                        <button
+                          onClick={async () => { await togglePush(); setShowUserMenu(false); }}
+                          style={{
+                            width: '100%',
+                            padding: '10px 14px',
+                            textAlign: 'left',
+                            fontSize: '12px',
+                            color: pushEnabled ? '#22c55e' : '#fff',
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px'
+                          }}
+                          className="hover:bg-white/10"
+                          data-testid="toggle-push-btn"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                          </svg>
+                          {pushEnabled ? 'Notifications activées' : 'Activer les notifications'}
+                        </button>
+                      )}
+
                       {/* Rafraîchir */}
                       <button
                         onClick={() => { window.location.reload(); }}
@@ -4558,8 +4926,8 @@ export const ChatWidget = () => {
                 </div>
               )}
               
-              {/* Menu burger - MASQUÉ en mode Coach (fusionné dans le menu coach ci-dessous) */}
-              {(step === 'chat') && isCoachMode && !isVisitorPreview && (
+              {/* Menu burger - VISIBLE UNIQUEMENT POUR LE COACH/ADMIN (masque en mode Vue Visiteur) */}
+              {(step === 'chat' || step === 'coach') && isCoachMode && !isVisitorPreview && (
                 <div className="relative">
                   <button
                     onClick={() => setShowMenu(!showMenu)}
@@ -4580,7 +4948,7 @@ export const ChatWidget = () => {
                   >
                     ⋮
                   </button>
-
+                  
                   {/* Menu déroulant - ADMIN ONLY */}
                   {showMenu && (
                     <div
@@ -5325,49 +5693,9 @@ export const ChatWidget = () => {
                 </div>
                 )}
 
-                {/* QR Scanner Modal */}
-                {showQRScannerChat && (
-                  <QRScannerModal
-                    onScan={handleQRValidation}
-                    onClose={function() { setShowQRScannerChat(false); }}
-                  />
-                )}
-
                 {/* Liste des sessions ou messages */}
                 {!selectedCoachSession ? (
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                    {/* Mini-tabs: Conversations | Réservations | Scanner */}
-                    <div style={{ display: 'flex', gap: '0', borderBottom: '1px solid rgba(255,255,255,0.1)', flexShrink: 0 }}>
-                      {[
-                        { id: 'conversations', label: 'Conversations', icon: '💬' },
-                        { id: 'reservations', label: 'Réservations', icon: '📋' },
-                        { id: 'scanner', label: 'Scanner', icon: '📷' }
-                      ].map(function(t) {
-                        return React.createElement('button', {
-                          key: t.id,
-                          onClick: function() {
-                            setCoachChatView(t.id);
-                            if (t.id === 'reservations') loadCoachReservations();
-                            if (t.id === 'scanner') setShowQRScannerChat(true);
-                          },
-                          style: {
-                            flex: 1,
-                            padding: '8px 4px',
-                            fontSize: '11px',
-                            color: coachChatView === t.id ? '#d91cd2' : 'rgba(255,255,255,0.5)',
-                            background: coachChatView === t.id ? 'rgba(217,28,210,0.1)' : 'transparent',
-                            border: 'none',
-                            borderBottom: coachChatView === t.id ? '2px solid #d91cd2' : '2px solid transparent',
-                            cursor: 'pointer',
-                            fontWeight: coachChatView === t.id ? '600' : '400'
-                          }
-                        }, t.icon + ' ' + t.label);
-                      })}
-                    </div>
-
-                    {/* Vue Conversations */}
-                    {coachChatView === 'conversations' && (
-                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+                  <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
                     <div style={{ color: '#fff', fontSize: '12px', marginBottom: '12px', opacity: 0.7 }}>
                       Conversations actives ({coachSessions.length})
                     </div>
@@ -5390,97 +5718,21 @@ export const ChatWidget = () => {
                           }}
                         >
                           <div style={{ color: '#fff', fontSize: '13px', fontWeight: '500' }}>
-                            {session.participantName || session.title || `Visiteur ${(session.id || '').slice(0, 6)}`}
+                            {session.title || `Session ${(session.id || 'unknown').slice(0, 8)}`}
                           </div>
-                          {session.lastMessage && (
-                            <div style={{ color: '#aaa', fontSize: '11px', marginTop: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '250px' }}>
-                              {session.lastMessage.slice(0, 60)}{session.lastMessage.length > 60 ? '...' : ''}
-                            </div>
-                          )}
-                          <div style={{ color: '#888', fontSize: '11px', marginTop: '2px', display: 'flex', justifyContent: 'space-between' }}>
-                            <span>{session.participantEmail || (session.mode === 'human' ? 'Mode Humain' : session.mode === 'community' ? 'Communauté' : 'IA')}</span>
-                            <span>{new Date(session.created_at).toLocaleDateString('fr-FR')}</span>
+                          <div style={{ color: '#888', fontSize: '11px', marginTop: '4px' }}>
+                            {session.mode === 'human' ? 'Mode Humain' : session.mode === 'community' ? 'Communauté' : 'IA'}
+                            {' • '}
+                            {new Date(session.created_at).toLocaleDateString('fr-FR')}
                           </div>
                         </div>
                       ))
                     )}
                   </div>
-                    )}
-
-                    {/* Vue Réservations */}
-                    {coachChatView === 'reservations' && (
-                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
-                      <div style={{ color: '#fff', fontSize: '12px', marginBottom: '12px', opacity: 0.7 }}>
-                        Réservations récentes ({coachReservations.length})
-                      </div>
-                      {coachReservations.length === 0 ? (
-                        <div style={{ color: '#fff', opacity: 0.5, textAlign: 'center', padding: '20px', fontSize: '13px' }}>
-                          Aucune réservation
-                        </div>
-                      ) : (
-                        coachReservations.map(function(resa, idx) {
-                          return React.createElement('div', {
-                            key: resa.id || idx,
-                            style: {
-                              background: resa.validated ? 'rgba(34,197,94,0.1)' : 'rgba(255,255,255,0.05)',
-                              border: '1px solid ' + (resa.validated ? 'rgba(34,197,94,0.3)' : 'rgba(255,255,255,0.1)'),
-                              borderRadius: '8px',
-                              padding: '10px',
-                              marginBottom: '8px'
-                            }
-                          },
-                            React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                              React.createElement('div', { style: { color: '#fff', fontSize: '13px', fontWeight: '500' } }, resa.userName || 'Anonyme'),
-                              React.createElement('span', {
-                                style: {
-                                  fontSize: '10px',
-                                  padding: '2px 8px',
-                                  borderRadius: '10px',
-                                  background: resa.validated ? 'rgba(34,197,94,0.2)' : 'rgba(251,191,36,0.2)',
-                                  color: resa.validated ? '#22c55e' : '#fbbf24'
-                                }
-                              }, resa.validated ? 'Validé' : 'En attente')
-                            ),
-                            React.createElement('div', { style: { color: '#aaa', fontSize: '11px', marginTop: '3px' } }, resa.courseName || resa.offerName || ''),
-                            React.createElement('div', { style: { color: '#888', fontSize: '11px', marginTop: '2px' } },
-                              (resa.selectedDatesText || new Date(resa.createdAt || resa.datetime).toLocaleDateString('fr-FR')) + ' • ' + (resa.reservationCode || '')
-                            )
-                          );
-                        })
-                      )}
-                    </div>
-                    )}
-
-                    {/* Vue Scanner — redirige vers le scanner modal */}
-                    {coachChatView === 'scanner' && (
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-                      <div style={{ fontSize: '48px', marginBottom: '16px' }}>📷</div>
-                      <div style={{ color: '#fff', fontSize: '14px', fontWeight: '500', marginBottom: '8px' }}>Scanner QR Code</div>
-                      <div style={{ color: '#888', fontSize: '12px', textAlign: 'center', marginBottom: '16px' }}>
-                        Scannez le QR code d'une réservation pour valider l'entrée
-                      </div>
-                      <button
-                        onClick={function() { setShowQRScannerChat(true); }}
-                        style={{
-                          padding: '12px 24px',
-                          background: 'linear-gradient(135deg, #d91cd2, #9333ea)',
-                          color: '#fff',
-                          border: 'none',
-                          borderRadius: '8px',
-                          fontSize: '13px',
-                          fontWeight: '600',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Ouvrir la caméra
-                      </button>
-                    </div>
-                    )}
-                  </div>
                 ) : (
                   <>
                     {/* Header session sélectionnée */}
-                    <div style={{
+                    <div style={{ 
                       padding: '8px 12px', 
                       borderBottom: '1px solid rgba(255,255,255,0.1)',
                       display: 'flex',
@@ -5500,7 +5752,7 @@ export const ChatWidget = () => {
                         ← Retour
                       </button>
                       <span style={{ color: '#fff', fontSize: '12px' }}>
-                        {selectedCoachSession.participantName || selectedCoachSession.title || `Visiteur ${(selectedCoachSession.id || '').slice(0, 6)}`}
+                        {selectedCoachSession.title || `Session ${(selectedCoachSession.id || 'unknown').slice(0, 8)}`}
                       </span>
                     </div>
 
@@ -5521,6 +5773,7 @@ export const ChatWidget = () => {
                           isUser={msg.type === 'coach'}
                           onReservationClick={() => {}}
                           onZoomPhoto={(url) => setZoomedChatPhoto(url)}
+                          onDelete={(messageId) => handleDeleteMessage(messageId)}
                         />
                       ))}
                       <div ref={messagesEndRef} />
@@ -5971,13 +6224,14 @@ export const ChatWidget = () => {
                     >
                       <MemoizedMessageBubble
                         msg={msg}
-                        isUser={msg.type === 'user' && msg.senderId === participantId}
+                        isUser={(msg.type === 'user' || msg.sender_type === 'user') && (msg.senderId === participantId || msg.sender_id === participantId)}
                         onParticipantClick={startPrivateChat}
                         isCommunity={chatMode === 'group'}
                         currentUserId={participantId}
                         profilePhotoUrl={profilePhoto}
                         onReservationClick={() => setShowReservationPanel(true)}
                         onZoomPhoto={(url) => setZoomedChatPhoto(url)}
+                        onDelete={(messageId) => handleDeleteMessage(messageId)}
                       />
                     </div>
                   ))}
@@ -6296,36 +6550,50 @@ export const ChatWidget = () => {
                 >
                   {/* === GAUCHE: Emoji + Réservations === */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                    {/* === SÉLECTEUR D'EMOJIS (Composant externe) === */}
-                    <EmojiPicker 
-                      isOpen={showEmojiPicker}
-                      onClose={() => setShowEmojiPicker(false)}
-                      onSelect={insertEmoji}
-                      position="bottom"
+                    {/* v154: Sélecteur d'emojis unifié (Africain + Coach custom) */}
+                    <AfricanEmojiPicker
+                      isOpen={showAfricanEmojiPicker}
+                      onSelect={(emoji) => {
+                        // Si c'est un tag [emoji:...], l'insérer tel quel
+                        if (typeof emoji === 'string' && emoji.startsWith('[emoji:')) {
+                          setInputMessage(prev => prev + emoji);
+                        } else {
+                          setInputMessage(prev => prev + emoji);
+                        }
+                        setShowAfricanEmojiPicker(false);
+                      }}
+                      onClose={() => setShowAfricanEmojiPicker(false)}
+                      customEmojis={coachCustomEmojis}
                     />
-                    
-                    {/* Bouton Emoji */}
+
+                    {/* v154: Un seul bouton emoji — personnage noir souriant */}
                     <button
                       type="button"
-                      onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                      onClick={() => setShowAfricanEmojiPicker(!showAfricanEmojiPicker)}
                       style={{
-                        width: '40px',
-                        height: '40px',
+                        width: '36px',
+                        height: '36px',
                         borderRadius: '50%',
-                        background: showEmojiPicker ? '#9333ea' : 'rgba(255,255,255,0.1)',
+                        background: showAfricanEmojiPicker ? '#D91CD2' : 'transparent',
                         border: 'none',
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         flexShrink: 0,
-                        fontSize: '18px'
+                        padding: 0
                       }}
                       data-testid="emoji-btn"
+                      title="Émojis"
                     >
-                      😊
+                      <svg width="28" height="28" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="18" cy="18" r="16" fill="#6D4C41"/>
+                        <circle cx="12" cy="15" r="2" fill="#1a1a1a"/>
+                        <circle cx="24" cy="15" r="2" fill="#1a1a1a"/>
+                        <path d="M11 22 C14 27, 22 27, 25 22" stroke="#1a1a1a" strokeWidth="2" strokeLinecap="round" fill="none"/>
+                      </svg>
                     </button>
-                    
+
                     {/* v9.3.7: Icône Calendrier (Réservation) - TOUJOURS VISIBLE pour tous les utilisateurs */}
                     <button
                       type="button"
@@ -6395,4 +6663,250 @@ export const ChatWidget = () => {
                       width: '44px',
                       height: '44px',
                       borderRadius: '50%',
- 
+                      background: '#D91CD2', /* v9.4.2: Violet Afroboost */
+                      border: 'none',
+                      cursor: isLoading || !inputMessage.trim() ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: isLoading || !inputMessage.trim() ? 0.5 : 1,
+                      flexShrink: 0,
+                      marginLeft: 'auto' /* Force à droite */
+                    }}
+                    data-testid="chat-send-btn"
+                  >
+                    <span style={{ pointerEvents: 'none' }}><SendIcon /></span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* === FENÊTRE FLOTTANTE MP (Composant extrait) === */}
+      <PrivateChatView
+        activeChat={activePrivateChat ? {
+          ...activePrivateChat,
+          recipientName: activePrivateChat.recipientName || 
+            (activePrivateChat.participant_1_id === participantId 
+              ? activePrivateChat.participant_2_name 
+              : activePrivateChat.participant_1_name)
+        } : null}
+        messages={privateMessages}
+        inputValue={privateInput}
+        setInputValue={setPrivateInput}
+        onSend={sendPrivateMessage}
+        onClose={closePrivateChat}
+        onInputChange={emitDmTyping}
+        onInputBlur={() => emitDmTyping(false)}
+        typingUser={dmTypingUser}
+        isMainChatOpen={isOpen}
+      />
+      
+      {/* === v85: MODAL ZOOM PHOTO — Portal sur document.body + z-index 10000000 === */}
+      {zoomedChatPhoto && ReactDOM.createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            background: 'rgba(0,0,0,0.88)',
+            backdropFilter: 'blur(5px)',
+            WebkitBackdropFilter: 'blur(5px)',
+            zIndex: 10000000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            pointerEvents: 'auto'
+          }}
+          onClick={() => setZoomedChatPhoto(null)}
+          data-testid="zoom-photo-modal"
+        >
+          {/* v82: Bouton Fermer (X) visible en haut à droite */}
+          <button
+            onClick={(e) => { e.stopPropagation(); setZoomedChatPhoto(null); }}
+            style={{
+              position: 'absolute',
+              top: '20px',
+              right: '20px',
+              width: '44px',
+              height: '44px',
+              borderRadius: '50%',
+              background: 'rgba(255,255,255,0.15)',
+              border: '2px solid rgba(255,255,255,0.3)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 10000001
+            }}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+          {/* v82: Photo circulaire avec bordure violet néon */}
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 'min(70vw, 280px)',
+              height: 'min(70vw, 280px)',
+              borderRadius: '50%',
+              overflow: 'hidden',
+              border: '5px solid #D91CD2',
+              boxShadow: '0 0 40px rgba(217,28,210,0.6), 0 0 80px rgba(217,28,210,0.3), 0 0 120px rgba(217,28,210,0.1)',
+              animation: 'v76ZoomIn 0.25s ease-out'
+            }}
+          >
+            <img
+              src={zoomedChatPhoto}
+              alt="Photo profil"
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            />
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* v76: CSS animation pour zoom photo */}
+      <style>{`
+        @keyframes v76ZoomIn {
+          from { transform: scale(0.5); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
+      
+        @keyframes birthdaySlide {
+          from { transform: translateX(-50%) translateY(-20px); opacity: 0; }
+          to { transform: translateX(-50%) translateY(0); opacity: 1; }
+        }
+      `}</style>
+
+      {/* V160: Birthday Announcement Banner */}
+      {todayBirthdays && todayBirthdays.length > 0 && (
+        <div style={{
+          position: 'fixed', top: '60px', left: '50%', transform: 'translateX(-50%)',
+          background: 'linear-gradient(135deg, #7c3aed, #a855f7)',
+          color: '#fff', padding: '12px 24px', borderRadius: '16px',
+          boxShadow: '0 4px 20px rgba(124,58,237,0.4)',
+          zIndex: 10000, display: 'flex', alignItems: 'center', gap: '10px',
+          maxWidth: '90vw', animation: 'birthdaySlide 0.5s ease-out'
+        }}>
+          <span style={{ fontSize: '28px' }}>&#x1F389;</span>
+          <div>
+            <div style={{ fontWeight: 'bold', fontSize: '14px' }}>
+              {"C'est l'anniversaire de " + todayBirthdays.map(function(b) { return b.name; }).join(', ') + " !"}
+            </div>
+            <div style={{ fontSize: '12px', opacity: 0.9 }}>
+              Souhaitez-lui un joyeux anniversaire !
+            </div>
+          </div>
+          <button onClick={function() { setTodayBirthdays(null); }} style={{
+            background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff',
+            borderRadius: '50%', width: '24px', height: '24px', cursor: 'pointer',
+            fontSize: '14px', marginLeft: '8px'
+          }}>&#x2715;</button>
+        </div>
+      )}
+
+      {/* V160: Birthday Date Picker Modal */}
+      {showBirthdayModal && ReactDOM.createPortal(
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.6)', zIndex: 99999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }} onClick={function() { setShowBirthdayModal(false); }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #1a1a2e, #2d1b4e)',
+            borderRadius: '20px', padding: '28px', width: '320px',
+            boxShadow: '0 8px 32px rgba(124,58,237,0.3)',
+            border: '1px solid rgba(124,58,237,0.3)'
+          }} onClick={function(e) { e.stopPropagation(); }}>
+            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+              <span style={{ fontSize: '40px' }}>&#x1F382;</span>
+              <h3 style={{ color: '#fff', margin: '10px 0 5px', fontSize: '18px' }}>Date de naissance</h3>
+              <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px', margin: 0 }}>
+                Pour recevoir un message le jour J !
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', marginBottom: '6px', display: 'block' }}>Mois</label>
+                <select
+                  value={birthdayMonth}
+                  onChange={function(e) { setBirthdayMonth(e.target.value); }}
+                  style={{
+                    width: '100%', padding: '10px', borderRadius: '10px',
+                    background: 'rgba(124,58,237,0.2)', border: '1px solid rgba(124,58,237,0.4)',
+                    color: '#fff', fontSize: '14px', outline: 'none'
+                  }}
+                >
+                  <option value="" style={{background:'#1a1a2e'}}>--</option>
+                  <option value="1" style={{background:'#1a1a2e'}}>Janvier</option>
+                  <option value="2" style={{background:'#1a1a2e'}}>F\u00e9vrier</option>
+                  <option value="3" style={{background:'#1a1a2e'}}>Mars</option>
+                  <option value="4" style={{background:'#1a1a2e'}}>Avril</option>
+                  <option value="5" style={{background:'#1a1a2e'}}>Mai</option>
+                  <option value="6" style={{background:'#1a1a2e'}}>Juin</option>
+                  <option value="7" style={{background:'#1a1a2e'}}>Juillet</option>
+                  <option value="8" style={{background:'#1a1a2e'}}>Ao\u00fbt</option>
+                  <option value="9" style={{background:'#1a1a2e'}}>Septembre</option>
+                  <option value="10" style={{background:'#1a1a2e'}}>Octobre</option>
+                  <option value="11" style={{background:'#1a1a2e'}}>Novembre</option>
+                  <option value="12" style={{background:'#1a1a2e'}}>D\u00e9cembre</option>
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', marginBottom: '6px', display: 'block' }}>Jour</label>
+                <select
+                  value={birthdayDay}
+                  onChange={function(e) { setBirthdayDay(e.target.value); }}
+                  style={{
+                    width: '100%', padding: '10px', borderRadius: '10px',
+                    background: 'rgba(124,58,237,0.2)', border: '1px solid rgba(124,58,237,0.4)',
+                    color: '#fff', fontSize: '14px', outline: 'none'
+                  }}
+                >
+                  <option value="" style={{background:'#1a1a2e'}}>--</option>
+                  {Array.from({length: 31}, function(_, i) { return i + 1; }).map(function(d) {
+                    return React.createElement('option', {key: d, value: String(d), style:{background:'#1a1a2e'}}, d);
+                  })}
+                </select>
+              </div>
+            </div>
+            {birthdaySaved ? (
+              <div style={{
+                background: 'rgba(34,197,94,0.2)', border: '1px solid rgba(34,197,94,0.4)',
+                borderRadius: '12px', padding: '12px', textAlign: 'center',
+                color: '#22c55e', fontSize: '14px'
+              }}>
+                &#x2705; Date enregistr\u00e9e !
+              </div>
+            ) : (
+              <button
+                onClick={handleSaveBirthday}
+                disabled={!birthdayMonth || !birthdayDay}
+                style={{
+                  width: '100%', padding: '12px', borderRadius: '12px',
+                  background: birthdayMonth && birthdayDay ? 'linear-gradient(135deg, #7c3aed, #a855f7)' : 'rgba(124,58,237,0.3)',
+                  border: 'none', color: '#fff', fontSize: '15px',
+                  fontWeight: 'bold', cursor: birthdayMonth && birthdayDay ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.3s'
+                }}
+              >
+                Enregistrer
+              </button>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
+
+    </>
+  );
+};
+
+export default ChatWidget;
