@@ -1228,6 +1228,10 @@ export const ChatWidget = () => {
   var _cres = useState([]); var coachReservations = _cres[0]; var setCoachReservations = _cres[1];
   var _cqr = useState(''); var qrScanCode = _cqr[0]; var setQrScanCode = _cqr[1];
   var _cqrR = useState(null); var qrScanResult = _cqrR[0]; var setQrScanResult = _cqrR[1];
+  // v162e: QR camera scanner
+  var _cqrCam = useState(false); var qrCameraActive = _cqrCam[0]; var setQrCameraActive = _cqrCam[1];
+  var _cqrErr = useState(''); var qrCameraError = _cqrErr[0]; var setQrCameraError = _cqrErr[1];
+  var qrScannerRef = useRef(null);
   const [isFullscreen, setIsFullscreen] = useState(getInitialFullscreen); // Mode plein écran (ABONNÉ = activé)
   const [showAfricanEmojiPicker, setShowAfricanEmojiPicker] = useState(false); // v154: Sélecteur d'emojis unifié
   const [coachCustomEmojis, setCoachCustomEmojis] = useState([]); // v154: Emojis personnalisés du coach
@@ -3498,6 +3502,66 @@ export const ChatWidget = () => {
       });
   };
 
+  // v162e: QR Camera Scanner functions
+  var loadQrScannerLib = function(callback) {
+    if (window.Html5Qrcode) { callback(); return; }
+    var s = document.createElement('script');
+    s.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+    s.onload = callback;
+    s.onerror = function() { setQrCameraError('Impossible de charger le scanner'); };
+    document.head.appendChild(s);
+  };
+
+  var startQrCamera = function() {
+    setQrCameraError('');
+    setQrScanResult(null);
+    loadQrScannerLib(function() {
+      try {
+        if (qrScannerRef.current) {
+          try { qrScannerRef.current.stop(); } catch(e) {}
+        }
+        var scanner = new window.Html5Qrcode('qr-reader-container');
+        qrScannerRef.current = scanner;
+        scanner.start(
+          { facingMode: 'environment' },
+          { fps: 10, qrbox: { width: 200, height: 200 }, aspectRatio: 1.0 },
+          function(decodedText) {
+            // QR code scanned successfully
+            setQrScanCode(decodedText.toUpperCase());
+            try { scanner.stop(); } catch(e) {}
+            setQrCameraActive(false);
+            // Auto-validate
+            axios.post(API + '/reservations/staff/validate', { code: decodedText.trim() })
+              .then(function(res) {
+                setQrScanResult(res.data);
+                if (res.data.success) setQrScanCode('');
+              })
+              .catch(function(err) {
+                var msg = (err.response && err.response.data && err.response.data.detail) || 'Erreur de validation';
+                setQrScanResult({ success: false, message: msg });
+              });
+          },
+          function() {} // ignore scan errors (no QR found in frame)
+        ).then(function() {
+          setQrCameraActive(true);
+        }).catch(function(err) {
+          setQrCameraError('Caméra non disponible: ' + (err.message || err));
+          setQrCameraActive(false);
+        });
+      } catch(e) {
+        setQrCameraError('Erreur scanner: ' + e.message);
+      }
+    });
+  };
+
+  var stopQrCamera = function() {
+    if (qrScannerRef.current) {
+      try { qrScannerRef.current.stop(); } catch(e) {}
+      qrScannerRef.current = null;
+    }
+    setQrCameraActive(false);
+  };
+
   // === MODE COACH: Charger les messages d'une session ===
   const loadCoachSessionMessages = async (session) => {
     setSelectedCoachSession(session);
@@ -5734,6 +5798,7 @@ export const ChatWidget = () => {
                         return React.createElement('button', {
                           key: tab.key,
                           onClick: function() {
+                            if (tab.key !== 'scanner') stopQrCamera();
                             setCoachDashTab(tab.key);
                             if (tab.key === 'reservations') loadCoachReservations();
                           },
@@ -5834,10 +5899,36 @@ export const ChatWidget = () => {
 
                     {/* Tab: Scanner QR */}
                     {coachDashTab === 'scanner' && (
-                    <div style={{ flex: 1, padding: '20px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                      <div style={{ color: '#fff', fontSize: '14px', fontWeight: '500' }}>Scanner / Valider un code</div>
-                      <div style={{ color: '#888', fontSize: '12px', textAlign: 'center' }}>
-                        Entrez le code de réservation pour valider la présence
+                    <div style={{ flex: 1, padding: '16px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', overflowY: 'auto' }}>
+                      {/* Camera scanner zone */}
+                      <div id="qr-reader-container" style={{
+                        width: '100%', maxWidth: '280px', minHeight: qrCameraActive ? '280px' : '0',
+                        borderRadius: '12px', overflow: 'hidden',
+                        display: qrCameraActive ? 'block' : 'none'
+                      }}></div>
+                      {!qrCameraActive && (
+                        <button onClick={startQrCamera} style={{
+                          padding: '12px 20px', borderRadius: '10px', border: '2px dashed rgba(217,28,210,0.5)',
+                          background: 'rgba(217,28,210,0.08)', color: '#d91cd2', fontSize: '14px',
+                          cursor: 'pointer', width: '100%', maxWidth: '280px', textAlign: 'center'
+                        }}>
+                          📷 Ouvrir la caméra
+                        </button>
+                      )}
+                      {qrCameraActive && (
+                        <button onClick={stopQrCamera} style={{
+                          padding: '8px 16px', borderRadius: '8px', border: 'none',
+                          background: 'rgba(239,68,68,0.2)', color: '#ef4444', fontSize: '12px',
+                          cursor: 'pointer'
+                        }}>
+                          Fermer la caméra
+                        </button>
+                      )}
+                      {qrCameraError && (
+                        <div style={{ color: '#ef4444', fontSize: '12px', textAlign: 'center' }}>{qrCameraError}</div>
+                      )}
+                      <div style={{ width: '100%', maxWidth: '280px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '10px', textAlign: 'center' }}>
+                        <div style={{ color: '#888', fontSize: '11px', marginBottom: '8px' }}>ou entrez le code manuellement</div>
                       </div>
                       <input
                         type="text"
