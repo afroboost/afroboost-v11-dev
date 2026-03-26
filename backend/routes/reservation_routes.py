@@ -298,6 +298,66 @@ async def delete_reservation(reservation_id: str):
     await db.reservations.delete_one({"id": reservation_id})
     return {"success": True}
 
+# === STAFF ACCESS: Validation QR uniquement (pas d'accès chat/péglages) ===
+@reservation_router.post("/staff/validate")
+async def staff_validate_reservation(request: Request):
+    """Endpoint simplifié pour le staff — valide une réservation par code QR.
+    Le staff n'a accès qu'à ce endpoint, pas aux conversations ni aux réglages."""
+    body = await request.json()
+    code = body.get("code", "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Code requis")
+    reservation = await db.reservations.find_one({"reservationCode": code}, {"_id": 0})
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Réservation non trouvée")
+    if reservation.get("validated"):
+        return {"success": False, "message": "Déjà validé", "userName": reservation.get("userName", ""), "validatedAt": reservation.get("validatedAt", "")}
+    await db.reservations.update_one(
+        {"reservationCode": code},
+        {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
+    )
+    return {"success": True, "message": "Réservation validée", "userName": reservation.get("userName", ""), "courseName": reservation.get("courseName", "")}
+
+
+# === EXPORT PRÉSENCES (CSV) ===
+@reservation_router.get("/reservations/export/attendance")
+async def export_attendance(request: Request, date: str = "", course: str = ""):
+    """Exporte la liste des présences (réservations validées) au format CSV.
+    Paramètres optionnels: date (YYYY-MM-DD), course (nom du cours).
+    Le frontend peut convertir en Excel ou PDF."""
+    query = {"validated": True}
+    if date:
+        query["selectedDatesText"] = {"$regex": date, "$options": "i"}
+    if course:
+        query["courseName"] = {"$regex": course, "$options": "i"}
+
+    reservations = await db.reservations.find(query, {"_id": 0}).sort("validatedAt", -1).to_list(500)
+
+    # Construire le CSV
+    import io, csv
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Nom", "Email", "WhatsApp", "Cours", "Date", "Code", "Validé le"])
+    for r in reservations:
+        writer.writerow([
+            r.get("userName", ""),
+            r.get("userEmail", ""),
+            r.get("userWhatsapp", ""),
+            r.get("courseName", r.get("offerName", "")),
+            r.get("selectedDatesText", ""),
+            r.get("reservationCode", ""),
+            r.get("validatedAt", "")
+        ])
+
+    from fastapi.responses import StreamingResponse
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=presences.csv"}
+    )
+
+
 @reservation_router.post("/check-reservation-eligibility")
 async def check_reservation_eligibility(request: Request):
     """Vérifie si un utilisateur peut réserver (abonné actif ou code promo valide)"""
