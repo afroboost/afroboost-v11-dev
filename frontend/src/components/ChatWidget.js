@@ -5642,19 +5642,57 @@ export const ChatWidget = () => {
                   alignItems: 'center'
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {coachProfile && coachProfile.photo_url ? (
-                      <img src={coachProfile.photo_url} alt="Coach" style={{
-                        width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover',
-                        border: '2px solid #d91cd2'
-                      }} />
-                    ) : (
-                      <div style={{
-                        width: '28px', height: '28px', borderRadius: '50%',
-                        background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '14px', color: '#fff'
-                      }}>👤</div>
-                    )}
+                    {/* Coach avatar — click to upload, long-press/right-click to zoom */}
+                    <label style={{ cursor: 'pointer', position: 'relative' }}>
+                      {coachProfile && coachProfile.photo_url ? (
+                        <img src={coachProfile.photo_url} alt="Coach"
+                          onClick={function(e) { e.preventDefault(); setZoomedChatPhoto(coachProfile.photo_url); }}
+                          style={{
+                            width: '30px', height: '30px', borderRadius: '50%', objectFit: 'cover',
+                            border: '2px solid #d91cd2', cursor: 'pointer'
+                          }} />
+                      ) : (
+                        <div style={{
+                          width: '30px', height: '30px', borderRadius: '50%',
+                          background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '13px', color: '#fff'
+                        }}>📷</div>
+                      )}
+                      <input type="file" accept="image/*" style={{ display: 'none' }}
+                        onChange={function(e) {
+                          var file = e.target.files && e.target.files[0];
+                          if (!file || file.size > 2 * 1024 * 1024) {
+                            if (file) alert('Image trop grande (max 2 Mo)');
+                            return;
+                          }
+                          var reader = new FileReader();
+                          reader.onload = function(ev) {
+                            var base64 = ev.target.result;
+                            // Resize to max 200x200 for storage
+                            var img = new Image();
+                            img.onload = function() {
+                              var canvas = document.createElement('canvas');
+                              var size = Math.min(img.width, img.height, 200);
+                              canvas.width = size; canvas.height = size;
+                              var ctx = canvas.getContext('2d');
+                              var sx = (img.width - size) / 2, sy = (img.height - size) / 2;
+                              ctx.drawImage(img, sx, sy, size, size, 0, 0, size, size);
+                              var resized = canvas.toDataURL('image/jpeg', 0.8);
+                              // Save to backend
+                              axios.put(API + '/coach-profile', { photo_url: resized }, {
+                                headers: { 'X-User-Email': localStorage.getItem('coach_email') || '' }
+                              }).then(function() {
+                                setCoachProfile(function(prev) { return Object.assign({}, prev, { photo_url: resized }); });
+                              }).catch(function() { alert('Erreur upload photo'); });
+                            };
+                            img.src = base64;
+                          };
+                          reader.readAsDataURL(file);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
                     <span style={{ color: '#d91cd2', fontSize: '12px', fontWeight: 'bold' }}>
                       Mode Coach
                     </span>
@@ -5897,6 +5935,30 @@ export const ChatWidget = () => {
                       coachSessions.map(function(session) { return (
                         <div
                           key={session.id}
+                          onClick={function() { loadCoachSessionMessages(session); }}
+                          onTouchStart={function(e) {
+                            var t = setTimeout(function() {
+                              // Long press detected
+                              if (window.confirm('Supprimer cette conversation avec ' + (session.participantName || 'Visiteur anonyme') + ' ?')) {
+                                axios.delete(API + '/chat/sessions/' + session.id, {
+                                  headers: { 'X-User-Email': localStorage.getItem('coach_email') || '' }
+                                }).then(function() { loadCoachSessions(); })
+                                  .catch(function() { alert('Erreur de suppression'); });
+                              }
+                            }, 800);
+                            e.target._lpTimer = t;
+                          }}
+                          onTouchEnd={function(e) { if (e.target._lpTimer) clearTimeout(e.target._lpTimer); }}
+                          onTouchMove={function(e) { if (e.target._lpTimer) clearTimeout(e.target._lpTimer); }}
+                          onContextMenu={function(e) {
+                            e.preventDefault();
+                            if (window.confirm('Supprimer cette conversation avec ' + (session.participantName || 'Visiteur anonyme') + ' ?')) {
+                              axios.delete(API + '/chat/sessions/' + session.id, {
+                                headers: { 'X-User-Email': localStorage.getItem('coach_email') || '' }
+                              }).then(function() { loadCoachSessions(); })
+                                .catch(function() { alert('Erreur de suppression'); });
+                            }
+                          }}
                           style={{
                             background: 'rgba(255,255,255,0.05)',
                             border: '1px solid rgba(255,255,255,0.1)',
@@ -5904,12 +5966,10 @@ export const ChatWidget = () => {
                             padding: '10px',
                             marginBottom: '8px',
                             cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'flex-start',
-                            gap: '8px'
+                            WebkitUserSelect: 'none',
+                            userSelect: 'none'
                           }}
                         >
-                          <div style={{ flex: 1 }} onClick={function() { loadCoachSessionMessages(session); }}>
                           <div style={{ color: '#fff', fontSize: '13px', fontWeight: '500' }}>
                             {session.participantName || session.title || 'Visiteur anonyme'}
                           </div>
@@ -5919,36 +5979,10 @@ export const ChatWidget = () => {
                             {new Date(session.created_at).toLocaleDateString('fr-FR')}
                           </div>
                           {session.lastMessage && (
-                            <div style={{ color: '#aaa', fontSize: '11px', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '220px' }}>
+                            <div style={{ color: '#aaa', fontSize: '11px', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '260px' }}>
                               {session.lastMessage}
                             </div>
                           )}
-                          </div>
-                          {/* v162g: Delete conversation button */}
-                          <button
-                            onClick={function(e) {
-                              e.stopPropagation();
-                              if (window.confirm('Supprimer cette conversation ?')) {
-                                axios.delete(API + '/chat/sessions/' + session.id, {
-                                  headers: { 'X-User-Email': localStorage.getItem('coach_email') || '' }
-                                }).then(function() {
-                                  loadCoachSessions();
-                                }).catch(function(err) {
-                                  console.error('Delete error:', err);
-                                  alert('Erreur de suppression');
-                                });
-                              }
-                            }}
-                            title="Supprimer"
-                            style={{
-                              background: 'none', border: 'none', cursor: 'pointer',
-                              color: '#666', fontSize: '16px', padding: '4px',
-                              flexShrink: 0, alignSelf: 'center', opacity: 0.6,
-                              transition: 'opacity 0.2s'
-                            }}
-                            onMouseOver={function(e) { e.target.style.opacity = '1'; e.target.style.color = '#ef4444'; }}
-                            onMouseOut={function(e) { e.target.style.opacity = '0.6'; e.target.style.color = '#666'; }}
-                          >🗑️</button>
                         </div>
                       ); })
                     )}
@@ -5997,24 +6031,55 @@ export const ChatWidget = () => {
                     <div style={{ flex: 1, padding: '16px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', overflowY: 'auto' }}>
                       {/* Camera scanner zone — always in DOM for html5-qrcode */}
                       <div id="qr-reader-container" style={{
-                        width: '100%', maxWidth: '280px', minHeight: '220px',
+                        width: '100%', maxWidth: '280px', minHeight: qrCameraActive ? '220px' : '0',
                         borderRadius: '12px', overflow: 'hidden',
-                        background: qrCameraActive ? '#000' : 'rgba(255,255,255,0.03)',
-                        border: qrCameraActive ? 'none' : '2px dashed rgba(217,28,210,0.3)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        position: 'relative'
-                      }}>
-                        {!qrCameraActive && (
+                        background: '#000'
+                      }}></div>
+                      {!qrCameraActive && (
+                        <div style={{ display: 'flex', gap: '8px', width: '100%', maxWidth: '280px' }}>
                           <button onClick={startQrCamera} style={{
-                            background: 'none', border: 'none', cursor: 'pointer',
-                            color: '#d91cd2', fontSize: '14px', textAlign: 'center',
-                            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px'
+                            flex: 1, padding: '14px 8px', borderRadius: '10px',
+                            border: '2px dashed rgba(217,28,210,0.4)',
+                            background: 'rgba(217,28,210,0.06)', color: '#d91cd2',
+                            fontSize: '13px', cursor: 'pointer', textAlign: 'center'
+                          }}>📷 Caméra</button>
+                          <label style={{
+                            flex: 1, padding: '14px 8px', borderRadius: '10px',
+                            border: '2px dashed rgba(139,92,246,0.4)',
+                            background: 'rgba(139,92,246,0.06)', color: '#8b5cf6',
+                            fontSize: '13px', cursor: 'pointer', textAlign: 'center'
                           }}>
-                            <span style={{ fontSize: '40px' }}>📷</span>
-                            <span>Appuyez pour scanner</span>
-                          </button>
-                        )}
-                      </div>
+                            🖼️ Image
+                            <input type="file" accept="image/*" style={{ display: 'none' }}
+                              onChange={function(e) {
+                                var file = e.target.files && e.target.files[0];
+                                if (!file) return;
+                                setQrCameraError('');
+                                setQrScanResult(null);
+                                loadQrScannerLib(function() {
+                                  var scanner = new window.Html5Qrcode('qr-reader-container');
+                                  scanner.scanFile(file, true).then(function(decodedText) {
+                                    setQrScanCode(decodedText.toUpperCase());
+                                    // Auto-validate
+                                    axios.post(API + '/reservations/staff/validate', { code: decodedText.trim() })
+                                      .then(function(res) {
+                                        setQrScanResult(res.data);
+                                        if (res.data.success) setQrScanCode('');
+                                      })
+                                      .catch(function(err) {
+                                        var msg = (err.response && err.response.data && err.response.data.detail) || 'Erreur';
+                                        setQrScanResult({ success: false, message: msg });
+                                      });
+                                  }).catch(function() {
+                                    setQrCameraError('Aucun QR code trouvé dans cette image');
+                                  });
+                                });
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
+                        </div>
+                      )}
                       {qrCameraActive && (
                         <button onClick={stopQrCamera} style={{
                           padding: '8px 16px', borderRadius: '8px', border: 'none',
