@@ -73,7 +73,14 @@ mongo_url = os.environ.get('MONGO_URL')
 if not mongo_url:
     raise RuntimeError("MONGO_URL required")
 
-client = AsyncIOMotorClient(mongo_url)
+# v162: Limiter le pool pour Vercel serverless (M0 = max 500 connexions)
+client = AsyncIOMotorClient(
+    mongo_url,
+    maxPoolSize=3,
+    minPoolSize=0,
+    maxIdleTimeMS=30000,
+    serverSelectionTimeoutMS=5000
+)
 db = client[os.environ.get('DB_NAME', 'afroboost_db')]
 
 # v9.1.1: Initialiser la db pour les routes modulaires
