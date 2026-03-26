@@ -1232,6 +1232,13 @@ export const ChatWidget = () => {
   var _cqrCam = useState(false); var qrCameraActive = _cqrCam[0]; var setQrCameraActive = _cqrCam[1];
   var _cqrErr = useState(''); var qrCameraError = _cqrErr[0]; var setQrCameraError = _cqrErr[1];
   var qrScannerRef = useRef(null);
+  // v162f: Coach profile photo
+  var _cpro = useState(null); var coachProfile = _cpro[0]; var setCoachProfile = _cpro[1];
+  // v162f: Coach emoji picker toggle (separate from chat emoji picker)
+  var _cep = useState(false); var showCoachEmojiPicker = _cep[0]; var setShowCoachEmojiPicker = _cep[1];
+  // v162f: AI suggestion for coach response
+  var _cai = useState(''); var aiSuggestion = _cai[0]; var setAiSuggestion = _cai[1];
+  var _caiL = useState(false); var aiSuggestionLoading = _caiL[0]; var setAiSuggestionLoading = _caiL[1];
   const [isFullscreen, setIsFullscreen] = useState(getInitialFullscreen); // Mode plein écran (ABONNÉ = activé)
   const [showAfricanEmojiPicker, setShowAfricanEmojiPicker] = useState(false); // v154: Sélecteur d'emojis unifié
   const [coachCustomEmojis, setCoachCustomEmojis] = useState([]); // v154: Emojis personnalisés du coach
@@ -3562,6 +3569,36 @@ export const ChatWidget = () => {
     setQrCameraActive(false);
   };
 
+  // v162f: Load coach profile on mount (for photo)
+  var loadCoachProfile = function() {
+    axios.get(API + '/coach-profile').then(function(res) {
+      setCoachProfile(res.data || null);
+    }).catch(function() {});
+  };
+
+  // v162f: AI suggestion for coach — ask backend AI for a response suggestion
+  var getAiSuggestion = function() {
+    if (!selectedCoachSession || aiSuggestionLoading) return;
+    setAiSuggestionLoading(true);
+    setAiSuggestion('');
+    // Collect last messages from the conversation
+    var msgs = (messages || []).slice(-6).map(function(m) {
+      return (m.type === 'user' ? 'Client' : 'Coach') + ': ' + (m.text || '').substring(0, 200);
+    }).join('\n');
+    axios.post(API + '/chat', {
+      message: 'Tu es le coach Afroboost. Suggère une réponse courte et chaleureuse au dernier message du client. Voici la conversation récente:\n' + msgs + '\n\nSuggère une réponse de coach (2-3 phrases max, en français):',
+      session_id: 'ai-suggestion-' + Date.now(),
+      mode: 'ai'
+    }).then(function(res) {
+      var reply = res.data && res.data.reply ? res.data.reply : '';
+      setAiSuggestion(reply);
+      setAiSuggestionLoading(false);
+    }).catch(function() {
+      setAiSuggestion('Erreur lors de la génération de suggestion.');
+      setAiSuggestionLoading(false);
+    });
+  };
+
   // === MODE COACH: Charger les messages d'une session ===
   const loadCoachSessionMessages = async (session) => {
     setSelectedCoachSession(session);
@@ -3612,6 +3649,7 @@ export const ChatWidget = () => {
   useEffect(() => {
     if (isCoachMode && isOpen) {
       loadCoachSessions();
+      loadCoachProfile();
       setStep('coach');
     }
   }, [isCoachMode, isOpen]);
@@ -5590,9 +5628,24 @@ export const ChatWidget = () => {
                   justifyContent: 'space-between',
                   alignItems: 'center'
                 }}>
-                  <span style={{ color: '#d91cd2', fontSize: '12px', fontWeight: 'bold' }}>
-                    Mode Coach
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {coachProfile && coachProfile.photo_url ? (
+                      <img src={coachProfile.photo_url} alt="Coach" style={{
+                        width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover',
+                        border: '2px solid #d91cd2'
+                      }} />
+                    ) : (
+                      <div style={{
+                        width: '28px', height: '28px', borderRadius: '50%',
+                        background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '14px', color: '#fff'
+                      }}>👤</div>
+                    )}
+                    <span style={{ color: '#d91cd2', fontSize: '12px', fontWeight: 'bold' }}>
+                      Mode Coach
+                    </span>
+                  </div>
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }} className="coach-icons-menu">
                     {/* Icône Partage (SVG minimaliste) */}
                     <button
@@ -6041,13 +6094,80 @@ export const ChatWidget = () => {
                       <div ref={messagesEndRef} />
                     </div>
 
-                    {/* Input coach */}
-                    <div style={{ padding: '12px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', gap: '8px' }}>
+                    {/* v162f: AI suggestion zone */}
+                    {(aiSuggestion || aiSuggestionLoading) && (
+                      <div style={{ padding: '8px 12px', borderTop: '1px solid rgba(217,28,210,0.2)', background: 'rgba(217,28,210,0.05)' }}>
+                        {aiSuggestionLoading ? (
+                          <div style={{ color: '#d91cd2', fontSize: '12px', textAlign: 'center' }}>
+                            ✨ Génération de suggestion...
+                          </div>
+                        ) : (
+                          <div>
+                            <div style={{ color: '#888', fontSize: '10px', marginBottom: '4px' }}>💡 Suggestion IA :</div>
+                            <div style={{ color: '#ddd', fontSize: '12px', lineHeight: '1.4', marginBottom: '6px' }}>{aiSuggestion}</div>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <button onClick={function() { setInputMessage(aiSuggestion); setAiSuggestion(''); }}
+                                style={{ padding: '4px 10px', borderRadius: '12px', border: 'none', background: '#d91cd2', color: '#fff', fontSize: '11px', cursor: 'pointer' }}>
+                                Utiliser
+                              </button>
+                              <button onClick={function() { setAiSuggestion(''); }}
+                                style={{ padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.2)', background: 'none', color: '#888', fontSize: '11px', cursor: 'pointer' }}>
+                                Ignorer
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* v162f: Coach emoji picker */}
+                    {showCoachEmojiPicker && (
+                      <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                        <AfricanEmojiPicker
+                          isOpen={showCoachEmojiPicker}
+                          onSelect={function(emoji) {
+                            setInputMessage(function(prev) { return prev + emoji; });
+                            setShowCoachEmojiPicker(false);
+                          }}
+                          onClose={function() { setShowCoachEmojiPicker(false); }}
+                          customEmojis={coachCustomEmojis}
+                        />
+                      </div>
+                    )}
+
+                    {/* Input coach with emoji + AI buttons */}
+                    <div style={{ padding: '8px 12px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      {/* Emoji button */}
+                      <button
+                        type="button"
+                        onClick={function() { setShowCoachEmojiPicker(!showCoachEmojiPicker); }}
+                        title="Émojis"
+                        style={{
+                          width: '32px', height: '32px', borderRadius: '50%', border: 'none',
+                          background: showCoachEmojiPicker ? '#d91cd2' : 'transparent',
+                          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          flexShrink: 0, fontSize: '16px'
+                        }}
+                      >😊</button>
+                      {/* AI suggestion button */}
+                      <button
+                        type="button"
+                        onClick={getAiSuggestion}
+                        disabled={aiSuggestionLoading}
+                        title="Suggestion IA"
+                        style={{
+                          width: '32px', height: '32px', borderRadius: '50%', border: 'none',
+                          background: aiSuggestionLoading ? 'rgba(217,28,210,0.3)' : 'transparent',
+                          cursor: aiSuggestionLoading ? 'wait' : 'pointer', display: 'flex',
+                          alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '16px'
+                        }}
+                      >✨</button>
+                      {/* Text input */}
                       <input
                         type="text"
                         value={inputMessage}
-                        onChange={(e) => setInputMessage(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && sendCoachResponse()}
+                        onChange={function(e) { setInputMessage(e.target.value); }}
+                        onKeyPress={function(e) { if (e.key === 'Enter') sendCoachResponse(); }}
                         placeholder="Votre réponse..."
                         style={{
                           flex: 1,
@@ -6060,9 +6180,10 @@ export const ChatWidget = () => {
                           outline: 'none'
                         }}
                       />
+                      {/* Send button */}
                       <button
                         type="button"
-                        onClick={(e) => {
+                        onClick={function(e) {
                           e.preventDefault();
                           e.stopPropagation();
                           sendCoachResponse();
@@ -6072,13 +6193,14 @@ export const ChatWidget = () => {
                           background: inputMessage.trim() ? 'linear-gradient(135deg, #d91cd2, #8b5cf6)' : 'rgba(255,255,255,0.1)',
                           border: 'none',
                           borderRadius: '50%',
-                          width: '40px',
-                          height: '40px',
+                          width: '36px',
+                          height: '36px',
                           cursor: inputMessage.trim() ? 'pointer' : 'not-allowed',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          opacity: inputMessage.trim() ? 1 : 0.5
+                          opacity: inputMessage.trim() ? 1 : 0.5,
+                          flexShrink: 0
                         }}
                         data-testid="coach-widget-send-btn"
                       >
