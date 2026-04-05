@@ -3494,12 +3494,22 @@ export const ChatWidget = () => {
     }
   };
 
-  // v162: Charger les réservations pour le dashboard coach
+  // v162m: Charger TOUTES les transactions (reservations + souscriptions + achats)
   var loadCoachReservations = function() {
-    axios.get(API + '/reservations').then(function(res) {
+    var headers = {};
+    var ce = getCoachEmail();
+    if (ce) headers['X-User-Email'] = ce;
+    axios.get(API + '/dashboard/all-transactions?limit=100', { headers: headers }).then(function(res) {
       var d = res.data;
-      setCoachReservations(Array.isArray(d) ? d : (d && Array.isArray(d.data) ? d.data : []));
-    }).catch(function(err) { console.error('[v162] Reservations load error:', err); });
+      var items = Array.isArray(d) ? d : (d && Array.isArray(d.data) ? d.data : []);
+      setCoachReservations(items);
+    }).catch(function(err) {
+      console.error('[v162m] All-transactions load error, fallback to reservations:', err);
+      axios.get(API + '/reservations').then(function(res2) {
+        var d2 = res2.data;
+        setCoachReservations(Array.isArray(d2) ? d2 : (d2 && Array.isArray(d2.data) ? d2.data : []));
+      }).catch(function() {});
+    });
   };
 
   // v162: Valider un QR code réservation
@@ -6197,7 +6207,7 @@ export const ChatWidget = () => {
                     <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.1)', flexShrink: 0 }}>
                       {[
                         { key: 'conversations', label: 'Conversations', icon: '💬' },
-                        { key: 'reservations', label: 'Réservations', icon: '📅' },
+                        { key: 'reservations', label: 'Transactions', icon: '📊' },
                         { key: 'scanner', label: 'Scanner QR', icon: '📷' }
                       ].filter(function(tab) {
                         if (isStaffMode && tab.key === 'conversations') return false;
@@ -6295,36 +6305,56 @@ export const ChatWidget = () => {
                   </div>
                     )}
 
-                    {/* Tab: Réservations */}
+                    {/* Tab: Réservations — v162m: affiche TOUTES les transactions */}
                     {coachDashTab === 'reservations' && (
                     <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
                       <div style={{ color: '#fff', fontSize: '12px', marginBottom: '12px', opacity: 0.7 }}>
-                        Réservations récentes ({coachReservations.length})
+                        Transactions ({coachReservations.length})
                       </div>
                       {coachReservations.length === 0 ? (
                         <div style={{ color: '#fff', opacity: 0.5, textAlign: 'center', padding: '20px', fontSize: '13px' }}>
-                          Aucune réservation
+                          Aucune transaction
                         </div>
                       ) : (
-                        coachReservations.slice(0, 30).map(function(r, idx) {
+                        coachReservations.slice(0, 50).map(function(r, idx) {
+                          var txType = r._tx_type || 'reservation';
+                          var txIcon = txType === 'subscription' ? '⭐' : (txType === 'payment' ? '💳' : (r.isProduct ? '🛒' : '📅'));
+                          var txLabel = txType === 'subscription' ? 'Souscription' : (txType === 'payment' ? 'Paiement' : (r.isProduct ? 'Achat' : 'Réservation'));
+                          var txColor = txType === 'subscription' ? '#22c55e' : (txType === 'payment' ? '#3b82f6' : '#d91cd2');
+                          var txName = r._tx_name || r.userName || 'Inconnu';
+                          var txOffer = r._tx_offer || r.courseName || r.offerName || '';
+                          var txPrice = r._tx_price || r.totalPrice || 0;
+                          var txStatus = r._tx_status || (r.validated ? 'validé' : 'en attente');
+                          var txDate = r._tx_date || r.createdAt || '';
+                          var txSessions = r._tx_sessions || '';
+                          var txCode = r._tx_code || r.reservationCode || '';
+                          var isValidated = txStatus === 'validé' || txStatus === 'payé' || txStatus === 'active' || txStatus === 'completed' || r.validated;
+                          var dateStr = '';
+                          try { dateStr = txDate ? new Date(txDate).toLocaleDateString('fr-FR') : ''; } catch(e) {}
                           return React.createElement('div', {
-                            key: r.reservationCode || idx,
+                            key: (r.reservationCode || r.id || r._tx_code || '') + '-' + idx,
                             style: {
-                              background: r.validated ? 'rgba(34,197,94,0.1)' : 'rgba(255,255,255,0.05)',
-                              border: '1px solid ' + (r.validated ? 'rgba(34,197,94,0.3)' : 'rgba(255,255,255,0.1)'),
+                              background: isValidated ? 'rgba(34,197,94,0.08)' : 'rgba(255,255,255,0.05)',
+                              border: '1px solid ' + (isValidated ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.1)'),
+                              borderLeft: '3px solid ' + txColor,
                               borderRadius: '8px',
                               padding: '10px',
                               marginBottom: '8px'
                             }
                           },
-                            React.createElement('div', { style: { color: '#fff', fontSize: '13px', fontWeight: '500' } },
-                              (r.userName || 'Inconnu') + (r.validated ? ' ✅' : ' ⏳')
+                            React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                              React.createElement('div', { style: { color: '#fff', fontSize: '13px', fontWeight: '500' } },
+                                txIcon + ' ' + txName + (isValidated ? ' ✅' : ' ⏳')
+                              ),
+                              React.createElement('span', { style: { color: txColor, fontSize: '10px', fontWeight: 'bold', background: txColor + '20', padding: '2px 6px', borderRadius: '4px' } },
+                                txLabel
+                              )
                             ),
-                            React.createElement('div', { style: { color: '#888', fontSize: '11px', marginTop: '4px' } },
-                              (r.courseName || r.offerName || '') + ' • ' + (r.selectedDatesText || '')
+                            React.createElement('div', { style: { color: '#aaa', fontSize: '11px', marginTop: '4px' } },
+                              txOffer + (txPrice > 0 ? ' • ' + txPrice + ' CHF' : '') + (txSessions ? ' • ' + txSessions + ' séances' : '')
                             ),
                             React.createElement('div', { style: { color: '#666', fontSize: '10px', marginTop: '2px' } },
-                              'Code: ' + (r.reservationCode || '') + (r.validatedAt ? ' • Validé le ' + new Date(r.validatedAt).toLocaleDateString('fr-FR') : '')
+                              (txCode ? 'Code: ' + txCode + ' • ' : '') + dateStr
                             )
                           );
                         })

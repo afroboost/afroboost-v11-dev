@@ -3320,6 +3320,37 @@ async def stripe_webhook(request: Request):
                         logger.warning(f"[PAYMENT] Email error: {mail_err}")
                 # v8.7: Sync CRM - Creer/MAJ contact (email unique)
                 await db.chat_participants.update_one({"email": customer_email}, {"$set": {"email": customer_email, "name": metadata.get("customer_name", customer_email.split("@")[0]), "source": "stripe_payment", "updated_at": datetime.now(timezone.utc).isoformat()}, "$setOnInsert": {"id": str(uuid.uuid4()), "created_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+                # v162m: Notifier le coach par email de la souscription
+                if RESEND_AVAILABLE and RESEND_API_KEY:
+                    try:
+                        customer_name = metadata.get("customer_name", customer_email.split("@")[0])
+                        coach_html = f"""<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0a0a0a;">
+                        <div style="background:linear-gradient(135deg,#22c55e,#8b5cf6);padding:24px;text-align:center;">
+                            <h1 style="color:white;margin:0;font-size:22px;">⭐ Nouvelle souscription !</h1>
+                        </div>
+                        <div style="padding:24px;color:#fff;">
+                            <p style="font-size:16px;"><strong>{customer_name}</strong> ({customer_email})</p>
+                            <div style="background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);border-radius:12px;padding:16px;margin:16px 0;">
+                                <table style="width:100%;font-size:14px;">
+                                    <tr><td style="color:#888;padding:6px 0;">Offre</td><td style="color:#fff;">{product_name}</td></tr>
+                                    <tr><td style="color:#888;padding:6px 0;">Seances</td><td style="color:#22c55e;font-weight:bold;">{sessions_count}</td></tr>
+                                    <tr><td style="color:#888;padding:6px 0;">Code</td><td style="color:#a855f7;">{new_code}</td></tr>
+                                    <tr><td style="color:#888;padding:6px 0;">Prix</td><td style="color:#22c55e;">{session.amount_total / 100 if session.amount_total else 0} {(session.currency or 'chf').upper()}</td></tr>
+                                </table>
+                            </div>
+                            <div style="text-align:center;margin:24px 0;">
+                                <a href="https://afroboost.com" style="display:inline-block;background:#22c55e;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:bold;">Voir le Dashboard</a>
+                            </div>
+                        </div></div>"""
+                        await asyncio.to_thread(resend.Emails.send, {
+                            "from": "Afroboost <notifications@afroboosteur.com>",
+                            "to": [SUPER_ADMIN_EMAIL],
+                            "subject": f"⭐ Nouvelle souscription — {customer_name} ({product_name})",
+                            "html": coach_html
+                        })
+                        logger.info(f"[PAYMENT] Coach notifie: souscription {customer_email} - {product_name}")
+                    except Exception as notify_err:
+                        logger.warning(f"[PAYMENT] Coach notification error: {notify_err}")
         elif event.type == 'checkout.session.expired':
             session = event.data.object
             await db.payment_transactions.update_one({"session_id": session.id}, {"$set": {"status": "expired", "webhook_received_at": datetime.now(timezone.utc).isoformat()}})
@@ -10681,6 +10712,97 @@ async def update_platform_settings(request: Request):
         "service_prices": settings.get("service_prices", {"campaign": 1, "ai_conversation": 1, "promo_code": 1}),
         "updated_at": settings.get("updated_at"),
         "message": "Paramètres mis à jour"
+    }
+
+# === v162m: DASHBOARD — Toutes les transactions (reservations + souscriptions + achats) ===
+@api_router.get("/dashboard/all-transactions")
+async def get_all_transactions(request: Request, page: int = 1, limit: int = 50):
+    """Retourne toutes les transactions: reservations, souscriptions Stripe, achats produits"""
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+
+    all_items = []
+
+    # 1. Reservations (from reservations collection)
+    res_query = {} if is_super_admin(caller_email) else {"coach_id": caller_email} if caller_email else {"coach_id": "__no_access__"}
+    reservations = await db.reservations.find(res_query, {"_id": 0}).sort("createdAt", -1).to_list(200)
+    for r in reservations:
+        r["_tx_type"] = "reservation"
+        r["_tx_date"] = r.get("createdAt", "")
+        r["_tx_name"] = r.get("userName", "Inconnu")
+        r["_tx_email"] = r.get("userEmail", "")
+        r["_tx_offer"] = r.get("courseName") or r.get("offerName", "")
+        r["_tx_price"] = r.get("totalPrice", 0)
+        r["_tx_status"] = "valid\u00e9" if r.get("validated") else "en attente"
+        all_items.append(r)
+
+    # 2. Subscriptions (from subscriptions collection — Stripe auto-created)
+    subscriptions = await db.subscriptions.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    for s in subscriptions:
+        # Avoid duplicates: skip if a reservation already exists with this subscription ID
+        sub_id = s.get("id", "")
+        already_in_reservations = any(
+            ri.get("subscriptionId") == sub_id for ri in reservations
+        )
+        s["_tx_type"] = "subscription"
+        s["_tx_date"] = s.get("created_at", "")
+        s["_tx_name"] = s.get("name", "Inconnu")
+        s["_tx_email"] = s.get("email", "")
+        s["_tx_offer"] = s.get("offer_name", "")
+        s["_tx_price"] = 0
+        s["_tx_status"] = s.get("status", "active")
+        s["_tx_sessions"] = f"{s.get('remaining_sessions', 0)}/{s.get('total_sessions', 0)}"
+        s["_tx_code"] = s.get("code", "")
+        if not already_in_reservations:
+            all_items.append(s)
+
+    # 3. Payment transactions (completed Stripe payments)
+    payments = await db.payment_transactions.find(
+        {"payment_status": "paid"},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    for p in payments:
+        # Only add if not already represented by a subscription or reservation
+        session_id = p.get("session_id", "")
+        meta = p.get("metadata", {})
+        p["_tx_type"] = "payment"
+        p["_tx_date"] = p.get("created_at", "")
+        p["_tx_name"] = meta.get("customer_name", "Client")
+        p["_tx_email"] = meta.get("customer_email", "")
+        p["_tx_offer"] = meta.get("product_name", "Paiement Stripe")
+        p["_tx_price"] = (p.get("amount_total", 0) or 0) / 100
+        p["_tx_status"] = "pay\u00e9"
+        all_items.append(p)
+
+    # Sort all by date descending
+    def sort_key(item):
+        d = item.get("_tx_date", "")
+        if isinstance(d, str):
+            return d
+        try:
+            return d.isoformat()
+        except:
+            return ""
+
+    all_items.sort(key=sort_key, reverse=True)
+
+    # Paginate
+    total = len(all_items)
+    start = (page - 1) * limit
+    page_items = all_items[start:start + limit]
+
+    return {
+        "data": page_items,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "pages": (total + limit - 1) // limit
+        },
+        "counts": {
+            "reservations": len(reservations),
+            "subscriptions": len(subscriptions),
+            "payments": len(payments)
+        }
     }
 
 # === COACH PROFILE: Photo + Date de naissance ===

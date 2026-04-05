@@ -93,6 +93,70 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
     except Exception as e:
         logger.warning(f"[EMAIL] Erreur envoi confirmation: {e}")
 
+
+async def _send_coach_notification_email(event_type: str, user_name: str, user_email: str, details: dict):
+    """v162m: Envoie une notification email au coach pour toute nouvelle transaction"""
+    if not _RESEND_OK or not _RESEND_KEY:
+        logger.warning('[EMAIL-COACH] Resend non disponible')
+        return
+    resend.api_key = _RESEND_KEY
+
+    coach_email = SUPER_ADMIN_EMAIL
+
+    type_labels = {
+        'reservation': ('Nouvelle reservation', chr(0x1F4C5), '#3b82f6'),
+        'subscription': ('Nouvelle souscription', chr(0x2B50), '#22c55e'),
+        'purchase': ('Nouvel achat', chr(0x1F6D2), '#d91cd2'),
+    }
+    label, icon, color = type_labels.get(event_type, ('Nouvelle transaction', chr(0x1F514), '#d91cd2'))
+
+    offer = details.get('offer_name', '')
+    price = details.get('price', 0)
+    code = details.get('code', '')
+    sessions_info = details.get('sessions_info', '')
+
+    details_rows = ''
+    if offer:
+        details_rows += f'<tr><td style="color:#888;padding:6px 0;">Offre</td><td style="color:#fff;">{offer}</td></tr>'
+    if price:
+        details_rows += f'<tr><td style="color:#888;padding:6px 0;">Prix</td><td style="color:#22c55e;font-weight:bold;">{price} CHF</td></tr>'
+    if code:
+        details_rows += f'<tr><td style="color:#888;padding:6px 0;">Code</td><td style="color:#a855f7;">{code}</td></tr>'
+    if sessions_info:
+        details_rows += f'<tr><td style="color:#888;padding:6px 0;">Seances</td><td style="color:#fff;">{sessions_info}</td></tr>'
+
+    html = f"""<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0a0a0a;">
+        <div style="background:linear-gradient(135deg,{color},#8b5cf6);padding:24px;text-align:center;">
+            <h1 style="color:white;margin:0;font-size:22px;">{icon} {label}</h1>
+        </div>
+        <div style="padding:24px;color:#fff;">
+            <p style="font-size:16px;line-height:1.6;">
+                <strong>{user_name}</strong> ({user_email})
+            </p>
+            <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:16px;margin:16px 0;">
+                <table style="width:100%;font-size:14px;">
+                    {details_rows}
+                </table>
+            </div>
+            <div style="text-align:center;margin:24px 0;">
+                <a href="https://afroboost.com" style="display:inline-block;background:{color};color:white;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;">Voir le Dashboard</a>
+            </div>
+            <p style="color:#666;font-size:11px;text-align:center;">Notification automatique Afroboost</p>
+        </div>
+    </div>"""
+
+    try:
+        await asyncio.to_thread(resend.Emails.send, {
+            'from': 'Afroboost <notifications@afroboosteur.com>',
+            'to': [coach_email],
+            'subject': f'{icon} {label} — {user_name}',
+            'html': html
+        })
+        logger.info(f'[EMAIL-COACH] Notification {event_type} envoyee pour {user_name}')
+    except Exception as e:
+        logger.warning(f'[EMAIL-COACH] Erreur notification: {e}')
+
+
 # v9.5.8: Liste des Super Admins
 SUPER_ADMIN_EMAILS = [
     "contact.artboost@gmail.com",
@@ -274,6 +338,20 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
         asyncio.create_task(_send_reservation_email(
             user_email, reservation.userName, reservation_data, sub_info
         ))
+
+    # v162m: Notifier le coach par email
+    event_type = 'purchase' if reservation.isProduct else 'reservation'
+    asyncio.create_task(_send_coach_notification_email(
+        event_type,
+        reservation.userName,
+        user_email,
+        {
+            'offer_name': reservation.offerName,
+            'price': reservation.totalPrice,
+            'code': reservation_data.get('reservationCode', ''),
+            'sessions_info': f'Seance deduite (abo {subscription_id[:8]}...)' if subscription_id else '',
+        }
+    ))
 
     return reservation_data
 
