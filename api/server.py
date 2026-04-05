@@ -7791,6 +7791,7 @@ async def generate_shareable_link(request: Request):
     session_data["tunnel_questions"] = tunnel_questions if isinstance(tunnel_questions, list) else []
     session_data["end_actions"] = end_actions if isinstance(end_actions, list) else []
     session_data["welcome_message"] = welcome_message.strip() if isinstance(welcome_message, str) else ""
+    session_data["is_smart_link"] = True  # v162m: Marqueur pour distinguer des sessions auto-créées
 
     await db.chat_sessions.insert_one(session_data)
 
@@ -7816,18 +7817,25 @@ async def generate_shareable_link(request: Request):
 @api_router.get("/chat/links")
 async def get_all_chat_links():
     """
-    Récupère tous les liens de chat générés.
-    Utile pour le coach pour gérer ses liens partagés.
+    Récupère uniquement les liens intelligents créés manuellement par le coach.
+    v162m: Filtre par is_smart_link=true OU lead_type existant (rétrocompat anciens liens).
+    Les sessions auto-créées quand un visiteur entre dans le chat ne sont PAS incluses.
     """
     sessions = await db.chat_sessions.find(
-        {"is_deleted": {"$ne": True}},
+        {
+            "is_deleted": {"$ne": True},
+            "$or": [
+                {"is_smart_link": True},
+                {"lead_type": {"$exists": True}}
+            ]
+        },
         {"_id": 0, "id": 1, "link_token": 1, "title": 1, "mode": 1, "is_ai_active": 1, "created_at": 1, "participant_ids": 1, "custom_prompt": 1, "lead_type": 1, "tunnel_questions": 1, "end_actions": 1, "welcome_message": 1}
     ).sort("created_at", -1).to_list(100)
-    
+
     # Ajouter le nombre de participants pour chaque lien
     for session in sessions:
         session["participant_count"] = len(session.get("participant_ids", []))
-    
+
     return sessions
 
 # v98.2: Récupérer un lien spécifique par token (pour OnboardingTunnel)
