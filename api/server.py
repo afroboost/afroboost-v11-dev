@@ -3732,7 +3732,7 @@ async def create_coach_checkout(request: Request):
                         "quantity": 1
                     }],
                     mode="payment",
-                    success_url=f"{base_url}/#partner-dashboard?success=true&session_id={{CHECKOUT_SESSION_ID}}&auth=success",
+                    success_url=f"{frontend_url}/#partner-dashboard?success=true&session_id={{CHECKOUT_SESSION_ID}}&auth=success",
                     cancel_url=CANCEL_URL,
                     customer_email=email,
                     metadata={

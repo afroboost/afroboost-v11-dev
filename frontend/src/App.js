@@ -1539,8 +1539,8 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
         ))}
       </div>
 
-      {/* v159: Flèches violettes VISIBLES — toujours présentes, animation main-swipe à l'arrivée */}
-      {offers.length > 1 && (
+      {/* v159: Flèches compactes — couleur prix (rose #D91CD2), disparaissent après 4s */}
+      {offers.length > 1 && showArrows && (
         <>
           <button
             type="button"
@@ -1554,18 +1554,22 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
               setTimeout(() => setIsPaused(false), 5000);
             }}
             aria-label="Offre précédente"
-            className="absolute left-2 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full flex items-center justify-center z-20"
+            className="absolute top-1/2 -translate-y-1/2 rounded-full flex items-center justify-center z-20"
             style={{
-              background: '#8b5cf6',
-              boxShadow: '0 6px 24px rgba(139, 92, 246, 0.8), 0 0 0 3px rgba(255,255,255,0.4)',
-              border: 'none',
-              opacity: currentIndex === 0 ? 0.35 : 1,
+              left: '4px',
+              width: '32px',
+              height: '32px',
+              background: '#D91CD2',
+              boxShadow: '0 2px 10px rgba(217, 28, 210, 0.6)',
+              border: '1.5px solid rgba(255,255,255,0.3)',
+              opacity: currentIndex === 0 ? 0.3 : 0.9,
               cursor: currentIndex === 0 ? 'default' : 'pointer',
-              animation: showArrows ? 'arrowSwipeLeft 1.2s ease-in-out infinite' : 'none',
+              animation: 'arrowSwipeLeft 1.2s ease-in-out infinite',
+              transition: 'opacity 0.4s ease',
             }}
             disabled={currentIndex === 0}
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="15 18 9 12 15 6"></polyline>
             </svg>
           </button>
@@ -1581,45 +1585,33 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
               setTimeout(() => setIsPaused(false), 5000);
             }}
             aria-label="Offre suivante"
-            className="absolute right-2 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full flex items-center justify-center z-20"
+            className="absolute top-1/2 -translate-y-1/2 rounded-full flex items-center justify-center z-20"
             style={{
-              background: '#8b5cf6',
-              boxShadow: '0 6px 24px rgba(139, 92, 246, 0.8), 0 0 0 3px rgba(255,255,255,0.4)',
-              border: 'none',
-              opacity: currentIndex >= offers.length - 1 ? 0.35 : 1,
+              right: '4px',
+              width: '32px',
+              height: '32px',
+              background: '#D91CD2',
+              boxShadow: '0 2px 10px rgba(217, 28, 210, 0.6)',
+              border: '1.5px solid rgba(255,255,255,0.3)',
+              opacity: currentIndex >= offers.length - 1 ? 0.3 : 0.9,
               cursor: currentIndex >= offers.length - 1 ? 'default' : 'pointer',
-              animation: showArrows ? 'arrowSwipeRight 1.2s ease-in-out infinite' : 'none',
+              animation: 'arrowSwipeRight 1.2s ease-in-out infinite',
+              transition: 'opacity 0.4s ease',
             }}
             disabled={currentIndex >= offers.length - 1}
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="9 18 15 12 9 6"></polyline>
             </svg>
           </button>
-          {/* v159: Indice "main qui swipe" en dessous du slider (mobile surtout) */}
-          {showArrows && (
-            <div className="flex items-center justify-center gap-2 mt-2" style={{ pointerEvents: 'none' }}>
-              <span style={{ fontSize: '20px', animation: 'swipeHand 1.4s ease-in-out infinite' }}>👉</span>
-              <span className="text-xs" style={{ color: '#c4b5fd', fontWeight: 500 }}>Glissez pour voir les autres offres</span>
-              <span style={{ fontSize: '20px', animation: 'swipeHandReverse 1.4s ease-in-out infinite' }}>👈</span>
-            </div>
-          )}
           <style>{`
             @keyframes arrowSwipeLeft {
               0%, 100% { transform: translateY(-50%) translateX(0); }
-              50% { transform: translateY(-50%) translateX(-6px); }
+              50% { transform: translateY(-50%) translateX(-4px); }
             }
             @keyframes arrowSwipeRight {
               0%, 100% { transform: translateY(-50%) translateX(0); }
-              50% { transform: translateY(-50%) translateX(6px); }
-            }
-            @keyframes swipeHand {
-              0%, 100% { transform: translateX(0); }
-              50% { transform: translateX(8px); }
-            }
-            @keyframes swipeHandReverse {
-              0%, 100% { transform: translateX(0); }
-              50% { transform: translateX(-8px); }
+              50% { transform: translateY(-50%) translateX(4px); }
             }
           `}</style>
         </>
