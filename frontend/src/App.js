@@ -3533,6 +3533,31 @@ function App() {
       return;
     }
 
+    // v158: FORCER la sélection d'une session AVANT de pouvoir choisir une offre
+    // Sauf pour produits/audio/video qui ne nécessitent pas de session
+    const isProduct = offer && (offer.type === 'product' || offer.type === 'audio' || offer.type === 'video');
+    if (!isProduct && (!selectedCourse || !selectedDates || selectedDates.length === 0)) {
+      // Scroller vers la section sessions et l'animer
+      const sessionsEl = document.getElementById('sessions-section');
+      if (sessionsEl) {
+        sessionsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        sessionsEl.style.boxShadow = '0 0 0 3px #d91cd2, 0 0 40px rgba(217,28,210,0.6)';
+        sessionsEl.style.borderRadius = '12px';
+        sessionsEl.style.transition = 'box-shadow 0.3s';
+        setTimeout(() => { sessionsEl.style.boxShadow = ''; }, 6000);
+      }
+      // Afficher une alerte visible (toast) en haut de la page
+      const existing = document.getElementById('v158-session-toast');
+      if (existing) existing.remove();
+      const toast = document.createElement('div');
+      toast.id = 'v158-session-toast';
+      toast.innerHTML = '⚠️&nbsp; <strong>Choisissez d\'abord l\'horaire de votre première séance</strong> ci-dessus';
+      toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#d91cd2,#8b5cf6);color:white;padding:14px 24px;border-radius:12px;font-size:14px;box-shadow:0 8px 30px rgba(217,28,210,0.5);max-width:90%;text-align:center;animation:bounce 0.5s ease;';
+      document.body.appendChild(toast);
+      setTimeout(() => { if (toast.parentNode) toast.remove(); }, 6000);
+      return; // ne pas définir selectedOffer
+    }
+
     setSelectedOffer(offer);
     // Réinitialiser les variantes quand une nouvelle offre est sélectionnée
     setSelectedVariants({});
