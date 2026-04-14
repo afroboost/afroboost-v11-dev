@@ -210,7 +210,11 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
     </div>
     
     <div className="text-white/60 text-xs space-y-1 mb-3">
-      <p>📅 {formatDateTime(r.datetime)}</p>
+      {/* v158.7: Afficher la date de reservation (createdAt) en plus de la date de session */}
+      {r.createdAt && (
+        <p>🗓️ <span className="text-blue-300">Réservé le :</span> {new Date(r.createdAt).toLocaleString('fr-CH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+      )}
+      <p>📅 <span className="text-purple-300">Session :</span> {formatDateTime(r.datetime)}</p>
       {r.courseName && <p>📚 {r.courseName}</p>}
       {r.promoCode && (
         <p>🎫 Code: <span className="text-yellow-400 font-medium">{r.promoCode}</span>
@@ -267,7 +271,15 @@ const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, 
         <span className="text-white/30">-</span>
       )}
     </td>
-    <td className="py-3 text-white/60 text-xs">{formatDateTime(r.datetime)}</td>
+    <td className="py-3 text-white/60 text-xs">
+      {/* v158.7: Afficher d'abord la date de reservation, puis la date de session */}
+      {r.createdAt && (
+        <div className="text-blue-300 text-[10px]">
+          🗓️ Réservé: {new Date(r.createdAt).toLocaleDateString('fr-CH', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+        </div>
+      )}
+      <div className="text-purple-300">📅 {formatDateTime(r.datetime)}</div>
+    </td>
     <td className="py-3">
       <div className="flex flex-col gap-0.5">
         <div className="flex gap-1">

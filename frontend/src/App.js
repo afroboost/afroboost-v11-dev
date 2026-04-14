@@ -3748,13 +3748,15 @@ function App() {
         saveClientInfo(userName, userEmail, userWhatsapp);
         
         setLastReservation(res.data);
-        sendWhatsAppNotification(res.data, true);
-        sendWhatsAppNotification(res.data, false);
-        
+        // v158.7: Désactivé — l'email et WhatsApp arrivent via le backend Resend + Twilio, pas de popup
+        // sendWhatsAppNotification(res.data, true);
+        // sendWhatsAppNotification(res.data, false);
+
         // NOTIFICATION AUTOMATIQUE AU COACH (email + WhatsApp API)
         notifyCoachAutomatic(res.data);
-        
-        setShowSuccess(true);
+
+        // v158.7: Ne plus afficher le popup plein écran — l'utilisateur reçoit tout par email
+        // setShowSuccess(true);
         resetFormKeepClient();
       } catch (err) { console.error(err); }
       setLoading(false);
@@ -3831,13 +3833,15 @@ function App() {
       saveClientInfo(pendingReservation.userName, pendingReservation.userEmail, pendingReservation.userWhatsapp);
       
       setLastReservation(res.data);
-      sendWhatsAppNotification(res.data, true);
-      sendWhatsAppNotification(res.data, false);
-      
+      // v158.7: Désactivé — l'email et WhatsApp arrivent via le backend, pas de popup
+      // sendWhatsAppNotification(res.data, true);
+      // sendWhatsAppNotification(res.data, false);
+
       // NOTIFICATION AUTOMATIQUE AU COACH (email + WhatsApp API)
       notifyCoachAutomatic(res.data);
-      
-      setShowSuccess(true);
+
+      // v158.7: Ne plus afficher le popup — tout arrive par email
+      // setShowSuccess(true);
       setShowConfirmPayment(false);
       resetFormKeepClient();
     } catch (err) { console.error(err); }
@@ -4504,25 +4508,22 @@ function App() {
       )}
 
       {showConfirmPayment && <ConfirmPaymentOverlay t={t} onConfirm={confirmPayment} onCancel={() => { setShowConfirmPayment(false); setPendingReservation(null); }} />}
-      {showSuccess && lastReservation && (
-        <SuccessOverlay 
-          t={t} 
-          data={lastReservation} 
-          onClose={() => setShowSuccess(false)} 
+      {/* v158.7: SuccessOverlay et PaymentSuccessPage désactivés.
+          L'utilisateur reçoit sa confirmation par email (avec QR code, code AFRO-XXXX, guide).
+          Pas de popup écran pour ne pas distraire et éviter les double-notifications. */}
+      {false && showSuccess && lastReservation && (
+        <SuccessOverlay
+          t={t}
+          data={lastReservation}
+          onClose={() => setShowSuccess(false)}
           onClearTicket={clearSavedTicket}
         />
       )}
-      
-      {/* Page de succès paiement Stripe (plein écran) */}
-      {showPaymentSuccessPage && lastReservation && (
-        <PaymentSuccessPage 
-          reservation={lastReservation} 
+      {false && showPaymentSuccessPage && lastReservation && (
+        <PaymentSuccessPage
+          reservation={lastReservation}
           t={t}
-          onClose={() => {
-            setShowPaymentSuccessPage(false);
-            // Optionnel: Afficher aussi l'overlay ticket pour permettre le téléchargement
-            setShowSuccess(true);
-          }} 
+          onClose={() => setShowPaymentSuccessPage(false)}
         />
       )}
 

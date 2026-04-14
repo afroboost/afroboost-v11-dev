@@ -365,10 +365,10 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
                     • {t['cancel_rule2']}
                 </p>
             </div>
-            <!-- CTAs -->
+            <!-- CTAs: les 2 boutons redirigent vers la page chat où l'utilisateur se connecte avec son code AFRO -->
             <div style="text-align:center;margin:28px 0;">
                 <a href="{chat_deeplink}" style="display:inline-block;background:#d91cd2;color:white;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;margin:4px;">{t['cta_chat']}</a>
-                <a href="https://afroboost.com" style="display:inline-block;background:rgba(139,92,246,0.3);color:white;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;margin:4px;border:1px solid rgba(139,92,246,0.5);">{t['cta_space']}</a>
+                <a href="{chat_deeplink}" style="display:inline-block;background:rgba(139,92,246,0.3);color:white;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;margin:4px;border:1px solid rgba(139,92,246,0.5);">{t['cta_space']}</a>
             </div>
             <p style="color:#666;font-size:11px;text-align:center;margin-top:24px;">{t['footer']}</p>
         </div>
