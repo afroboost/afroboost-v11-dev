@@ -2472,15 +2472,24 @@ function App() {
   const audioRef = useRef(null);
 
   // v104: Charger les FAQ homepage (publiques + FAQ coach principal)
+  // v160.6: Sur vitrine coach partenaire, charger UNIQUEMENT ses FAQ (pas celles du Super Admin)
   useEffect(() => {
     const loadFaqs = async () => {
       try {
-        // Charger FAQ publiques "general" + FAQ du coach principal (contact.artboost)
-        const results = await Promise.all([
-          axios.get(`${API}/public/faqs/general`).catch(() => ({ data: [] })),
-          axios.get(`${API}/public/faqs/partner`).catch(() => ({ data: [] })),
-          axios.get(`${API}/coach/faqs/contact.artboost@gmail.com`).catch(() => ({ data: [] })),
-        ]);
+        let results;
+        if (currentCoachVitrineEmail) {
+          // Vitrine coach partenaire: charger UNIQUEMENT ses FAQ
+          results = await Promise.all([
+            axios.get(`${API}/coach/faqs/${encodeURIComponent(currentCoachVitrineEmail)}`).catch(() => ({ data: [] })),
+          ]);
+        } else {
+          // Homepage Super Admin: FAQ publiques + FAQ super admin
+          results = await Promise.all([
+            axios.get(`${API}/public/faqs/general`).catch(() => ({ data: [] })),
+            axios.get(`${API}/public/faqs/partner`).catch(() => ({ data: [] })),
+            axios.get(`${API}/coach/faqs/contact.artboost@gmail.com`).catch(() => ({ data: [] })),
+          ]);
+        }
         const allFaqs = results.flatMap(r => Array.isArray(r.data) ? r.data : []);
         // Dédupliquer par question
         const seen = new Set();
@@ -2491,20 +2500,25 @@ function App() {
           return true;
         });
         if (unique.length === 0) {
-          // Fallback FAQ statiques
-          setHomeFaqs([
-            { id: 'f1', question: "Comment réserver une séance ?", answer: "Choisissez votre séance dans le calendrier, sélectionnez votre créneau et confirmez. Vous recevrez un email de confirmation." },
-            { id: 'f2', question: "Quels sont les moyens de paiement acceptés ?", answer: "Nous acceptons les paiements par carte bancaire (Visa, Mastercard), TWINT et Mobile Money (MTN, Orange, Moov/Airtel)." },
-            { id: 'f3', question: "Comment fonctionne le chat IA ?", answer: "Notre assistant IA est disponible 24h/24 pour répondre à vos questions, vous guider dans vos choix et vous accompagner dans votre parcours." },
-            { id: 'f4', question: "Puis-je annuler ma réservation ?", answer: "Contactez-nous directement via le chat ou par email pour toute demande d'annulation ou de modification." },
-          ]);
+          if (currentCoachVitrineEmail) {
+            // Coach partenaire sans FAQ: tableau vide (pas de fallback Super Admin)
+            setHomeFaqs([]);
+          } else {
+            // Fallback FAQ statiques Super Admin
+            setHomeFaqs([
+              { id: 'f1', question: "Comment réserver une séance ?", answer: "Choisissez votre séance dans le calendrier, sélectionnez votre créneau et confirmez. Vous recevrez un email de confirmation." },
+              { id: 'f2', question: "Quels sont les moyens de paiement acceptés ?", answer: "Nous acceptons les paiements par carte bancaire (Visa, Mastercard), TWINT et Mobile Money (MTN, Orange, Moov/Airtel)." },
+              { id: 'f3', question: "Comment fonctionne le chat IA ?", answer: "Notre assistant IA est disponible 24h/24 pour répondre à vos questions, vous guider dans vos choix et vous accompagner dans votre parcours." },
+              { id: 'f4', question: "Puis-je annuler ma réservation ?", answer: "Contactez-nous directement via le chat ou par email pour toute demande d'annulation ou de modification." },
+            ]);
+          }
         } else {
           setHomeFaqs(unique);
         }
       } catch (e) { console.warn('[FAQ] Erreur chargement:', e); }
     };
     if (!coachMode) loadFaqs();
-  }, [coachMode]);
+  }, [coachMode, currentCoachVitrineEmail]);
 
   // Vérifier si le feature flag Audio est activé
   useEffect(() => {
@@ -2900,6 +2914,15 @@ function App() {
         }).catch(() => {
           setSocialComments([]);
           setSocialTotalCount(0);
+        });
+
+        // v160.6: Charger les audio tracks du coach (si vide, le coach n'a pas ajoute de musique)
+        axios.get(`${API}/public/audio-tracks/${encodeURIComponent(coachEmail)}`).then(ares => {
+          const tracks = ares.data?.tracks || [];
+          setStudioAudioTracks(tracks);
+          console.log('[V160.6] Coach audio tracks loaded:', tracks.length);
+        }).catch(() => {
+          setStudioAudioTracks([]);
         });
       }
       setCoachVitrineLoaded(true);
@@ -3393,14 +3416,18 @@ function App() {
       console.log(`📦 Cache: ${cachedCourses ? '✓' : '↓'}courses ${cachedOffers ? '✓' : '↓'}offers ${cachedConcept ? '✓' : '↓'}concept`);
 
       // v53: Charger les pistes audio autonomes (Studio Audio) du super admin
-      try {
-        const ownerEmail = SUPER_ADMIN_EMAILS[0]; // contact.artboost@gmail.com
-        const audioRes = await axios.get(`${API}/public/audio-tracks/${encodeURIComponent(ownerEmail)}`);
-        const tracks = audioRes.data?.tracks || [];
-        setStudioAudioTracks(tracks);
-        console.log('[V53] Studio audio tracks loaded:', tracks.length);
-      } catch (audioErr) {
-        console.warn('[V53] Studio audio tracks fetch failed:', audioErr.message);
+      // v160.6: Sur vitrine coach partenaire, ne PAS charger les tracks du super admin
+      //        (le useEffect separe showCoachVitrine chargera les tracks du coach)
+      if (!showCoachVitrine) {
+        try {
+          const ownerEmail = SUPER_ADMIN_EMAILS[0]; // contact.artboost@gmail.com
+          const audioRes = await axios.get(`${API}/public/audio-tracks/${encodeURIComponent(ownerEmail)}`);
+          const tracks = audioRes.data?.tracks || [];
+          setStudioAudioTracks(tracks);
+          console.log('[V53] Studio audio tracks loaded:', tracks.length);
+        } catch (audioErr) {
+          console.warn('[V53] Studio audio tracks fetch failed:', audioErr.message);
+        }
       }
 
     } catch (err) { console.error("Error:", err); }
@@ -5950,7 +5977,8 @@ function App() {
         )}
         
         {/* Widget Chat IA flottant */}
-        <ChatWidget />
+        {/* v160.6: Passage de l'email du coach de la vitrine pour contextualiser le chat */}
+        <ChatWidget vitrineCoachEmail={currentCoachVitrineEmail} />
         
         {/* v8.9.4: Modal recherche coach (déclenchée par l'icône dans NavigationBar) */}
         <CoachSearchModal

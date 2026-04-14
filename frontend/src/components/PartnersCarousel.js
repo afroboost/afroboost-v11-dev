@@ -9,6 +9,7 @@
  */
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import axios from "axios";
+import { QRCodeSVG } from "qrcode.react";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -1273,6 +1274,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
   // v9.6.8: État pour sélecteur de langue
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [globalMuted, setGlobalMuted] = useState(true); // Son global muté par défaut
+  const [showQRModal, setShowQRModal] = useState(false); // v160.6: Modal QR code vitrine coach
   const [partners, setPartners] = useState([]);
   const [filteredPartners, setFilteredPartners] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1697,16 +1699,13 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
               <SoundIcon muted={globalMuted} />
             </button>
 
-            {/* v14: Bouton QR Code - toujours visible */}
+            {/* v14: Bouton QR Code - v160.6: ouvre modal inline avec QR affiche sur la page */}
             <button
-              onClick={() => {
-                const url = window.location.href;
-                const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(url)}`;
-                window.open(qrUrl, '_blank');
-              }}
+              onClick={() => setShowQRModal(true)}
               className="w-7 h-7 flex items-center justify-center rounded-full transition-all hover:scale-110"
               style={{ background: 'rgba(255,255,255,0.1)', color: 'white' }}
               data-testid="qr-btn-carousel"
+              title="QR Code de cette vitrine"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="2" y="2" width="8" height="8" rx="1" />
@@ -1810,6 +1809,76 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
           })
         )}
       </div>
+
+      {/* v160.6: Modal QR code inline pour partager la vitrine courante */}
+      {showQRModal && (
+        <div
+          onClick={() => setShowQRModal(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
+            zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '20px'
+          }}
+          data-testid="qr-modal-overlay"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'linear-gradient(180deg, #1a0a1f 0%, #0d0510 100%)',
+              border: '1px solid rgba(217,28,210,0.4)',
+              borderRadius: '16px',
+              padding: '24px',
+              maxWidth: '360px',
+              width: '100%',
+              textAlign: 'center',
+              boxShadow: '0 0 40px rgba(217,28,210,0.3)'
+            }}
+          >
+            <p style={{ color: '#fff', fontSize: '16px', fontWeight: 700, marginBottom: '6px' }}>
+              📱 Scanne pour accéder
+            </p>
+            <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '12px', marginBottom: '18px' }}>
+              Lien direct vers cette vitrine
+            </p>
+            <div style={{ background: '#fff', padding: '16px', borderRadius: '12px', display: 'inline-block' }}>
+              <QRCodeSVG
+                value={window.location.href}
+                size={220}
+                level="H"
+                includeMargin={false}
+                bgColor="#ffffff"
+                fgColor="#000000"
+              />
+            </div>
+            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', marginTop: '12px', wordBreak: 'break-all' }}>
+              {window.location.href}
+            </p>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(window.location.href);
+                  alert('Lien copié !');
+                }}
+                style={{
+                  flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)',
+                  background: 'rgba(255,255,255,0.08)', color: '#fff', fontSize: '13px', cursor: 'pointer'
+                }}
+              >
+                📋 Copier
+              </button>
+              <button
+                onClick={() => setShowQRModal(false)}
+                style={{
+                  flex: 1, padding: '10px', borderRadius: '8px', border: 'none',
+                  background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', color: '#fff', fontSize: '13px', fontWeight: 600, cursor: 'pointer'
+                }}
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
