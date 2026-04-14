@@ -1432,24 +1432,17 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
   const [hasShownHint, setHasShownHint] = useState(false);
   const containerRef = useRef(null);
 
-  // v159: Afficher les flèches brièvement quand la section entre dans le viewport
+  // v159.1: Afficher les flèches brièvement 1s après apparition des offres (indice visuel)
   useEffect(() => {
-    if (!containerRef.current || hasShownHint || !offers || offers.length <= 1) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach(entry => {
-          if (entry.isIntersecting && !hasShownHint) {
-            setShowArrows(true);
-            setHasShownHint(true);
-            // Masquer après 4 secondes (juste un indice)
-            setTimeout(() => setShowArrows(false), 4000);
-          }
-        });
-      },
-      { threshold: 0.3 }
-    );
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
+    if (!offers || offers.length <= 1 || hasShownHint) return;
+    // Petit delay pour laisser le composant se mount + entrer dans le viewport
+    const showTimer = setTimeout(() => {
+      setShowArrows(true);
+      setHasShownHint(true);
+      // Masquer après 4 secondes supplémentaires
+      setTimeout(() => setShowArrows(false), 4000);
+    }, 1200);
+    return () => clearTimeout(showTimer);
   }, [offers, hasShownHint]);
   
   // V119.1: Largeur carte responsive — min(340px, 80vw) + 12px padding
