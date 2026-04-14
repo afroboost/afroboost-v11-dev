@@ -4320,15 +4320,24 @@ function App() {
   // Utilise 'visible !== false' pour inclure les offres sans champ visible défini
   // =====================================================
   
-  // 1. PRODUITS PHYSIQUES (isProduct: true) - Filtrés par visibilité
-  const visibleProducts = offers.filter(o => 
-    o.isProduct === true && o.visible !== false
-  );
-  
-  // 2. OFFRES/SERVICES (isProduct: false ou undefined) - Filtrés par visibilité
-  const visibleServices = offers.filter(o => 
-    !o.isProduct && o.visible !== false
-  );
+  // v159: Helper de tri par position (drag&drop dashboard) — undefined va à la fin
+  const sortByPosition = (a, b) => {
+    const pa = typeof a.position === 'number' ? a.position : 999999;
+    const pb = typeof b.position === 'number' ? b.position : 999999;
+    return pa - pb;
+  };
+
+  // 1. PRODUITS PHYSIQUES (isProduct: true) - Filtrés par visibilité + triés par position
+  const visibleProducts = offers
+    .filter(o => o.isProduct === true && o.visible !== false)
+    .slice()
+    .sort(sortByPosition);
+
+  // 2. OFFRES/SERVICES (isProduct: false ou undefined) - Filtrés par visibilité + triés par position
+  const visibleServices = offers
+    .filter(o => !o.isProduct && o.visible !== false)
+    .slice()
+    .sort(sortByPosition);
   
   // 3. COURS avec leur propre visibilité (exclure les archivés et invisibles)
   // v12: DÉDUPLICATION par nom - garder uniquement le premier de chaque nom
