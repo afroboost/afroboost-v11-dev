@@ -52,7 +52,8 @@ import MediaViewer from "./components/MediaViewer";
 import BecomeCoachPage from "./components/BecomeCoachPage";
 import SuperAdminPanel from "./components/SuperAdminPanel";
 import { CoachSearchModal } from "./components/CoachSearch";
-import CoachVitrine from "./components/CoachVitrine";
+// v160.3: CoachVitrine n'est plus rendu (layout unifie via App.js) mais l'import est retire pour eviter l'ambiguite
+// import CoachVitrine from "./components/CoachVitrine";
 import PartnersCarousel from "./components/PartnersCarousel";
 import AudioPlayer from "./components/AudioPlayer";
 import { useDataCache, invalidateCache } from "./hooks/useDataCache";
