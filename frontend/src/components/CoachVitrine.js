@@ -161,6 +161,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const [bookingForm, setBookingForm] = useState({ name: '', email: '', whatsapp: '', promoCode: '' });
   const [bookingLoading, setBookingLoading] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState(false);
+  const [offerSessionHint, setOfferSessionHint] = useState(false); // v158: indique qu'il faut choisir une session
 
   // Promo
   const [promoMessage, setPromoMessage] = useState({ type: '', text: '' });
@@ -255,14 +256,20 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       // Envoyer une réservation par séance sélectionnée
       const finalPrice = calculateFinalPrice();
       const qty = selectedBookings.length;
+      // v158: détecter la langue courante du navigateur (FR/EN/DE)
+      const detectedLang = (typeof navigator !== 'undefined' && navigator.language ? navigator.language : 'fr').slice(0, 2).toLowerCase();
+      const userLang = ['fr', 'en', 'de'].includes(detectedLang) ? detectedLang : 'fr';
       for (const booking of selectedBookings) {
         await axios.post(`${API}/reservations`, {
           userName: bookingForm.name,
           userEmail: bookingForm.email,
           userWhatsapp: bookingForm.whatsapp,
+          userLanguage: userLang, // v158: pour email/WhatsApp multilingue
           courseName: booking.course.name || booking.course.title,
           courseTime: booking.course.time,
           datetime: booking.date.toISOString(),
+          selectedDates: [booking.date.toISOString()], // v158: utilisé pour la règle 24h
+          selectedDatesText: booking.date.toLocaleDateString('fr-CH', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }) + ' • ' + (booking.course.time || ''),
           offerName: selectedOffer?.name || 'Séance',
           totalPrice: finalPrice / qty,
           quantity: 1,
@@ -1185,6 +1192,21 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         {/* === ÉTAPE 1: Cours/Sessions === */}
         {uniqueCourses.length > 0 && (
           <div id="vitrine-courses-section" className="mb-8">
+            {/* v158: Bannière d'alerte si l'utilisateur a tenté de prendre une offre sans session */}
+            {offerSessionHint && (
+              <div className="mb-4 rounded-xl p-4 flex items-start gap-3 animate-pulse"
+                style={{
+                  background: 'linear-gradient(135deg, rgba(217,28,210,0.2), rgba(139,92,246,0.2))',
+                  border: '2px solid #d91cd2',
+                  boxShadow: '0 0 20px rgba(217,28,210,0.4)'
+                }}>
+                <span style={{ fontSize: '22px' }}>⚠️</span>
+                <div>
+                  <p className="text-white font-semibold text-sm">Choisissez d'abord l'horaire de votre première séance</p>
+                  <p className="text-white/70 text-xs mt-1">Pour réserver votre offre, sélectionnez une date ci-dessous.</p>
+                </div>
+              </div>
+            )}
             <h2 className="font-semibold mb-4 text-white flex items-center gap-2" style={{ fontSize: '18px' }}>
               Choisissez vos sessions
               {selectedBookings.length > 0 && (
@@ -1285,10 +1307,25 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       }}
                       onClick={() => {
                         setSelectedOffer(offer);
-                        setTimeout(() => {
-                          const el = document.getElementById('vitrine-booking-form');
-                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        }, 100);
+                        // v158: Forcer la sélection d'un horaire AVANT de passer au paiement
+                        if (uniqueCourses.length > 0 && selectedBookings.length === 0) {
+                          const sessionsEl = document.getElementById('vitrine-courses-section');
+                          if (sessionsEl) {
+                            sessionsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            sessionsEl.style.boxShadow = '0 0 0 3px #d91cd2, 0 0 30px rgba(217,28,210,0.5)';
+                            sessionsEl.style.borderRadius = '12px';
+                            sessionsEl.style.transition = 'box-shadow 0.3s';
+                            setTimeout(() => { sessionsEl.style.boxShadow = ''; }, 3500);
+                          }
+                          // Afficher un message clair
+                          setOfferSessionHint(true);
+                          setTimeout(() => setOfferSessionHint(false), 5000);
+                        } else {
+                          setTimeout(() => {
+                            const el = document.getElementById('vitrine-booking-form');
+                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                          }, 100);
+                        }
                       }}>
                       <div style={{ position: 'relative', height: '180px', overflow: 'hidden' }}>
                         <img src={imageUrl} alt={offer.name} className="w-full h-full object-cover"
@@ -1381,7 +1418,28 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                     const imageUrl = offer.imageUrl || offer.thumbnail || offer.images?.[0] || defaultImage;
                     return (
                       <div key={offer.id} className="flex-shrink-0 snap-start" style={{ width: '280px', minWidth: '280px', padding: '4px' }}>
-                        <div className="rounded-xl overflow-hidden transition-all duration-300 hover:scale-[1.02]"
+                        <div className="rounded-xl overflow-hidden transition-all duration-300 hover:scale-[1.02] cursor-pointer"
+                          onClick={() => {
+                            // v158: Forcer la sélection d'un horaire AVANT l'offre
+                            setSelectedOffer(offer);
+                            if (uniqueCourses.length > 0 && selectedBookings.length === 0) {
+                              const sessionsEl = document.getElementById('vitrine-courses-section');
+                              if (sessionsEl) {
+                                sessionsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                sessionsEl.style.boxShadow = '0 0 0 3px #d91cd2, 0 0 30px rgba(217,28,210,0.5)';
+                                sessionsEl.style.borderRadius = '12px';
+                                sessionsEl.style.transition = 'box-shadow 0.3s';
+                                setTimeout(() => { sessionsEl.style.boxShadow = ''; }, 3500);
+                              }
+                              setOfferSessionHint(true);
+                              setTimeout(() => setOfferSessionHint(false), 5000);
+                            } else {
+                              setTimeout(() => {
+                                const el = document.getElementById('vitrine-booking-form');
+                                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                              }, 100);
+                            }
+                          }}
                           style={{
                             boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
                             background: 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(5,0,15,0.99) 100%)',
@@ -1467,6 +1525,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   previewDuration={track.preview_duration || 30}
                   onBuyClick={track.price > 0 ? () => {
                     setSelectedOffer({ name: track.title, price: track.price, id: track.id, type: 'audio', thumbnail: track.cover_url });
+                    // v158: audio tracks are not tied to sessions → aller directement au formulaire
                     const el = document.getElementById('vitrine-booking-form');
                     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                   } : undefined}
