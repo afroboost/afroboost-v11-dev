@@ -1204,7 +1204,7 @@ const OfferCard = ({ offer, selected, onClick }) => {
 };
 
 // Offer Card for Horizontal Slider - With LED effect, Loupe, Info icon + Discrete dots
-const OfferCardSlider = ({ offer, selected, onClick }) => {
+const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
   const [showDescription, setShowDescription] = useState(false);
   const [showZoom, setShowZoom] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -1298,9 +1298,11 @@ const OfferCardSlider = ({ offer, selected, onClick }) => {
           style={{
             boxShadow: selected
               ? '0 0 0 1.5px #d91cd2, 0 0 12px rgba(217, 28, 210, 0.25)'
+              : pending
+              ? '0 0 0 2.5px #FF2DAA, 0 0 22px rgba(255, 45, 170, 0.55)'
               : '0 0 0 1px rgba(139, 92, 246, 0.2), 0 4px 24px rgba(0,0,0,0.5)',
             border: 'none',
-            transform: selected ? 'scale(1.02)' : 'scale(1)',
+            transform: selected ? 'scale(1.02)' : pending ? 'scale(1.01)' : 'scale(1)',
             background: 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(5,0,15,0.99) 100%)',
             borderRadius: '16px',
             overflow: 'hidden'
@@ -1421,10 +1423,27 @@ const OfferCardSlider = ({ offer, selected, onClick }) => {
 
 // === OFFERS SLIDER WITH AUTO-PLAY ===
 // Carrousel horizontal avec défilement automatique pour montrer qu'il y a plusieurs offres
-const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer }) => {
+const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOffer }) => {
   const sliderRef = useRef(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  // v159: Afficher les flèches comme indice visuel temporaire + au survol
+  const [showArrows, setShowArrows] = useState(false);
+  const [hasShownHint, setHasShownHint] = useState(false);
+  const containerRef = useRef(null);
+
+  // v159.1: Afficher les flèches brièvement 1s après apparition des offres (indice visuel)
+  useEffect(() => {
+    if (!offers || offers.length <= 1 || hasShownHint) return;
+    // Petit delay pour laisser le composant se mount + entrer dans le viewport
+    const showTimer = setTimeout(() => {
+      setShowArrows(true);
+      setHasShownHint(true);
+      // Masquer après 4 secondes supplémentaires
+      setTimeout(() => setShowArrows(false), 4000);
+    }, 1200);
+    return () => clearTimeout(showTimer);
+  }, [offers, hasShownHint]);
   
   // V119.1: Largeur carte responsive — min(340px, 80vw) + 12px padding
   const CARD_WIDTH = typeof window !== 'undefined' ? Math.min(340, window.innerWidth * 0.8) + 12 : 352;
@@ -1484,10 +1503,11 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer }) => {
   }
   
   return (
-    <div 
-      className="relative"
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
+    <div
+      ref={containerRef}
+      className="relative group"
+      onMouseEnter={() => { handleMouseEnter(); setShowArrows(true); }}
+      onMouseLeave={() => { handleMouseLeave(); setShowArrows(false); }}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
@@ -1513,10 +1533,89 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer }) => {
             key={offer.id}
             offer={offer}
             selected={selectedOffer?.id === offer.id}
+            pending={pendingOffer?.id === offer.id && !selectedOffer}
             onClick={() => onSelectOffer(offer)}
           />
         ))}
       </div>
+
+      {/* v159: Flèches compactes — couleur prix (rose #D91CD2), disparaissent après 4s */}
+      {offers.length > 1 && showArrows && (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setIsPaused(true);
+              if (sliderRef.current) {
+                const newIdx = Math.max(0, currentIndex - 1);
+                setCurrentIndex(newIdx);
+                sliderRef.current.scrollTo({ left: newIdx * CARD_WIDTH, behavior: 'smooth' });
+              }
+              setTimeout(() => setIsPaused(false), 5000);
+            }}
+            aria-label="Offre précédente"
+            className="absolute top-1/2 -translate-y-1/2 rounded-full flex items-center justify-center z-20"
+            style={{
+              left: '4px',
+              width: '32px',
+              height: '32px',
+              background: '#D91CD2',
+              boxShadow: '0 2px 10px rgba(217, 28, 210, 0.6)',
+              border: '1.5px solid rgba(255,255,255,0.3)',
+              opacity: currentIndex === 0 ? 0.3 : 0.9,
+              cursor: currentIndex === 0 ? 'default' : 'pointer',
+              animation: 'arrowSwipeLeft 1.2s ease-in-out infinite',
+              transition: 'opacity 0.4s ease',
+            }}
+            disabled={currentIndex === 0}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsPaused(true);
+              if (sliderRef.current) {
+                const newIdx = Math.min(offers.length - 1, currentIndex + 1);
+                setCurrentIndex(newIdx);
+                sliderRef.current.scrollTo({ left: newIdx * CARD_WIDTH, behavior: 'smooth' });
+              }
+              setTimeout(() => setIsPaused(false), 5000);
+            }}
+            aria-label="Offre suivante"
+            className="absolute top-1/2 -translate-y-1/2 rounded-full flex items-center justify-center z-20"
+            style={{
+              right: '4px',
+              width: '32px',
+              height: '32px',
+              background: '#D91CD2',
+              boxShadow: '0 2px 10px rgba(217, 28, 210, 0.6)',
+              border: '1.5px solid rgba(255,255,255,0.3)',
+              opacity: currentIndex >= offers.length - 1 ? 0.3 : 0.9,
+              cursor: currentIndex >= offers.length - 1 ? 'default' : 'pointer',
+              animation: 'arrowSwipeRight 1.2s ease-in-out infinite',
+              transition: 'opacity 0.4s ease',
+            }}
+            disabled={currentIndex >= offers.length - 1}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </button>
+          <style>{`
+            @keyframes arrowSwipeLeft {
+              0%, 100% { transform: translateY(-50%) translateX(0); }
+              50% { transform: translateY(-50%) translateX(-4px); }
+            }
+            @keyframes arrowSwipeRight {
+              0%, 100% { transform: translateY(-50%) translateX(0); }
+              50% { transform: translateY(-50%) translateX(4px); }
+            }
+          `}</style>
+        </>
+      )}
       
       {/* Indicateurs de pagination (points) - Visibles uniquement s'il y a plusieurs offres */}
       {offers.length > 1 && (
@@ -2421,6 +2520,7 @@ function App() {
   const [selectedCourse, setSelectedCourse] = useState(null);
   const [selectedDates, setSelectedDates] = useState([]); // MULTI-SELECT: Array de dates sélectionnées
   const [selectedOffer, setSelectedOffer] = useState(null);
+  const [pendingOffer, setPendingOffer] = useState(null); // v159: offre cliquée en attente d'une session
   const [selectedSession, setSelectedSession] = useState(null);
   const [quantity, setQuantity] = useState(1); // Quantité pour achats multiples
   const [showTermsModal, setShowTermsModal] = useState(false); // Modal CGV
@@ -3532,11 +3632,21 @@ function App() {
       setSelectedVariants({});
       return;
     }
+    // v159: Toggle aussi pour l'offre en attente (pending)
+    if (pendingOffer && offer && pendingOffer.id === offer.id) {
+      setPendingOffer(null);
+      // Retirer le toast si visible
+      const existingToast = document.getElementById('v158-session-toast');
+      if (existingToast) existingToast.remove();
+      return;
+    }
 
-    // v158: FORCER la sélection d'une session AVANT de pouvoir choisir une offre
+    // v158/v159: FORCER la sélection d'une session AVANT de pouvoir choisir une offre
     // Sauf pour produits/audio/video qui ne nécessitent pas de session
     const isProduct = offer && (offer.type === 'product' || offer.type === 'audio' || offer.type === 'video');
     if (!isProduct && (!selectedCourse || !selectedDates || selectedDates.length === 0)) {
+      // v159: Mémoriser l'offre cliquée pour l'appliquer automatiquement dès qu'une session est choisie
+      setPendingOffer(offer);
       // Scroller vers la section sessions et l'animer
       const sessionsEl = document.getElementById('sessions-section');
       if (sessionsEl) {
@@ -3546,15 +3656,19 @@ function App() {
         sessionsEl.style.transition = 'box-shadow 0.3s';
         setTimeout(() => { sessionsEl.style.boxShadow = ''; }, 6000);
       }
-      // Afficher une alerte visible (toast) en haut de la page
+      // v159: Toast avec le nom de l'offre mémorisée — adapté selon linked_course_ids
+      const hasLinkedCourses = Array.isArray(offer?.linked_course_ids) && offer.linked_course_ids.length > 0;
+      const hintMsg = hasLinkedCourses
+        ? `Les horaires de cette offre s'affichent maintenant ci-dessous`
+        : `Choisissez l'horaire de votre première séance ci-dessus`;
       const existing = document.getElementById('v158-session-toast');
       if (existing) existing.remove();
       const toast = document.createElement('div');
       toast.id = 'v158-session-toast';
-      toast.innerHTML = '⚠️&nbsp; <strong>Choisissez d\'abord l\'horaire de votre première séance</strong> ci-dessus';
+      toast.innerHTML = `✨&nbsp; <strong>${offer?.name || 'Offre'}</strong><br/><span style="font-size:12px;opacity:0.9;">${hintMsg}</span>`;
       toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#d91cd2,#8b5cf6);color:white;padding:14px 24px;border-radius:12px;font-size:14px;box-shadow:0 8px 30px rgba(217,28,210,0.5);max-width:90%;text-align:center;animation:bounce 0.5s ease;';
       document.body.appendChild(toast);
-      setTimeout(() => { if (toast.parentNode) toast.remove(); }, 6000);
+      setTimeout(() => { if (toast.parentNode) toast.remove(); }, 8000);
       return; // ne pas définir selectedOffer
     }
 
@@ -3757,6 +3871,17 @@ function App() {
 
         // v158.7: Ne plus afficher le popup plein écran — l'utilisateur reçoit tout par email
         // setShowSuccess(true);
+        // v159: Notification toast "consultez votre email"
+        try {
+          const existingToast = document.getElementById('v159-email-toast');
+          if (existingToast) existingToast.remove();
+          const toast = document.createElement('div');
+          toast.id = 'v159-email-toast';
+          toast.innerHTML = '✅&nbsp; <strong>Réservation confirmée !</strong><br/><span style="font-size:13px;opacity:0.95;">📧 Consultez votre email pour recevoir votre QR code et code d\'accès AFRO</span>';
+          toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#10b981,#d91cd2);color:white;padding:16px 28px;border-radius:14px;font-size:15px;box-shadow:0 10px 40px rgba(217,28,210,0.5);max-width:90%;text-align:center;animation:fadeInScale 0.4s ease;';
+          document.body.appendChild(toast);
+          setTimeout(() => { if (toast.parentNode) toast.remove(); }, 10000);
+        } catch (e) { /* ignore */ }
         resetFormKeepClient();
       } catch (err) { console.error(err); }
       setLoading(false);
@@ -3842,6 +3967,17 @@ function App() {
 
       // v158.7: Ne plus afficher le popup — tout arrive par email
       // setShowSuccess(true);
+      // v159: Notification toast "consultez votre email"
+      try {
+        const existingToast = document.getElementById('v159-email-toast');
+        if (existingToast) existingToast.remove();
+        const toast = document.createElement('div');
+        toast.id = 'v159-email-toast';
+        toast.innerHTML = '✅&nbsp; <strong>Paiement confirmé !</strong><br/><span style="font-size:13px;opacity:0.95;">📧 Consultez votre email pour recevoir votre QR code et code d\'accès AFRO</span>';
+        toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#10b981,#d91cd2);color:white;padding:16px 28px;border-radius:14px;font-size:15px;box-shadow:0 10px 40px rgba(217,28,210,0.5);max-width:90%;text-align:center;animation:fadeInScale 0.4s ease;';
+        document.body.appendChild(toast);
+        setTimeout(() => { if (toast.parentNode) toast.remove(); }, 10000);
+      } catch (e) { /* ignore */ }
       setShowConfirmPayment(false);
       resetFormKeepClient();
     } catch (err) { console.error(err); }
@@ -3857,7 +3993,7 @@ function App() {
           const isSelected = selectedCourse?.id === course.id && selectedDates.includes(dateISO);
           return (
             <button key={idx} type="button"
-              onClick={() => { 
+              onClick={() => {
                 // Sélectionner le cours si différent
                 if (selectedCourse?.id !== course.id) {
                   setSelectedCourse(course);
@@ -3865,6 +4001,20 @@ function App() {
                 } else {
                   // Toggle la date (ajouter/retirer)
                   toggleDateSelection(dateISO);
+                }
+                // v159: Si une offre était en attente, l'appliquer automatiquement
+                if (pendingOffer) {
+                  setSelectedOffer(pendingOffer);
+                  setSelectedVariants({});
+                  setPendingOffer(null);
+                  // Retirer le toast
+                  const existing = document.getElementById('v158-session-toast');
+                  if (existing) existing.remove();
+                  // Scroller vers le formulaire
+                  setTimeout(() => {
+                    const formSection = document.getElementById('user-info-section');
+                    if (formSection) formSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }, 300);
                 }
               }}
               className={`session-btn px-3 py-2 rounded-lg text-sm font-medium ${isSelected ? 'selected' : ''}`}
@@ -4162,15 +4312,24 @@ function App() {
   // Utilise 'visible !== false' pour inclure les offres sans champ visible défini
   // =====================================================
   
-  // 1. PRODUITS PHYSIQUES (isProduct: true) - Filtrés par visibilité
-  const visibleProducts = offers.filter(o => 
-    o.isProduct === true && o.visible !== false
-  );
-  
-  // 2. OFFRES/SERVICES (isProduct: false ou undefined) - Filtrés par visibilité
-  const visibleServices = offers.filter(o => 
-    !o.isProduct && o.visible !== false
-  );
+  // v159: Helper de tri par position (drag&drop dashboard) — undefined va à la fin
+  const sortByPosition = (a, b) => {
+    const pa = typeof a.position === 'number' ? a.position : 999999;
+    const pb = typeof b.position === 'number' ? b.position : 999999;
+    return pa - pb;
+  };
+
+  // 1. PRODUITS PHYSIQUES (isProduct: true) - Filtrés par visibilité + triés par position
+  const visibleProducts = offers
+    .filter(o => o.isProduct === true && o.visible !== false)
+    .slice()
+    .sort(sortByPosition);
+
+  // 2. OFFRES/SERVICES (isProduct: false ou undefined) - Filtrés par visibilité + triés par position
+  const visibleServices = offers
+    .filter(o => !o.isProduct && o.visible !== false)
+    .slice()
+    .sort(sortByPosition);
   
   // 3. COURS avec leur propre visibilité (exclure les archivés et invisibles)
   // v12: DÉDUPLICATION par nom - garder uniquement le premier de chaque nom
@@ -4258,10 +4417,17 @@ function App() {
     visibleCourses = []; // Masquer les cours sur la page Shop
   } else if (searchQuery.trim()) {
     const query = searchQuery.trim();
-    visibleCourses = baseCourses.filter(course => 
+    visibleCourses = baseCourses.filter(course =>
       searchWithSynonyms(course.name || '', query) ||
       searchWithSynonyms(course.locationName || '', query)
     );
+  }
+
+  // v159: Si une offre est sélectionnée OU en attente (pending) avec des cours liés,
+  // filtrer pour ne montrer QUE ces cours liés
+  const activeOfferForFiltering = selectedOffer || pendingOffer;
+  if (activeOfferForFiltering && Array.isArray(activeOfferForFiltering.linked_course_ids) && activeOfferForFiltering.linked_course_ids.length > 0) {
+    visibleCourses = visibleCourses.filter(course => activeOfferForFiltering.linked_course_ids.includes(course.id));
   }
   
   // =====================================================
@@ -4708,12 +4874,20 @@ function App() {
             'offers-first' = Offres puis Sessions, 'sessions-first' = Sessions puis Offres (défaut)
             ===================================================== */}
         {(() => {
-          const isOffersFirst = concept.vitrineSectionOrder === 'offers-first';
+          // v159: Flow offer-first — sessions cachées par défaut, apparaissent au clic d'une offre
+          const activeOffer = selectedOffer || pendingOffer;
+          const isOffersFirst = true; // v159: force offers-first (UX plus simple)
+          // Afficher sessions UNIQUEMENT si: une offre est active OU si l'utilisateur filtre par "sessions" OU s'il n'y a pas d'offres
+          const showSessions = activeFilter !== 'shop' && visibleCourses.length > 0 && (
+            activeFilter === 'sessions' || !!activeOffer || filteredServices.length === 0
+          );
 
           // --- BLOC SESSIONS ---
-          const sessionsBlock = activeFilter !== 'shop' && visibleCourses.length > 0 && (
+          const sessionsBlock = showSessions && (
             <div key="sessions-block" id="sessions-section" className="mb-8 fade-in-section" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
-              <h2 className="font-semibold mb-4 text-white" style={{ fontSize: '18px' }}>{t('chooseSession')}</h2>
+              <h2 className="font-semibold mb-4 text-white" style={{ fontSize: '18px' }}>
+                {activeOffer ? `📅 Horaires pour "${activeOffer.name}"` : t('chooseSession')}
+              </h2>
               {/* Container avec scroll pour mobile - scrollbar rose fine 4px */}
               <div
                 className="space-y-4 sessions-scrollbar"
@@ -4750,24 +4924,25 @@ function App() {
             </div>
           );
 
-          // --- BLOC OFFRES (V119: toujours visible si des offres existent, pas besoin de sélectionner un cours) ---
+          // --- BLOC OFFRES (v159: flow offer-first — cliquez offre puis horaire apparaît) ---
           const offersBlock = activeFilter !== 'shop' && filteredServices.length > 0 && (
             <div key="offers-block" id="offers-section" className="mb-8 fade-in-section">
               <h2 className="font-semibold mb-2 text-white" style={{ fontSize: '18px' }}>{t('chooseOffer')}</h2>
 
-              {!selectedCourse || selectedDates.length === 0 ? (
-                <p className="text-sm mb-4" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                  👇 {t('selectSessionFirst') || 'Sélectionnez une session et des dates pour réserver'}
+              {activeOffer ? (
+                <p className="text-sm mb-4" style={{ color: '#d91cd2' }}>
+                  👇 Choisissez votre horaire ci-dessous pour cette offre
                 </p>
               ) : (
-                <p className="text-sm mb-4" style={{ color: '#d91cd2' }}>
-                  👉 Sélectionnez une offre pour continuer
+                <p className="text-sm mb-4" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                  👉 Sélectionnez une offre pour voir les horaires disponibles
                 </p>
               )}
 
               <OffersSliderAutoPlay
                 offers={filteredServices}
                 selectedOffer={selectedOffer}
+                pendingOffer={pendingOffer}
                 onSelectOffer={handleSelectOffer}
               />
             </div>
@@ -5007,9 +5182,10 @@ function App() {
               </span>
             </div>
             
-            <OffersSliderAutoPlay 
+            <OffersSliderAutoPlay
               offers={filteredProducts}
               selectedOffer={selectedOffer}
+              pendingOffer={pendingOffer}
               onSelectOffer={(product) => {
                 // Pour les produits, pas besoin de cours/dates
                 setSelectedCourse(null);

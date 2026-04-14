@@ -5756,10 +5756,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 const totalAudioTracks = courses.reduce((acc, c) => acc + (c.audio_tracks?.length || c.playlist?.length || 0), 0);
                 const totalVideos = (concept?.heroVideos || []).filter(v => v && (v.url || v.file_id)).length;
                 return [
-                  { id: 'contenus', icon: '💃', label: 'Contenus', badge: courses.length + (offers?.length || 0) + totalAudioTracks },
+                  { id: 'contenus', icon: '🎁', label: 'Offres & Cours', badge: (offers?.length || 0) + courses.length },
+                  { id: 'audio', icon: '🎵', label: 'Audio', badge: totalAudioTracks },
+                  { id: 'social', icon: '💬', label: 'Social Boost', badge: 0 },
+                  { id: 'emojis', icon: '😊', label: 'Emojis', badge: 0 },
                   { id: 'video-hero', icon: '🎬', label: 'Vidéo Hero', badge: totalVideos },
                   { id: 'vitrine', icon: '🖼️', label: 'Ma Vitrine', badge: 0 },
-                  { id: 'boutique-hub', icon: '💳', label: 'Boutique & Paiements', badge: 0 }
+                  { id: 'boutique-hub', icon: '💳', label: 'Paiements', badge: 0 }
                 ];
               })().map(sub => (
                 <button
@@ -5770,48 +5773,48 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     flexDirection: 'column',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: '6px',
-                    padding: '14px 8px',
-                    borderRadius: '14px',
+                    gap: '3px',
+                    padding: '8px 6px',
+                    borderRadius: '10px',
                     border: offersSubTab === sub.id
                       ? '2px solid rgba(217,28,210,0.7)'
-                      : '1px solid rgba(255,255,255,0.1)',
+                      : '1px solid rgba(255,255,255,0.08)',
                     background: offersSubTab === sub.id
                       ? 'linear-gradient(135deg, rgba(217,28,210,0.18), rgba(139,92,246,0.12))'
-                      : 'rgba(255,255,255,0.04)',
+                      : 'rgba(255,255,255,0.03)',
                     cursor: 'pointer',
                     transition: 'all 0.2s ease',
-                    transform: offersSubTab === sub.id ? 'scale(1.02)' : 'scale(1)',
-                    minHeight: '72px',
+                    minHeight: '54px',
                     position: 'relative'
                   }}
                 >
-                  <span style={{ fontSize: '24px' }}>{sub.icon}</span>
+                  <span style={{ fontSize: '18px' }}>{sub.icon}</span>
                   <span style={{
                     color: offersSubTab === sub.id ? '#D91CD2' : 'rgba(255,255,255,0.7)',
-                    fontSize: '12px',
+                    fontSize: '10px',
                     fontWeight: offersSubTab === sub.id ? 700 : 500,
                     textAlign: 'center',
-                    lineHeight: '1.2'
+                    lineHeight: '1.1'
                   }}>{sub.label}</span>
                   {sub.badge > 0 && (
                     <span style={{
-                      position: 'absolute', top: '6px', right: '8px',
+                      position: 'absolute', top: '3px', right: '4px',
                       background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)',
-                      color: '#fff', fontSize: '10px', fontWeight: 800,
-                      minWidth: '18px', height: '18px', borderRadius: '9px',
+                      color: '#fff', fontSize: '9px', fontWeight: 800,
+                      minWidth: '16px', height: '16px', borderRadius: '8px',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      padding: '0 5px',
-                      boxShadow: '0 0 8px rgba(217,28,210,0.4)'
+                      padding: '0 4px',
+                      boxShadow: '0 0 6px rgba(217,28,210,0.4)'
                     }}>{sub.badge}</span>
                   )}
                 </button>
               ))}
             </div>
 
-            {/* v37.2: Sous-onglet: 💃 Contenus — Cours + Offres + Audio Upload + Master Control Audio */}
-            {offersSubTab === 'contenus' && (
+            {/* v159: Sous-onglets séparés — Contenus / Audio / Social / Emojis */}
+            {['contenus', 'audio', 'social', 'emojis'].includes(offersSubTab) && (
               <>
+                {offersSubTab === 'contenus' && (
                 <CoursesManager
                   courses={courses}
                   setCourses={setCourses}
@@ -5824,8 +5827,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   t={t}
                   coachEmail={safeCoachUser?.email}
                 />
-                {/* v69: Indicateur prochaine expiration automatique */}
-                {nextExpiration?.next && (
+                )}
+                {/* v69: Indicateur prochaine expiration automatique (seulement tab Contenus) */}
+                {offersSubTab === 'contenus' && nextExpiration?.next && (
                   <div style={{
                     margin: '16px 0 0 0',
                     padding: '12px 16px',
@@ -5877,8 +5881,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   </div>
                 )}
 
-                {/* v71: SOCIAL BOOST — Panneau Admin (Super Admin uniquement) */}
-                {isSuperAdmin && (
+                {/* v71: SOCIAL BOOST — Panneau Admin (Super Admin uniquement) - v159: onglet dédié 'social' */}
+                {offersSubTab === 'social' && isSuperAdmin && (
                   <div style={{
                     marginTop: '16px', marginBottom: '16px',
                     borderRadius: '16px', padding: '20px',
@@ -6043,6 +6047,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   </div>
                 )}
 
+                {offersSubTab === 'contenus' && (
                 <div style={{ marginTop: '16px' }}>
                   <OffersManager
                     offers={offers}
@@ -6059,14 +6064,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     cancelEditOffer={cancelEditOffer}
                     API={API}
                     t={t}
-                  
+                    courses={courses}
                     isSuperAdmin={isSuperAdmin}
                     coachEmail={safeCoachUser?.email}
                     consumeCredit={consumeCredit}
                   />
                 </div>
+                )}
 
-                {/* v37.2: Audio Studio inline dans Contenus */}
+                {/* v37.2: Audio Studio — v159: onglet 'audio' */}
+                {offersSubTab === 'audio' && (<>
                 <div style={{
                   borderRadius: '16px',
                   padding: '20px',
@@ -6303,8 +6310,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   setCourses={setCourses}
                   section="audio"
                 />
+                </>
+                )}
 
-                {/* v154: Section Emojis Personnalisés */}
+                {/* v154: Section Emojis Personnalisés — v159: onglet 'emojis' */}
+                {offersSubTab === 'emojis' && (
+                <>
                 <div style={{
                   borderRadius: '16px',
                   padding: '20px',
@@ -6415,6 +6426,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     </div>
                   )}
                 </div>
+                </>
+                )}
               </>
             )}
 

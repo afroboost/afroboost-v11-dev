@@ -22,10 +22,155 @@ const OffersManager = ({
   isSuperAdmin,
   coachEmail,
   consumeCredit,
+  courses = [],
   t
 }) => {
   const [aiLoading, setAiLoading] = React.useState(false);
   const [showOnboarding, setShowOnboarding] = React.useState(false);
+  // v159: État pour accordéon Design A — quelle carte est dépliée
+  const [expandedOfferId, setExpandedOfferId] = React.useState(null);
+
+  // v159 Helper: Retourne les cours liés à une offre donnée
+  const getLinkedCoursesForOffer = (offer) => {
+    const ids = offer?.linked_course_ids || [];
+    if (!ids.length) return [];
+    return (courses || []).filter(c => ids.includes(c.id) && !c.archived);
+  };
+
+  // v159 Helper: Offre sans horaires (produit/audio/video) ?
+  const isOfferWithoutSchedule = (offer) => {
+    return !!(offer.isProduct || (offer.category && ['tshirt','shoes','supplement','accessory','audio','video'].includes(offer.category)));
+  };
+
+  // v159: Drag & Drop réorganisation offres (souris PC + touch mobile)
+  const [draggingId, setDraggingId] = React.useState(null);
+  const [dragOverId, setDragOverId] = React.useState(null);
+  const touchStartY = React.useRef(0);
+
+  const handleDragStart = (e, offerId) => {
+    setDraggingId(offerId);
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', offerId);
+    }
+  };
+  const handleDragOver = (e, offerId) => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    setDragOverId(offerId);
+  };
+  const handleDragEnd = () => { setDraggingId(null); setDragOverId(null); };
+  const handleDrop = async (e, targetOfferId) => {
+    e.preventDefault();
+    const draggedId = draggingId;
+    setDraggingId(null); setDragOverId(null);
+    if (!draggedId || draggedId === targetOfferId) return;
+    const fromIdx = offers.findIndex(o => o.id === draggedId);
+    const toIdx = offers.findIndex(o => o.id === targetOfferId);
+    if (fromIdx < 0 || toIdx < 0) return;
+    // Réordonner localement
+    const reordered = [...offers];
+    const [moved] = reordered.splice(fromIdx, 1);
+    reordered.splice(toIdx, 0, moved);
+    setOffers(reordered);
+    // Sauvegarder l'ordre via PUT sur chaque offre (champ position)
+    try {
+      await Promise.all(reordered.map((o, i) => updateOffer({ ...o, position: i })));
+    } catch (err) { console.error('[V159] reorder error:', err); }
+  };
+  // Touch handlers pour mobile (swipe vertical pour réordonner)
+  const handleTouchStart = (e, offerId) => {
+    touchStartY.current = e.touches[0].clientY;
+    setDraggingId(offerId);
+  };
+  const handleTouchMove = (e) => {
+    if (!draggingId) return;
+    const touch = e.touches[0];
+    const elOver = document.elementFromPoint(touch.clientX, touch.clientY);
+    const card = elOver?.closest('[data-offer-id]');
+    if (card) setDragOverId(card.getAttribute('data-offer-id'));
+  };
+  const handleTouchEnd = (e) => {
+    if (!draggingId || !dragOverId) { setDraggingId(null); setDragOverId(null); return; }
+    handleDrop({ preventDefault: () => {} }, dragOverId);
+  };
+
+  // v159 Helper: Toggle lien cours ↔ offre (appelle updateOffer)
+  const toggleCourseLink = async (offer, courseId) => {
+    const currentIds = offer.linked_course_ids || [];
+    const newIds = currentIds.includes(courseId)
+      ? currentIds.filter(id => id !== courseId)
+      : [...currentIds, courseId];
+    const updated = { ...offer, linked_course_ids: newIds };
+    // Met à jour localement puis sauvegarde
+    setOffers(prev => prev.map(o => o.id === offer.id ? updated : o));
+    try { await updateOffer(updated); } catch (e) { console.error('[V159] toggleCourseLink error:', e); }
+  };
+
+  // v159 Helper: Rendu section horaires pour une offre (accordéon interne)
+  const WEEKDAYS = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+  const renderScheduleSection = (offer) => {
+    if (isOfferWithoutSchedule(offer)) {
+      return (
+        <div className="mt-3 p-3 rounded-lg text-xs" style={{ background: 'rgba(139,92,246,0.08)', color: 'rgba(255,255,255,0.6)' }}>
+          {offer.category === 'audio' ? '🎵' : offer.category === 'video' ? '🎬' : '📦'} Produit sans horaire
+        </div>
+      );
+    }
+    const linkedCourses = getLinkedCoursesForOffer(offer);
+    const myCourses = (courses || []).filter(c => !c.archived && (isSuperAdmin || (c.coach_id || '').toLowerCase() === (coachEmail || '').toLowerCase()));
+    return (
+      <div className="mt-3 p-3 rounded-lg" style={{ background: 'rgba(217,28,210,0.06)', border: '1px solid rgba(217,28,210,0.2)' }}>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-semibold" style={{ color: '#d91cd2' }}>
+            📅 Horaires proposés ({linkedCourses.length})
+          </span>
+          <span className="text-xs text-white/40">
+            {linkedCourses.length === 0 ? 'Aucun — tous les cours seront proposés' : ''}
+          </span>
+        </div>
+        {/* Liste des cours liés (chips avec bouton suppression) */}
+        {linkedCourses.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {linkedCourses.map(c => (
+              <div key={c.id} className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs"
+                style={{ background: 'rgba(217,28,210,0.25)', border: '1px solid rgba(217,28,210,0.5)', color: '#fff' }}>
+                <span>{c.name}</span>
+                <span className="text-white/60">•&nbsp;{WEEKDAYS[c.weekday]}&nbsp;{c.time}</span>
+                <button
+                  type="button"
+                  onClick={() => toggleCourseLink(offer, c.id)}
+                  className="ml-1 text-white/70 hover:text-red-300"
+                  title="Retirer ce créneau"
+                >✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* Sélecteur compact pour AJOUTER un cours */}
+        {myCourses.filter(c => !(offer.linked_course_ids || []).includes(c.id)).length > 0 && (
+          <details>
+            <summary className="cursor-pointer text-xs font-medium py-1" style={{ color: '#a78bfa' }}>
+              + Ajouter un horaire à cette offre
+            </summary>
+            <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+              {myCourses.filter(c => !(offer.linked_course_ids || []).includes(c.id)).map(c => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => toggleCourseLink(offer, c.id)}
+                  className="w-full text-left px-2 py-1.5 rounded text-xs hover:bg-white/10"
+                  style={{ color: '#fff' }}
+                >
+                  + {c.name} <span className="text-white/50">• {WEEKDAYS[c.weekday]} {c.time}</span>
+                </button>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
+    );
+  };
 
   React.useEffect(() => {
     if (!isSuperAdmin) {
@@ -138,11 +283,38 @@ const OffersManager = ({
       <div style={{ maxHeight: '500px', overflowY: 'auto', overflowX: 'hidden' }}>
         {/* === MOBILE VIEW: Cartes verticales === */}
         <div className="block md:hidden space-y-4">
-          {(offersSearch ? offers.filter(o => 
+          {(offersSearch ? offers.filter(o =>
             o.name?.toLowerCase().includes(offersSearch.toLowerCase()) ||
             o.description?.toLowerCase().includes(offersSearch.toLowerCase())
           ) : offers).map((offer, idx) => (
-            <div key={offer.id} className="glass rounded-lg p-4">
+            <div
+              key={offer.id}
+              data-offer-id={offer.id}
+              draggable
+              onDragStart={(e) => handleDragStart(e, offer.id)}
+              onDragOver={(e) => handleDragOver(e, offer.id)}
+              onDragEnd={handleDragEnd}
+              onDrop={(e) => handleDrop(e, offer.id)}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+              className="glass rounded-lg p-4"
+              style={{
+                cursor: 'grab',
+                opacity: draggingId === offer.id ? 0.5 : 1,
+                border: dragOverId === offer.id && draggingId !== offer.id ? '2px dashed #d91cd2' : undefined,
+                transition: 'opacity 0.2s',
+              }}
+            >
+              {/* Poignée de drag (visible) */}
+              <div
+                onTouchStart={(e) => handleTouchStart(e, offer.id)}
+                className="flex items-center gap-2 mb-2 -mt-1"
+                style={{ cursor: 'grab', color: 'rgba(255,255,255,0.3)', fontSize: '14px', userSelect: 'none' }}
+                title="Maintenir et glisser pour réorganiser"
+              >
+                <span style={{ letterSpacing: '1px' }}>⋮⋮</span>
+                <span style={{ fontSize: '10px' }}>Glisser pour déplacer</span>
+              </div>
               {/* Image et nom */}
               <div className="flex items-center gap-3 mb-3">
                 {offer.images?.[0] || offer.thumbnail ? (
@@ -174,10 +346,28 @@ const OffersManager = ({
               {offer.description && (
                 <p className="text-white/60 text-xs mb-3 italic truncate">"{offer.description}"</p>
               )}
-              
+
+              {/* v159 Design A: Bouton accordéon pour déplier les horaires */}
+              <button
+                type="button"
+                onClick={() => setExpandedOfferId(expandedOfferId === offer.id ? null : offer.id)}
+                className="w-full mb-2 py-2 rounded-lg text-xs font-medium flex items-center justify-between px-3"
+                style={{ background: 'rgba(139,92,246,0.15)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)' }}
+              >
+                <span>
+                  {isOfferWithoutSchedule(offer)
+                    ? (offer.isProduct ? '📦 Produit' : offer.category === 'audio' ? '🎵 Audio' : offer.category === 'video' ? '🎬 Vidéo' : '📦 Produit')
+                    : `📅 ${getLinkedCoursesForOffer(offer).length} horaire(s) associé(s)`}
+                </span>
+                <span>{expandedOfferId === offer.id ? '▲' : '▼'}</span>
+              </button>
+
+              {/* Section horaires liés (accordéon) */}
+              {expandedOfferId === offer.id && renderScheduleSection(offer)}
+
               {/* Boutons action */}
-              <div className="flex gap-2">
-                <button 
+              <div className="flex gap-2 mt-2">
+                <button
                   onClick={() => startEditOffer(offer)}
                   className="flex-1 py-3 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm font-medium"
                   data-testid={`edit-offer-${offer.id}`}
@@ -185,7 +375,7 @@ const OffersManager = ({
                   ✏️ Modifier
                 </button>
                 {isOwnOffer(offer) ? (
-                  <button 
+                  <button
                     onClick={() => deleteOffer(offer.id)}
                     className="flex-1 py-3 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-medium"
                     data-testid={`delete-offer-${offer.id}`}
@@ -193,7 +383,7 @@ const OffersManager = ({
                     🗑️ Supprimer
                   </button>
                 ) : (
-                  <button 
+                  <button
                     disabled
                     className="flex-1 py-3 rounded-lg bg-gray-600 text-white/30 text-sm font-medium cursor-not-allowed"
                     title="Vous ne pouvez supprimer que vos propres offres"
@@ -205,14 +395,34 @@ const OffersManager = ({
             </div>
           ))}
         </div>
-        
+
         {/* === DESKTOP VIEW: Layout horizontal === */}
         <div className="hidden md:block">
-          {(offersSearch ? offers.filter(o => 
+          {(offersSearch ? offers.filter(o =>
             o.name?.toLowerCase().includes(offersSearch.toLowerCase()) ||
             o.description?.toLowerCase().includes(offersSearch.toLowerCase())
           ) : offers).map((offer, idx) => (
-            <div key={offer.id} className="glass rounded-lg p-4 mb-4">
+            <div
+              key={offer.id}
+              data-offer-id={offer.id}
+              draggable
+              onDragStart={(e) => handleDragStart(e, offer.id)}
+              onDragOver={(e) => handleDragOver(e, offer.id)}
+              onDragEnd={handleDragEnd}
+              onDrop={(e) => handleDrop(e, offer.id)}
+              className="glass rounded-lg p-4 mb-4"
+              style={{
+                cursor: 'grab',
+                opacity: draggingId === offer.id ? 0.5 : 1,
+                border: dragOverId === offer.id && draggingId !== offer.id ? '2px dashed #d91cd2' : undefined,
+                transition: 'opacity 0.2s',
+              }}
+            >
+              {/* v159: Poignée de drag visible (desktop) */}
+              <div className="flex items-center gap-2 mb-2" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', userSelect: 'none' }} title="Glisser pour réorganiser">
+                <span style={{ letterSpacing: '2px', fontSize: '16px' }}>⋮⋮</span>
+                <span>Glisser pour déplacer</span>
+              </div>
               <div className="flex justify-between items-start mb-3">
                 <div className="flex items-center gap-3">
                   {offer.images?.[0] || offer.thumbnail ? (
@@ -267,11 +477,27 @@ const OffersManager = ({
               {offer.description && (
                 <p className="text-white/60 text-xs mt-2 italic">"{offer.description}"</p>
               )}
+
+              {/* v159 Design A: Accordéon horaires (Desktop) */}
+              <button
+                type="button"
+                onClick={() => setExpandedOfferId(expandedOfferId === offer.id ? null : offer.id)}
+                className="w-full mt-3 py-2 rounded-lg text-xs font-medium flex items-center justify-between px-3"
+                style={{ background: 'rgba(139,92,246,0.15)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)' }}
+              >
+                <span>
+                  {isOfferWithoutSchedule(offer)
+                    ? (offer.isProduct ? '📦 Produit' : offer.category === 'audio' ? '🎵 Audio' : offer.category === 'video' ? '🎬 Vidéo' : '📦 Produit')
+                    : `📅 ${getLinkedCoursesForOffer(offer).length} horaire(s) associé(s)`}
+                </span>
+                <span>{expandedOfferId === offer.id ? '▲' : '▼'}</span>
+              </button>
+              {expandedOfferId === offer.id && renderScheduleSection(offer)}
             </div>
           ))}
         </div>
       </div>
-      
+
       {/* Formulaire Ajout/Modification - RESPONSIVE */}
       <form id="offer-form" onSubmit={addOffer} className="glass rounded-lg p-4 mt-4 border-2 border-purple-500/50">
         <h3 className="text-white mb-4 font-semibold text-sm flex items-center gap-2">
@@ -462,26 +688,74 @@ const OffersManager = ({
             value={newOffer.description || ''}
             onChange={e => setNewOffer({ ...newOffer, description: e.target.value })}
             className="w-full px-3 py-3 rounded-lg neon-input text-sm"
-            rows={2}
-            maxLength={150}
-            placeholder="Description visible au clic sur l'icône i (max 150 car.)"
+            rows={5}
+            maxLength={2000}
+            placeholder="Description détaillée de votre offre (jusqu'à 2000 caractères)"
           />
-          <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>{(newOffer.description || '').length}/150</p>
+          <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>{(newOffer.description || '').length}/2000</p>
         </div>
         
         {/* Mots-clés */}
         <div className="mt-3">
           <label className="text-xs text-white opacity-60 mb-1 block">🔍 Mots-clés (pour la recherche)</label>
-          <input 
+          <input
             type="text"
-            value={newOffer.keywords || ''} 
+            value={newOffer.keywords || ''}
             onChange={e => setNewOffer({ ...newOffer, keywords: e.target.value })}
-            className="w-full px-3 py-2 rounded-lg neon-input text-sm" 
+            className="w-full px-3 py-2 rounded-lg neon-input text-sm"
             placeholder="session, séance, cardio, danse, afro... (séparés par virgules)"
             data-testid="offer-keywords"
           />
           <p className="text-xs mt-1" style={{ color: 'rgba(139, 92, 246, 0.6)' }}>💡 Aide les clients à trouver cette offre</p>
         </div>
+
+        {/* v159: Cours liés à cette offre (many-to-many) */}
+        {!newOffer.isProduct && courses && courses.length > 0 && (
+          <div className="mt-3 p-3 rounded-lg" style={{ border: '1px solid rgba(217, 28, 210, 0.3)', background: 'rgba(217, 28, 210, 0.05)' }}>
+            <label className="text-xs text-white font-semibold mb-2 block">
+              📅 Cours associés à cette offre
+            </label>
+            <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.5)' }}>
+              Quand un client cliquera sur cette offre, il verra uniquement ces cours.
+              Laissez vide pour afficher tous vos cours.
+            </p>
+            <div className="max-h-48 overflow-y-auto space-y-1 pr-2" style={{ scrollbarWidth: 'thin' }}>
+              {courses
+                .filter(c => !c.archived && (isSuperAdmin || (c.coach_id || '').toLowerCase() === (coachEmail || '').toLowerCase()))
+                .map(course => {
+                  const linked = (newOffer.linked_course_ids || []).includes(course.id);
+                  const weekdays = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+                  return (
+                    <label key={course.id} className="flex items-center gap-2 text-sm text-white py-1.5 px-2 rounded cursor-pointer hover:bg-white/5">
+                      <input
+                        type="checkbox"
+                        checked={linked}
+                        onChange={(e) => {
+                          const current = newOffer.linked_course_ids || [];
+                          const updated = e.target.checked
+                            ? [...current, course.id]
+                            : current.filter(id => id !== course.id);
+                          setNewOffer({ ...newOffer, linked_course_ids: updated });
+                        }}
+                        className="w-4 h-4"
+                      />
+                      <span className="flex-1">
+                        <span className="font-medium">{course.name || course.title || 'Cours'}</span>
+                        <span className="text-white/50 text-xs ml-2">
+                          {course.weekday !== undefined && weekdays[course.weekday]} • {course.time}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+            </div>
+            {(newOffer.linked_course_ids || []).length > 0 && (
+              <p className="text-xs mt-2 text-pink-400">
+                ✓ {(newOffer.linked_course_ids || []).length} cours lié(s)
+              </p>
+            )}
+          </div>
+        )}
         
         {/* Category & Type */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
