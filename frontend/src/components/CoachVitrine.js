@@ -1306,26 +1306,29 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                         border: isOfferSelected ? '2px solid #d91cd2' : '1px solid rgba(217, 28, 210, 0.3)'
                       }}
                       onClick={() => {
-                        setSelectedOffer(offer);
-                        // v158: Forcer la sélection d'un horaire AVANT de passer au paiement
+                        // v158.4: Si pas de session choisie ET il y a des cours dispo → BLOQUER l'offre
                         if (uniqueCourses.length > 0 && selectedBookings.length === 0) {
+                          // Ne PAS définir selectedOffer (sinon le checkout apparaît)
                           const sessionsEl = document.getElementById('vitrine-courses-section');
                           if (sessionsEl) {
                             sessionsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                            sessionsEl.style.boxShadow = '0 0 0 3px #d91cd2, 0 0 30px rgba(217,28,210,0.5)';
+                            sessionsEl.style.boxShadow = '0 0 0 3px #d91cd2, 0 0 40px rgba(217,28,210,0.6)';
                             sessionsEl.style.borderRadius = '12px';
                             sessionsEl.style.transition = 'box-shadow 0.3s';
-                            setTimeout(() => { sessionsEl.style.boxShadow = ''; }, 3500);
+                            setTimeout(() => { sessionsEl.style.boxShadow = ''; }, 6000);
                           }
-                          // Afficher un message clair
+                          // Garder l'offre "en attente" visuellement et afficher la bannière
                           setOfferSessionHint(true);
-                          setTimeout(() => setOfferSessionHint(false), 5000);
-                        } else {
-                          setTimeout(() => {
-                            const el = document.getElementById('vitrine-booking-form');
-                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                          }, 100);
+                          // Afficher la bannière pendant 8 secondes pour bien la voir
+                          setTimeout(() => setOfferSessionHint(false), 8000);
+                          return;
                         }
+                        // Cas normal : session déjà choisie → définir l'offre et scroller au formulaire
+                        setSelectedOffer(offer);
+                        setTimeout(() => {
+                          const el = document.getElementById('vitrine-booking-form');
+                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }, 100);
                       }}>
                       <div style={{ position: 'relative', height: '180px', overflow: 'hidden' }}>
                         <img src={imageUrl} alt={offer.name} className="w-full h-full object-cover"
@@ -1420,25 +1423,25 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       <div key={offer.id} className="flex-shrink-0 snap-start" style={{ width: '280px', minWidth: '280px', padding: '4px' }}>
                         <div className="rounded-xl overflow-hidden transition-all duration-300 hover:scale-[1.02] cursor-pointer"
                           onClick={() => {
-                            // v158: Forcer la sélection d'un horaire AVANT l'offre
-                            setSelectedOffer(offer);
+                            // v158.4: BLOQUER l'offre si pas de session
                             if (uniqueCourses.length > 0 && selectedBookings.length === 0) {
                               const sessionsEl = document.getElementById('vitrine-courses-section');
                               if (sessionsEl) {
                                 sessionsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                                sessionsEl.style.boxShadow = '0 0 0 3px #d91cd2, 0 0 30px rgba(217,28,210,0.5)';
+                                sessionsEl.style.boxShadow = '0 0 0 3px #d91cd2, 0 0 40px rgba(217,28,210,0.6)';
                                 sessionsEl.style.borderRadius = '12px';
                                 sessionsEl.style.transition = 'box-shadow 0.3s';
-                                setTimeout(() => { sessionsEl.style.boxShadow = ''; }, 3500);
+                                setTimeout(() => { sessionsEl.style.boxShadow = ''; }, 6000);
                               }
                               setOfferSessionHint(true);
-                              setTimeout(() => setOfferSessionHint(false), 5000);
-                            } else {
-                              setTimeout(() => {
-                                const el = document.getElementById('vitrine-booking-form');
-                                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                              }, 100);
+                              setTimeout(() => setOfferSessionHint(false), 8000);
+                              return;
                             }
+                            setSelectedOffer(offer);
+                            setTimeout(() => {
+                              const el = document.getElementById('vitrine-booking-form');
+                              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }, 100);
                           }}
                           style={{
                             boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
