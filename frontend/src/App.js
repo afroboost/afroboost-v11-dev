@@ -4777,27 +4777,9 @@ function App() {
         {/* v75: Icône AVIS intégrée dans la barre d'actions PartnersCarousel */}
       </div>
 
-      {/* v14: VITRINE COACH OVERLAY - Transition instantanée, pas d'écran de chargement violet */}
-      {showCoachVitrine && (
-        <div
-          className="fixed inset-0 z-50"
-          style={{
-            background: '#000'
-          }}
-        >
-          <CoachVitrine
-            username={showCoachVitrine}
-            onClose={() => {
-              setShowCoachVitrine(null);
-              window.history.pushState({}, '', '/');
-            }}
-            onBack={() => {
-              setShowCoachVitrine(null);
-              window.history.pushState({}, '', '/');
-            }}
-          />
-        </div>
-      )}
+      {/* v160: Overlay CoachVitrine SUPPRIMÉ — la vitrine coach utilise maintenant
+          le layout unifié App.js (voir useEffect showCoachVitrine ligne 2866).
+          Seul le bandeau de retour aux lignes 4528+ est conservé. */}
 
       {/* v35: SECTION AUDIO déplacée vers le Shop — voir plus bas */}
 
@@ -5960,6 +5942,15 @@ function App() {
             setShowCoachSearch(false);
             // v8.9.6: Rediriger vers la vitrine du coach
             if (coach?.id) {
+              // v160.3: Si c'est le Super Admin (bassi/afroboost/artboost) → homepage publique
+              const coachSlug = (coach.name || coach.email || coach.id || '').toLowerCase().trim().replace(/\s+/g, '-');
+              const coachEmail = (coach.email || '').toLowerCase().trim();
+              if (SUPER_ADMIN_SLUGS.includes(coachSlug) || SUPER_ADMIN_EMAILS.some(e => e.toLowerCase() === coachEmail)) {
+                console.log('[V160.3] Recherche coach Super Admin → homepage publique');
+                window.history.replaceState({}, '', '/?visitor=true');
+                window.location.reload();
+                return;
+              }
               setShowCoachVitrine(coach.id);
               window.history.pushState({}, '', `/coach/${coach.id}`);
             }
