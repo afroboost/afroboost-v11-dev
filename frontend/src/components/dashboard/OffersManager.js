@@ -42,6 +42,59 @@ const OffersManager = ({
     return !!(offer.isProduct || (offer.category && ['tshirt','shoes','supplement','accessory','audio','video'].includes(offer.category)));
   };
 
+  // v159: Drag & Drop réorganisation offres (souris PC + touch mobile)
+  const [draggingId, setDraggingId] = React.useState(null);
+  const [dragOverId, setDragOverId] = React.useState(null);
+  const touchStartY = React.useRef(0);
+
+  const handleDragStart = (e, offerId) => {
+    setDraggingId(offerId);
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', offerId);
+    }
+  };
+  const handleDragOver = (e, offerId) => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    setDragOverId(offerId);
+  };
+  const handleDragEnd = () => { setDraggingId(null); setDragOverId(null); };
+  const handleDrop = async (e, targetOfferId) => {
+    e.preventDefault();
+    const draggedId = draggingId;
+    setDraggingId(null); setDragOverId(null);
+    if (!draggedId || draggedId === targetOfferId) return;
+    const fromIdx = offers.findIndex(o => o.id === draggedId);
+    const toIdx = offers.findIndex(o => o.id === targetOfferId);
+    if (fromIdx < 0 || toIdx < 0) return;
+    // Réordonner localement
+    const reordered = [...offers];
+    const [moved] = reordered.splice(fromIdx, 1);
+    reordered.splice(toIdx, 0, moved);
+    setOffers(reordered);
+    // Sauvegarder l'ordre via PUT sur chaque offre (champ position)
+    try {
+      await Promise.all(reordered.map((o, i) => updateOffer({ ...o, position: i })));
+    } catch (err) { console.error('[V159] reorder error:', err); }
+  };
+  // Touch handlers pour mobile (swipe vertical pour réordonner)
+  const handleTouchStart = (e, offerId) => {
+    touchStartY.current = e.touches[0].clientY;
+    setDraggingId(offerId);
+  };
+  const handleTouchMove = (e) => {
+    if (!draggingId) return;
+    const touch = e.touches[0];
+    const elOver = document.elementFromPoint(touch.clientX, touch.clientY);
+    const card = elOver?.closest('[data-offer-id]');
+    if (card) setDragOverId(card.getAttribute('data-offer-id'));
+  };
+  const handleTouchEnd = (e) => {
+    if (!draggingId || !dragOverId) { setDraggingId(null); setDragOverId(null); return; }
+    handleDrop({ preventDefault: () => {} }, dragOverId);
+  };
+
   // v159 Helper: Toggle lien cours ↔ offre (appelle updateOffer)
   const toggleCourseLink = async (offer, courseId) => {
     const currentIds = offer.linked_course_ids || [];
@@ -230,11 +283,38 @@ const OffersManager = ({
       <div style={{ maxHeight: '500px', overflowY: 'auto', overflowX: 'hidden' }}>
         {/* === MOBILE VIEW: Cartes verticales === */}
         <div className="block md:hidden space-y-4">
-          {(offersSearch ? offers.filter(o => 
+          {(offersSearch ? offers.filter(o =>
             o.name?.toLowerCase().includes(offersSearch.toLowerCase()) ||
             o.description?.toLowerCase().includes(offersSearch.toLowerCase())
           ) : offers).map((offer, idx) => (
-            <div key={offer.id} className="glass rounded-lg p-4">
+            <div
+              key={offer.id}
+              data-offer-id={offer.id}
+              draggable
+              onDragStart={(e) => handleDragStart(e, offer.id)}
+              onDragOver={(e) => handleDragOver(e, offer.id)}
+              onDragEnd={handleDragEnd}
+              onDrop={(e) => handleDrop(e, offer.id)}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+              className="glass rounded-lg p-4"
+              style={{
+                cursor: 'grab',
+                opacity: draggingId === offer.id ? 0.5 : 1,
+                border: dragOverId === offer.id && draggingId !== offer.id ? '2px dashed #d91cd2' : undefined,
+                transition: 'opacity 0.2s',
+              }}
+            >
+              {/* Poignée de drag (visible) */}
+              <div
+                onTouchStart={(e) => handleTouchStart(e, offer.id)}
+                className="flex items-center gap-2 mb-2 -mt-1"
+                style={{ cursor: 'grab', color: 'rgba(255,255,255,0.3)', fontSize: '14px', userSelect: 'none' }}
+                title="Maintenir et glisser pour réorganiser"
+              >
+                <span style={{ letterSpacing: '1px' }}>⋮⋮</span>
+                <span style={{ fontSize: '10px' }}>Glisser pour déplacer</span>
+              </div>
               {/* Image et nom */}
               <div className="flex items-center gap-3 mb-3">
                 {offer.images?.[0] || offer.thumbnail ? (

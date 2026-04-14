@@ -368,6 +368,8 @@ class Offer(BaseModel):
     # Si vide → l'offre accepte tous les cours du coach (backward compat)
     # Si rempli → seuls ces cours sont proposés quand on clique l'offre
     linked_course_ids: List[str] = []
+    # v159: Position d'affichage (drag & drop reorder) — plus petit = plus haut
+    position: Optional[int] = None
     # E-commerce fields
     category: Optional[str] = ""  # Ex: "service", "tshirt", "shoes", "supplement"
     isProduct: bool = False  # True = physical product, False = service/course
@@ -402,6 +404,7 @@ class OfferCreate(BaseModel):
     images: List[str] = []  # Support multi-images (max 5)
     # v159: Cours liés à cette offre (validation: mêmes coach_id)
     linked_course_ids: List[str] = []
+    position: Optional[int] = None  # v159: ordre d'affichage
     # E-commerce fields
     category: Optional[str] = ""
     isProduct: bool = False
