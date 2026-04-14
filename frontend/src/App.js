@@ -1299,7 +1299,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
             boxShadow: selected
               ? '0 0 0 1.5px #d91cd2, 0 0 12px rgba(217, 28, 210, 0.25)'
               : pending
-              ? '0 0 0 2.5px #fbbf24, 0 0 20px rgba(251, 191, 36, 0.45)'
+              ? '0 0 0 2.5px #FF2DAA, 0 0 22px rgba(255, 45, 170, 0.55)'
               : '0 0 0 1px rgba(139, 92, 246, 0.2), 0 4px 24px rgba(0,0,0,0.5)',
             border: 'none',
             transform: selected ? 'scale(1.02)' : pending ? 'scale(1.01)' : 'scale(1)',
