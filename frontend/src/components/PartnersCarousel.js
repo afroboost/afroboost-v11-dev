@@ -172,7 +172,7 @@ const getMediaInfo = (videoUrl) => {
 // === COMPOSANT VIDEO CARD v9.5.7 avec mode maintenance ===
 // v11.7: Ajout isSuperAdminVideo pour désactiver double-clic
 // v34: Ajout preview 30s + overlay achat pour vidéos premium
-const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onNavigate, isPaused, onTogglePause, isVisible, maintenanceMode = false, isSuperAdmin = false, onBuyVideo, socialCommentsCount = 0, onShowComments, pageLikesCount = 0, likeAnimating = false }) => {
+const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onNavigate, isPaused, onTogglePause, isVisible, maintenanceMode = false, isSuperAdmin = false, onBuyVideo, socialCommentsCount = 0, onShowComments, pageLikesCount = 0, likeAnimating = false, currentVitrineEmail = null }) => {
   const videoRef = useRef(null);
   const [hasError, setHasError] = useState(false);
   const [ytPlaying, setYtPlaying] = useState(false);
@@ -505,31 +505,34 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
 
   // v9.5.7: handleReserve avec blocage maintenance
   // v11.8: Pour SA, scroll vers offres au lieu de naviguer
+  // v160.5: Pour le coach en cours de visite, scroll aussi vers offres (même logique SA)
   const handleReserve = (e) => {
     e.stopPropagation();
     if (isBlocked) {
       console.log('[MAINTENANCE] Réservation bloquée');
       return;
     }
-    
+
+    // v160.5: Si on est déjà sur la vitrine de ce partenaire → scroll vers offres (pas de navigation)
+    const currentVitrine = (currentVitrineEmail || '').toLowerCase().trim();
+    const isCurrentVitrinePartner = currentVitrine && partnerEmail === currentVitrine;
+
     // v11.8: Si vidéo Super Admin, scroll vers les offres de la page actuelle
-    if (isSuperAdminVideo) {
-      console.log('[SUPER-ADMIN] Scroll vers section offres (pas de navigation)');
+    if (isSuperAdminVideo || isCurrentVitrinePartner) {
+      console.log('[RESERVE] Scroll vers section offres (pas de navigation) - isSuperAdmin:', isSuperAdminVideo, 'isCurrentVitrine:', isCurrentVitrinePartner);
       // Chercher les sections offres/sessions dans la page actuelle
-      const offersSection = document.getElementById('sessions-section') || 
-                           document.getElementById('offers-section') ||
+      const offersSection = document.getElementById('offers-section') ||
+                           document.getElementById('sessions-section') ||
                            document.getElementById('courses-section');
       if (offersSection) {
         offersSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        console.log('[SUPER-ADMIN] ✅ Scroll effectué vers', offersSection.id);
+        console.log('[RESERVE] ✅ Scroll effectué vers', offersSection.id);
       } else {
-        console.log('[SUPER-ADMIN] ❌ Aucune section offres trouvée');
-        // Fallback: appeler onNavigate qui ne fera rien pour SA (grâce au check v11.7)
-        onNavigate(partner);
+        console.log('[RESERVE] ❌ Aucune section offres trouvée');
       }
       return;
     }
-    
+
     // Pour les autres partenaires, navigation normale vers leur vitrine
     onNavigate(partner);
   };
@@ -1288,12 +1291,23 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
   const searchInputRef = useRef(null);
   
   // v9.5.3: Filtrer les partenaires par nom
+  // v160.5: Sur la vitrine d'un coach partenaire, ne montrer QUE sa propre video hero (isolation)
   useEffect(() => {
+    const currentVitrine = (currentVitrineEmail || '').toLowerCase().trim();
+    let baseList = partners;
+    if (currentVitrine) {
+      baseList = partners.filter(p => (p.email || '').toLowerCase().trim() === currentVitrine);
+      // Si le coach n'est pas dans la liste /api/partners/active, afficher quand meme une carte minimale
+      if (baseList.length === 0 && partners.length > 0) {
+        console.log('[V160.5] Coach non trouve dans partners/active, filtrage desactive');
+        baseList = partners;
+      }
+    }
     if (searchQuery.trim() === '') {
-      setFilteredPartners(partners);
+      setFilteredPartners(baseList);
     } else {
       const query = searchQuery.toLowerCase();
-      const filtered = partners.filter(p => {
+      const filtered = baseList.filter(p => {
         const name = (p.platform_name || p.name || '').toLowerCase();
         const bio = (p.bio || p.description || '').toLowerCase();
         return name.includes(query) || bio.includes(query);
@@ -1301,7 +1315,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
       setFilteredPartners(filtered);
     }
     setActiveIndex(0);
-  }, [searchQuery, partners]);
+  }, [searchQuery, partners, currentVitrineEmail]);
   
   // Restaurer la position de scroll
   useEffect(() => {
@@ -1789,6 +1803,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
                   onBuyVideo={onBuyVideo}
                   socialCommentsCount={socialCommentsCount}
                   onShowComments={onShowComments}
+                  currentVitrineEmail={currentVitrineEmail}
                 />
               </div>
             );

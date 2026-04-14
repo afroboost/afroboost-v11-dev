@@ -2417,6 +2417,7 @@ function App() {
   const [showCoachSearch, setShowCoachSearch] = useState(false); // v8.9.4: Modal recherche coach
   const [showCoachVitrine, setShowCoachVitrine] = useState(null); // v8.9.6: Username du coach pour vitrine
   const [coachVitrineLoaded, setCoachVitrineLoaded] = useState(false); // v160: flag data coach chargee
+  const [currentCoachVitrineEmail, setCurrentCoachVitrineEmail] = useState(null); // v160.5: Email du coach dont on affiche la vitrine (pour isolation commentaires/likes et Reserve button)
 
   // v72: Social Proof — Icône interactive + panneau commentaires
   const [socialComments, setSocialComments] = useState([]);
@@ -2883,6 +2884,23 @@ function App() {
           document.documentElement.style.setProperty('--background-color', data.concept.backgroundColor);
           document.body.style.backgroundColor = data.concept.backgroundColor;
         }
+      }
+      // v160.5: Charger les commentaires & likes SPECIFIQUES a ce coach (isolation per-coach)
+      const coachEmail = (data.coach && data.coach.email ? data.coach.email : '').toLowerCase().trim();
+      setCurrentCoachVitrineEmail(coachEmail || null);
+      if (coachEmail) {
+        axios.get(`${API}/comments?coach_id=${encodeURIComponent(coachEmail)}`).then(cres => {
+          if (cres.data && Array.isArray(cres.data.comments)) {
+            setSocialComments(cres.data.comments);
+            setSocialTotalCount(cres.data.total_count || cres.data.comments.length);
+          } else {
+            setSocialComments([]);
+            setSocialTotalCount(0);
+          }
+        }).catch(() => {
+          setSocialComments([]);
+          setSocialTotalCount(0);
+        });
       }
       setCoachVitrineLoaded(true);
     }).catch(err => {
@@ -4767,7 +4785,7 @@ function App() {
           isSuperAdmin={isSuperAdminEmail(coachUser?.email)}
           lang={lang}
           onLangChange={setLang}
-          currentVitrineEmail={null}
+          currentVitrineEmail={currentCoachVitrineEmail}
           onBuyVideo={(videoOffer) => {
             console.log('[V34-BUY] Achat vidéo depuis carousel:', videoOffer);
             handleSelectOffer(videoOffer);
