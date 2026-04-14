@@ -1539,7 +1539,7 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
         ))}
       </div>
 
-      {/* v159: Indice minimaliste de navigation — apparaît 4s à l'arrivée puis disparaît */}
+      {/* v159: Flèches violettes VISIBLES — toujours présentes, animation main-swipe à l'arrivée */}
       {offers.length > 1 && (
         <>
           <button
@@ -1554,22 +1554,18 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
               setTimeout(() => setIsPaused(false), 5000);
             }}
             aria-label="Offre précédente"
-            className="absolute left-1 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center z-10"
+            className="absolute left-2 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full flex items-center justify-center z-20"
             style={{
-              background: 'rgba(0, 0, 0, 0.4)',
-              backdropFilter: 'blur(6px)',
-              WebkitBackdropFilter: 'blur(6px)',
-              border: '1px solid rgba(255,255,255,0.15)',
-              opacity: showArrows && currentIndex !== 0 ? 0.75 : 0,
-              visibility: showArrows ? 'visible' : 'hidden',
-              transition: 'opacity 0.5s ease, visibility 0.5s',
+              background: '#8b5cf6',
+              boxShadow: '0 6px 24px rgba(139, 92, 246, 0.8), 0 0 0 3px rgba(255,255,255,0.4)',
+              border: 'none',
+              opacity: currentIndex === 0 ? 0.35 : 1,
               cursor: currentIndex === 0 ? 'default' : 'pointer',
-              pointerEvents: showArrows && currentIndex !== 0 ? 'auto' : 'none',
-              animation: showArrows ? 'hintPulse 1.6s ease-in-out infinite' : 'none',
+              animation: showArrows ? 'arrowSwipeLeft 1.2s ease-in-out infinite' : 'none',
             }}
             disabled={currentIndex === 0}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="15 18 9 12 15 6"></polyline>
             </svg>
           </button>
@@ -1585,29 +1581,45 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
               setTimeout(() => setIsPaused(false), 5000);
             }}
             aria-label="Offre suivante"
-            className="absolute right-1 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center z-10"
+            className="absolute right-2 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full flex items-center justify-center z-20"
             style={{
-              background: 'rgba(0, 0, 0, 0.4)',
-              backdropFilter: 'blur(6px)',
-              WebkitBackdropFilter: 'blur(6px)',
-              border: '1px solid rgba(255,255,255,0.15)',
-              opacity: showArrows && currentIndex < offers.length - 1 ? 0.75 : 0,
-              visibility: showArrows ? 'visible' : 'hidden',
-              transition: 'opacity 0.5s ease, visibility 0.5s',
+              background: '#8b5cf6',
+              boxShadow: '0 6px 24px rgba(139, 92, 246, 0.8), 0 0 0 3px rgba(255,255,255,0.4)',
+              border: 'none',
+              opacity: currentIndex >= offers.length - 1 ? 0.35 : 1,
               cursor: currentIndex >= offers.length - 1 ? 'default' : 'pointer',
-              pointerEvents: showArrows && currentIndex < offers.length - 1 ? 'auto' : 'none',
-              animation: showArrows ? 'hintPulse 1.6s ease-in-out infinite' : 'none',
+              animation: showArrows ? 'arrowSwipeRight 1.2s ease-in-out infinite' : 'none',
             }}
             disabled={currentIndex >= offers.length - 1}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="9 18 15 12 9 6"></polyline>
             </svg>
           </button>
+          {/* v159: Indice "main qui swipe" en dessous du slider (mobile surtout) */}
+          {showArrows && (
+            <div className="flex items-center justify-center gap-2 mt-2" style={{ pointerEvents: 'none' }}>
+              <span style={{ fontSize: '20px', animation: 'swipeHand 1.4s ease-in-out infinite' }}>👉</span>
+              <span className="text-xs" style={{ color: '#c4b5fd', fontWeight: 500 }}>Glissez pour voir les autres offres</span>
+              <span style={{ fontSize: '20px', animation: 'swipeHandReverse 1.4s ease-in-out infinite' }}>👈</span>
+            </div>
+          )}
           <style>{`
-            @keyframes hintPulse {
-              0%, 100% { opacity: 0.5; }
-              50% { opacity: 0.85; }
+            @keyframes arrowSwipeLeft {
+              0%, 100% { transform: translateY(-50%) translateX(0); }
+              50% { transform: translateY(-50%) translateX(-6px); }
+            }
+            @keyframes arrowSwipeRight {
+              0%, 100% { transform: translateY(-50%) translateX(0); }
+              50% { transform: translateY(-50%) translateX(6px); }
+            }
+            @keyframes swipeHand {
+              0%, 100% { transform: translateX(0); }
+              50% { transform: translateX(8px); }
+            }
+            @keyframes swipeHandReverse {
+              0%, 100% { transform: translateX(0); }
+              50% { transform: translateX(-8px); }
             }
           `}</style>
         </>
@@ -4861,12 +4873,20 @@ function App() {
             'offers-first' = Offres puis Sessions, 'sessions-first' = Sessions puis Offres (défaut)
             ===================================================== */}
         {(() => {
-          const isOffersFirst = concept.vitrineSectionOrder === 'offers-first';
+          // v159: Flow offer-first — sessions cachées par défaut, apparaissent au clic d'une offre
+          const activeOffer = selectedOffer || pendingOffer;
+          const isOffersFirst = true; // v159: force offers-first (UX plus simple)
+          // Afficher sessions UNIQUEMENT si: une offre est active OU si l'utilisateur filtre par "sessions" OU s'il n'y a pas d'offres
+          const showSessions = activeFilter !== 'shop' && visibleCourses.length > 0 && (
+            activeFilter === 'sessions' || !!activeOffer || filteredServices.length === 0
+          );
 
           // --- BLOC SESSIONS ---
-          const sessionsBlock = activeFilter !== 'shop' && visibleCourses.length > 0 && (
+          const sessionsBlock = showSessions && (
             <div key="sessions-block" id="sessions-section" className="mb-8 fade-in-section" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
-              <h2 className="font-semibold mb-4 text-white" style={{ fontSize: '18px' }}>{t('chooseSession')}</h2>
+              <h2 className="font-semibold mb-4 text-white" style={{ fontSize: '18px' }}>
+                {activeOffer ? `📅 Horaires pour "${activeOffer.name}"` : t('chooseSession')}
+              </h2>
               {/* Container avec scroll pour mobile - scrollbar rose fine 4px */}
               <div
                 className="space-y-4 sessions-scrollbar"
@@ -4903,18 +4923,18 @@ function App() {
             </div>
           );
 
-          // --- BLOC OFFRES (V119: toujours visible si des offres existent, pas besoin de sélectionner un cours) ---
+          // --- BLOC OFFRES (v159: flow offer-first — cliquez offre puis horaire apparaît) ---
           const offersBlock = activeFilter !== 'shop' && filteredServices.length > 0 && (
             <div key="offers-block" id="offers-section" className="mb-8 fade-in-section">
               <h2 className="font-semibold mb-2 text-white" style={{ fontSize: '18px' }}>{t('chooseOffer')}</h2>
 
-              {!selectedCourse || selectedDates.length === 0 ? (
-                <p className="text-sm mb-4" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                  👇 {t('selectSessionFirst') || 'Sélectionnez une session et des dates pour réserver'}
+              {activeOffer ? (
+                <p className="text-sm mb-4" style={{ color: '#d91cd2' }}>
+                  👇 Choisissez votre horaire ci-dessous pour cette offre
                 </p>
               ) : (
-                <p className="text-sm mb-4" style={{ color: '#d91cd2' }}>
-                  👉 Sélectionnez une offre pour continuer
+                <p className="text-sm mb-4" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                  👉 Sélectionnez une offre pour voir les horaires disponibles
                 </p>
               )}
 
