@@ -3319,13 +3319,87 @@ async def stripe_webhook(request: Request):
                 }
                 await db.subscriptions.insert_one(subscription_data)
                 logger.info(f"[PAYMENT] Subscription auto-creee: {customer_email} - {product_name} ({sessions_count} seances)")
-                # v8.1: EMAIL AVEC QR CODE + CODE TEXTE
+                # v163: EMAIL CONFIRMATION — QR code (double usage) + Guide de connexion au chat
                 if RESEND_AVAILABLE and RESEND_API_KEY and customer_email:
-                    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://afroboost.com/?qr={new_code}&format=png"
-                    html = f"""<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0a0a0a;"><div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:24px;text-align:center;"><h1 style="color:white;margin:0;font-size:22px;">Bienvenue chez Afroboost</h1></div><div style="padding:24px;color:#fff;"><p style="color:#a855f7;font-size:16px;line-height:1.6;">Merci pour ton achat et bienvenue dans la communaute Afroboost ! <span style="font-size:18px;">&#9889;</span><br><br>Ton energie va faire la difference. Tu trouveras ci-dessous ton code personnel et ton QR Code pour acceder a tes seances.</p><div style="background:rgba(147,51,234,0.15);border:1px solid rgba(147,51,234,0.3);border-radius:12px;padding:20px;margin:20px 0;text-align:center;"><p style="margin:0 0 8px;color:#888;">Ton code d'acces personnel</p><p style="margin:0;color:#d91cd2;font-size:28px;font-weight:bold;letter-spacing:3px;">{new_code}</p><p style="margin:12px 0 0;color:#888;">{sessions_count} seances incluses</p></div><div style="text-align:center;margin:30px 0;"><p style="color:#888;margin-bottom:16px;">Ton QR Code d'acces</p><img src="{qr_url}" alt="QR Code Afroboost" width="150" height="150" style="background:white;padding:10px;border-radius:8px;display:block;margin:0 auto;"/><p style="color:#a855f7;font-size:13px;margin-top:12px;">Presente ce QR Code a l'entree de ton cours.</p></div><div style="text-align:center;margin:30px 0;"><a href="https://afroboost.com" style="display:inline-block;background:#d91cd2;color:white;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;">Acceder a mon espace Afroboost</a></div><p style="color:#666;font-size:12px;text-align:center;margin-top:30px;">Conserve ce mail precieusement. A tres vite !</p></div></div>"""
+                    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=https://afroboost.com/?qr={new_code}&format=png"
+                    chat_url = f"https://afroboost.com/?qr={new_code}"
+                    html = f"""<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;background:#0a0a0a;color:#fff;">
+                        <div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:28px 24px;text-align:center;">
+                            <h1 style="color:white;margin:0;font-size:24px;">Bienvenue chez Afroboost !</h1>
+                            <p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">Ta souscription est confirmee</p>
+                        </div>
+                        <div style="padding:28px 24px;">
+                            <p style="color:#e2e8f0;font-size:15px;line-height:1.6;margin:0 0 16px;">Merci pour ton achat et bienvenue dans la communaute Afroboost ! <span style="font-size:18px;">&#9889;</span></p>
+                            <p style="color:#a855f7;font-size:14px;line-height:1.6;margin:0 0 24px;">Ton energie va faire la difference. Voici tout ce qu'il te faut pour commencer.</p>
+
+                            <!-- CODE + QR -->
+                            <div style="background:rgba(147,51,234,0.15);border:1px solid rgba(147,51,234,0.3);border-radius:14px;padding:22px;margin:0 0 24px;text-align:center;">
+                                <p style="margin:0 0 6px;color:#888;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Ton code d'acces personnel</p>
+                                <p style="margin:0;color:#d91cd2;font-size:30px;font-weight:bold;letter-spacing:3px;">{new_code}</p>
+                                <p style="margin:10px 0 20px;color:#888;font-size:13px;">{sessions_count} seance(s) incluse(s)</p>
+                                <img src="{qr_url}" alt="QR Code Afroboost" width="180" height="180" style="background:white;padding:12px;border-radius:10px;display:block;margin:0 auto;"/>
+                                <p style="color:#a855f7;font-size:12px;margin:14px 0 0;line-height:1.5;">
+                                    <strong style="color:#fff;">Ton QR code a 2 usages :</strong><br>
+                                    &#10003; A scanner a l'entree de ton cours<br>
+                                    &#10003; A scanner pour acceder a ton espace chat / client
+                                </p>
+                            </div>
+
+                            <!-- BOUTON ACCES DIRECT CHAT -->
+                            <div style="text-align:center;margin:0 0 28px;">
+                                <a href="{chat_url}" style="display:inline-block;background:#d91cd2;color:white;padding:14px 32px;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">Acceder a mon espace chat</a>
+                                <p style="color:#666;font-size:11px;margin:10px 0 0;">Ce lien te connecte automatiquement avec ton code</p>
+                            </div>
+
+                            <!-- GUIDE RESERVATION FUTURES SEANCES -->
+                            <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.2);border-radius:14px;padding:22px;margin:0 0 20px;">
+                                <h2 style="color:#fff;margin:0 0 16px;font-size:16px;">Comment reserver tes prochaines seances ?</h2>
+                                <table style="width:100%;border-spacing:0;">
+                                    <tr>
+                                        <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
+                                            <div style="background:#d91cd2;color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">1</div>
+                                        </td>
+                                        <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
+                                            <strong>Ouvre ton espace chat</strong> en cliquant sur le bouton ci-dessus, ou scanne le QR code avec ton telephone.
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
+                                            <div style="background:#d91cd2;color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">2</div>
+                                        </td>
+                                        <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
+                                            <strong>Entre ton code</strong> {new_code} si demande (il est deja memorise si tu viens du lien).
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
+                                            <div style="background:#d91cd2;color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">3</div>
+                                        </td>
+                                        <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
+                                            <strong>Dis a l'IA "je veux reserver"</strong> ou choisis une date dans la liste des sessions disponibles.
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
+                                            <div style="background:#d91cd2;color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">4</div>
+                                        </td>
+                                        <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
+                                            <strong>Confirme ta reservation</strong> - tes seances restantes se mettent a jour automatiquement.
+                                        </td>
+                                    </tr>
+                                </table>
+                                <p style="color:#a855f7;font-size:12px;margin:16px 0 0;text-align:center;line-height:1.5;">
+                                    Astuce : installe Afroboost en PWA depuis le menu du navigateur pour un acces rapide.
+                                </p>
+                            </div>
+
+                            <!-- FOOTER -->
+                            <p style="color:#666;font-size:11px;text-align:center;margin:24px 0 0;line-height:1.5;">Conserve ce mail precieusement - ton code et ton QR code y sont accessibles a tout moment.<br>A tres vite chez Afroboost !</p>
+                        </div>
+                    </div>"""
                     try:
-                        await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost <notifications@afroboosteur.com>", "to": [customer_email], "subject": f"Votre acces Afroboost - {new_code}", "html": html})
-                        logger.info(f"[PAYMENT] Email envoye a {customer_email}")
+                        await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost <notifications@afroboosteur.com>", "to": [customer_email], "subject": f"Bienvenue chez Afroboost - Ton code {new_code}", "html": html})
+                        logger.info(f"[PAYMENT] Email v163 envoye a {customer_email}")
                     except Exception as mail_err:
                         logger.warning(f"[PAYMENT] Email error: {mail_err}")
                 # v8.7: Sync CRM - Creer/MAJ contact (email unique)
