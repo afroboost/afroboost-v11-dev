@@ -1347,6 +1347,18 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
         } else {
           console.log('[FLUX-REELS] ✅ Aucun doublon détecté');
         }
+        // v159: Filtrer les vidéos YouTube Shorts des heroVideos (indésirables)
+        data.forEach(p => {
+          if (Array.isArray(p.heroVideos)) {
+            p.heroVideos = p.heroVideos.filter(v => {
+              const url = (v?.url || '').toLowerCase();
+              return !url.includes('youtube.com') && !url.includes('youtu.be') && !url.includes('shorts/');
+            });
+          }
+          if (p.video_url && /youtube\.com|youtu\.be|shorts\//i.test(p.video_url)) {
+            p.video_url = '';
+          }
+        });
         
         setPartners(data);
         setFilteredPartners(data); // v9.5.3: Initialiser filteredPartners
