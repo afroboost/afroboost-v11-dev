@@ -507,16 +507,21 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
                 logger.warning(f"[RESERVATION] Impossible de parser la date {selected_dates}: {e}")
                 # Par sécurité, on laisse passer si le format est ambigu
 
-    # === v95: VÉRIFIER ET DÉDUIRE UNE SÉANCE — support subscriptionId pour choix multi-abo ===
+    # === v95/v158.8: VÉRIFIER ET DÉDUIRE UNE SÉANCE ===
+    # v158.8: Ne déduire du pack QUE si l'utilisateur utilise EXPLICITEMENT son abonnement
+    # (via subscriptionId ou promoCode qui est son code de pack). Pas d'auto-déduction
+    # pour les réservations d'essai gratuit, achats à l'unité, etc.
     subscription_id = getattr(reservation, 'subscriptionId', None)
-    if user_email:
-        # v95: Si subscriptionId fourni, cibler cet abonnement spécifique
+    offer_price = float(getattr(reservation, 'totalPrice', 0) or 0)
+    # Une reservation "essai gratuit" ou "achat à l'unité" NE DOIT PAS déduire d'un pack existant
+    is_free_or_single_purchase = offer_price == 0 or (not subscription_id and not promo_code)
+
+    if user_email and not is_free_or_single_purchase:
+        # Seulement si subscriptionId OU promoCode explicitement fourni
         if subscription_id:
             query = {"id": subscription_id, "email": user_email, "status": "active"}
         else:
-            query = {"email": user_email, "status": "active"}
-            if promo_code:
-                query["code"] = promo_code.upper().strip()
+            query = {"email": user_email, "status": "active", "code": promo_code.upper().strip()}
 
         subscription = await db.subscriptions.find_one(query, {"_id": 0})
         
