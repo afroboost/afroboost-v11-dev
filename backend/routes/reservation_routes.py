@@ -105,12 +105,25 @@ _I18N = {
         'footer': 'Conserve cet email. À très vite chez Afroboost !',
         'credit_label': 'Ton crédit restant',
         'credit_unit': 'séances',
+        # v158: règles annulation & remboursement
+        'cancel_title': '⚠️ Règles d\'annulation',
+        'cancel_rule1': 'Annulation possible jusqu\'à 24h avant la séance.',
+        'cancel_rule2': 'Passé ce délai : séance non remboursable.',
+        # v158: infos pratiques à apporter le jour J
+        'practical_title': '🎒 Infos pratiques pour ta séance',
+        'practical_rule1': '🕒 Viens 15 minutes en avance',
+        'practical_rule2': '👕 Tenue de sport',
+        'practical_rule3': '🧻 Serviette',
+        'practical_rule4': '💧 Bouteille d\'eau',
         'whatsapp_msg': ('✨ Afroboost — Réservation confirmée ✨\n\n'
                          'Merci {name} ! Référence : {res_code}\n'
                          '🎟️ Code d\'accès permanent : {access_code}\n'
                          '📅 {dates}\n\n'
                          'Pour tes prochaines séances, va sur le chat Afroboost et entre ton code.\n'
-                         '⚠️ Réserve au moins 24h à l\'avance sinon la séance est perdue.\n\n'
+                         '⚠️ Réserve au moins 24h à l\'avance sinon la séance est perdue.\n'
+                         '⚠️ Annulation uniquement jusqu\'à 24h avant — sinon non remboursable.\n\n'
+                         '🎒 À apporter : tenue de sport, serviette, bouteille d\'eau\n'
+                         '🕒 Viens 15 minutes en avance\n\n'
                          '💜 La piste t\'attend !'),
     },
     'en': {
@@ -137,12 +150,23 @@ _I18N = {
         'footer': 'Keep this email safe. See you soon at Afroboost!',
         'credit_label': 'Your remaining credit',
         'credit_unit': 'sessions',
+        'cancel_title': '⚠️ Cancellation policy',
+        'cancel_rule1': 'Cancellation is allowed up to 24h before the session.',
+        'cancel_rule2': 'After that: the session is non-refundable.',
+        'practical_title': '🎒 Practical info for your session',
+        'practical_rule1': '🕒 Arrive 15 minutes early',
+        'practical_rule2': '👕 Sportswear',
+        'practical_rule3': '🧻 Towel',
+        'practical_rule4': '💧 Water bottle',
         'whatsapp_msg': ('✨ Afroboost — Booking confirmed ✨\n\n'
                          'Thanks {name}! Reference: {res_code}\n'
                          '🎟️ Permanent access code: {access_code}\n'
                          '📅 {dates}\n\n'
                          'For your next sessions, go to the Afroboost chat and enter your code.\n'
-                         '⚠️ Book at least 24h in advance or the session is lost.\n\n'
+                         '⚠️ Book at least 24h in advance or the session is lost.\n'
+                         '⚠️ Cancel at least 24h before — otherwise non-refundable.\n\n'
+                         '🎒 Bring: sportswear, towel, water bottle\n'
+                         '🕒 Arrive 15 min early\n\n'
                          '💜 The dance floor is waiting!'),
     },
     'de': {
@@ -169,12 +193,23 @@ _I18N = {
         'footer': 'Bewahre diese E-Mail auf. Bis bald bei Afroboost!',
         'credit_label': 'Dein verbleibendes Guthaben',
         'credit_unit': 'Sessions',
+        'cancel_title': '⚠️ Stornierungsbedingungen',
+        'cancel_rule1': 'Stornierung bis 24h vor der Session möglich.',
+        'cancel_rule2': 'Danach: Session nicht erstattungsfähig.',
+        'practical_title': '🎒 Praktische Infos für deine Session',
+        'practical_rule1': '🕒 Komme 15 Minuten früher',
+        'practical_rule2': '👕 Sportkleidung',
+        'practical_rule3': '🧻 Handtuch',
+        'practical_rule4': '💧 Wasserflasche',
         'whatsapp_msg': ('✨ Afroboost — Buchung bestätigt ✨\n\n'
                          'Danke {name}! Referenz: {res_code}\n'
                          '🎟️ Dauerhafter Zugangscode: {access_code}\n'
                          '📅 {dates}\n\n'
                          'Für deine nächsten Sessions, gehe in den Afroboost-Chat und gib deinen Code ein.\n'
-                         '⚠️ Buche mindestens 24h im Voraus, sonst ist die Session verloren.\n\n'
+                         '⚠️ Buche mindestens 24h im Voraus, sonst ist die Session verloren.\n'
+                         '⚠️ Stornierung nur bis 24h vorher — sonst keine Rückerstattung.\n\n'
+                         '🎒 Bitte mitbringen: Sportkleidung, Handtuch, Wasserflasche\n'
+                         '🕒 Komme 15 Min früher\n\n'
                          '💜 Die Tanzfläche wartet!'),
     },
 }
@@ -310,6 +345,24 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
                     {t['guide_step2'].format(code=access_code)}<br>
                     {t['guide_step3']}<br>
                     {t['guide_step4']}
+                </p>
+            </div>
+            <!-- Infos pratiques à apporter -->
+            <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:12px;padding:18px;margin:20px 0;">
+                <p style="color:#10b981;font-size:14px;font-weight:bold;margin:0 0 10px;">{t['practical_title']}</p>
+                <p style="color:rgba(255,255,255,0.85);font-size:13px;line-height:1.9;margin:0;">
+                    {t['practical_rule1']}<br>
+                    {t['practical_rule2']}<br>
+                    {t['practical_rule3']}<br>
+                    {t['practical_rule4']}
+                </p>
+            </div>
+            <!-- Règles d'annulation -->
+            <div style="background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.3);border-radius:12px;padding:18px;margin:20px 0;">
+                <p style="color:#fb923c;font-size:14px;font-weight:bold;margin:0 0 10px;">{t['cancel_title']}</p>
+                <p style="color:rgba(255,255,255,0.85);font-size:13px;line-height:1.8;margin:0;">
+                    • {t['cancel_rule1']}<br>
+                    • {t['cancel_rule2']}
                 </p>
             </div>
             <!-- CTAs -->
