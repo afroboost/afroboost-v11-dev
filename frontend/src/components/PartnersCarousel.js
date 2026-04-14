@@ -1560,9 +1560,11 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
       data-testid="partners-reels-section"
     >
       {/* v9.6.6: HEADER avec icônes bien alignées (Loupe + Traduction) */}
-      <div 
-        className="absolute top-0 left-0 right-0 z-20"
-        style={{ 
+      {/* v160.8: Decaler de 40px vers le bas sur vitrine coach pour passer sous le bandeau 'Retour Afroboost' */}
+      <div
+        className="absolute left-0 right-0 z-20"
+        style={{
+          top: currentVitrineEmail ? '40px' : '0px',
           background: 'linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.3) 70%, transparent 100%)',
           paddingTop: '0px',
           paddingBottom: '0px'
