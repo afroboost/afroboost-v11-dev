@@ -2421,6 +2421,7 @@ function App() {
   const [selectedCourse, setSelectedCourse] = useState(null);
   const [selectedDates, setSelectedDates] = useState([]); // MULTI-SELECT: Array de dates sélectionnées
   const [selectedOffer, setSelectedOffer] = useState(null);
+  const [pendingOffer, setPendingOffer] = useState(null); // v159: offre cliquée en attente d'une session
   const [selectedSession, setSelectedSession] = useState(null);
   const [quantity, setQuantity] = useState(1); // Quantité pour achats multiples
   const [showTermsModal, setShowTermsModal] = useState(false); // Modal CGV
@@ -3533,10 +3534,12 @@ function App() {
       return;
     }
 
-    // v158: FORCER la sélection d'une session AVANT de pouvoir choisir une offre
+    // v158/v159: FORCER la sélection d'une session AVANT de pouvoir choisir une offre
     // Sauf pour produits/audio/video qui ne nécessitent pas de session
     const isProduct = offer && (offer.type === 'product' || offer.type === 'audio' || offer.type === 'video');
     if (!isProduct && (!selectedCourse || !selectedDates || selectedDates.length === 0)) {
+      // v159: Mémoriser l'offre cliquée pour l'appliquer automatiquement dès qu'une session est choisie
+      setPendingOffer(offer);
       // Scroller vers la section sessions et l'animer
       const sessionsEl = document.getElementById('sessions-section');
       if (sessionsEl) {
@@ -3546,15 +3549,15 @@ function App() {
         sessionsEl.style.transition = 'box-shadow 0.3s';
         setTimeout(() => { sessionsEl.style.boxShadow = ''; }, 6000);
       }
-      // Afficher une alerte visible (toast) en haut de la page
+      // v159: Toast avec le nom de l'offre mémorisée
       const existing = document.getElementById('v158-session-toast');
       if (existing) existing.remove();
       const toast = document.createElement('div');
       toast.id = 'v158-session-toast';
-      toast.innerHTML = '⚠️&nbsp; <strong>Choisissez d\'abord l\'horaire de votre première séance</strong> ci-dessus';
+      toast.innerHTML = `⚠️&nbsp; <strong>Choisissez l'horaire de votre première séance</strong><br/><span style="font-size:12px;opacity:0.9;">"${offer?.name || 'Offre'}" sera appliquée automatiquement</span>`;
       toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#d91cd2,#8b5cf6);color:white;padding:14px 24px;border-radius:12px;font-size:14px;box-shadow:0 8px 30px rgba(217,28,210,0.5);max-width:90%;text-align:center;animation:bounce 0.5s ease;';
       document.body.appendChild(toast);
-      setTimeout(() => { if (toast.parentNode) toast.remove(); }, 6000);
+      setTimeout(() => { if (toast.parentNode) toast.remove(); }, 8000);
       return; // ne pas définir selectedOffer
     }
 
@@ -3757,6 +3760,17 @@ function App() {
 
         // v158.7: Ne plus afficher le popup plein écran — l'utilisateur reçoit tout par email
         // setShowSuccess(true);
+        // v159: Notification toast "consultez votre email"
+        try {
+          const existingToast = document.getElementById('v159-email-toast');
+          if (existingToast) existingToast.remove();
+          const toast = document.createElement('div');
+          toast.id = 'v159-email-toast';
+          toast.innerHTML = '✅&nbsp; <strong>Réservation confirmée !</strong><br/><span style="font-size:13px;opacity:0.95;">📧 Consultez votre email pour recevoir votre QR code et code d\'accès AFRO</span>';
+          toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#10b981,#d91cd2);color:white;padding:16px 28px;border-radius:14px;font-size:15px;box-shadow:0 10px 40px rgba(217,28,210,0.5);max-width:90%;text-align:center;animation:fadeInScale 0.4s ease;';
+          document.body.appendChild(toast);
+          setTimeout(() => { if (toast.parentNode) toast.remove(); }, 10000);
+        } catch (e) { /* ignore */ }
         resetFormKeepClient();
       } catch (err) { console.error(err); }
       setLoading(false);
@@ -3842,6 +3856,17 @@ function App() {
 
       // v158.7: Ne plus afficher le popup — tout arrive par email
       // setShowSuccess(true);
+      // v159: Notification toast "consultez votre email"
+      try {
+        const existingToast = document.getElementById('v159-email-toast');
+        if (existingToast) existingToast.remove();
+        const toast = document.createElement('div');
+        toast.id = 'v159-email-toast';
+        toast.innerHTML = '✅&nbsp; <strong>Paiement confirmé !</strong><br/><span style="font-size:13px;opacity:0.95;">📧 Consultez votre email pour recevoir votre QR code et code d\'accès AFRO</span>';
+        toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#10b981,#d91cd2);color:white;padding:16px 28px;border-radius:14px;font-size:15px;box-shadow:0 10px 40px rgba(217,28,210,0.5);max-width:90%;text-align:center;animation:fadeInScale 0.4s ease;';
+        document.body.appendChild(toast);
+        setTimeout(() => { if (toast.parentNode) toast.remove(); }, 10000);
+      } catch (e) { /* ignore */ }
       setShowConfirmPayment(false);
       resetFormKeepClient();
     } catch (err) { console.error(err); }
@@ -3857,7 +3882,7 @@ function App() {
           const isSelected = selectedCourse?.id === course.id && selectedDates.includes(dateISO);
           return (
             <button key={idx} type="button"
-              onClick={() => { 
+              onClick={() => {
                 // Sélectionner le cours si différent
                 if (selectedCourse?.id !== course.id) {
                   setSelectedCourse(course);
@@ -3865,6 +3890,20 @@ function App() {
                 } else {
                   // Toggle la date (ajouter/retirer)
                   toggleDateSelection(dateISO);
+                }
+                // v159: Si une offre était en attente, l'appliquer automatiquement
+                if (pendingOffer) {
+                  setSelectedOffer(pendingOffer);
+                  setSelectedVariants({});
+                  setPendingOffer(null);
+                  // Retirer le toast
+                  const existing = document.getElementById('v158-session-toast');
+                  if (existing) existing.remove();
+                  // Scroller vers le formulaire
+                  setTimeout(() => {
+                    const formSection = document.getElementById('user-info-section');
+                    if (formSection) formSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }, 300);
                 }
               }}
               className={`session-btn px-3 py-2 rounded-lg text-sm font-medium ${isSelected ? 'selected' : ''}`}

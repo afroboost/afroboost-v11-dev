@@ -1289,6 +1289,30 @@ export const ChatWidget = () => {
     }
   }, []);
 
+  // === v159: AUTO-OUVERTURE FORMULAIRE ABONNÉ via URL ?code=AFRO-XXXX ===
+  // Utilisé par le bouton "Mon espace" dans l'email de confirmation
+  useEffect(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const codeFromUrl = urlParams.get('code');
+      if (codeFromUrl && codeFromUrl.toUpperCase().startsWith('AFRO-')) {
+        console.log('[CHATWIDGET] 🎟️ Code AFRO détecté dans URL:', codeFromUrl);
+        // Forcer sortie du mode admin si connecté
+        setIsCoachMode(false);
+        // Pré-remplir et ouvrir le formulaire abonné
+        setSubscriberFormData(prev => ({ ...prev, code: codeFromUrl.toUpperCase() }));
+        setShowSubscriberForm(true);
+        setIsFullscreen(true);
+        setIsOpen(true);
+        // Nettoyer l'URL pour pas ré-ouvrir le form en cas de refresh
+        const cleanUrl = window.location.pathname + window.location.hash;
+        window.history.replaceState({}, '', cleanUrl);
+      }
+    } catch (e) {
+      console.warn('[CHATWIDGET] Erreur lecture URL code:', e);
+    }
+  }, []);
+
   // === v8.9.9: VÉRIFICATION COACH INSCRIT ===
   // v9.3.0: Initialiser depuis localStorage pour persistance après reconnexion
   // v9.3.1: Aussi vérifier côté serveur pour synchronisation

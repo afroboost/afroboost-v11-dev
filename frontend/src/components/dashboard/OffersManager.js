@@ -462,11 +462,11 @@ const OffersManager = ({
             value={newOffer.description || ''}
             onChange={e => setNewOffer({ ...newOffer, description: e.target.value })}
             className="w-full px-3 py-3 rounded-lg neon-input text-sm"
-            rows={2}
-            maxLength={150}
-            placeholder="Description visible au clic sur l'icône i (max 150 car.)"
+            rows={5}
+            maxLength={2000}
+            placeholder="Description détaillée de votre offre (jusqu'à 2000 caractères)"
           />
-          <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>{(newOffer.description || '').length}/150</p>
+          <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>{(newOffer.description || '').length}/2000</p>
         </div>
         
         {/* Mots-clés */}
