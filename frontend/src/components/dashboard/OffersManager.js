@@ -398,11 +398,31 @@ const OffersManager = ({
 
         {/* === DESKTOP VIEW: Layout horizontal === */}
         <div className="hidden md:block">
-          {(offersSearch ? offers.filter(o => 
+          {(offersSearch ? offers.filter(o =>
             o.name?.toLowerCase().includes(offersSearch.toLowerCase()) ||
             o.description?.toLowerCase().includes(offersSearch.toLowerCase())
           ) : offers).map((offer, idx) => (
-            <div key={offer.id} className="glass rounded-lg p-4 mb-4">
+            <div
+              key={offer.id}
+              data-offer-id={offer.id}
+              draggable
+              onDragStart={(e) => handleDragStart(e, offer.id)}
+              onDragOver={(e) => handleDragOver(e, offer.id)}
+              onDragEnd={handleDragEnd}
+              onDrop={(e) => handleDrop(e, offer.id)}
+              className="glass rounded-lg p-4 mb-4"
+              style={{
+                cursor: 'grab',
+                opacity: draggingId === offer.id ? 0.5 : 1,
+                border: dragOverId === offer.id && draggingId !== offer.id ? '2px dashed #d91cd2' : undefined,
+                transition: 'opacity 0.2s',
+              }}
+            >
+              {/* v159: Poignée de drag visible (desktop) */}
+              <div className="flex items-center gap-2 mb-2" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', userSelect: 'none' }} title="Glisser pour réorganiser">
+                <span style={{ letterSpacing: '2px', fontSize: '16px' }}>⋮⋮</span>
+                <span>Glisser pour déplacer</span>
+              </div>
               <div className="flex justify-between items-start mb-3">
                 <div className="flex items-center gap-3">
                   {offer.images?.[0] || offer.thumbnail ? (
