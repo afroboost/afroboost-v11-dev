@@ -162,6 +162,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const [bookingLoading, setBookingLoading] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState(false);
   const [offerSessionHint, setOfferSessionHint] = useState(false); // v158: indique qu'il faut choisir une session
+  const [userClickedSession, setUserClickedSession] = useState(false); // v158.5: l'utilisateur a-t-il MANUELLEMENT cliqué une session ?
 
   // Promo
   const [promoMessage, setPromoMessage] = useState({ type: '', text: '' });
@@ -182,6 +183,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
 
   // v17: Clic sur date → toggle sélection multi-séances (max 3)
   const handleBookClick = (course, date) => {
+    setUserClickedSession(true); // v158.5: marquer que l'utilisateur a manuellement cliqué une session
     const dateStr = date.toISOString();
     const exists = selectedBookings.findIndex(b => b.course.id === course.id && b.date.toISOString() === dateStr);
     if (exists >= 0) {
@@ -1307,7 +1309,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       }}
                       onClick={() => {
                         // v158.4: Si pas de session choisie ET il y a des cours dispo → BLOQUER l'offre
-                        if (uniqueCourses.length > 0 && selectedBookings.length === 0) {
+                        if (uniqueCourses.length > 0 && !userClickedSession) {
                           // Ne PAS définir selectedOffer (sinon le checkout apparaît)
                           const sessionsEl = document.getElementById('vitrine-courses-section');
                           if (sessionsEl) {
@@ -1424,7 +1426,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                         <div className="rounded-xl overflow-hidden transition-all duration-300 hover:scale-[1.02] cursor-pointer"
                           onClick={() => {
                             // v158.4: BLOQUER l'offre si pas de session
-                            if (uniqueCourses.length > 0 && selectedBookings.length === 0) {
+                            if (uniqueCourses.length > 0 && !userClickedSession) {
                               const sessionsEl = document.getElementById('vitrine-courses-section');
                               if (sessionsEl) {
                                 sessionsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
