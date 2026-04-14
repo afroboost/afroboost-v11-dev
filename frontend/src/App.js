@@ -3652,12 +3652,16 @@ function App() {
         sessionsEl.style.transition = 'box-shadow 0.3s';
         setTimeout(() => { sessionsEl.style.boxShadow = ''; }, 6000);
       }
-      // v159: Toast avec le nom de l'offre mémorisée
+      // v159: Toast avec le nom de l'offre mémorisée — adapté selon linked_course_ids
+      const hasLinkedCourses = Array.isArray(offer?.linked_course_ids) && offer.linked_course_ids.length > 0;
+      const hintMsg = hasLinkedCourses
+        ? `Les horaires de cette offre s'affichent maintenant ci-dessous`
+        : `Choisissez l'horaire de votre première séance ci-dessus`;
       const existing = document.getElementById('v158-session-toast');
       if (existing) existing.remove();
       const toast = document.createElement('div');
       toast.id = 'v158-session-toast';
-      toast.innerHTML = `⚠️&nbsp; <strong>Choisissez l'horaire de votre première séance</strong><br/><span style="font-size:12px;opacity:0.9;">"${offer?.name || 'Offre'}" sera appliquée automatiquement</span>`;
+      toast.innerHTML = `✨&nbsp; <strong>${offer?.name || 'Offre'}</strong><br/><span style="font-size:12px;opacity:0.9;">${hintMsg}</span>`;
       toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#d91cd2,#8b5cf6);color:white;padding:14px 24px;border-radius:12px;font-size:14px;box-shadow:0 8px 30px rgba(217,28,210,0.5);max-width:90%;text-align:center;animation:bounce 0.5s ease;';
       document.body.appendChild(toast);
       setTimeout(() => { if (toast.parentNode) toast.remove(); }, 8000);
@@ -4400,10 +4404,17 @@ function App() {
     visibleCourses = []; // Masquer les cours sur la page Shop
   } else if (searchQuery.trim()) {
     const query = searchQuery.trim();
-    visibleCourses = baseCourses.filter(course => 
+    visibleCourses = baseCourses.filter(course =>
       searchWithSynonyms(course.name || '', query) ||
       searchWithSynonyms(course.locationName || '', query)
     );
+  }
+
+  // v159: Si une offre est sélectionnée OU en attente (pending) avec des cours liés,
+  // filtrer pour ne montrer QUE ces cours liés
+  const activeOfferForFiltering = selectedOffer || pendingOffer;
+  if (activeOfferForFiltering && Array.isArray(activeOfferForFiltering.linked_course_ids) && activeOfferForFiltering.linked_course_ids.length > 0) {
+    visibleCourses = visibleCourses.filter(course => activeOfferForFiltering.linked_course_ids.includes(course.id));
   }
   
   // =====================================================

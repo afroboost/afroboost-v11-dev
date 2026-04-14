@@ -6059,7 +6059,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     cancelEditOffer={cancelEditOffer}
                     API={API}
                     t={t}
-                  
+                    courses={courses}
                     isSuperAdmin={isSuperAdmin}
                     coachEmail={safeCoachUser?.email}
                     consumeCredit={consumeCredit}

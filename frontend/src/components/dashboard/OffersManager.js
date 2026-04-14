@@ -22,6 +22,7 @@ const OffersManager = ({
   isSuperAdmin,
   coachEmail,
   consumeCredit,
+  courses = [],
   t
 }) => {
   const [aiLoading, setAiLoading] = React.useState(false);
@@ -472,16 +473,64 @@ const OffersManager = ({
         {/* Mots-clés */}
         <div className="mt-3">
           <label className="text-xs text-white opacity-60 mb-1 block">🔍 Mots-clés (pour la recherche)</label>
-          <input 
+          <input
             type="text"
-            value={newOffer.keywords || ''} 
+            value={newOffer.keywords || ''}
             onChange={e => setNewOffer({ ...newOffer, keywords: e.target.value })}
-            className="w-full px-3 py-2 rounded-lg neon-input text-sm" 
+            className="w-full px-3 py-2 rounded-lg neon-input text-sm"
             placeholder="session, séance, cardio, danse, afro... (séparés par virgules)"
             data-testid="offer-keywords"
           />
           <p className="text-xs mt-1" style={{ color: 'rgba(139, 92, 246, 0.6)' }}>💡 Aide les clients à trouver cette offre</p>
         </div>
+
+        {/* v159: Cours liés à cette offre (many-to-many) */}
+        {!newOffer.isProduct && courses && courses.length > 0 && (
+          <div className="mt-3 p-3 rounded-lg" style={{ border: '1px solid rgba(217, 28, 210, 0.3)', background: 'rgba(217, 28, 210, 0.05)' }}>
+            <label className="text-xs text-white font-semibold mb-2 block">
+              📅 Cours associés à cette offre
+            </label>
+            <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.5)' }}>
+              Quand un client cliquera sur cette offre, il verra uniquement ces cours.
+              Laissez vide pour afficher tous vos cours.
+            </p>
+            <div className="max-h-48 overflow-y-auto space-y-1 pr-2" style={{ scrollbarWidth: 'thin' }}>
+              {courses
+                .filter(c => !c.archived && (isSuperAdmin || (c.coach_id || '').toLowerCase() === (coachEmail || '').toLowerCase()))
+                .map(course => {
+                  const linked = (newOffer.linked_course_ids || []).includes(course.id);
+                  const weekdays = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+                  return (
+                    <label key={course.id} className="flex items-center gap-2 text-sm text-white py-1.5 px-2 rounded cursor-pointer hover:bg-white/5">
+                      <input
+                        type="checkbox"
+                        checked={linked}
+                        onChange={(e) => {
+                          const current = newOffer.linked_course_ids || [];
+                          const updated = e.target.checked
+                            ? [...current, course.id]
+                            : current.filter(id => id !== course.id);
+                          setNewOffer({ ...newOffer, linked_course_ids: updated });
+                        }}
+                        className="w-4 h-4"
+                      />
+                      <span className="flex-1">
+                        <span className="font-medium">{course.name || course.title || 'Cours'}</span>
+                        <span className="text-white/50 text-xs ml-2">
+                          {course.weekday !== undefined && weekdays[course.weekday]} • {course.time}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+            </div>
+            {(newOffer.linked_course_ids || []).length > 0 && (
+              <p className="text-xs mt-2 text-pink-400">
+                ✓ {(newOffer.linked_course_ids || []).length} cours lié(s)
+              </p>
+            )}
+          </div>
+        )}
         
         {/* Category & Type */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">

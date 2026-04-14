@@ -363,6 +363,11 @@ class Offer(BaseModel):
     keywords: Optional[str] = ""  # Mots-clés pour la recherche (invisible)
     visible: bool = True
     images: List[str] = []  # Support multi-images (max 5)
+    # v159: Cours liés à cette offre (many-to-many)
+    # Liste d'IDs de courses appartenant au MÊME coach_id (validation backend)
+    # Si vide → l'offre accepte tous les cours du coach (backward compat)
+    # Si rempli → seuls ces cours sont proposés quand on clique l'offre
+    linked_course_ids: List[str] = []
     # E-commerce fields
     category: Optional[str] = ""  # Ex: "service", "tshirt", "shoes", "supplement"
     isProduct: bool = False  # True = physical product, False = service/course
@@ -395,6 +400,8 @@ class OfferCreate(BaseModel):
     keywords: Optional[str] = ""  # Mots-clés pour la recherche
     visible: bool = True
     images: List[str] = []  # Support multi-images (max 5)
+    # v159: Cours liés à cette offre (validation: mêmes coach_id)
+    linked_course_ids: List[str] = []
     # E-commerce fields
     category: Optional[str] = ""
     isProduct: bool = False
@@ -1121,6 +1128,19 @@ async def create_offer(offer: OfferCreate, request: Request):
     offer_data["created_at"] = now_iso
     if offer_data.get("duration_value") and offer_data.get("duration_unit"):
         offer_data["expiration_date"] = calculate_expiration_date(now_iso, offer_data["duration_value"], offer_data["duration_unit"])
+    # v159: Validation linked_course_ids — doivent appartenir au même coach_id
+    linked_ids = offer_data.get("linked_course_ids") or []
+    if linked_ids:
+        offer_coach_id = offer_data.get("coach_id")
+        # Ne garder que les IDs de cours appartenant au même coach_id
+        valid_courses = await db.courses.find(
+            {"id": {"$in": linked_ids}, "coach_id": offer_coach_id},
+            {"_id": 0, "id": 1}
+        ).to_list(length=500)
+        valid_ids = {c["id"] for c in valid_courses}
+        offer_data["linked_course_ids"] = [cid for cid in linked_ids if cid in valid_ids]
+        if len(offer_data["linked_course_ids"]) != len(linked_ids):
+            logger.warning(f"[OFFER] v159: Filtré {len(linked_ids) - len(offer_data['linked_course_ids'])} cours non-autorisés (isolation coach_id)")
     offer_obj = Offer(**offer_data)
     await db.offers.insert_one(offer_obj.model_dump())
     return offer_obj
@@ -1155,6 +1175,17 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
             update_data["last_prolonged_date"] = None
     else:
         update_data["expiration_date"] = None
+    # v159: Validation linked_course_ids sur update
+    linked_ids = update_data.get("linked_course_ids") or []
+    if linked_ids:
+        existing_offer = await db.offers.find_one({"id": offer_id}, {"_id": 0, "coach_id": 1})
+        offer_coach_id = (existing_offer or {}).get("coach_id") or update_data.get("coach_id")
+        valid_courses = await db.courses.find(
+            {"id": {"$in": linked_ids}, "coach_id": offer_coach_id},
+            {"_id": 0, "id": 1}
+        ).to_list(length=500)
+        valid_ids = {c["id"] for c in valid_courses}
+        update_data["linked_course_ids"] = [cid for cid in linked_ids if cid in valid_ids]
     await db.offers.update_one({"id": offer_id}, {"$set": update_data})
     updated = await db.offers.find_one({"id": offer_id}, {"_id": 0})
     return updated
