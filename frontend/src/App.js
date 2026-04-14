@@ -1204,7 +1204,7 @@ const OfferCard = ({ offer, selected, onClick }) => {
 };
 
 // Offer Card for Horizontal Slider - With LED effect, Loupe, Info icon + Discrete dots
-const OfferCardSlider = ({ offer, selected, onClick }) => {
+const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
   const [showDescription, setShowDescription] = useState(false);
   const [showZoom, setShowZoom] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -1298,9 +1298,11 @@ const OfferCardSlider = ({ offer, selected, onClick }) => {
           style={{
             boxShadow: selected
               ? '0 0 0 1.5px #d91cd2, 0 0 12px rgba(217, 28, 210, 0.25)'
+              : pending
+              ? '0 0 0 2.5px #fbbf24, 0 0 20px rgba(251, 191, 36, 0.45)'
               : '0 0 0 1px rgba(139, 92, 246, 0.2), 0 4px 24px rgba(0,0,0,0.5)',
             border: 'none',
-            transform: selected ? 'scale(1.02)' : 'scale(1)',
+            transform: selected ? 'scale(1.02)' : pending ? 'scale(1.01)' : 'scale(1)',
             background: 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(5,0,15,0.99) 100%)',
             borderRadius: '16px',
             overflow: 'hidden'
@@ -1421,10 +1423,34 @@ const OfferCardSlider = ({ offer, selected, onClick }) => {
 
 // === OFFERS SLIDER WITH AUTO-PLAY ===
 // Carrousel horizontal avec défilement automatique pour montrer qu'il y a plusieurs offres
-const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer }) => {
+const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOffer }) => {
   const sliderRef = useRef(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  // v159: Afficher les flèches comme indice visuel temporaire + au survol
+  const [showArrows, setShowArrows] = useState(false);
+  const [hasShownHint, setHasShownHint] = useState(false);
+  const containerRef = useRef(null);
+
+  // v159: Afficher les flèches brièvement quand la section entre dans le viewport
+  useEffect(() => {
+    if (!containerRef.current || hasShownHint || !offers || offers.length <= 1) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting && !hasShownHint) {
+            setShowArrows(true);
+            setHasShownHint(true);
+            // Masquer après 4 secondes (juste un indice)
+            setTimeout(() => setShowArrows(false), 4000);
+          }
+        });
+      },
+      { threshold: 0.3 }
+    );
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, [offers, hasShownHint]);
   
   // V119.1: Largeur carte responsive — min(340px, 80vw) + 12px padding
   const CARD_WIDTH = typeof window !== 'undefined' ? Math.min(340, window.innerWidth * 0.8) + 12 : 352;
@@ -1484,10 +1510,11 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer }) => {
   }
   
   return (
-    <div 
-      className="relative"
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
+    <div
+      ref={containerRef}
+      className="relative group"
+      onMouseEnter={() => { handleMouseEnter(); setShowArrows(true); }}
+      onMouseLeave={() => { handleMouseLeave(); setShowArrows(false); }}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
@@ -1513,10 +1540,85 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer }) => {
             key={offer.id}
             offer={offer}
             selected={selectedOffer?.id === offer.id}
+            pending={pendingOffer?.id === offer.id && !selectedOffer}
             onClick={() => onSelectOffer(offer)}
           />
         ))}
       </div>
+
+      {/* v159: Indice minimaliste de navigation — apparaît 4s à l'arrivée puis disparaît */}
+      {offers.length > 1 && (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setIsPaused(true);
+              if (sliderRef.current) {
+                const newIdx = Math.max(0, currentIndex - 1);
+                setCurrentIndex(newIdx);
+                sliderRef.current.scrollTo({ left: newIdx * CARD_WIDTH, behavior: 'smooth' });
+              }
+              setTimeout(() => setIsPaused(false), 5000);
+            }}
+            aria-label="Offre précédente"
+            className="absolute left-1 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center z-10"
+            style={{
+              background: 'rgba(0, 0, 0, 0.4)',
+              backdropFilter: 'blur(6px)',
+              WebkitBackdropFilter: 'blur(6px)',
+              border: '1px solid rgba(255,255,255,0.15)',
+              opacity: showArrows && currentIndex !== 0 ? 0.75 : 0,
+              visibility: showArrows ? 'visible' : 'hidden',
+              transition: 'opacity 0.5s ease, visibility 0.5s',
+              cursor: currentIndex === 0 ? 'default' : 'pointer',
+              pointerEvents: showArrows && currentIndex !== 0 ? 'auto' : 'none',
+              animation: showArrows ? 'hintPulse 1.6s ease-in-out infinite' : 'none',
+            }}
+            disabled={currentIndex === 0}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsPaused(true);
+              if (sliderRef.current) {
+                const newIdx = Math.min(offers.length - 1, currentIndex + 1);
+                setCurrentIndex(newIdx);
+                sliderRef.current.scrollTo({ left: newIdx * CARD_WIDTH, behavior: 'smooth' });
+              }
+              setTimeout(() => setIsPaused(false), 5000);
+            }}
+            aria-label="Offre suivante"
+            className="absolute right-1 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center z-10"
+            style={{
+              background: 'rgba(0, 0, 0, 0.4)',
+              backdropFilter: 'blur(6px)',
+              WebkitBackdropFilter: 'blur(6px)',
+              border: '1px solid rgba(255,255,255,0.15)',
+              opacity: showArrows && currentIndex < offers.length - 1 ? 0.75 : 0,
+              visibility: showArrows ? 'visible' : 'hidden',
+              transition: 'opacity 0.5s ease, visibility 0.5s',
+              cursor: currentIndex >= offers.length - 1 ? 'default' : 'pointer',
+              pointerEvents: showArrows && currentIndex < offers.length - 1 ? 'auto' : 'none',
+              animation: showArrows ? 'hintPulse 1.6s ease-in-out infinite' : 'none',
+            }}
+            disabled={currentIndex >= offers.length - 1}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </button>
+          <style>{`
+            @keyframes hintPulse {
+              0%, 100% { opacity: 0.5; }
+              50% { opacity: 0.85; }
+            }
+          `}</style>
+        </>
+      )}
       
       {/* Indicateurs de pagination (points) - Visibles uniquement s'il y a plusieurs offres */}
       {offers.length > 1 && (
@@ -3533,6 +3635,14 @@ function App() {
       setSelectedVariants({});
       return;
     }
+    // v159: Toggle aussi pour l'offre en attente (pending)
+    if (pendingOffer && offer && pendingOffer.id === offer.id) {
+      setPendingOffer(null);
+      // Retirer le toast si visible
+      const existingToast = document.getElementById('v158-session-toast');
+      if (existingToast) existingToast.remove();
+      return;
+    }
 
     // v158/v159: FORCER la sélection d'une session AVANT de pouvoir choisir une offre
     // Sauf pour produits/audio/video qui ne nécessitent pas de session
@@ -4807,6 +4917,7 @@ function App() {
               <OffersSliderAutoPlay
                 offers={filteredServices}
                 selectedOffer={selectedOffer}
+                pendingOffer={pendingOffer}
                 onSelectOffer={handleSelectOffer}
               />
             </div>
@@ -5046,9 +5157,10 @@ function App() {
               </span>
             </div>
             
-            <OffersSliderAutoPlay 
+            <OffersSliderAutoPlay
               offers={filteredProducts}
               selectedOffer={selectedOffer}
+              pendingOffer={pendingOffer}
               onSelectOffer={(product) => {
                 // Pour les produits, pas besoin de cours/dates
                 setSelectedCourse(null);
