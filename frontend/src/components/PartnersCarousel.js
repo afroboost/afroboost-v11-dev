@@ -861,13 +861,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                           </svg>
                         </div>
                       </div>
-                      {/* Badge "Shorts" */}
-                      <div
-                        className="absolute top-4 left-4 px-3 py-1 rounded-full text-xs font-bold text-white"
-                        style={{ background: 'rgba(255, 0, 0, 0.8)' }}
-                      >
-                        Shorts
-                      </div>
+                      {/* v160.9: Badge "Shorts" supprime (demande utilisateur) */}
                     </>
                   ) : (
                     <iframe
