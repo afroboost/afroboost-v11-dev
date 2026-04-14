@@ -2415,6 +2415,7 @@ function App() {
   const [userRole, setUserRole] = useState(null); // 'super_admin', 'coach', 'user'
   const [showCoachSearch, setShowCoachSearch] = useState(false); // v8.9.4: Modal recherche coach
   const [showCoachVitrine, setShowCoachVitrine] = useState(null); // v8.9.6: Username du coach pour vitrine
+  const [coachVitrineLoaded, setCoachVitrineLoaded] = useState(false); // v160: flag data coach chargee
 
   // v72: Social Proof — Icône interactive + panneau commentaires
   const [socialComments, setSocialComments] = useState([]);
@@ -2862,6 +2863,33 @@ function App() {
   // v67: SLUGS DU SUPER ADMIN — tout accès à ces slugs = homepage publique, jamais CoachVitrine
   const SUPER_ADMIN_SLUGS = ['bassi', 'artboost', 'afroboost'];
 
+  // v160: Charger les donnees du coach vitrine (remplace l'ancienne logique CoachVitrine)
+  useEffect(() => {
+    if (!showCoachVitrine) return;
+    setCoachVitrineLoaded(false);
+    const username = encodeURIComponent(showCoachVitrine);
+    axios.get(`${API}/coach/vitrine/${username}`).then(res => {
+      const data = res.data || {};
+      // Remplacer les donnees du super admin par celles du coach
+      if (Array.isArray(data.offers)) setOffers(data.offers);
+      if (Array.isArray(data.courses)) setCourses(data.courses);
+      if (data.concept) {
+        setConcept(prev => ({ ...prev, ...data.concept }));
+        if (data.concept.primaryColor) {
+          document.documentElement.style.setProperty('--primary-color', data.concept.primaryColor);
+        }
+        if (data.concept.backgroundColor) {
+          document.documentElement.style.setProperty('--background-color', data.concept.backgroundColor);
+          document.body.style.backgroundColor = data.concept.backgroundColor;
+        }
+      }
+      setCoachVitrineLoaded(true);
+    }).catch(err => {
+      console.error('[V160] Erreur chargement vitrine coach:', err);
+      setCoachVitrineLoaded(true);
+    });
+  }, [showCoachVitrine]);
+
   // v8.9.6: Détecter l'URL /coach/[username] ou /partner/[username] pour afficher la vitrine
   // v9.1.8: Support route /partner/:username (alias de /coach/:username)
   // v67: Verrouillage — /coach/bassi redirige vers /?visitor=true (1 Super Admin = 1 seule vitrine = homepage)
@@ -3227,6 +3255,11 @@ function App() {
 
   // Fonction pour charger les données avec cache
   const fetchData = useCallback(async (forceRefresh = false) => {
+    // v160: Si on affiche la vitrine d'un coach partenaire, SKIPPER le chargement super admin
+    // Les donnees sont chargees par le useEffect dedie au coach
+    if (showCoachVitrine) {
+      return;
+    }
     try {
       // Utiliser le cache si disponible et pas de force refresh
       const cachedCourses = !forceRefresh && isCacheValid('courses') ? cacheRef.current.courses.data : null;
@@ -4277,30 +4310,15 @@ function App() {
   const isVisitorMode = urlParams.get('visitor') === 'true' || isSuperAdminSlugInUrl;
 
   // v18.2: Si l'URL est /coach/xxx, afficher la vitrine MÊME si le coach est connecté
-  // v67: JAMAIS CoachVitrine pour le Super Admin — sa vitrine = homepage
+  // v160: CoachVitrine unifiée — on rend TOUJOURS App.js, meme pour les coachs partenaires
+  // Les donnees sont automatiquement remplacees par celles du coach via le useEffect precedent
+  // Donc on ne fait PLUS de return CoachVitrine ici
   if (coachMode && !isVisitorMode) {
-    if (showCoachVitrine) {
-      // v67: Dernier verrou — si showCoachVitrine est un slug Super Admin, forcer homepage
-      const vitrineSlug = (showCoachVitrine || '').toLowerCase().trim();
-      if (SUPER_ADMIN_SLUGS.includes(vitrineSlug) || SUPER_ADMIN_EMAILS.some(e => e.toLowerCase() === vitrineSlug)) {
-        // Ne pas rendre CoachVitrine, fall through vers la homepage
-        console.log('[V67] VERROU FINAL: CoachVitrine bloquée pour slug Super Admin →', vitrineSlug);
-      } else {
-        return (
-          <div className="fixed inset-0 z-50" style={{ background: '#000' }}>
-            <CoachVitrine
-              username={showCoachVitrine}
-              onClose={() => { setShowCoachVitrine(null); window.history.pushState({}, '', '/'); }}
-              onBack={() => { setShowCoachVitrine(null); window.history.pushState({}, '', '/'); }}
-            />
-          </div>
-        );
-      }
-    }
-    if (!showCoachVitrine || !SUPER_ADMIN_SLUGS.includes((showCoachVitrine || '').toLowerCase().trim())) {
+    // Si showCoachVitrine non set, afficher le dashboard coach normal
+    if (!showCoachVitrine) {
       return <CoachDashboard t={t} lang={lang} onBack={handleBackFromCoach} onLogout={handleLogout} coachUser={coachUser} />;
     }
-    // v67: Si on arrive ici, c'est un slug Super Admin en coachMode → on continue vers la homepage publique
+    // Sinon on tombe dans le render App.js normal (vitrine unifiee)
   }
 
   // Filtrer les offres et cours selon visibilité, filtre actif et recherche
@@ -4500,10 +4518,35 @@ function App() {
 
       {/* Event Poster Modal (Popup d'accueil) */}
       {showEventPoster && concept.eventPosterMediaUrl && (
-        <EventPosterModal 
-          mediaUrl={concept.eventPosterMediaUrl} 
-          onClose={closeEventPoster} 
+        <EventPosterModal
+          mediaUrl={concept.eventPosterMediaUrl}
+          onClose={closeEventPoster}
         />
+      )}
+
+      {/* v160: Bandeau vitrine coach partenaire — visible UNIQUEMENT sur /coach/{username} */}
+      {showCoachVitrine && (
+        <div
+          className="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-2"
+          style={{
+            background: 'linear-gradient(135deg, rgba(217,28,210,0.9), rgba(139,92,246,0.9))',
+            backdropFilter: 'blur(10px)',
+            borderBottom: '1px solid rgba(255,255,255,0.2)',
+            boxShadow: '0 2px 12px rgba(0,0,0,0.3)'
+          }}
+        >
+          <button
+            onClick={() => { setShowCoachVitrine(null); window.history.pushState({}, '', '/'); window.location.reload(); }}
+            className="flex items-center gap-1 text-white text-sm font-medium hover:underline"
+            style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
+          >
+            <span style={{ fontSize: '16px' }}>←</span>
+            <span>Retour Afroboost</span>
+          </button>
+          <div className="text-white text-xs font-semibold opacity-90">
+            Vitrine partenaire
+          </div>
+        </div>
       )}
 
       {/* PWA Install Banner — V129: Bannière hybride (Chrome mini-infobar + notre bouton fallback) */}
