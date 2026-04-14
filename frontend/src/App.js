@@ -2418,6 +2418,7 @@ function App() {
   const [showCoachVitrine, setShowCoachVitrine] = useState(null); // v8.9.6: Username du coach pour vitrine
   const [coachVitrineLoaded, setCoachVitrineLoaded] = useState(false); // v160: flag data coach chargee
   const [currentCoachVitrineEmail, setCurrentCoachVitrineEmail] = useState(null); // v160.5: Email du coach dont on affiche la vitrine (pour isolation commentaires/likes et Reserve button)
+  const [currentCoachVitrineName, setCurrentCoachVitrineName] = useState(null); // v160.7: Nom du coach de la vitrine (pour ChatWidget header)
 
   // v72: Social Proof — Icône interactive + panneau commentaires
   const [socialComments, setSocialComments] = useState([]);
@@ -2901,7 +2902,9 @@ function App() {
       }
       // v160.5: Charger les commentaires & likes SPECIFIQUES a ce coach (isolation per-coach)
       const coachEmail = (data.coach && data.coach.email ? data.coach.email : '').toLowerCase().trim();
+      const coachName = (data.coach && (data.coach.platform_name || data.coach.name) ? (data.coach.platform_name || data.coach.name) : '').trim();
       setCurrentCoachVitrineEmail(coachEmail || null);
+      setCurrentCoachVitrineName(coachName || null);
       if (coachEmail) {
         axios.get(`${API}/comments?coach_id=${encodeURIComponent(coachEmail)}`).then(cres => {
           if (cres.data && Array.isArray(cres.data.comments)) {
@@ -5977,8 +5980,8 @@ function App() {
         )}
         
         {/* Widget Chat IA flottant */}
-        {/* v160.6: Passage de l'email du coach de la vitrine pour contextualiser le chat */}
-        <ChatWidget vitrineCoachEmail={currentCoachVitrineEmail} />
+        {/* v160.7: Passage de l'email ET du nom du coach de la vitrine pour contextualiser le chat */}
+        <ChatWidget vitrineCoachEmail={currentCoachVitrineEmail} vitrineCoachName={currentCoachVitrineName} />
         
         {/* v8.9.4: Modal recherche coach (déclenchée par l'icône dans NavigationBar) */}
         <CoachSearchModal

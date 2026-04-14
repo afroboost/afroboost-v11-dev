@@ -405,7 +405,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             marginLeft: '4px',
             color: '#A78BFA'
           }}>
-            Coach Bassi
+            {vitrineCoachName || 'Coach Bassi'}
           </div>
           <button
             onClick={() => setIsMinimized(false)}
@@ -444,7 +444,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
           marginLeft: '4px',
           color: '#A78BFA'
         }}>
-          Coach Bassi
+          {vitrineCoachName || 'Coach Bassi'}
         </div>
         <div
           style={{
@@ -926,7 +926,7 @@ const MemoizedMessageBubble = memo(MessageBubble, (prevProps, nextProps) => {
  * Widget de chat IA flottant avec reconnaissance automatique et historique
  * Utilise l'API /api/chat/smart-entry pour identifier les utilisateurs
  */
-export const ChatWidget = () => {
+export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null } = {}) => {
   // === VÉRIFICATION DU PROFIL ABONNÉ (afroboost_profile) ===
   const getStoredProfile = () => {
     try {
@@ -4814,13 +4814,13 @@ export const ChatWidget = () => {
                     /* Afficher le statut abonné si profil validé + cours restants */
                     afroboostProfile?.code && step === 'chat'
                       ? `Abonne - ${afroboostProfile.name}${reservationEligibility?.remaining !== undefined && reservationEligibility?.remaining !== 'illimite' ? ` (${reservationEligibility.remaining} cours)` : ''}`
-                      : isReturningClient && step === 'chat' 
-                        ? leadData.firstName 
-                        : isCommunityMode 
+                      : isReturningClient && step === 'chat'
+                        ? leadData.firstName
+                        : isCommunityMode
                           ? 'Chat Groupe'
-                          : sessionData?.is_ai_active === false 
+                          : sessionData?.is_ai_active === false
                             ? 'Mode Coach'
-                            : 'Coach Bassi'
+                            : (vitrineCoachName || 'Coach Bassi') /* v160.7: Nom dynamique du coach de la vitrine */
                   )}
                 </div>
               </div>
