@@ -405,7 +405,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             marginLeft: '4px',
             color: '#A78BFA'
           }}>
-            Coach Bassi
+            {vitrineCoachName || 'Coach Bassi'}
           </div>
           <button
             onClick={() => setIsMinimized(false)}
@@ -444,7 +444,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
           marginLeft: '4px',
           color: '#A78BFA'
         }}>
-          Coach Bassi
+          {vitrineCoachName || 'Coach Bassi'}
         </div>
         <div
           style={{
@@ -926,7 +926,7 @@ const MemoizedMessageBubble = memo(MessageBubble, (prevProps, nextProps) => {
  * Widget de chat IA flottant avec reconnaissance automatique et historique
  * Utilise l'API /api/chat/smart-entry pour identifier les utilisateurs
  */
-export const ChatWidget = () => {
+export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null } = {}) => {
   // === VÉRIFICATION DU PROFIL ABONNÉ (afroboost_profile) ===
   const getStoredProfile = () => {
     try {
@@ -1261,6 +1261,40 @@ export const ChatWidget = () => {
   // === FORMULAIRE ABONNÉ (4 champs: Nom, WhatsApp, Email, Code Promo) ===
   const [showSubscriberForm, setShowSubscriberForm] = useState(false); // Afficher le formulaire abonné
   const [subscriberFormData, setSubscriberFormData] = useState({ name: '', whatsapp: '', email: '', code: '' });
+  // v160: Formulaire de connexion coach simple dans le chat
+  const [showCoachLoginForm, setShowCoachLoginForm] = useState(false);
+  const [coachLoginData, setCoachLoginData] = useState({ email: '', password: '' });
+  const [coachLoginLoading, setCoachLoginLoading] = useState(false);
+  const [coachLoginError, setCoachLoginError] = useState('');
+
+  const handleCoachLoginSubmit = async (e) => {
+    e.preventDefault();
+    const { email, password } = coachLoginData;
+    if (!email || !password) {
+      setCoachLoginError('Email et mot de passe requis');
+      return;
+    }
+    setCoachLoginLoading(true);
+    setCoachLoginError('');
+    try {
+      const res = await axios.post(`${API}/auth/login`, { email, password }, { withCredentials: true });
+      if (res.data.success) {
+        if (res.data.token) localStorage.setItem('afroboost_jwt', res.data.token);
+        if (res.data.user) {
+          localStorage.setItem('afroboost_coach_user', JSON.stringify(res.data.user));
+          localStorage.setItem('afroboost_coach_mode', 'true');
+        }
+        // Recharger pour ouvrir le dashboard coach
+        window.location.href = '/';
+      } else {
+        setCoachLoginError('Identifiants invalides');
+      }
+    } catch (err) {
+      setCoachLoginError(err?.response?.data?.detail || 'Erreur de connexion');
+    } finally {
+      setCoachLoginLoading(false);
+    }
+  };
   const [validatingCode, setValidatingCode] = useState(false); // Loading pendant validation du code
 
   // === v16.0: TUNNEL D'ONBOARDING (liens personnalisés) ===
@@ -4780,13 +4814,13 @@ export const ChatWidget = () => {
                     /* Afficher le statut abonné si profil validé + cours restants */
                     afroboostProfile?.code && step === 'chat'
                       ? `Abonne - ${afroboostProfile.name}${reservationEligibility?.remaining !== undefined && reservationEligibility?.remaining !== 'illimite' ? ` (${reservationEligibility.remaining} cours)` : ''}`
-                      : isReturningClient && step === 'chat' 
-                        ? leadData.firstName 
-                        : isCommunityMode 
+                      : isReturningClient && step === 'chat'
+                        ? leadData.firstName
+                        : isCommunityMode
                           ? 'Chat Groupe'
-                          : sessionData?.is_ai_active === false 
+                          : sessionData?.is_ai_active === false
                             ? 'Mode Coach'
-                            : 'Coach Bassi'
+                            : (vitrineCoachName || 'Coach Bassi') /* v160.7: Nom dynamique du coach de la vitrine */
                   )}
                 </div>
               </div>
@@ -5351,6 +5385,59 @@ export const ChatWidget = () => {
                     error={error}
                     isLoading={validatingCode}
                   />
+                ) : showCoachLoginForm ? (
+                  /* === v160: FORMULAIRE CONNEXION COACH === */
+                  <form onSubmit={handleCoachLoginSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ textAlign: 'center', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '28px' }}>🎟️</span>
+                      <p style={{ color: '#fff', fontSize: '14px', marginTop: '8px', fontWeight: 700 }}>
+                        Connexion coach partenaire
+                      </p>
+                      <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', marginTop: '4px' }}>
+                        Entrez votre email et mot de passe de coach
+                      </p>
+                    </div>
+                    <input
+                      type="email"
+                      required
+                      autoComplete="email"
+                      value={coachLoginData.email}
+                      onChange={(e) => setCoachLoginData(prev => ({ ...prev, email: e.target.value }))}
+                      placeholder="email@example.com"
+                      style={{ padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.06)', color: '#fff', fontSize: '14px' }}
+                    />
+                    <input
+                      type="password"
+                      required
+                      autoComplete="current-password"
+                      value={coachLoginData.password}
+                      onChange={(e) => setCoachLoginData(prev => ({ ...prev, password: e.target.value }))}
+                      placeholder="Mot de passe"
+                      style={{ padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.06)', color: '#fff', fontSize: '14px' }}
+                    />
+                    {coachLoginError && (
+                      <p style={{ color: '#f87171', fontSize: '12px', textAlign: 'center' }}>{coachLoginError}</p>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={coachLoginLoading}
+                      style={{ padding: '12px', borderRadius: '10px', border: 'none', background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', color: '#fff', fontSize: '14px', fontWeight: 700, cursor: coachLoginLoading ? 'wait' : 'pointer', boxShadow: '0 2px 12px rgba(217,28,210,0.4)' }}
+                    >
+                      {coachLoginLoading ? 'Connexion...' : 'Se connecter'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setShowCoachLoginForm(false); setCoachLoginError(''); setCoachLoginData({ email: '', password: '' }); }}
+                      style={{ padding: '10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: 'rgba(255,255,255,0.7)', fontSize: '12px', cursor: 'pointer' }}
+                    >
+                      ← Retour
+                    </button>
+                    <div style={{ textAlign: 'center', marginTop: '6px', padding: '10px', borderRadius: '8px', background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.25)' }}>
+                      <p style={{ color: '#c4b5fd', fontSize: '10px', margin: 0 }}>
+                        💡 Pas encore coach ? <a href="#become-coach" style={{ color: '#D91CD2', textDecoration: 'underline' }}>Devenir partenaire</a>
+                      </p>
+                    </div>
+                  </form>
                 ) : showRecoverForm ? (
                   /* === v11.6: FORMULAIRE RÉCUPÉRATION D'ACCÈS === */
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 'min-content' }}>
@@ -5688,6 +5775,24 @@ export const ChatWidget = () => {
                       data-testid="subscriber-btn"
                     >
                       S'identifier comme abonné
+                    </button>
+
+                    {/* === v160: BOUTON COACH === */}
+                    <button
+                      type="button"
+                      onClick={() => { setShowCoachLoginForm(true); setError(''); }}
+                      className="py-3 rounded-lg font-semibold text-sm transition-all"
+                      style={{
+                        background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                        color: '#fff',
+                        border: 'none',
+                        cursor: 'pointer',
+                        marginTop: '8px',
+                        boxShadow: '0 2px 10px rgba(217,28,210,0.3)'
+                      }}
+                      data-testid="coach-login-btn"
+                    >
+                      🎟️ Je suis coach partenaire
                     </button>
 
                     {/* === v11.6: LIEN RETROUVER MES ACCÈS === */}

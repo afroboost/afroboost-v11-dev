@@ -462,11 +462,14 @@ html, body {
   color: #FFFFFF;
   font-size: 13px;
   line-height: 1.5;
-  text-align: center;
+  text-align: left;
   margin: 0;
   padding: 0 24px;
   max-height: 100%;
   overflow-y: auto;
+  /* v160.10: Preserver les retours a la ligne et espaces saisis par le coach */
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 /* Close button for description panel */

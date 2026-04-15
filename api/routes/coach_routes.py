@@ -453,7 +453,18 @@ async def get_coach_vitrine(username: str):
         # v29: Charger le concept admin directement (concept_id="concept")
         concept_id = "concept"
     else:
-        coach = await db.coaches.find_one({"$or": [{"name": {"$regex": f"^{username}$", "$options": "i"}}, {"email": username.lower()}, {"id": username}], "is_active": True}, {"_id": 0, "id": 1, "name": 1, "photo_url": 1, "bio": 1, "email": 1, "platform_name": 1, "logo_url": 1})
+        # V160.2: Support slug matching - le frontend convertit "Coach Test" → "coach-test"
+        # donc on accepte aussi le slug en remplacant les tirets par des espaces
+        username_as_name = username.replace("-", " ")
+        username_email_local = username.split("@")[0].lower()
+        coach = await db.coaches.find_one({"$or": [
+            {"name": {"$regex": f"^{username}$", "$options": "i"}},
+            {"name": {"$regex": f"^{username_as_name}$", "$options": "i"}},
+            {"email": username.lower()},
+            {"email": {"$regex": f"^{username_email_local}@", "$options": "i"}},
+            {"email": {"$regex": f"^{username_as_name.replace(' ', '.')}@", "$options": "i"}},
+            {"id": username}
+        ], "is_active": True}, {"_id": 0, "id": 1, "name": 1, "photo_url": 1, "bio": 1, "email": 1, "platform_name": 1, "logo_url": 1})
         if not coach:
             raise HTTPException(status_code=404, detail="Partenaire non trouvé")
         coach_email = coach.get("email", "").lower()

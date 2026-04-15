@@ -9,6 +9,7 @@
  */
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import axios from "axios";
+import { QRCodeSVG } from "qrcode.react";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -172,7 +173,7 @@ const getMediaInfo = (videoUrl) => {
 // === COMPOSANT VIDEO CARD v9.5.7 avec mode maintenance ===
 // v11.7: Ajout isSuperAdminVideo pour désactiver double-clic
 // v34: Ajout preview 30s + overlay achat pour vidéos premium
-const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onNavigate, isPaused, onTogglePause, isVisible, maintenanceMode = false, isSuperAdmin = false, onBuyVideo, socialCommentsCount = 0, onShowComments, pageLikesCount = 0, likeAnimating = false }) => {
+const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onNavigate, isPaused, onTogglePause, isVisible, maintenanceMode = false, isSuperAdmin = false, onBuyVideo, socialCommentsCount = 0, onShowComments, pageLikesCount = 0, likeAnimating = false, currentVitrineEmail = null }) => {
   const videoRef = useRef(null);
   const [hasError, setHasError] = useState(false);
   const [ytPlaying, setYtPlaying] = useState(false);
@@ -505,31 +506,34 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
 
   // v9.5.7: handleReserve avec blocage maintenance
   // v11.8: Pour SA, scroll vers offres au lieu de naviguer
+  // v160.5: Pour le coach en cours de visite, scroll aussi vers offres (même logique SA)
   const handleReserve = (e) => {
     e.stopPropagation();
     if (isBlocked) {
       console.log('[MAINTENANCE] Réservation bloquée');
       return;
     }
-    
+
+    // v160.5: Si on est déjà sur la vitrine de ce partenaire → scroll vers offres (pas de navigation)
+    const currentVitrine = (currentVitrineEmail || '').toLowerCase().trim();
+    const isCurrentVitrinePartner = currentVitrine && partnerEmail === currentVitrine;
+
     // v11.8: Si vidéo Super Admin, scroll vers les offres de la page actuelle
-    if (isSuperAdminVideo) {
-      console.log('[SUPER-ADMIN] Scroll vers section offres (pas de navigation)');
+    if (isSuperAdminVideo || isCurrentVitrinePartner) {
+      console.log('[RESERVE] Scroll vers section offres (pas de navigation) - isSuperAdmin:', isSuperAdminVideo, 'isCurrentVitrine:', isCurrentVitrinePartner);
       // Chercher les sections offres/sessions dans la page actuelle
-      const offersSection = document.getElementById('sessions-section') || 
-                           document.getElementById('offers-section') ||
+      const offersSection = document.getElementById('offers-section') ||
+                           document.getElementById('sessions-section') ||
                            document.getElementById('courses-section');
       if (offersSection) {
         offersSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        console.log('[SUPER-ADMIN] ✅ Scroll effectué vers', offersSection.id);
+        console.log('[RESERVE] ✅ Scroll effectué vers', offersSection.id);
       } else {
-        console.log('[SUPER-ADMIN] ❌ Aucune section offres trouvée');
-        // Fallback: appeler onNavigate qui ne fera rien pour SA (grâce au check v11.7)
-        onNavigate(partner);
+        console.log('[RESERVE] ❌ Aucune section offres trouvée');
       }
       return;
     }
-    
+
     // Pour les autres partenaires, navigation normale vers leur vitrine
     onNavigate(partner);
   };
@@ -857,13 +861,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                           </svg>
                         </div>
                       </div>
-                      {/* Badge "Shorts" */}
-                      <div
-                        className="absolute top-4 left-4 px-3 py-1 rounded-full text-xs font-bold text-white"
-                        style={{ background: 'rgba(255, 0, 0, 0.8)' }}
-                      >
-                        Shorts
-                      </div>
+                      {/* v160.9: Badge "Shorts" supprime (demande utilisateur) */}
                     </>
                   ) : (
                     <iframe
@@ -1270,6 +1268,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
   // v9.6.8: État pour sélecteur de langue
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [globalMuted, setGlobalMuted] = useState(true); // Son global muté par défaut
+  const [showQRModal, setShowQRModal] = useState(false); // v160.6: Modal QR code vitrine coach
   const [partners, setPartners] = useState([]);
   const [filteredPartners, setFilteredPartners] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1288,12 +1287,23 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
   const searchInputRef = useRef(null);
   
   // v9.5.3: Filtrer les partenaires par nom
+  // v160.5: Sur la vitrine d'un coach partenaire, ne montrer QUE sa propre video hero (isolation)
   useEffect(() => {
+    const currentVitrine = (currentVitrineEmail || '').toLowerCase().trim();
+    let baseList = partners;
+    if (currentVitrine) {
+      baseList = partners.filter(p => (p.email || '').toLowerCase().trim() === currentVitrine);
+      // Si le coach n'est pas dans la liste /api/partners/active, afficher quand meme une carte minimale
+      if (baseList.length === 0 && partners.length > 0) {
+        console.log('[V160.5] Coach non trouve dans partners/active, filtrage desactive');
+        baseList = partners;
+      }
+    }
     if (searchQuery.trim() === '') {
-      setFilteredPartners(partners);
+      setFilteredPartners(baseList);
     } else {
       const query = searchQuery.toLowerCase();
-      const filtered = partners.filter(p => {
+      const filtered = baseList.filter(p => {
         const name = (p.platform_name || p.name || '').toLowerCase();
         const bio = (p.bio || p.description || '').toLowerCase();
         return name.includes(query) || bio.includes(query);
@@ -1301,7 +1311,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
       setFilteredPartners(filtered);
     }
     setActiveIndex(0);
-  }, [searchQuery, partners]);
+  }, [searchQuery, partners, currentVitrineEmail]);
   
   // Restaurer la position de scroll
   useEffect(() => {
@@ -1544,9 +1554,11 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
       data-testid="partners-reels-section"
     >
       {/* v9.6.6: HEADER avec icônes bien alignées (Loupe + Traduction) */}
-      <div 
-        className="absolute top-0 left-0 right-0 z-20"
-        style={{ 
+      {/* v160.8: Decaler de 40px vers le bas sur vitrine coach pour passer sous le bandeau 'Retour Afroboost' */}
+      <div
+        className="absolute left-0 right-0 z-20"
+        style={{
+          top: currentVitrineEmail ? '40px' : '0px',
           background: 'linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.3) 70%, transparent 100%)',
           paddingTop: '0px',
           paddingBottom: '0px'
@@ -1683,16 +1695,13 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
               <SoundIcon muted={globalMuted} />
             </button>
 
-            {/* v14: Bouton QR Code - toujours visible */}
+            {/* v14: Bouton QR Code - v160.6: ouvre modal inline avec QR affiche sur la page */}
             <button
-              onClick={() => {
-                const url = window.location.href;
-                const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(url)}`;
-                window.open(qrUrl, '_blank');
-              }}
+              onClick={() => setShowQRModal(true)}
               className="w-7 h-7 flex items-center justify-center rounded-full transition-all hover:scale-110"
               style={{ background: 'rgba(255,255,255,0.1)', color: 'white' }}
               data-testid="qr-btn-carousel"
+              title="QR Code de cette vitrine"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="2" y="2" width="8" height="8" rx="1" />
@@ -1789,12 +1798,83 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
                   onBuyVideo={onBuyVideo}
                   socialCommentsCount={socialCommentsCount}
                   onShowComments={onShowComments}
+                  currentVitrineEmail={currentVitrineEmail}
                 />
               </div>
             );
           })
         )}
       </div>
+
+      {/* v160.6: Modal QR code inline pour partager la vitrine courante */}
+      {showQRModal && (
+        <div
+          onClick={() => setShowQRModal(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
+            zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '20px'
+          }}
+          data-testid="qr-modal-overlay"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'linear-gradient(180deg, #1a0a1f 0%, #0d0510 100%)',
+              border: '1px solid rgba(217,28,210,0.4)',
+              borderRadius: '16px',
+              padding: '24px',
+              maxWidth: '360px',
+              width: '100%',
+              textAlign: 'center',
+              boxShadow: '0 0 40px rgba(217,28,210,0.3)'
+            }}
+          >
+            <p style={{ color: '#fff', fontSize: '16px', fontWeight: 700, marginBottom: '6px' }}>
+              📱 Scanne pour accéder
+            </p>
+            <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '12px', marginBottom: '18px' }}>
+              Lien direct vers cette vitrine
+            </p>
+            <div style={{ background: '#fff', padding: '16px', borderRadius: '12px', display: 'inline-block' }}>
+              <QRCodeSVG
+                value={window.location.href}
+                size={220}
+                level="H"
+                includeMargin={false}
+                bgColor="#ffffff"
+                fgColor="#000000"
+              />
+            </div>
+            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', marginTop: '12px', wordBreak: 'break-all' }}>
+              {window.location.href}
+            </p>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(window.location.href);
+                  alert('Lien copié !');
+                }}
+                style={{
+                  flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)',
+                  background: 'rgba(255,255,255,0.08)', color: '#fff', fontSize: '13px', cursor: 'pointer'
+                }}
+              >
+                📋 Copier
+              </button>
+              <button
+                onClick={() => setShowQRModal(false)}
+                style={{
+                  flex: 1, padding: '10px', borderRadius: '8px', border: 'none',
+                  background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', color: '#fff', fontSize: '13px', fontWeight: 600, cursor: 'pointer'
+                }}
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -52,7 +52,8 @@ import MediaViewer from "./components/MediaViewer";
 import BecomeCoachPage from "./components/BecomeCoachPage";
 import SuperAdminPanel from "./components/SuperAdminPanel";
 import { CoachSearchModal } from "./components/CoachSearch";
-import CoachVitrine from "./components/CoachVitrine";
+// v160.3: CoachVitrine n'est plus rendu (layout unifie via App.js) mais l'import est retire pour eviter l'ambiguite
+// import CoachVitrine from "./components/CoachVitrine";
 import PartnersCarousel from "./components/PartnersCarousel";
 import AudioPlayer from "./components/AudioPlayer";
 import { useDataCache, invalidateCache } from "./hooks/useDataCache";
@@ -2415,6 +2416,9 @@ function App() {
   const [userRole, setUserRole] = useState(null); // 'super_admin', 'coach', 'user'
   const [showCoachSearch, setShowCoachSearch] = useState(false); // v8.9.4: Modal recherche coach
   const [showCoachVitrine, setShowCoachVitrine] = useState(null); // v8.9.6: Username du coach pour vitrine
+  const [coachVitrineLoaded, setCoachVitrineLoaded] = useState(false); // v160: flag data coach chargee
+  const [currentCoachVitrineEmail, setCurrentCoachVitrineEmail] = useState(null); // v160.5: Email du coach dont on affiche la vitrine (pour isolation commentaires/likes et Reserve button)
+  const [currentCoachVitrineName, setCurrentCoachVitrineName] = useState(null); // v160.7: Nom du coach de la vitrine (pour ChatWidget header)
 
   // v72: Social Proof — Icône interactive + panneau commentaires
   const [socialComments, setSocialComments] = useState([]);
@@ -2469,15 +2473,24 @@ function App() {
   const audioRef = useRef(null);
 
   // v104: Charger les FAQ homepage (publiques + FAQ coach principal)
+  // v160.6: Sur vitrine coach partenaire, charger UNIQUEMENT ses FAQ (pas celles du Super Admin)
   useEffect(() => {
     const loadFaqs = async () => {
       try {
-        // Charger FAQ publiques "general" + FAQ du coach principal (contact.artboost)
-        const results = await Promise.all([
-          axios.get(`${API}/public/faqs/general`).catch(() => ({ data: [] })),
-          axios.get(`${API}/public/faqs/partner`).catch(() => ({ data: [] })),
-          axios.get(`${API}/coach/faqs/contact.artboost@gmail.com`).catch(() => ({ data: [] })),
-        ]);
+        let results;
+        if (currentCoachVitrineEmail) {
+          // Vitrine coach partenaire: charger UNIQUEMENT ses FAQ
+          results = await Promise.all([
+            axios.get(`${API}/coach/faqs/${encodeURIComponent(currentCoachVitrineEmail)}`).catch(() => ({ data: [] })),
+          ]);
+        } else {
+          // Homepage Super Admin: FAQ publiques + FAQ super admin
+          results = await Promise.all([
+            axios.get(`${API}/public/faqs/general`).catch(() => ({ data: [] })),
+            axios.get(`${API}/public/faqs/partner`).catch(() => ({ data: [] })),
+            axios.get(`${API}/coach/faqs/contact.artboost@gmail.com`).catch(() => ({ data: [] })),
+          ]);
+        }
         const allFaqs = results.flatMap(r => Array.isArray(r.data) ? r.data : []);
         // Dédupliquer par question
         const seen = new Set();
@@ -2488,20 +2501,25 @@ function App() {
           return true;
         });
         if (unique.length === 0) {
-          // Fallback FAQ statiques
-          setHomeFaqs([
-            { id: 'f1', question: "Comment réserver une séance ?", answer: "Choisissez votre séance dans le calendrier, sélectionnez votre créneau et confirmez. Vous recevrez un email de confirmation." },
-            { id: 'f2', question: "Quels sont les moyens de paiement acceptés ?", answer: "Nous acceptons les paiements par carte bancaire (Visa, Mastercard), TWINT et Mobile Money (MTN, Orange, Moov/Airtel)." },
-            { id: 'f3', question: "Comment fonctionne le chat IA ?", answer: "Notre assistant IA est disponible 24h/24 pour répondre à vos questions, vous guider dans vos choix et vous accompagner dans votre parcours." },
-            { id: 'f4', question: "Puis-je annuler ma réservation ?", answer: "Contactez-nous directement via le chat ou par email pour toute demande d'annulation ou de modification." },
-          ]);
+          if (currentCoachVitrineEmail) {
+            // Coach partenaire sans FAQ: tableau vide (pas de fallback Super Admin)
+            setHomeFaqs([]);
+          } else {
+            // Fallback FAQ statiques Super Admin
+            setHomeFaqs([
+              { id: 'f1', question: "Comment réserver une séance ?", answer: "Choisissez votre séance dans le calendrier, sélectionnez votre créneau et confirmez. Vous recevrez un email de confirmation." },
+              { id: 'f2', question: "Quels sont les moyens de paiement acceptés ?", answer: "Nous acceptons les paiements par carte bancaire (Visa, Mastercard), TWINT et Mobile Money (MTN, Orange, Moov/Airtel)." },
+              { id: 'f3', question: "Comment fonctionne le chat IA ?", answer: "Notre assistant IA est disponible 24h/24 pour répondre à vos questions, vous guider dans vos choix et vous accompagner dans votre parcours." },
+              { id: 'f4', question: "Puis-je annuler ma réservation ?", answer: "Contactez-nous directement via le chat ou par email pour toute demande d'annulation ou de modification." },
+            ]);
+          }
         } else {
           setHomeFaqs(unique);
         }
       } catch (e) { console.warn('[FAQ] Erreur chargement:', e); }
     };
     if (!coachMode) loadFaqs();
-  }, [coachMode]);
+  }, [coachMode, currentCoachVitrineEmail]);
 
   // Vérifier si le feature flag Audio est activé
   useEffect(() => {
@@ -2861,6 +2879,61 @@ function App() {
 
   // v67: SLUGS DU SUPER ADMIN — tout accès à ces slugs = homepage publique, jamais CoachVitrine
   const SUPER_ADMIN_SLUGS = ['bassi', 'artboost', 'afroboost'];
+
+  // v160: Charger les donnees du coach vitrine (remplace l'ancienne logique CoachVitrine)
+  useEffect(() => {
+    if (!showCoachVitrine) return;
+    setCoachVitrineLoaded(false);
+    const username = encodeURIComponent(showCoachVitrine);
+    axios.get(`${API}/coach/vitrine/${username}`).then(res => {
+      const data = res.data || {};
+      // Remplacer les donnees du super admin par celles du coach
+      if (Array.isArray(data.offers)) setOffers(data.offers);
+      if (Array.isArray(data.courses)) setCourses(data.courses);
+      if (data.concept) {
+        setConcept(prev => ({ ...prev, ...data.concept }));
+        if (data.concept.primaryColor) {
+          document.documentElement.style.setProperty('--primary-color', data.concept.primaryColor);
+        }
+        if (data.concept.backgroundColor) {
+          document.documentElement.style.setProperty('--background-color', data.concept.backgroundColor);
+          document.body.style.backgroundColor = data.concept.backgroundColor;
+        }
+      }
+      // v160.5: Charger les commentaires & likes SPECIFIQUES a ce coach (isolation per-coach)
+      const coachEmail = (data.coach && data.coach.email ? data.coach.email : '').toLowerCase().trim();
+      const coachName = (data.coach && (data.coach.platform_name || data.coach.name) ? (data.coach.platform_name || data.coach.name) : '').trim();
+      setCurrentCoachVitrineEmail(coachEmail || null);
+      setCurrentCoachVitrineName(coachName || null);
+      if (coachEmail) {
+        axios.get(`${API}/comments?coach_id=${encodeURIComponent(coachEmail)}`).then(cres => {
+          if (cres.data && Array.isArray(cres.data.comments)) {
+            setSocialComments(cres.data.comments);
+            setSocialTotalCount(cres.data.total_count || cres.data.comments.length);
+          } else {
+            setSocialComments([]);
+            setSocialTotalCount(0);
+          }
+        }).catch(() => {
+          setSocialComments([]);
+          setSocialTotalCount(0);
+        });
+
+        // v160.6: Charger les audio tracks du coach (si vide, le coach n'a pas ajoute de musique)
+        axios.get(`${API}/public/audio-tracks/${encodeURIComponent(coachEmail)}`).then(ares => {
+          const tracks = ares.data?.tracks || [];
+          setStudioAudioTracks(tracks);
+          console.log('[V160.6] Coach audio tracks loaded:', tracks.length);
+        }).catch(() => {
+          setStudioAudioTracks([]);
+        });
+      }
+      setCoachVitrineLoaded(true);
+    }).catch(err => {
+      console.error('[V160] Erreur chargement vitrine coach:', err);
+      setCoachVitrineLoaded(true);
+    });
+  }, [showCoachVitrine]);
 
   // v8.9.6: Détecter l'URL /coach/[username] ou /partner/[username] pour afficher la vitrine
   // v9.1.8: Support route /partner/:username (alias de /coach/:username)
@@ -3227,6 +3300,11 @@ function App() {
 
   // Fonction pour charger les données avec cache
   const fetchData = useCallback(async (forceRefresh = false) => {
+    // v160: Si on affiche la vitrine d'un coach partenaire, SKIPPER le chargement super admin
+    // Les donnees sont chargees par le useEffect dedie au coach
+    if (showCoachVitrine) {
+      return;
+    }
     try {
       // Utiliser le cache si disponible et pas de force refresh
       const cachedCourses = !forceRefresh && isCacheValid('courses') ? cacheRef.current.courses.data : null;
@@ -3341,14 +3419,18 @@ function App() {
       console.log(`📦 Cache: ${cachedCourses ? '✓' : '↓'}courses ${cachedOffers ? '✓' : '↓'}offers ${cachedConcept ? '✓' : '↓'}concept`);
 
       // v53: Charger les pistes audio autonomes (Studio Audio) du super admin
-      try {
-        const ownerEmail = SUPER_ADMIN_EMAILS[0]; // contact.artboost@gmail.com
-        const audioRes = await axios.get(`${API}/public/audio-tracks/${encodeURIComponent(ownerEmail)}`);
-        const tracks = audioRes.data?.tracks || [];
-        setStudioAudioTracks(tracks);
-        console.log('[V53] Studio audio tracks loaded:', tracks.length);
-      } catch (audioErr) {
-        console.warn('[V53] Studio audio tracks fetch failed:', audioErr.message);
+      // v160.6: Sur vitrine coach partenaire, ne PAS charger les tracks du super admin
+      //        (le useEffect separe showCoachVitrine chargera les tracks du coach)
+      if (!showCoachVitrine) {
+        try {
+          const ownerEmail = SUPER_ADMIN_EMAILS[0]; // contact.artboost@gmail.com
+          const audioRes = await axios.get(`${API}/public/audio-tracks/${encodeURIComponent(ownerEmail)}`);
+          const tracks = audioRes.data?.tracks || [];
+          setStudioAudioTracks(tracks);
+          console.log('[V53] Studio audio tracks loaded:', tracks.length);
+        } catch (audioErr) {
+          console.warn('[V53] Studio audio tracks fetch failed:', audioErr.message);
+        }
       }
 
     } catch (err) { console.error("Error:", err); }
@@ -4277,30 +4359,15 @@ function App() {
   const isVisitorMode = urlParams.get('visitor') === 'true' || isSuperAdminSlugInUrl;
 
   // v18.2: Si l'URL est /coach/xxx, afficher la vitrine MÊME si le coach est connecté
-  // v67: JAMAIS CoachVitrine pour le Super Admin — sa vitrine = homepage
+  // v160: CoachVitrine unifiée — on rend TOUJOURS App.js, meme pour les coachs partenaires
+  // Les donnees sont automatiquement remplacees par celles du coach via le useEffect precedent
+  // Donc on ne fait PLUS de return CoachVitrine ici
   if (coachMode && !isVisitorMode) {
-    if (showCoachVitrine) {
-      // v67: Dernier verrou — si showCoachVitrine est un slug Super Admin, forcer homepage
-      const vitrineSlug = (showCoachVitrine || '').toLowerCase().trim();
-      if (SUPER_ADMIN_SLUGS.includes(vitrineSlug) || SUPER_ADMIN_EMAILS.some(e => e.toLowerCase() === vitrineSlug)) {
-        // Ne pas rendre CoachVitrine, fall through vers la homepage
-        console.log('[V67] VERROU FINAL: CoachVitrine bloquée pour slug Super Admin →', vitrineSlug);
-      } else {
-        return (
-          <div className="fixed inset-0 z-50" style={{ background: '#000' }}>
-            <CoachVitrine
-              username={showCoachVitrine}
-              onClose={() => { setShowCoachVitrine(null); window.history.pushState({}, '', '/'); }}
-              onBack={() => { setShowCoachVitrine(null); window.history.pushState({}, '', '/'); }}
-            />
-          </div>
-        );
-      }
-    }
-    if (!showCoachVitrine || !SUPER_ADMIN_SLUGS.includes((showCoachVitrine || '').toLowerCase().trim())) {
+    // Si showCoachVitrine non set, afficher le dashboard coach normal
+    if (!showCoachVitrine) {
       return <CoachDashboard t={t} lang={lang} onBack={handleBackFromCoach} onLogout={handleLogout} coachUser={coachUser} />;
     }
-    // v67: Si on arrive ici, c'est un slug Super Admin en coachMode → on continue vers la homepage publique
+    // Sinon on tombe dans le render App.js normal (vitrine unifiee)
   }
 
   // Filtrer les offres et cours selon visibilité, filtre actif et recherche
@@ -4500,10 +4567,35 @@ function App() {
 
       {/* Event Poster Modal (Popup d'accueil) */}
       {showEventPoster && concept.eventPosterMediaUrl && (
-        <EventPosterModal 
-          mediaUrl={concept.eventPosterMediaUrl} 
-          onClose={closeEventPoster} 
+        <EventPosterModal
+          mediaUrl={concept.eventPosterMediaUrl}
+          onClose={closeEventPoster}
         />
+      )}
+
+      {/* v160: Bandeau vitrine coach partenaire — visible UNIQUEMENT sur /coach/{username} */}
+      {showCoachVitrine && (
+        <div
+          className="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-2"
+          style={{
+            background: 'linear-gradient(135deg, rgba(217,28,210,0.9), rgba(139,92,246,0.9))',
+            backdropFilter: 'blur(10px)',
+            borderBottom: '1px solid rgba(255,255,255,0.2)',
+            boxShadow: '0 2px 12px rgba(0,0,0,0.3)'
+          }}
+        >
+          <button
+            onClick={() => { setShowCoachVitrine(null); window.history.pushState({}, '', '/'); window.location.reload(); }}
+            className="flex items-center gap-1 text-white text-sm font-medium hover:underline"
+            style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
+          >
+            <span style={{ fontSize: '16px' }}>←</span>
+            <span>Retour Afroboost</span>
+          </button>
+          <div className="text-white text-xs font-semibold opacity-90">
+            Vitrine partenaire
+          </div>
+        </div>
       )}
 
       {/* PWA Install Banner — V129: Bannière hybride (Chrome mini-infobar + notre bouton fallback) */}
@@ -4723,7 +4815,7 @@ function App() {
           isSuperAdmin={isSuperAdminEmail(coachUser?.email)}
           lang={lang}
           onLangChange={setLang}
-          currentVitrineEmail={null}
+          currentVitrineEmail={currentCoachVitrineEmail}
           onBuyVideo={(videoOffer) => {
             console.log('[V34-BUY] Achat vidéo depuis carousel:', videoOffer);
             handleSelectOffer(videoOffer);
@@ -4734,27 +4826,9 @@ function App() {
         {/* v75: Icône AVIS intégrée dans la barre d'actions PartnersCarousel */}
       </div>
 
-      {/* v14: VITRINE COACH OVERLAY - Transition instantanée, pas d'écran de chargement violet */}
-      {showCoachVitrine && (
-        <div
-          className="fixed inset-0 z-50"
-          style={{
-            background: '#000'
-          }}
-        >
-          <CoachVitrine
-            username={showCoachVitrine}
-            onClose={() => {
-              setShowCoachVitrine(null);
-              window.history.pushState({}, '', '/');
-            }}
-            onBack={() => {
-              setShowCoachVitrine(null);
-              window.history.pushState({}, '', '/');
-            }}
-          />
-        </div>
-      )}
+      {/* v160: Overlay CoachVitrine SUPPRIMÉ — la vitrine coach utilise maintenant
+          le layout unifié App.js (voir useEffect showCoachVitrine ligne 2866).
+          Seul le bandeau de retour aux lignes 4528+ est conservé. */}
 
       {/* v35: SECTION AUDIO déplacée vers le Shop — voir plus bas */}
 
@@ -5906,7 +5980,8 @@ function App() {
         )}
         
         {/* Widget Chat IA flottant */}
-        <ChatWidget />
+        {/* v160.7: Passage de l'email ET du nom du coach de la vitrine pour contextualiser le chat */}
+        <ChatWidget vitrineCoachEmail={currentCoachVitrineEmail} vitrineCoachName={currentCoachVitrineName} />
         
         {/* v8.9.4: Modal recherche coach (déclenchée par l'icône dans NavigationBar) */}
         <CoachSearchModal
@@ -5917,6 +5992,15 @@ function App() {
             setShowCoachSearch(false);
             // v8.9.6: Rediriger vers la vitrine du coach
             if (coach?.id) {
+              // v160.3: Si c'est le Super Admin (bassi/afroboost/artboost) → homepage publique
+              const coachSlug = (coach.name || coach.email || coach.id || '').toLowerCase().trim().replace(/\s+/g, '-');
+              const coachEmail = (coach.email || '').toLowerCase().trim();
+              if (SUPER_ADMIN_SLUGS.includes(coachSlug) || SUPER_ADMIN_EMAILS.some(e => e.toLowerCase() === coachEmail)) {
+                console.log('[V160.3] Recherche coach Super Admin → homepage publique');
+                window.history.replaceState({}, '', '/?visitor=true');
+                window.location.reload();
+                return;
+              }
               setShowCoachVitrine(coach.id);
               window.history.pushState({}, '', `/coach/${coach.id}`);
             }
