@@ -844,7 +844,7 @@ class ChatSession(BaseModel):
     mode: str = "ai"  # "ai", "human", "community"
     is_ai_active: bool = True  # Interrupteur pour désactiver l'IA
     is_deleted: bool = False  # Suppression logique
-    link_token: str = Field(default_factory=lambda: str(uuid.uuid4())[:12])  # Token unique pour partage
+    link_token: str = Field(default_factory=lambda: str(uuid.uuid4()).replace('-', '')[:6])  # V161: Token court 6 chars pour URLs vendeurs
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: Optional[str] = None
     deleted_at: Optional[str] = None

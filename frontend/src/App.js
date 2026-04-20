@@ -1191,7 +1191,8 @@ const OfferCard = ({ offer, selected, onClick }) => {
         {offer.description && (
           <p className="text-xs text-white/60 mt-1" style={{
             overflow: 'hidden', textOverflow: 'ellipsis',
-            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical'
+            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+            whiteSpace: 'pre-wrap'
           }}>
             {offer.description}{' '}
             <span onClick={toggleDescription} className="cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
@@ -1372,7 +1373,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
                 className="w-full h-full flex flex-col justify-start p-5 pt-10 overflow-y-auto"
                 style={{ background: 'linear-gradient(180deg, rgba(139, 92, 246, 0.95) 0%, rgba(217, 28, 210, 0.9) 100%)' }}
               >
-                <p className="text-white text-sm leading-relaxed">{offer.description}</p>
+                <p className="text-white text-sm leading-relaxed" style={{ whiteSpace: 'pre-wrap' }}>{offer.description}</p>
                 <button
                   className="absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center bg-white/20 hover:bg-white/30 transition-all text-white"
                   onClick={toggleDescription}
@@ -1390,7 +1391,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
             {!showDescription && (
               <div className="mb-2">
                 {offer.description && (
-                  <p className="text-xs" style={{ color: 'rgba(255,255,255,0.45)', lineHeight: '1.4', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                  <p className="text-xs" style={{ color: 'rgba(255,255,255,0.45)', lineHeight: '1.4', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', whiteSpace: 'pre-wrap' }}>
                     {offer.description}
                   </p>
                 )}
@@ -4937,7 +4938,7 @@ function App() {
         {/* v16: DESCRIPTION PARTENAIRE — entre nav et sessions */}
         {concept.description && activeFilter !== 'shop' && (
           <div className="mb-6 fade-in-section" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '16px' }}>
-            <p className="text-white/70 text-sm leading-relaxed" style={{ fontWeight: 300 }}>
+            <p className="text-white/70 text-sm leading-relaxed" style={{ fontWeight: 300, whiteSpace: 'pre-wrap' }}>
               {concept.description}
             </p>
           </div>

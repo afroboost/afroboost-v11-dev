@@ -6,8 +6,8 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v162m';
-var SW_VERSION = 162;
+var CACHE_NAME = 'afroboost-v161';
+var SW_VERSION = 161;
 
 var PRECACHE_URLS = [
   '/',
@@ -183,10 +183,80 @@ self.addEventListener('fetch', function(event) {
 });
 
 // -----------------------------------------------------------------
-// NOTIFICATIONS — DÉSACTIVÉES V139
-// Les handlers push/notificationclick cassaient l'installation WebAPK
-// sur Android. Ils seront réactivés quand les VAPID keys seront configurées.
+// NOTIFICATIONS PUSH — V161 : Réactivées avec protection try/catch
 // -----------------------------------------------------------------
+self.addEventListener('push', function(event) {
+  try {
+    var data = {};
+    if (event.data) {
+      try {
+        data = event.data.json();
+      } catch (e) {
+        data = { title: 'Afroboost', body: event.data.text() || 'Nouveau message' };
+      }
+    }
+
+    var title = data.title || 'Afroboost';
+    var options = {
+      body: data.body || 'Vous avez une nouvelle notification',
+      icon: '/logo192.png',
+      badge: '/logo192.png',
+      vibrate: [200, 100, 200],
+      tag: data.tag || 'afroboost-push',
+      renotify: true,
+      data: {
+        url: data.url || '/',
+        session_id: data.session_id || null
+      }
+    };
+
+    event.waitUntil(
+      self.registration.showNotification(title, options)
+        .catch(function() {
+          // Silencieux si showNotification échoue
+        })
+    );
+  } catch (e) {
+    // Protection totale — ne jamais crasher le SW
+  }
+});
+
+self.addEventListener('notificationclick', function(event) {
+  try {
+    event.notification.close();
+
+    var targetUrl = '/';
+    if (event.notification.data && event.notification.data.url) {
+      targetUrl = event.notification.data.url;
+    }
+
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+        .then(function(clientList) {
+          // Si une fenêtre Afroboost est déjà ouverte, la focus
+          for (var i = 0; i < clientList.length; i++) {
+            var client = clientList[i];
+            if (client.url.indexOf('afroboost.com') !== -1 || client.url.indexOf('localhost') !== -1) {
+              client.focus();
+              client.postMessage({
+                type: 'NOTIFICATION_CLICK',
+                url: targetUrl,
+                session_id: event.notification.data ? event.notification.data.session_id : null
+              });
+              return;
+            }
+          }
+          // Sinon ouvrir une nouvelle fenêtre
+          return self.clients.openWindow(targetUrl);
+        })
+        .catch(function() {
+          // Silencieux
+        })
+    );
+  } catch (e) {
+    // Protection totale
+  }
+});
 
 // -----------------------------------------------------------------
 // MESSAGE — Écoute les commandes du client (SKIP_WAITING)
