@@ -62,10 +62,15 @@ RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 if RESEND_AVAILABLE and RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
 
-# TWILIO CONFIGURATION
+# TWILIO CONFIGURATION (legacy)
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
 TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER', '')
+
+# META WHATSAPP CLOUD API CONFIGURATION (V161)
+META_WHATSAPP_TOKEN = os.environ.get('META_WHATSAPP_TOKEN', '')
+META_WHATSAPP_PHONE_ID = os.environ.get('META_WHATSAPP_PHONE_ID', '')
+META_WHATSAPP_API_VERSION = os.environ.get('META_WHATSAPP_API_VERSION', 'v21.0')
 TWILIO_SANDBOX_NUMBER = "+14155238886"
 
 # MongoDB connection
@@ -5110,19 +5115,27 @@ class WhatsAppConfig(BaseModel):
     accountSid: str = ""
     authToken: str = ""
     fromNumber: str = ""
-    apiMode: str = "twilio"
+    apiMode: str = "meta"  # V161: "meta" par défaut (anciennement "twilio")
+    # V161: Champs Meta WhatsApp Cloud API
+    metaAccessToken: str = ""
+    metaPhoneNumberId: str = ""
 
 class WhatsAppConfigUpdate(BaseModel):
     accountSid: Optional[str] = None
     authToken: Optional[str] = None
     fromNumber: Optional[str] = None
     apiMode: Optional[str] = None
+    metaAccessToken: Optional[str] = None
+    metaPhoneNumberId: Optional[str] = None
 
 @api_router.get("/whatsapp-config")
 async def get_whatsapp_config():
     config = await db.whatsapp_config.find_one({"id": "whatsapp_config"}, {"_id": 0})
     if not config:
-        return {"id": "whatsapp_config", "accountSid": "", "authToken": "", "fromNumber": "", "apiMode": "twilio"}
+        # V161: Vérifier d'abord si les variables Meta sont configurées
+        if META_WHATSAPP_TOKEN and META_WHATSAPP_PHONE_ID:
+            return {"id": "whatsapp_config", "apiMode": "meta", "metaAccessToken": "***configured***", "metaPhoneNumberId": META_WHATSAPP_PHONE_ID, "accountSid": "", "authToken": "", "fromNumber": ""}
+        return {"id": "whatsapp_config", "accountSid": "", "authToken": "", "fromNumber": "", "apiMode": "meta", "metaAccessToken": "", "metaPhoneNumberId": ""}
     return config
 
 @api_router.put("/whatsapp-config")
@@ -5583,141 +5596,203 @@ class SendWhatsAppRequest(BaseModel):
     message: str
     mediaUrl: str = None
 
-# === FONCTION UTILITAIRE WHATSAPP ===
-async def _get_twilio_config():
+# === FONCTION UTILITAIRE WHATSAPP — V161: Meta Cloud API + Twilio fallback ===
+async def _get_whatsapp_config():
     """
-    Récupère la configuration Twilio avec PRIORITÉ aux variables .env.
-    Ordre de priorité:
-    1. Variables d'environnement (.env) - PRODUCTION
-    2. Configuration en base de données - FALLBACK
-    
-    Retourne: (account_sid, auth_token, from_number) ou (None, None, None) si non configuré
+    Récupère la configuration WhatsApp. Priorité:
+    1. Variables d'environnement Meta (.env) — PRODUCTION
+    2. Configuration Meta en base de données
+    3. Variables d'environnement Twilio (.env) — LEGACY fallback
+    4. Configuration Twilio en base de données — LEGACY fallback
+
+    Retourne: dict avec api_mode + credentials
     """
-    # PRIORITÉ 1: Variables d'environnement (.env)
-    if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER:
-        logger.info(f"[WHATSAPP-PROD] ✅ Utilisation config .env - Numéro: {TWILIO_FROM_NUMBER}")
-        return TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER
-    
-    # PRIORITÉ 2: Configuration en base de données (fallback)
+    # PRIORITÉ 1: Meta via variables d'environnement
+    if META_WHATSAPP_TOKEN and META_WHATSAPP_PHONE_ID:
+        logger.info(f"[WHATSAPP] ✅ Mode Meta Cloud API (.env) - Phone ID: {META_WHATSAPP_PHONE_ID}")
+        return {
+            "api_mode": "meta",
+            "access_token": META_WHATSAPP_TOKEN,
+            "phone_number_id": META_WHATSAPP_PHONE_ID,
+            "api_version": META_WHATSAPP_API_VERSION
+        }
+
+    # PRIORITÉ 2: Config en base de données
     whatsapp_config = await db.whatsapp_config.find_one({"id": "whatsapp_config"}, {"_id": 0})
     if whatsapp_config:
-        account_sid = whatsapp_config.get("accountSid")
-        auth_token = whatsapp_config.get("authToken")
-        from_number = whatsapp_config.get("fromNumber")
-        
+        api_mode = whatsapp_config.get("apiMode", "meta")
+
+        if api_mode == "meta":
+            token = whatsapp_config.get("metaAccessToken", "")
+            phone_id = whatsapp_config.get("metaPhoneNumberId", "")
+            if token and phone_id:
+                logger.info(f"[WHATSAPP] ✅ Mode Meta Cloud API (DB) - Phone ID: {phone_id}")
+                return {
+                    "api_mode": "meta",
+                    "access_token": token,
+                    "phone_number_id": phone_id,
+                    "api_version": META_WHATSAPP_API_VERSION
+                }
+
+        # Legacy Twilio fallback (DB)
+        account_sid = whatsapp_config.get("accountSid", "")
+        auth_token = whatsapp_config.get("authToken", "")
+        from_number = whatsapp_config.get("fromNumber", "")
         if account_sid and auth_token and from_number:
-            logger.info(f"[WHATSAPP-PROD] ⚠️ Utilisation config DB (fallback) - Numéro: {from_number}")
-            return account_sid, auth_token, from_number
-    
-    return None, None, None
-async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = None, campaign_id: str = None, campaign_name: str = None) -> dict:
-    """
-    Fonction interne pour envoyer un message WhatsApp via Twilio.
-    Utilisée par l'endpoint /send-whatsapp et par /campaigns/{id}/launch.
-    
-    Args:
-        to_phone: Numéro de téléphone du destinataire
-        message: Corps du message
-        media_url: URL d'un média à joindre (optionnel)
-        campaign_id: ID de la campagne (pour logs d'erreurs)
-        campaign_name: Nom de la campagne (pour logs d'erreurs)
-    
-    Returns:
-        dict avec status, sid (si succès), error (si échec), error_code (si Twilio)
-    """
-    import httpx
-    
-    # Récupérer la config Twilio (priorité .env)
-    account_sid, auth_token, from_number = await _get_twilio_config()
-    
-    if not account_sid or not auth_token or not from_number:
-        logger.warning("[WHATSAPP-PROD] ❌ Configuration Twilio manquante - mode simulation")
+            logger.info(f"[WHATSAPP] ⚠️ Mode Twilio legacy (DB) - Numéro: {from_number}")
+            return {
+                "api_mode": "twilio",
+                "account_sid": account_sid,
+                "auth_token": auth_token,
+                "from_number": from_number
+            }
+
+    # PRIORITÉ 3: Twilio via variables d'environnement (legacy)
+    if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER:
+        logger.info(f"[WHATSAPP] ⚠️ Mode Twilio legacy (.env) - Numéro: {TWILIO_FROM_NUMBER}")
         return {
-            "status": "simulated",
-            "message": f"WhatsApp simulé pour: {to_phone}",
-            "simulated": True
+            "api_mode": "twilio",
+            "account_sid": TWILIO_ACCOUNT_SID,
+            "auth_token": TWILIO_AUTH_TOKEN,
+            "from_number": TWILIO_FROM_NUMBER
         }
-    
-    # Formater le numéro destinataire
-    clean_to = to_phone.replace(" ", "").replace("-", "")
-    if not clean_to.startswith("+"):
-        clean_to = "+41" + clean_to.lstrip("0") if clean_to.startswith("0") else "+" + clean_to
-    
-    # Formater le numéro expéditeur
-    clean_from = from_number if from_number.startswith("+") else "+" + from_number
-    
-    # Construire la requête Twilio
-    twilio_url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
-    
-    data = {
-        "From": f"whatsapp:{clean_from}",
-        "To": f"whatsapp:{clean_to}",
-        "Body": message
+
+    return None
+
+
+async def _send_whatsapp_meta(to_phone: str, message: str, media_url: str, config: dict, campaign_id: str = None, campaign_name: str = None) -> dict:
+    """Envoi via Meta WhatsApp Cloud API (V161)"""
+    import httpx
+
+    access_token = config["access_token"]
+    phone_number_id = config["phone_number_id"]
+    api_version = config.get("api_version", "v21.0")
+
+    # Formater le numéro (retirer + et espaces, garder uniquement les chiffres)
+    clean_to = to_phone.replace(" ", "").replace("-", "").replace("+", "")
+    if clean_to.startswith("0"):
+        clean_to = "41" + clean_to[1:]  # Suisse par défaut
+
+    meta_url = f"https://graph.facebook.com/{api_version}/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
     }
-    
-    if media_url:
-        data["MediaUrl"] = media_url
-    
-    logger.info(f"[WHATSAPP-PROD] 📤 Envoi via {clean_from} vers {clean_to}")
-    
+
+    logger.info(f"[WHATSAPP-META] 📤 Envoi vers {clean_to}")
+
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                twilio_url,
-                data=data,
-                auth=(account_sid, auth_token)
-            )
-            
-            result = response.json()
-            
-            if response.status_code >= 400:
-                error_msg = result.get("message", "Unknown error")
-                error_code = result.get("code", response.status_code)
-                more_info = result.get("more_info", "")
-                
-                logger.error(f"[WHATSAPP] ❌ Erreur [{error_code}]: {error_msg}")
-                
-                # Stockage dans campaign_errors
-                try:
-                    error_doc = {
-                        "campaign_id": campaign_id or "direct_send",
-                        "campaign_name": campaign_name or "Envoi Direct",
-                        "error_type": "twilio_api_error",
-                        "error_code": str(error_code),
-                        "error_message": error_msg,
-                        "more_info": more_info,
-                        "channel": "whatsapp",
-                        "to_phone": clean_to,
-                        "from_phone": clean_from,
-                        "http_status": response.status_code,
-                        "created_at": datetime.now(timezone.utc).isoformat()
+            # Si média, envoyer d'abord le média puis le texte
+            if media_url:
+                # Détecter le type de média
+                media_lower = media_url.lower()
+                if any(ext in media_lower for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
+                    media_type = "image"
+                elif any(ext in media_lower for ext in ['.mp4', '.3gp']):
+                    media_type = "video"
+                elif any(ext in media_lower for ext in ['.mp3', '.ogg', '.wav', '.aac']):
+                    media_type = "audio"
+                else:
+                    media_type = "document"
+
+                media_payload = {
+                    "messaging_product": "whatsapp",
+                    "to": clean_to,
+                    "type": media_type,
+                    media_type: {
+                        "link": media_url,
+                        "caption": message if media_type in ["image", "video", "document"] else None
                     }
-                    await db.campaign_errors.insert_one(error_doc)
-                except Exception as log_err:
-                    logger.error(f"[WHATSAPP] Erreur log: {log_err}")
-                
-                return {
-                    "status": "error", 
-                    "error": error_msg, 
-                    "error_code": str(error_code),
-                    "more_info": more_info
                 }
-            
-            sid = result.get("sid", "")
-            logger.info(f"[WHATSAPP] ✅ Envoyé - SID: {sid}")
-            
-            return {
-                "status": "success",
-                "sid": sid,
-                "to": clean_to,
-                "from": clean_from
-            }
-            
+                # Nettoyer None du caption
+                if media_payload[media_type].get("caption") is None:
+                    del media_payload[media_type]["caption"]
+                    # Envoyer texte séparément si audio
+
+                response = await client.post(meta_url, headers=headers, json=media_payload)
+                result = response.json()
+
+                if response.status_code >= 400:
+                    error_detail = result.get("error", {})
+                    error_msg = error_detail.get("message", str(result))
+                    error_code = error_detail.get("code", response.status_code)
+                    logger.error(f"[WHATSAPP-META] ❌ Erreur média [{error_code}]: {error_msg}")
+
+                    try:
+                        await db.campaign_errors.insert_one({
+                            "campaign_id": campaign_id or "direct_send",
+                            "campaign_name": campaign_name or "Envoi Direct",
+                            "error_type": "meta_api_error",
+                            "error_code": str(error_code),
+                            "error_message": error_msg,
+                            "channel": "whatsapp",
+                            "to_phone": clean_to,
+                            "http_status": response.status_code,
+                            "created_at": datetime.now(timezone.utc).isoformat()
+                        })
+                    except Exception:
+                        pass
+
+                    return {"status": "error", "error": error_msg, "error_code": str(error_code)}
+
+                # Si audio, envoyer le texte séparément
+                if media_type == "audio" and message:
+                    text_payload = {
+                        "messaging_product": "whatsapp",
+                        "to": clean_to,
+                        "type": "text",
+                        "text": {"body": message}
+                    }
+                    await client.post(meta_url, headers=headers, json=text_payload)
+
+                msg_id = result.get("messages", [{}])[0].get("id", "")
+                logger.info(f"[WHATSAPP-META] ✅ Envoyé avec média - ID: {msg_id}")
+                return {"status": "success", "sid": msg_id, "to": clean_to}
+
+            else:
+                # Message texte simple
+                text_payload = {
+                    "messaging_product": "whatsapp",
+                    "to": clean_to,
+                    "type": "text",
+                    "text": {"body": message}
+                }
+
+                response = await client.post(meta_url, headers=headers, json=text_payload)
+                result = response.json()
+
+                if response.status_code >= 400:
+                    error_detail = result.get("error", {})
+                    error_msg = error_detail.get("message", str(result))
+                    error_code = error_detail.get("code", response.status_code)
+                    logger.error(f"[WHATSAPP-META] ❌ Erreur [{error_code}]: {error_msg}")
+
+                    try:
+                        await db.campaign_errors.insert_one({
+                            "campaign_id": campaign_id or "direct_send",
+                            "campaign_name": campaign_name or "Envoi Direct",
+                            "error_type": "meta_api_error",
+                            "error_code": str(error_code),
+                            "error_message": error_msg,
+                            "channel": "whatsapp",
+                            "to_phone": clean_to,
+                            "http_status": response.status_code,
+                            "created_at": datetime.now(timezone.utc).isoformat()
+                        })
+                    except Exception:
+                        pass
+
+                    return {"status": "error", "error": error_msg, "error_code": str(error_code)}
+
+                msg_id = result.get("messages", [{}])[0].get("id", "")
+                logger.info(f"[WHATSAPP-META] ✅ Envoyé - ID: {msg_id}")
+                return {"status": "success", "sid": msg_id, "to": clean_to}
+
     except Exception as e:
-        logger.error(f"[WHATSAPP] ❌ Exception: {str(e)}")
-        
+        logger.error(f"[WHATSAPP-META] ❌ Exception: {str(e)}")
         try:
-            error_doc = {
+            await db.campaign_errors.insert_one({
                 "campaign_id": campaign_id or "direct_send",
                 "campaign_name": campaign_name or "Envoi Direct",
                 "error_type": "exception",
@@ -5725,14 +5800,85 @@ async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = Non
                 "error_message": str(e),
                 "channel": "whatsapp",
                 "to_phone": clean_to,
-                "from_phone": clean_from,
                 "created_at": datetime.now(timezone.utc).isoformat()
-            }
-            await db.campaign_errors.insert_one(error_doc)
-        except Exception as log_err:
-            logger.error(f"[WHATSAPP-DIAG] Impossible d'enregistrer l'exception: {log_err}")
-        
+            })
+        except Exception:
+            pass
         return {"status": "error", "error": str(e), "error_code": "EXCEPTION"}
+
+
+async def _send_whatsapp_twilio(to_phone: str, message: str, media_url: str, config: dict, campaign_id: str = None, campaign_name: str = None) -> dict:
+    """Envoi via Twilio (legacy fallback)"""
+    import httpx
+
+    account_sid = config["account_sid"]
+    auth_token = config["auth_token"]
+    from_number = config["from_number"]
+
+    clean_to = to_phone.replace(" ", "").replace("-", "")
+    if not clean_to.startswith("+"):
+        clean_to = "+41" + clean_to.lstrip("0") if clean_to.startswith("0") else "+" + clean_to
+
+    clean_from = from_number if from_number.startswith("+") else "+" + from_number
+    twilio_url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+
+    data = {"From": f"whatsapp:{clean_from}", "To": f"whatsapp:{clean_to}", "Body": message}
+    if media_url:
+        data["MediaUrl"] = media_url
+
+    logger.info(f"[WHATSAPP-TWILIO] 📤 Envoi via {clean_from} vers {clean_to}")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(twilio_url, data=data, auth=(account_sid, auth_token))
+            result = response.json()
+
+            if response.status_code >= 400:
+                error_msg = result.get("message", "Unknown error")
+                error_code = result.get("code", response.status_code)
+                logger.error(f"[WHATSAPP-TWILIO] ❌ Erreur [{error_code}]: {error_msg}")
+                try:
+                    await db.campaign_errors.insert_one({
+                        "campaign_id": campaign_id or "direct_send",
+                        "campaign_name": campaign_name or "Envoi Direct",
+                        "error_type": "twilio_api_error",
+                        "error_code": str(error_code),
+                        "error_message": error_msg,
+                        "channel": "whatsapp",
+                        "to_phone": clean_to,
+                        "from_phone": clean_from,
+                        "http_status": response.status_code,
+                        "created_at": datetime.now(timezone.utc).isoformat()
+                    })
+                except Exception:
+                    pass
+                return {"status": "error", "error": error_msg, "error_code": str(error_code)}
+
+            sid = result.get("sid", "")
+            logger.info(f"[WHATSAPP-TWILIO] ✅ Envoyé - SID: {sid}")
+            return {"status": "success", "sid": sid, "to": clean_to, "from": clean_from}
+
+    except Exception as e:
+        logger.error(f"[WHATSAPP-TWILIO] ❌ Exception: {str(e)}")
+        return {"status": "error", "error": str(e), "error_code": "EXCEPTION"}
+
+
+async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = None, campaign_id: str = None, campaign_name: str = None) -> dict:
+    """
+    V161: Fonction unifiée pour envoyer un message WhatsApp.
+    Route automatiquement vers Meta Cloud API ou Twilio selon la config.
+    Utilisée par /send-whatsapp et /campaigns/{id}/launch.
+    """
+    config = await _get_whatsapp_config()
+
+    if not config:
+        logger.warning("[WHATSAPP] ❌ Aucune configuration WhatsApp — mode simulation")
+        return {"status": "simulated", "message": f"WhatsApp simulé pour: {to_phone}", "simulated": True}
+
+    if config["api_mode"] == "meta":
+        return await _send_whatsapp_meta(to_phone, message, media_url, config, campaign_id, campaign_name)
+    else:
+        return await _send_whatsapp_twilio(to_phone, message, media_url, config, campaign_id, campaign_name)
 @api_router.post("/send-whatsapp")
 async def send_whatsapp_message(request: SendWhatsAppRequest):
     """

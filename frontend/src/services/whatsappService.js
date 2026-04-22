@@ -1,4 +1,4 @@
-// whatsappService.js - Service d'envoi WhatsApp automatisé via Twilio API
+// whatsappService.js - V161: Service d'envoi WhatsApp via Meta Cloud API (+ Twilio legacy)
 // Compatible Vercel - Configuration stockée dans MongoDB
 
 // API URL
@@ -20,14 +20,14 @@ export const getWhatsAppConfig = async () => {
   } catch (e) {
     console.error('Error fetching WhatsApp config:', e);
   }
-  return { accountSid: '', authToken: '', fromNumber: '', apiMode: 'twilio' };
+  return { apiMode: 'meta', metaAccessToken: '', metaPhoneNumberId: '', accountSid: '', authToken: '', fromNumber: '' };
 };
 
 /**
  * Récupère la configuration WhatsApp synchrone (depuis cache)
  */
 export const getWhatsAppConfigSync = () => {
-  return cachedConfig || { accountSid: '', authToken: '', fromNumber: '', apiMode: 'twilio' };
+  return cachedConfig || { apiMode: 'meta', metaAccessToken: '', metaPhoneNumberId: '', accountSid: '', authToken: '', fromNumber: '' };
 };
 
 /**
@@ -54,7 +54,12 @@ export const saveWhatsAppConfig = async (config) => {
  * Vérifie si WhatsApp API est configuré
  */
 export const isWhatsAppConfigured = () => {
-  const config = cachedConfig || { accountSid: '', authToken: '', fromNumber: '' };
+  const config = cachedConfig || {};
+  const mode = config.apiMode || 'meta';
+  if (mode === 'meta') {
+    return !!(config.metaAccessToken && config.metaPhoneNumberId);
+  }
+  // Legacy Twilio
   return !!(config.accountSid && config.authToken && config.fromNumber);
 };
 
@@ -77,15 +82,9 @@ export const formatPhoneE164 = (phone) => {
 };
 
 /**
- * Envoie un message WhatsApp via Twilio API
+ * V161: Envoie un message WhatsApp via le backend (Meta ou Twilio, routé côté serveur)
  */
 export const sendWhatsAppMessage = async (params) => {
-  const config = cachedConfig || await getWhatsAppConfig();
-  
-  if (!config.accountSid || !config.authToken || !config.fromNumber) {
-    throw new Error('WhatsApp API non configuré.');
-  }
-
   const toNumber = formatPhoneE164(params.to);
   if (!toNumber || toNumber.length < 10) {
     return { success: false, error: 'Numéro de téléphone invalide' };
@@ -97,35 +96,27 @@ export const sendWhatsAppMessage = async (params) => {
     personalizedMessage = params.message.replace(/{prénom}/gi, firstName);
   }
 
-  const formData = new URLSearchParams();
-  formData.append('From', `whatsapp:${formatPhoneE164(config.fromNumber)}`);
-  formData.append('To', `whatsapp:${toNumber}`);
-  formData.append('Body', personalizedMessage);
-  
-  if (params.mediaUrl) {
-    formData.append('MediaUrl', params.mediaUrl);
-  }
-
   try {
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${config.accountSid}/Messages.json`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Basic ' + btoa(`${config.accountSid}:${config.authToken}`),
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: formData
-      }
-    );
+    // V161: Envoi via backend unifié (Meta ou Twilio, routé côté serveur)
+    const response = await fetch(`${API}/api/send-whatsapp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: toNumber,
+        message: personalizedMessage,
+        mediaUrl: params.mediaUrl || null
+      })
+    });
 
     const data = await response.json();
 
-    if (!response.ok) {
-      return { success: false, error: data.message || `HTTP ${response.status}`, code: data.code };
+    if (data.status === 'success') {
+      return { success: true, sid: data.sid, status: data.status };
+    } else if (data.status === 'simulated') {
+      return { success: true, simulated: true, status: 'simulated' };
+    } else {
+      return { success: false, error: data.error || 'Erreur envoi WhatsApp', code: data.error_code };
     }
-
-    return { success: true, sid: data.sid, status: data.status };
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -138,17 +129,9 @@ export const sendBulkWhatsApp = async (recipients, campaign, onProgress) => {
   const results = { sent: 0, failed: 0, errors: [], details: [] };
   const total = recipients.length;
 
-  if (!cachedConfig) {
-    await getWhatsAppConfig();
-  }
-
-  if (!isWhatsAppConfigured()) {
-    return { ...results, failed: total, errors: ['WhatsApp API non configuré'] };
-  }
-
   for (let i = 0; i < recipients.length; i++) {
     const recipient = recipients[i];
-    
+
     if (onProgress) {
       onProgress(i + 1, total, 'sending', recipient.name || recipient.phone);
     }
@@ -193,7 +176,7 @@ export const sendBulkWhatsApp = async (recipients, campaign, onProgress) => {
 export const testWhatsAppConfig = async (testPhone) => {
   return sendWhatsAppMessage({
     to: testPhone,
-    message: '🎉 Test Afroboost WhatsApp API!\n\nVotre configuration Twilio fonctionne correctement.',
+    message: '🎉 Test Afroboost WhatsApp!\n\nVotre configuration Meta WhatsApp fonctionne correctement.',
     contactName: 'Test'
   });
 };

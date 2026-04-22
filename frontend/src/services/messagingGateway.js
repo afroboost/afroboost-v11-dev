@@ -109,125 +109,60 @@ export const sendAIResponseViaEmail = async (aiMessage, clientEmail, clientName 
 };
 
 /**
- * === LIAISON IA -> WHATSAPP ===
- * Fonction de soudure entre l'agent IA et le canal WhatsApp via webhook
- * 
+ * === LIAISON IA -> WHATSAPP — V161: Via backend unifié (Meta Cloud API ou Twilio) ===
+ * Fonction de soudure entre l'agent IA et le canal WhatsApp
+ *
  * @param {string} aiMessage - Message généré par l'IA
  * @param {string} phoneNumber - Numéro de téléphone du destinataire
- * @param {object} twilioConfig - Config Twilio (optionnel si webhook utilisé)
+ * @param {object} _legacyConfig - Ignoré (legacy Twilio, gardé pour rétrocompat)
  * @returns {Promise<{success: boolean, ...}>}
  */
-export const sendAIResponseViaWhatsApp = async (aiMessage, phoneNumber, twilioConfig = null) => {
-  // === BYPASS CRASH POSTHOG ===
+export const sendAIResponseViaWhatsApp = async (aiMessage, phoneNumber, _legacyConfig = null) => {
   try {
-    console.log('[IA->WhatsApp] ========================================');
-    console.log('[IA->WhatsApp] Liaison IA -> WhatsApp activée');
+    console.log('[IA->WhatsApp] Liaison IA -> WhatsApp (Meta Cloud API)');
     console.log('[IA->WhatsApp] Destinataire:', phoneNumber);
-    console.log('[IA->WhatsApp] Message IA:', aiMessage?.substring(0, 100) + '...');
-    console.log('[IA->WhatsApp] ========================================');
-    
-    // Validation basique
+
     if (!phoneNumber) {
-      console.error('[IA->WhatsApp] ❌ Numéro invalide');
       return { success: false, error: 'Numéro invalide', channel: 'whatsapp' };
     }
-    
+
     if (!aiMessage || aiMessage.trim() === '') {
-      console.error('[IA->WhatsApp] ❌ Message IA vide');
       return { success: false, error: 'Message IA vide', channel: 'whatsapp' };
     }
-    
+
     // Formater le numéro au format E.164
     let formattedPhone = phoneNumber.replace(/[^\d+]/g, '');
     if (!formattedPhone.startsWith('+')) {
-      formattedPhone = formattedPhone.startsWith('0') 
-        ? '+41' + formattedPhone.substring(1) 
+      formattedPhone = formattedPhone.startsWith('0')
+        ? '+41' + formattedPhone.substring(1)
         : '+' + formattedPhone;
     }
-    
-    // === OPTION 1: Via Twilio direct si config fournie ===
-    if (twilioConfig && twilioConfig.accountSid && twilioConfig.authToken) {
-      const { accountSid, authToken, fromNumber } = twilioConfig;
-      
-      const formData = new URLSearchParams();
-      formData.append('From', `whatsapp:${fromNumber.startsWith('+') ? fromNumber : '+' + fromNumber}`);
-      formData.append('To', `whatsapp:${formattedPhone}`);
-      formData.append('Body', String(aiMessage));
-      
-      const response = await fetch(
-        `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Basic ' + btoa(`${accountSid}:${authToken}`),
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: formData
-        }
-      );
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        console.error('[IA->WhatsApp] ❌ Erreur Twilio:', data);
-        return { success: false, error: data.message, channel: 'whatsapp' };
-      }
-      
-      console.log('IA : Message envoyé via WhatsApp (Twilio)');
-      console.log('[IA->WhatsApp] ✅ SID:', data.sid);
-      
+
+    // V161: Toujours passer par le backend unifié (qui route Meta ou Twilio)
+    const response = await fetch(`${BACKEND_URL}/api/send-whatsapp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: formattedPhone,
+        message: String(aiMessage)
+      })
+    });
+
+    const data = await response.json();
+
+    if (data.status === 'success') {
+      console.log('[IA->WhatsApp] ✅ Envoyé - ID:', data.sid);
       return { success: true, sid: data.sid, channel: 'whatsapp' };
+    } else if (data.status === 'simulated') {
+      console.warn('[IA->WhatsApp] ⚠️ Mode simulation');
+      return { success: true, simulated: true, channel: 'whatsapp' };
+    } else {
+      console.error('[IA->WhatsApp] ❌ Erreur:', data.error);
+      return { success: false, error: data.error, channel: 'whatsapp' };
     }
-    
-    // === OPTION 2: Via webhook backend ===
-    const webhookUrl = `${BACKEND_URL}/api/send-whatsapp`;
-    
-    console.log('[IA->WhatsApp] Tentative via webhook:', webhookUrl);
-    
-    try {
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: formattedPhone,
-          message: String(aiMessage)
-        })
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('IA : Message envoyé via WhatsApp (webhook)');
-        return { success: true, data, channel: 'whatsapp', viaWebhook: true };
-      }
-    } catch (webhookError) {
-      console.warn('[IA->WhatsApp] Webhook non disponible:', webhookError.message);
-    }
-    
-    // === OPTION 3: Mode simulation ===
-    console.warn('[IA->WhatsApp] ⚠️ Mode simulation activé');
-    console.log('IA : Message WhatsApp simulé pour:', formattedPhone);
-    
-    return { 
-      success: true, 
-      simulated: true, 
-      channel: 'whatsapp',
-      message: `WhatsApp prêt pour: ${formattedPhone}`
-    };
-    
+
   } catch (error) {
-    console.error('[IA->WhatsApp] ❌ Erreur (bypass PostHog):', error);
-    
-    // Vérifier si c'est une erreur PostHog
-    if (error.name === 'DataCloneError' || error.message?.includes('clone')) {
-      console.warn('[IA->WhatsApp] ⚠️ Erreur PostHog ignorée');
-      return { 
-        success: false, 
-        error: 'PostHog blocking',
-        postHogBlocked: true,
-        channel: 'whatsapp'
-      };
-    }
-    
+    console.error('[IA->WhatsApp] ❌ Exception:', error);
     return { success: false, error: error.message, channel: 'whatsapp' };
   }
 };
@@ -326,84 +261,45 @@ export const sendEmailGateway = async (to_email, to_name = 'Client', subject = '
 };
 
 /**
- * PASSERELLE WHATSAPP - Canal technique pur
- * Reçoit les paramètres de l'agent IA et les transmet à Twilio
- * AUCUNE logique de décision - juste transmission
- * 
+ * PASSERELLE WHATSAPP — V161: Via backend unifié (Meta Cloud API ou Twilio)
+ * Canal technique pur - route vers /api/send-whatsapp
+ *
  * @param {string} phoneNumber - Numéro de téléphone du destinataire
  * @param {string} message - Message généré par l'IA
- * @param {object} twilioConfig - {accountSid, authToken, fromNumber}
+ * @param {object} _legacyConfig - Ignoré (rétrocompat)
  * @returns {Promise<{success: boolean, sid?: string, error?: string}>}
  */
-export const sendWhatsAppGateway = async (phoneNumber, message, twilioConfig = {}) => {
-  const { accountSid, authToken, fromNumber } = twilioConfig;
-  
-  console.log('[Gateway] ========================================');
-  console.log('[Gateway] DEMANDE WHATSAPP/TWILIO - Canal de sortie IA');
-  console.log('[Gateway] Destination:', phoneNumber);
-  console.log('[Gateway] Message:', message?.substring(0, 50) + '...');
-  console.log('[Gateway] Config présente:', !!accountSid && !!authToken && !!fromNumber);
-  console.log('[Gateway] ========================================');
-  
-  // Si pas de config Twilio, mode simulation (pour développement)
-  if (!accountSid || !authToken || !fromNumber) {
-    console.warn('[Gateway] ⚠️ Twilio non configuré - Mode simulation');
-    // Ne pas bloquer l'agent IA, retourner succès simulé
-    return { 
-      success: true, 
-      simulated: true, 
-      channel: 'whatsapp',
-      message: `WhatsApp prêt pour: ${phoneNumber}` 
-    };
-  }
-  
-  // Formater le numéro au format E.164
+export const sendWhatsAppGateway = async (phoneNumber, message, _legacyConfig = {}) => {
+  console.log('[Gateway] DEMANDE WHATSAPP (Meta Cloud API) - Destination:', phoneNumber);
+
   let formattedPhone = phoneNumber.replace(/[^\d+]/g, '');
   if (!formattedPhone.startsWith('+')) {
-    formattedPhone = formattedPhone.startsWith('0') 
-      ? '+41' + formattedPhone.substring(1) 
+    formattedPhone = formattedPhone.startsWith('0')
+      ? '+41' + formattedPhone.substring(1)
       : '+' + formattedPhone;
   }
-  
-  // Payload plat - URLSearchParams pour Twilio
-  const formData = new URLSearchParams();
-  formData.append('From', `whatsapp:${fromNumber.startsWith('+') ? fromNumber : '+' + fromNumber}`);
-  formData.append('To', `whatsapp:${formattedPhone}`);
-  formData.append('Body', String(message));
-  
+
   try {
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Basic ' + btoa(`${accountSid}:${authToken}`),
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: formData
-      }
-    );
-    
+    const response = await fetch(`${BACKEND_URL}/api/send-whatsapp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: formattedPhone, message: String(message) })
+    });
+
     const data = await response.json();
-    
-    if (!response.ok) {
-      console.error('[Gateway] ❌ Erreur Twilio:', data);
-      return { 
-        success: false, 
-        error: data.message || `HTTP ${response.status}`,
-        channel: 'whatsapp'
-      };
+
+    if (data.status === 'success') {
+      console.log('[Gateway] ✅ WhatsApp envoyé - ID:', data.sid);
+      return { success: true, sid: data.sid, channel: 'whatsapp' };
+    } else if (data.status === 'simulated') {
+      return { success: true, simulated: true, channel: 'whatsapp' };
+    } else {
+      console.error('[Gateway] ❌ Erreur WhatsApp:', data.error);
+      return { success: false, error: data.error || 'Erreur envoi', channel: 'whatsapp' };
     }
-    
-    console.log('[Gateway] ✅ WhatsApp transmis, SID:', data.sid);
-    return { success: true, sid: data.sid, channel: 'whatsapp' };
   } catch (error) {
     console.error('[Gateway] ❌ Erreur transmission WhatsApp:', error);
-    return { 
-      success: false, 
-      error: error.message,
-      channel: 'whatsapp'
-    };
+    return { success: false, error: error.message, channel: 'whatsapp' };
   }
 };
 
@@ -430,8 +326,7 @@ export const sendMessageGateway = async (channel, params) => {
   if (channel === 'whatsapp') {
     return sendWhatsAppGateway(
       params.phoneNumber,
-      params.message,
-      params.twilioConfig
+      params.message
     );
   }
   
