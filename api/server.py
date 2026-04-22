@@ -2672,7 +2672,7 @@ async def launch_campaign(campaign_id: str):
         seen_emails = set()
         unique_contacts = []
         for c in contacts:
-            phone = (c.get("whatsapp") or "").replace(" ", "").replace("-", "").replace("+", "")
+            phone = (c.get("whatsapp") or c.get("phone") or "").replace(" ", "").replace("-", "").replace("+", "")
             email = (c.get("email") or "").lower().strip()
             # Garder le contact si son téléphone ET son email n'ont pas déjà été vus
             phone_key = phone[-9:] if len(phone) >= 9 else phone  # Comparer les 9 derniers chiffres
@@ -2695,7 +2695,8 @@ async def launch_campaign(campaign_id: str):
         contact_id = contact.get("id", "")
         contact_name = contact.get("name", "")
         contact_email = contact.get("email", "")
-        contact_phone = contact.get("whatsapp", "")
+        contact_phone = contact.get("whatsapp") or contact.get("phone") or ""
+        logger.info(f"[CAMPAIGN-LAUNCH] 👤 Contact: {contact_name} | whatsapp={contact.get('whatsapp')} | phone={contact.get('phone')} | résolu={contact_phone}")
 
         # Substituer les variables pour chaque contact
         personalized_msg = substitute_campaign_variables(message_content, contact)
