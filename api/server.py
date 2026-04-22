@@ -2439,22 +2439,24 @@ async def launch_campaign(campaign_id: str):
     
     Chaque canal est indépendant: l'échec d'un envoi ne bloque pas les suivants.
     """
-    campaign = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-
-    # V161.2: ANTI-DOUBLON — Bloquer immédiatement si déjà en cours ou terminée
-    current_status = campaign.get("status", "")
-    if current_status in ("sending", "completed", "failed"):
-        logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ Campagne '{campaign.get('name')}' déjà en statut '{current_status}', lancement ignoré")
-        return campaign  # Retourner la campagne sans rien faire
-
-    # V161.2: Mettre le statut à "sending" IMMÉDIATEMENT pour empêcher le cron de relancer
-    await db.campaigns.update_one(
-        {"id": campaign_id},
-        {"$set": {"status": "sending", "updatedAt": datetime.now(timezone.utc).isoformat()}}
+    # V162: ANTI-DOUBLON ATOMIQUE — findOneAndUpdate garantit qu'un seul process peut verrouiller
+    # Ceci empêche toute race condition entre instances cron concurrentes
+    campaign = await db.campaigns.find_one_and_update(
+        {"id": campaign_id, "status": {"$nin": ["sending", "completed", "failed"]}},
+        {"$set": {"status": "sending", "updatedAt": datetime.now(timezone.utc).isoformat()}},
+        return_document=False  # Retourne le doc AVANT la mise à jour
     )
-    logger.info(f"[CAMPAIGN-LAUNCH] 🔒 Campagne '{campaign.get('name')}' verrouillée en statut 'sending'")
+    if not campaign:
+        # Soit la campagne n'existe pas, soit elle est déjà en cours/terminée
+        existing = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
+        if not existing:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ Campagne '{existing.get('name')}' déjà en statut '{existing.get('status')}', lancement ignoré")
+        return existing
+
+    # Nettoyer le champ _id retourné par findOneAndUpdate
+    campaign.pop("_id", None)
+    logger.info(f"[CAMPAIGN-LAUNCH] 🔒 Campagne '{campaign.get('name')}' verrouillée ATOMIQUEMENT en statut 'sending'")
 
     # v11: Vérification et déduction de crédits (coût × nombre de contacts)
     coach_email = campaign.get("coach_id", "")
@@ -2679,12 +2681,34 @@ async def launch_campaign(campaign_id: str):
             }
             
             try:
-                # Envoi DIRECT via Twilio (format E.164)
+                # Envoi DIRECT via Meta/Twilio (format E.164)
                 phone_e164 = format_phone_e164(contact_phone)
+
+                # V162: Les liens web (Instagram, YouTube, etc.) ne sont PAS des médias
+                # WhatsApp ne sait pas télécharger ces pages — il les envoie comme fichier HTML
+                # → On les inclut dans le texte du message pour que WhatsApp génère un aperçu de lien
+                wa_media_url = media_url if media_url else None
+                wa_message = personalized_msg
+                if wa_media_url:
+                    is_web_link = any(domain in wa_media_url.lower() for domain in [
+                        'instagram.com', 'youtube.com', 'youtu.be', 'tiktok.com',
+                        'facebook.com', 'twitter.com', 'x.com', 'drive.google.com'
+                    ])
+                    is_direct_media = any(wa_media_url.lower().endswith(ext) for ext in [
+                        '.jpg', '.jpeg', '.png', '.gif', '.webp',
+                        '.mp4', '.3gp', '.mov', '.webm',
+                        '.mp3', '.ogg', '.wav', '.aac',
+                        '.pdf'
+                    ])
+                    if is_web_link or not is_direct_media:
+                        # Ajouter le lien au texte, ne pas envoyer comme média
+                        wa_message = f"{personalized_msg}\n\n🔗 {wa_media_url}"
+                        wa_media_url = None
+
                 wa_response = await send_whatsapp_direct(
                     to_phone=phone_e164,
-                    message=personalized_msg,
-                    media_url=media_url if media_url else None
+                    message=wa_message,
+                    media_url=wa_media_url
                 )
                 
                 if wa_response.get("status") == "success":
@@ -6018,6 +6042,18 @@ async def _send_whatsapp_meta(to_phone: str, message: str, media_url: str, confi
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
+            # V162: SÉCURITÉ — Vérifier que media_url n'est pas un lien web (Instagram, YouTube, etc.)
+            # Les liens web envoyés comme "document" deviennent des fichiers HTML téléchargés
+            if media_url:
+                media_lower_check = media_url.lower()
+                web_domains = ['instagram.com', 'youtube.com', 'youtu.be', 'tiktok.com',
+                               'facebook.com', 'twitter.com', 'x.com', 'drive.google.com']
+                if any(domain in media_lower_check for domain in web_domains):
+                    logger.warning(f"[WHATSAPP-META] ⚠️ Lien web détecté comme média: {media_url} — converti en texte")
+                    # Inclure le lien dans le message texte au lieu de l'envoyer comme document
+                    message = f"{message}\n\n🔗 {media_url}" if message else media_url
+                    media_url = None
+
             # Si média, envoyer d'abord le média puis le texte
             if media_url:
                 # Détecter le type de média
@@ -6156,6 +6192,15 @@ async def _send_whatsapp_twilio(to_phone: str, message: str, media_url: str, con
 
     clean_from = from_number if from_number.startswith("+") else "+" + from_number
     twilio_url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+
+    # V162: Même protection que Meta — ne pas envoyer les liens web comme média
+    if media_url:
+        web_domains = ['instagram.com', 'youtube.com', 'youtu.be', 'tiktok.com',
+                       'facebook.com', 'twitter.com', 'x.com', 'drive.google.com']
+        if any(domain in media_url.lower() for domain in web_domains):
+            logger.warning(f"[WHATSAPP-TWILIO] ⚠️ Lien web détecté comme média: {media_url} — converti en texte")
+            message = f"{message}\n\n🔗 {media_url}" if message else media_url
+            media_url = None
 
     data = {"From": f"whatsapp:{clean_from}", "To": f"whatsapp:{clean_to}", "Body": message}
     if media_url:
