@@ -2721,6 +2721,8 @@ async def launch_campaign(campaign_id: str):
                 # V162.2: Gestion intelligente des liens web pour WhatsApp
                 wa_media_url = media_url if media_url else None
                 wa_message = personalized_msg
+                wa_cta_url = None
+                wa_cta_text = None
                 if wa_media_url:
                     media_lower = wa_media_url.lower()
                     is_direct_media = any(media_lower.endswith(ext) for ext in [
@@ -2801,19 +2803,34 @@ async def launch_campaign(campaign_id: str):
                                 thumbnail_url = f"https://img.youtube.com/vi/{yt_id}/maxresdefault.jpg"
                                 logger.info(f"[CAMPAIGN-WA] ▶️ Miniature YouTube: {thumbnail_url}")
 
+                        # V163.2: Variable pour le lien cliquable CTA
+                        wa_cta_url = None
+                        wa_cta_text = None
+
                         if thumbnail_url:
-                            # Envoyer la miniature comme IMAGE avec caption contenant le lien
+                            # Envoyer miniature + bouton cliquable vers le lien original
                             wa_media_url = thumbnail_url
-                            wa_message = f"{personalized_msg}\n\n▶️ Voir ici 👇\n{media_url}"
+                            wa_message = personalized_msg
+                            wa_cta_url = media_url  # Le lien original Instagram/YouTube
+                            # Déterminer le texte du bouton
+                            if 'instagram.com' in media_lower:
+                                wa_cta_text = "Voir sur Instagram ▶️"
+                            elif 'youtube.com' in media_lower or 'youtu.be' in media_lower:
+                                wa_cta_text = "Voir sur YouTube ▶️"
+                            else:
+                                wa_cta_text = "Voir la vidéo ▶️"
                         else:
                             # Fallback: lien dans le texte avec preview_url
                             wa_message = f"{personalized_msg}\n\n🔗 {wa_media_url}"
                             wa_media_url = None
+                            wa_cta_url = None
 
                 wa_response = await send_whatsapp_direct(
                     to_phone=phone_e164,
                     message=wa_message,
-                    media_url=wa_media_url
+                    media_url=wa_media_url,
+                    cta_url=wa_cta_url,
+                    cta_text=wa_cta_text
                 )
                 
                 if wa_response.get("status") == "success":
@@ -6126,8 +6143,8 @@ async def _get_whatsapp_config():
     return None
 
 
-async def _send_whatsapp_meta(to_phone: str, message: str, media_url: str, config: dict, campaign_id: str = None, campaign_name: str = None) -> dict:
-    """Envoi via Meta WhatsApp Cloud API (V161)"""
+async def _send_whatsapp_meta(to_phone: str, message: str, media_url: str, config: dict, campaign_id: str = None, campaign_name: str = None, cta_url: str = None, cta_text: str = None) -> dict:
+    """Envoi via Meta WhatsApp Cloud API (V161) — V163.2: Support CTA URL interactif"""
     import httpx
 
     access_token = config["access_token"]
@@ -6169,7 +6186,49 @@ async def _send_whatsapp_meta(to_phone: str, message: str, media_url: str, confi
                         message = f"{message}\n\n🔗 {media_url}" if message else media_url
                         media_url = None
 
-            # Si média, envoyer d'abord le média puis le texte
+            # V163.2: Si CTA URL + miniature → message interactif avec bouton cliquable
+            if cta_url and media_url:
+                cta_display = cta_text or "Voir ▶️"
+                interactive_payload = {
+                    "messaging_product": "whatsapp",
+                    "to": clean_to,
+                    "type": "interactive",
+                    "interactive": {
+                        "type": "cta_url",
+                        "header": {
+                            "type": "image",
+                            "image": {
+                                "link": media_url
+                            }
+                        },
+                        "body": {
+                            "text": message or "▶️"
+                        },
+                        "action": {
+                            "name": "cta_url",
+                            "parameters": {
+                                "display_text": cta_display,
+                                "url": cta_url
+                            }
+                        }
+                    }
+                }
+                logger.info(f"[WHATSAPP-META] 🔗 Envoi CTA URL interactif: {cta_display} → {cta_url[:60]}")
+                response = await client.post(meta_url, headers=headers, json=interactive_payload)
+                result = response.json()
+
+                if response.status_code < 400:
+                    msg_id = result.get("messages", [{}])[0].get("id", "")
+                    logger.info(f"[WHATSAPP-META] ✅ CTA URL envoyé - ID: {msg_id}")
+                    return {"status": "success", "sid": msg_id, "to": clean_to}
+                else:
+                    # Fallback: si CTA URL échoue, envoyer comme image + texte classique
+                    error_detail = result.get("error", {})
+                    logger.warning(f"[WHATSAPP-META] ⚠️ CTA URL échoué ({error_detail.get('message', '')}), fallback image+texte")
+                    message = f"{message}\n\n▶️ Voir ici 👇\n{cta_url}"
+                    # Continue vers l'envoi média classique ci-dessous
+
+            # Si média, envoyer le média
             if media_url:
                 # Détecter le type de média
                 media_lower = media_url.lower()
@@ -6368,11 +6427,11 @@ async def _send_whatsapp_twilio(to_phone: str, message: str, media_url: str, con
         return {"status": "error", "error": str(e), "error_code": "EXCEPTION"}
 
 
-async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = None, campaign_id: str = None, campaign_name: str = None) -> dict:
+async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = None, campaign_id: str = None, campaign_name: str = None, cta_url: str = None, cta_text: str = None) -> dict:
     """
     V161: Fonction unifiée pour envoyer un message WhatsApp.
     Route automatiquement vers Meta Cloud API ou Twilio selon la config.
-    Utilisée par /send-whatsapp et /campaigns/{id}/launch.
+    V163.2: Support CTA URL — miniature cliquable qui redirige vers le lien.
     """
     config = await _get_whatsapp_config()
 
@@ -6381,7 +6440,7 @@ async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = Non
         return {"status": "simulated", "message": f"WhatsApp simulé pour: {to_phone}", "simulated": True}
 
     if config["api_mode"] == "meta":
-        return await _send_whatsapp_meta(to_phone, message, media_url, config, campaign_id, campaign_name)
+        return await _send_whatsapp_meta(to_phone, message, media_url, config, campaign_id, campaign_name, cta_url=cta_url, cta_text=cta_text)
     else:
         return await _send_whatsapp_twilio(to_phone, message, media_url, config, campaign_id, campaign_name)
 @api_router.post("/send-whatsapp")
