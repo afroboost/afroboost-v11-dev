@@ -71,6 +71,7 @@ TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER', '')
 META_WHATSAPP_TOKEN = os.environ.get('META_WHATSAPP_TOKEN', '')
 META_WHATSAPP_PHONE_ID = os.environ.get('META_WHATSAPP_PHONE_ID', '')
 META_WHATSAPP_API_VERSION = os.environ.get('META_WHATSAPP_API_VERSION', 'v21.0')
+META_WHATSAPP_VERIFY_TOKEN = os.environ.get('META_WHATSAPP_VERIFY_TOKEN', 'afroboost_webhook_2024')
 TWILIO_SANDBOX_NUMBER = "+14155238886"
 
 # MongoDB connection
@@ -5589,6 +5590,317 @@ async def handle_whatsapp_webhook(webhook: WhatsAppWebhook):
     except Exception as e:
         logger.error(f"AI error: {str(e)}")
         return {"status": "error", "message": str(e)}
+
+# --- Meta WhatsApp Cloud API Webhook (V161) ---
+# GET = vérification webhook par Meta | POST = messages entrants
+# Ne touche PAS au webhook Twilio existant ci-dessus
+
+@api_router.get("/webhook/whatsapp-meta")
+async def verify_meta_whatsapp_webhook(request: Request):
+    """
+    Vérification du webhook par Meta (GET).
+    Meta envoie hub.mode, hub.verify_token et hub.challenge.
+    On vérifie le token et renvoie hub.challenge.
+    """
+    params = request.query_params
+    mode = params.get("hub.mode")
+    token = params.get("hub.verify_token")
+    challenge = params.get("hub.challenge")
+
+    logger.info(f"[META-WEBHOOK] Verification request: mode={mode}, token={'***' if token else 'None'}")
+
+    if mode == "subscribe" and token == META_WHATSAPP_VERIFY_TOKEN:
+        logger.info("[META-WEBHOOK] ✅ Webhook vérifié avec succès")
+        from starlette.responses import PlainTextResponse
+        return PlainTextResponse(content=challenge, status_code=200)
+    else:
+        logger.warning(f"[META-WEBHOOK] ❌ Vérification échouée (token mismatch)")
+        raise HTTPException(status_code=403, detail="Verification failed")
+
+
+@api_router.post("/webhook/whatsapp-meta")
+async def handle_meta_whatsapp_webhook(request: Request):
+    """
+    Webhook pour recevoir les messages WhatsApp entrants via Meta Cloud API.
+    Format Meta: { object, entry: [{ changes: [{ value: { messages: [...] } }] }] }
+    Réutilise le MÊME flux IA + conversation que le webhook Twilio existant.
+    """
+    import time
+
+    try:
+        body = await request.json()
+    except Exception:
+        logger.error("[META-WEBHOOK] ❌ JSON invalide")
+        return {"status": "error", "message": "Invalid JSON"}
+
+    # Meta envoie toujours object = "whatsapp_business_account"
+    if body.get("object") != "whatsapp_business_account":
+        logger.info(f"[META-WEBHOOK] Objet ignoré: {body.get('object')}")
+        return {"status": "ignored"}
+
+    # Parcourir les entrées (peut y avoir plusieurs messages)
+    entries = body.get("entry", [])
+    processed = 0
+
+    for entry in entries:
+        changes = entry.get("changes", [])
+        for change in changes:
+            value = change.get("value", {})
+            messages = value.get("messages", [])
+            contacts = value.get("contacts", [])
+
+            # Ignorer les statuts de livraison (pas de messages)
+            if not messages:
+                continue
+
+            for msg in messages:
+                msg_type = msg.get("type", "")
+                from_phone = msg.get("from", "")  # Format: 41767639928 (sans +)
+
+                # Extraire le texte selon le type de message
+                if msg_type == "text":
+                    incoming_message = msg.get("text", {}).get("body", "")
+                elif msg_type == "image":
+                    incoming_message = msg.get("image", {}).get("caption", "") or "[Image reçue]"
+                elif msg_type == "video":
+                    incoming_message = msg.get("video", {}).get("caption", "") or "[Vidéo reçue]"
+                elif msg_type == "audio":
+                    incoming_message = "[Message vocal reçu]"
+                elif msg_type == "document":
+                    incoming_message = msg.get("document", {}).get("caption", "") or "[Document reçu]"
+                elif msg_type == "location":
+                    incoming_message = "[Localisation reçue]"
+                elif msg_type == "sticker":
+                    incoming_message = "[Sticker reçu]"
+                elif msg_type == "reaction":
+                    # Ignorer les réactions
+                    continue
+                else:
+                    incoming_message = f"[Message {msg_type} reçu]"
+
+                if not incoming_message or not from_phone:
+                    continue
+
+                # Ajouter le + au numéro pour normaliser
+                if not from_phone.startswith("+"):
+                    from_phone = f"+{from_phone}"
+
+                # Récupérer le nom du contact Meta (si disponible)
+                meta_contact_name = None
+                for contact in contacts:
+                    if contact.get("wa_id") == msg.get("from"):
+                        profile = contact.get("profile", {})
+                        meta_contact_name = profile.get("name")
+                        break
+
+                logger.info(f"[META-WEBHOOK] 📩 Message de {from_phone} ({meta_contact_name}): {incoming_message[:80]}")
+
+                # === RÉUTILISER LE MÊME FLUX QUE LE WEBHOOK TWILIO ===
+                start_time = time.time()
+
+                # 1. Vérifier si l'IA est activée
+                ai_config = await db.ai_config.find_one({"id": "ai_config"}, {"_id": 0})
+                if not ai_config or not ai_config.get("enabled"):
+                    logger.info(f"[META-WEBHOOK] AI disabled, saving message but not responding")
+                    # Sauvegarder le message entrant même si l'IA est désactivée
+                    await _save_whatsapp_conversation(
+                        from_phone=from_phone,
+                        contact_name=meta_contact_name,
+                        incoming_message=incoming_message,
+                        ai_response=None
+                    )
+                    processed += 1
+                    continue
+
+                # 2. Chercher le client dans les réservations
+                client_name = meta_contact_name  # Utiliser le nom Meta par défaut
+                normalized_phone = from_phone.replace("+", "").replace(" ", "")
+                reservations = await db.reservations.find({}, {"_id": 0}).to_list(1000)
+
+                for res in reservations:
+                    res_phone = (res.get("whatsapp") or res.get("phone") or "").replace("+", "").replace(" ", "").replace("-", "")
+                    if res_phone and normalized_phone.endswith(res_phone[-9:]):
+                        client_name = res.get("userName") or res.get("name") or meta_contact_name
+                        break
+
+                # 3. Construire le contexte
+                context = ""
+                if client_name:
+                    context += f"\n\nLe client qui te parle s'appelle {client_name}. Utilise son prénom dans ta réponse."
+
+                last_media = ai_config.get("lastMediaUrl", "")
+                if last_media:
+                    context += f"\n\nNote: Tu as récemment envoyé un média à ce client: {last_media}. Tu peux lui demander s'il l'a bien reçu."
+
+                full_system_prompt = ai_config.get("systemPrompt", "") + context
+
+                # 4. Appeler l'IA
+                try:
+                    from openai import OpenAI
+
+                    openai_key = os.environ.get("OPENAI_API_KEY")
+                    if not openai_key:
+                        logger.error("[META-WEBHOOK] OPENAI_API_KEY not configured")
+                        await _save_whatsapp_conversation(
+                            from_phone=from_phone,
+                            contact_name=client_name or meta_contact_name,
+                            incoming_message=incoming_message,
+                            ai_response=None
+                        )
+                        processed += 1
+                        continue
+
+                    client = OpenAI(api_key=openai_key)
+                    model_name = ai_config.get("model", "gpt-4o-mini")
+
+                    response = await asyncio.to_thread(
+                        client.chat.completions.create,
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": full_system_prompt},
+                            {"role": "user", "content": incoming_message}
+                        ],
+                        max_tokens=1000
+                    )
+                    ai_response = response.choices[0].message.content
+
+                    response_time = time.time() - start_time
+
+                    # 5. Sauvegarder le log IA
+                    log_entry = AILog(
+                        fromPhone=from_phone,
+                        clientName=client_name,
+                        incomingMessage=incoming_message,
+                        aiResponse=ai_response,
+                        responseTime=response_time
+                    ).model_dump()
+                    await db.ai_logs.insert_one(log_entry)
+
+                    logger.info(f"[META-WEBHOOK] 🤖 AI responded to {from_phone} in {response_time:.2f}s")
+
+                    # 6. ENVOYER la réponse via Meta Cloud API
+                    send_result = await send_whatsapp_direct(
+                        to_phone=from_phone,
+                        message=ai_response
+                    )
+                    logger.info(f"[META-WEBHOOK] 📤 Réponse envoyée: {send_result.get('status')}")
+
+                    # 7. Sauvegarder la conversation dans le système de messagerie
+                    await _save_whatsapp_conversation(
+                        from_phone=from_phone,
+                        contact_name=client_name or meta_contact_name,
+                        incoming_message=incoming_message,
+                        ai_response=ai_response
+                    )
+
+                    processed += 1
+
+                except Exception as e:
+                    logger.error(f"[META-WEBHOOK] ❌ AI error: {str(e)}")
+                    await _save_whatsapp_conversation(
+                        from_phone=from_phone,
+                        contact_name=client_name or meta_contact_name,
+                        incoming_message=incoming_message,
+                        ai_response=None
+                    )
+                    processed += 1
+
+    # Meta exige une réponse 200 OK rapide
+    return {"status": "ok", "processed": processed}
+
+
+async def _save_whatsapp_conversation(from_phone: str, contact_name: str, incoming_message: str, ai_response: str = None):
+    """
+    Sauvegarde un échange WhatsApp dans le système de conversations privées
+    pour qu'il apparaisse dans l'interface de messagerie d'afroboost.com.
+    """
+    from datetime import datetime, timezone
+    import uuid
+
+    try:
+        # ID unique basé sur le numéro de téléphone pour le participant WhatsApp
+        whatsapp_participant_id = f"whatsapp_{from_phone.replace('+', '')}"
+        admin_participant_id = "admin_afroboost"
+        display_name = contact_name or from_phone
+
+        # Chercher ou créer la conversation
+        existing = await db.private_conversations.find_one({
+            "$or": [
+                {"participant_1_id": whatsapp_participant_id, "participant_2_id": admin_participant_id},
+                {"participant_1_id": admin_participant_id, "participant_2_id": whatsapp_participant_id}
+            ]
+        }, {"_id": 0})
+
+        if not existing:
+            # Créer la conversation
+            conv_id = str(uuid.uuid4())
+            now = datetime.now(timezone.utc).isoformat()
+            conversation = {
+                "id": conv_id,
+                "participant_1_id": whatsapp_participant_id,
+                "participant_1_name": f"📱 {display_name}",
+                "participant_2_id": admin_participant_id,
+                "participant_2_name": "Afroboost IA",
+                "last_message": incoming_message[:100],
+                "last_message_at": now,
+                "created_at": now,
+                "channel": "whatsapp",
+                "phone": from_phone
+            }
+            await db.private_conversations.insert_one(conversation)
+            logger.info(f"[META-WEBHOOK] 💬 Nouvelle conversation créée: {conv_id}")
+        else:
+            conv_id = existing["id"]
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Sauvegarder le message entrant du client
+        incoming_msg = {
+            "id": str(uuid.uuid4()),
+            "conversation_id": conv_id,
+            "sender_id": whatsapp_participant_id,
+            "sender_name": f"📱 {display_name}",
+            "recipient_id": admin_participant_id,
+            "recipient_name": "Afroboost IA",
+            "content": incoming_message,
+            "created_at": now,
+            "is_deleted": False,
+            "channel": "whatsapp"
+        }
+        await db.private_messages.insert_one(incoming_msg)
+
+        # Sauvegarder la réponse IA si elle existe
+        if ai_response:
+            ai_msg = {
+                "id": str(uuid.uuid4()),
+                "conversation_id": conv_id,
+                "sender_id": admin_participant_id,
+                "sender_name": "Afroboost IA",
+                "recipient_id": whatsapp_participant_id,
+                "recipient_name": f"📱 {display_name}",
+                "content": ai_response,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "is_deleted": False,
+                "channel": "whatsapp"
+            }
+            await db.private_messages.insert_one(ai_msg)
+
+        # Mettre à jour le dernier message de la conversation
+        last_content = ai_response[:100] if ai_response else incoming_message[:100]
+        await db.private_conversations.update_one(
+            {"id": conv_id},
+            {"$set": {
+                "last_message": last_content,
+                "last_message_at": datetime.now(timezone.utc).isoformat(),
+                "participant_1_name": f"📱 {display_name}"  # Mettre à jour le nom si on l'a
+            }}
+        )
+
+        logger.info(f"[META-WEBHOOK] 💾 Conversation sauvegardée: {conv_id}")
+
+    except Exception as e:
+        logger.error(f"[META-WEBHOOK] ❌ Erreur sauvegarde conversation: {str(e)}")
+
 
 # --- Endpoint pour envoyer WhatsApp depuis le frontend (Liaison IA -> Twilio) ---
 class SendWhatsAppRequest(BaseModel):
