@@ -2803,15 +2803,24 @@ async def launch_campaign(campaign_id: str):
                                 thumbnail_url = f"https://img.youtube.com/vi/{yt_id}/maxresdefault.jpg"
                                 logger.info(f"[CAMPAIGN-WA] ▶️ Miniature YouTube: {thumbnail_url}")
 
-                        # V163.5: Envoyer le LIEN dans le texte pour que WhatsApp
-                        # génère une carte de preview CLIQUABLE (miniature + redirection)
-                        # L'ancienne approche envoyait la miniature comme image séparée
-                        # → belle image mais PAS cliquable. Avec preview_url: true,
-                        # WhatsApp crée une carte cliquable qui redirige vers Instagram/YouTube
-                        wa_message = f"{personalized_msg}\n\n🔗 {media_url}"
-                        wa_media_url = None  # Pas d'image séparée, on laisse WhatsApp faire le preview
-                        wa_cta_url = None
-                        wa_cta_text = None
+                        # V163.6: Grande miniature + bouton cliquable via CTA URL interactif
+                        # Le format interactive cta_url affiche: grande image header + bouton cliquable
+                        if thumbnail_url:
+                            wa_media_url = thumbnail_url  # Grande image en header
+                            wa_message = personalized_msg
+                            wa_cta_url = media_url  # Lien original Instagram/YouTube
+                            if 'instagram.com' in media_lower:
+                                wa_cta_text = "Voir sur Instagram"
+                            elif 'youtube.com' in media_lower or 'youtu.be' in media_lower:
+                                wa_cta_text = "Voir sur YouTube"
+                            else:
+                                wa_cta_text = "Voir le contenu"
+                        else:
+                            # Pas de miniature → lien dans le texte avec preview_url
+                            wa_message = f"{personalized_msg}\n\n🔗 {wa_media_url}"
+                            wa_media_url = None
+                            wa_cta_url = None
+                            wa_cta_text = None
 
                 wa_response = await send_whatsapp_direct(
                     to_phone=phone_e164,
@@ -6174,9 +6183,15 @@ async def _send_whatsapp_meta(to_phone: str, message: str, media_url: str, confi
                         message = f"{message}\n\n🔗 {media_url}" if message else media_url
                         media_url = None
 
-            # V163.2: Si CTA URL + miniature → message interactif avec bouton cliquable
+            # V163.6: Si CTA URL + miniature → message interactif avec bouton cliquable
+            # Format: grande image header + texte + bouton "Voir sur Instagram" cliquable
             if cta_url and media_url:
-                cta_display = cta_text or "Voir ▶️"
+                cta_display = cta_text or "Voir"
+                # Le body ne peut pas dépasser 1024 chars et le display_text 20 chars
+                if len(cta_display) > 20:
+                    cta_display = cta_display[:20]
+                body_text = message[:1024] if message else "Découvrir"
+
                 interactive_payload = {
                     "messaging_product": "whatsapp",
                     "to": clean_to,
@@ -6190,7 +6205,7 @@ async def _send_whatsapp_meta(to_phone: str, message: str, media_url: str, confi
                             }
                         },
                         "body": {
-                            "text": message or "▶️"
+                            "text": body_text
                         },
                         "action": {
                             "name": "cta_url",
@@ -6201,19 +6216,28 @@ async def _send_whatsapp_meta(to_phone: str, message: str, media_url: str, confi
                         }
                     }
                 }
-                logger.info(f"[WHATSAPP-META] 🔗 Envoi CTA URL interactif: {cta_display} → {cta_url[:60]}")
+                import json as json_log
+                logger.info(f"[WHATSAPP-META] 🔗 Envoi CTA URL interactif: {cta_display} → {cta_url[:80]}")
+                logger.info(f"[WHATSAPP-META] 🔗 Image header: {media_url[:100]}")
+                logger.info(f"[WHATSAPP-META] 🔗 Payload CTA: {json_log.dumps(interactive_payload, ensure_ascii=False)[:500]}")
+
                 response = await client.post(meta_url, headers=headers, json=interactive_payload)
                 result = response.json()
+                logger.info(f"[WHATSAPP-META] 🔗 CTA Response status={response.status_code}: {json_log.dumps(result, ensure_ascii=False)[:300]}")
 
                 if response.status_code < 400:
                     msg_id = result.get("messages", [{}])[0].get("id", "")
-                    logger.info(f"[WHATSAPP-META] ✅ CTA URL envoyé - ID: {msg_id}")
+                    logger.info(f"[WHATSAPP-META] ✅ CTA URL envoyé avec succès - ID: {msg_id}")
                     return {"status": "success", "sid": msg_id, "to": clean_to}
                 else:
-                    # Fallback: si CTA URL échoue, envoyer comme image + texte classique
+                    # Fallback: si CTA URL échoue, envoyer image + texte avec lien cliquable
                     error_detail = result.get("error", {})
-                    logger.warning(f"[WHATSAPP-META] ⚠️ CTA URL échoué ({error_detail.get('message', '')}), fallback image+texte")
-                    message = f"{message}\n\n▶️ Voir ici 👇\n{cta_url}"
+                    error_code = error_detail.get("code", "")
+                    error_msg = error_detail.get("message", "")
+                    logger.error(f"[WHATSAPP-META] ❌ CTA URL ÉCHOUÉ code={error_code}: {error_msg}")
+                    logger.error(f"[WHATSAPP-META] ❌ Full error: {json_log.dumps(result, ensure_ascii=False)[:500]}")
+                    # Fallback: image + lien dans le texte
+                    message = f"{message}\n\n👉 {cta_url}"
                     # Continue vers l'envoi média classique ci-dessous
 
             # Si média, envoyer le média
