@@ -2734,34 +2734,50 @@ async def launch_campaign(campaign_id: str):
                         thumbnail_url = None
                         import re as re_wa
 
-                        # === INSTAGRAM: miniature via og:image de la page ===
+                        # === INSTAGRAM: miniature RÉELLE du post ===
                         if 'instagram.com' in media_lower:
                             try:
                                 import httpx
-                                # Méthode 1: Récupérer og:image depuis la page Instagram
-                                async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as ig_client:
-                                    ig_resp = await ig_client.get(wa_media_url, headers={
-                                        "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-                                        "Accept": "text/html,application/xhtml+xml",
-                                        "Accept-Language": "fr-FR,fr;q=0.9"
-                                    })
-                                    if ig_resp.status_code == 200:
-                                        # Extraire og:image du HTML
-                                        html_text = ig_resp.text
-                                        import re as re_og
-                                        # Chercher og:image (content peut être avant ou après property)
-                                        og_match = re_og.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', html_text)
-                                        if not og_match:
-                                            og_match = re_og.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html_text)
-                                        if og_match:
-                                            thumbnail_url = og_match.group(1).replace("&amp;", "&")
-                                            logger.info(f"[CAMPAIGN-WA] 📸 Miniature Instagram og:image: {thumbnail_url[:100]}")
-                                        else:
-                                            logger.warning(f"[CAMPAIGN-WA] ⚠️ og:image non trouvé dans la page Instagram (status {ig_resp.status_code})")
-                                    else:
-                                        logger.warning(f"[CAMPAIGN-WA] ⚠️ Instagram page status: {ig_resp.status_code}")
+                                import re as re_ig
 
-                                # Méthode 2 (fallback): oEmbed Meta API
+                                # Extraire le shortcode du lien Instagram
+                                ig_shortcode_match = re_ig.search(
+                                    r'instagram\.com/(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)',
+                                    wa_media_url
+                                )
+
+                                if ig_shortcode_match:
+                                    ig_shortcode = ig_shortcode_match.group(1)
+
+                                    # Méthode 1: /media/?size=l — retourne la VRAIE image du post (redirect CDN)
+                                    media_direct_url = f"https://www.instagram.com/p/{ig_shortcode}/media/?size=l"
+                                    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as ig_client:
+                                        ig_resp = await ig_client.get(media_direct_url, headers={
+                                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                                        })
+                                        # Si redirect réussie, l'URL finale est la vraie image CDN
+                                        if ig_resp.status_code == 200 and 'image' in ig_resp.headers.get('content-type', ''):
+                                            thumbnail_url = str(ig_resp.url)
+                                            logger.info(f"[CAMPAIGN-WA] 📸 Miniature Instagram /media/ directe: {thumbnail_url[:100]}")
+
+                                # Méthode 2 (fallback): og:image depuis la page HTML
+                                if not thumbnail_url:
+                                    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as ig_client:
+                                        ig_resp = await ig_client.get(wa_media_url, headers={
+                                            "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+                                            "Accept": "text/html,application/xhtml+xml",
+                                            "Accept-Language": "fr-FR,fr;q=0.9"
+                                        })
+                                        if ig_resp.status_code == 200:
+                                            html_text = ig_resp.text
+                                            og_match = re_ig.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', html_text)
+                                            if not og_match:
+                                                og_match = re_ig.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html_text)
+                                            if og_match:
+                                                thumbnail_url = og_match.group(1).replace("&amp;", "&")
+                                                logger.info(f"[CAMPAIGN-WA] 📸 Miniature Instagram og:image (fallback): {thumbnail_url[:100]}")
+
+                                # Méthode 3 (fallback): oEmbed Meta API
                                 if not thumbnail_url:
                                     ig_oembed_url = "https://graph.facebook.com/v21.0/instagram_oembed"
                                     async with httpx.AsyncClient(timeout=10.0) as oembed_client:
