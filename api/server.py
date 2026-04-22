@@ -2779,6 +2779,16 @@ async def launch_campaign(campaign_id: str):
                                 media_html = f'<div style="padding:0;text-align:center;"><a href="{app_url}" style="text-decoration:none;"><img src="https://img.youtube.com/vi/{yt_id}/hqdefault.jpg" alt="Vidéo" style="width:100%;max-height:300px;object-fit:cover;border-radius:4px;" /><div style="padding:8px;color:#9333EA;font-size:13px;font-weight:bold;">▶ Voir sur Afroboost</div></a></div>'
                             else:
                                 media_html = f'<div style="padding:10px 20px;text-align:center;"><a href="{app_url}" style="color:#9333EA;font-size:13px;">▶ Voir sur Afroboost</a></div>'
+                        elif 'instagram.com' in media_url:
+                            # V161.2: Lien Instagram (post, reel, tv) — même logique que YouTube
+                            import re as re_ig
+                            ig_match = re_ig.search(r'instagram\.com\/(?:p|reel|tv)\/([a-zA-Z0-9_-]+)', media_url)
+                            app_url = "https://afroboost-v11-dev-pm7l.vercel.app"
+                            if ig_match:
+                                ig_id = ig_match.group(1)
+                                media_html = f'<div style="padding:0;text-align:center;"><a href="{media_url}" style="text-decoration:none;"><div style="background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);padding:30px 20px;text-align:center;"><div style="font-size:40px;margin-bottom:8px;">📸</div><div style="color:#fff;font-size:15px;font-weight:bold;">Voir sur Instagram</div><div style="color:rgba(255,255,255,0.7);font-size:11px;margin-top:4px;">instagram.com/p/{ig_id}</div></div></a></div>'
+                            else:
+                                media_html = f'<div style="padding:10px 20px;text-align:center;"><a href="{media_url}" style="color:#e1306c;font-size:13px;font-weight:bold;">📸 Voir sur Instagram</a></div>'
 
                     html_content = f"""<!DOCTYPE html>
 <html lang="fr">

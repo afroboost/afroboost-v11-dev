@@ -268,6 +268,10 @@ export default function CampaignModal({
   // YouTube detection for preview
   const ytMatch = (newCampaign.mediaUrl || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
 
+  // V161.2: Instagram detection for preview (post, reel, tv)
+  const igMatch = (newCampaign.mediaUrl || '').match(/instagram\.com\/(?:p|reel|tv)\/([a-zA-Z0-9_-]+)/);
+  const isInstagram = !!igMatch;
+
   // V159: Google Drive detection & conversion
   const convertGoogleDriveUrl = function(url) {
     if (!url) return url;
@@ -450,6 +454,11 @@ export default function CampaignModal({
                     </div>
                   </div>
                 )}
+                {isInstagram && (
+                  <div style={{ marginTop: '6px', padding: '6px 10px', borderRadius: '6px', background: 'rgba(225, 48, 108, 0.1)', border: '1px solid rgba(225, 48, 108, 0.3)', fontSize: '11px', color: '#e1306c' }}>
+                    📸 Lien Instagram détecté — sera partagé dans la campagne
+                  </div>
+                )}
                 {/* Preview */}
                 {newCampaign.mediaUrl && (
                   <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'center' }}>
@@ -463,6 +472,13 @@ export default function CampaignModal({
                           <img src={`https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`} alt="YT" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.target.src = `https://img.youtube.com/vi/${ytMatch[1]}/default.jpg`; }} />
                           <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: '40px', height: '40px', background: 'rgba(255,0,0,0.85)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                             <div style={{ width: 0, height: 0, borderTop: '8px solid transparent', borderBottom: '8px solid transparent', borderLeft: '14px solid #fff', marginLeft: '2px' }} />
+                          </div>
+                        </div>
+                      ) : igMatch ? (
+                        <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888)' }}>
+                          <div style={{ textAlign: 'center', color: '#fff' }}>
+                            <div style={{ fontSize: '28px', marginBottom: '4px' }}>📸</div>
+                            <div style={{ fontSize: '10px', fontWeight: 600, opacity: 0.9 }}>Post Instagram</div>
                           </div>
                         </div>
                       ) : (
