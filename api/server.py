@@ -2803,27 +2803,15 @@ async def launch_campaign(campaign_id: str):
                                 thumbnail_url = f"https://img.youtube.com/vi/{yt_id}/maxresdefault.jpg"
                                 logger.info(f"[CAMPAIGN-WA] ▶️ Miniature YouTube: {thumbnail_url}")
 
-                        # V163.2: Variable pour le lien cliquable CTA
+                        # V163.5: Envoyer le LIEN dans le texte pour que WhatsApp
+                        # génère une carte de preview CLIQUABLE (miniature + redirection)
+                        # L'ancienne approche envoyait la miniature comme image séparée
+                        # → belle image mais PAS cliquable. Avec preview_url: true,
+                        # WhatsApp crée une carte cliquable qui redirige vers Instagram/YouTube
+                        wa_message = f"{personalized_msg}\n\n🔗 {media_url}"
+                        wa_media_url = None  # Pas d'image séparée, on laisse WhatsApp faire le preview
                         wa_cta_url = None
                         wa_cta_text = None
-
-                        if thumbnail_url:
-                            # Envoyer miniature + bouton cliquable vers le lien original
-                            wa_media_url = thumbnail_url
-                            wa_message = personalized_msg
-                            wa_cta_url = media_url  # Le lien original Instagram/YouTube
-                            # Déterminer le texte du bouton
-                            if 'instagram.com' in media_lower:
-                                wa_cta_text = "Voir sur Instagram ▶️"
-                            elif 'youtube.com' in media_lower or 'youtu.be' in media_lower:
-                                wa_cta_text = "Voir sur YouTube ▶️"
-                            else:
-                                wa_cta_text = "Voir la vidéo ▶️"
-                        else:
-                            # Fallback: lien dans le texte avec preview_url
-                            wa_message = f"{personalized_msg}\n\n🔗 {wa_media_url}"
-                            wa_media_url = None
-                            wa_cta_url = None
 
                 wa_response = await send_whatsapp_direct(
                     to_phone=phone_e164,
