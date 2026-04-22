@@ -2656,7 +2656,33 @@ async def launch_campaign(campaign_id: str):
                                 })
 
                 logger.info(f"[CAMPAIGN-LAUNCH] 📧 {len(contacts)} contacts résolus pour email/WhatsApp")
-    
+
+    # V162: DÉDUPLICATION — Empêcher d'envoyer plusieurs fois au même numéro/email
+    # Les targetIds peuvent contenir des doublons qui se résolvent au même contact
+    if contacts:
+        seen_phones = set()
+        seen_emails = set()
+        unique_contacts = []
+        for c in contacts:
+            phone = (c.get("whatsapp") or "").replace(" ", "").replace("-", "").replace("+", "")
+            email = (c.get("email") or "").lower().strip()
+            # Garder le contact si son téléphone ET son email n'ont pas déjà été vus
+            phone_key = phone[-9:] if len(phone) >= 9 else phone  # Comparer les 9 derniers chiffres
+            is_dup_phone = phone_key and phone_key in seen_phones
+            is_dup_email = email and email in seen_emails
+            if is_dup_phone or is_dup_email:
+                logger.info(f"[CAMPAIGN-LAUNCH] 🔄 Doublon ignoré: {c.get('name')} (tel:{phone_key}, email:{email})")
+                continue
+            if phone_key:
+                seen_phones.add(phone_key)
+            if email:
+                seen_emails.add(email)
+            unique_contacts.append(c)
+
+        if len(unique_contacts) < len(contacts):
+            logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ {len(contacts) - len(unique_contacts)} doublons supprimés ({len(contacts)} → {len(unique_contacts)} contacts)")
+        contacts = unique_contacts
+
     for contact in contacts:
         contact_id = contact.get("id", "")
         contact_name = contact.get("name", "")
@@ -6113,7 +6139,7 @@ async def _send_whatsapp_meta(to_phone: str, message: str, media_url: str, confi
                         "messaging_product": "whatsapp",
                         "to": clean_to,
                         "type": "text",
-                        "text": {"body": message}
+                        "text": {"body": message, "preview_url": True}
                     }
                     await client.post(meta_url, headers=headers, json=text_payload)
 
@@ -6122,12 +6148,15 @@ async def _send_whatsapp_meta(to_phone: str, message: str, media_url: str, confi
                 return {"status": "success", "sid": msg_id, "to": clean_to}
 
             else:
-                # Message texte simple
+                # Message texte simple — V162: preview_url active les aperçus de liens
                 text_payload = {
                     "messaging_product": "whatsapp",
                     "to": clean_to,
                     "type": "text",
-                    "text": {"body": message}
+                    "text": {
+                        "body": message,
+                        "preview_url": True
+                    }
                 }
 
                 response = await client.post(meta_url, headers=headers, json=text_payload)
