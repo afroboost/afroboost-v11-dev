@@ -814,17 +814,57 @@ export default function CampaignModal({
                   }}
                   style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', fontSize: '13px', outline: 'none' }}>
                   <option value="none">Aucun bouton</option>
+                  <option value="lien">🔗 Lien externe (Instagram, YouTube, Site...)</option>
+                  <option value="conversation">💬 Lier à une Conversation</option>
                   <option value="reserver">🗓️ Réserver</option>
                   <option value="offre">🎁 Offre</option>
-                  <option value="conversation">💬 Lier à une Conversation</option>
                   <option value="personnalise">✨ Personnalisé</option>
                 </select>
 
+                {/* V163: Lien externe — Instagram, YouTube, Site web */}
+                {newCampaign.ctaType === 'lien' && (
+                  <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <input
+                      value={newCampaign.ctaLink || ''}
+                      onChange={e => {
+                        const url = e.target.value;
+                        let autoText = 'Voir ▶️';
+                        if (url.includes('instagram.com')) autoText = 'Voir sur Instagram ▶️';
+                        else if (url.includes('youtube.com') || url.includes('youtu.be')) autoText = 'Voir sur YouTube ▶️';
+                        else if (url.includes('tiktok.com')) autoText = 'Voir sur TikTok ▶️';
+                        setNewCampaign(prev => ({
+                          ...prev,
+                          ctaLink: url,
+                          ctaText: prev.ctaText && prev.ctaText !== 'Voir ▶️' && !prev.ctaText.includes('Voir sur') ? prev.ctaText : autoText
+                        }));
+                      }}
+                      placeholder="Collez le lien ici (ex: https://www.instagram.com/p/...)"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(139,92,246,0.4)', color: '#fff', fontSize: '13px', outline: 'none' }}
+                    />
+                    <input
+                      value={newCampaign.ctaText || ''}
+                      onChange={e => setNewCampaign(prev => ({ ...prev, ctaText: e.target.value }))}
+                      placeholder="Texte du bouton (ex: Voir sur Instagram ▶️)"
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontSize: '12px', outline: 'none' }}
+                    />
+                    {newCampaign.ctaLink && (
+                      <div style={{ padding: '8px 12px', borderRadius: '8px', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)' }}>
+                        <p style={{ color: '#22c55e', fontSize: '12px', margin: 0, fontWeight: 500 }}>
+                          ✅ Bouton configuré : « {newCampaign.ctaText || 'Voir ▶️'} »
+                        </p>
+                        <p style={{ color: 'rgba(34,197,94,0.7)', fontSize: '11px', margin: '4px 0 0', wordBreak: 'break-all' }}>
+                          → {newCampaign.ctaLink}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* v16.3: Sélecteur de lien conversation */}
                 {newCampaign.ctaType === 'conversation' && (
-                  <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <select
-                      value={newCampaign.ctaLink || ''}
+                      value={newCampaign.ctaConversationToken || ''}
                       onChange={e => {
                         const token = e.target.value;
                         const selectedLink = chatLinks.find(l => (l.link_token || l.token) === token);
@@ -859,28 +899,30 @@ export default function CampaignModal({
                       style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontSize: '12px', outline: 'none' }}
                     />
                     {newCampaign.ctaLink && (
-                      <p style={{ color: 'rgba(217,28,210,0.6)', fontSize: '11px', margin: 0, wordBreak: 'break-all' }}>
-                        🔗 {newCampaign.ctaLink}
-                      </p>
+                      <div style={{ padding: '8px 12px', borderRadius: '8px', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)' }}>
+                        <p style={{ color: '#22c55e', fontSize: '12px', margin: 0, fontWeight: 500 }}>
+                          ✅ Lien configuré : « {newCampaign.ctaText || 'Discuter'} »
+                        </p>
+                      </div>
                     )}
                   </div>
                 )}
 
                 {/* Types existants: texte + lien */}
-                {newCampaign.ctaType && newCampaign.ctaType !== 'none' && newCampaign.ctaType !== 'conversation' && (
-                  <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
+                {newCampaign.ctaType && !['none', 'conversation', 'lien'].includes(newCampaign.ctaType) && (
+                  <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <input
                       value={newCampaign.ctaText || ''}
                       onChange={e => setNewCampaign(prev => ({ ...prev, ctaText: e.target.value }))}
                       placeholder="Texte du bouton"
-                      style={{ flex: 1, padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontSize: '12px', outline: 'none' }}
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontSize: '12px', outline: 'none' }}
                     />
                     {(newCampaign.ctaType === 'offre' || newCampaign.ctaType === 'personnalise') && (
                       <input
                         value={newCampaign.ctaLink || ''}
                         onChange={e => setNewCampaign(prev => ({ ...prev, ctaLink: e.target.value }))}
                         placeholder="https://..."
-                        style={{ flex: 1, padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontSize: '12px', outline: 'none' }}
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontSize: '12px', outline: 'none' }}
                       />
                     )}
                   </div>
