@@ -2726,23 +2726,48 @@ async def launch_campaign(campaign_id: str):
                         thumbnail_url = None
                         import re as re_wa
 
-                        # === INSTAGRAM: miniature via oEmbed Meta API ===
+                        # === INSTAGRAM: miniature via og:image de la page ===
                         if 'instagram.com' in media_lower:
                             try:
                                 import httpx
-                                ig_oembed_url = f"https://graph.facebook.com/v21.0/instagram_oembed"
-                                async with httpx.AsyncClient(timeout=10.0) as oembed_client:
-                                    oembed_resp = await oembed_client.get(ig_oembed_url, params={
-                                        "url": wa_media_url,
-                                        "access_token": META_WHATSAPP_TOKEN,
-                                        "fields": "thumbnail_url,title"
+                                # Méthode 1: Récupérer og:image depuis la page Instagram
+                                async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as ig_client:
+                                    ig_resp = await ig_client.get(wa_media_url, headers={
+                                        "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+                                        "Accept": "text/html,application/xhtml+xml",
+                                        "Accept-Language": "fr-FR,fr;q=0.9"
                                     })
-                                    if oembed_resp.status_code == 200:
-                                        oembed_data = oembed_resp.json()
-                                        thumbnail_url = oembed_data.get("thumbnail_url")
-                                        logger.info(f"[CAMPAIGN-WA] 📸 Miniature Instagram récupérée: {thumbnail_url[:80] if thumbnail_url else 'None'}")
+                                    if ig_resp.status_code == 200:
+                                        # Extraire og:image du HTML
+                                        html_text = ig_resp.text
+                                        import re as re_og
+                                        # Chercher og:image (content peut être avant ou après property)
+                                        og_match = re_og.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', html_text)
+                                        if not og_match:
+                                            og_match = re_og.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html_text)
+                                        if og_match:
+                                            thumbnail_url = og_match.group(1).replace("&amp;", "&")
+                                            logger.info(f"[CAMPAIGN-WA] 📸 Miniature Instagram og:image: {thumbnail_url[:100]}")
+                                        else:
+                                            logger.warning(f"[CAMPAIGN-WA] ⚠️ og:image non trouvé dans la page Instagram (status {ig_resp.status_code})")
+                                    else:
+                                        logger.warning(f"[CAMPAIGN-WA] ⚠️ Instagram page status: {ig_resp.status_code}")
+
+                                # Méthode 2 (fallback): oEmbed Meta API
+                                if not thumbnail_url:
+                                    ig_oembed_url = "https://graph.facebook.com/v21.0/instagram_oembed"
+                                    async with httpx.AsyncClient(timeout=10.0) as oembed_client:
+                                        oembed_resp = await oembed_client.get(ig_oembed_url, params={
+                                            "url": wa_media_url,
+                                            "access_token": META_WHATSAPP_TOKEN
+                                        })
+                                        if oembed_resp.status_code == 200:
+                                            oembed_data = oembed_resp.json()
+                                            thumbnail_url = oembed_data.get("thumbnail_url")
+                                            if thumbnail_url:
+                                                logger.info(f"[CAMPAIGN-WA] 📸 Miniature Instagram oEmbed: {thumbnail_url[:100]}")
                             except Exception as oe:
-                                logger.warning(f"[CAMPAIGN-WA] ⚠️ oEmbed Instagram échoué: {oe}")
+                                logger.warning(f"[CAMPAIGN-WA] ⚠️ Récupération miniature Instagram échouée: {oe}")
 
                         # === YOUTUBE: miniature via URL standard ===
                         elif 'youtube.com' in media_lower or 'youtu.be' in media_lower:
