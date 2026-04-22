@@ -6123,17 +6123,25 @@ async def _send_whatsapp_meta(to_phone: str, message: str, media_url: str, confi
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # V162: SÉCURITÉ — Vérifier que media_url n'est pas un lien web (Instagram, YouTube, etc.)
-            # Les liens web envoyés comme "document" deviennent des fichiers HTML téléchargés
+            # V162.3: SÉCURITÉ — Vérifier que media_url n'est pas un lien de PAGE web
+            # Les liens de pages web envoyés comme "document" deviennent des fichiers HTML
+            # MAIS les URLs CDN (images/vidéos hébergées) doivent passer comme média
             if media_url:
                 media_lower_check = media_url.lower()
-                web_domains = ['instagram.com', 'youtube.com', 'youtu.be', 'tiktok.com',
-                               'facebook.com', 'twitter.com', 'x.com', 'drive.google.com']
-                if any(domain in media_lower_check for domain in web_domains):
-                    logger.warning(f"[WHATSAPP-META] ⚠️ Lien web détecté comme média: {media_url} — converti en texte")
-                    # Inclure le lien dans le message texte au lieu de l'envoyer comme document
-                    message = f"{message}\n\n🔗 {media_url}" if message else media_url
-                    media_url = None
+                # URLs CDN légitimes à ne PAS bloquer (miniatures, images hébergées)
+                cdn_safe = ['cdninstagram.com', 'fbcdn.net', 'img.youtube.com',
+                            'i.ytimg.com', 'scontent', 'pbs.twimg.com']
+                is_cdn = any(cdn in media_lower_check for cdn in cdn_safe)
+
+                if not is_cdn:
+                    web_pages = ['instagram.com/p/', 'instagram.com/reel/', 'instagram.com/tv/',
+                                 'youtube.com/watch', 'youtube.com/shorts/', 'youtu.be/',
+                                 'tiktok.com/', 'facebook.com/', 'twitter.com/', 'x.com/',
+                                 'drive.google.com']
+                    if any(page in media_lower_check for page in web_pages):
+                        logger.warning(f"[WHATSAPP-META] ⚠️ Lien de page web détecté: {media_url[:80]} — converti en texte")
+                        message = f"{message}\n\n🔗 {media_url}" if message else media_url
+                        media_url = None
 
             # Si média, envoyer d'abord le média puis le texte
             if media_url:
@@ -6277,14 +6285,21 @@ async def _send_whatsapp_twilio(to_phone: str, message: str, media_url: str, con
     clean_from = from_number if from_number.startswith("+") else "+" + from_number
     twilio_url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
 
-    # V162: Même protection que Meta — ne pas envoyer les liens web comme média
+    # V162.3: Même protection que Meta — bloquer les pages web, pas les CDN
     if media_url:
-        web_domains = ['instagram.com', 'youtube.com', 'youtu.be', 'tiktok.com',
-                       'facebook.com', 'twitter.com', 'x.com', 'drive.google.com']
-        if any(domain in media_url.lower() for domain in web_domains):
-            logger.warning(f"[WHATSAPP-TWILIO] ⚠️ Lien web détecté comme média: {media_url} — converti en texte")
-            message = f"{message}\n\n🔗 {media_url}" if message else media_url
-            media_url = None
+        media_lower_tw = media_url.lower()
+        cdn_safe_tw = ['cdninstagram.com', 'fbcdn.net', 'img.youtube.com',
+                       'i.ytimg.com', 'scontent', 'pbs.twimg.com']
+        is_cdn_tw = any(cdn in media_lower_tw for cdn in cdn_safe_tw)
+        if not is_cdn_tw:
+            web_pages_tw = ['instagram.com/p/', 'instagram.com/reel/', 'instagram.com/tv/',
+                            'youtube.com/watch', 'youtube.com/shorts/', 'youtu.be/',
+                            'tiktok.com/', 'facebook.com/', 'twitter.com/', 'x.com/',
+                            'drive.google.com']
+            if any(page in media_lower_tw for page in web_pages_tw):
+                logger.warning(f"[WHATSAPP-TWILIO] ⚠️ Lien de page web détecté: {media_url[:80]} — converti en texte")
+                message = f"{message}\n\n🔗 {media_url}" if message else media_url
+                media_url = None
 
     data = {"From": f"whatsapp:{clean_from}", "To": f"whatsapp:{clean_to}", "Body": message}
     if media_url:
