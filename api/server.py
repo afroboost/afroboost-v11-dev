@@ -2443,6 +2443,19 @@ async def launch_campaign(campaign_id: str):
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
+    # V161.2: ANTI-DOUBLON — Bloquer immédiatement si déjà en cours ou terminée
+    current_status = campaign.get("status", "")
+    if current_status in ("sending", "completed", "failed"):
+        logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ Campagne '{campaign.get('name')}' déjà en statut '{current_status}', lancement ignoré")
+        return campaign  # Retourner la campagne sans rien faire
+
+    # V161.2: Mettre le statut à "sending" IMMÉDIATEMENT pour empêcher le cron de relancer
+    await db.campaigns.update_one(
+        {"id": campaign_id},
+        {"$set": {"status": "sending", "updatedAt": datetime.now(timezone.utc).isoformat()}}
+    )
+    logger.info(f"[CAMPAIGN-LAUNCH] 🔒 Campagne '{campaign.get('name')}' verrouillée en statut 'sending'")
+
     # v11: Vérification et déduction de crédits (coût × nombre de contacts)
     coach_email = campaign.get("coach_id", "")
     if coach_email and not is_super_admin(coach_email):
