@@ -52,7 +52,7 @@ export default function CampaignModal({
   // Pre-selected date from calendar
   preSelectedDate,
   // v16.3: Chat links pour CTA "Lier à une Conversation"
-  chatLinks = [],
+  chatLinks: externalChatLinks = [],
   // v18: Coach email for unified contacts
   coachEmail
 }) {
@@ -67,6 +67,21 @@ export default function CampaignModal({
   const [contactsLoading, setContactsLoading] = useState(false);
   const [contactSearch, setContactSearch] = useState('');
   const [contactFilter, setContactFilter] = useState('all'); // all, group, user
+
+  // V163.3: Charger les liens de conversation directement dans le modal
+  const [chatLinks, setChatLinks] = useState(externalChatLinks);
+  const [chatLinksLoading, setChatLinksLoading] = useState(false);
+  useEffect(() => {
+    // Toujours recharger les chatLinks à l'ouverture du modal
+    if (API) {
+      setChatLinksLoading(true);
+      axios.get(`${API}/chat/links`).then(res => {
+        setChatLinks(res.data || []);
+      }).catch(() => {}).finally(() => setChatLinksLoading(false));
+    }
+  }, [API]);
+  // Sync si les externes changent
+  useEffect(() => { if (externalChatLinks.length > 0) setChatLinks(externalChatLinks); }, [externalChatLinks]);
 
   // v17.3: Import contacts
   const importFileRef = useRef(null);
@@ -887,9 +902,19 @@ export default function CampaignModal({
                         );
                       })}
                     </select>
-                    {chatLinks.length === 0 && (
+                    {chatLinksLoading && (
+                      <p style={{ color: '#a78bfa', fontSize: '11px', margin: 0 }}>
+                        ⏳ Chargement des liens...
+                      </p>
+                    )}
+                    {!chatLinksLoading && chatLinks.length === 0 && (
                       <p style={{ color: '#f59e0b', fontSize: '11px', margin: 0 }}>
-                        ⚠️ Créez d'abord un lien dans l'onglet Conversations.
+                        ⚠️ Aucun lien trouvé. Créez d'abord un lien dans l'onglet Conversations.
+                      </p>
+                    )}
+                    {!chatLinksLoading && chatLinks.length > 0 && (
+                      <p style={{ color: '#22c55e', fontSize: '11px', margin: 0 }}>
+                        ✅ {chatLinks.length} lien(s) disponible(s)
                       </p>
                     )}
                     <input
