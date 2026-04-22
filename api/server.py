@@ -2627,16 +2627,25 @@ async def launch_campaign(campaign_id: str):
                 # 1) Essayer de trouver directement par ID utilisateur
                 contacts = await db.users.find({"id": {"$in": contact_ids}}, {"_id": 0}).to_list(1000)
 
-                # 2) Si rien trouvé, les IDs sont peut-être des conversation/session IDs
-                #    → résoudre via participantEmail des chat_sessions
-                if not contacts:
-                    for cid in contact_ids:
-                        # Chercher le user par ID direct
-                        user_doc = await db.users.find_one({"id": cid}, {"_id": 0})
-                        if user_doc:
-                            contacts.append(user_doc)
-                            continue
-                        # Chercher la session chat pour trouver l'email du participant
+                # 2) Compléter avec chat_participants (CRM) pour les IDs non trouvés dans users
+                found_ids = set(c.get("id") for c in contacts)
+                missing_ids = [cid for cid in contact_ids if cid not in found_ids]
+                if missing_ids:
+                    crm_contacts = await db.chat_participants.find(
+                        {"id": {"$in": missing_ids}}, {"_id": 0}
+                    ).to_list(1000)
+                    for p in crm_contacts:
+                        contacts.append({
+                            "id": p.get("id", ""),
+                            "name": p.get("name", ""),
+                            "email": p.get("email", ""),
+                            "whatsapp": p.get("whatsapp") or p.get("phone") or ""
+                        })
+                    found_ids.update(p.get("id") for p in crm_contacts)
+                    still_missing = [cid for cid in contact_ids if cid not in found_ids]
+
+                    # 3) Fallback: résoudre via chat_sessions pour les IDs restants
+                    for cid in still_missing:
                         session_doc = await db.chat_sessions.find_one(
                             {"$or": [{"id": cid}, {"participant_ids": cid}]},
                             {"_id": 0, "participantEmail": 1, "participantName": 1}
@@ -2647,7 +2656,6 @@ async def launch_campaign(campaign_id: str):
                             if user_by_email:
                                 contacts.append(user_by_email)
                             else:
-                                # Créer un contact virtuel avec les infos de la session
                                 contacts.append({
                                     "id": cid,
                                     "name": session_doc.get("participantName", ""),
@@ -4664,9 +4672,11 @@ async def bulk_import_contacts(request: Request):
             if email:
                 dup_query["$or"].append({"email": {"$regex": f"^{email}$", "$options": "i"}})
             if phone:
+                import re as re_dup
                 clean = phone.replace(" ", "").replace("-", "")
-                dup_query["$or"].append({"whatsapp": {"$regex": clean}})
-                dup_query["$or"].append({"phone": {"$regex": clean}})
+                escaped = re_dup.escape(clean)
+                dup_query["$or"].append({"whatsapp": {"$regex": escaped}})
+                dup_query["$or"].append({"phone": {"$regex": escaped}})
 
             if dup_query["$or"]:
                 existing = await db.chat_participants.find_one(dup_query, {"_id": 0})
