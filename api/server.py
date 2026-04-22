@@ -2710,26 +2710,56 @@ async def launch_campaign(campaign_id: str):
                 # Envoi DIRECT via Meta/Twilio (format E.164)
                 phone_e164 = format_phone_e164(contact_phone)
 
-                # V162: Les liens web (Instagram, YouTube, etc.) ne sont PAS des médias
-                # WhatsApp ne sait pas télécharger ces pages — il les envoie comme fichier HTML
-                # → On les inclut dans le texte du message pour que WhatsApp génère un aperçu de lien
+                # V162.2: Gestion intelligente des liens web pour WhatsApp
                 wa_media_url = media_url if media_url else None
                 wa_message = personalized_msg
                 if wa_media_url:
-                    is_web_link = any(domain in wa_media_url.lower() for domain in [
-                        'instagram.com', 'youtube.com', 'youtu.be', 'tiktok.com',
-                        'facebook.com', 'twitter.com', 'x.com', 'drive.google.com'
-                    ])
-                    is_direct_media = any(wa_media_url.lower().endswith(ext) for ext in [
+                    media_lower = wa_media_url.lower()
+                    is_direct_media = any(media_lower.endswith(ext) for ext in [
                         '.jpg', '.jpeg', '.png', '.gif', '.webp',
                         '.mp4', '.3gp', '.mov', '.webm',
-                        '.mp3', '.ogg', '.wav', '.aac',
-                        '.pdf'
+                        '.mp3', '.ogg', '.wav', '.aac', '.pdf'
                     ])
-                    if is_web_link or not is_direct_media:
-                        # Ajouter le lien au texte, ne pas envoyer comme média
-                        wa_message = f"{personalized_msg}\n\n🔗 {wa_media_url}"
-                        wa_media_url = None
+
+                    if not is_direct_media:
+                        # C'est un lien web — récupérer la miniature pour l'envoyer comme image
+                        thumbnail_url = None
+                        import re as re_wa
+
+                        # === INSTAGRAM: miniature via oEmbed Meta API ===
+                        if 'instagram.com' in media_lower:
+                            try:
+                                import httpx
+                                ig_oembed_url = f"https://graph.facebook.com/v21.0/instagram_oembed"
+                                async with httpx.AsyncClient(timeout=10.0) as oembed_client:
+                                    oembed_resp = await oembed_client.get(ig_oembed_url, params={
+                                        "url": wa_media_url,
+                                        "access_token": META_WHATSAPP_TOKEN,
+                                        "fields": "thumbnail_url,title"
+                                    })
+                                    if oembed_resp.status_code == 200:
+                                        oembed_data = oembed_resp.json()
+                                        thumbnail_url = oembed_data.get("thumbnail_url")
+                                        logger.info(f"[CAMPAIGN-WA] 📸 Miniature Instagram récupérée: {thumbnail_url[:80] if thumbnail_url else 'None'}")
+                            except Exception as oe:
+                                logger.warning(f"[CAMPAIGN-WA] ⚠️ oEmbed Instagram échoué: {oe}")
+
+                        # === YOUTUBE: miniature via URL standard ===
+                        elif 'youtube.com' in media_lower or 'youtu.be' in media_lower:
+                            yt_match = re_wa.search(r'(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})', wa_media_url)
+                            if yt_match:
+                                yt_id = yt_match.group(1)
+                                thumbnail_url = f"https://img.youtube.com/vi/{yt_id}/maxresdefault.jpg"
+                                logger.info(f"[CAMPAIGN-WA] ▶️ Miniature YouTube: {thumbnail_url}")
+
+                        if thumbnail_url:
+                            # Envoyer la miniature comme IMAGE avec caption contenant le lien
+                            wa_media_url = thumbnail_url
+                            wa_message = f"{personalized_msg}\n\n▶️ Voir ici 👇\n{media_url}"
+                        else:
+                            # Fallback: lien dans le texte avec preview_url
+                            wa_message = f"{personalized_msg}\n\n🔗 {wa_media_url}"
+                            wa_media_url = None
 
                 wa_response = await send_whatsapp_direct(
                     to_phone=phone_e164,
