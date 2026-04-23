@@ -6533,6 +6533,46 @@ async def send_whatsapp_template(data: dict):
             return {"status": "error", "code": error.get("code"), "message": error.get("message"), "to": clean_to}
 
 # --- Endpoint pour tester l'IA manuellement ---
+@api_router.post("/create-whatsapp-template")
+async def create_whatsapp_template(data: dict):
+    """V163.8: Créer un template WhatsApp via Meta Graph API"""
+    import httpx
+    import json as json_ct
+
+    config = await _get_whatsapp_config()
+    if config["api_mode"] != "meta":
+        raise HTTPException(status_code=400, detail="Mode Meta requis")
+
+    access_token = config["access_token"]
+    api_version = config.get("api_version", "v21.0")
+    waba_id = "1615280896432370"  # WhatsApp Business Account ID
+
+    template_name = data.get("name", "afroboost_info")
+    category = data.get("category", "UTILITY")
+    language = data.get("language", "fr")
+    body_text = data.get("body", "{{1}}")
+
+    create_url = f"https://graph.facebook.com/{api_version}/{waba_id}/message_templates"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "name": template_name,
+        "category": category,
+        "language": language,
+        "components": [
+            {"type": "BODY", "text": body_text}
+        ]
+    }
+
+    logger.info(f"[WHATSAPP-TEMPLATE] 🆕 Création template: {json_ct.dumps(payload, ensure_ascii=False)}")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(create_url, headers=headers, json=payload)
+        result = response.json()
+        logger.info(f"[WHATSAPP-TEMPLATE] Response {response.status_code}: {json_ct.dumps(result, ensure_ascii=False)[:500]}")
+        return result
+
 @api_router.post("/ai-test")
 async def test_ai_response(data: dict):
     """Test l'IA avec un message manuel"""
