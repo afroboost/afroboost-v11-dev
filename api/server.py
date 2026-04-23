@@ -6468,6 +6468,70 @@ async def send_whatsapp_message(request: SendWhatsAppRequest):
         media_url=request.mediaUrl
     )
 
+@api_router.post("/send-whatsapp-template")
+async def send_whatsapp_template(data: dict):
+    """V163.8: Envoyer un message template WhatsApp (requis pour les premiers messages business)"""
+    import httpx
+    to_phone = data.get("to", "")
+    template_name = data.get("template", "hello_world")
+    template_lang = data.get("language", "en_US")
+    template_params = data.get("params", [])
+
+    if not to_phone:
+        raise HTTPException(status_code=400, detail="Numéro 'to' requis")
+
+    config = await _get_whatsapp_config()
+    if config["api_mode"] != "meta":
+        raise HTTPException(status_code=400, detail="Mode Meta requis")
+
+    access_token = config["access_token"]
+    phone_number_id = config["phone_number_id"]
+    api_version = config.get("api_version", "v21.0")
+
+    clean_to = to_phone.replace(" ", "").replace("-", "").replace("+", "")
+    if clean_to.startswith("0"):
+        clean_to = "41" + clean_to[1:]
+
+    meta_url = f"https://graph.facebook.com/{api_version}/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    # Construire le payload template
+    template_payload = {
+        "messaging_product": "whatsapp",
+        "to": clean_to,
+        "type": "template",
+        "template": {
+            "name": template_name,
+            "language": {"code": template_lang}
+        }
+    }
+
+    # Ajouter les paramètres si fournis
+    if template_params:
+        template_payload["template"]["components"] = [{
+            "type": "body",
+            "parameters": [{"type": "text", "text": p} for p in template_params]
+        }]
+
+    import json as json_tpl
+    logger.info(f"[WHATSAPP-TEMPLATE] 📤 Envoi template '{template_name}' à {clean_to}")
+    logger.info(f"[WHATSAPP-TEMPLATE] 📤 Payload: {json_tpl.dumps(template_payload, ensure_ascii=False)[:500]}")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(meta_url, headers=headers, json=template_payload)
+        result = response.json()
+        logger.info(f"[WHATSAPP-TEMPLATE] Response {response.status_code}: {json_tpl.dumps(result, ensure_ascii=False)[:500]}")
+
+        if response.status_code < 400:
+            msg_id = result.get("messages", [{}])[0].get("id", "")
+            return {"status": "success", "sid": msg_id, "to": clean_to, "template": template_name}
+        else:
+            error = result.get("error", {})
+            return {"status": "error", "code": error.get("code"), "message": error.get("message"), "to": clean_to}
+
 # --- Endpoint pour tester l'IA manuellement ---
 @api_router.post("/ai-test")
 async def test_ai_response(data: dict):
