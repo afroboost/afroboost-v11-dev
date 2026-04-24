@@ -3798,13 +3798,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           editScheduledAt = localDate.toISOString();
         }
 
+        // V165.5: Sécurité — forcer targetType="selected" si des destinataires sont dans le panier
+        const editEffectiveTargetType = targetIds.length > 0 ? "selected" : newCampaign.targetType;
         const updateData = {
           name: newCampaign.name,
           message: newCampaign.message,
           mediaUrl: newCampaign.mediaUrl,
           mediaFormat: newCampaign.mediaFormat,
-          targetType: newCampaign.targetType,
-          selectedContacts: newCampaign.targetType === "selected" ? selectedContactsForCampaign : [],
+          targetType: editEffectiveTargetType,
+          selectedContacts: editEffectiveTargetType === "selected" ? (selectedContactsForCampaign.length > 0 ? selectedContactsForCampaign : targetIds) : [],
           channels: { ...newCampaign.channels, internal: selectedRecipients.length > 0 },
           targetGroupId: newCampaign.targetGroupId || 'community',
           targetIds: targetIds, // Tableau des IDs du panier
@@ -3846,13 +3848,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     try {
       if (isImmediate) {
         // Create single immediate campaign
+        // V165.5: Si des destinataires sont dans le panier, forcer targetType="selected"
+        // pour éviter d'envoyer à TOUS les contacts par erreur
+        const effectiveTargetType = targetIds.length > 0 ? "selected" : newCampaign.targetType;
         const campaignData = {
           name: newCampaign.name,
           message: newCampaign.message,
           mediaUrl: newCampaign.mediaUrl,
           mediaFormat: newCampaign.mediaFormat,
-          targetType: newCampaign.targetType,
-          selectedContacts: newCampaign.targetType === "selected" ? selectedContactsForCampaign : [],
+          targetType: effectiveTargetType,
+          selectedContacts: effectiveTargetType === "selected" ? (selectedContactsForCampaign.length > 0 ? selectedContactsForCampaign : targetIds) : [],
           channels: { ...newCampaign.channels, internal: selectedRecipients.length > 0 },
           targetGroupId: newCampaign.targetGroupId || 'community',
           targetIds: targetIds, // Tableau des IDs du panier
@@ -3888,13 +3893,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           // Build ISO string with user's local timezone offset
           const localDate = new Date(`${slot.date}T${slot.time}:00`);
           const scheduledAt = localDate.toISOString();
+          // V165.5: Même sécurité que mode immédiat
           const campaignData = {
             name: scheduleSlots.length > 1 ? `${newCampaign.name} (${i + 1}/${scheduleSlots.length})` : newCampaign.name,
             message: newCampaign.message,
             mediaUrl: newCampaign.mediaUrl,
             mediaFormat: newCampaign.mediaFormat,
-            targetType: newCampaign.targetType,
-            selectedContacts: newCampaign.targetType === "selected" ? selectedContactsForCampaign : [],
+            targetType: effectiveTargetType,
+            selectedContacts: effectiveTargetType === "selected" ? (selectedContactsForCampaign.length > 0 ? selectedContactsForCampaign : targetIds) : [],
             channels: { ...newCampaign.channels, internal: selectedRecipients.length > 0 },
             targetGroupId: newCampaign.targetGroupId || 'community',
             targetIds: targetIds, // Tableau des IDs du panier
