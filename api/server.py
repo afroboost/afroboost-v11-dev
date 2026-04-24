@@ -2691,11 +2691,49 @@ async def launch_campaign(campaign_id: str):
             logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ {len(contacts) - len(unique_contacts)} doublons supprimés ({len(contacts)} → {len(unique_contacts)} contacts)")
         contacts = unique_contacts
 
+    # V165: Exclure le numéro business WhatsApp des destinataires de campagne
+    # Le numéro expéditeur ne doit JAMAIS recevoir ses propres campagnes
+    config_wa = await _get_whatsapp_config()
+    business_phone_id = config_wa.get("phone_number_id", "") if config_wa else ""
+    # Récupérer le vrai numéro de téléphone business via l'API Meta
+    business_phone_number = ""
+    if business_phone_id and config_wa.get("api_mode") == "meta":
+        try:
+            import httpx
+            phone_info_url = f"https://graph.facebook.com/{config_wa.get('api_version', 'v21.0')}/{business_phone_id}"
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(phone_info_url, headers={"Authorization": f"Bearer {config_wa['access_token']}"})
+                if resp.status_code == 200:
+                    phone_data = resp.json()
+                    raw_number = phone_data.get("display_phone_number", "")
+                    # Normaliser: retirer +, espaces, tirets
+                    business_phone_number = raw_number.replace("+", "").replace(" ", "").replace("-", "")
+                    if business_phone_number.startswith("0"):
+                        business_phone_number = "41" + business_phone_number[1:]
+                    logger.info(f"[CAMPAIGN-LAUNCH] 🏢 Numéro business détecté: {business_phone_number} (exclu des envois)")
+        except Exception as e:
+            logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ Impossible de récupérer le numéro business: {e}")
+    # Fallback: numéro business connu
+    if not business_phone_number:
+        business_phone_number = "41767639928"
+        logger.info(f"[CAMPAIGN-LAUNCH] 🏢 Numéro business fallback: {business_phone_number}")
+
     for contact in contacts:
         contact_id = contact.get("id", "")
         contact_name = contact.get("name", "")
         contact_email = contact.get("email", "")
         contact_phone = contact.get("whatsapp") or contact.get("phone") or ""
+
+        # V165: Vérifier si ce contact est le numéro business (expéditeur)
+        if contact_phone and business_phone_number:
+            normalized_contact = contact_phone.replace("+", "").replace(" ", "").replace("-", "")
+            if normalized_contact.startswith("0"):
+                normalized_contact = "41" + normalized_contact[1:]
+            if normalized_contact == business_phone_number:
+                logger.warning(f"[CAMPAIGN-LAUNCH] 🚫 Contact '{contact_name}' EXCLU — c'est le numéro business WhatsApp ({contact_phone})")
+                results["skipped"] = results.get("skipped", 0) + 1
+                continue
+
         logger.info(f"[CAMPAIGN-LAUNCH] 👤 Contact: {contact_name} | whatsapp={contact.get('whatsapp')} | phone={contact.get('phone')} | résolu={contact_phone}")
 
         # Substituer les variables pour chaque contact
@@ -6474,20 +6512,55 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         "Content-Type": "application/json"
     }
 
-    # V164.2: Nettoyer le message pour la variable {{1}} du template
-    # Meta rejette les paramètres contenant des URLs, newlines excessives, ou certains caractères spéciaux
+    # V165.1: Nettoyage AGRESSIF du message pour la variable {{1}} du template
+    # Meta rejette les paramètres contenant: URLs, emojis, caractères spéciaux Unicode,
+    # newlines, tirets longs (—), guillemets typographiques, etc.
     import re as re_tpl
     template_var = campaign_message if campaign_message else "Découvrez nos nouveautés"
 
-    # Supprimer les URLs (Meta les interdit dans les variables de templates marketing)
+    # 1. Supprimer les URLs
     template_var = re_tpl.sub(r'https?://\S+', '', template_var)
     template_var = re_tpl.sub(r'www\.\S+', '', template_var)
-    # Remplacer les sauts de ligne par des espaces
+
+    # 2. Supprimer TOUS les emojis et symboles Unicode non-latin
+    template_var = re_tpl.sub(
+        r'[\U0001F600-\U0001F64F'  # Emoticons
+        r'\U0001F300-\U0001F5FF'   # Misc Symbols & Pictographs
+        r'\U0001F680-\U0001F6FF'   # Transport & Map
+        r'\U0001F1E0-\U0001F1FF'   # Flags
+        r'\U00002702-\U000027B0'   # Dingbats
+        r'\U000024C2-\U0001F251'   # Enclosed chars
+        r'\U0001F900-\U0001F9FF'   # Supplemental Symbols
+        r'\U0001FA00-\U0001FA6F'   # Chess Symbols
+        r'\U0001FA70-\U0001FAFF'   # Symbols Extended-A
+        r'\U00002600-\U000026FF'   # Misc Symbols
+        r'\U0000FE00-\U0000FE0F'   # Variation Selectors
+        r'\U0000200D'              # Zero Width Joiner
+        r'\U00000023\U000020E3'    # Keycap
+        r']+', '', template_var
+    )
+
+    # 3. Remplacer les caractères typographiques spéciaux par leurs équivalents ASCII
+    template_var = template_var.replace('—', '-').replace('–', '-')
+    template_var = template_var.replace('\u2018', "'").replace('\u2019', "'")
+    template_var = template_var.replace('\u201C', '"').replace('\u201D', '"')
+    template_var = template_var.replace('\u2026', '...')
+    template_var = template_var.replace('\u00A0', ' ')  # Non-breaking space
+
+    # 4. Remplacer les sauts de ligne par des espaces
     template_var = template_var.replace('\n', ' ').replace('\r', ' ')
-    # Nettoyer les espaces multiples
+
+    # 5. Ne garder que les caractères ASCII étendus + accents français
+    template_var = re_tpl.sub(r'[^\w\s\.,;:!\?\'-/()àâäéèêëïîôùûüçœæÀÂÄÉÈÊËÏÎÔÙÛÜÇŒÆ°€@&+=%]', '', template_var)
+
+    # 6. Nettoyer les espaces multiples
     template_var = re_tpl.sub(r'\s{2,}', ' ', template_var).strip()
-    # Tronquer à 900 chars max (template body limit = 1024, le template ajoute du texte autour)
+
+    # 7. Tronquer à 900 chars max
     template_var = template_var[:900] if template_var else "Découvrez nos nouveautés"
+
+    logger.info(f"[WHATSAPP-CAMPAIGN] 🧹 Variable AVANT nettoyage: {(campaign_message or '')[:150]}")
+    logger.info(f"[WHATSAPP-CAMPAIGN] 🧹 Variable APRÈS nettoyage: {template_var[:150]}")
 
     logger.info(f"[WHATSAPP-CAMPAIGN] 🧹 Variable nettoyée: {template_var[:150]}...")
 
