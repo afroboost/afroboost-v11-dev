@@ -6577,14 +6577,19 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         cta_label = cta_text or "En savoir plus"
         full_text += f"\n\n{cta_label}: {cta_url}"
 
-    # Nettoyer pour le template: pas d'emojis, pas de caractères spéciaux Unicode
+    # V168.1: Nettoyer AGRESSIVEMENT pour respecter les règles Meta template
+    # Meta interdit: emojis, URLs, sauts de ligne, caractères Unicode spéciaux
     template_var = re_tpl.sub(
         r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF'
         r'\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251'
         r'\U0001F900-\U0001F9FF\U0001FA00-\U0001FAFF\U00002600-\U000026FF'
         r'\U0000FE00-\U0000FE0F\U0000200D]+', '', full_text
     )
-    # Garder les URLs (Meta les accepte dans les variables de template)
+    # Supprimer les URLs (INTERDIT dans les variables template Meta)
+    template_var = re_tpl.sub(r'https?://\S+', '', template_var)
+    # Remplacer sauts de ligne par " - " (INTERDIT dans les variables template Meta)
+    template_var = re_tpl.sub(r'\n{2,}', ' - ', template_var)
+    template_var = template_var.replace('\n', ' ')
     # Remplacer tirets spéciaux
     template_var = template_var.replace('—', '-').replace('–', '-')
     # Remplacer les caractères gras Unicode par leurs équivalents ASCII
@@ -6595,11 +6600,11 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         bold_map[chr(0x1D5EE + i)] = c
     for old_c, new_c in bold_map.items():
         template_var = template_var.replace(old_c, new_c)
-    # Garder lettres, chiffres, ponctuation courante, accents, sauts de ligne, URLs
-    template_var = re_tpl.sub(r'[^\w\s\.,;:!\?\'-/()àâäéèêëïîôùûüçœæÀÂÄÉÈÊËÏÎÔÙÛÜÇŒÆ°€@&=|%+#\n]', '', template_var)
-    template_var = re_tpl.sub(r'[ \t]{2,}', ' ', template_var).strip()
+    # Garder UNIQUEMENT lettres, chiffres, ponctuation basique, accents
+    template_var = re_tpl.sub(r'[^\w\s\.,;:!\?\'-/()àâäéèêëïîôùûüçœæÀÂÄÉÈÊËÏÎÔÙÛÜÇŒÆ°€@&=%+]', '', template_var)
+    template_var = re_tpl.sub(r'\s{2,}', ' ', template_var).strip()
     # Limiter à 1024 chars (limite Meta pour les variables)
-    template_var = template_var[:1024] if template_var else "Découvrez nos nouveautés"
+    template_var = template_var[:1024] if template_var else "Decouvrez nos nouveautes"
 
     logger.info(f"[WHATSAPP-CAMPAIGN] Variable template: {template_var}")
 
