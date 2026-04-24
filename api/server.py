@@ -2823,12 +2823,17 @@ async def launch_campaign(campaign_id: str):
                             wa_cta_url = None
                             wa_cta_text = None
 
-                wa_response = await send_whatsapp_direct(
+                # V164: Utiliser le template approuvé pour les campagnes
+                # Le template afroboost_campagne = "Afroboost vous informe: {{1}}. Rendez-vous sur afroboost.com"
+                # Cela permet d'envoyer aux contacts qui n'ont jamais écrit (business-initiated)
+                wa_response = await _send_whatsapp_campaign_template(
                     to_phone=phone_e164,
-                    message=wa_message,
+                    campaign_message=wa_message,
                     media_url=wa_media_url,
                     cta_url=wa_cta_url,
-                    cta_text=wa_cta_text
+                    cta_text=wa_cta_text,
+                    campaign_id=campaign_id,
+                    campaign_name=campaign_name
                 )
                 
                 if wa_response.get("status") == "success":
@@ -6437,6 +6442,104 @@ async def _send_whatsapp_twilio(to_phone: str, message: str, media_url: str, con
 
     except Exception as e:
         logger.error(f"[WHATSAPP-TWILIO] ❌ Exception: {str(e)}")
+        return {"status": "error", "error": str(e), "error_code": "EXCEPTION"}
+
+
+async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str, media_url: str = None, cta_url: str = None, cta_text: str = None, campaign_id: str = None, campaign_name: str = None) -> dict:
+    """
+    V164: Envoie un message de campagne via le template WhatsApp approuvé 'afroboost_campagne'.
+    Template: "Afroboost vous informe: {{1}}. Rendez-vous sur afroboost.com"
+
+    Les messages template sont OBLIGATOIRES pour contacter des utilisateurs qui n'ont
+    jamais écrit au numéro business (conversations initiées par l'entreprise).
+    """
+    import httpx
+
+    config = await _get_whatsapp_config()
+    if not config or config["api_mode"] != "meta":
+        logger.warning("[WHATSAPP-CAMPAIGN] ❌ Config Meta manquante — fallback message direct")
+        return await send_whatsapp_direct(to_phone, campaign_message, media_url, campaign_id, campaign_name, cta_url, cta_text)
+
+    access_token = config["access_token"]
+    phone_number_id = config["phone_number_id"]
+    api_version = config.get("api_version", "v21.0")
+
+    clean_to = to_phone.replace(" ", "").replace("-", "").replace("+", "")
+    if clean_to.startswith("0"):
+        clean_to = "41" + clean_to[1:]
+
+    meta_url = f"https://graph.facebook.com/{api_version}/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    # Tronquer le message pour qu'il tienne dans la variable {{1}} du template
+    # Le template complet = "Afroboost vous informe: {msg}. Rendez-vous sur afroboost.com"
+    # Limite WhatsApp body = 1024 chars, donc ~900 chars pour la variable
+    template_var = campaign_message[:900] if campaign_message else "Découvrez nos nouveautés"
+
+    # Construire le payload template
+    template_payload = {
+        "messaging_product": "whatsapp",
+        "to": clean_to,
+        "type": "template",
+        "template": {
+            "name": "afroboost_campagne",
+            "language": {"code": "fr"},
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": template_var}
+                    ]
+                }
+            ]
+        }
+    }
+
+    logger.info(f"[WHATSAPP-CAMPAIGN] 📤 Envoi template 'afroboost_campagne' vers {clean_to}")
+    logger.info(f"[WHATSAPP-CAMPAIGN] 📝 Variable {{{{1}}}}: {template_var[:100]}...")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            import json as json_log
+            logger.info(f"[WHATSAPP-CAMPAIGN] 📦 Payload: {json_log.dumps(template_payload, ensure_ascii=False)[:500]}")
+
+            response = await client.post(meta_url, headers=headers, json=template_payload)
+            result = response.json()
+            logger.info(f"[WHATSAPP-CAMPAIGN] 📬 Response status={response.status_code}: {json_log.dumps(result, ensure_ascii=False)[:300]}")
+
+            if response.status_code < 400:
+                msg_id = result.get("messages", [{}])[0].get("id", "")
+                logger.info(f"[WHATSAPP-CAMPAIGN] ✅ Template envoyé avec succès - ID: {msg_id}")
+                return {"status": "success", "sid": msg_id, "to": clean_to}
+            else:
+                error_detail = result.get("error", {})
+                error_code = error_detail.get("code", "")
+                error_msg = error_detail.get("message", str(result))
+                logger.error(f"[WHATSAPP-CAMPAIGN] ❌ Erreur template [{error_code}]: {error_msg}")
+
+                # Log dans campaign_errors
+                try:
+                    await db.campaign_errors.insert_one({
+                        "campaign_id": campaign_id or "direct_send",
+                        "campaign_name": campaign_name or "Campagne",
+                        "error_type": "template_error",
+                        "error_code": str(error_code),
+                        "error_message": error_msg,
+                        "channel": "whatsapp",
+                        "to_phone": clean_to,
+                        "http_status": response.status_code,
+                        "created_at": datetime.now(timezone.utc).isoformat()
+                    })
+                except Exception:
+                    pass
+
+                return {"status": "error", "error": error_msg, "error_code": str(error_code)}
+
+    except Exception as e:
+        logger.error(f"[WHATSAPP-CAMPAIGN] ❌ Exception: {str(e)}")
         return {"status": "error", "error": str(e), "error_code": "EXCEPTION"}
 
 
