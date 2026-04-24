@@ -6572,23 +6572,27 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
     # Préparer le message COMPLET pour la variable {{1}} du template
     full_text = (campaign_message or "Découvrez nos nouveautés").strip()
 
-    # Ajouter le lien CTA si fourni
+    # V170.1: Ajouter le lien CTA si fourni — convertir en format sans protocole
+    # Meta interdit "https://..." dans les variables, mais "afroboost.com/..." passe
     if cta_url:
         cta_label = cta_text or "En savoir plus"
-        full_text += f"\n\n{cta_label}: {cta_url}"
+        # Retirer le protocole pour éviter l'erreur 132018
+        clean_url = re_tpl.sub(r'https?://(www\.)?', '', cta_url)
+        full_text += f"\n\n{cta_label}: {clean_url}"
 
-    # V170: Nettoyer pour respecter les règles Meta template
-    # Meta interdit: emojis, caractères Unicode spéciaux
-    # Meta AUTORISE: retours à la ligne (\n) et URLs dans les variables body
+    # V170.1: Nettoyer pour respecter les règles Meta template
+    # Meta interdit: emojis, URLs avec protocole (https://), caractères Unicode spéciaux
+    # Meta AUTORISE: retours à la ligne (\n), domaines sans protocole
     template_var = re_tpl.sub(
         r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF'
         r'\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251'
         r'\U0001F900-\U0001F9FF\U0001FA00-\U0001FAFF\U00002600-\U000026FF'
         r'\U0000FE00-\U0000FE0F\U0000200D]+', '', full_text
     )
-    # V170: NE PAS supprimer les URLs — elles passent (confirmé par test réel à 9h)
-    # V169: GARDER les retours à la ligne (autorisés par Meta dans body params)
-    # Juste nettoyer les lignes vides multiples
+    # V170.1: Supprimer les URLs avec protocole (INTERDIT par Meta)
+    # mais garder les domaines sans protocole (ex: afroboost.com/chat/15e88d)
+    template_var = re_tpl.sub(r'https?://(www\.)?', '', template_var)
+    # Nettoyer les lignes vides multiples
     template_var = re_tpl.sub(r'\n{3,}', '\n\n', template_var)
     # Remplacer tirets spéciaux
     template_var = template_var.replace('—', '-').replace('–', '-')
