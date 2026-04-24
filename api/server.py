@@ -10921,6 +10921,65 @@ def _parse_scheduled_at(scheduled_at_str: str) -> datetime:
     except Exception:
         return None
 
+@api_router.get("/whatsapp-diagnostic")
+async def whatsapp_diagnostic():
+    """V164.4: Diagnostic complet du setup WhatsApp Cloud API"""
+    import httpx
+    config = await _get_whatsapp_config()
+    if not config or config["api_mode"] != "meta":
+        return {"error": "Config Meta manquante"}
+
+    access_token = config["access_token"]
+    phone_number_id = config["phone_number_id"]
+    api_version = config.get("api_version", "v21.0")
+
+    results = {}
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        # 1. Vérifier le statut du numéro de téléphone
+        phone_url = f"https://graph.facebook.com/{api_version}/{phone_number_id}"
+        phone_resp = await client.get(phone_url, params={
+            "access_token": access_token,
+            "fields": "display_phone_number,verified_name,quality_rating,platform_type,name_status,is_official_business_account,account_mode,messaging_limit_tier,status"
+        })
+        results["phone_number"] = phone_resp.json()
+
+        # 2. Vérifier le WABA
+        waba_id = "1615280896432370"
+        waba_url = f"https://graph.facebook.com/{api_version}/{waba_id}"
+        waba_resp = await client.get(waba_url, params={
+            "access_token": access_token,
+            "fields": "name,currency,message_template_namespace,account_review_status,business_verification_status,on_behalf_of_business_info"
+        })
+        results["waba"] = waba_resp.json()
+
+        # 3. Vérifier le statut de l'app
+        app_url = f"https://graph.facebook.com/{api_version}/1656270458951182"
+        app_resp = await client.get(app_url, params={
+            "access_token": access_token,
+            "fields": "name,status,category"
+        })
+        results["app"] = app_resp.json()
+
+        # 4. Vérifier les templates disponibles
+        tpl_url = f"https://graph.facebook.com/{api_version}/{waba_id}/message_templates"
+        tpl_resp = await client.get(tpl_url, params={
+            "access_token": access_token,
+            "fields": "name,status,language,category",
+            "limit": 10
+        })
+        results["templates"] = tpl_resp.json()
+
+    results["config_info"] = {
+        "phone_number_id": phone_number_id,
+        "api_version": api_version,
+        "token_length": len(access_token),
+        "token_prefix": access_token[:20] + "..."
+    }
+
+    return results
+
+
 @api_router.get("/campaign-errors")
 async def get_campaign_errors(limit: int = 20):
     """V164: Endpoint diagnostic — affiche les dernières erreurs de campagne WhatsApp"""
