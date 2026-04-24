@@ -3798,15 +3798,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           editScheduledAt = localDate.toISOString();
         }
 
-        // V165.5: Sécurité — forcer targetType="selected" si des destinataires sont dans le panier
-        const editEffectiveTargetType = targetIds.length > 0 ? "selected" : newCampaign.targetType;
+        // V165.5: Utilise effectiveTargetType défini en amont
         const updateData = {
           name: newCampaign.name,
           message: newCampaign.message,
           mediaUrl: newCampaign.mediaUrl,
           mediaFormat: newCampaign.mediaFormat,
-          targetType: editEffectiveTargetType,
-          selectedContacts: editEffectiveTargetType === "selected" ? (selectedContactsForCampaign.length > 0 ? selectedContactsForCampaign : targetIds) : [],
+          targetType: effectiveTargetType,
+          selectedContacts: effectiveTargetType === "selected" ? (selectedContactsForCampaign.length > 0 ? selectedContactsForCampaign : targetIds) : [],
           channels: { ...newCampaign.channels, internal: selectedRecipients.length > 0 },
           targetGroupId: newCampaign.targetGroupId || 'community',
           targetIds: targetIds, // Tableau des IDs du panier
@@ -3845,12 +3844,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       ctaLink: newCampaign.ctaLink || (newCampaign.ctaType === 'reserver' ? '#courses' : '')
     } : {};
     
+    // V165.5: Si des destinataires sont dans le panier, forcer targetType="selected"
+    // pour éviter d'envoyer à TOUS les contacts par erreur
+    const effectiveTargetType = targetIds.length > 0 ? "selected" : newCampaign.targetType;
+
     try {
       if (isImmediate) {
         // Create single immediate campaign
-        // V165.5: Si des destinataires sont dans le panier, forcer targetType="selected"
-        // pour éviter d'envoyer à TOUS les contacts par erreur
-        const effectiveTargetType = targetIds.length > 0 ? "selected" : newCampaign.targetType;
         const campaignData = {
           name: newCampaign.name,
           message: newCampaign.message,
