@@ -6572,10 +6572,13 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
     # Préparer le message COMPLET pour la variable {{1}} du template
     full_text = (campaign_message or "Découvrez nos nouveautés").strip()
 
-    # Ajouter le lien CTA si fourni
+    # Ajouter le lien CTA si fourni (le lien sera supprimé par le nettoyage Meta)
     if cta_url:
         cta_label = cta_text or "En savoir plus"
         full_text += f"\n\n{cta_label}: {cta_url}"
+
+    # V169.1: Ajouter le numéro WhatsApp pour contact direct
+    full_text += "\n\nPlus d'infos ? Ecris-nous sur WhatsApp au +41 76 763 99 28"
 
     # V169: Nettoyer pour respecter les règles Meta template
     # Meta interdit: emojis, URLs, caractères Unicode spéciaux
