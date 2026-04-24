@@ -2621,9 +2621,17 @@ async def launch_campaign(campaign_id: str):
     # On essaie d'abord par ID utilisateur, puis par email via chat_sessions
     contacts = []
     if channels.get("whatsapp") or channels.get("email"):
-        if campaign.get("targetType") == "all":
+        # V165.4: SÉCURITÉ — si des targetIds spécifiques sont fournis, les utiliser
+        # même si targetType dit "all" (bug frontend possible)
+        has_specific_targets = bool(valid_target_ids) or bool(campaign.get("selectedContacts", []))
+        use_all = campaign.get("targetType") == "all" and not has_specific_targets
+
+        if use_all:
             contacts = await db.users.find({}, {"_id": 0}).to_list(1000)
+            logger.info(f"[CAMPAIGN-LAUNCH] 📋 Mode 'all': {len(contacts)} contacts trouvés")
         else:
+            if has_specific_targets and campaign.get("targetType") == "all":
+                logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ targetType='all' MAIS targetIds présents — utilisation des targetIds spécifiques (sécurité V165.4)")
             contact_ids = valid_target_ids if valid_target_ids else campaign.get("selectedContacts", [])
             if contact_ids:
                 # 1) Essayer de trouver directement par ID utilisateur
