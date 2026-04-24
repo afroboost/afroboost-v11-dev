@@ -6646,9 +6646,9 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
             msg_id = result.get("messages", [{}])[0].get("id", "")
             logger.info(f"[WHATSAPP-CAMPAIGN] Template OK - ID: {msg_id}")
 
-            # ÉTAPE 2: Attendre un peu puis envoyer le message complet formaté
+            # ÉTAPE 2: Attendre que le template soit délivré puis envoyer le message complet
             import asyncio
-            await asyncio.sleep(2)
+            await asyncio.sleep(5)  # V167.4: 5s au lieu de 2s pour laisser le template être délivré
 
             # Construire le message complet avec mise en page
             full_message = campaign_message or ""
@@ -6671,11 +6671,37 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
             logger.info(f"[WHATSAPP-CAMPAIGN] ÉTAPE 2: Message complet ({len(full_message)} chars)")
             text_response = await client.post(meta_url, headers=headers, json=text_payload)
             text_result = text_response.json()
-            logger.info(f"[WHATSAPP-CAMPAIGN] Message response: {text_response.status_code}")
+            logger.info(f"[WHATSAPP-CAMPAIGN] ÉTAPE 2 response: {text_response.status_code} - {json_log.dumps(text_result, ensure_ascii=False)[:300]}")
+
+            # V167.4: Gestion d'erreur étape 2 avec retry
+            if text_response.status_code >= 400:
+                error_detail = text_result.get("error", {})
+                error_msg = error_detail.get("message", str(text_result))
+                logger.warning(f"[WHATSAPP-CAMPAIGN] ÉTAPE 2 ÉCHEC: {error_msg} — retry dans 5s...")
+                await asyncio.sleep(5)
+                text_response2 = await client.post(meta_url, headers=headers, json=text_payload)
+                text_result2 = text_response2.json()
+                logger.info(f"[WHATSAPP-CAMPAIGN] ÉTAPE 2 RETRY: {text_response2.status_code} - {json_log.dumps(text_result2, ensure_ascii=False)[:300]}")
+                if text_response2.status_code >= 400:
+                    logger.error(f"[WHATSAPP-CAMPAIGN] ÉTAPE 2 ÉCHEC DÉFINITIF pour {clean_to}")
+                    try:
+                        await db.campaign_errors.insert_one({
+                            "campaign_id": campaign_id or "direct_send",
+                            "campaign_name": campaign_name or "Campagne",
+                            "error_type": "step2_text_error",
+                            "error_code": str(text_result2.get("error", {}).get("code", "")),
+                            "error_message": text_result2.get("error", {}).get("message", str(text_result2)),
+                            "channel": "whatsapp",
+                            "to_phone": clean_to,
+                            "http_status": text_response2.status_code,
+                            "created_at": datetime.now(timezone.utc).isoformat()
+                        })
+                    except Exception:
+                        pass
 
             # ÉTAPE 3: Envoyer l'image/média si fourni
             if media_url:
-                await asyncio.sleep(1)
+                await asyncio.sleep(2)
                 # Déterminer le type de média
                 media_lower = media_url.lower()
                 is_image = any(media_lower.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp'])
@@ -6693,7 +6719,10 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
                     }
                     logger.info(f"[WHATSAPP-CAMPAIGN] ÉTAPE 3: Envoi {media_type}")
                     media_response = await client.post(meta_url, headers=headers, json=media_payload)
-                    logger.info(f"[WHATSAPP-CAMPAIGN] Media response: {media_response.status_code}")
+                    media_result = media_response.json()
+                    logger.info(f"[WHATSAPP-CAMPAIGN] ÉTAPE 3 response: {media_response.status_code} - {json_log.dumps(media_result, ensure_ascii=False)[:200]}")
+                    if media_response.status_code >= 400:
+                        logger.error(f"[WHATSAPP-CAMPAIGN] ÉTAPE 3 ÉCHEC média pour {clean_to}")
 
             return {"status": "success", "sid": msg_id, "to": clean_to}
 
