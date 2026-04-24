@@ -6522,57 +6522,58 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         "Content-Type": "application/json"
     }
 
-    # V165.1: Nettoyage AGRESSIF du message pour la variable {{1}} du template
-    # Meta rejette les paramètres contenant: URLs, emojis, caractères spéciaux Unicode,
-    # newlines, tirets longs (—), guillemets typographiques, etc.
+    # V166: Nettoyage du message pour la variable {{1}} du template
     import re as re_tpl
     template_var = campaign_message if campaign_message else "Découvrez nos nouveautés"
 
-    # 1. Supprimer les URLs
-    template_var = re_tpl.sub(r'https?://\S+', '', template_var)
-    template_var = re_tpl.sub(r'www\.\S+', '', template_var)
+    # 1. Supprimer les URLs SAUF afroboost.com (domaine propre)
+    template_var = re_tpl.sub(r'https?://(?!(?:www\.)?afroboost\.com)\S+', '', template_var)
+    template_var = re_tpl.sub(r'www\.(?!afroboost\.com)\S+', '', template_var)
 
-    # 2. Supprimer TOUS les emojis et symboles Unicode non-latin
+    # 2. Supprimer les emojis
     template_var = re_tpl.sub(
-        r'[\U0001F600-\U0001F64F'  # Emoticons
-        r'\U0001F300-\U0001F5FF'   # Misc Symbols & Pictographs
-        r'\U0001F680-\U0001F6FF'   # Transport & Map
-        r'\U0001F1E0-\U0001F1FF'   # Flags
-        r'\U00002702-\U000027B0'   # Dingbats
-        r'\U000024C2-\U0001F251'   # Enclosed chars
-        r'\U0001F900-\U0001F9FF'   # Supplemental Symbols
-        r'\U0001FA00-\U0001FA6F'   # Chess Symbols
-        r'\U0001FA70-\U0001FAFF'   # Symbols Extended-A
-        r'\U00002600-\U000026FF'   # Misc Symbols
-        r'\U0000FE00-\U0000FE0F'   # Variation Selectors
-        r'\U0000200D'              # Zero Width Joiner
-        r'\U00000023\U000020E3'    # Keycap
-        r']+', '', template_var
+        r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF'
+        r'\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251'
+        r'\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF'
+        r'\U00002600-\U000026FF\U0000FE00-\U0000FE0F\U0000200D]+', '', template_var
     )
 
-    # 3. Remplacer les caractères typographiques spéciaux par leurs équivalents ASCII
-    template_var = template_var.replace('—', '-').replace('–', '-')
-    template_var = template_var.replace('\u2018', "'").replace('\u2019', "'")
-    template_var = template_var.replace('\u201C', '"').replace('\u201D', '"')
-    template_var = template_var.replace('\u2026', '...')
-    template_var = template_var.replace('\u00A0', ' ')  # Non-breaking space
+    # 3. Remplacer caractères typographiques
+    for old, new in [('—', '-'), ('–', '-'), ('\u2018', "'"), ('\u2019', "'"),
+                     ('\u201C', '"'), ('\u201D', '"'), ('\u2026', '...'), ('\u00A0', ' '),
+                     ('\u00B7', '.'), ('\uFF65', '.')]:
+        template_var = template_var.replace(old, new)
 
-    # 4. Remplacer les sauts de ligne par des espaces
+    # 4. Remplacer les caractères gras Unicode (𝗔-𝗭, 𝗮-𝘇) par des lettres normales
+    bold_map = {}
+    for i, c in enumerate('ABCDEFGHIJKLMNOPQRSTUVWXYZ'):
+        bold_map[chr(0x1D5D4 + i)] = c
+    for i, c in enumerate('abcdefghijklmnopqrstuvwxyz'):
+        bold_map[chr(0x1D5EE + i)] = c
+    for old_c, new_c in bold_map.items():
+        template_var = template_var.replace(old_c, new_c)
+
+    # 5. Remplacer sauts de ligne par espaces
     template_var = template_var.replace('\n', ' ').replace('\r', ' ')
 
-    # 5. Ne garder que les caractères ASCII étendus + accents français
-    template_var = re_tpl.sub(r'[^\w\s\.,;:!\?\'-/()àâäéèêëïîôùûüçœæÀÂÄÉÈÊËÏÎÔÙÛÜÇŒÆ°€@&+=%]', '', template_var)
+    # 6. Ne garder que les caractères sûrs (lettres, chiffres, ponctuation, accents, URLs)
+    template_var = re_tpl.sub(r'[^\w\s\.,;:!\?\'-/()àâäéèêëïîôùûüçœæÀÂÄÉÈÊËÏÎÔÙÛÜÇŒÆ°€@&+=%.#~]', '', template_var)
 
-    # 6. Nettoyer les espaces multiples
+    # 7. Nettoyer espaces multiples et tronquer
     template_var = re_tpl.sub(r'\s{2,}', ' ', template_var).strip()
-
-    # 7. Tronquer à 900 chars max
     template_var = template_var[:900] if template_var else "Découvrez nos nouveautés"
 
-    logger.info(f"[WHATSAPP-CAMPAIGN] 🧹 Variable AVANT nettoyage: {(campaign_message or '')[:150]}")
-    logger.info(f"[WHATSAPP-CAMPAIGN] 🧹 Variable APRÈS nettoyage: {template_var[:150]}")
+    # V166: Ajouter le lien CTA à la fin du message si fourni
+    cta_suffix = ""
+    if cta_url:
+        cta_label = cta_text or "En savoir plus"
+        cta_suffix = f" {cta_label}: {cta_url}"
+        # Vérifier que ça rentre dans la limite
+        if len(template_var) + len(cta_suffix) > 900:
+            template_var = template_var[:900 - len(cta_suffix)]
+        template_var = template_var + cta_suffix
 
-    logger.info(f"[WHATSAPP-CAMPAIGN] 🧹 Variable nettoyée: {template_var[:150]}...")
+    logger.info(f"[WHATSAPP-CAMPAIGN] Variable nettoyée ({len(template_var)} chars): {template_var[:200]}")
 
     # Construire le payload template
     template_payload = {
