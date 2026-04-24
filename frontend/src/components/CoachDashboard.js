@@ -3786,7 +3786,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     
     // Préparer les targetIds depuis le panier
     const targetIds = selectedRecipients.map(r => r.id);
-    
+
+    // V167.2: Déclarer effectiveTargetType ICI avant le bloc édition ET création
+    const effectiveTargetType = targetIds.length > 0 ? "selected" : newCampaign.targetType;
+
     // === MODE ÉDITION : Mise à jour d'une campagne existante ===
     if (editingCampaignId) {
       try {
@@ -3844,10 +3847,6 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       ctaLink: newCampaign.ctaLink || (newCampaign.ctaType === 'reserver' ? '#courses' : '')
     } : {};
     
-    // V165.5: Si des destinataires sont dans le panier, forcer targetType="selected"
-    // pour éviter d'envoyer à TOUS les contacts par erreur
-    const effectiveTargetType = targetIds.length > 0 ? "selected" : newCampaign.targetType;
-
     try {
       if (isImmediate) {
         // Create single immediate campaign
