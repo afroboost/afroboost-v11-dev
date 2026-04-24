@@ -10909,6 +10909,18 @@ def _parse_scheduled_at(scheduled_at_str: str) -> datetime:
     except Exception:
         return None
 
+@api_router.get("/campaign-errors")
+async def get_campaign_errors(limit: int = 20):
+    """V164: Endpoint diagnostic — affiche les dernières erreurs de campagne WhatsApp"""
+    try:
+        errors = await db.campaign_errors.find().sort("created_at", -1).limit(limit).to_list(limit)
+        for e in errors:
+            e["_id"] = str(e["_id"])
+        return errors
+    except Exception as ex:
+        return {"error": str(ex)}
+
+
 @api_router.get("/cron/check-campaigns")
 async def cron_check_campaigns(request: Request):
     """
