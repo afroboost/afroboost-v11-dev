@@ -11053,6 +11053,26 @@ async def whatsapp_diagnostic():
     return results
 
 
+@api_router.get("/campaign-debug/{campaign_id}")
+async def get_campaign_debug(campaign_id: str):
+    """V165: Endpoint diagnostic — affiche le contenu complet d'une campagne"""
+    try:
+        campaign = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
+        if not campaign:
+            return {"error": "Campagne introuvable"}
+        return campaign
+    except Exception as ex:
+        return {"error": str(ex)}
+
+@api_router.get("/campaigns-list")
+async def get_campaigns_list():
+    """V165: Liste les campagnes récentes avec leur ID et message"""
+    try:
+        campaigns = await db.campaigns.find({}, {"_id": 0, "id": 1, "name": 1, "status": 1, "message": 1, "messageContent": 1, "whatsappMessage": 1, "createdAt": 1}).sort("createdAt", -1).limit(5).to_list(5)
+        return campaigns
+    except Exception as ex:
+        return {"error": str(ex)}
+
 @api_router.get("/campaign-errors")
 async def get_campaign_errors(limit: int = 20):
     """V164: Endpoint diagnostic — affiche les dernières erreurs de campagne WhatsApp"""
