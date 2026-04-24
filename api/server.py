@@ -2410,11 +2410,13 @@ def substitute_campaign_variables(message: str, contact: dict) -> str:
     return result
 
 
-def format_phone_e164(phone: str, default_country: str = "+33") -> str:
+def format_phone_e164(phone: str, default_country: str = "+41") -> str:
     """
-    Convertit un numéro de téléphone au format E.164 pour Twilio.
-    Ex: 0765203363 → +33765203363
-    Ex: +33765203363 → +33765203363
+    V165.3: Convertit un numéro de téléphone au format E.164.
+    Défaut: Suisse (+41) car Afroboost est basé en Suisse.
+    Ex: 0765203363 → +41765203363
+    Ex: +41765203363 → +41765203363
+    Ex: +33612345678 → +33612345678 (conservé tel quel)
     """
     if not phone:
         return ""
@@ -2425,7 +2427,7 @@ def format_phone_e164(phone: str, default_country: str = "+33") -> str:
         return "+" + phone[2:]
     if phone.startswith("0"):
         return default_country + phone[1:]
-    return default_country + phone
+    return "+" + phone
 
 
 @api_router.post("/campaigns/{campaign_id}/launch")
@@ -11068,7 +11070,7 @@ async def get_campaign_debug(campaign_id: str):
 async def get_campaigns_list():
     """V165: Liste les campagnes récentes avec leur ID et message"""
     try:
-        campaigns = await db.campaigns.find({}, {"_id": 0, "id": 1, "name": 1, "status": 1, "message": 1, "messageContent": 1, "whatsappMessage": 1, "createdAt": 1}).sort("createdAt", -1).limit(5).to_list(5)
+        campaigns = await db.campaigns.find({}, {"_id": 0, "id": 1, "name": 1, "status": 1, "targetType": 1, "channels": 1, "createdAt": 1, "launchedAt": 1, "updatedAt": 1}).sort("createdAt", -1).limit(20).to_list(20)
         return campaigns
     except Exception as ex:
         return {"error": str(ex)}
