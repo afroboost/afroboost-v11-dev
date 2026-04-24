@@ -6572,28 +6572,25 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
     # Préparer le message COMPLET pour la variable {{1}} du template
     full_text = (campaign_message or "Découvrez nos nouveautés").strip()
 
-    # V170.1: Ajouter le lien CTA si fourni — convertir en format sans protocole
-    # Meta interdit "https://..." dans les variables, mais "afroboost.com/..." passe
+    # V171: Ajouter le lien CTA si fourni — SANS protocole (Meta bloque https://)
     if cta_url:
         cta_label = cta_text or "En savoir plus"
-        # Retirer le protocole pour éviter l'erreur 132018
         clean_url = re_tpl.sub(r'https?://(www\.)?', '', cta_url)
-        full_text += f"\n\n{cta_label}: {clean_url}"
+        full_text += f" - {cta_label}: {clean_url}"
 
-    # V170.1: Nettoyer pour respecter les règles Meta template
-    # Meta interdit: emojis, URLs avec protocole (https://), caractères Unicode spéciaux
-    # Meta AUTORISE: retours à la ligne (\n), domaines sans protocole
+    # V171: Revenir au nettoyage V168.1 qui MARCHAIT (message à 13:57)
+    # Supprimer emojis
     template_var = re_tpl.sub(
         r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF'
         r'\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251'
         r'\U0001F900-\U0001F9FF\U0001FA00-\U0001FAFF\U00002600-\U000026FF'
         r'\U0000FE00-\U0000FE0F\U0000200D]+', '', full_text
     )
-    # V170.1: Supprimer les URLs avec protocole (INTERDIT par Meta)
-    # mais garder les domaines sans protocole (ex: afroboost.com/chat/15e88d)
-    template_var = re_tpl.sub(r'https?://(www\.)?', '', template_var)
-    # Nettoyer les lignes vides multiples
-    template_var = re_tpl.sub(r'\n{3,}', '\n\n', template_var)
+    # Supprimer les URLs complètes avec protocole
+    template_var = re_tpl.sub(r'https?://\S+', '', template_var)
+    # Remplacer sauts de ligne par " - " (V168.1 qui marchait)
+    template_var = re_tpl.sub(r'\n{2,}', ' - ', template_var)
+    template_var = template_var.replace('\n', ' ')
     # Remplacer tirets spéciaux
     template_var = template_var.replace('—', '-').replace('–', '-')
     # Remplacer les caractères gras Unicode par leurs équivalents ASCII
@@ -6604,23 +6601,9 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         bold_map[chr(0x1D5EE + i)] = c
     for old_c, new_c in bold_map.items():
         template_var = template_var.replace(old_c, new_c)
-    # Garder lettres, chiffres, ponctuation, accents, newlines, ET URLs (:/.)
-    template_var = re_tpl.sub(r'[^\w\s\n\.,;:!\?\'-/()àâäéèêëïîôùûüçœæÀÂÄÉÈÊËÏÎÔÙÛÜÇŒÆ°€@&=%+#~]', '', template_var)
-    # Nettoyer les espaces multiples sur une même ligne (mais PAS les \n)
-    lines = template_var.split('\n')
-    lines = [re_tpl.sub(r'  +', ' ', line).strip() for line in lines]
-    # Supprimer les lignes vides consécutives (garder max 1 ligne vide)
-    cleaned_lines = []
-    prev_empty = False
-    for line in lines:
-        if not line:
-            if not prev_empty:
-                cleaned_lines.append('')
-            prev_empty = True
-        else:
-            cleaned_lines.append(line)
-            prev_empty = False
-    template_var = '\n'.join(cleaned_lines).strip()
+    # Garder UNIQUEMENT lettres, chiffres, ponctuation basique, accents
+    template_var = re_tpl.sub(r'[^\w\s\.,;:!\?\'-/()àâäéèêëïîôùûüçœæÀÂÄÉÈÊËÏÎÔÙÛÜÇŒÆ°€@&=%+]', '', template_var)
+    template_var = re_tpl.sub(r'\s{2,}', ' ', template_var).strip()
     # Limiter à 1024 chars (limite Meta pour les variables)
     template_var = template_var[:1024] if template_var else "Decouvrez nos nouveautes"
 
