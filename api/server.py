@@ -6522,29 +6522,25 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         "Content-Type": "application/json"
     }
 
-    # V166: Nettoyage du message pour la variable {{1}} du template
+    # V167: NOUVELLE APPROCHE — Template court + message complet en suivi
+    # 1. Envoyer le template approuvé avec un résumé court (ouvre la fenêtre de conversation)
+    # 2. Envoyer le vrai message formaté avec emojis, liens, images (dans la fenêtre ouverte)
     import re as re_tpl
-    template_var = campaign_message if campaign_message else "Découvrez nos nouveautés"
+    import json as json_log
 
-    # 1. Supprimer les URLs SAUF afroboost.com (domaine propre)
-    template_var = re_tpl.sub(r'https?://(?!(?:www\.)?afroboost\.com)\S+', '', template_var)
-    template_var = re_tpl.sub(r'www\.(?!afroboost\.com)\S+', '', template_var)
-
-    # 2. Supprimer les emojis
+    # Préparer le résumé court pour la variable {{1}} du template
+    # Extraire la première phrase significative du message
+    first_line = (campaign_message or "Découvrez nos nouveautés").split('\n')[0].strip()
+    # Nettoyer pour le template: pas d'emojis, pas d'URLs, pas de caractères spéciaux
     template_var = re_tpl.sub(
         r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF'
         r'\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251'
-        r'\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF'
-        r'\U00002600-\U000026FF\U0000FE00-\U0000FE0F\U0000200D]+', '', template_var
+        r'\U0001F900-\U0001F9FF\U0001FA00-\U0001FAFF\U00002600-\U000026FF'
+        r'\U0000FE00-\U0000FE0F\U0000200D]+', '', first_line
     )
-
-    # 3. Remplacer caractères typographiques
-    for old, new in [('—', '-'), ('–', '-'), ('\u2018', "'"), ('\u2019', "'"),
-                     ('\u201C', '"'), ('\u201D', '"'), ('\u2026', '...'), ('\u00A0', ' '),
-                     ('\u00B7', '.'), ('\uFF65', '.')]:
-        template_var = template_var.replace(old, new)
-
-    # 4. Remplacer les caractères gras Unicode (𝗔-𝗭, 𝗮-𝘇) par des lettres normales
+    template_var = re_tpl.sub(r'https?://\S+', '', template_var)
+    template_var = template_var.replace('—', '-').replace('–', '-')
+    # Remplacer les caractères gras Unicode
     bold_map = {}
     for i, c in enumerate('ABCDEFGHIJKLMNOPQRSTUVWXYZ'):
         bold_map[chr(0x1D5D4 + i)] = c
@@ -6552,30 +6548,13 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         bold_map[chr(0x1D5EE + i)] = c
     for old_c, new_c in bold_map.items():
         template_var = template_var.replace(old_c, new_c)
-
-    # 5. Remplacer sauts de ligne par espaces
-    template_var = template_var.replace('\n', ' ').replace('\r', ' ')
-
-    # 6. Ne garder que les caractères sûrs (lettres, chiffres, ponctuation, accents, URLs)
-    template_var = re_tpl.sub(r'[^\w\s\.,;:!\?\'-/()àâäéèêëïîôùûüçœæÀÂÄÉÈÊËÏÎÔÙÛÜÇŒÆ°€@&+=%.#~]', '', template_var)
-
-    # 7. Nettoyer espaces multiples et tronquer
+    template_var = re_tpl.sub(r'[^\w\s\.,;:!\?\'-/()àâäéèêëïîôùûüçœæÀÂÄÉÈÊËÏÎÔÙÛÜÇŒÆ°€@&]', '', template_var)
     template_var = re_tpl.sub(r'\s{2,}', ' ', template_var).strip()
-    template_var = template_var[:900] if template_var else "Découvrez nos nouveautés"
+    template_var = template_var[:200] if template_var else "Découvrez nos nouveautés"
 
-    # V166: Ajouter le lien CTA à la fin du message si fourni
-    cta_suffix = ""
-    if cta_url:
-        cta_label = cta_text or "En savoir plus"
-        cta_suffix = f" {cta_label}: {cta_url}"
-        # Vérifier que ça rentre dans la limite
-        if len(template_var) + len(cta_suffix) > 900:
-            template_var = template_var[:900 - len(cta_suffix)]
-        template_var = template_var + cta_suffix
+    logger.info(f"[WHATSAPP-CAMPAIGN] Variable template: {template_var}")
 
-    logger.info(f"[WHATSAPP-CAMPAIGN] Variable nettoyée ({len(template_var)} chars): {template_var[:200]}")
-
-    # Construire le payload template
+    # ÉTAPE 1: Envoyer le template (ouvre la fenêtre de conversation 24h)
     template_payload = {
         "messaging_product": "whatsapp",
         "to": clean_to,
@@ -6594,29 +6573,19 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         }
     }
 
-    logger.info(f"[WHATSAPP-CAMPAIGN] 📤 Envoi template 'afroboost_campagne' vers {clean_to}")
-    logger.info(f"[WHATSAPP-CAMPAIGN] 📝 Variable {{{{1}}}}: {template_var[:100]}...")
+    logger.info(f"[WHATSAPP-CAMPAIGN] ÉTAPE 1: Template vers {clean_to}")
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            import json as json_log
-            logger.info(f"[WHATSAPP-CAMPAIGN] 📦 Payload: {json_log.dumps(template_payload, ensure_ascii=False)[:500]}")
-
             response = await client.post(meta_url, headers=headers, json=template_payload)
             result = response.json()
-            logger.info(f"[WHATSAPP-CAMPAIGN] 📬 Response status={response.status_code}: {json_log.dumps(result, ensure_ascii=False)[:300]}")
+            logger.info(f"[WHATSAPP-CAMPAIGN] Template response: {response.status_code} - {json_log.dumps(result, ensure_ascii=False)[:300]}")
 
-            if response.status_code < 400:
-                msg_id = result.get("messages", [{}])[0].get("id", "")
-                logger.info(f"[WHATSAPP-CAMPAIGN] ✅ Template envoyé avec succès - ID: {msg_id}")
-                return {"status": "success", "sid": msg_id, "to": clean_to}
-            else:
+            if response.status_code >= 400:
                 error_detail = result.get("error", {})
                 error_code = error_detail.get("code", "")
                 error_msg = error_detail.get("message", str(result))
-                logger.error(f"[WHATSAPP-CAMPAIGN] ❌ Erreur template [{error_code}]: {error_msg}")
-
-                # Log dans campaign_errors
+                logger.error(f"[WHATSAPP-CAMPAIGN] Template error [{error_code}]: {error_msg}")
                 try:
                     await db.campaign_errors.insert_one({
                         "campaign_id": campaign_id or "direct_send",
@@ -6631,11 +6600,64 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
                     })
                 except Exception:
                     pass
-
                 return {"status": "error", "error": error_msg, "error_code": str(error_code)}
 
+            msg_id = result.get("messages", [{}])[0].get("id", "")
+            logger.info(f"[WHATSAPP-CAMPAIGN] Template OK - ID: {msg_id}")
+
+            # ÉTAPE 2: Attendre un peu puis envoyer le message complet formaté
+            import asyncio
+            await asyncio.sleep(2)
+
+            # Construire le message complet avec mise en page
+            full_message = campaign_message or ""
+            # Ajouter le lien CTA si fourni
+            if cta_url:
+                cta_label = cta_text or "En savoir plus"
+                full_message += f"\n\n{cta_label}: {cta_url}"
+
+            # Envoyer le message formaté complet (texte avec emojis, liens, sauts de ligne)
+            text_payload = {
+                "messaging_product": "whatsapp",
+                "to": clean_to,
+                "type": "text",
+                "text": {
+                    "body": full_message,
+                    "preview_url": True
+                }
+            }
+
+            logger.info(f"[WHATSAPP-CAMPAIGN] ÉTAPE 2: Message complet ({len(full_message)} chars)")
+            text_response = await client.post(meta_url, headers=headers, json=text_payload)
+            text_result = text_response.json()
+            logger.info(f"[WHATSAPP-CAMPAIGN] Message response: {text_response.status_code}")
+
+            # ÉTAPE 3: Envoyer l'image/média si fourni
+            if media_url:
+                await asyncio.sleep(1)
+                # Déterminer le type de média
+                media_lower = media_url.lower()
+                is_image = any(media_lower.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp'])
+                is_video = any(media_lower.endswith(ext) for ext in ['.mp4', '.3gp', '.mov'])
+
+                if is_image or is_video:
+                    media_type = "image" if is_image else "video"
+                    media_payload = {
+                        "messaging_product": "whatsapp",
+                        "to": clean_to,
+                        "type": media_type,
+                        media_type: {
+                            "link": media_url
+                        }
+                    }
+                    logger.info(f"[WHATSAPP-CAMPAIGN] ÉTAPE 3: Envoi {media_type}")
+                    media_response = await client.post(meta_url, headers=headers, json=media_payload)
+                    logger.info(f"[WHATSAPP-CAMPAIGN] Media response: {media_response.status_code}")
+
+            return {"status": "success", "sid": msg_id, "to": clean_to}
+
     except Exception as e:
-        logger.error(f"[WHATSAPP-CAMPAIGN] ❌ Exception: {str(e)}")
+        logger.error(f"[WHATSAPP-CAMPAIGN] Exception: {str(e)}")
         return {"status": "error", "error": str(e), "error_code": "EXCEPTION"}
 
 
