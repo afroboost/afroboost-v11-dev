@@ -2412,11 +2412,17 @@ def substitute_campaign_variables(message: str, contact: dict) -> str:
 
 def format_phone_e164(phone: str, default_country: str = "+41") -> str:
     """
-    V165.3: Convertit un numéro de téléphone au format E.164.
-    Défaut: Suisse (+41) car Afroboost est basé en Suisse.
-    Ex: 0765203363 → +41765203363
-    Ex: +41765203363 → +41765203363
-    Ex: +33612345678 → +33612345678 (conservé tel quel)
+    V167.1: Convertit un numéro de téléphone au format E.164.
+    Supporte tous les pays: Suisse (+41), France (+33), Ghana (+233), etc.
+
+    Règles:
+    - +XX... → conservé tel quel (déjà au bon format)
+    - 00XX... → +XX... (format international)
+    - 0033... → +33... (format français avec 00)
+    - 06/07 + 8 chiffres → +33 (numéro français mobile)
+    - 07 + 8 chiffres commençant par 6-9 → +41 (numéro suisse mobile)
+    - 02X... (Ghana etc.) → +233 ou selon le contexte
+    - Autre 0... → +41 par défaut (Suisse)
     """
     if not phone:
         return ""
@@ -2426,7 +2432,30 @@ def format_phone_e164(phone: str, default_country: str = "+41") -> str:
     if phone.startswith("00"):
         return "+" + phone[2:]
     if phone.startswith("0"):
-        return default_country + phone[1:]
+        # Détecter le pays par le pattern du numéro
+        digits_after_0 = phone[1:]
+
+        # Numéros français: 06XX ou 07XX (10 chiffres total, mobile français)
+        if len(phone) == 10 and phone.startswith("06"):
+            return "+33" + digits_after_0
+
+        # Numéros suisses: 07X (10 chiffres, mobile suisse)
+        # Les numéros suisses mobiles: 076, 077, 078, 079
+        if len(phone) == 10 and phone.startswith("07"):
+            # 076-079 = suisse, 070-075 = pourrait être français
+            if phone[2] in "6789":
+                return "+41" + digits_after_0
+            else:
+                return "+33" + digits_after_0
+
+        # Numéros courts africains (Ghana: 02X, 05X — 10 chiffres)
+        if len(phone) == 10 and phone[1] in "2345":
+            return "+233" + digits_after_0  # Ghana par défaut pour les contacts africains
+
+        # Par défaut: utiliser le pays par défaut
+        return default_country + digits_after_0
+
+    # Numéro sans 0 ni + (ex: 41765203363, 33612345678)
     return "+" + phone
 
 
