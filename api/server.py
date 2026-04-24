@@ -6474,10 +6474,22 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         "Content-Type": "application/json"
     }
 
-    # Tronquer le message pour qu'il tienne dans la variable {{1}} du template
-    # Le template complet = "Afroboost vous informe: {msg}. Rendez-vous sur afroboost.com"
-    # Limite WhatsApp body = 1024 chars, donc ~900 chars pour la variable
-    template_var = campaign_message[:900] if campaign_message else "Découvrez nos nouveautés"
+    # V164.2: Nettoyer le message pour la variable {{1}} du template
+    # Meta rejette les paramètres contenant des URLs, newlines excessives, ou certains caractères spéciaux
+    import re as re_tpl
+    template_var = campaign_message if campaign_message else "Découvrez nos nouveautés"
+
+    # Supprimer les URLs (Meta les interdit dans les variables de templates marketing)
+    template_var = re_tpl.sub(r'https?://\S+', '', template_var)
+    template_var = re_tpl.sub(r'www\.\S+', '', template_var)
+    # Remplacer les sauts de ligne par des espaces
+    template_var = template_var.replace('\n', ' ').replace('\r', ' ')
+    # Nettoyer les espaces multiples
+    template_var = re_tpl.sub(r'\s{2,}', ' ', template_var).strip()
+    # Tronquer à 900 chars max (template body limit = 1024, le template ajoute du texte autour)
+    template_var = template_var[:900] if template_var else "Découvrez nos nouveautés"
+
+    logger.info(f"[WHATSAPP-CAMPAIGN] 🧹 Variable nettoyée: {template_var[:150]}...")
 
     # Construire le payload template
     template_payload = {
