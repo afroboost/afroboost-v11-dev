@@ -10933,6 +10933,66 @@ async def get_campaign_errors(limit: int = 20):
         return {"error": str(ex)}
 
 
+@api_router.get("/test-whatsapp-template")
+async def test_whatsapp_template(to: str = "41765203363", template: str = "afroboost_bienvenue"):
+    """V164.3: Endpoint diagnostic — envoie UN message template et retourne la réponse complète de Meta"""
+    import httpx
+    import json as json_test
+
+    config = await _get_whatsapp_config()
+    if not config or config["api_mode"] != "meta":
+        return {"error": "Config Meta manquante"}
+
+    access_token = config["access_token"]
+    phone_number_id = config["phone_number_id"]
+    api_version = config.get("api_version", "v21.0")
+
+    clean_to = to.replace(" ", "").replace("-", "").replace("+", "")
+    if clean_to.startswith("0"):
+        clean_to = "41" + clean_to[1:]
+
+    meta_url = f"https://graph.facebook.com/{api_version}/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    # Template sans variable (afroboost_bienvenue) ou avec variable (afroboost_campagne)
+    template_payload = {
+        "messaging_product": "whatsapp",
+        "to": clean_to,
+        "type": "template",
+        "template": {
+            "name": template,
+            "language": {"code": "fr"}
+        }
+    }
+
+    # Ajouter la variable {{1}} pour afroboost_campagne
+    if template == "afroboost_campagne":
+        template_payload["template"]["components"] = [{
+            "type": "body",
+            "parameters": [{"type": "text", "text": "Test campagne Afroboost"}]
+        }]
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(meta_url, headers=headers, json=template_payload)
+        result = response.json()
+
+    return {
+        "test_info": {
+            "to": clean_to,
+            "template": template,
+            "phone_number_id": phone_number_id,
+            "api_version": api_version,
+            "meta_url": meta_url
+        },
+        "request_payload": template_payload,
+        "response_status": response.status_code,
+        "response_body": result
+    }
+
+
 @api_router.get("/cron/check-campaigns")
 async def cron_check_campaigns(request: Request):
     """
