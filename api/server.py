@@ -6577,8 +6577,9 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         cta_label = cta_text or "En savoir plus"
         full_text += f"\n\n{cta_label}: {cta_url}"
 
-    # V168.1: Nettoyer AGRESSIVEMENT pour respecter les règles Meta template
-    # Meta interdit: emojis, URLs, sauts de ligne, caractères Unicode spéciaux
+    # V169: Nettoyer pour respecter les règles Meta template
+    # Meta interdit: emojis, URLs, caractères Unicode spéciaux
+    # Meta AUTORISE: retours à la ligne (\n) dans les variables body
     template_var = re_tpl.sub(
         r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF'
         r'\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251'
@@ -6586,10 +6587,11 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         r'\U0000FE00-\U0000FE0F\U0000200D]+', '', full_text
     )
     # Supprimer les URLs (INTERDIT dans les variables template Meta)
+    # Mais garder le texte du CTA (ex: "En savoir plus" sans l'URL)
     template_var = re_tpl.sub(r'https?://\S+', '', template_var)
-    # Remplacer sauts de ligne par " - " (INTERDIT dans les variables template Meta)
-    template_var = re_tpl.sub(r'\n{2,}', ' - ', template_var)
-    template_var = template_var.replace('\n', ' ')
+    # V169: GARDER les retours à la ligne (autorisés par Meta dans body params)
+    # Juste nettoyer les lignes vides multiples
+    template_var = re_tpl.sub(r'\n{3,}', '\n\n', template_var)
     # Remplacer tirets spéciaux
     template_var = template_var.replace('—', '-').replace('–', '-')
     # Remplacer les caractères gras Unicode par leurs équivalents ASCII
@@ -6600,9 +6602,23 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         bold_map[chr(0x1D5EE + i)] = c
     for old_c, new_c in bold_map.items():
         template_var = template_var.replace(old_c, new_c)
-    # Garder UNIQUEMENT lettres, chiffres, ponctuation basique, accents
-    template_var = re_tpl.sub(r'[^\w\s\.,;:!\?\'-/()àâäéèêëïîôùûüçœæÀÂÄÉÈÊËÏÎÔÙÛÜÇŒÆ°€@&=%+]', '', template_var)
-    template_var = re_tpl.sub(r'\s{2,}', ' ', template_var).strip()
+    # Garder UNIQUEMENT lettres, chiffres, ponctuation basique, accents, ET newlines
+    template_var = re_tpl.sub(r'[^\w\s\n\.,;:!\?\'-/()àâäéèêëïîôùûüçœæÀÂÄÉÈÊËÏÎÔÙÛÜÇŒÆ°€@&=%+]', '', template_var)
+    # Nettoyer les espaces multiples sur une même ligne (mais PAS les \n)
+    lines = template_var.split('\n')
+    lines = [re_tpl.sub(r'  +', ' ', line).strip() for line in lines]
+    # Supprimer les lignes vides consécutives (garder max 1 ligne vide)
+    cleaned_lines = []
+    prev_empty = False
+    for line in lines:
+        if not line:
+            if not prev_empty:
+                cleaned_lines.append('')
+            prev_empty = True
+        else:
+            cleaned_lines.append(line)
+            prev_empty = False
+    template_var = '\n'.join(cleaned_lines).strip()
     # Limiter à 1024 chars (limite Meta pour les variables)
     template_var = template_var[:1024] if template_var else "Decouvrez nos nouveautes"
 

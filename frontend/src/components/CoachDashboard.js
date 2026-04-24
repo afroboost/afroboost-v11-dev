@@ -3219,10 +3219,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const filteredChatSessions = useMemo(() => {
     if (!conversationSearch) return chatSessions;
     const q = conversationSearch.toLowerCase();
+    // V169: Build lookup map for performance (avoid O(n²) with .find())
+    const participantMap = {};
+    chatParticipants.forEach(p => { if (p.id) participantMap[p.id] = p.name || ''; });
     return chatSessions.filter(s => {
-      // Rechercher dans les noms des participants
-      const participantNames = s.participant_ids?.map(id => getParticipantName(id)).join(' ').toLowerCase() || '';
-      return participantNames.includes(q) || s.title?.toLowerCase().includes(q);
+      if (s.title?.toLowerCase().includes(q)) return true;
+      // V169: Limit participant search to first 50 to avoid freezing on large groups
+      const pids = (s.participant_ids || []).slice(0, 50);
+      return pids.some(id => (participantMap[id] || '').toLowerCase().includes(q));
     });
   }, [chatSessions, conversationSearch, chatParticipants]);
 
