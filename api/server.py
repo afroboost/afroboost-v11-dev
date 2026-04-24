@@ -6563,25 +6563,31 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         "Content-Type": "application/json"
     }
 
-    # V167: NOUVELLE APPROCHE — Template court + message complet en suivi
-    # 1. Envoyer le template approuvé avec un résumé court (ouvre la fenêtre de conversation)
-    # 2. Envoyer le vrai message formaté avec emojis, liens, images (dans la fenêtre ouverte)
+    # V168: APPROCHE UNIQUE — Mettre TOUT le message dans la variable {{1}} du template
+    # Le template "afroboost_campagne" = "Afroboost vous informe: {{1}}. Rendez-vous sur afroboost.com"
+    # La variable {{1}} accepte jusqu'à 1024 caractères, on y met le message complet (nettoyé)
     import re as re_tpl
     import json as json_log
 
-    # Préparer le résumé court pour la variable {{1}} du template
-    # Extraire la première phrase significative du message
-    first_line = (campaign_message or "Découvrez nos nouveautés").split('\n')[0].strip()
-    # Nettoyer pour le template: pas d'emojis, pas d'URLs, pas de caractères spéciaux
+    # Préparer le message COMPLET pour la variable {{1}} du template
+    full_text = (campaign_message or "Découvrez nos nouveautés").strip()
+
+    # Ajouter le lien CTA si fourni
+    if cta_url:
+        cta_label = cta_text or "En savoir plus"
+        full_text += f"\n\n{cta_label}: {cta_url}"
+
+    # Nettoyer pour le template: pas d'emojis, pas de caractères spéciaux Unicode
     template_var = re_tpl.sub(
         r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF'
         r'\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251'
         r'\U0001F900-\U0001F9FF\U0001FA00-\U0001FAFF\U00002600-\U000026FF'
-        r'\U0000FE00-\U0000FE0F\U0000200D]+', '', first_line
+        r'\U0000FE00-\U0000FE0F\U0000200D]+', '', full_text
     )
-    template_var = re_tpl.sub(r'https?://\S+', '', template_var)
+    # Garder les URLs (Meta les accepte dans les variables de template)
+    # Remplacer tirets spéciaux
     template_var = template_var.replace('—', '-').replace('–', '-')
-    # Remplacer les caractères gras Unicode
+    # Remplacer les caractères gras Unicode par leurs équivalents ASCII
     bold_map = {}
     for i, c in enumerate('ABCDEFGHIJKLMNOPQRSTUVWXYZ'):
         bold_map[chr(0x1D5D4 + i)] = c
@@ -6589,9 +6595,11 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         bold_map[chr(0x1D5EE + i)] = c
     for old_c, new_c in bold_map.items():
         template_var = template_var.replace(old_c, new_c)
-    template_var = re_tpl.sub(r'[^\w\s\.,;:!\?\'-/()àâäéèêëïîôùûüçœæÀÂÄÉÈÊËÏÎÔÙÛÜÇŒÆ°€@&]', '', template_var)
-    template_var = re_tpl.sub(r'\s{2,}', ' ', template_var).strip()
-    template_var = template_var[:200] if template_var else "Découvrez nos nouveautés"
+    # Garder lettres, chiffres, ponctuation courante, accents, sauts de ligne, URLs
+    template_var = re_tpl.sub(r'[^\w\s\.,;:!\?\'-/()àâäéèêëïîôùûüçœæÀÂÄÉÈÊËÏÎÔÙÛÜÇŒÆ°€@&=|%+#\n]', '', template_var)
+    template_var = re_tpl.sub(r'[ \t]{2,}', ' ', template_var).strip()
+    # Limiter à 1024 chars (limite Meta pour les variables)
+    template_var = template_var[:1024] if template_var else "Découvrez nos nouveautés"
 
     logger.info(f"[WHATSAPP-CAMPAIGN] Variable template: {template_var}")
 
@@ -6644,85 +6652,7 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
                 return {"status": "error", "error": error_msg, "error_code": str(error_code)}
 
             msg_id = result.get("messages", [{}])[0].get("id", "")
-            logger.info(f"[WHATSAPP-CAMPAIGN] Template OK - ID: {msg_id}")
-
-            # ÉTAPE 2: Attendre que le template soit délivré puis envoyer le message complet
-            import asyncio
-            await asyncio.sleep(5)  # V167.4: 5s au lieu de 2s pour laisser le template être délivré
-
-            # Construire le message complet avec mise en page
-            full_message = campaign_message or ""
-            # Ajouter le lien CTA si fourni
-            if cta_url:
-                cta_label = cta_text or "En savoir plus"
-                full_message += f"\n\n{cta_label}: {cta_url}"
-
-            # Envoyer le message formaté complet (texte avec emojis, liens, sauts de ligne)
-            text_payload = {
-                "messaging_product": "whatsapp",
-                "to": clean_to,
-                "type": "text",
-                "text": {
-                    "body": full_message,
-                    "preview_url": True
-                }
-            }
-
-            logger.info(f"[WHATSAPP-CAMPAIGN] ÉTAPE 2: Message complet ({len(full_message)} chars)")
-            text_response = await client.post(meta_url, headers=headers, json=text_payload)
-            text_result = text_response.json()
-            logger.info(f"[WHATSAPP-CAMPAIGN] ÉTAPE 2 response: {text_response.status_code} - {json_log.dumps(text_result, ensure_ascii=False)[:300]}")
-
-            # V167.4: Gestion d'erreur étape 2 avec retry
-            if text_response.status_code >= 400:
-                error_detail = text_result.get("error", {})
-                error_msg = error_detail.get("message", str(text_result))
-                logger.warning(f"[WHATSAPP-CAMPAIGN] ÉTAPE 2 ÉCHEC: {error_msg} — retry dans 5s...")
-                await asyncio.sleep(5)
-                text_response2 = await client.post(meta_url, headers=headers, json=text_payload)
-                text_result2 = text_response2.json()
-                logger.info(f"[WHATSAPP-CAMPAIGN] ÉTAPE 2 RETRY: {text_response2.status_code} - {json_log.dumps(text_result2, ensure_ascii=False)[:300]}")
-                if text_response2.status_code >= 400:
-                    logger.error(f"[WHATSAPP-CAMPAIGN] ÉTAPE 2 ÉCHEC DÉFINITIF pour {clean_to}")
-                    try:
-                        await db.campaign_errors.insert_one({
-                            "campaign_id": campaign_id or "direct_send",
-                            "campaign_name": campaign_name or "Campagne",
-                            "error_type": "step2_text_error",
-                            "error_code": str(text_result2.get("error", {}).get("code", "")),
-                            "error_message": text_result2.get("error", {}).get("message", str(text_result2)),
-                            "channel": "whatsapp",
-                            "to_phone": clean_to,
-                            "http_status": text_response2.status_code,
-                            "created_at": datetime.now(timezone.utc).isoformat()
-                        })
-                    except Exception:
-                        pass
-
-            # ÉTAPE 3: Envoyer l'image/média si fourni
-            if media_url:
-                await asyncio.sleep(2)
-                # Déterminer le type de média
-                media_lower = media_url.lower()
-                is_image = any(media_lower.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp'])
-                is_video = any(media_lower.endswith(ext) for ext in ['.mp4', '.3gp', '.mov'])
-
-                if is_image or is_video:
-                    media_type = "image" if is_image else "video"
-                    media_payload = {
-                        "messaging_product": "whatsapp",
-                        "to": clean_to,
-                        "type": media_type,
-                        media_type: {
-                            "link": media_url
-                        }
-                    }
-                    logger.info(f"[WHATSAPP-CAMPAIGN] ÉTAPE 3: Envoi {media_type}")
-                    media_response = await client.post(meta_url, headers=headers, json=media_payload)
-                    media_result = media_response.json()
-                    logger.info(f"[WHATSAPP-CAMPAIGN] ÉTAPE 3 response: {media_response.status_code} - {json_log.dumps(media_result, ensure_ascii=False)[:200]}")
-                    if media_response.status_code >= 400:
-                        logger.error(f"[WHATSAPP-CAMPAIGN] ÉTAPE 3 ÉCHEC média pour {clean_to}")
+            logger.info(f"[WHATSAPP-CAMPAIGN] V168 Template OK - ID: {msg_id} - Variable ({len(template_var)} chars)")
 
             return {"status": "success", "sid": msg_id, "to": clean_to}
 
