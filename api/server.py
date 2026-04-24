@@ -6586,8 +6586,9 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         r'\U0001F900-\U0001F9FF\U0001FA00-\U0001FAFF\U00002600-\U000026FF'
         r'\U0000FE00-\U0000FE0F\U0000200D]+', '', full_text
     )
-    # Supprimer les URLs complètes avec protocole
-    template_var = re_tpl.sub(r'https?://\S+', '', template_var)
+    # V171.1: Retirer SEULEMENT le protocole (https://www.) mais GARDER le domaine
+    # "https://www.afroboost.com/?link=15e88d" → "afroboost.com/?link=15e88d" (cliquable!)
+    template_var = re_tpl.sub(r'https?://(www\.)?', '', template_var)
     # Remplacer sauts de ligne par " - " (V168.1 qui marchait)
     template_var = re_tpl.sub(r'\n{2,}', ' - ', template_var)
     template_var = template_var.replace('\n', ' ')
