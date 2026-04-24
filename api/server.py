@@ -11249,6 +11249,66 @@ async def test_whatsapp_template(to: str = "41765203363", template: str = "afrob
     }
 
 
+@api_router.get("/test-campaign-3steps")
+async def test_campaign_3steps(to: str = "41765203363"):
+    """V167.4: Test diagnostic — envoie template + message texte + vérifie chaque étape"""
+    import httpx
+    import asyncio
+    import json as json_test
+
+    config = await _get_whatsapp_config()
+    if not config or config["api_mode"] != "meta":
+        return {"error": "Config Meta manquante"}
+
+    access_token = config["access_token"]
+    phone_number_id = config["phone_number_id"]
+    api_version = config.get("api_version", "v21.0")
+
+    clean_to = to.replace(" ", "").replace("-", "").replace("+", "")
+    if clean_to.startswith("0"):
+        clean_to = "41" + clean_to[1:]
+
+    meta_url = f"https://graph.facebook.com/{api_version}/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    results = {"version": "V167.4", "to": clean_to, "steps": {}}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # ÉTAPE 1: Template
+        template_payload = {
+            "messaging_product": "whatsapp", "to": clean_to, "type": "template",
+            "template": {"name": "afroboost_campagne", "language": {"code": "fr"},
+                "components": [{"type": "body", "parameters": [{"type": "text", "text": "Test diagnostic 3 etapes"}]}]
+            }
+        }
+        resp1 = await client.post(meta_url, headers=headers, json=template_payload)
+        results["steps"]["1_template"] = {"status": resp1.status_code, "body": resp1.json()}
+
+        if resp1.status_code >= 400:
+            results["steps"]["1_template"]["conclusion"] = "ECHEC - template refuse"
+            return results
+
+        # ÉTAPE 2: Attendre + message texte
+        await asyncio.sleep(5)
+        text_payload = {
+            "messaging_product": "whatsapp", "to": clean_to, "type": "text",
+            "text": {"body": "Ceci est le message complet de test.\n\nAvec des emojis 🔥 et des liens:\nhttps://www.afroboost.com\n\nBassi — Afroboost", "preview_url": True}
+        }
+        resp2 = await client.post(meta_url, headers=headers, json=text_payload)
+        results["steps"]["2_text"] = {"status": resp2.status_code, "body": resp2.json()}
+
+        if resp2.status_code >= 400:
+            results["steps"]["2_text"]["conclusion"] = "ECHEC - message texte refuse apres template"
+        else:
+            results["steps"]["2_text"]["conclusion"] = "OK - message texte accepte"
+
+    results["conclusion"] = "Template OK, message texte " + ("OK" if resp2.status_code < 400 else "ECHEC")
+    return results
+
+
 @api_router.get("/cron/check-campaigns")
 async def cron_check_campaigns(request: Request):
     """
