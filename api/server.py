@@ -2314,15 +2314,18 @@ async def _save_campaign_chat_message(
     campaign_name: str = None,
     cta_type: str = None,
     cta_text: str = None,
-    cta_link: str = None
+    cta_link: str = None,
+    contact_name: str = None
 ):
     """
     Écrit le message de campagne dans la collection chat_messages
     pour qu'il apparaisse dans l'UI client (omnicanalité).
     Crée la session si elle n'existe pas encore pour ce contact.
     Inclut les médias et boutons CTA pour l'affichage dans le chat.
+    V167.3: Ajoute le nom du contact dans la session.
     Fallback silencieux : ne lève jamais d'exception bloquante.
     """
+    display_name = contact_name or contact_id
     # Chercher ou créer la session chat du contact
     session = await db.chat_sessions.find_one(
         {"participant_ids": contact_id},
@@ -2330,16 +2333,23 @@ async def _save_campaign_chat_message(
     )
     if session:
         session_id = session["id"]
+        # V167.3: Mettre à jour le nom si manquant
+        if contact_name:
+            await db.chat_sessions.update_one(
+                {"id": session_id, "participant_name": {"$exists": False}},
+                {"$set": {"participant_name": display_name}}
+            )
     else:
         session_id = str(uuid.uuid4())
         await db.chat_sessions.insert_one({
             "id": session_id,
             "mode": "user",
             "participant_ids": [contact_id],
+            "participant_name": display_name,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat()
         })
-        logger.info(f"[CAMPAIGN-CHAT] Session créée pour contact {contact_id}: {session_id}")
+        logger.info(f"[CAMPAIGN-CHAT] Session créée pour contact {contact_id} ({display_name}): {session_id}")
 
     msg_id = str(uuid.uuid4())
     msg_timestamp = datetime.now(timezone.utc).isoformat()
@@ -2930,7 +2940,8 @@ async def launch_campaign(campaign_id: str):
                             campaign_name=campaign_name,
                             cta_type=cta_type,
                             cta_text=cta_text,
-                            cta_link=cta_link
+                            cta_link=cta_link,
+                            contact_name=contact_name
                         )
                     except Exception as chat_err:
                         logger.warning(f"[CAMPAIGN-CHAT] Écriture chat_messages échouée (WhatsApp, {contact_id}): {chat_err}")
@@ -3061,7 +3072,8 @@ async def launch_campaign(campaign_id: str):
                             campaign_name=campaign_name,
                             cta_type=cta_type,
                             cta_text=cta_text,
-                            cta_link=cta_link
+                            cta_link=cta_link,
+                            contact_name=contact_name
                         )
                     except Exception as chat_err:
                         logger.warning(f"[CAMPAIGN-CHAT] Écriture chat_messages échouée (email, {contact_id}): {chat_err}")
