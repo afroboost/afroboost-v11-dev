@@ -8132,11 +8132,17 @@ async def get_conversations_advanced(
             sort=[("created_at", -1)]
         )
         
-        # Récupérer les infos des participants
+        # V169: Récupérer les infos des participants — LIMITER à 10 max pour éviter
+        # des centaines de requêtes MongoDB sur les grands groupes (825+ membres)
+        all_pids = session.get("participant_ids", [])
+        pids_to_load = all_pids[:10]  # Charger max 10 participants pour l'affichage
         participants_info = []
-        for pid in session.get("participant_ids", []):
-            participant = await db.chat_participants.find_one({"id": pid}, {"_id": 0})
-            if participant:
+        if pids_to_load:
+            participants_cursor = db.chat_participants.find(
+                {"id": {"$in": pids_to_load}},
+                {"_id": 0, "id": 1, "name": 1, "email": 1, "whatsapp": 1, "source": 1}
+            )
+            async for participant in participants_cursor:
                 participants_info.append({
                     "id": participant.get("id"),
                     "name": participant.get("name", "Inconnu"),
@@ -8166,6 +8172,7 @@ async def get_conversations_advanced(
         enriched_conversations.append({
             **session,
             "participants": participants_info,
+            "participant_count": len(all_pids),  # V169: Total membres (pour groupes)
             "participantName": first_participant_name,  # v14.0: Pour l'affichage CRM
             "participantEmail": first_participant_email,  # v14.0: Pour l'affichage CRM
             "participantWhatsapp": first_participant_whatsapp,  # v16.0: WhatsApp pour CRM
