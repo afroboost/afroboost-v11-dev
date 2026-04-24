@@ -10993,7 +10993,7 @@ async def get_campaign_errors(limit: int = 20):
 
 
 @api_router.get("/test-whatsapp-template")
-async def test_whatsapp_template(to: str = "41765203363", template: str = "afroboost_bienvenue"):
+async def test_whatsapp_template(to: str = "41765203363", template: str = "afroboost_bienvenue", version: str = ""):
     """V164.3: Endpoint diagnostic — envoie UN message template et retourne la réponse complète de Meta"""
     import httpx
     import json as json_test
@@ -11004,7 +11004,8 @@ async def test_whatsapp_template(to: str = "41765203363", template: str = "afrob
 
     access_token = config["access_token"]
     phone_number_id = config["phone_number_id"]
-    api_version = config.get("api_version", "v21.0")
+    # V164.5: Permettre de tester différentes versions de l'API
+    api_version = version if version else config.get("api_version", "v21.0")
 
     clean_to = to.replace(" ", "").replace("-", "").replace("+", "")
     if clean_to.startswith("0"):
