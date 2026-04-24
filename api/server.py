@@ -6572,25 +6572,21 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
     # Préparer le message COMPLET pour la variable {{1}} du template
     full_text = (campaign_message or "Découvrez nos nouveautés").strip()
 
-    # Ajouter le lien CTA si fourni (le lien sera supprimé par le nettoyage Meta)
+    # Ajouter le lien CTA si fourni
     if cta_url:
         cta_label = cta_text or "En savoir plus"
         full_text += f"\n\n{cta_label}: {cta_url}"
 
-    # V169.1: Pas de numéro WhatsApp — les contacts reçoivent déjà depuis ce numéro
-
-    # V169: Nettoyer pour respecter les règles Meta template
-    # Meta interdit: emojis, URLs, caractères Unicode spéciaux
-    # Meta AUTORISE: retours à la ligne (\n) dans les variables body
+    # V170: Nettoyer pour respecter les règles Meta template
+    # Meta interdit: emojis, caractères Unicode spéciaux
+    # Meta AUTORISE: retours à la ligne (\n) et URLs dans les variables body
     template_var = re_tpl.sub(
         r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF'
         r'\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251'
         r'\U0001F900-\U0001F9FF\U0001FA00-\U0001FAFF\U00002600-\U000026FF'
         r'\U0000FE00-\U0000FE0F\U0000200D]+', '', full_text
     )
-    # Supprimer les URLs (INTERDIT dans les variables template Meta)
-    # Mais garder le texte du CTA (ex: "En savoir plus" sans l'URL)
-    template_var = re_tpl.sub(r'https?://\S+', '', template_var)
+    # V170: NE PAS supprimer les URLs — elles passent (confirmé par test réel à 9h)
     # V169: GARDER les retours à la ligne (autorisés par Meta dans body params)
     # Juste nettoyer les lignes vides multiples
     template_var = re_tpl.sub(r'\n{3,}', '\n\n', template_var)
@@ -6604,8 +6600,8 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
         bold_map[chr(0x1D5EE + i)] = c
     for old_c, new_c in bold_map.items():
         template_var = template_var.replace(old_c, new_c)
-    # Garder UNIQUEMENT lettres, chiffres, ponctuation basique, accents, ET newlines
-    template_var = re_tpl.sub(r'[^\w\s\n\.,;:!\?\'-/()àâäéèêëïîôùûüçœæÀÂÄÉÈÊËÏÎÔÙÛÜÇŒÆ°€@&=%+]', '', template_var)
+    # Garder lettres, chiffres, ponctuation, accents, newlines, ET URLs (:/.)
+    template_var = re_tpl.sub(r'[^\w\s\n\.,;:!\?\'-/()àâäéèêëïîôùûüçœæÀÂÄÉÈÊËÏÎÔÙÛÜÇŒÆ°€@&=%+#~]', '', template_var)
     # Nettoyer les espaces multiples sur une même ligne (mais PAS les \n)
     lines = template_var.split('\n')
     lines = [re_tpl.sub(r'  +', ' ', line).strip() for line in lines]
