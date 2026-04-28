@@ -11298,6 +11298,61 @@ async def create_sunset_group():
     }
 
 
+@api_router.get("/create-whatsapp-group")
+async def create_whatsapp_group():
+    """V171.2: Crée un groupe avec SEULEMENT les contacts qui ont un numéro WhatsApp"""
+    import uuid as _uuid
+    group_name = "Contacts WhatsApp"
+    coach_email = "contact.artboost@gmail.com"
+
+    # Vérifier si le groupe existe déjà
+    existing = await db.chat_groups.find_one({"name": group_name, "is_deleted": {"$ne": True}})
+    if existing:
+        return {"status": "already_exists", "group_id": existing.get("id"), "member_count": len(existing.get("member_ids", []))}
+
+    # Récupérer SEULEMENT les contacts avec un numéro WhatsApp/phone
+    all_contacts = await db.chat_participants.find(
+        {"$or": [
+            {"whatsapp": {"$exists": True, "$ne": "", "$ne": None}},
+            {"phone": {"$exists": True, "$ne": "", "$ne": None}}
+        ]},
+        {"_id": 0, "id": 1, "name": 1, "phone": 1, "whatsapp": 1, "email": 1}
+    ).to_list(5000)
+
+    # Filtrer ceux qui ont réellement un numéro non-vide
+    contacts_with_phone = [c for c in all_contacts if (c.get("whatsapp") or c.get("phone") or "").strip()]
+    member_ids = [c["id"] for c in contacts_with_phone if c.get("id")]
+
+    group_id = str(_uuid.uuid4())
+    link_token = str(_uuid.uuid4())[:8]
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    group_doc = {
+        "id": group_id, "name": group_name, "coach_id": coach_email,
+        "member_ids": member_ids, "system_prompt": "", "is_ai_active": False,
+        "link_token": link_token, "mode": "group",
+        "created_at": now_iso, "updated_at": now_iso, "is_deleted": False,
+    }
+    await db.chat_groups.insert_one(group_doc)
+
+    session_doc = {
+        "id": f"grp_{group_id[:8]}", "title": group_name, "mode": "group",
+        "is_ai_active": False, "custom_prompt": "",
+        "participant_ids": member_ids, "coach_id": coach_email,
+        "group_id": group_id, "link_token": link_token,
+        "created_at": now_iso, "updated_at": now_iso,
+    }
+    await db.chat_sessions.insert_one(session_doc)
+
+    logger.info(f"[V171.2] Groupe '{group_name}' créé avec {len(member_ids)} contacts WhatsApp")
+    return {
+        "status": "created", "group_id": group_id, "group_name": group_name,
+        "member_count": len(member_ids),
+        "total_contacts": len(all_contacts),
+        "members_preview": [{"id": c["id"], "name": c.get("name", ""), "phone": c.get("whatsapp") or c.get("phone", "")} for c in contacts_with_phone[:20]]
+    }
+
+
 @api_router.get("/cron/check-campaigns")
 async def cron_check_campaigns(request: Request):
     """
