@@ -376,7 +376,7 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
 
     try:
         await asyncio.to_thread(resend.Emails.send, {
-            "from": "Afroboost <notifications@afroboosteur.com>",
+            "from": "Afroboost <notifications@afroboost.com>",
             "to": [user_email],
             "subject": f"{t['subject']} — {res_code}",
             "html": html

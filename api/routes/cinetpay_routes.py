@@ -540,7 +540,7 @@ async def register_free_pack(request: RegisterFreePackRequest, response: Respons
                 # Email au Super Admin
                 admin_email = "contact.artboost@gmail.com"
                 await asyncio.to_thread(resend.Emails.send, {
-                    "from": "Afroboost <notifications@afroboosteur.com>",
+                    "from": "Afroboost <notifications@afroboost.com>",
                     "to": [admin_email],
                     "subject": f"🎉 Nouveau Partenaire Gratuit ! {name} ({email})",
                     "html": f"""
@@ -559,7 +559,7 @@ async def register_free_pack(request: RegisterFreePackRequest, response: Respons
 
                 # Email au nouveau partenaire
                 await asyncio.to_thread(resend.Emails.send, {
-                    "from": "Afroboost <notifications@afroboosteur.com>",
+                    "from": "Afroboost <notifications@afroboost.com>",
                     "to": [email],
                     "subject": "🎊 Bienvenue Partenaire Afroboost !",
                     "html": f"""
@@ -743,7 +743,7 @@ async def cinetpay_webhook(request: Request):
 
                 # Email au Super Admin
                 await asyncio.to_thread(resend.Emails.send, {
-                    "from": "Afroboost <notifications@afroboosteur.com>",
+                    "from": "Afroboost <notifications@afroboost.com>",
                     "to": ["contact.artboost@gmail.com"],
                     "subject": f"🎉 Nouveau Partenaire ! {customer_name} ({coach_email})",
                     "html": f"""
@@ -763,7 +763,7 @@ async def cinetpay_webhook(request: Request):
 
                 # Email au nouveau partenaire
                 await asyncio.to_thread(resend.Emails.send, {
-                    "from": "Afroboost <notifications@afroboosteur.com>",
+                    "from": "Afroboost <notifications@afroboost.com>",
                     "to": [coach_email],
                     "subject": "🎊 Bienvenue Partenaire Afroboost !",
                     "html": f"""
@@ -843,7 +843,7 @@ async def cinetpay_webhook(request: Request):
                     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://afroboost.com/?qr={access_code}"
 
                     await asyncio.to_thread(resend.Emails.send, {
-                        "from": "Afroboost <notifications@afroboosteur.com>",
+                        "from": "Afroboost <notifications@afroboost.com>",
                         "to": [customer_email],
                         "subject": f"Votre accès Afroboost - {access_code}",
                         "html": f"""
@@ -868,7 +868,7 @@ async def cinetpay_webhook(request: Request):
 
                     # Notifier le Super Admin
                     await asyncio.to_thread(resend.Emails.send, {
-                        "from": "Afroboost <notifications@afroboosteur.com>",
+                        "from": "Afroboost <notifications@afroboost.com>",
                         "to": ["contact.artboost@gmail.com"],
                         "subject": f"💰 Nouvelle vente ! {local_tx.get('customer_name', '')} - {amount} {currency}",
                         "html": f"""

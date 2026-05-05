@@ -674,7 +674,7 @@ async def forgot_password(user_data: ForgotPasswordRequest):
                 """
 
                 await asyncio.to_thread(resend.Emails.send, {
-                    "from": "Afroboost <notifications@afroboosteur.com>",
+                    "from": "Afroboost <notifications@afroboost.com>",
                     "to": [email],
                     "subject": "Réinitialiser votre mot de passe Afroboost",
                     "html": html_content

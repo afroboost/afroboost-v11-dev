@@ -69,7 +69,7 @@ async def _send_welcome_email(user_email: str, user_name: str, code_str: str, of
 
     try:
         await asyncio.to_thread(resend.Emails.send, {
-            "from": "Afroboost <notifications@afroboosteur.com>",
+            "from": "Afroboost <notifications@afroboost.com>",
             "to": [user_email],
             "subject": f"Ton code Afroboost — {code_str}",
             "html": html
@@ -99,7 +99,7 @@ async def _send_coach_sale_email(coach_email, customer_email, customer_name, cod
     </div>"""
     try:
         await asyncio.to_thread(resend.Emails.send, {
-            "from": "Afroboost <notifications@afroboosteur.com>",
+            "from": "Afroboost <notifications@afroboost.com>",
             "to": [coach_email],
             "subject": f"Souscription - {customer_name} - {offer_name}",
             "html": html

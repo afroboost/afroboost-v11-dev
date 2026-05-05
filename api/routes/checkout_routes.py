@@ -739,7 +739,7 @@ async def _process_successful_payment(
             # Email au client
             try:
                 resend.Emails.send({
-                    "from": "Afroboost <notifications@afroboosteur.com>",
+                    "from": "Afroboost <notifications@afroboost.com>",
                     "to": [customer_email],
                     "subject": f"✅ Confirmation de votre achat - {access_code}",
                     "html": f"""
@@ -774,7 +774,7 @@ async def _process_successful_payment(
                     vendor_email = coach["notification_email"]
 
                 resend.Emails.send({
-                    "from": "Afroboost <notifications@afroboosteur.com>",
+                    "from": "Afroboost <notifications@afroboost.com>",
                     "to": [vendor_email],
                     "subject": f"💰 Nouvelle vente ! {total} {currency} - {customer_name}",
                     "html": f"""

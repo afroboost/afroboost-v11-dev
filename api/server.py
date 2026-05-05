@@ -3049,7 +3049,7 @@ async def launch_campaign(campaign_id: str):
 </html>"""
                     
                     params = {
-                        "from": "Afroboost <notifications@afroboosteur.com>",
+                        "from": "Afroboost <notifications@afroboost.com>",
                         "to": [contact_email],
                         "subject": subject,
                         "html": html_content
@@ -3497,7 +3497,7 @@ async def stripe_webhook(request: Request):
                             <p style="color:#888;font-size:12px;">Utilisez vos crédits pour les campagnes, conversations IA et codes promo.</p>
                             </div></div>"""
                             await asyncio.to_thread(resend.Emails.send, {
-                                "from": "Afroboost <notifications@afroboosteur.com>",
+                                "from": "Afroboost <notifications@afroboost.com>",
                                 "to": [coach_email],
                                 "subject": f"✅ +{credits} crédits ajoutés à votre compte",
                                 "html": html
@@ -3517,7 +3517,7 @@ async def stripe_webhook(request: Request):
                             <p style="margin:8px 0 0;color:#d91cd2;"><strong>Crédits:</strong> +{credits}</p>
                             </div></div>"""
                             await asyncio.to_thread(resend.Emails.send, {
-                                "from": "Afroboost System <notifications@afroboosteur.com>",
+                                "from": "Afroboost System <notifications@afroboost.com>",
                                 "to": [SUPER_ADMIN_EMAIL],
                                 "subject": f"💰 Vente: {pack_name} à {metadata.get('customer_name', coach_email)}",
                                 "html": bassi_html
@@ -3567,7 +3567,7 @@ async def stripe_webhook(request: Request):
                         </div>
                         <p style="color:#888;font-size:12px;">Accédez au Panel Admin pour gérer ce coach.</p>
                         </div>"""
-                        await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost System <notifications@afroboosteur.com>", "to": [SUPER_ADMIN_EMAIL], "subject": f"🔔 Nouveau Coach: {coach_name}", "html": bassi_html})
+                        await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost System <notifications@afroboost.com>", "to": [SUPER_ADMIN_EMAIL], "subject": f"🔔 Nouveau Coach: {coach_name}", "html": bassi_html})
                         logger.info(f"[WEBHOOK] Notification Bassi envoyée pour {coach_email}")
                     except Exception as notify_err:
                         logger.warning(f"[WEBHOOK] Notification Bassi error: {notify_err}")
@@ -3584,7 +3584,7 @@ async def stripe_webhook(request: Request):
                         <p style="color:#a855f7;">Connecte-toi via le bouton "S'identifier" sur afroboost.com pour accéder à ton Dashboard personnel.</p>
                         </div></div>"""
                         await asyncio.to_thread(resend.Emails.send, {
-                            "from": "Afroboost <notifications@afroboosteur.com>",
+                            "from": "Afroboost <notifications@afroboost.com>",
                             "to": [coach_email],
                             "subject": "Bienvenue Coach Afroboost !",
                             "html": html
@@ -3699,7 +3699,7 @@ async def stripe_webhook(request: Request):
                         </div>
                     </div>"""
                     try:
-                        await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost <notifications@afroboosteur.com>", "to": [customer_email], "subject": f"Bienvenue chez Afroboost - Ton code {new_code}", "html": html})
+                        await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost <notifications@afroboost.com>", "to": [customer_email], "subject": f"Bienvenue chez Afroboost - Ton code {new_code}", "html": html})
                         logger.info(f"[PAYMENT] Email v163 envoye a {customer_email}")
                     except Exception as mail_err:
                         logger.warning(f"[PAYMENT] Email error: {mail_err}")
@@ -3728,7 +3728,7 @@ async def stripe_webhook(request: Request):
                             </div>
                         </div></div>"""
                         await asyncio.to_thread(resend.Emails.send, {
-                            "from": "Afroboost <notifications@afroboosteur.com>",
+                            "from": "Afroboost <notifications@afroboost.com>",
                             "to": [SUPER_ADMIN_EMAIL],
                             "subject": f"⭐ Nouvelle souscription — {customer_name} ({product_name})",
                             "html": coach_html
@@ -3914,7 +3914,7 @@ async def recover_subscriber_access(request: Request):
                 """
 
                 await asyncio.to_thread(resend.Emails.send, {
-                    "from": "Afroboost <notifications@afroboosteur.com>",
+                    "from": "Afroboost <notifications@afroboost.com>",
                     "to": [found_email],
                     "subject": f"Votre code d'accès Afroboost - {code}",
                     "html": html_content
@@ -10621,7 +10621,7 @@ async def send_backup_email(participant_id: str, message_preview: str):
     
     try:
         params = {
-            "from": "Afroboost <notifications@afroboosteur.com>",
+            "from": "Afroboost <notifications@afroboost.com>",
             "to": [email],
             "subject": "Nouvelle reponse sur Afroboost",
             "html": html_content
@@ -10684,7 +10684,7 @@ async def notify_coach_new_message(participant_name: str, message_preview: str, 
     
     try:
         params = {
-            "from": "Afroboost <notifications@afroboosteur.com>",
+            "from": "Afroboost <notifications@afroboost.com>",
             "to": [coach_email],
             "subject": f"🔔 Nouveau message de {participant_name}",
             "html": html_content
@@ -10869,7 +10869,7 @@ Clique sur le bouton ci-dessous pour la découvrir.
     
     try:
         params = {
-            "from": "Afroboost <notifications@afroboosteur.com>",
+            "from": "Afroboost <notifications@afroboost.com>",
             "to": [to_email],
             "subject": subject,
             "html": html_content
@@ -10952,7 +10952,7 @@ async def send_bulk_campaign_email(request: Request, background_tasks: Backgroun
 </body></html>'''
                 
                 params = {
-                    "from": "Afroboost <notifications@afroboosteur.com>",
+                    "from": "Afroboost <notifications@afroboost.com>",
                     "to": [to_email],
                     "subject": subj,
                     "html": html_content
@@ -11487,7 +11487,7 @@ async def send_expiry_reminder_email(coach_email: str, offer_name: str, days_rem
     try:
         import resend as resend_lib
         resend_lib.api_key = RESEND_API_KEY
-        resend_lib.Emails.send({"from": "Afroboost <notifications@afroboosteur.com>", "to": coach_email, "subject": subject, "html": html})
+        resend_lib.Emails.send({"from": "Afroboost <notifications@afroboost.com>", "to": coach_email, "subject": subject, "html": html})
         logger.info(f"[EXPIRY] ✅ Rappel J-{days_remaining} envoyé à {coach_email}")
     except Exception as e:
         logger.error(f"[EXPIRY] ❌ Email J-{days_remaining} échoué: {e}")
@@ -11517,7 +11517,7 @@ async def send_prolongation_email(coach_email: str, offer_name: str):
     try:
         import resend as resend_lib
         resend_lib.api_key = RESEND_API_KEY
-        resend_lib.Emails.send({"from": "Afroboost <notifications@afroboosteur.com>", "to": coach_email, "subject": subject, "html": html})
+        resend_lib.Emails.send({"from": "Afroboost <notifications@afroboost.com>", "to": coach_email, "subject": subject, "html": html})
         logger.info(f"[EXPIRY] ✅ Email prolongation envoyé à {coach_email}")
     except Exception as e:
         logger.error(f"[EXPIRY] ❌ Email prolongation échoué: {e}")
@@ -11544,7 +11544,7 @@ async def send_expired_no_credits_email(coach_email: str, offer_name: str):
     try:
         import resend as resend_lib
         resend_lib.api_key = RESEND_API_KEY
-        resend_lib.Emails.send({"from": "Afroboost <notifications@afroboosteur.com>", "to": coach_email, "subject": subject, "html": html})
+        resend_lib.Emails.send({"from": "Afroboost <notifications@afroboost.com>", "to": coach_email, "subject": subject, "html": html})
         logger.info(f"[EXPIRY] ✅ Email offre expirée (pas de crédits) envoyé à {coach_email}")
     except Exception as e:
         logger.error(f"[EXPIRY] ❌ Email expirée échoué: {e}")
