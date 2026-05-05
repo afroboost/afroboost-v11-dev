@@ -3734,6 +3734,16 @@ async def stripe_webhook(request: Request):
                             "html": coach_html
                         })
                         logger.info(f"[PAYMENT] Coach notifie: souscription {customer_email} - {product_name}")
+                        # V180: Notif push au coach pour nouvelle vente
+                        try:
+                            await send_push_by_email(
+                                SUPER_ADMIN_EMAIL,
+                                f"💰 Nouvelle vente !",
+                                f"{customer_name} - {product_name}",
+                                {"type": "new_sale", "customer": customer_name, "product": product_name}
+                            )
+                        except Exception as _pe:
+                            logger.warning(f"[PUSH-V180] notif vente coach échec: {_pe}")
                     except Exception as notify_err:
                         logger.warning(f"[PAYMENT] Coach notification error: {notify_err}")
         elif event.type == 'checkout.session.expired':
@@ -10579,6 +10589,27 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
     except Exception as e:
         logger.error(f"[PUSH] Erreur: {str(e)}")
         return False
+
+async def send_push_by_email(email: str, title: str, body: str, data: dict = None):
+    """V180: Envoie une notification push à tous les participants liés à un email (helper coach/admin)."""
+    if not email or not WEBPUSH_AVAILABLE or not VAPID_PRIVATE_KEY:
+        return False
+    email_lower = email.lower().strip()
+    try:
+        participants = await db.chat_participants.find({"email": email_lower}, {"_id": 0, "id": 1}).to_list(20)
+    except Exception:
+        return False
+    sent = 0
+    for p in participants:
+        pid = p.get("id")
+        if not pid:
+            continue
+        if await send_push_notification(pid, title, body, data):
+            sent += 1
+    if sent > 0:
+        logger.info(f"[PUSH-V180] {sent} notif(s) -> {email_lower}: {title}")
+    return sent > 0
+
 
 async def send_backup_email(participant_id: str, message_preview: str):
     """Envoie un email de backup si la notification push echoue."""

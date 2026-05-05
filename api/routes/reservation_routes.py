@@ -33,6 +33,62 @@ _TWILIO_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
 _TWILIO_WHATSAPP_FROM = os.environ.get('TWILIO_WHATSAPP_FROM', 'whatsapp:+14155238886')  # sandbox par défaut
 
 
+# V180: Helper pour envoyer notifications push à un user via son email
+async def _send_push_to_email(email: str, title: str, body: str, data: dict = None) -> bool:
+    """V180: Envoie une notification push à tous les participants liés à un email."""
+    if not email or db is None:
+        return False
+    try:
+        from pywebpush import webpush, WebPushException
+    except ImportError:
+        return False
+    vapid_private = os.environ.get('VAPID_PRIVATE_KEY', '')
+    vapid_email = os.environ.get('VAPID_CLAIMS_EMAIL', 'contact@afroboost.ch')
+    if not vapid_private:
+        return False
+    import json as _json
+    email_lower = email.lower().strip()
+    try:
+        participants = await db.chat_participants.find({"email": email_lower}, {"_id": 0, "id": 1}).to_list(20)
+    except Exception:
+        return False
+    sent = 0
+    for p in participants:
+        pid = p.get("id")
+        if not pid:
+            continue
+        try:
+            sub = await db.push_subscriptions.find_one({"participant_id": pid, "active": True}, {"_id": 0})
+        except Exception:
+            continue
+        if not sub or not sub.get("subscription"):
+            continue
+        payload = _json.dumps({
+            "title": title, "body": body,
+            "icon": "/logo192.png", "badge": "/logo192.png",
+            "data": data or {},
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        try:
+            webpush(
+                subscription_info=sub["subscription"], data=payload,
+                vapid_private_key=vapid_private,
+                vapid_claims={"sub": "mailto:" + vapid_email}
+            )
+            sent += 1
+        except WebPushException as e:
+            if e.response and e.response.status_code in [404, 410]:
+                try:
+                    await db.push_subscriptions.update_one({"participant_id": pid}, {"$set": {"active": False}})
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    if sent > 0:
+        logger.info(f"[PUSH-V180] {sent} notif(s) envoyée(s) à {email_lower}: {title}")
+    return sent > 0
+
+
 # === v158: Génération du code d'accès permanent AFRO-XXXX ===
 def _generate_afro_code() -> str:
     """Génère un code d'accès permanent au format AFRO-XXXX (alphanumérique)."""
@@ -553,6 +609,28 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
             subscription_id = subscription.get("id")
             logger.info(f"[RESERVATION] Séance déduite: {user_email} - {new_remaining} restantes (sub: {subscription_id})")
 
+            # V180: Notif push si reste 2 séances ou moins
+            if new_remaining == 2:
+                try:
+                    await _send_push_to_email(
+                        user_email,
+                        "⚠️ Plus que 2 séances Afroboost",
+                        "Pense à renouveler ton abonnement pour continuer à danser !",
+                        {"type": "low_sessions", "remaining": 2}
+                    )
+                except Exception as _e:
+                    logger.warning(f"[PUSH-V180] notif 2 séances échec: {_e}")
+            elif new_remaining == 0:
+                try:
+                    await _send_push_to_email(
+                        user_email,
+                        "🎯 Dernière séance utilisée",
+                        "Renouvelle ton abonnement pour ne pas manquer le prochain cours !",
+                        {"type": "no_sessions", "remaining": 0}
+                    )
+                except Exception as _e:
+                    logger.warning(f"[PUSH-V180] notif 0 séances échec: {_e}")
+
     if promo_code:
         discount = await db.discount_codes.find_one({"code": {"$regex": f"^{promo_code}$", "$options": "i"}, "active": True}, {"_id": 0})
         if discount:
@@ -592,6 +670,20 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
             user_lang=reservation.userLanguage,
             user_whatsapp=reservation.userWhatsapp
         ))
+
+    # V180: Notification push à l'abonné après réservation réussie
+    if user_email:
+        try:
+            course_name = (reservation.courseName or reservation.offerName or "ton cours")
+            course_dt = reservation.datetime or ""
+            asyncio.create_task(_send_push_to_email(
+                user_email,
+                "🎉 Réservation confirmée",
+                "Ta place pour " + course_name + " est réservée. À très vite !",
+                {"type": "reservation_confirmed", "courseName": course_name, "datetime": course_dt}
+            ))
+        except Exception as _e:
+            logger.warning(f"[PUSH-V180] notif réservation échec: {_e}")
 
     return reservation_data
 
