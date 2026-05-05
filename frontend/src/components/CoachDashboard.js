@@ -1635,21 +1635,21 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   };
 
   // Validate reservation by code (for QR scanner)
-  // V156: Validation unifiée QR — gère codes réservation ET codes abonnement
-  const validateReservation = async (code) => {
+  // V177: Ajout sélecteur de cours quand auto-détection échoue
+  const validateReservation = async (code, forcedCourseId = null) => {
     try {
-      const response = await axios.post(`${API}/qr/scan-validate`, { code });
+      const payload = { code };
+      if (forcedCourseId) payload.courseId = forcedCourseId;
+      const response = await axios.post(`${API}/qr/scan-validate`, payload);
       const data = response.data;
 
       if (data.success) {
         if (data.type === 'reservation') {
-          // Code de réservation classique
           setScanResult({ success: true, reservation: data.reservation });
           setReservations(reservations.map(r =>
             r.reservationCode === code ? { ...r, validated: true } : r
           ));
         } else if (data.type === 'subscription') {
-          // Code d'abonnement — afficher les infos abonné
           setScanResult({
             success: true,
             reservation: {
@@ -1660,25 +1660,52 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             message: data.message,
           });
         }
-        // V156.2: Recharger les réservations + codes promo pour refléter la déduction
         loadReservations();
         try {
           const updatedCodes = await axios.get(`${API}/discount-codes`);
           setDiscountCodes(updatedCodes.data);
         } catch (e) { console.warn('[V156] Refresh codes:', e); }
-        // Auto-close after 4 seconds
-        setTimeout(() => {
-          setShowScanner(false);
-          setScanResult(null);
-        }, 4000);
       } else {
-        // Réponse 200 mais success=false (ex: déjà validé, plus de séances)
         setScanError(data.message || 'Validation impossible');
         setTimeout(() => setScanError(null), 4000);
       }
     } catch (err) {
-      setScanError(err.response?.data?.detail || 'Code non trouvé');
-      setTimeout(() => setScanError(null), 4000);
+      const status = err.response?.status;
+      const detail = err.response?.data?.detail;
+      // V177: Si pas de cours auto-détecté → propose au coach de choisir
+      if (status === 422 && typeof detail === 'object' && detail?.error === 'no_course_now') {
+        try {
+          const coursesResp = await axios.get(`${API}/courses`);
+          const visibleCourses = (coursesResp.data || []).filter(c => c.visible && !c.archived);
+          if (visibleCourses.length === 0) {
+            setScanError("Aucun cours configuré. Crée un cours d'abord.");
+            setTimeout(() => setScanError(null), 4000);
+            return;
+          }
+          const days = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
+          const list = visibleCourses.map((c, i) => `${i+1}. ${c.name} (${days[c.weekday] || '?'} ${c.time})`).join('\n');
+          const choice = window.prompt(`Aucun cours en cours détecté.\nQuel cours valider ?\n\n${list}\n\nEntre le numéro :`);
+          if (choice) {
+            const idx = parseInt(choice, 10) - 1;
+            if (idx >= 0 && idx < visibleCourses.length) {
+              return await validateReservation(code, visibleCourses[idx].id);
+            }
+          }
+          setScanError('Validation annulée.');
+          setTimeout(() => setScanError(null), 3000);
+        } catch (e) {
+          console.error('[V177] Failed to load courses:', e);
+          setScanError("Impossible de charger les cours.");
+          setTimeout(() => setScanError(null), 4000);
+        }
+      } else {
+        // Cas par défaut : message d'erreur
+        let errMsg = 'Code non trouvé';
+        if (typeof detail === 'string') errMsg = detail;
+        else if (detail?.message) errMsg = detail.message;
+        setScanError(errMsg);
+        setTimeout(() => setScanError(null), 4000);
+      }
     }
   };
 

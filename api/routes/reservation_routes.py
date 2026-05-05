@@ -657,6 +657,9 @@ async def qr_scan_validate(request: Request):
     if not code:
         raise HTTPException(status_code=400, detail="Code requis")
 
+    # V177: courseId optionnel pour override l'auto-détection
+    forced_course_id = (body.get("courseId") or "").strip() or None
+
     # CAS A : code de réservation existante
     reservation = await db.reservations.find_one({"reservationCode": code}, {"_id": 0})
     if reservation:
@@ -697,23 +700,32 @@ async def qr_scan_validate(request: Request):
         courses = await db.courses.find({"weekday": today_weekday, "visible": True, "archived": False}, {"_id": 0}).to_list(50)
 
     target_course = None
-    best_diff = 9999
-    for c in courses:
-        ctime = (c.get("time") or "").strip()
-        if not ctime:
-            continue
-        try:
-            ch, cm = ctime.split(":")
-            cdt = now_swiss.replace(hour=int(ch), minute=int(cm), second=0, microsecond=0)
-            diff = abs((cdt - now_swiss).total_seconds() / 60)
-            if diff <= 90 and diff < best_diff:
-                target_course = c
-                best_diff = diff
-        except Exception:
-            continue
-
-    if not target_course:
-        raise HTTPException(status_code=404, detail="Aucun cours en cours actuellement (±90 min)")
+    # V177: si le coach a forcé un cours via UI, on l'utilise direct
+    if forced_course_id:
+        target_course = await db.courses.find_one({"id": forced_course_id, "archived": False}, {"_id": 0})
+        if not target_course:
+            raise HTTPException(status_code=404, detail="Cours sélectionné introuvable ou archivé")
+    else:
+        best_diff = 9999
+        for c in courses:
+            ctime = (c.get("time") or "").strip()
+            if not ctime:
+                continue
+            try:
+                ch, cm = ctime.split(":")
+                ch, cm = int(ch), int(cm)
+                cdt = now_swiss.replace(hour=ch, minute=cm, second=0, microsecond=0)
+                diff = abs((cdt - now_swiss).total_seconds() / 60)
+                if diff <= 90 and diff < best_diff:
+                    target_course = c
+                    best_diff = diff
+            except Exception:
+                continue
+        if not target_course:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "no_course_now", "message": "Aucun cours en cours actuellement. Sélectionnez un cours manuellement."}
+            )
 
     course_id = target_course.get("id")
     course_name = target_course.get("name") or "Cours"
