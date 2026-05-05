@@ -3701,6 +3701,16 @@ async def stripe_webhook(request: Request):
                     try:
                         await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost <notifications@afroboost.com>", "to": [customer_email], "subject": f"Bienvenue chez Afroboost - Ton code {new_code}", "html": html})
                         logger.info(f"[PAYMENT] Email v163 envoye a {customer_email}")
+                        # V183: Notif push à l'abonné après paiement réussi
+                        try:
+                            await send_push_by_email(
+                                customer_email,
+                                "🎉 Bienvenue chez Afroboost !",
+                                f"Ton accès est actif. Code: {new_code}",
+                                {"type": "payment_success", "code": new_code}
+                            )
+                        except Exception as _pe:
+                            logger.warning(f"[PUSH-V183] notif paiement abonné échec: {_pe}")
                     except Exception as mail_err:
                         logger.warning(f"[PAYMENT] Email error: {mail_err}")
                 # v8.7: Sync CRM - Creer/MAJ contact (email unique)
@@ -10618,6 +10628,77 @@ async def send_push_by_email(email: str, title: str, body: str, data: dict = Non
     if sent > 0:
         logger.info(f"[PUSH-V180] {sent} notif(s) -> {email_lower}: {title}")
     return sent > 0
+
+
+# V183: Endpoint broadcast pour annoncer un nouveau cours/info à tous les abonnés
+@api_router.post("/push/broadcast")
+async def push_broadcast(request: Request):
+    """V183: Envoie une notification push à tous les abonnés actifs (annonces, nouveau cours)."""
+    body = await request.json()
+    title = (body.get("title") or "").strip()
+    message = (body.get("body") or "").strip()
+    coach_id = body.get("coach_id") or DEFAULT_COACH_ID
+    if not title or not message:
+        raise HTTPException(status_code=400, detail="title et body requis")
+    caller_email = (request.headers.get("X-User-Email", "") or "").lower().strip()
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Réservé super admin")
+    try:
+        subs = await db.push_subscriptions.find({"active": True}, {"_id": 0, "participant_id": 1}).to_list(2000)
+    except Exception as e:
+        logger.error(f"[BROADCAST-V183] erreur lecture subs: {e}")
+        raise HTTPException(status_code=500, detail="Erreur DB")
+    sent = 0
+    for s in subs:
+        pid = s.get("participant_id")
+        if not pid:
+            continue
+        try:
+            if await send_push_notification(pid, title, message, {"type": "broadcast", "coach_id": coach_id}):
+                sent += 1
+        except Exception:
+            continue
+    logger.info(f"[BROADCAST-V183] {sent}/{len(subs)} notifs envoyées (titre: {title})")
+    return {"success": True, "sent": sent, "total": len(subs)}
+
+
+# V183: Cron rappel 1h avant un cours réservé
+@api_router.get("/cron/reservation-reminders")
+async def cron_reservation_reminders():
+    """V183: Cron horaire — envoie un rappel 1h avant chaque cours réservé."""
+    from datetime import timedelta as _td
+    now = datetime.now(timezone.utc)
+    target_start = (now + _td(minutes=45)).isoformat()
+    target_end = (now + _td(minutes=75)).isoformat()
+    try:
+        reservations = await db.reservations.find({
+            "datetime": {"$gte": target_start, "$lte": target_end},
+            "reminder_sent": {"$ne": True}
+        }, {"_id": 0}).to_list(500)
+    except Exception as e:
+        logger.error(f"[REMINDER-V183] erreur lecture résa: {e}")
+        return {"checked": 0, "sent": 0, "error": str(e)}
+    sent = 0
+    for r in reservations:
+        email = (r.get("userEmail") or "").lower().strip()
+        if not email:
+            continue
+        course_name = r.get("courseName") or r.get("offerName") or "ton cours"
+        course_time = r.get("courseTime") or ""
+        try:
+            ok = await send_push_by_email(
+                email,
+                "📅 Ton cours commence dans 1h",
+                f"{course_name}" + (f" à {course_time}" if course_time else "") + " — prépare-toi !",
+                {"type": "course_reminder", "reservation_id": r.get("id")}
+            )
+            if ok:
+                sent += 1
+            await db.reservations.update_one({"id": r.get("id")}, {"$set": {"reminder_sent": True, "reminder_sent_at": now.isoformat()}})
+        except Exception as e:
+            logger.warning(f"[REMINDER-V183] résa {r.get('id')}: {e}")
+    logger.info(f"[REMINDER-V183] {sent}/{len(reservations)} rappels envoyés")
+    return {"checked": len(reservations), "sent": sent}
 
 
 async def send_backup_email(participant_id: str, message_preview: str):
