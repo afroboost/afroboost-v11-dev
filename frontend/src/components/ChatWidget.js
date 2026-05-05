@@ -353,7 +353,8 @@ const InlineCtaButton = ({ label, url }) => {
  * Affiche le nom de l'expéditeur au-dessus de chaque bulle
  * Couleurs: Violet (#8B5CF6) pour le Coach, Gris foncé pour les membres/IA
  */
-const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUserId, profilePhotoUrl, onReservationClick, onZoomPhoto, onDelete }) => {
+// V172: vitrineCoachName ajouté aux props (utilisé dans le récap réservation)
+const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUserId, profilePhotoUrl, onReservationClick, onZoomPhoto, onDelete, vitrineCoachName }) => {
   // v10.4: Fallback robuste pour texte (content, text, body - jamais vide)
   const messageText = msg.content || msg.text || msg.body || '';
   const htmlContent = parseMessageContent(messageText);
@@ -6624,6 +6625,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                       gap: '8px' 
                     }}>
                       {messages.map(function(msg, idx) { return (
+                        // V172: transmission de vitrineCoachName pour éviter ReferenceError dans MessageBubble
                         <MemoizedMessageBubble
                           key={msg.id || idx}
                           msg={msg}
@@ -6632,6 +6634,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           onReservationClick={function() {}}
                           onZoomPhoto={function(url) { setZoomedChatPhoto(url); }}
                           onDelete={function(messageId) { handleDeleteMessage(messageId); }}
+                          vitrineCoachName={vitrineCoachName}
                         />
                       ); })}
                       <div ref={messagesEndRef} />
@@ -7149,6 +7152,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         animationDelay: `${Math.min(idx * 0.03, 0.3)}s`
                       }}
                     >
+                      {/* V172: transmission de vitrineCoachName pour éviter ReferenceError dans MessageBubble */}
                       <MemoizedMessageBubble
                         msg={msg}
                         isUser={(msg.type === 'user' || msg.sender_type === 'user') && (msg.senderId === participantId || msg.sender_id === participantId)}
@@ -7159,6 +7163,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         onReservationClick={() => setShowReservationPanel(true)}
                         onZoomPhoto={(url) => setZoomedChatPhoto(url)}
                         onDelete={(messageId) => handleDeleteMessage(messageId)}
+                        vitrineCoachName={vitrineCoachName}
                       />
                     </div>
                   ))}
