@@ -134,15 +134,22 @@ export const subscribeToPush = async (participantId) => {
       applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
     });
     
-    // 4. Envoyer la souscription au serveur
-    await axios.post(`${API}/push/subscribe`, {
+    // 4. Envoyer la souscription au serveur — V182: valider réponse
+    const resp = await axios.post(`${API}/push/subscribe`, {
       participant_id: participantId,
       subscription: subscription.toJSON()
     });
-    
+
+    // V182: Valider la réponse backend (success: true requis)
+    if (!resp || !resp.data || resp.data.success !== true) {
+      console.error('[PUSH-V182] Backend subscribe response invalid:', resp && resp.data);
+      return false;
+    }
+
     // 5. Marquer comme souscrit
     localStorage.setItem(PUSH_SUBSCRIPTION_KEY, 'true');
-    console.log('Successfully subscribed to push notifications');
+    localStorage.setItem('af_push_pid', participantId); // V182: stocker pid pour diagnostic
+    console.log('[PUSH-V182] Successfully subscribed for participant', participantId);
     return true;
     
   } catch (error) {
@@ -233,6 +240,49 @@ export const showLocalNotification = async (title, body, options = {}) => {
   }
 };
 
+// V182: Diagnostic complet de l'état des notifications push
+export const getPushDiagnostic = async () => {
+  const result = {
+    supported: isPushSupported(),
+    permission: typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
+    serviceWorkerActive: false,
+    hasSubscription: false,
+    backendKnowsSubscription: null,
+    participantId: localStorage.getItem('af_push_pid') || null,
+    localStorageSubscribed: localStorage.getItem(PUSH_SUBSCRIPTION_KEY) === 'true',
+    error: null,
+  };
+  try {
+    if ('serviceWorker' in navigator) {
+      const reg = await navigator.serviceWorker.getRegistration();
+      result.serviceWorkerActive = !!(reg && reg.active);
+      if (reg) {
+        const sub = await reg.pushManager.getSubscription();
+        result.hasSubscription = !!sub;
+        result.endpoint = sub ? sub.endpoint.substring(0, 60) + '...' : null;
+      }
+    }
+  } catch (e) {
+    result.error = String(e);
+  }
+  return result;
+};
+
+// V182: Envoyer une notification test pour vérifier de bout en bout
+export const sendTestPushNotification = async (participantId) => {
+  if (!participantId) return { success: false, error: 'No participantId' };
+  try {
+    const r = await axios.post(`${API}/push/send`, {
+      participant_id: participantId,
+      title: '🎉 Test Afroboost',
+      body: 'Si tu vois ça, les notifications marchent !'
+    });
+    return { success: !!(r.data && r.data.push_sent), data: r.data };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+};
+
 export default {
   isPushSupported,
   hasAskedForPermission,
@@ -242,5 +292,7 @@ export default {
   subscribeToPush,
   unsubscribeFromPush,
   promptForNotifications,
-  showLocalNotification
+  showLocalNotification,
+  getPushDiagnostic,
+  sendTestPushNotification
 };

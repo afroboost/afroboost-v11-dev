@@ -21,7 +21,9 @@ import {
   registerServiceWorker,
   isSubscribed,
   subscribeToPush,
-  unsubscribeFromPush
+  unsubscribeFromPush,
+  getPushDiagnostic,
+  sendTestPushNotification
 } from '../services/pushNotificationService';
 import { 
   isInSilenceHours, 
@@ -1493,23 +1495,52 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
     console.log('[SOUND] 🔊', newValue ? 'Activé' : 'Désactivé');
   };
 
-  // V120: Toggle notifications push
+  // V120 + V182: Toggle notifications push avec diagnostic + test
   const togglePush = async () => {
     if (pushEnabled) {
-      // Désactiver
       await unsubscribeFromPush(participantId);
       setPushEnabled(false);
       console.log('[PUSH] 🔕 Désactivé');
-    } else {
-      // Activer — demander permission + souscrire
-      if (!participantId) return;
-      const permission = await Notification.requestPermission();
-      if (permission === 'granted') {
-        const ok = await subscribeToPush(participantId);
-        setPushEnabled(ok);
-        console.log('[PUSH] 🔔', ok ? 'Activé' : 'Échec');
-      }
+      return;
     }
+    if (!participantId) {
+      alert('Connecte-toi en abonné pour activer les notifications.');
+      return;
+    }
+    if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      alert('Ton navigateur ne supporte pas les notifications push.');
+      return;
+    }
+    const currentPerm = Notification.permission;
+    if (currentPerm === 'denied') {
+      alert('Les notifications sont BLOQUÉES dans ton navigateur.\n\nPour réactiver :\n1. Long-press sur l\'icône Afroboost (mobile)\n2. Notifications → Activé\n\nOu Chrome → Paramètres → Sites → afroboost.com → Notifications → Autoriser.');
+      return;
+    }
+    const permission = currentPerm === 'granted' ? 'granted' : await Notification.requestPermission();
+    if (permission !== 'granted') {
+      alert('Tu as refusé les notifications. Réessaie via les 3 points → Activer.');
+      return;
+    }
+    const ok = await subscribeToPush(participantId);
+    if (!ok) {
+      const diag = await getPushDiagnostic();
+      console.error('[PUSH-V182] Échec inscription. Diagnostic:', diag);
+      alert('L\'inscription a échoué.\n\n' +
+        'Permission: ' + diag.permission + '\n' +
+        'Service Worker: ' + (diag.serviceWorkerActive ? 'OK' : 'KO') + '\n' +
+        'Souscription locale: ' + (diag.hasSubscription ? 'OK' : 'KO'));
+      return;
+    }
+    setPushEnabled(true);
+    setTimeout(async () => {
+      const test = await sendTestPushNotification(participantId);
+      if (!test.success) {
+        console.warn('[PUSH-V182] Test post-inscription échoué:', test);
+      } else {
+        console.log('[PUSH-V182] ✅ Test push envoyé avec succès');
+      }
+    }, 1500);
+    console.log('[PUSH-V182] 🔔 Activé + test envoyé');
   };
 
   // V120: Clear badge quand le chat est ouvert/visible
