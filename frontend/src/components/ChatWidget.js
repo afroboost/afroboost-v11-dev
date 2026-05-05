@@ -3571,17 +3571,48 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
     });
   };
 
-  // v162: Valider un QR code réservation
-  var handleQrValidation = function() {
+  // V178: Valider un code QR (resa OU abonnement) avec sélecteur de cours si pas auto-détecté
+  var handleQrValidation = function(forcedCourseId) {
     if (!qrScanCode.trim()) return;
     setQrScanResult(null);
-    axios.post(API + '/reservations/staff/validate', { code: qrScanCode.trim() })
+    var payload = { code: qrScanCode.trim().toUpperCase() };
+    if (forcedCourseId) payload.courseId = forcedCourseId;
+    axios.post(API + '/qr/scan-validate', payload)
       .then(function(res) {
         setQrScanResult(res.data);
         if (res.data.success) setQrScanCode('');
       })
       .catch(function(err) {
-        var msg = (err.response && err.response.data && err.response.data.detail) || 'Erreur de validation';
+        var status = err.response && err.response.status;
+        var detail = err.response && err.response.data && err.response.data.detail;
+        if (status === 422 && typeof detail === 'object' && detail && detail.error === 'no_course_now') {
+          axios.get(API + '/courses').then(function(cr) {
+            var vc = (cr.data || []).filter(function(c) { return c.visible && !c.archived; });
+            if (vc.length === 0) {
+              setQrScanResult({ success: false, message: 'Aucun cours configuré.' });
+              return;
+            }
+            var days = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
+            var list = vc.map(function(c, i) {
+              return (i+1) + '. ' + c.name + ' (' + (days[c.weekday] || '?') + ' ' + c.time + ')';
+            }).join('\n');
+            var choice = window.prompt('Aucun cours en cours détecté.\nQuel cours valider ?\n\n' + list + '\n\nEntre le numéro :');
+            if (choice) {
+              var idx = parseInt(choice, 10) - 1;
+              if (idx >= 0 && idx < vc.length) {
+                handleQrValidation(vc[idx].id);
+                return;
+              }
+            }
+            setQrScanResult({ success: false, message: 'Validation annulée.' });
+          }).catch(function() {
+            setQrScanResult({ success: false, message: 'Impossible de charger les cours.' });
+          });
+          return;
+        }
+        var msg = 'Erreur de validation';
+        if (typeof detail === 'string') msg = detail;
+        else if (detail && detail.message) msg = detail.message;
         setQrScanResult({ success: false, message: msg });
       });
   };
@@ -3620,16 +3651,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
               setQrScanCode(decodedText.toUpperCase());
               try { scanner.stop(); } catch(e) {}
               setQrCameraActive(false);
-              // Auto-validate
-              axios.post(API + '/reservations/staff/validate', { code: decodedText.trim() })
-                .then(function(res) {
-                  setQrScanResult(res.data);
-                  if (res.data.success) setQrScanCode('');
-                })
-                .catch(function(err) {
-                  var msg = (err.response && err.response.data && err.response.data.detail) || 'Erreur de validation';
-                  setQrScanResult({ success: false, message: msg });
-                });
+              // V178: Auto-validate via /qr/scan-validate avec sélecteur fallback
+              setQrScanCode(decodedText.trim().toUpperCase());
+              setTimeout(function() { handleQrValidation(); }, 100);
             },
             function() {} // ignore scan errors (no QR found in frame)
           ).catch(function(err) {
