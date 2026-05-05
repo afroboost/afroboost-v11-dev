@@ -514,7 +514,8 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
     subscription_id = getattr(reservation, 'subscriptionId', None)
     offer_price = float(getattr(reservation, 'totalPrice', 0) or 0)
     # Une reservation "essai gratuit" ou "achat à l'unité" NE DOIT PAS déduire d'un pack existant
-    is_free_or_single_purchase = offer_price == 0 or (not subscription_id and not promo_code)
+    # V174: Fix déduction séances abonnés - on déduit dès qu'un abonnement OU code promo est fourni (peu importe le prix qui est forcément 0 pour un abonné)
+    is_free_or_single_purchase = (not subscription_id and not promo_code)
 
     if user_email and not is_free_or_single_purchase:
         # Seulement si subscriptionId OU promoCode explicitement fourni
