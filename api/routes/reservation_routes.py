@@ -48,13 +48,22 @@ async def _send_push_to_email(email: str, title: str, body: str, data: dict = No
         return False
     import json as _json
     email_lower = email.lower().strip()
+    # V181: Chercher dans chat_participants ET users (CRM) pour trouver tous les participant_ids
+    candidate_pids = set()
     try:
-        participants = await db.chat_participants.find({"email": email_lower}, {"_id": 0, "id": 1}).to_list(20)
+        async for p in db.chat_participants.find({"email": email_lower}, {"_id": 0, "id": 1}):
+            if p.get("id"):
+                candidate_pids.add(p["id"])
     except Exception:
-        return False
+        pass
+    try:
+        async for u in db.users.find({"email": email_lower}, {"_id": 0, "id": 1}):
+            if u.get("id"):
+                candidate_pids.add(u["id"])
+    except Exception:
+        pass
     sent = 0
-    for p in participants:
-        pid = p.get("id")
+    for pid in candidate_pids:
         if not pid:
             continue
         try:

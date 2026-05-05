@@ -2274,10 +2274,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
         }).format(reservationDate);
         
         const confirmMsg = {
+          // V181: id stable pour préservation locale (loadChatHistory ne l'écrase plus)
+          id: 'local_resa_' + Date.now() + '_' + Math.random().toString(36).slice(2,8),
           type: 'ai',
           text: `✨ RÉSERVATION CONFIRMÉE ✨`,
           sender: 'Coach Bassi',
           isReservationSummary: true,
+          isLocalOnly: true,
           reservationDetails: {
             courseName: selectedCourse.name,
             courseTime: selectedCourse.time,
@@ -2683,11 +2686,18 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
               cta_text: msg.cta_text || null,
               cta_link: msg.cta_link || null
             }));
-            setMessages(restoredMessages);
+            // V181: Préserver les messages locaux (confirmation réservation, etc.) qui ne sont pas dans le backend
+            setMessages(prev => {
+              const localOnly = (prev || []).filter(m => m && (m.isLocalOnly === true || m.isReservationSummary === true));
+              if (localOnly.length === 0) return restoredMessages;
+              const restoredIds = new Set(restoredMessages.map(m => m.id).filter(Boolean));
+              const preserved = localOnly.filter(m => !restoredIds.has(m.id));
+              return [...restoredMessages, ...preserved];
+            });
             setLastMessageCount(restoredMessages.length);
             // === CACHE HYBRIDE: Sauvegarder dans sessionStorage ===
             saveCachedMessages(restoredMessages);
-            console.log('[HISTORY]', restoredMessages.length, 'messages restaurés et mis en cache');
+            console.log('[HISTORY]', restoredMessages.length, 'messages restaurés et mis en cache (V181: locaux préservés)');
           }
         }
       } catch (err) {
