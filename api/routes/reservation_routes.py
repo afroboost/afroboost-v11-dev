@@ -649,6 +649,113 @@ async def staff_validate_reservation(request: Request):
     return {"success": True, "message": "Réservation validée", "userName": reservation.get("userName", ""), "courseName": reservation.get("courseName", "")}
 
 
+@reservation_router.post("/qr/scan-validate")
+async def qr_scan_validate(request: Request):
+    """V176: Scan QR coach. Gère codes réservation ET codes abonné (auto-détection cours)."""
+    body = await request.json()
+    code = body.get("code", "").strip().upper()
+    if not code:
+        raise HTTPException(status_code=400, detail="Code requis")
+
+    # CAS A : code de réservation existante
+    reservation = await db.reservations.find_one({"reservationCode": code}, {"_id": 0})
+    if reservation:
+        if reservation.get("validated"):
+            return {"success": True, "type": "reservation", "message": "Déjà validé",
+                    "reservation": {"userName": reservation.get("userName", ""), "reservationCode": code,
+                                    "courseName": reservation.get("courseName", ""), "validatedAt": reservation.get("validatedAt", "")}}
+        await db.reservations.update_one({"reservationCode": code},
+            {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}})
+        return {"success": True, "type": "reservation", "message": "Réservation validée",
+                "reservation": {"userName": reservation.get("userName", ""), "reservationCode": code,
+                                "courseName": reservation.get("courseName", "")}}
+
+    # CAS B : code d'abonnement
+    subscription = await db.subscriptions.find_one({"code": code, "status": "active"}, {"_id": 0})
+    if not subscription:
+        any_sub = await db.subscriptions.find_one({"code": code}, {"_id": 0})
+        if any_sub:
+            raise HTTPException(status_code=400, detail="Abonnement inactif ou expiré")
+        raise HTTPException(status_code=404, detail="Code introuvable (ni réservation, ni abonnement)")
+
+    remaining = int(subscription.get("remaining_sessions", 0))
+    if remaining <= 0:
+        raise HTTPException(status_code=400, detail="Plus de séances disponibles")
+
+    user_email = (subscription.get("email") or "").lower().strip()
+    user_name = subscription.get("name") or subscription.get("userName") or "Abonné"
+    sub_id = subscription.get("id")
+
+    from datetime import timedelta as _td
+    swiss_tz = timezone(_td(hours=2))
+    now_swiss = datetime.now(swiss_tz)
+    today_weekday = now_swiss.weekday()
+    coach_id = subscription.get("coach_id") or "bassi_default"
+
+    courses = await db.courses.find({"weekday": today_weekday, "visible": True, "archived": False, "coach_id": coach_id}, {"_id": 0}).to_list(50)
+    if not courses:
+        courses = await db.courses.find({"weekday": today_weekday, "visible": True, "archived": False}, {"_id": 0}).to_list(50)
+
+    target_course = None
+    best_diff = 9999
+    for c in courses:
+        ctime = (c.get("time") or "").strip()
+        if not ctime:
+            continue
+        try:
+            ch, cm = ctime.split(":")
+            cdt = now_swiss.replace(hour=int(ch), minute=int(cm), second=0, microsecond=0)
+            diff = abs((cdt - now_swiss).total_seconds() / 60)
+            if diff <= 90 and diff < best_diff:
+                target_course = c
+                best_diff = diff
+        except Exception:
+            continue
+
+    if not target_course:
+        raise HTTPException(status_code=404, detail="Aucun cours en cours actuellement (±90 min)")
+
+    course_id = target_course.get("id")
+    course_name = target_course.get("name") or "Cours"
+    course_time = target_course.get("time") or ""
+    today_str = now_swiss.strftime("%Y-%m-%d")
+
+    existing = await db.reservations.find_one({"userEmail": user_email, "courseId": course_id, "datetime": {"$regex": today_str}}, {"_id": 0})
+
+    if existing:
+        if not existing.get("validated"):
+            await db.reservations.update_one({"id": existing.get("id")},
+                {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}})
+        return {"success": True, "type": "subscription", "message": "Présence validée (résa déjà existante)",
+                "reservation": {"userName": user_name, "reservationCode": existing.get("reservationCode", code), "courseName": course_name},
+                "subscriber": {"name": user_name, "remaining": remaining, "total": subscription.get("total_sessions", remaining)}}
+
+    new_remaining = remaining - 1
+    new_used = int(subscription.get("used_sessions", 0)) + 1
+    sub_update = {"remaining_sessions": new_remaining, "used_sessions": new_used, "updated_at": datetime.now(timezone.utc).isoformat()}
+    if new_remaining <= 0:
+        sub_update["status"] = "completed"
+    await db.subscriptions.update_one({"id": sub_id}, {"$set": sub_update})
+
+    new_res_code = _generate_afro_code()
+    new_reservation = {
+        "id": str(uuid.uuid4()), "reservationCode": new_res_code,
+        "userId": subscription.get("userId", ""), "userName": user_name, "userEmail": user_email,
+        "userWhatsapp": subscription.get("whatsapp", ""), "courseId": course_id, "courseName": course_name,
+        "courseTime": course_time, "datetime": now_swiss.isoformat(),
+        "offerId": course_id, "offerName": course_name, "price": 0, "quantity": 1, "totalPrice": 0,
+        "subscriptionId": sub_id, "promoCode": code, "source": "qr_scan_coach", "type": "abonné",
+        "validated": True, "validatedAt": datetime.now(timezone.utc).isoformat(),
+        "createdAt": datetime.now(timezone.utc).isoformat(), "coach_id": coach_id
+    }
+    await db.reservations.insert_one(new_reservation)
+    logger.info(f"[QR-SCAN-V176] Création résa + déduction: {user_email} -> {course_name} ({new_remaining} restantes)")
+
+    return {"success": True, "type": "subscription", "message": "Réservation créée + séance déduite",
+            "reservation": {"userName": user_name, "reservationCode": new_res_code, "courseName": course_name},
+            "subscriber": {"name": user_name, "remaining": new_remaining, "total": subscription.get("total_sessions", new_remaining + new_used)}}
+
+
 # === EXPORT PRÉSENCES (CSV) ===
 @reservation_router.get("/reservations/export/attendance")
 async def export_attendance(request: Request, date: str = "", course: str = ""):
