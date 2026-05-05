@@ -1233,6 +1233,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
   var _cqrCam = useState(false); var qrCameraActive = _cqrCam[0]; var setQrCameraActive = _cqrCam[1];
   var _cqrErr = useState(''); var qrCameraError = _cqrErr[0]; var setQrCameraError = _cqrErr[1];
   var qrScannerRef = useRef(null);
+  // V179: State pour modal sélecteur de cours (au lieu de window.prompt)
+  var _cqrSel = useState(null); var qrCourseSelector = _cqrSel[0]; var setQrCourseSelector = _cqrSel[1];
   // v162k: Staff mode (no access to Conversations)
   var _csm = useState(false); var isStaffMode = _csm[0]; var setIsStaffMode = _csm[1];
   var _csl = useState(false); var showStaffLogin = _csl[0]; var setShowStaffLogin = _csl[1];
@@ -3592,19 +3594,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
               setQrScanResult({ success: false, message: 'Aucun cours configuré.' });
               return;
             }
-            var days = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
-            var list = vc.map(function(c, i) {
-              return (i+1) + '. ' + c.name + ' (' + (days[c.weekday] || '?') + ' ' + c.time + ')';
-            }).join('\n');
-            var choice = window.prompt('Aucun cours en cours détecté.\nQuel cours valider ?\n\n' + list + '\n\nEntre le numéro :');
-            if (choice) {
-              var idx = parseInt(choice, 10) - 1;
-              if (idx >= 0 && idx < vc.length) {
-                handleQrValidation(vc[idx].id);
-                return;
-              }
-            }
-            setQrScanResult({ success: false, message: 'Validation annulée.' });
+            // V179: Affichage du modal aux couleurs Afroboost (au lieu de window.prompt)
+            setQrCourseSelector(vc);
           }).catch(function() {
             setQrScanResult({ success: false, message: 'Impossible de charger les cours.' });
           });
@@ -7859,6 +7850,75 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
           </div>
         </div>,
         document.body
+      )}
+
+      {/* V179: Modal sélecteur de cours aux couleurs Afroboost */}
+      {qrCourseSelector && (
+        <div
+          onClick={function() { setQrCourseSelector(null); setQrScanResult({ success: false, message: 'Validation annulée.' }); }}
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 999999,
+            background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
+          }}
+        >
+          <div
+            onClick={function(e) { e.stopPropagation(); }}
+            style={{
+              maxWidth: '480px', width: '100%',
+              background: 'linear-gradient(180deg, rgba(15,5,25,0.97) 0%, rgba(5,0,15,0.99) 100%)',
+              border: '1px solid rgba(217,28,210,0.4)',
+              borderRadius: '20px', padding: '28px',
+              boxShadow: '0 0 60px rgba(217,28,210,0.25), 0 0 120px rgba(139,92,246,0.1)',
+              position: 'relative'
+            }}
+          >
+            <h3 style={{ color: '#D91CD2', fontSize: '20px', fontWeight: '700', marginBottom: '8px', textAlign: 'center', margin: '0 0 8px' }}>
+              ✨ Choisir le cours
+            </h3>
+            <p style={{ color: '#aaa', fontSize: '13px', marginBottom: '20px', textAlign: 'center', margin: '0 0 20px' }}>
+              Aucun cours détecté à cette heure. Sélectionne le cours :
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '60vh', overflowY: 'auto' }}>
+              {qrCourseSelector.map(function(course, idx) {
+                var days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+                return (
+                  <button
+                    key={course.id || idx}
+                    onClick={function() { setQrCourseSelector(null); handleQrValidation(course.id); }}
+                    style={{
+                      width: '100%', padding: '14px 16px',
+                      background: 'rgba(217,28,210,0.12)',
+                      border: '1px solid rgba(217,28,210,0.35)',
+                      borderRadius: '12px', color: 'white',
+                      fontSize: '14px', fontWeight: '600',
+                      cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s'
+                    }}
+                    onMouseOver={function(e) { e.currentTarget.style.background = 'rgba(217,28,210,0.25)'; }}
+                    onMouseOut={function(e) { e.currentTarget.style.background = 'rgba(217,28,210,0.12)'; }}
+                  >
+                    <div style={{ color: '#D91CD2', fontSize: '11px', fontWeight: '700', marginBottom: '4px', letterSpacing: '0.5px' }}>
+                      {days[course.weekday] || '?'} • {course.time}
+                    </div>
+                    <div>{course.name}</div>
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              onClick={function() { setQrCourseSelector(null); setQrScanResult({ success: false, message: 'Validation annulée.' }); }}
+              style={{
+                marginTop: '16px', width: '100%', padding: '12px',
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(255,255,255,0.15)',
+                borderRadius: '10px', color: '#888',
+                fontSize: '13px', cursor: 'pointer'
+              }}
+            >
+              Annuler
+            </button>
+          </div>
+        </div>
       )}
 
     </>
