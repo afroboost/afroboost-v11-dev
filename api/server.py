@@ -3981,6 +3981,52 @@ def _v184_public_origin():
     return base.rstrip("/")
 
 
+# V201: Debug endpoint temporaire — diagnostic accès abonné (À SUPPRIMER APRÈS FIX)
+@api_router.get("/subscriber/debug/{access_code}")
+async def debug_subscriber_space(access_code: str):
+    """V201: Voir pourquoi un lien abonné échoue."""
+    code_upper = (access_code or "").strip().upper()
+    result = {"code_searched": code_upper}
+
+    # 1. Chercher dans subscriptions (exact)
+    sub_exact = await db.subscriptions.find_one(
+        {"code": code_upper}, {"_id": 0, "code": 1, "status": 1, "email": 1, "remaining_sessions": 1}
+    )
+    result["subscription_exact"] = sub_exact if sub_exact else "NOT FOUND"
+
+    # 2. Chercher dans subscriptions (regex case-insensitive)
+    sub_regex = await db.subscriptions.find_one(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0, "code": 1, "status": 1, "email": 1}
+    )
+    result["subscription_regex"] = sub_regex if sub_regex else "NOT FOUND"
+
+    # 3. Chercher dans subscriptions (active seulement)
+    sub_active = await db.subscriptions.find_one(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "status": "active"}, {"_id": 0, "code": 1, "status": 1}
+    )
+    result["subscription_active"] = sub_active if sub_active else "NOT FOUND"
+
+    # 4. Chercher dans discount_codes
+    discount = await db.discount_codes.find_one(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0, "code": 1, "active": 1, "maxUses": 1, "used": 1, "expiresAt": 1, "assignedEmail": 1}
+    )
+    result["discount_code"] = discount if discount else "NOT FOUND"
+
+    # 5. Codes similaires (les 6 premiers caractères)
+    prefix = code_upper[:6] if len(code_upper) >= 6 else code_upper
+    similar_subs = await db.subscriptions.find(
+        {"code": {"$regex": prefix, "$options": "i"}}, {"_id": 0, "code": 1, "status": 1}
+    ).to_list(10)
+    result["similar_subscriptions"] = similar_subs
+
+    similar_dc = await db.discount_codes.find(
+        {"code": {"$regex": prefix, "$options": "i"}}, {"_id": 0, "code": 1, "active": 1}
+    ).to_list(10)
+    result["similar_discount_codes"] = similar_dc
+
+    return result
+
+
 @api_router.get("/subscriber/space/{access_code}")
 async def get_subscriber_space(access_code: str):
     """V184: Données complètes de la page d'accès rapide d'un abonné."""
@@ -3988,16 +4034,41 @@ async def get_subscriber_space(access_code: str):
     if not code_upper:
         raise HTTPException(status_code=400, detail="Code d'accès requis")
 
-    # Source d'autorité : collection subscriptions (mise à jour par les réservations)
+    # V201: Log pour diagnostic
+    logger.info(f"[V201] subscriber/space called with access_code='{access_code}', code_upper='{code_upper}'")
+
+    # V201: Lookup case-insensitive + fallback sans filtre status
     subscription = await db.subscriptions.find_one(
-        {"code": code_upper, "status": "active"}, {"_id": 0}
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "status": "active"}, {"_id": 0}
     )
+    # V201: Si pas trouvé avec status active, chercher sans filtre status
+    if not subscription:
+        sub_any = await db.subscriptions.find_one(
+            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+        )
+        if sub_any:
+            logger.warning(f"[V201] Code {code_upper}: subscription trouvée mais status='{sub_any.get('status')}' (pas 'active')")
+            # V201: Utiliser quand même si le statut est completed/expired — l'abonné doit voir son espace
+            subscription = sub_any
+
     # Fallback historique : un code peut exister dans discount_codes sans subscription créée
     discount = await db.discount_codes.find_one(
         {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
     )
+
+    # V201: Log détaillé
+    logger.info(f"[V201] Code {code_upper}: subscription={'found' if subscription else 'NOT FOUND'}, discount={'found' if discount else 'NOT FOUND'}")
+
     if not subscription and not discount:
-        raise HTTPException(status_code=404, detail="Code abonné introuvable")
+        # V201: Diagnostic détaillé — chercher des codes similaires
+        similar_subs = await db.subscriptions.find(
+            {"code": {"$regex": code_upper[:6], "$options": "i"}}, {"_id": 0, "code": 1, "status": 1}
+        ).to_list(5)
+        similar_codes = await db.discount_codes.find(
+            {"code": {"$regex": code_upper[:6], "$options": "i"}}, {"_id": 0, "code": 1}
+        ).to_list(5)
+        logger.error(f"[V201] Code {code_upper} introuvable! Similar subs: {[s.get('code') for s in similar_subs]}, Similar discount_codes: {[c.get('code') for c in similar_codes]}")
+        raise HTTPException(status_code=404, detail=f"Code abonné introuvable. Code cherché: {code_upper}")
 
     if subscription:
         user_email = (subscription.get("email") or "").lower().strip()
