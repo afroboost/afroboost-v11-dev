@@ -730,11 +730,13 @@ async def delete_reservation(reservation_id: str):
     return {"success": True}
 
 
-# V185 F4 + V186 fix: Suivi des casques (Silent Disco)
+# V185 F4 + V186 fix + V188: Suivi des casques (Silent Disco)
 async def _update_headphone_impl(reservation_id: str, request: Request):
-    """V186: Met à jour le statut du casque audio (Silent Disco).
+    """V188: Met à jour le statut du casque audio (Silent Disco).
     Valeurs acceptées : null, 'taken', 'returned'.
-    V186 fix: lookup robuste (id OU reservationCode), parsing tolérant du body.
+    - Si body.guest_index est absent/None → met à jour headphone_status (abonné principal)
+    - Si body.guest_index est un entier ≥ 0 → met à jour guest_headphones[index]
+    V186 : lookup robuste (id OU reservationCode), parsing tolérant du body.
     """
     body = {}
     try:
@@ -744,32 +746,82 @@ async def _update_headphone_impl(reservation_id: str, request: Request):
             body = _json.loads(raw.decode("utf-8"))
     except Exception:
         body = {}
+
     status = body.get("status") if isinstance(body, dict) else None
     if isinstance(status, str):
         status = status.strip().lower() or None
     if status not in (None, "", "taken", "returned"):
         raise HTTPException(status_code=400, detail=f"Statut casque invalide: {status!r}")
+    normalized = status if status else None
+
+    # V188: index de l'accompagnant (None = abonné principal)
+    raw_index = body.get("guest_index") if isinstance(body, dict) else None
+    guest_index = None
+    if raw_index is not None:
+        try:
+            guest_index = int(raw_index)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f"guest_index invalide: {raw_index!r}")
+        if guest_index < 0 or guest_index > 19:
+            raise HTTPException(status_code=400, detail="guest_index hors borne (0-19)")
 
     # V186: lookup robuste — id de doc OU reservationCode
+    filter_doc = {"$or": [{"id": reservation_id}, {"reservationCode": reservation_id}]}
     reservation = await db.reservations.find_one(
-        {"$or": [{"id": reservation_id}, {"reservationCode": reservation_id}]},
-        {"_id": 0, "id": 1, "reservationCode": 1}
+        filter_doc,
+        {"_id": 0, "id": 1, "reservationCode": 1, "quantity": 1, "guests": 1, "guest_headphones": 1}
     )
     if not reservation:
         raise HTTPException(status_code=404, detail=f"Réservation introuvable: {reservation_id}")
 
-    normalized = status if status else None
-    update_payload = {
-        "headphone_status": normalized,
-        "headphone_updated_at": datetime.now(timezone.utc).isoformat(),
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    if guest_index is None:
+        # Abonné principal
+        update_payload = {"headphone_status": normalized, "headphone_updated_at": now_iso}
+        await db.reservations.update_one(filter_doc, {"$set": update_payload})
+        logger.info(f"[V188 HEADPHONE] {reservation_id} principal → {normalized}")
+        return {
+            "success": True,
+            "reservation_id": reservation_id,
+            "headphone_status": normalized,
+            "guest_index": None,
+        }
+
+    # V188: Accompagnant — vérifier qu'il y a bien une place à cet index
+    quantity = int(reservation.get("quantity") or 1)
+    max_guests = max(0, quantity - 1)
+    if guest_index >= max_guests:
+        raise HTTPException(
+            status_code=400,
+            detail=f"guest_index {guest_index} hors borne pour cette réservation ({max_guests} accompagnant(s))"
+        )
+
+    # S'assurer que guest_headphones existe et a la bonne longueur, puis mettre à jour l'index
+    existing = reservation.get("guest_headphones")
+    if not isinstance(existing, list) or len(existing) < max_guests:
+        # Initialiser/étendre la liste à max_guests entrées (None par défaut)
+        padded = list(existing) if isinstance(existing, list) else []
+        while len(padded) < max_guests:
+            padded.append(None)
+        padded[guest_index] = normalized
+        await db.reservations.update_one(
+            filter_doc,
+            {"$set": {"guest_headphones": padded, "headphone_updated_at": now_iso}}
+        )
+    else:
+        # Mise à jour ciblée de l'index (notation pointée Mongo)
+        await db.reservations.update_one(
+            filter_doc,
+            {"$set": {f"guest_headphones.{guest_index}": normalized, "headphone_updated_at": now_iso}}
+        )
+    logger.info(f"[V188 HEADPHONE] {reservation_id} guest[{guest_index}] → {normalized}")
+    return {
+        "success": True,
+        "reservation_id": reservation_id,
+        "guest_index": guest_index,
+        "guest_headphone_status": normalized,
     }
-    # Use the same OR filter for the update to hit the correct doc
-    await db.reservations.update_one(
-        {"$or": [{"id": reservation_id}, {"reservationCode": reservation_id}]},
-        {"$set": update_payload}
-    )
-    logger.info(f"[V186 HEADPHONE] {reservation_id} → {normalized}")
-    return {"success": True, "reservation_id": reservation_id, "headphone_status": normalized}
 
 
 @reservation_router.put("/reservations/{reservation_id}/headphone")

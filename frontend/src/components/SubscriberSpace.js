@@ -144,6 +144,62 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     });
   };
 
+  // V188: Cycle du casque cliquable depuis "Mes prochaines séances"
+  // guestIndex = null pour l'abonné principal, sinon index 0-based dans guests/guest_headphones
+  const cycleHeadphone = async (reservation, guestIndex = null) => {
+    if (!reservation?.id) return;
+    const current = guestIndex == null
+      ? (reservation.headphone_status || null)
+      : ((reservation.guest_headphones || [])[guestIndex] || null);
+    const next = current === "taken" ? "returned" : current === "returned" ? null : "taken";
+
+    // Mise à jour optimiste locale
+    setData((prev) => {
+      if (!prev) return prev;
+      const reservations = (prev.reservations || []).map((r) => {
+        if (r.id !== reservation.id) return r;
+        if (guestIndex == null) {
+          return { ...r, headphone_status: next };
+        }
+        const arr = Array.isArray(r.guest_headphones) ? [...r.guest_headphones] : [];
+        while (arr.length <= guestIndex) arr.push(null);
+        arr[guestIndex] = next;
+        return { ...r, guest_headphones: arr };
+      });
+      return { ...prev, reservations };
+    });
+
+    const url = `${API}/reservations/${encodeURIComponent(reservation.id)}/headphone`;
+    const body = guestIndex == null ? { status: next } : { status: next, guest_index: guestIndex };
+    try {
+      await axios.put(url, body);
+    } catch (err) {
+      // Retry POST si PUT échoue (parité avec CoachDashboard V186)
+      try {
+        await axios.post(url, body);
+      } catch (err2) {
+        console.error("[V188 HEADPHONE] échec:", { url, body, status: err2?.response?.status, data: err2?.response?.data });
+        // Rollback
+        setData((prev) => {
+          if (!prev) return prev;
+          const reservations = (prev.reservations || []).map((r) => {
+            if (r.id !== reservation.id) return r;
+            if (guestIndex == null) {
+              return { ...r, headphone_status: current };
+            }
+            const arr = Array.isArray(r.guest_headphones) ? [...r.guest_headphones] : [];
+            while (arr.length <= guestIndex) arr.push(null);
+            arr[guestIndex] = current;
+            return { ...r, guest_headphones: arr };
+          });
+          return { ...prev, reservations };
+        });
+        const detail = err2?.response?.data?.detail || err?.response?.data?.detail || "Réessaye dans un instant.";
+        setActionError(`Statut casque non mis à jour : ${detail}`);
+      }
+    }
+  };
+
   // V185 F3: Annuler une réservation (avec confirmation et règle des 2h)
   const handleCancelReservation = async (reservation) => {
     if (!reservation?.id || cancellingId) return;
@@ -368,27 +424,34 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                         )}
                       </p>
                       <p className="text-white/50 text-xs">{formatOccurrence(r.datetime)}</p>
-                      {/* V187: Liste des prénoms avec pastille casque par personne (lecture seule) */}
+                      {/* V188: Liste des prénoms avec pastille casque par personne — CLIQUABLE */}
                       {(() => {
                         const subscriberName = (r.userName || subscriber.name || "").split(" ")[0] || "Moi";
                         const guests = Array.isArray(r.guests) ? r.guests : [];
                         const guestHp = Array.isArray(r.guest_headphones) ? r.guest_headphones : [];
+                        // [0] = abonné principal, [1..N] = accompagnants
                         const people = [
-                          { name: subscriberName, hp: r.headphone_status || null },
-                          ...guests.map((g, i) => ({ name: g, hp: guestHp[i] || null })),
+                          { name: subscriberName, hp: r.headphone_status || null, guestIndex: null },
+                          ...guests.map((g, i) => ({ name: g, hp: guestHp[i] || null, guestIndex: i })),
                         ];
-                        // Tronque à r.quantity au cas où
                         const totalPlaces = Math.max(1, Number(r.quantity) || 1);
                         const display = people.slice(0, totalPlaces);
-                        const HP_STYLE = {
-                          taken: "#ef4444",      // rouge
-                          returned: "#22c55e",   // vert
-                        };
+                        const HP_STYLE = { taken: "#ef4444", returned: "#22c55e" };
+                        const HP_LABEL = { taken: "Casque pris", returned: "Casque rendu" };
                         return (
                           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-white/70">
                             {display.map((p, idx) => (
                               <span key={idx} className="inline-flex items-center gap-1">
-                                <span style={{ color: HP_STYLE[p.hp] || "rgba(255,255,255,0.3)" }} title={p.hp || "pas de casque"}>🎧</span>
+                                <button
+                                  type="button"
+                                  onClick={() => cycleHeadphone(r, p.guestIndex)}
+                                  title={`🎧 ${HP_LABEL[p.hp] || "Pas de casque"} — clic pour changer`}
+                                  data-testid={`subscriber-headphone-${r.id}-${p.guestIndex ?? "main"}`}
+                                  className="rounded p-0.5 hover:bg-white/5 transition-colors"
+                                  style={{ color: HP_STYLE[p.hp] || "rgba(255,255,255,0.3)", lineHeight: 1 }}
+                                >
+                                  🎧
+                                </button>
                                 <span>{p.name || `Invité ${idx + 1}`}</span>
                               </span>
                             ))}
