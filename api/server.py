@@ -3898,39 +3898,61 @@ def _v184_parse_time_hhmm(time_str):
 
 
 def _v184_next_occurrences(course, days_ahead=14):
-    """V184: Calcule les prochaines occurrences d'un cours récurrent (weekday+time) sur N jours."""
+    """V184/V196: Calcule les prochaines occurrences d'un cours récurrent.
+
+    V196 fixes deux bugs :
+    1. La donnée `weekday` est stockée en convention JavaScript (Sun=0, Sat=6)
+       — c'est ce que le site principal utilise via `Date.getDay()`. Or Python
+       `datetime.weekday()` renvoie Mon=0..Sun=6, donc on convertit avant de
+       comparer. Sans ça, tous les jours étaient décalés de +1.
+    2. Le champ `time` ("18:30") représente l'heure LOCALE (Europe/Zurich),
+       pas UTC. On retournait un ISO marqué `+00:00` qui était reconverti
+       en local par le frontend → "20:30" pendant l'heure d'été. On serialise
+       maintenant en datetime naïf (sans tzinfo), interprété comme local.
+    """
     weekday_value = course.get("weekday")
     try:
-        weekday_num = int(weekday_value) if weekday_value is not None else None
+        js_weekday = int(weekday_value) if weekday_value is not None else None
     except (TypeError, ValueError):
-        weekday_num = None
-    if weekday_num is None or not (0 <= weekday_num <= 6):
+        js_weekday = None
+    if js_weekday is None or not (0 <= js_weekday <= 6):
         return []
+
+    # V196: JS weekday (Sun=0..Sat=6) → Python weekday (Mon=0..Sun=6)
+    py_weekday = (js_weekday - 1) % 7
 
     hm = _v184_parse_time_hhmm(course.get("time", ""))
     hour, minute = hm if hm else (9, 0)
 
     occurrences = []
-    now = datetime.now(timezone.utc)
-    today = now.date()
+    # V196: comparaison en naïf — l'heure du cours est en local Zurich,
+    # pas en UTC. On utilise zoneinfo si dispo (Python 3.9+) pour gérer le DST.
+    try:
+        from zoneinfo import ZoneInfo  # Python 3.9+
+        zurich_now = datetime.now(ZoneInfo("Europe/Zurich"))
+        now_naive = zurich_now.replace(tzinfo=None)
+    except Exception:
+        # Fallback approximatif si zoneinfo indispo : CEST en mai (UTC+2)
+        now_naive = datetime.utcnow() + timedelta(hours=2)
+    today = now_naive.date()
     for offset in range(days_ahead + 1):
         candidate_date = today + timedelta(days=offset)
-        if candidate_date.weekday() != weekday_num:
+        if candidate_date.weekday() != py_weekday:
             continue
         occurrence_dt = datetime(
             candidate_date.year, candidate_date.month, candidate_date.day,
-            hour, minute, tzinfo=timezone.utc
+            hour, minute  # PAS de tzinfo — interprété comme local par le frontend
         )
-        if occurrence_dt < now:
+        if occurrence_dt < now_naive:
             continue
         occurrences.append({
             "course_id": course.get("id"),
             "name": course.get("name"),
-            "weekday": weekday_num,
-            "weekday_label": _V184_WEEKDAY_LABELS_FR[weekday_num],
+            "weekday": js_weekday,  # on garde la convention JS dans la réponse
+            "weekday_label": _V184_WEEKDAY_LABELS_FR[py_weekday],
             "time": course.get("time"),
             "locationName": course.get("locationName") or course.get("location", ""),
-            "datetime": occurrence_dt.isoformat(),
+            "datetime": occurrence_dt.isoformat(),  # naïf : "2026-05-17T18:30:00"
             "date": candidate_date.isoformat(),
         })
     return occurrences
@@ -4035,6 +4057,8 @@ async def get_subscriber_space(access_code: str):
     occurrences.sort(key=lambda o: o.get("datetime", ""))
 
     # Historique de réservations de l'abonné (par email) — V187 expose quantity/guests/casques
+    # V196: ajoute courseTime pour permettre au frontend d'afficher l'heure locale brute
+    # (évite les décalages timezone des anciennes réservations stockées en UTC).
     reservations_raw = []
     if user_email:
         reservations_raw = await db.reservations.find(
@@ -4042,7 +4066,7 @@ async def get_subscriber_space(access_code: str):
             {
                 "_id": 0, "id": 1, "courseName": 1, "courseId": 1,
                 "datetime": 1, "createdAt": 1, "reservationCode": 1,
-                "quantity": 1, "userName": 1,
+                "quantity": 1, "userName": 1, "courseTime": 1,
                 "headphone_status": 1, "guests": 1, "guest_headphones": 1,
             }
         ).sort("createdAt", -1).to_list(50)

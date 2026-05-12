@@ -26,13 +26,36 @@ const FRENCH_DATE_OPTIONS = {
   minute: "2-digit",
 };
 
-function formatOccurrence(iso) {
-  if (!iso) return "";
-  try {
-    return new Date(iso).toLocaleString("fr-FR", FRENCH_DATE_OPTIONS);
-  } catch {
-    return iso;
+// V196: Format sans calcul de timezone — utilise directement les champs
+// .date (YYYY-MM-DD) + .time ("HH:MM") pour matcher le site principal
+// qui affiche l'heure telle quelle (l'heure du cours = heure locale Zurich).
+// Compatible avec :
+//   - un objet occurrence : { date, time, ... }
+//   - une chaîne ISO datetime (réservations existantes)
+function formatOccurrence(input) {
+  if (!input) return "";
+  let dateStr = "";
+  let timeStr = "";
+  if (typeof input === "object") {
+    if (input.date) {
+      try {
+        // T12:00:00 évite tout décalage de jour selon la timezone du navigateur
+        dateStr = new Date(input.date + "T12:00:00").toLocaleDateString("fr-FR", {
+          weekday: "short", day: "numeric", month: "short",
+        });
+      } catch {
+        dateStr = input.date;
+      }
+    }
+    timeStr = input.time || "";
+  } else {
+    try {
+      return new Date(input).toLocaleString("fr-FR", FRENCH_DATE_OPTIONS);
+    } catch {
+      return String(input);
+    }
   }
+  return [dateStr, timeStr].filter(Boolean).join(", ");
 }
 
 export default function SubscriberSpace({ accessCode: propCode }) {
@@ -467,7 +490,14 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                           </span>
                         )}
                       </p>
-                      <p className="text-white/50 text-xs">{formatOccurrence(r.datetime)}</p>
+                      <p className="text-white/50 text-xs">
+                        {/* V196: si courseTime est connu (string brute "HH:MM"),
+                            on s'en sert pour éviter les décalages timezone des
+                            anciennes réservations stockées en UTC. */}
+                        {r.courseTime
+                          ? formatOccurrence({ date: (r.datetime || "").slice(0, 10), time: r.courseTime })
+                          : formatOccurrence(r.datetime)}
+                      </p>
                       {/* V188: Liste des prénoms avec pastille casque par personne — CLIQUABLE */}
                       {(() => {
                         const subscriberName = (r.userName || subscriber.name || "").split(" ")[0] || "Moi";
@@ -567,7 +597,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                     <div className="min-w-0 mb-2">
                       <p className="text-sm font-medium truncate">{occ.name || "Cours"}</p>
                       <p className="text-white/50 text-xs">
-                        {formatOccurrence(occ.datetime)}
+                        {formatOccurrence(occ)}
                         {occ.locationName ? ` · ${occ.locationName}` : ""}
                       </p>
                     </div>
