@@ -3982,12 +3982,17 @@ async def get_subscriber_space(access_code: str):
         occurrences.extend(_v184_next_occurrences(course, days_ahead=14))
     occurrences.sort(key=lambda o: o.get("datetime", ""))
 
-    # Historique de réservations de l'abonné (par email)
+    # Historique de réservations de l'abonné (par email) — V187 expose quantity/guests/casques
     reservations_raw = []
     if user_email:
         reservations_raw = await db.reservations.find(
             {"userEmail": {"$regex": f"^{user_email}$", "$options": "i"}},
-            {"_id": 0, "id": 1, "courseName": 1, "datetime": 1, "createdAt": 1, "reservationCode": 1}
+            {
+                "_id": 0, "id": 1, "courseName": 1, "courseId": 1,
+                "datetime": 1, "createdAt": 1, "reservationCode": 1,
+                "quantity": 1, "userName": 1,
+                "headphone_status": 1, "guests": 1, "guest_headphones": 1,
+            }
         ).sort("createdAt", -1).to_list(50)
 
     return {
@@ -4038,6 +4043,19 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         quantity = 1
     if quantity < 1 or quantity > 20:
         raise HTTPException(status_code=400, detail="Nombre de places invalide (1 à 20)")
+
+    # V187: Prénoms des accompagnants (place 1 = abonné, places 2..N = guests)
+    raw_guests = body.get("guests") if isinstance(body, dict) else None
+    guests = []
+    if isinstance(raw_guests, list):
+        for g in raw_guests:
+            if isinstance(g, str):
+                clean = g.strip()
+                if clean:
+                    guests.append(clean[:50])  # limite anti-abus
+    # Tronquer si plus de guests que de places supplémentaires
+    expected_guests = max(0, quantity - 1)
+    guests = guests[:expected_guests]
 
     subscription = await db.subscriptions.find_one(
         {"code": code_upper, "status": "active"}, {"_id": 0}
@@ -4119,10 +4137,13 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         "validatedAt": None,
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "coach_id": coach_id,
+        # V187: Prénoms et statuts casque par accompagnant
+        "guests": guests,
+        "guest_headphones": [None] * len(guests),
     }
     await db.reservations.insert_one(reservation_doc)
     reservation_doc.pop("_id", None)
-    logger.info(f"[SUBSCRIBER_SPACE V186] Réservation {reservation_doc['reservationCode']} pour {user_email} ({course.get('name')}) × {quantity}")
+    logger.info(f"[SUBSCRIBER_SPACE V187] Réservation {reservation_doc['reservationCode']} pour {user_email} ({course.get('name')}) × {quantity} guests={guests}")
 
     return {
         "success": True,

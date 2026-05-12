@@ -54,8 +54,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const [cancellingId, setCancellingId] = useState(null);
   // V186 F2: Compteurs par occurrence (multi-personnes)
   const [quantities, setQuantities] = useState({});
-  // V186 F3: État accordéon conditions
-  const [termsOpen, setTermsOpen] = useState(false);
+  // V187: Prénoms des accompagnants par occurrence (array de strings)
+  const [guestNames, setGuestNames] = useState({});
 
   const loadSpace = useCallback(async () => {
     if (!accessCode) {
@@ -84,16 +84,23 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     if (!occurrence?.course_id || reservingKey) return;
     const reservationKey = `${occurrence.course_id}_${occurrence.datetime}`;
     const qty = Math.max(1, Number(quantities[reservationKey]) || 1);
+    // V187: prénoms des accompagnants (place 1 = abonné, donc on envoie qty - 1 prénoms)
+    const rawGuests = guestNames[reservationKey] || [];
+    const guests = rawGuests
+      .slice(0, Math.max(0, qty - 1))
+      .map((g) => (g || "").trim())
+      .filter(Boolean);
     setReservingKey(reservationKey);
     setActionError("");
     try {
       const res = await axios.post(
         `${API}/subscriber/space/${encodeURIComponent(accessCode)}/reserve/${encodeURIComponent(occurrence.course_id)}`,
-        { datetime: occurrence.datetime, quantity: qty }
+        { datetime: occurrence.datetime, quantity: qty, guests }
       );
       setConfirmedKeys((prev) => ({ ...prev, [reservationKey]: true }));
-      // V186: reset compteur après réservation
+      // V186/V187: reset compteur + guests après réservation
       setQuantities((prev) => ({ ...prev, [reservationKey]: 1 }));
+      setGuestNames((prev) => ({ ...prev, [reservationKey]: [] }));
       if (typeof res.data?.remaining_sessions === "number") {
         setData((prev) =>
           prev
@@ -116,6 +123,24 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       const current = Math.max(1, Number(prev[key]) || 1);
       const next = Math.min(Math.max(1, current + delta), Math.max(1, max));
       return { ...prev, [key]: next };
+    });
+    // V187: tronquer la liste des prénoms si la quantité diminue
+    if (delta < 0) {
+      setGuestNames((prev) => {
+        const cur = prev[key] || [];
+        const targetGuests = Math.max(0, Math.max(1, (Number(quantities[key]) || 1) + delta) - 1);
+        return { ...prev, [key]: cur.slice(0, targetGuests) };
+      });
+    }
+  };
+
+  // V187: éditer le prénom d'un guest à l'index donné (0-based dans la liste des accompagnants)
+  const setGuestName = (key, index, value) => {
+    setGuestNames((prev) => {
+      const cur = [...(prev[key] || [])];
+      while (cur.length <= index) cur.push("");
+      cur[index] = value.slice(0, 50);
+      return { ...prev, [key]: cur };
     });
   };
 
@@ -343,18 +368,33 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                         )}
                       </p>
                       <p className="text-white/50 text-xs">{formatOccurrence(r.datetime)}</p>
-                      {/* V185 F4: Pastille casque par réservation */}
-                      {hp && (
-                        <p
-                          className="text-[10px] mt-1 inline-block px-2 py-0.5 rounded-full"
-                          style={{
-                            background: hp === "taken" ? "rgba(239,68,68,0.15)" : "rgba(34,197,94,0.15)",
-                            color: hp === "taken" ? "#fca5a5" : "#86efac",
-                          }}
-                        >
-                          🎧 {hp === "taken" ? "Casque pris" : "Casque rendu"}
-                        </p>
-                      )}
+                      {/* V187: Liste des prénoms avec pastille casque par personne (lecture seule) */}
+                      {(() => {
+                        const subscriberName = (r.userName || subscriber.name || "").split(" ")[0] || "Moi";
+                        const guests = Array.isArray(r.guests) ? r.guests : [];
+                        const guestHp = Array.isArray(r.guest_headphones) ? r.guest_headphones : [];
+                        const people = [
+                          { name: subscriberName, hp: r.headphone_status || null },
+                          ...guests.map((g, i) => ({ name: g, hp: guestHp[i] || null })),
+                        ];
+                        // Tronque à r.quantity au cas où
+                        const totalPlaces = Math.max(1, Number(r.quantity) || 1);
+                        const display = people.slice(0, totalPlaces);
+                        const HP_STYLE = {
+                          taken: "#ef4444",      // rouge
+                          returned: "#22c55e",   // vert
+                        };
+                        return (
+                          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-white/70">
+                            {display.map((p, idx) => (
+                              <span key={idx} className="inline-flex items-center gap-1">
+                                <span style={{ color: HP_STYLE[p.hp] || "rgba(255,255,255,0.3)" }} title={p.hp || "pas de casque"}>🎧</span>
+                                <span>{p.name || `Invité ${idx + 1}`}</span>
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
                     <button
                       type="button"
@@ -434,42 +474,73 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                         ✓ Réservé
                       </span>
                     ) : (
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        {/* V186 F2: Compteur de places */}
-                        <div className="flex items-center gap-2" data-testid={`qty-${occ.course_id}`}>
+                      <>
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          {/* V186 F2: Compteur de places */}
+                          <div className="flex items-center gap-2" data-testid={`qty-${occ.course_id}`}>
+                            <button
+                              type="button"
+                              onClick={dec}
+                              disabled={qty <= 1 || isBusy || noSessions}
+                              aria-label="Diminuer"
+                              className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
+                              style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}
+                            >
+                              −
+                            </button>
+                            <span className="text-sm font-semibold w-6 text-center">{qty}</span>
+                            <button
+                              type="button"
+                              onClick={inc}
+                              disabled={qty >= maxQty || isBusy || noSessions}
+                              aria-label="Augmenter"
+                              className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
+                              style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}
+                            >
+                              +
+                            </button>
+                          </div>
                           <button
                             type="button"
-                            onClick={dec}
-                            disabled={qty <= 1 || isBusy || noSessions}
-                            aria-label="Diminuer"
-                            className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
-                            style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}
+                            disabled={isBusy || noSessions}
+                            onClick={() => handleReserve(occ)}
+                            className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-50"
+                            style={{ background: COLORS.primary, color: "white" }}
+                            data-testid={`reserve-${occ.course_id}`}
                           >
-                            −
-                          </button>
-                          <span className="text-sm font-semibold w-6 text-center">{qty}</span>
-                          <button
-                            type="button"
-                            onClick={inc}
-                            disabled={qty >= maxQty || isBusy || noSessions}
-                            aria-label="Augmenter"
-                            className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
-                            style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}
-                          >
-                            +
+                            {isBusy ? "…" : qty > 1 ? `Réserver ${qty} places` : "Réserver"}
                           </button>
                         </div>
-                        <button
-                          type="button"
-                          disabled={isBusy || noSessions}
-                          onClick={() => handleReserve(occ)}
-                          className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-50"
-                          style={{ background: COLORS.primary, color: "white" }}
-                          data-testid={`reserve-${occ.course_id}`}
-                        >
-                          {isBusy ? "…" : qty > 1 ? `Réserver ${qty} places` : "Réserver"}
-                        </button>
-                      </div>
+
+                        {/* V187: liste des places + saisie des prénoms accompagnants */}
+                        {qty > 1 && (
+                          <ol className="mt-3 space-y-1 text-xs text-white/70">
+                            <li className="flex items-center gap-2">
+                              <span className="w-4 text-white/40">1.</span>
+                              <span className="flex-1">{firstName} <span className="text-white/40">(moi)</span></span>
+                            </li>
+                            {Array.from({ length: qty - 1 }).map((_, i) => (
+                              <li key={i} className="flex items-center gap-2">
+                                <span className="w-4 text-white/40">{i + 2}.</span>
+                                <input
+                                  type="text"
+                                  value={(guestNames[key] || [])[i] || ""}
+                                  onChange={(e) => setGuestName(key, i, e.target.value)}
+                                  placeholder="Prénom"
+                                  maxLength={50}
+                                  data-testid={`guest-input-${occ.course_id}-${i}`}
+                                  className="flex-1 px-2 py-1 rounded text-xs"
+                                  style={{
+                                    background: "rgba(255,255,255,0.05)",
+                                    border: "1px solid rgba(255,255,255,0.12)",
+                                    color: "white",
+                                  }}
+                                />
+                              </li>
+                            ))}
+                          </ol>
+                        )}
+                      </>
                     )}
                   </li>
                 );
@@ -557,33 +628,19 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           })()}
         </section>
 
-        {/* ===== V186 F3: Conditions d'utilisation (accordéon) ===== */}
-        <section
-          className="rounded-2xl"
-          style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
-          data-testid="subscriber-space-terms"
-        >
-          <button
-            type="button"
-            onClick={() => setTermsOpen((v) => !v)}
-            className="w-full flex items-center justify-between px-4 py-3 text-left text-sm font-medium"
-            style={{ color: "rgba(255,255,255,0.7)" }}
-            aria-expanded={termsOpen}
+        {/* ===== V187: Conditions d'utilisation = lien vers la page CGU ===== */}
+        <div className="text-center pt-2 pb-1">
+          <a
+            href="/conditions"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs underline"
+            style={{ color: "rgba(255,255,255,0.5)" }}
+            data-testid="subscriber-space-terms-link"
           >
-            <span>📋 Conditions d'utilisation</span>
-            <span style={{ transform: termsOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▾</span>
-          </button>
-          {termsOpen && (
-            <ul className="px-4 pb-4 space-y-2 text-xs leading-relaxed" style={{ color: "rgba(255,255,255,0.45)" }}>
-              <li>• Chaque séance réservée est décomptée de votre solde.</li>
-              <li>• Vous pouvez annuler une réservation jusqu'à 2 heures avant le cours.</li>
-              <li>• Les séances non utilisées avant la date d'expiration de votre abonnement ne sont pas remboursables.</li>
-              <li>• Les casques audio doivent être retournés à la fin de chaque cours.</li>
-              <li>• En cas de perte ou de dommage du casque, des frais de remplacement pourront être appliqués.</li>
-              <li>• Pour toute question, contactez votre coach via le chat Afroboost.</li>
-            </ul>
-          )}
-        </section>
+            📋 Conditions d'utilisation
+          </a>
+        </div>
       </div>
 
       {/* ===== QR Fullscreen Dialog ===== */}
