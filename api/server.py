@@ -3823,6 +3823,315 @@ async def get_subscriber_by_code(code: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# === V184: ESPACE ABONNÉ ACCÈS RAPIDE — Page publique /espace/AFR-XXXXXX ===
+# Endpoints dédiés à la page d'accès rapide abonné (séances + QR + réservation)
+
+_V184_WEEKDAY_LABELS_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+
+
+def _v184_parse_time_hhmm(time_str):
+    """V184: Parse '18:30' / '18h30' / '18h' → (hour, minute) ou None."""
+    if not time_str or not isinstance(time_str, str):
+        return None
+    try:
+        cleaned = time_str.strip().lower().replace("h", ":")
+        parts = cleaned.split(":")
+        hour = int(parts[0])
+        minute = int(parts[1]) if len(parts) > 1 and parts[1] else 0
+        if 0 <= hour < 24 and 0 <= minute < 60:
+            return hour, minute
+    except (ValueError, IndexError):
+        return None
+    return None
+
+
+def _v184_next_occurrences(course, days_ahead=14):
+    """V184: Calcule les prochaines occurrences d'un cours récurrent (weekday+time) sur N jours."""
+    weekday_value = course.get("weekday")
+    try:
+        weekday_num = int(weekday_value) if weekday_value is not None else None
+    except (TypeError, ValueError):
+        weekday_num = None
+    if weekday_num is None or not (0 <= weekday_num <= 6):
+        return []
+
+    hm = _v184_parse_time_hhmm(course.get("time", ""))
+    hour, minute = hm if hm else (9, 0)
+
+    occurrences = []
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    for offset in range(days_ahead + 1):
+        candidate_date = today + timedelta(days=offset)
+        if candidate_date.weekday() != weekday_num:
+            continue
+        occurrence_dt = datetime(
+            candidate_date.year, candidate_date.month, candidate_date.day,
+            hour, minute, tzinfo=timezone.utc
+        )
+        if occurrence_dt < now:
+            continue
+        occurrences.append({
+            "course_id": course.get("id"),
+            "name": course.get("name"),
+            "weekday": weekday_num,
+            "weekday_label": _V184_WEEKDAY_LABELS_FR[weekday_num],
+            "time": course.get("time"),
+            "locationName": course.get("locationName") or course.get("location", ""),
+            "datetime": occurrence_dt.isoformat(),
+            "date": candidate_date.isoformat(),
+        })
+    return occurrences
+
+
+async def _v184_find_coach_for_code(code_upper):
+    """V184: Localise le coach propriétaire d'un code abonné via discount_codes.coach_id."""
+    if not code_upper:
+        return None
+    discount = await db.discount_codes.find_one(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}},
+        {"_id": 0, "coach_id": 1}
+    )
+    coach_id = (discount or {}).get("coach_id")
+    if not coach_id:
+        return None
+    return await db.coaches.find_one(
+        {"$or": [{"email": coach_id}, {"id": coach_id}]},
+        {"_id": 0}
+    )
+
+
+def _v184_public_origin():
+    """V184: Origine publique pour construire les liens partagés."""
+    base = os.environ.get("FRONTEND_URL") or "https://afroboost.com"
+    return base.rstrip("/")
+
+
+@api_router.get("/subscriber/space/{access_code}")
+async def get_subscriber_space(access_code: str):
+    """V184: Données complètes de la page d'accès rapide d'un abonné."""
+    code_upper = (access_code or "").strip().upper()
+    if not code_upper:
+        raise HTTPException(status_code=400, detail="Code d'accès requis")
+
+    # Source d'autorité : collection subscriptions (mise à jour par les réservations)
+    subscription = await db.subscriptions.find_one(
+        {"code": code_upper, "status": "active"}, {"_id": 0}
+    )
+    # Fallback historique : un code peut exister dans discount_codes sans subscription créée
+    discount = await db.discount_codes.find_one(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+    )
+    if not subscription and not discount:
+        raise HTTPException(status_code=404, detail="Code abonné introuvable")
+
+    if subscription:
+        user_email = (subscription.get("email") or "").lower().strip()
+        display_name = subscription.get("name")
+        total_sessions = subscription.get("total_sessions") or (discount.get("maxUses") if discount else 0) or 0
+        used_sessions = subscription.get("used_sessions") or 0
+        remaining_sessions = subscription.get("remaining_sessions")
+        if remaining_sessions is None:
+            remaining_sessions = max(0, (total_sessions or 0) - (used_sessions or 0))
+        offer_name = subscription.get("offer_name") or (discount.get("name") if discount else "") or "Abonnement"
+        expires_at = subscription.get("expires_at") or (discount.get("expiresAt") if discount else None)
+        coach_id_hint = subscription.get("coach_id")
+    else:
+        user_email = (discount.get("assignedEmail") or "").lower().strip()
+        display_name = discount.get("name") or (user_email.split("@")[0] if user_email else "")
+        total_sessions = discount.get("maxUses") or 0
+        used_sessions = discount.get("used") or 0
+        remaining_sessions = max(0, total_sessions - used_sessions)
+        offer_name = discount.get("name") or "Abonnement"
+        expires_at = discount.get("expiresAt")
+        coach_id_hint = discount.get("coach_id")
+
+    if not display_name and user_email:
+        participant = await db.chat_participants.find_one({"email": user_email}, {"_id": 0, "name": 1})
+        if participant:
+            display_name = participant.get("name")
+    if not display_name:
+        display_name = (user_email.split("@")[0] if user_email else "Abonné")
+
+    # Coach branding (best-effort)
+    coach = await _v184_find_coach_for_code(code_upper)
+    if not coach and coach_id_hint:
+        coach = await db.coaches.find_one(
+            {"$or": [{"email": coach_id_hint}, {"id": coach_id_hint}]}, {"_id": 0}
+        )
+    coach_payload = None
+    if coach:
+        coach_payload = {
+            "id": coach.get("id") or coach.get("email"),
+            "name": coach.get("platform_name") or coach.get("name") or "",
+            "logo_url": coach.get("logo_url") or coach.get("photo_url") or "",
+        }
+
+    # Offer details (optionnel)
+    offer = await db.offers.find_one({"name": offer_name}, {"_id": 0}) if offer_name else None
+
+    # Prochaines occurrences sur 14 jours, filtrées par coach quand connu
+    course_query = {"archived": {"$ne": True}, "visible": {"$ne": False}}
+    coach_email_for_courses = (coach or {}).get("email") or coach_id_hint
+    if coach_email_for_courses:
+        course_query["coach_id"] = coach_email_for_courses
+    courses_raw = await db.courses.find(course_query, {"_id": 0}).to_list(200)
+
+    occurrences = []
+    for course in courses_raw:
+        occurrences.extend(_v184_next_occurrences(course, days_ahead=14))
+    occurrences.sort(key=lambda o: o.get("datetime", ""))
+
+    # Historique de réservations de l'abonné (par email)
+    reservations_raw = []
+    if user_email:
+        reservations_raw = await db.reservations.find(
+            {"userEmail": {"$regex": f"^{user_email}$", "$options": "i"}},
+            {"_id": 0, "id": 1, "courseName": 1, "datetime": 1, "createdAt": 1, "reservationCode": 1}
+        ).sort("createdAt", -1).to_list(50)
+
+    return {
+        "success": True,
+        "subscriber": {
+            "name": display_name,
+            "email": user_email,
+            "code": code_upper,
+        },
+        "subscription": {
+            "id": (subscription or {}).get("id"),
+            "offer_name": offer_name,
+            "total_sessions": total_sessions,
+            "used_sessions": used_sessions,
+            "remaining_sessions": remaining_sessions,
+            "expires_at": expires_at,
+        },
+        "offer": {
+            "name": offer.get("name") if offer else offer_name,
+            "description": offer.get("description") if offer else "",
+            "thumbnail": offer.get("thumbnail") if offer else "",
+        } if offer else None,
+        "coach": coach_payload,
+        "upcoming_courses": occurrences,
+        "reservations": reservations_raw,
+    }
+
+
+@api_router.post("/subscriber/space/{access_code}/reserve/{course_id}")
+async def reserve_course_from_space(access_code: str, course_id: str, request: Request):
+    """V184: Permet à un abonné de réserver un cours via sa page d'accès rapide."""
+    code_upper = (access_code or "").strip().upper()
+    if not code_upper:
+        raise HTTPException(status_code=400, detail="Code d'accès requis")
+    if not course_id:
+        raise HTTPException(status_code=400, detail="Cours requis")
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    occurrence_iso = body.get("datetime") if isinstance(body, dict) else None
+
+    subscription = await db.subscriptions.find_one(
+        {"code": code_upper, "status": "active"}, {"_id": 0}
+    )
+    if not subscription:
+        raise HTTPException(status_code=404, detail="Abonnement introuvable ou inactif")
+
+    remaining = subscription.get("remaining_sessions", 0)
+    if remaining <= 0:
+        raise HTTPException(status_code=400, detail="Plus de séances disponibles")
+
+    course = await db.courses.find_one({"id": course_id}, {"_id": 0})
+    if not course or course.get("archived"):
+        raise HTTPException(status_code=404, detail="Cours introuvable")
+
+    user_email = (subscription.get("email") or "").lower().strip()
+    user_name = subscription.get("name") or (user_email.split("@")[0] if user_email else "Abonné")
+
+    # Déduction subscription (source d'autorité)
+    new_remaining = remaining - 1
+    new_used = subscription.get("used_sessions", 0) + 1
+    update_data = {
+        "remaining_sessions": new_remaining,
+        "used_sessions": new_used,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if new_remaining <= 0:
+        update_data["status"] = "completed"
+    await db.subscriptions.update_one({"id": subscription.get("id")}, {"$set": update_data})
+
+    # Incrément discount_codes.used (cohérent avec la logique de create_reservation)
+    await db.discount_codes.update_one(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}},
+        {"$inc": {"used": 1}}
+    )
+
+    coach_id = subscription.get("coach_id") or course.get("coach_id") or "bassi_default"
+
+    reservation_doc = {
+        "id": str(uuid.uuid4()),
+        "reservationCode": f"AF{uuid.uuid4().hex[:8].upper()}",
+        "userName": user_name,
+        "userEmail": user_email,
+        "userWhatsapp": "",
+        "courseId": course_id,
+        "courseName": course.get("name"),
+        "courseTime": course.get("time"),
+        "datetime": occurrence_iso,
+        "offerId": "",
+        "offerName": subscription.get("offer_name") or "Abonnement",
+        "price": 0.0,
+        "quantity": 1,
+        "totalPrice": 0.0,
+        "discountCode": code_upper,
+        "promoCode": code_upper,
+        "source": "subscriber_space",
+        "type": "ticket",
+        "validated": False,
+        "validatedAt": None,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "coach_id": coach_id,
+    }
+    await db.reservations.insert_one(reservation_doc)
+    reservation_doc.pop("_id", None)
+    logger.info(f"[SUBSCRIBER_SPACE V184] Réservation {reservation_doc['reservationCode']} pour {user_email} ({course.get('name')})")
+
+    return {
+        "success": True,
+        "reservation": reservation_doc,
+        "remaining_sessions": new_remaining,
+    }
+
+
+@api_router.get("/subscriber/by-email/{email}/space-link")
+async def get_space_link_by_email(email: str):
+    """V184: Retourne le lien d'accès rapide d'un abonné identifié par son email."""
+    email_clean = (email or "").lower().strip()
+    if not email_clean:
+        raise HTTPException(status_code=400, detail="Email requis")
+
+    subscription = await db.subscriptions.find_one(
+        {"email": email_clean, "status": "active"}, {"_id": 0, "code": 1}
+    )
+    code = (subscription or {}).get("code")
+    if not code:
+        # Fallback : code assigné dans discount_codes
+        discount = await db.discount_codes.find_one(
+            {"assignedEmail": email_clean, "active": True}, {"_id": 0, "code": 1}
+        )
+        code = (discount or {}).get("code")
+    if not code:
+        raise HTTPException(status_code=404, detail="Aucun code abonné pour cet email")
+
+    return {
+        "success": True,
+        "email": email_clean,
+        "code": code,
+        "url": f"{_v184_public_origin()}/espace/{code}",
+    }
+
+
 # === ESPACE ABONNÉ — Récupération d'accès par email ou WhatsApp v11.1 ===
 @api_router.post("/subscriber/recover")
 async def recover_subscriber_access(request: Request):

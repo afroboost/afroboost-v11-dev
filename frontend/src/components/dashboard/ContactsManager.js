@@ -9,6 +9,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { parseContacts } from '../../utils/contactParser';
+// V184: Espace abonné — partage du lien d'accès rapide
+import { copyToClipboard } from '../../utils/clipboard';
 
 export default function ContactsManager({ API, coachEmail }) {
   const [contacts, setContacts] = useState([]);
@@ -39,6 +41,34 @@ export default function ContactsManager({ API, coachEmail }) {
   const [assigningCategory, setAssigningCategory] = useState(false);
 
   const headers = { 'X-User-Email': coachEmail || '' };
+
+  // V184: État + handler pour le bouton "Partager lien d'accès abonné"
+  const [shareLinkBusy, setShareLinkBusy] = useState(null); // email en cours
+  const [shareLinkStatus, setShareLinkStatus] = useState({}); // { email: 'copied' | 'none' | 'error' }
+
+  const handleShareSubscriberLink = useCallback(async (email) => {
+    if (!email || shareLinkBusy === email) return;
+    setShareLinkBusy(email);
+    try {
+      const res = await axios.get(`${API}/subscriber/by-email/${encodeURIComponent(email)}/space-link`, { headers });
+      const url = res?.data?.url || (res?.data?.code ? `${window.location.origin}/espace/${res.data.code}` : null);
+      if (!url) {
+        setShareLinkStatus(prev => ({ ...prev, [email]: 'error' }));
+      } else {
+        const r = await copyToClipboard(url);
+        setShareLinkStatus(prev => ({ ...prev, [email]: r.success ? 'copied' : 'error' }));
+      }
+    } catch (err) {
+      setShareLinkStatus(prev => ({ ...prev, [email]: err?.response?.status === 404 ? 'none' : 'error' }));
+    } finally {
+      setShareLinkBusy(null);
+      setTimeout(() => setShareLinkStatus(prev => {
+        const next = { ...prev };
+        delete next[email];
+        return next;
+      }), 2500);
+    }
+  }, [API, coachEmail, shareLinkBusy]);
 
   // V161: Birthday Calendar states
   var _bdm = useState(new Date().getMonth());
@@ -907,6 +937,32 @@ export default function ContactsManager({ API, coachEmail }) {
                 }}>
                   {c.source === 'google' ? 'Google' : c.source === 'app' ? 'App' : c.source === 'stripe_payment' ? 'Stripe' : c.source || 'Import'}
                 </span>
+                {/* V184: Bouton "Partager lien d'accès abonné" — visible si l'individu a un email */}
+                {!isGroup && c.email && (() => {
+                  const status = shareLinkStatus[c.email];
+                  const isBusy = shareLinkBusy === c.email;
+                  let label = '🔗 Lien'; let bg = 'rgba(217,28,210,0.18)'; let col = '#F0A8EE';
+                  if (isBusy) { label = '…'; }
+                  else if (status === 'copied') { label = '✓ Copié'; bg = 'rgba(34,197,94,0.18)'; col = '#86efac'; }
+                  else if (status === 'none') { label = '✗ Pas abonné'; bg = 'rgba(255,255,255,0.06)'; col = 'rgba(255,255,255,0.5)'; }
+                  else if (status === 'error') { label = '⚠️ Erreur'; bg = 'rgba(239,68,68,0.18)'; col = '#fca5a5'; }
+                  return (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleShareSubscriberLink(c.email); }}
+                      disabled={isBusy}
+                      title="Partager le lien d'accès abonné"
+                      data-testid={`share-subscriber-link-${c.email}`}
+                      style={{
+                        padding: '3px 8px', borderRadius: '10px', fontSize: '10px',
+                        background: bg, color: col, border: 'none', cursor: isBusy ? 'wait' : 'pointer',
+                        whiteSpace: 'nowrap', flexShrink: 0, fontWeight: 500
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })()}
               </div>
             );
           })

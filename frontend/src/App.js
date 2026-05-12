@@ -56,6 +56,8 @@ import { CoachSearchModal } from "./components/CoachSearch";
 // import CoachVitrine from "./components/CoachVitrine";
 import PartnersCarousel from "./components/PartnersCarousel";
 import AudioPlayer from "./components/AudioPlayer";
+// V184: Espace abonné accès rapide (lien public /espace/AFR-XXXXXX)
+import SubscriberSpace from "./components/SubscriberSpace";
 import { useDataCache, invalidateCache } from "./hooks/useDataCache";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
@@ -2417,6 +2419,7 @@ function App() {
   const [userRole, setUserRole] = useState(null); // 'super_admin', 'coach', 'user'
   const [showCoachSearch, setShowCoachSearch] = useState(false); // v8.9.4: Modal recherche coach
   const [showCoachVitrine, setShowCoachVitrine] = useState(null); // v8.9.6: Username du coach pour vitrine
+  const [showSubscriberSpace, setShowSubscriberSpace] = useState(null); // V184: Code abonné pour espace d'accès rapide
   const [coachVitrineLoaded, setCoachVitrineLoaded] = useState(false); // v160: flag data coach chargee
   const [currentCoachVitrineEmail, setCurrentCoachVitrineEmail] = useState(null); // v160.5: Email du coach dont on affiche la vitrine (pour isolation commentaires/likes et Reserve button)
   const [currentCoachVitrineName, setCurrentCoachVitrineName] = useState(null); // v160.7: Nom du coach de la vitrine (pour ChatWidget header)
@@ -2959,6 +2962,19 @@ function App() {
 
     // Écouter les changements d'URL
     const handlePopState = () => checkCoachVitrine();
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // V184: Détecter l'URL /espace/:accessCode pour afficher la page d'accès rapide abonné
+  useEffect(() => {
+    const checkSubscriberSpace = () => {
+      const path = window.location.pathname;
+      const match = path.match(/^\/espace\/([^/]+)\/?$/);
+      setShowSubscriberSpace(match ? decodeURIComponent(match[1]).toUpperCase() : null);
+    };
+    checkSubscriberSpace();
+    const handlePopState = () => checkSubscriberSpace();
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
@@ -4260,6 +4276,11 @@ function App() {
   // Pour que les liens /#/v/{slug} fonctionnent même quand le coach est connecté
   if (mediaSlug) {
     return <MediaViewer slug={mediaSlug} />;
+  }
+
+  // V184: Espace abonné accès rapide — lien public, pas d'auth requise
+  if (showSubscriberSpace) {
+    return <SubscriberSpace accessCode={showSubscriberSpace} />;
   }
 
   // Panneau Super Admin
