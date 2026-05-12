@@ -969,25 +969,6 @@ const VISITOR_QUICK_REPLIES = [
   }
 ];
 
-// V197: Style bouton quick-reply (inline, pas de Tailwind pour cette partie)
-const quickReplyButtonStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  padding: '10px 16px',
-  margin: '4px 0',
-  background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.1), rgba(139, 92, 246, 0.1))',
-  border: '1px solid rgba(217, 28, 210, 0.3)',
-  borderRadius: '12px',
-  color: '#FFFFFF',
-  fontSize: '14px',
-  fontWeight: '500',
-  cursor: 'pointer',
-  transition: 'all 0.2s ease',
-  width: '100%',
-  textAlign: 'left'
-};
-
 /**
  * Widget de chat IA flottant avec reconnaissance automatique et historique
  * Utilise l'API /api/chat/smart-entry pour identifier les utilisateurs
@@ -2022,8 +2003,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
   const typingTimeoutRef = useRef(null); // Timer pour cacher l'indicateur après 3s
   const lastTypingEmitRef = useRef(0); // Éviter le spam d'événements typing
 
-  // V197: État des boutons quick-reply visiteurs (cachés par défaut, activés après le formulaire visiteur)
-  const [showQuickReplies, setShowQuickReplies] = useState(false);
+  // V197b: Quick replies chargés depuis l'API (avec fallback statique VISITOR_QUICK_REPLIES)
+  const [quickRepliesData, setQuickRepliesData] = useState(VISITOR_QUICK_REPLIES);
+  // V197b: Liste éditable côté coach (inclut active/inactif)
+  const [botRepliesEdit, setBotRepliesEdit] = useState([]);
+  const [botRepliesSavingId, setBotRepliesSavingId] = useState(null);
   
   // === MESSAGERIE PRIVÉE (MP) ===
   const [privateChats, setPrivateChats] = useState([]); // Liste des conversations MP actives
@@ -4038,6 +4022,19 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
     }
   }, [messages]);
 
+  // V197b: Charger les quick replies depuis l'API au montage (fallback sur VISITOR_QUICK_REPLIES si erreur)
+  useEffect(() => {
+    let cancelled = false;
+    axios.get(`${API}/bot/quick-replies`)
+      .then(res => {
+        if (!cancelled && Array.isArray(res.data) && res.data.length > 0) {
+          setQuickRepliesData(res.data);
+        }
+      })
+      .catch(err => console.log('V197b: fallback quick replies statiques —', err.message));
+    return () => { cancelled = true; };
+  }, []);
+
   // === TIMER DYNAMIQUE: Rafraîchit les timestamps toutes les 60s ===
   const [, setTimestampTick] = useState(0);
   useEffect(() => {
@@ -4083,10 +4080,16 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
       setIsCoachMode(isCoach);
       console.log(`[AUTH] Email: ${clientData.email}, isCoach: ${isCoach}`);
 
-      // V197: Détecter visiteur pur (pas coach, pas abonné) pour afficher les quick-replies
+      // V197b: Détecter visiteur pur (pas coach, pas abonné) pour injecter les chips quick-replies dans le flux
       const isVisitor = !isCoach && !afroboostProfile?.code;
-      // V197: Message de bienvenue local pour les NOUVEAUX visiteurs (remplace le welcome backend)
+      // V197b: Message de bienvenue local pour les NOUVEAUX visiteurs (remplace le welcome backend)
       const V197_WELCOME = 'Bienvenue chez Afroboost ! 🎶💃\n\nJe suis l\'assistant virtuel de Coach Bassi. Comment puis-je t\'aider ?';
+      const baseNow = Date.now();
+      const quickRepliesMsg = {
+        id: 'qr_buttons_' + baseNow,
+        type: 'quick_replies',
+        replies: quickRepliesData
+      };
 
       // Restaurer l'historique si utilisateur reconnu
       if (is_returning && chat_history && chat_history.length > 0) {
@@ -4096,30 +4099,29 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
           text: msg.content,
           sender: msg.sender_name
         }));
-        setMessages([
-          { id: `welcome_${Date.now()}`, type: 'ai', text: message },
+        // V197b: Pour visiteur de retour, on ajoute les chips à la fin pour offrir les questions fréquentes
+        const restored = [
+          { id: `welcome_${baseNow}`, type: 'ai', text: message },
           ...restoredMessages
-        ]);
+        ];
+        if (isVisitor) restored.push(quickRepliesMsg);
+        setMessages(restored);
         setLastMessageCount(chat_history.length + 1);
       } else if (isVisitor) {
-        // V197: NOUVEAU visiteur — message de bienvenue local + boutons cliquables
-        setMessages([{
-          id: `welcome_v197_${Date.now()}`,
-          type: 'ai',
-          text: V197_WELCOME
-        }]);
+        // V197b: NOUVEAU visiteur — message de bienvenue + chips quick-replies dans le flux
+        setMessages([
+          { id: `welcome_v197_${baseNow}`, type: 'ai', text: V197_WELCOME },
+          quickRepliesMsg
+        ]);
         setLastMessageCount(1);
       } else {
         setMessages([{
-          id: `welcome_${Date.now()}`,
+          id: `welcome_${baseNow}`,
           type: 'ai',
           text: message
         }]);
         setLastMessageCount(1);
       }
-
-      // V197: Activer les quick-replies pour les visiteurs (nouveau ou de retour)
-      setShowQuickReplies(isVisitor);
 
       setStep('chat');
       
@@ -4263,9 +4265,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
     }
   };
 
-  // V197: Handler clic sur un bouton quick-reply visiteur
+  // V197b: Handler clic sur un chip quick-reply — supprime les chips, ajoute user+bot, ré-ajoute les chips
   const handleQuickReply = (reply) => {
-    // 1. Ajouter le label cliqué comme message utilisateur (bubble à droite)
     const now = Date.now();
     const userMsg = {
       id: 'qr_user_' + now,
@@ -4274,15 +4275,14 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
       senderId: participantId,
       sender_id: participantId
     };
-    setMessages(prev => [...prev, userMsg]);
 
-    // 2. Masquer temporairement les boutons
-    setShowQuickReplies(false);
+    // 1. Retirer les chips du flux + ajouter le message user
+    setMessages(prev => prev.filter(m => m.type !== 'quick_replies').concat([userMsg]));
 
-    // 3. Afficher l'indicateur "Coach Bassi est en train d'écrire..."
+    // 2. Indicateur "Coach Bassi est en train d'écrire..."
     setTypingUser({ type: 'coach', name: 'Coach Bassi' });
 
-    // 4. Après 800ms, afficher la réponse + flag bouton contact
+    // 3. Après 800ms, ajouter la réponse + ré-ajouter les chips
     setTimeout(() => {
       setTypingUser(null);
       const botMsg = {
@@ -4291,19 +4291,61 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
         text: reply.response,
         showContactButton: true
       };
-      setMessages(prev => [...prev, botMsg]);
-
-      // 5. Ré-afficher les boutons après un court délai pour permettre une nouvelle question
-      setTimeout(() => {
-        setShowQuickReplies(true);
-      }, 500);
+      const newQR = {
+        id: 'qr_buttons_' + (now + 2),
+        type: 'quick_replies',
+        replies: quickRepliesData
+      };
+      setMessages(prev => prev.concat([botMsg, newQR]));
     }, 800);
   };
 
-  // V197: Handler clic "Parler à Coach Bassi" — ouvre WhatsApp avec message pré-rempli
+  // V197b: Handler clic "Parler à Coach Bassi" — ouvre WhatsApp avec message pré-rempli
   const handleContactCoachBassi = () => {
     const url = 'https://wa.me/' + COACH_BASSI_WHATSAPP + '?text=' + encodeURIComponent(COACH_BASSI_WHATSAPP_MESSAGE);
     window.open(url, '_blank');
+  };
+
+  // V197b: Charger la liste complète (actifs+inactifs) pour l'éditeur coach
+  const loadBotRepliesEdit = () => {
+    axios.get(`${API}/bot/quick-replies/all`)
+      .then(res => {
+        if (Array.isArray(res.data)) setBotRepliesEdit(res.data);
+      })
+      .catch(err => console.error('V197b loadBotRepliesEdit:', err.message));
+  };
+
+  // V197b: Modifier localement un champ d'une réponse en cours d'édition
+  const updateBotReplyField = (index, field, value) => {
+    setBotRepliesEdit(prev => {
+      const copy = prev.slice();
+      copy[index] = { ...copy[index], [field]: value };
+      return copy;
+    });
+  };
+
+  // V197b: Sauvegarder une réponse vers l'API (et rafraîchir les chips affichés aux visiteurs)
+  const saveBotReply = (reply) => {
+    setBotRepliesSavingId(reply.id);
+    axios.put(`${API}/bot/quick-replies/${reply.id}`, {
+      emoji: reply.emoji,
+      label: reply.label,
+      response: reply.response,
+      active: reply.active,
+      order: reply.order
+    })
+      .then(() => {
+        // Rafraîchir aussi la liste publique utilisée par les chips
+        return axios.get(`${API}/bot/quick-replies`);
+      })
+      .then(res => {
+        if (Array.isArray(res.data)) setQuickRepliesData(res.data);
+      })
+      .catch(err => {
+        console.error('V197b saveBotReply:', err.message);
+        alert('Erreur lors de la sauvegarde');
+      })
+      .finally(() => setBotRepliesSavingId(null));
   };
 
   // === v88: Soumettre un avis post-session (fix erreur + masquage permanent) ===
@@ -6596,9 +6638,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                       {[
                         { key: 'conversations', label: 'Conversations', icon: '💬' },
                         { key: 'reservations', label: 'Transactions', icon: '📊' },
-                        { key: 'scanner', label: 'Scanner QR', icon: '📷' }
+                        { key: 'scanner', label: 'Scanner QR', icon: '📷' },
+                        // V197b: Onglet d'édition du bot visiteurs (coach uniquement, masqué en mode staff)
+                        { key: 'bot', label: 'Bot visiteurs', icon: '🤖' }
                       ].filter(function(tab) {
                         if (isStaffMode && tab.key === 'conversations') return false;
+                        // V197b: Mode staff n'accède pas à l'éditeur du bot
+                        if (isStaffMode && tab.key === 'bot') return false;
                         return true;
                       }).map(function(tab) {
                         return React.createElement('button', {
@@ -6607,6 +6653,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                             if (tab.key !== 'scanner') stopQrCamera();
                             setCoachDashTab(tab.key);
                             if (tab.key === 'reservations') loadCoachReservations();
+                            if (tab.key === 'bot') loadBotRepliesEdit();
                           },
                           style: {
                             flex: 1,
@@ -6865,6 +6912,108 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         </div>
                       )}
                     </div>
+                    )}
+
+                    {/* V197b: Tab — Édition des réponses du bot visiteurs */}
+                    {coachDashTab === 'bot' && (
+                      <div style={{ flex: 1, padding: '12px', overflowY: 'auto' }} data-testid="coach-bot-editor">
+                        <h3 style={{ color: '#fff', fontSize: '15px', margin: '0 0 6px' }}>
+                          Réponses du bot visiteurs
+                        </h3>
+                        <p style={{ color: '#888', fontSize: '12px', margin: '0 0 14px' }}>
+                          Modifie les questions et réponses que le bot propose aux visiteurs (chips dans le chat). Les changements sont actifs immédiatement.
+                        </p>
+
+                        {botRepliesEdit.length === 0 && (
+                          <div style={{ color: '#888', fontSize: '12px', textAlign: 'center', padding: '20px' }}>
+                            Chargement…
+                          </div>
+                        )}
+
+                        {botRepliesEdit.map(function(reply, index) {
+                          return (
+                            <div key={reply.id} style={{
+                              background: '#1a1a2e',
+                              borderRadius: '12px',
+                              padding: '12px',
+                              marginBottom: '10px',
+                              border: '1px solid #2a2a3e'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                                <input
+                                  value={reply.emoji || ''}
+                                  onChange={function(e) { updateBotReplyField(index, 'emoji', e.target.value); }}
+                                  style={{ width: '46px', background: '#0a0a1a', border: '1px solid #333', borderRadius: '8px', color: '#fff', textAlign: 'center', padding: '6px', fontSize: '18px' }}
+                                  data-testid={'bot-edit-emoji-' + reply.id}
+                                />
+                                <input
+                                  value={reply.label || ''}
+                                  onChange={function(e) { updateBotReplyField(index, 'label', e.target.value); }}
+                                  style={{ flex: 1, background: '#0a0a1a', border: '1px solid #333', borderRadius: '8px', color: '#fff', padding: '6px 10px', fontSize: '14px' }}
+                                  data-testid={'bot-edit-label-' + reply.id}
+                                />
+                                <button
+                                  onClick={function() { updateBotReplyField(index, 'active', !reply.active); }}
+                                  style={{
+                                    padding: '6px 12px',
+                                    borderRadius: '12px',
+                                    border: 'none',
+                                    background: reply.active ? '#D91CD2' : '#555',
+                                    color: '#fff',
+                                    fontSize: '11px',
+                                    cursor: 'pointer',
+                                    fontWeight: 600
+                                  }}
+                                  data-testid={'bot-edit-toggle-' + reply.id}
+                                >
+                                  {reply.active ? 'Actif' : 'Inactif'}
+                                </button>
+                              </div>
+                              <textarea
+                                value={reply.response || ''}
+                                onChange={function(e) { updateBotReplyField(index, 'response', e.target.value); }}
+                                rows={5}
+                                style={{
+                                  width: '100%',
+                                  background: '#0a0a1a',
+                                  border: '1px solid #333',
+                                  borderRadius: '8px',
+                                  color: '#fff',
+                                  padding: '8px',
+                                  fontSize: '13px',
+                                  resize: 'vertical',
+                                  fontFamily: 'inherit',
+                                  boxSizing: 'border-box'
+                                }}
+                                data-testid={'bot-edit-response-' + reply.id}
+                              />
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+                                <span style={{ color: '#666', fontSize: '11px' }}>
+                                  Ordre: {reply.order}
+                                </span>
+                                <button
+                                  onClick={function() { saveBotReply(reply); }}
+                                  disabled={botRepliesSavingId === reply.id}
+                                  style={{
+                                    padding: '6px 16px',
+                                    background: 'linear-gradient(135deg, #D91CD2, #8B5CF6)',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    color: '#fff',
+                                    fontSize: '13px',
+                                    cursor: botRepliesSavingId === reply.id ? 'not-allowed' : 'pointer',
+                                    opacity: botRepliesSavingId === reply.id ? 0.6 : 1,
+                                    fontWeight: 600
+                                  }}
+                                  data-testid={'bot-edit-save-' + reply.id}
+                                >
+                                  {botRepliesSavingId === reply.id ? 'Sauvegarde…' : 'Sauvegarder'}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     )}
 
                   </div>
@@ -7425,59 +7574,116 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
 
                   {/* === MESSAGES: Affichés selon mode (privé ou groupe) === */}
                   {/* v16.4: Animation slide-in + fade pour chaque message */}
-                  {(chatMode === 'group' ? groupMessages : messages).filter(m => m.type !== 'review_request').map((msg, idx) => (
-                    <div
-                      key={msg.id || idx}
-                      style={{
-                        animation: 'afroMsgSlideIn 0.35s ease-out both',
-                        animationDelay: `${Math.min(idx * 0.03, 0.3)}s`
-                      }}
-                    >
-                      {/* V172: transmission de vitrineCoachName pour éviter ReferenceError dans MessageBubble */}
-                      <MemoizedMessageBubble
-                        msg={msg}
-                        isUser={(msg.type === 'user' || msg.sender_type === 'user') && (msg.senderId === participantId || msg.sender_id === participantId)}
-                        onParticipantClick={startPrivateChat}
-                        isCommunity={chatMode === 'group'}
-                        currentUserId={participantId}
-                        profilePhotoUrl={profilePhoto}
-                        onReservationClick={() => setShowReservationPanel(true)}
-                        onZoomPhoto={(url) => setZoomedChatPhoto(url)}
-                        onDelete={(messageId) => handleDeleteMessage(messageId)}
-                        vitrineCoachName={vitrineCoachName}
-                      />
-                      {/* V197: Bouton "Parler à Coach Bassi" sous les réponses prédéfinies */}
-                      {msg.showContactButton && (
-                        <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: '8px' }}>
-                          <button
-                            onClick={handleContactCoachBassi}
-                            style={{
-                              padding: '10px 20px',
-                              background: 'linear-gradient(135deg, #D91CD2, #8B5CF6)',
-                              border: 'none',
-                              borderRadius: '12px',
-                              color: '#FFFFFF',
-                              fontWeight: '600',
-                              fontSize: '14px',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: '8px',
-                              boxShadow: '0 4px 12px rgba(217, 28, 210, 0.3)',
-                              transition: 'transform 0.15s ease'
-                            }}
-                            onMouseDown={function(e) { e.currentTarget.style.transform = 'scale(0.97)'; }}
-                            onMouseUp={function(e) { e.currentTarget.style.transform = 'scale(1)'; }}
-                            onMouseLeave={function(e) { e.currentTarget.style.transform = 'scale(1)'; }}
-                            data-testid="contact-coach-bassi-btn"
-                          >
-                            💬 Parler à Coach Bassi
-                          </button>
+                  {(chatMode === 'group' ? groupMessages : messages).filter(m => m.type !== 'review_request').map((msg, idx) => {
+                    // V197b: Rendu des chips quick-reply dans le flux des messages
+                    if (msg.type === 'quick_replies' && Array.isArray(msg.replies) && msg.replies.length > 0) {
+                      return (
+                        <div
+                          key={msg.id || idx}
+                          style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: '8px',
+                            padding: '4px 12px 4px 12px',
+                            maxWidth: '92%',
+                            alignSelf: 'flex-start',
+                            animation: 'afroMsgSlideIn 0.35s ease-out both',
+                            animationDelay: `${Math.min(idx * 0.03, 0.3)}s`
+                          }}
+                          data-testid="visitor-quick-reply-chips"
+                        >
+                          {msg.replies.map(function(reply) {
+                            return (
+                              <button
+                                key={reply.id}
+                                onClick={function() { handleQuickReply(reply); }}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  padding: '8px 14px',
+                                  background: 'transparent',
+                                  border: '1.5px solid rgba(217, 28, 210, 0.5)',
+                                  borderRadius: '20px',
+                                  color: '#FFFFFF',
+                                  fontSize: '13px',
+                                  fontWeight: '500',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s ease',
+                                  whiteSpace: 'nowrap'
+                                }}
+                                onMouseOver={function(e) {
+                                  e.currentTarget.style.background = 'rgba(217, 28, 210, 0.2)';
+                                  e.currentTarget.style.borderColor = '#D91CD2';
+                                }}
+                                onMouseOut={function(e) {
+                                  e.currentTarget.style.background = 'transparent';
+                                  e.currentTarget.style.borderColor = 'rgba(217, 28, 210, 0.5)';
+                                }}
+                                data-testid={'quick-reply-chip-' + reply.id}
+                              >
+                                <span style={{ fontSize: '14px' }}>{reply.emoji}</span>
+                                <span>{reply.label}</span>
+                              </button>
+                            );
+                          })}
                         </div>
-                      )}
-                    </div>
-                  ))}
+                      );
+                    }
+                    return (
+                      <div
+                        key={msg.id || idx}
+                        style={{
+                          animation: 'afroMsgSlideIn 0.35s ease-out both',
+                          animationDelay: `${Math.min(idx * 0.03, 0.3)}s`
+                        }}
+                      >
+                        {/* V172: transmission de vitrineCoachName pour éviter ReferenceError dans MessageBubble */}
+                        <MemoizedMessageBubble
+                          msg={msg}
+                          isUser={(msg.type === 'user' || msg.sender_type === 'user') && (msg.senderId === participantId || msg.sender_id === participantId)}
+                          onParticipantClick={startPrivateChat}
+                          isCommunity={chatMode === 'group'}
+                          currentUserId={participantId}
+                          profilePhotoUrl={profilePhoto}
+                          onReservationClick={() => setShowReservationPanel(true)}
+                          onZoomPhoto={(url) => setZoomedChatPhoto(url)}
+                          onDelete={(messageId) => handleDeleteMessage(messageId)}
+                          vitrineCoachName={vitrineCoachName}
+                        />
+                        {/* V197: Bouton "Parler à Coach Bassi" sous les réponses prédéfinies */}
+                        {msg.showContactButton && (
+                          <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: '8px', paddingLeft: '12px' }}>
+                            <button
+                              onClick={handleContactCoachBassi}
+                              style={{
+                                padding: '10px 20px',
+                                background: 'linear-gradient(135deg, #D91CD2, #8B5CF6)',
+                                border: 'none',
+                                borderRadius: '12px',
+                                color: '#FFFFFF',
+                                fontWeight: '600',
+                                fontSize: '14px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '8px',
+                                boxShadow: '0 4px 12px rgba(217, 28, 210, 0.3)',
+                                transition: 'transform 0.15s ease'
+                              }}
+                              onMouseDown={function(e) { e.currentTarget.style.transform = 'scale(0.97)'; }}
+                              onMouseUp={function(e) { e.currentTarget.style.transform = 'scale(1)'; }}
+                              onMouseLeave={function(e) { e.currentTarget.style.transform = 'scale(1)'; }}
+                              data-testid="contact-coach-bassi-btn"
+                            >
+                              💬 Parler à Coach Bassi
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                   
                   {/* === INDICATEUR DE SAISIE (Typing Indicator) === */}
                   {typingUser && (
@@ -7733,39 +7939,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                   </div>
                 )}
                 
-                {/* V197: Boutons quick-reply visiteurs — affichés au-dessus de la barre de saisie */}
-                {showQuickReplies && step === 'chat' && !isCoachMode && !afroboostProfile?.code && (
-                  <div
-                    style={{
-                      padding: '8px 12px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '6px',
-                      maxHeight: '280px',
-                      overflowY: 'auto',
-                      borderTop: '1px solid rgba(217, 28, 210, 0.15)'
-                    }}
-                    data-testid="visitor-quick-replies"
-                  >
-                    {VISITOR_QUICK_REPLIES.map(function(reply) {
-                      return (
-                        <button
-                          key={reply.id}
-                          onClick={function() { handleQuickReply(reply); }}
-                          style={quickReplyButtonStyle}
-                          onMouseOver={function(e) { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(217, 28, 210, 0.25), rgba(139, 92, 246, 0.25))'; }}
-                          onMouseOut={function(e) { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(217, 28, 210, 0.1), rgba(139, 92, 246, 0.1))'; }}
-                          onMouseDown={function(e) { e.currentTarget.style.transform = 'scale(0.98)'; }}
-                          onMouseUp={function(e) { e.currentTarget.style.transform = 'scale(1)'; }}
-                          data-testid={'quick-reply-' + reply.id}
-                        >
-                          <span style={{ fontSize: '18px' }}>{reply.emoji}</span>
-                          <span>{reply.label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+                {/* V197b: Les chips quick-reply sont rendus DANS le flux des messages — voir messages.map */}
 
                 {/* === BOUTON RÉACTIVATION MODE ABONNÉ (Visible en mode visiteur avec profil) === */}
                 {!isFullscreen && isVisitorMode && afroboostProfile?.code && step === 'chat' && (

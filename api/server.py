@@ -13210,6 +13210,174 @@ async def staff_login(request: Request):
         raise HTTPException(status_code=403, detail="Code invalide")
     return {"success": True, "role": "staff", "permissions": ["scan_qr", "view_reservations"]}
 
+# V197b: Quick replies du bot visiteurs — chargés depuis MongoDB, éditables par le coach
+V197B_DEFAULT_QUICK_REPLIES = [
+    {
+        "id": "cours_horaires",
+        "emoji": "📅",
+        "label": "Cours & horaires",
+        "response": (
+            "Voici nos cours actuels :\n\n"
+            "🔥 **Afroboost Silent – Sunday Vibes**\n"
+            "Dimanche à 18h30\n"
+            "Rue des Vallangines 97, Neuchâtel\n\n"
+            "🌅 **Afroboost Silent – Session Cardio**\n"
+            "Mercredi à 18h30\n"
+            "Rue des Vallangines 97, Neuchâtel\n\n"
+            "Les séances durent environ 1h. Ambiance garantie ! 💃🎧\n\n"
+            "Tu veux réserver une séance ?"
+        ),
+        "order": 1,
+        "active": True,
+    },
+    {
+        "id": "prix_abonnements",
+        "emoji": "💰",
+        "label": "Prix & abonnements",
+        "response": (
+            "Nos formules :\n\n"
+            "🎟️ **Cours à l'unité** : 30 CHF\n"
+            "📦 **Carte 10 cours** : 150 CHF (15 CHF/séance)\n"
+            "🔄 **Abonnement 1 mois** : 109 CHF\n\n"
+            "Paiement par carte ou TWINT accepté !\n\n"
+            "Tu veux acheter un pack ?"
+        ),
+        "order": 2,
+        "active": True,
+    },
+    {
+        "id": "essai_gratuit",
+        "emoji": "🎁",
+        "label": "Essai gratuit",
+        "response": (
+            "Bonne nouvelle ! Ta première séance découverte est possible ! 🎉\n\n"
+            "Contacte directement Coach Bassi pour organiser ton essai. Il te trouvera la meilleure séance selon ton niveau.\n\n"
+            "Tu veux qu'on te mette en contact ?"
+        ),
+        "order": 3,
+        "active": True,
+    },
+    {
+        "id": "contact",
+        "emoji": "📞",
+        "label": "Contact",
+        "response": (
+            "Tu peux nous joindre de plusieurs façons :\n\n"
+            "📱 **WhatsApp** : +41 76 520 33 63\n"
+            "📧 **Email** : contact.artboost@gmail.com\n"
+            "📍 **Cours** : Rue des Vallangines 97, 2000 Neuchâtel\n"
+            "📸 **Instagram** : @afroboost\n\n"
+            "Ou clique sur le bouton ci-dessous pour parler directement à Coach Bassi !"
+        ),
+        "order": 4,
+        "active": True,
+    },
+    {
+        "id": "devenir_coach",
+        "emoji": "🏋️",
+        "label": "Devenir coach",
+        "response": (
+            "Tu veux devenir coach partenaire Afroboost ? 💪\n\n"
+            "Afroboost recherche des coachs passionnés pour animer des séances dans d'autres villes de Suisse et d'Europe.\n\n"
+            "**Ce qu'on propose :**\n"
+            "- Formation au concept Afroboost\n"
+            "- Matériel (casques silent disco)\n"
+            "- Support marketing\n"
+            "- Communauté de coachs\n\n"
+            "Contacte Coach Bassi pour en discuter !"
+        ),
+        "order": 5,
+        "active": True,
+    },
+    {
+        "id": "devenir_partenaire",
+        "emoji": "🤝",
+        "label": "Devenir partenaire",
+        "response": (
+            "Tu représentes une salle de sport, un événement, ou une marque ? 🤝\n\n"
+            "Afroboost collabore avec des partenaires pour :\n"
+            "- Organiser des événements spéciaux\n"
+            "- Proposer des séances dans vos locaux\n"
+            "- Des collaborations marketing\n\n"
+            "Contacte Coach Bassi pour explorer les possibilités !"
+        ),
+        "order": 6,
+        "active": True,
+    },
+]
+
+
+async def _v197b_seed_quick_replies_if_empty():
+    """V197b: Insère les réponses par défaut si la collection est vide."""
+    try:
+        count = await db.bot_quick_replies.count_documents({})
+        if count > 0:
+            return 0
+        now = datetime.utcnow().isoformat()
+        docs = []
+        for r in V197B_DEFAULT_QUICK_REPLIES:
+            docs.append({**r, "updated_at": now, "updated_by": "seed"})
+        await db.bot_quick_replies.insert_many(docs)
+        return len(docs)
+    except Exception as e:
+        logger.warning(f"[V197b] seed quick replies failed: {e}")
+        return 0
+
+
+@api_router.get("/bot/quick-replies")
+async def v197b_get_quick_replies():
+    """V197b: Liste publique des quick replies actifs (chargés par le ChatWidget)."""
+    # Auto-seed à la première requête (au cas où le startup ne s'est pas exécuté)
+    await _v197b_seed_quick_replies_if_empty()
+    replies = await db.bot_quick_replies.find(
+        {"active": True}, {"_id": 0}
+    ).sort("order", 1).to_list(None)
+    return replies
+
+
+@api_router.get("/bot/quick-replies/all")
+async def v197b_get_quick_replies_all(request: Request):
+    """V197b: Liste complète (actifs + inactifs) — réservé au coach pour l'éditeur."""
+    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not user_email:
+        raise HTTPException(status_code=401, detail="Email requis")
+    await _v197b_seed_quick_replies_if_empty()
+    replies = await db.bot_quick_replies.find({}, {"_id": 0}).sort("order", 1).to_list(None)
+    return replies
+
+
+@api_router.put("/bot/quick-replies/{reply_id}")
+async def v197b_update_quick_reply(reply_id: str, request: Request):
+    """V197b: Modifier un quick reply (coach uniquement)."""
+    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not user_email:
+        raise HTTPException(status_code=401, detail="Email requis")
+
+    body = await request.json()
+    allowed = {"label", "emoji", "response", "order", "active"}
+    update_data = {k: v for k, v in body.items() if k in allowed}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour")
+
+    update_data["updated_at"] = datetime.utcnow().isoformat()
+    update_data["updated_by"] = user_email
+
+    result = await db.bot_quick_replies.update_one(
+        {"id": reply_id}, {"$set": update_data}
+    )
+    if result.matched_count == 0:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    return {"success": True}
+
+
+@api_router.post("/bot/quick-replies/seed")
+async def v197b_seed_quick_replies():
+    """V197b: Seed manuel (idempotent)."""
+    inserted = await _v197b_seed_quick_replies_if_empty()
+    count = await db.bot_quick_replies.count_documents({})
+    return {"inserted": inserted, "total": count}
+
+
 # Include router
 fastapi_app.include_router(api_router)
 
@@ -13349,6 +13517,14 @@ async def startup_db():
         logger.info("[INDEX] push_subscriptions.endpoint unique OK")
     except Exception:
         pass  # Index existe deja
+
+    # V197b: Seed des quick replies bot visiteurs si la collection est vide
+    try:
+        inserted = await _v197b_seed_quick_replies_if_empty()
+        if inserted:
+            logger.info(f"[V197b] Quick replies seeded ({inserted} docs)")
+    except Exception as e:
+        logger.warning(f"[V197b] startup seed skipped: {e}")
 
     logger.info("[SYSTEM] Database indexes initialized")
 
