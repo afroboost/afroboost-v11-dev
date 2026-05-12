@@ -3,7 +3,7 @@
 // V107.11: Chat intégré inline dans chaque groupe
 
 import React, { useState, useEffect, useRef, memo, useCallback } from 'react';
-import { Users, Plus, X, Search, Check, Bot, UserCircle, Trash2, ChevronDown, ChevronUp, Copy, MessageSquare, Send, RefreshCw, Edit2, Save, UserPlus } from 'lucide-react';
+import { Users, Plus, X, Search, Check, Bot, UserCircle, Trash2, ChevronDown, ChevronUp, Copy, MessageSquare, Send, RefreshCw, Edit2, Save, UserPlus, Eye, EyeOff } from 'lucide-react';
 import { renderTextWithLinks } from '../chat/ChatBubbles';
 
 // === AI / Human Toggle Switch ===
@@ -255,7 +255,7 @@ const GroupChatPanel = memo(({ group, API, coachEmail, onClose }) => {
 GroupChatPanel.displayName = 'GroupChatPanel';
 
 // === Group Card — V155: ajout bouton Modifier ===
-const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, onOpenChat, onEdit, isActive, copiedId }) => {
+const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, onOpenChat, onEdit, onToggleVisibility, isActive, copiedId }) => {
   const memberCount = (group.member_ids || []).length;
   // v108: Afficher les noms des membres résolus depuis members_info
   const membersInfo = group.members_info || [];
@@ -298,6 +298,20 @@ const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, onOpenChat, onE
         )}
       </div>
       <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+        {/* V198: Toggle visibilité pour les abonnés (visible par défaut si champ absent) */}
+        {onToggleVisibility && (
+          <button onClick={e => { e.stopPropagation(); onToggleVisibility(group.id, group.visible_to_subscribers !== false); }}
+            title={group.visible_to_subscribers !== false ? 'Visible par les abonnés — cliquer pour cacher' : 'Caché des abonnés — cliquer pour rendre visible'}
+            style={{
+              background: 'none', border: 'none', padding: '4px', borderRadius: '6px',
+              color: group.visible_to_subscribers !== false ? '#D91CD2' : 'rgba(255,255,255,0.3)',
+              cursor: 'pointer', transition: 'all 0.2s',
+            }}
+            data-testid={'group-visibility-' + group.id}
+          >
+            {group.visible_to_subscribers !== false ? <Eye size={14} /> : <EyeOff size={14} />}
+          </button>
+        )}
         {/* V155: Bouton Modifier */}
         <button onClick={e => { e.stopPropagation(); onEdit(group); }}
           title="Modifier le groupe"
@@ -613,6 +627,25 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  // V198: Toggle visibilité d'un groupe pour les abonnés (optimistic update + rollback en cas d'erreur)
+  const handleToggleVisibility = useCallback(async (groupId, currentlyVisible) => {
+    if (!API) return;
+    const newVisible = !currentlyVisible;
+    setGroups(prev => prev.map(g => g.id === groupId ? { ...g, visible_to_subscribers: newVisible } : g));
+    try {
+      const res = await fetch(`${API}/chat/groups/${groupId}/visibility`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail || '' },
+        body: JSON.stringify({ visible_to_subscribers: newVisible }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    } catch (e) {
+      console.error('[V198] toggle visibility:', e);
+      // Rollback
+      setGroups(prev => prev.map(g => g.id === groupId ? { ...g, visible_to_subscribers: currentlyVisible } : g));
+    }
+  }, [API, coachEmail]);
+
   return (
     <div style={{ background: '#1A1A1A', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '16px', overflow: 'hidden' }}>
       {/* Header */}
@@ -641,6 +674,7 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
                     onOpenChat={(grp) => setChatGroupId(prev => prev === grp.id ? null : grp.id)}
                     onEdit={handleStartEdit}
                     onDelete={handleDelete}
+                    onToggleVisibility={handleToggleVisibility}
                     onCopyLink={handleCopyLink} copiedId={copiedId} />
 
                   {/* V155: Edit form inline sous le groupe sélectionné */}

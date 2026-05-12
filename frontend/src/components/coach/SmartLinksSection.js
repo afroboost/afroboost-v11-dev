@@ -758,6 +758,13 @@ const SmartLinksSection = ({
   const [selectedLinks, setSelectedLinks] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [simulatorLink, setSimulatorLink] = useState(null);
+  // V198: Référence sur le conteneur carrousel pour scroll programmatique via les flèches
+  const carouselRef = useRef(null);
+  const v198ScrollCarousel = useCallback((dir) => {
+    if (carouselRef.current) {
+      carouselRef.current.scrollBy({ left: dir * 360, behavior: 'smooth' });
+    }
+  }, []);
 
   // Multi-sélection
   const getLinkId = (link) => link.id || link._id || link.link_token || '';
@@ -1012,28 +1019,89 @@ const SmartLinksSection = ({
           </div>
         )}
 
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 340px), 1fr))',
-          gap: '14px',
-        }}>
-          {filteredLinks.map(link => {
-            const lid = getLinkId(link);
-            return (
-              <SmartLinkCard
-                key={lid || Math.random()}
-                link={link}
-                copiedLinkId={copiedLinkId}
-                onCopy={copyLinkToClipboard}
-                onDelete={deleteChatLink}
-                onEdit={handleEdit}
-                onPreview={() => setSimulatorLink(link)}
-                selected={selectedLinks.has(lid)}
-                onToggleSelect={toggleSelect}
-              />
-            );
-          })}
-        </div>
+        {/* V198: Carrousel horizontal des liens intelligents (scroll tactile + flèches desktop) */}
+        {filteredLinks.length > 0 && (
+          <div style={{ position: 'relative' }}>
+            {/* V198: CSS inline pour masquer la scrollbar Webkit */}
+            <style>{`.v198-smart-links-carousel::-webkit-scrollbar{display:none;}`}</style>
+
+            {/* V198: Flèche gauche (cachée sur petits écrans) */}
+            <button
+              type="button"
+              onClick={() => v198ScrollCarousel(-1)}
+              aria-label="Faire défiler à gauche"
+              className="v198-carousel-arrow-hidden-mobile"
+              style={{
+                position: 'absolute', left: '-4px', top: '50%', transform: 'translateY(-50%)',
+                zIndex: 2, width: 36, height: 36, borderRadius: '50%',
+                background: 'rgba(217, 28, 210, 0.85)', border: 'none', color: '#fff',
+                cursor: 'pointer', fontSize: '18px', fontWeight: 700, lineHeight: 1,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 2px 10px rgba(0,0,0,0.4)'
+              }}
+            >‹</button>
+
+            <div
+              ref={carouselRef}
+              className="v198-smart-links-carousel"
+              style={{
+                display: 'flex',
+                overflowX: 'auto',
+                gap: '14px',
+                padding: '8px 4px 16px 4px',
+                scrollSnapType: 'x mandatory',
+                WebkitOverflowScrolling: 'touch',
+                scrollbarWidth: 'none',
+                msOverflowStyle: 'none',
+                alignItems: 'stretch'
+              }}
+            >
+              {filteredLinks.map(link => {
+                const lid = getLinkId(link);
+                return (
+                  <div
+                    key={lid || Math.random()}
+                    style={{
+                      flex: '0 0 auto',
+                      width: 'min(85vw, 340px)',
+                      scrollSnapAlign: 'start'
+                    }}
+                  >
+                    <SmartLinkCard
+                      link={link}
+                      copiedLinkId={copiedLinkId}
+                      onCopy={copyLinkToClipboard}
+                      onDelete={deleteChatLink}
+                      onEdit={handleEdit}
+                      onPreview={() => setSimulatorLink(link)}
+                      selected={selectedLinks.has(lid)}
+                      onToggleSelect={toggleSelect}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* V198: Flèche droite */}
+            <button
+              type="button"
+              onClick={() => v198ScrollCarousel(1)}
+              aria-label="Faire défiler à droite"
+              className="v198-carousel-arrow-hidden-mobile"
+              style={{
+                position: 'absolute', right: '-4px', top: '50%', transform: 'translateY(-50%)',
+                zIndex: 2, width: 36, height: 36, borderRadius: '50%',
+                background: 'rgba(217, 28, 210, 0.85)', border: 'none', color: '#fff',
+                cursor: 'pointer', fontSize: '18px', fontWeight: 700, lineHeight: 1,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 2px 10px rgba(0,0,0,0.4)'
+              }}
+            >›</button>
+
+            {/* V198: Cache les flèches sur mobile (scroll tactile suffit) */}
+            <style>{`@media (max-width: 640px){.v198-carousel-arrow-hidden-mobile{display:none !important;}}`}</style>
+          </div>
+        )}
       </div>
 
       {/* Simulateur d'aperçu */}

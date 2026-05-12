@@ -8694,9 +8694,21 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
         query["coach_id"] = caller_email
     
     sessions = await db.chat_sessions.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
-    
+
     # v14.0: Enrichir chaque session avec les infos du premier participant
     enriched_sessions = []
+    # V198: Pré-charger les emails des abonnés actifs en une seule requête (perf vs N+1)
+    active_subscriber_emails = set()
+    try:
+        sub_cursor = db.subscriptions.find({"status": "active"}, {"_id": 0, "email": 1})
+        async for sub in sub_cursor:
+            email = (sub.get("email") or "").lower().strip()
+            if email:
+                active_subscriber_emails.add(email)
+    except Exception as _e:
+        # Si la requête échoue, on continue sans catégorisation abonné
+        pass
+
     for session in sessions:
         participant_name = ""
         participant_email = ""
@@ -8710,33 +8722,45 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
                 participant_email = participant.get("email", "")
                 participant_whatsapp = participant.get("whatsapp", "")
                 break
-        
+
         # Fallback sur le titre de la session
         if not participant_name and session.get("title"):
             participant_name = session.get("title")
-        
+
         # Récupérer le dernier message
         last_message = await db.chat_messages.find_one(
             {"session_id": session.get("id"), "is_deleted": {"$ne": True}},
             {"_id": 0, "content": 1},
             sort=[("created_at", -1)]
         )
-        
+
         # Compter les messages
         message_count = await db.chat_messages.count_documents({
             "session_id": session.get("id"),
             "is_deleted": {"$ne": True}
         })
-        
+
+        # V198: Catégorie de la session pour les 3 sections du dashboard coach
+        #   - "smart_link" si la session vient d'un Lien Intelligent
+        #   - "subscriber" si l'email du participant a un abonnement actif
+        #   - "visitor" sinon (visiteurs du site)
+        if session.get("is_smart_link") is True:
+            category = "smart_link"
+        elif participant_email and participant_email.lower().strip() in active_subscriber_emails:
+            category = "subscriber"
+        else:
+            category = "visitor"
+
         enriched_sessions.append({
             **session,
             "participantName": participant_name,
             "participantEmail": participant_email,
             "participantWhatsapp": participant_whatsapp,
             "lastMessage": last_message.get("content", "")[:100] if last_message else "Nouvelle conversation",
-            "messageCount": message_count
+            "messageCount": message_count,
+            "category": category,  # V198
         })
-    
+
     return enriched_sessions
 
 # === CRM AVANCÉ - HISTORIQUE CONVERSATIONS ===
@@ -11061,9 +11085,14 @@ async def delete_chat_group(group_id: str, request: Request):
 @api_router.get("/chat/groups/public")
 async def get_public_groups(request: Request):
     """V107.12: Liste les groupes disponibles pour les abonnés.
-    Retourne tous les groupes actifs avec leur session_id."""
+    Retourne tous les groupes actifs avec leur session_id.
+    V198: Filtre les groupes cachés par le coach (visible_to_subscribers=False).
+    Les groupes existants sans ce champ restent visibles par défaut."""
     groups = await db.chat_groups.find(
-        {"is_deleted": {"$ne": True}},
+        {
+            "is_deleted": {"$ne": True},
+            "visible_to_subscribers": {"$ne": False},  # V198: visible par défaut
+        },
         {"_id": 0, "id": 1, "name": 1, "system_prompt": 1, "is_ai_active": 1,
          "member_ids": 1, "link_token": 1, "created_at": 1}
     ).sort("created_at", -1).to_list(50)
@@ -11074,6 +11103,22 @@ async def get_public_groups(request: Request):
         g["member_count"] = len(g.get("member_ids", []))
 
     return groups
+
+
+@api_router.put("/chat/groups/{group_id}/visibility")
+async def v198_toggle_group_visibility(group_id: str, request: Request):
+    """V198: Toggle la visibilité d'un groupe pour les abonnés (coach only)."""
+    require_auth(request)
+    body = await request.json()
+    visible = bool(body.get("visible_to_subscribers", True))
+    now_iso = datetime.now(timezone.utc).isoformat()
+    result = await db.chat_groups.update_one(
+        {"id": group_id},
+        {"$set": {"visible_to_subscribers": visible, "updated_at": now_iso}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return {"success": True, "visible_to_subscribers": visible}
 
 
 @api_router.post("/chat/groups/{group_id}/join")

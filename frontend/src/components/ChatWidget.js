@@ -1272,6 +1272,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
   const [selectedCoachSession, setSelectedCoachSession] = useState(null); // Session sélectionnée par le coach
   // v162: Mini-dashboard tabs
   var _ctab = useState('conversations'); var coachDashTab = _ctab[0]; var setCoachDashTab = _ctab[1];
+  // V198: État d'ouverture des 3 sections de conversations
+  var _cSec1 = useState(true); var showSubscribers = _cSec1[0]; var setShowSubscribers = _cSec1[1];
+  var _cSec2 = useState(true); var showVisitors = _cSec2[0]; var setShowVisitors = _cSec2[1];
+  var _cSec3 = useState(false); var showSmartLinks = _cSec3[0]; var setShowSmartLinks = _cSec3[1];
   var _cres = useState([]); var coachReservations = _cres[0]; var setCoachReservations = _cres[1];
   var _cqr = useState(''); var qrScanCode = _cqr[0]; var setQrScanCode = _cqr[1];
   var _cqrR = useState(null); var qrScanResult = _cqrR[0]; var setQrScanResult = _cqrR[1];
@@ -6670,75 +6674,136 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                       })}
                     </div>
 
-                    {/* Tab: Conversations */}
-                    {coachDashTab === 'conversations' && (
-                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
-                    <div style={{ color: '#fff', fontSize: '12px', marginBottom: '12px', opacity: 0.7 }}>
-                      Conversations actives ({coachSessions.length})
-                    </div>
-                    {coachSessions.length === 0 ? (
-                      <div style={{ color: '#fff', opacity: 0.5, textAlign: 'center', padding: '20px', fontSize: '13px' }}>
-                        Aucune conversation active
-                      </div>
-                    ) : (
-                      coachSessions.map(function(session) { return (
-                        <div
-                          key={session.id}
-                          onClick={function(e) { if (e.currentTarget._lpFired) { e.currentTarget._lpFired = false; return; } loadCoachSessionMessages(session); }}
-                          onTouchStart={function(e) {
-                            var el = e.currentTarget;
-                            el._lpFired = false;
-                            var t = setTimeout(function() {
-                              el._lpFired = true;
+                    {/* Tab: Conversations — V198: catégorisé en 3 sections (Abonnés, Visiteurs, Liens Intelligents) */}
+                    {coachDashTab === 'conversations' && (() => {
+                      // V198: Helper pour rendre la carte session (réutilisé dans les 3 sections)
+                      var renderSessionCard = function(session) {
+                        var categoryBadge = null;
+                        if (session.category === 'subscriber') {
+                          categoryBadge = React.createElement('span', { style: { background: '#D91CD2', color: '#fff', fontSize: '9px', padding: '2px 6px', borderRadius: '8px', marginLeft: '6px', fontWeight: 600 } }, 'Abonné');
+                        } else if (session.category === 'smart_link') {
+                          categoryBadge = React.createElement('span', { style: { background: '#FF2DAA', color: '#fff', fontSize: '9px', padding: '2px 6px', borderRadius: '8px', marginLeft: '6px', fontWeight: 600 } }, 'Lien');
+                        }
+                        return (
+                          <div
+                            key={session.id}
+                            onClick={function(e) { if (e.currentTarget._lpFired) { e.currentTarget._lpFired = false; return; } loadCoachSessionMessages(session); }}
+                            onTouchStart={function(e) {
+                              var el = e.currentTarget;
+                              el._lpFired = false;
+                              var t = setTimeout(function() {
+                                el._lpFired = true;
+                                if (window.confirm('Supprimer cette conversation avec ' + (session.participantName || 'Visiteur anonyme') + ' ?')) {
+                                  axios.delete(API + '/chat/sessions/' + session.id, {
+                                    headers: { 'X-User-Email': getCoachEmail() }
+                                  }).then(function() { loadCoachSessions(); })
+                                    .catch(function(err) { alert('Erreur: ' + ((err.response && err.response.data && err.response.data.detail) || 'Suppression impossible')); });
+                                }
+                              }, 800);
+                              el._lpTimer = t;
+                            }}
+                            onTouchEnd={function(e) { var el = e.currentTarget; if (el._lpTimer) clearTimeout(el._lpTimer); }}
+                            onTouchMove={function(e) { var el = e.currentTarget; if (el._lpTimer) clearTimeout(el._lpTimer); el._lpFired = false; }}
+                            onContextMenu={function(e) {
+                              e.preventDefault();
                               if (window.confirm('Supprimer cette conversation avec ' + (session.participantName || 'Visiteur anonyme') + ' ?')) {
                                 axios.delete(API + '/chat/sessions/' + session.id, {
                                   headers: { 'X-User-Email': getCoachEmail() }
                                 }).then(function() { loadCoachSessions(); })
                                   .catch(function(err) { alert('Erreur: ' + ((err.response && err.response.data && err.response.data.detail) || 'Suppression impossible')); });
                               }
-                            }, 800);
-                            el._lpTimer = t;
-                          }}
-                          onTouchEnd={function(e) { var el = e.currentTarget; if (el._lpTimer) clearTimeout(el._lpTimer); }}
-                          onTouchMove={function(e) { var el = e.currentTarget; if (el._lpTimer) clearTimeout(el._lpTimer); el._lpFired = false; }}
-                          onContextMenu={function(e) {
-                            e.preventDefault();
-                            if (window.confirm('Supprimer cette conversation avec ' + (session.participantName || 'Visiteur anonyme') + ' ?')) {
-                              axios.delete(API + '/chat/sessions/' + session.id, {
-                                headers: { 'X-User-Email': getCoachEmail() }
-                              }).then(function() { loadCoachSessions(); })
-                                .catch(function(err) { alert('Erreur: ' + ((err.response && err.response.data && err.response.data.detail) || 'Suppression impossible')); });
-                            }
-                          }}
-                          style={{
-                            background: 'rgba(255,255,255,0.05)',
-                            border: '1px solid rgba(255,255,255,0.1)',
-                            borderRadius: '8px',
-                            padding: '10px',
-                            marginBottom: '8px',
-                            cursor: 'pointer',
-                            WebkitUserSelect: 'none',
-                            userSelect: 'none'
-                          }}
-                        >
-                          <div style={{ color: '#fff', fontSize: '13px', fontWeight: '500' }}>
-                            {session.participantName || session.title || 'Visiteur anonyme'}
-                          </div>
-                          <div style={{ color: '#888', fontSize: '11px', marginTop: '4px' }}>
-                            {session.participantEmail ? session.participantEmail : (session.mode === 'human' ? 'Mode Humain' : session.mode === 'community' ? 'Communauté' : 'IA')}
-                            {' • '}
-                            {new Date(session.created_at).toLocaleDateString('fr-FR')}
-                          </div>
-                          {session.lastMessage && (
-                            <div style={{ color: '#aaa', fontSize: '11px', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '260px' }}>
-                              {session.lastMessage}
+                            }}
+                            style={{
+                              background: 'rgba(255,255,255,0.05)',
+                              border: '1px solid rgba(255,255,255,0.1)',
+                              borderRadius: '8px',
+                              padding: '10px',
+                              marginBottom: '8px',
+                              cursor: 'pointer',
+                              WebkitUserSelect: 'none',
+                              userSelect: 'none'
+                            }}
+                          >
+                            <div style={{ color: '#fff', fontSize: '13px', fontWeight: '500', display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
+                              <span>{session.participantName || session.title || 'Visiteur anonyme'}</span>
+                              {categoryBadge}
                             </div>
+                            <div style={{ color: '#888', fontSize: '11px', marginTop: '4px' }}>
+                              {session.participantEmail ? session.participantEmail : (session.mode === 'human' ? 'Mode Humain' : session.mode === 'community' ? 'Communauté' : 'IA')}
+                              {' • '}
+                              {new Date(session.created_at).toLocaleDateString('fr-FR')}
+                            </div>
+                            {session.lastMessage && (
+                              <div style={{ color: '#aaa', fontSize: '11px', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '260px' }}>
+                                {session.lastMessage}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      };
+
+                      // V198: Catégorisation côté frontend basée sur le champ `category` retourné par l'API
+                      var subscriberSessions = coachSessions.filter(function(s) { return s.category === 'subscriber'; });
+                      var smartLinkSessions = coachSessions.filter(function(s) { return s.category === 'smart_link'; });
+                      var visitorSessions = coachSessions.filter(function(s) { return s.category === 'visitor' || (!s.category && s.category !== 'subscriber' && s.category !== 'smart_link'); });
+
+                      // V198: Header de catégorie cliquable (style cohérent avec le dashboard sombre)
+                      var sectionHeader = function(label, count, color, bg, isOpen, onToggle, testId) {
+                        return (
+                          <div
+                            onClick={onToggle}
+                            style={{
+                              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                              padding: '10px 12px', cursor: 'pointer',
+                              background: bg, borderRadius: '8px', marginBottom: '4px', marginTop: '4px'
+                            }}
+                            data-testid={testId}
+                          >
+                            <span style={{ color: color, fontWeight: '600', fontSize: '13px' }}>
+                              {label} <span style={{ color: '#888', fontWeight: '400' }}>{count}</span>
+                            </span>
+                            <span style={{ color: '#888', fontSize: '11px' }}>{isOpen ? '▼' : '▶'}</span>
+                          </div>
+                        );
+                      };
+
+                      return (
+                        <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+                          <div style={{ color: '#fff', fontSize: '12px', marginBottom: '12px', opacity: 0.7 }}>
+                            Conversations actives ({coachSessions.length})
+                          </div>
+
+                          {coachSessions.length === 0 ? (
+                            <div style={{ color: '#fff', opacity: 0.5, textAlign: 'center', padding: '20px', fontSize: '13px' }}>
+                              Aucune conversation active
+                            </div>
+                          ) : (
+                            <>
+                              {/* V198: Abonnés */}
+                              {sectionHeader('⭐ Abonnés', subscriberSessions.length, '#D91CD2', 'rgba(217, 28, 210, 0.1)', showSubscribers, function() { setShowSubscribers(!showSubscribers); }, 'sessions-section-subscribers')}
+                              {showSubscribers && subscriberSessions.length === 0 && (
+                                <div style={{ color: '#666', fontSize: '11px', padding: '6px 12px 10px' }}>Aucun abonné en conversation</div>
+                              )}
+                              {showSubscribers && subscriberSessions.map(renderSessionCard)}
+
+                              {/* V198: Visiteurs du site */}
+                              {sectionHeader('💬 Visiteurs du site', visitorSessions.length, '#8B5CF6', 'rgba(139, 92, 246, 0.1)', showVisitors, function() { setShowVisitors(!showVisitors); }, 'sessions-section-visitors')}
+                              {showVisitors && visitorSessions.length === 0 && (
+                                <div style={{ color: '#666', fontSize: '11px', padding: '6px 12px 10px' }}>Aucun visiteur en conversation</div>
+                              )}
+                              {showVisitors && visitorSessions.map(renderSessionCard)}
+
+                              {/* V198: Liens Intelligents */}
+                              {sectionHeader('🔗 Liens Intelligents', smartLinkSessions.length, '#FF2DAA', 'rgba(255, 45, 170, 0.1)', showSmartLinks, function() { setShowSmartLinks(!showSmartLinks); }, 'sessions-section-smartlinks')}
+                              {showSmartLinks && smartLinkSessions.length === 0 && (
+                                <div style={{ color: '#666', fontSize: '11px', padding: '6px 12px 10px' }}>Aucun lead venant d'un Lien Intelligent</div>
+                              )}
+                              {showSmartLinks && smartLinkSessions.map(renderSessionCard)}
+                            </>
                           )}
                         </div>
-                      ); })
-                    )}
-                  </div>
-                    )}
+                      );
+                    })()}
 
                     {/* Tab: Réservations — v162m: affiche TOUTES les transactions */}
                     {coachDashTab === 'reservations' && (
