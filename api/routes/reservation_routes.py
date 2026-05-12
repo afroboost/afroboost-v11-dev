@@ -525,7 +525,10 @@ async def get_reservations(request: Request, page: int = 1, limit: int = 20, all
         "offerName": 1, "totalPrice": 1, "quantity": 1, "validated": 1,
         "validatedAt": 1, "createdAt": 1, "selectedDates": 1, "selectedDatesText": 1,
         "selectedVariants": 1, "variantsText": 1, "isProduct": 1, "shippingStatus": 1,
-        "trackingNumber": 1, "promoCode": 1, "source": 1, "type": 1
+        "trackingNumber": 1, "promoCode": 1, "source": 1, "type": 1,
+        # V191: Casques Silent Disco + accompagnants (visible dans le dashboard coach)
+        "headphone_status": 1, "headphone_updated_at": 1,
+        "guests": 1, "guest_headphones": 1,
     }
     if all_data:
         reservations = await db.reservations.find(base_query, {"_id": 0}).sort("createdAt", -1).to_list(10000)

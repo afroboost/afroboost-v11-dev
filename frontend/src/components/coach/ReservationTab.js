@@ -131,7 +131,7 @@ const ReservationTab = ({
               isProduct={isProduct}
               onValidate={() => onValidateReservation(r.id)}
               onDelete={() => onDeleteReservation(r.id)}
-              onCycleHeadphone={onCycleHeadphone ? () => onCycleHeadphone(r) : null}
+              onCycleHeadphone={onCycleHeadphone || null} /* V191: brut, prend (reservation, guestIndex) */
               formatDateTime={formatDateTime}
             />
           );
@@ -165,7 +165,7 @@ const ReservationTab = ({
                   isProduct={isProduct}
                   onValidate={() => onValidateReservation(r.id)}
                   onDelete={() => onDeleteReservation(r.id)}
-                  onCycleHeadphone={onCycleHeadphone ? () => onCycleHeadphone(r) : null}
+                  onCycleHeadphone={onCycleHeadphone || null} /* V191: brut, prend (reservation, guestIndex) */
                   formatDateTime={formatDateTime}
                 />
               );
@@ -183,39 +183,84 @@ const ReservationTab = ({
 // === SOUS-COMPOSANTS MÉMOÏSÉS ===
 
 // V185 F4: Bouton 🎧 Casque cyclique (gris → rouge → vert → gris)
-const HeadphoneToggle = memo(({ status, onClick, compact }) => {
+const HeadphoneToggle = memo(({ status, onClick, compact, label }) => {
   const map = {
-    taken: { color: '#ef4444', bg: 'rgba(239,68,68,0.18)', label: 'Casque pris', next: 'returned' },
-    returned: { color: '#22c55e', bg: 'rgba(34,197,94,0.18)', label: 'Casque rendu', next: null },
+    taken: { color: '#ef4444', bg: 'rgba(239,68,68,0.18)', stateLabel: 'Casque pris' },
+    returned: { color: '#22c55e', bg: 'rgba(34,197,94,0.18)', stateLabel: 'Casque rendu' },
   };
-  const meta = map[status] || { color: 'rgba(255,255,255,0.4)', bg: 'rgba(255,255,255,0.06)', label: 'Pas de casque', next: 'taken' };
+  const meta = map[status] || { color: 'rgba(255,255,255,0.4)', bg: 'rgba(255,255,255,0.06)', stateLabel: 'Pas de casque' };
   return (
     <button
       type="button"
       onClick={onClick}
-      title={`🎧 ${meta.label} — clic pour changer`}
+      title={`🎧 ${meta.stateLabel}${label ? ` — ${label}` : ''} — clic pour changer`}
       data-testid="headphone-toggle"
+      className="inline-flex items-center gap-1"
       style={{
         padding: compact ? '4px 6px' : '6px 8px', borderRadius: '8px',
         background: meta.bg, color: meta.color, border: 'none', cursor: 'pointer',
         fontSize: compact ? '12px' : '14px', lineHeight: 1, whiteSpace: 'nowrap'
       }}
     >
-      🎧
+      <span>🎧</span>
+      {label && <span style={{ fontSize: compact ? '10px' : '11px', fontWeight: 500 }}>{label}</span>}
     </button>
   );
 });
 HeadphoneToggle.displayName = 'HeadphoneToggle';
 
+// V191: Rangée de casques — 1 bouton pour l'abonné + N boutons pour les accompagnants
+const HeadphoneRow = memo(({ reservation, onCycle, compact }) => {
+  const r = reservation;
+  if (!r || !onCycle) return null;
+  const guests = Array.isArray(r.guests) ? r.guests : [];
+  const guestHp = Array.isArray(r.guest_headphones) ? r.guest_headphones : [];
+  const mainName = (r.userName || '').split(' ')[0] || 'Abonné';
+  return (
+    <div className="flex flex-wrap gap-1.5 items-center">
+      <HeadphoneToggle
+        status={r.headphone_status}
+        label={mainName}
+        compact={compact}
+        onClick={() => onCycle(r, null)}
+      />
+      {guests.map((gname, i) => (
+        <HeadphoneToggle
+          key={i}
+          status={guestHp[i]}
+          label={(gname || `Invité ${i + 1}`).split(' ')[0]}
+          compact={compact}
+          onClick={() => onCycle(r, i)}
+        />
+      ))}
+    </div>
+  );
+});
+HeadphoneRow.displayName = 'HeadphoneRow';
+
 const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete, onCycleHeadphone, formatDateTime }) => (
   <div className={`p-4 rounded-lg glass ${r.validated ? 'border border-green-500/30' : 'border border-purple-500/20'}`}>
     <div className="flex justify-between items-start mb-3">
-      <div>
-        <span className="text-pink-400 font-bold text-sm">{r.reservationCode || '-'}</span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-pink-400 font-bold text-sm">{r.reservationCode || '-'}</span>
+          {/* V191: badge × N places si réservation multi-personnes */}
+          {Number(r.quantity) > 1 && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(217,28,210,0.18)', color: '#F0A8EE' }}>
+              × {r.quantity} places
+            </span>
+          )}
+        </div>
         <h3 className="text-white font-semibold">{r.userName}</h3>
         <p className="text-white/60 text-xs">{r.userEmail}</p>
+        {/* V191: Liste des accompagnants */}
+        {Array.isArray(r.guests) && r.guests.length > 0 && (
+          <p className="text-white/70 text-xs mt-1">
+            👥 {[((r.userName || '').split(' ')[0] || 'Abonné'), ...r.guests].join(', ')}
+          </p>
+        )}
         {r.userWhatsapp && (
-          <a 
+          <a
             href={`https://wa.me/${r.userWhatsapp.replace(/[^\d+]/g, '')}`}
             target="_blank"
             rel="noopener noreferrer"
@@ -259,6 +304,13 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
       )}
     </div>
     
+    {/* V191: Rangée casques — 1 toggle par personne (abonné + guests) */}
+    {onCycleHeadphone && (
+      <div className="mb-3">
+        <HeadphoneRow reservation={r} onCycle={onCycleHeadphone} />
+      </div>
+    )}
+
     <div className="flex gap-2 items-center">
       {!r.validated && (
         <button
@@ -267,10 +319,6 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
         >
           ✅ Valider
         </button>
-      )}
-      {/* V185 F4: Casque Silent Disco */}
-      {onCycleHeadphone && (
-        <HeadphoneToggle status={r.headphone_status} onClick={onCycleHeadphone} />
       )}
       <button
         onClick={onDelete}
@@ -284,10 +332,30 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
 
 const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, onCycleHeadphone, formatDateTime }) => (
   <tr className="hover:bg-white/5">
-    <td className="py-3 text-pink-400 font-medium">{r.reservationCode || '-'}</td>
+    <td className="py-3 text-pink-400 font-medium">
+      <div>{r.reservationCode || '-'}</div>
+      {/* V191: badge × N places */}
+      {Number(r.quantity) > 1 && (
+        <div className="text-[10px] mt-1 inline-block px-2 py-0.5 rounded-full" style={{ background: 'rgba(217,28,210,0.18)', color: '#F0A8EE' }}>
+          × {r.quantity} places
+        </div>
+      )}
+    </td>
     <td className="py-3">
       <div className="text-white font-medium">{r.userName}</div>
       <div className="text-white/50 text-xs">{r.userEmail}</div>
+      {/* V191: Liste des accompagnants */}
+      {Array.isArray(r.guests) && r.guests.length > 0 && (
+        <div className="text-white/60 text-[11px] mt-1">
+          👥 {[((r.userName || '').split(' ')[0] || 'Abonné'), ...r.guests].join(', ')}
+        </div>
+      )}
+      {/* V191: Casques individuels (un toggle par personne) */}
+      {onCycleHeadphone && (
+        <div className="mt-2">
+          <HeadphoneRow reservation={r} onCycle={onCycleHeadphone} compact />
+        </div>
+      )}
     </td>
     <td className="py-3">
       {r.userWhatsapp ? (
@@ -338,6 +406,7 @@ const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, 
       )}
     </td>
     <td className="py-3 text-right">
+      {/* V191: les casques sont maintenant dans la colonne Client (un par personne) */}
       <div className="flex justify-end gap-2 items-center">
         {!r.validated && (
           <button
@@ -346,10 +415,6 @@ const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, 
           >
             ✅
           </button>
-        )}
-        {/* V185 F4: Casque Silent Disco */}
-        {onCycleHeadphone && (
-          <HeadphoneToggle status={r.headphone_status} onClick={onCycleHeadphone} compact />
         )}
         <button
           onClick={onDelete}

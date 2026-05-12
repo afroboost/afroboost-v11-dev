@@ -1981,55 +1981,51 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   };
   
   // Delete reservation - SUPPRESSION DÉFINITIVE EN BASE
-  // V186: Cycle du statut casque (Silent Disco) — null → taken → returned → null
-  // Fix: id fallback (_id, reservationCode), POST aliasing si PUT bloqué, diagnostic console.
-  const cycleHeadphone = async (reservation) => {
+  // V191: Cycle du statut casque (Silent Disco) — null → taken → returned → null
+  // guestIndex = null pour l'abonné principal, sinon index 0-based dans guest_headphones.
+  // Conserve les fallbacks V186 (id/_id/reservationCode, retry POST si PUT bloqué).
+  const cycleHeadphone = async (reservation, guestIndex = null) => {
     const targetId = reservation?.id || reservation?._id || reservation?.reservationCode;
     if (!targetId) {
-      console.warn('[V186 HEADPHONE] Aucun identifiant exploitable sur la réservation:', reservation);
+      console.warn('[V191 HEADPHONE] Aucun identifiant exploitable sur la réservation:', reservation);
       alert("Impossible : cette réservation n'a pas d'identifiant.");
       return;
     }
-    const current = reservation.headphone_status || null;
+    const isGuest = guestIndex != null && guestIndex >= 0;
+    const current = isGuest
+      ? ((reservation.guest_headphones || [])[guestIndex] || null)
+      : (reservation.headphone_status || null);
     const next = current === 'taken' ? 'returned' : current === 'returned' ? null : 'taken';
 
     // Mise à jour optimiste
-    setReservations(prev => prev.map(r => (
-      (r.id === targetId || r._id === targetId || r.reservationCode === targetId)
-        ? { ...r, headphone_status: next }
-        : r
-    )));
+    const applyOptimistic = (newStatus) => {
+      setReservations(prev => prev.map(r => {
+        if (r.id !== targetId && r._id !== targetId && r.reservationCode !== targetId) return r;
+        if (!isGuest) return { ...r, headphone_status: newStatus };
+        const arr = Array.isArray(r.guest_headphones) ? [...r.guest_headphones] : [];
+        while (arr.length <= guestIndex) arr.push(null);
+        arr[guestIndex] = newStatus;
+        return { ...r, guest_headphones: arr };
+      }));
+    };
+    applyOptimistic(next);
 
     const url = `${API}/reservations/${encodeURIComponent(targetId)}/headphone`;
-    const body = { status: next };
+    const body = isGuest ? { status: next, guest_index: guestIndex } : { status: next };
 
     try {
       await axios.put(url, body);
     } catch (err) {
-      console.error('[V186 HEADPHONE] PUT échec:', {
-        url,
-        body,
-        status: err?.response?.status,
-        data: err?.response?.data,
-        message: err?.message,
+      console.error('[V191 HEADPHONE] PUT échec:', {
+        url, body, status: err?.response?.status, data: err?.response?.data, message: err?.message,
       });
-      // Retry en POST au cas où PUT serait bloqué par un proxy/cache
       try {
         await axios.post(url, body);
       } catch (err2) {
-        console.error('[V186 HEADPHONE] POST fallback échec:', {
-          url,
-          body,
-          status: err2?.response?.status,
-          data: err2?.response?.data,
-          message: err2?.message,
+        console.error('[V191 HEADPHONE] POST fallback échec:', {
+          url, body, status: err2?.response?.status, data: err2?.response?.data, message: err2?.message,
         });
-        // Rollback
-        setReservations(prev => prev.map(r => (
-          (r.id === targetId || r._id === targetId || r.reservationCode === targetId)
-            ? { ...r, headphone_status: current }
-            : r
-        )));
+        applyOptimistic(current); // rollback
         const detail = err2?.response?.data?.detail || err?.response?.data?.detail || err2?.message || err?.message || 'erreur inconnue';
         alert(`Impossible de mettre à jour le statut du casque.\n\n${detail}`);
       }
