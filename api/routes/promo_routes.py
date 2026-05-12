@@ -389,6 +389,8 @@ async def validate_discount_code(data: dict):
         # Check expiration date
         expiry_date = None
         if code.get("expiresAt"):
+            # V200: Log brut pour diagnostiquer les codes affichés à tort comme expirés
+            logger.info(f"[VALIDATE] code={code_str} expiresAt={code['expiresAt']!r} (type={type(code['expiresAt']).__name__})")
             try:
                 expiry = code["expiresAt"]
                 if isinstance(expiry, str):

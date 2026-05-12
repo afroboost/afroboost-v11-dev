@@ -267,13 +267,36 @@ const PromoCodesTab = ({
     }
   }, [resolvedSessionsFromOffer]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Helper pour formater les dates
-  const formatDate = (dateVal) => {
-    if (!dateVal) return '—';
+  // V200: Parse résilient — accepte ISO, datetime JS, ou format DD.MM.YYYY (legacy)
+  const parsePromoDate = (dateVal) => {
+    if (!dateVal) return null;
     try {
-      const d = new Date(dateVal);
-      return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('fr-CH');
-    } catch { return '—'; }
+      let d = new Date(dateVal);
+      if (isNaN(d.getTime()) && typeof dateVal === 'string') {
+        const m = dateVal.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+        if (m) {
+          d = new Date(parseInt(m[3], 10), parseInt(m[2], 10) - 1, parseInt(m[1], 10), 23, 59, 59, 999);
+        }
+      }
+      return isNaN(d.getTime()) ? null : d;
+    } catch { return null; }
+  };
+
+  // V200: Helper pour formater les dates (utilise parsePromoDate, gère DD.MM.YYYY)
+  const formatDate = (dateVal) => {
+    const d = parsePromoDate(dateVal);
+    return d ? d.toLocaleDateString('fr-CH') : '—';
+  };
+
+  // V200: Helper — code expiré ssi la date d'expiration est strictement antérieure à aujourd'hui
+  // Compare au jour près (ignore l'heure) pour traiter "expires_at = aujourd'hui" comme valide
+  const isDateExpired = (dateVal) => {
+    const d = parsePromoDate(dateVal);
+    if (!d) return false;
+    const dDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return dDay < today;
   };
 
   // V154: Reset selectedTargetCategories when form is cleared or editing is cancelled
@@ -710,10 +733,16 @@ const PromoCodesTab = ({
       
       {/* ============ LISTE DES CODES ============ */}
       <div className="space-y-3" style={{ maxHeight: codesSearch ? '80vh' : '400px', overflowY: 'auto' }}>
-        {filteredDiscountCodes.map(code => (
-          <div 
-            key={code.id} 
-            className={`glass rounded-lg p-4 ${!code.active ? 'opacity-50' : ''}`}
+        {filteredDiscountCodes.map(code => {
+          // V200: Distinguer 3 états: actif, inactif (toggle), expiré (date passée)
+          const codeExpired = isDateExpired(code.expiresAt);
+          const cardClass = codeExpired
+            ? 'opacity-40 border border-red-500/40'  // V200: expiré = très grisé + bord rouge
+            : (!code.active ? 'opacity-50' : '');     // inactif = grisé, actif = normal
+          return (
+          <div
+            key={code.id}
+            className={`glass rounded-lg p-4 ${cardClass}`}
             data-testid={`promo-code-${code.id}`}
           >
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -741,6 +770,12 @@ const PromoCodesTab = ({
                       🎁 {code.linkedOfferName}
                     </span>
                   )}
+                  {/* V200: Badge EXPIRÉ — séparé de la désactivation manuelle */}
+                  {codeExpired && (
+                    <span className="px-2 py-0.5 rounded text-xs font-semibold" style={{ background: 'rgba(239, 68, 68, 0.25)', color: '#ef4444' }}>
+                      ⚠️ EXPIRÉ
+                    </span>
+                  )}
                 </div>
                 {/* Bénéficiaires — v106.1: support assignedEmail (string) + assignedEmails (array) */}
                 {(code.assignedEmails?.length > 0 || code.assignedEmail) && (
@@ -756,7 +791,12 @@ const PromoCodesTab = ({
                 {/* Stats utilisation */}
                 <p className="text-white/30 text-xs mt-1">
                   Utilisé: {code.usedCount || code.used || 0}/{code.maxUses || '∞'}
-                  {code.expiresAt && ` • Expire: ${formatDate(code.expiresAt)}`}
+                  {/* V200: Indicateur explicite « Expiré le » (rouge) vs « Expire le » (vert) */}
+                  {code.expiresAt && (
+                    <span style={{ color: codeExpired ? '#ef4444' : '#22c55e', marginLeft: '4px' }}>
+                      {' • '}{codeExpired ? '⚠️ Expiré le ' : '✅ Expire le '}{formatDate(code.expiresAt)}
+                    </span>
+                  )}
                 </p>
                 {/* V194: Séances par abonné — dédupe par email et utilise code.maxUses
                     comme dénominateur (source de vérité) au lieu du total_sessions
@@ -806,14 +846,24 @@ const PromoCodesTab = ({
               
               {/* BOUTONS D'ACTION */}
               <div className="flex items-center gap-2 flex-wrap">
-                {/* Toggle Actif/Inactif */}
-                <button
-                  onClick={() => toggleCode && toggleCode(code)}
-                  className={`px-3 py-1.5 rounded text-xs font-medium ${code.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}
-                  data-testid={`toggle-code-${code.id}`}
-                >
-                  {code.active ? '✓ Actif' : '✗ Inactif'}
-                </button>
+                {/* V200: 3 états — Expiré (date passée), Actif, Inactif. Le toggle reste cliquable même si expiré */}
+                {codeExpired ? (
+                  <span
+                    className="px-3 py-1.5 rounded text-xs font-medium bg-red-500/20 text-red-400"
+                    title="Date d'expiration dépassée"
+                    data-testid={`toggle-code-${code.id}`}
+                  >
+                    ⏰ Expiré
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => toggleCode && toggleCode(code)}
+                    className={`px-3 py-1.5 rounded text-xs font-medium ${code.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}
+                    data-testid={`toggle-code-${code.id}`}
+                  >
+                    {code.active ? '✓ Actif' : '✗ Inactif'}
+                  </button>
+                )}
                 
                 {/* Bouton Éditer */}
                 {editCode && (
@@ -860,7 +910,7 @@ const PromoCodesTab = ({
               </div>
             </div>
           </div>
-        ))}
+        );})}
         {filteredDiscountCodes.length === 0 && (
           <p className="text-center py-8 text-white opacity-50">
             {codesSearch ? 'Aucun code trouvé' : t('noPromoCode')}
