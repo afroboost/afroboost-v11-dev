@@ -925,6 +925,69 @@ const MemoizedMessageBubble = memo(MessageBubble, (prevProps, nextProps) => {
   return true;
 });
 
+// V197: Numéro WhatsApp officiel Coach Bassi (utilisé par le bouton "Parler à Coach Bassi")
+const COACH_BASSI_WHATSAPP = '41765203363';
+const COACH_BASSI_WHATSAPP_MESSAGE = "Bonjour Coach Bassi, je viens du site Afroboost et j'aimerais en savoir plus !";
+
+// V197: Boutons quick-reply pour visiteurs — affichés après l'envoi du formulaire
+const VISITOR_QUICK_REPLIES = [
+  {
+    id: 'cours_horaires',
+    emoji: '📅',
+    label: 'Cours & horaires',
+    response: "Voici nos cours actuels :\n\n🔥 **Afroboost Silent – Sunday Vibes**\nDimanche à 18h30\nRue des Vallangines 97, Neuchâtel\n\n🌅 **Afroboost Silent – Session Cardio**\nMercredi à 18h30\nRue des Vallangines 97, Neuchâtel\n\nLes séances durent environ 1h. Ambiance garantie ! 💃🎧\n\nTu veux réserver une séance ?"
+  },
+  {
+    id: 'prix_abonnements',
+    emoji: '💰',
+    label: 'Prix & abonnements',
+    response: "Nos formules :\n\n🎟️ **Cours à l'unité** : 30 CHF\n📦 **Pack 5 séances** : 125 CHF (25 CHF/séance)\n📦 **Pack 10 séances** : 200 CHF (20 CHF/séance)\n🔄 **Abonnement mensuel** : sur demande\n\nPaiement par carte ou TWINT accepté !\n\nTu veux acheter un pack ?"
+  },
+  {
+    id: 'essai_gratuit',
+    emoji: '🎁',
+    label: 'Essai gratuit',
+    response: "Bonne nouvelle ! Ta première séance découverte est possible ! 🎉\n\nContacte directement Coach Bassi pour organiser ton essai. Il te trouvera la meilleure séance selon ton niveau.\n\nTu veux qu'on te mette en contact ?"
+  },
+  {
+    id: 'contact',
+    emoji: '📞',
+    label: 'Contact',
+    response: "Tu peux nous joindre de plusieurs façons :\n\n📱 **WhatsApp** : +41 76 520 33 63\n📧 **Email** : contact.artboost@gmail.com\n📍 **Cours** : Rue des Vallangines 97, 2000 Neuchâtel\n📸 **Instagram** : @afroboost\n\nOu clique sur le bouton ci-dessous pour parler directement à Coach Bassi !"
+  },
+  {
+    id: 'devenir_coach',
+    emoji: '🏋️',
+    label: 'Devenir coach',
+    response: "Tu veux devenir coach partenaire Afroboost ? 💪\n\nAfroboost recherche des coachs passionnés pour animer des séances dans d'autres villes de Suisse et d'Europe.\n\n**Ce qu'on propose :**\n- Formation au concept Afroboost\n- Matériel (casques silent disco)\n- Support marketing\n- Communauté de coachs\n\nContacte Coach Bassi pour en discuter !"
+  },
+  {
+    id: 'devenir_partenaire',
+    emoji: '🤝',
+    label: 'Devenir partenaire',
+    response: "Tu représentes une salle de sport, un événement, ou une marque ? 🤝\n\nAfroboost collabore avec des partenaires pour :\n- Organiser des événements spéciaux\n- Proposer des séances dans vos locaux\n- Des collaborations marketing\n\nContacte Coach Bassi pour explorer les possibilités !"
+  }
+];
+
+// V197: Style bouton quick-reply (inline, pas de Tailwind pour cette partie)
+const quickReplyButtonStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '8px',
+  padding: '10px 16px',
+  margin: '4px 0',
+  background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.1), rgba(139, 92, 246, 0.1))',
+  border: '1px solid rgba(217, 28, 210, 0.3)',
+  borderRadius: '12px',
+  color: '#FFFFFF',
+  fontSize: '14px',
+  fontWeight: '500',
+  cursor: 'pointer',
+  transition: 'all 0.2s ease',
+  width: '100%',
+  textAlign: 'left'
+};
+
 /**
  * Widget de chat IA flottant avec reconnaissance automatique et historique
  * Utilise l'API /api/chat/smart-entry pour identifier les utilisateurs
@@ -1958,6 +2021,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
   const [typingUser, setTypingUser] = useState(null); // Qui est en train d'écrire
   const typingTimeoutRef = useRef(null); // Timer pour cacher l'indicateur après 3s
   const lastTypingEmitRef = useRef(0); // Éviter le spam d'événements typing
+
+  // V197: État des boutons quick-reply visiteurs (cachés par défaut, activés après le formulaire visiteur)
+  const [showQuickReplies, setShowQuickReplies] = useState(false);
   
   // === MESSAGERIE PRIVÉE (MP) ===
   const [privateChats, setPrivateChats] = useState([]); // Liste des conversations MP actives
@@ -4017,6 +4083,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
       setIsCoachMode(isCoach);
       console.log(`[AUTH] Email: ${clientData.email}, isCoach: ${isCoach}`);
 
+      // V197: Détecter visiteur pur (pas coach, pas abonné) pour afficher les quick-replies
+      const isVisitor = !isCoach && !afroboostProfile?.code;
+      // V197: Message de bienvenue local pour les NOUVEAUX visiteurs (remplace le welcome backend)
+      const V197_WELCOME = 'Bienvenue chez Afroboost ! 🎶💃\n\nJe suis l\'assistant virtuel de Coach Bassi. Comment puis-je t\'aider ?';
+
       // Restaurer l'historique si utilisateur reconnu
       if (is_returning && chat_history && chat_history.length > 0) {
         const restoredMessages = chat_history.map(msg => ({
@@ -4030,6 +4101,14 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
           ...restoredMessages
         ]);
         setLastMessageCount(chat_history.length + 1);
+      } else if (isVisitor) {
+        // V197: NOUVEAU visiteur — message de bienvenue local + boutons cliquables
+        setMessages([{
+          id: `welcome_v197_${Date.now()}`,
+          type: 'ai',
+          text: V197_WELCOME
+        }]);
+        setLastMessageCount(1);
       } else {
         setMessages([{
           id: `welcome_${Date.now()}`,
@@ -4038,6 +4117,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
         }]);
         setLastMessageCount(1);
       }
+
+      // V197: Activer les quick-replies pour les visiteurs (nouveau ou de retour)
+      setShowQuickReplies(isVisitor);
 
       setStep('chat');
       
@@ -4174,11 +4256,54 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
   // === Ouvrir le widget ===
   const handleOpenWidget = () => {
     setIsOpen(true);
-    
+
     // Si client reconnu et pas encore en mode chat, ouvrir directement le chat
     if (isReturningClient && step === 'form') {
       handleReturningClientStart();
     }
+  };
+
+  // V197: Handler clic sur un bouton quick-reply visiteur
+  const handleQuickReply = (reply) => {
+    // 1. Ajouter le label cliqué comme message utilisateur (bubble à droite)
+    const now = Date.now();
+    const userMsg = {
+      id: 'qr_user_' + now,
+      type: 'user',
+      text: reply.emoji + ' ' + reply.label,
+      senderId: participantId,
+      sender_id: participantId
+    };
+    setMessages(prev => [...prev, userMsg]);
+
+    // 2. Masquer temporairement les boutons
+    setShowQuickReplies(false);
+
+    // 3. Afficher l'indicateur "Coach Bassi est en train d'écrire..."
+    setTypingUser({ type: 'coach', name: 'Coach Bassi' });
+
+    // 4. Après 800ms, afficher la réponse + flag bouton contact
+    setTimeout(() => {
+      setTypingUser(null);
+      const botMsg = {
+        id: 'qr_bot_' + (now + 1),
+        type: 'ai',
+        text: reply.response,
+        showContactButton: true
+      };
+      setMessages(prev => [...prev, botMsg]);
+
+      // 5. Ré-afficher les boutons après un court délai pour permettre une nouvelle question
+      setTimeout(() => {
+        setShowQuickReplies(true);
+      }, 500);
+    }, 800);
+  };
+
+  // V197: Handler clic "Parler à Coach Bassi" — ouvre WhatsApp avec message pré-rempli
+  const handleContactCoachBassi = () => {
+    const url = 'https://wa.me/' + COACH_BASSI_WHATSAPP + '?text=' + encodeURIComponent(COACH_BASSI_WHATSAPP_MESSAGE);
+    window.open(url, '_blank');
   };
 
   // === v88: Soumettre un avis post-session (fix erreur + masquage permanent) ===
@@ -7321,6 +7446,36 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         onDelete={(messageId) => handleDeleteMessage(messageId)}
                         vitrineCoachName={vitrineCoachName}
                       />
+                      {/* V197: Bouton "Parler à Coach Bassi" sous les réponses prédéfinies */}
+                      {msg.showContactButton && (
+                        <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: '8px' }}>
+                          <button
+                            onClick={handleContactCoachBassi}
+                            style={{
+                              padding: '10px 20px',
+                              background: 'linear-gradient(135deg, #D91CD2, #8B5CF6)',
+                              border: 'none',
+                              borderRadius: '12px',
+                              color: '#FFFFFF',
+                              fontWeight: '600',
+                              fontSize: '14px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '8px',
+                              boxShadow: '0 4px 12px rgba(217, 28, 210, 0.3)',
+                              transition: 'transform 0.15s ease'
+                            }}
+                            onMouseDown={function(e) { e.currentTarget.style.transform = 'scale(0.97)'; }}
+                            onMouseUp={function(e) { e.currentTarget.style.transform = 'scale(1)'; }}
+                            onMouseLeave={function(e) { e.currentTarget.style.transform = 'scale(1)'; }}
+                            data-testid="contact-coach-bassi-btn"
+                          >
+                            💬 Parler à Coach Bassi
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
                   
@@ -7578,6 +7733,40 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                   </div>
                 )}
                 
+                {/* V197: Boutons quick-reply visiteurs — affichés au-dessus de la barre de saisie */}
+                {showQuickReplies && step === 'chat' && !isCoachMode && !afroboostProfile?.code && (
+                  <div
+                    style={{
+                      padding: '8px 12px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '6px',
+                      maxHeight: '280px',
+                      overflowY: 'auto',
+                      borderTop: '1px solid rgba(217, 28, 210, 0.15)'
+                    }}
+                    data-testid="visitor-quick-replies"
+                  >
+                    {VISITOR_QUICK_REPLIES.map(function(reply) {
+                      return (
+                        <button
+                          key={reply.id}
+                          onClick={function() { handleQuickReply(reply); }}
+                          style={quickReplyButtonStyle}
+                          onMouseOver={function(e) { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(217, 28, 210, 0.25), rgba(139, 92, 246, 0.25))'; }}
+                          onMouseOut={function(e) { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(217, 28, 210, 0.1), rgba(139, 92, 246, 0.1))'; }}
+                          onMouseDown={function(e) { e.currentTarget.style.transform = 'scale(0.98)'; }}
+                          onMouseUp={function(e) { e.currentTarget.style.transform = 'scale(1)'; }}
+                          data-testid={'quick-reply-' + reply.id}
+                        >
+                          <span style={{ fontSize: '18px' }}>{reply.emoji}</span>
+                          <span>{reply.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
                 {/* === BOUTON RÉACTIVATION MODE ABONNÉ (Visible en mode visiteur avec profil) === */}
                 {!isFullscreen && isVisitorMode && afroboostProfile?.code && step === 'chat' && (
                   <div 
