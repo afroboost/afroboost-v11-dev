@@ -811,19 +811,27 @@ const GroupedConversationList = memo(({
   bulkSelected,
   toggleBulkSelect
 }) => {
-  const [collapsedGroups, setCollapsedGroups] = useState({});
+  // V198b: 3 catégories fixes (Abonnés / Visiteurs / Liens Intelligents).
+  // Smart Links est replié par défaut, les deux autres sont ouverts.
+  const [collapsedGroups, setCollapsedGroups] = useState({ smart_link: true });
 
+  // V198b: Méta des 3 catégories — ordre, label, couleurs
+  const CATEGORY_META = useMemo(() => ([
+    { key: 'subscriber', label: 'Abonnés', icon: '⭐', color: '#D91CD2', bg: 'rgba(217, 28, 210, 0.08)', border: 'rgba(217, 28, 210, 0.18)' },
+    { key: 'visitor', label: 'Visiteurs du site', icon: '💬', color: '#8B5CF6', bg: 'rgba(139, 92, 246, 0.08)', border: 'rgba(139, 92, 246, 0.18)' },
+    { key: 'smart_link', label: 'Liens Intelligents', icon: '🔗', color: '#FF2DAA', bg: 'rgba(255, 45, 170, 0.08)', border: 'rgba(255, 45, 170, 0.2)' },
+  ]), []);
+
+  // V198b: Grouper par category (fallback "visitor" si champ manquant — anciennes sessions)
   const grouped = useMemo(() => {
-    const groups = {};
+    const groups = { subscriber: [], visitor: [], smart_link: [] };
     enrichedConversations.forEach(session => {
-      const key = session.title || 'Conversations directes';
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(session);
+      const cat = session.category && groups[session.category] ? session.category : 'visitor';
+      groups[cat].push(session);
     });
     return groups;
   }, [enrichedConversations]);
 
-  const groupKeys = Object.keys(grouped);
   const toggleGroup = (key) => {
     setCollapsedGroups(prev => ({ ...prev, [key]: !prev[key] }));
   };
@@ -840,30 +848,32 @@ const GroupedConversationList = memo(({
           <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: '13px', margin: 0 }}>Aucune conversation</p>
         </div>
       ) : (
-        groupKeys.map(groupKey => {
-          const sessions = grouped[groupKey];
-          const isCollapsed = collapsedGroups[groupKey];
+        // V198b: 3 sections fixes — Abonnés / Visiteurs / Liens Intelligents
+        CATEGORY_META.map(meta => {
+          const sessions = grouped[meta.key] || [];
+          const isCollapsed = !!collapsedGroups[meta.key];
           const totalUnread = sessions.reduce((sum, s) => sum + (s.unreadCount || 0), 0);
 
           return (
-            <div key={groupKey} style={{ marginBottom: '8px' }}>
-              {/* Group header — minimal */}
+            <div key={meta.key} style={{ marginBottom: '8px' }}>
+              {/* V198b: header coloré par catégorie */}
               <button
-                onClick={() => toggleGroup(groupKey)}
+                onClick={() => toggleGroup(meta.key)}
                 style={{
                   width: '100%',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   padding: '10px 12px',
-                  background: 'rgba(217, 28, 210, 0.04)',
+                  background: meta.bg,
                   border: 'none',
-                  borderBottom: isCollapsed ? 'none' : '1px solid rgba(217, 28, 210, 0.12)',
+                  borderBottom: isCollapsed ? 'none' : `1px solid ${meta.border}`,
                   borderRadius: '8px',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease',
                   marginBottom: isCollapsed ? '0' : '6px',
                 }}
+                data-testid={'conversations-section-' + meta.key}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <ChevronDown
@@ -874,8 +884,8 @@ const GroupedConversationList = memo(({
                       transition: 'transform 0.2s ease',
                     }}
                   />
-                  <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: '600', textShadow: '0 0 8px rgba(217,28,210,0.3)' }}>
-                    {groupKey}
+                  <span style={{ color: meta.color, fontSize: '12px', fontWeight: '600', textShadow: `0 0 8px ${meta.color}33` }}>
+                    {meta.icon} {meta.label}
                   </span>
                   <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '11px' }}>
                     {sessions.length}
@@ -883,7 +893,7 @@ const GroupedConversationList = memo(({
                 </div>
                 {totalUnread > 0 && (
                   <span style={{
-                    background: '#D91CD2',
+                    background: meta.color,
                     color: '#fff',
                     fontSize: '10px',
                     fontWeight: '700',
@@ -895,10 +905,14 @@ const GroupedConversationList = memo(({
                 )}
               </button>
 
-              {/* Conversations */}
+              {/* Liste des conversations de cette catégorie */}
               {!isCollapsed && (
                 <div style={{ paddingLeft: '4px' }}>
-                  {sessions.map(session => (
+                  {sessions.length === 0 ? (
+                    <p style={{ color: 'rgba(255,255,255,0.18)', fontSize: '11px', padding: '8px 12px', margin: 0 }}>
+                      Aucune conversation dans cette catégorie
+                    </p>
+                  ) : sessions.map(session => (
                     <ConversationItem
                       key={session.id}
                       session={session}

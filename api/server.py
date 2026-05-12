@@ -8884,13 +8884,24 @@ async def get_conversations_advanced(
     
     # Récupérer les sessions paginées
     sessions = await db.chat_sessions.find(
-        base_query, 
+        base_query,
         {"_id": 0}
     ).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
-    
+
     # Enrichir chaque session avec le dernier message et les infos participant
     enriched_conversations = []
-    
+
+    # V198b: Pré-charger les emails des abonnés actifs (1 requête au lieu de N)
+    active_subscriber_emails = set()
+    try:
+        sub_cursor = db.subscriptions.find({"status": "active"}, {"_id": 0, "email": 1})
+        async for sub in sub_cursor:
+            email = (sub.get("email") or "").lower().strip()
+            if email:
+                active_subscriber_emails.add(email)
+    except Exception:
+        pass  # En cas d'erreur, on continue sans catégorisation abonné
+
     for session in sessions:
         # Récupérer le dernier message
         last_message = await db.chat_messages.find_one(
@@ -8936,6 +8947,14 @@ async def get_conversations_advanced(
         if not first_participant_name and session.get("title"):
             first_participant_name = session.get("title")
 
+        # V198b: Catégorie pour le dashboard coach (3 sections : abonnés / visiteurs / liens intelligents)
+        if session.get("is_smart_link") is True:
+            session_category = "smart_link"
+        elif first_participant_email and first_participant_email.lower().strip() in active_subscriber_emails:
+            session_category = "subscriber"
+        else:
+            session_category = "visitor"
+
         enriched_conversations.append({
             **session,
             "participants": participants_info,
@@ -8951,7 +8970,8 @@ async def get_conversations_advanced(
                 "created_at": last_message.get("created_at", "") if last_message else ""
             } if last_message else None,
             "message_count": message_count,
-            "messageCount": message_count  # v14.0: Alias pour compatibilité frontend
+            "messageCount": message_count,  # v14.0: Alias pour compatibilité frontend
+            "category": session_category,  # V198b: subscriber / visitor / smart_link
         })
     
     logger.info(f"[CRM] Conversations: page={page}, limit={limit}, query='{query}', total={total}")
