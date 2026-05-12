@@ -42,6 +42,9 @@ http_ece==1.2.1
 # --- Images (upload photos profil) ---
 pillow==12.1.0
 
+# --- PDF (V199: génération de factures) ---
+reportlab==4.2.5
+
 # --- HTTP Client (Twilio API, webhooks) ---
 aiohttp==3.13.3
 httpx==0.28.1

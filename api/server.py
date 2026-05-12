@@ -13471,6 +13471,199 @@ async def v197b_seed_quick_replies():
     return {"inserted": inserted, "total": count}
 
 
+# V199: Générateur de factures PDF — utilise reportlab (pure Python, OK Vercel)
+@api_router.post("/invoices/generate")
+async def v199_generate_invoice(request: Request):
+    """V199: Génère un PDF de facture Afroboost et le retourne en streaming.
+    Sauvegarde aussi un enregistrement dans la collection `invoices`."""
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import cm
+        from reportlab.lib.colors import HexColor
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.enums import TA_CENTER
+    except ImportError:
+        return JSONResponse({"error": "reportlab non installé"}, status_code=500)
+
+    from io import BytesIO
+    from starlette.responses import StreamingResponse
+
+    body = await request.json()
+
+    invoice_number = body.get("invoice_number") or f"AF-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    invoice_date = body.get("invoice_date") or datetime.utcnow().strftime("%d.%m.%Y")
+
+    emitter = body.get("emitter") or {}
+    emitter_name = emitter.get("name", "Association Afroboosteur")
+    emitter_address = emitter.get("address", "Rue de Maillefer 39")
+    emitter_city = emitter.get("city", "2000 Neuchâtel")
+    emitter_iban = emitter.get("iban", "CH77 0900 0000 1688 2939 4")
+    emitter_contact = emitter.get("contact", "Bassi Henri")
+    emitter_ide = emitter.get("ide", "CHE-407.097.646")
+
+    recipient = body.get("recipient") or {}
+    recipient_name = recipient.get("name", "")
+    recipient_address = recipient.get("address", "")
+    recipient_city = recipient.get("city", "")
+
+    items = body.get("items") or []
+    notes = body.get("notes") or "Paiement à l'avance par virement bancaire.\nUtilisation des séances dès réception du paiement."
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        topMargin=2 * cm, bottomMargin=2 * cm,
+        leftMargin=2 * cm, rightMargin=2 * cm,
+    )
+
+    elements = []
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('AfroTitle', parent=styles['Heading1'], textColor=HexColor('#D91CD2'), fontSize=22, spaceAfter=20)
+    subtitle_style = ParagraphStyle('AfroSubtitle', parent=styles['Heading2'], textColor=HexColor('#333333'), fontSize=14, spaceAfter=10)
+    normal_style = ParagraphStyle('AfroNormal', parent=styles['Normal'], fontSize=10, leading=14)
+    small_style = ParagraphStyle('AfroSmall', parent=styles['Normal'], fontSize=9, textColor=HexColor('#666666'), leading=12)
+
+    # Logo (cherché dans plusieurs emplacements)
+    logo_candidates = [
+        os.path.join(os.path.dirname(__file__), 'static', 'logo192.png'),
+        os.path.join(os.path.dirname(__file__), '..', 'frontend', 'public', 'logo192.png'),
+    ]
+    logo_path = None
+    for p in logo_candidates:
+        if os.path.exists(p):
+            logo_path = p
+            break
+
+    if logo_path:
+        try:
+            logo = Image(logo_path, width=50, height=50)
+            header_data = [[logo, Paragraph("FACTURE", title_style)]]
+            header_table = Table(header_data, colWidths=[60, 400])
+            header_table.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ALIGN', (0, 0), (0, 0), 'LEFT'),
+            ]))
+            elements.append(header_table)
+        except Exception:
+            elements.append(Paragraph("FACTURE", title_style))
+    else:
+        elements.append(Paragraph("FACTURE", title_style))
+
+    elements.append(Spacer(1, 10))
+    elements.append(Paragraph(f"<b>N° :</b> {invoice_number} &nbsp;&nbsp;&nbsp; <b>Date :</b> {invoice_date}", normal_style))
+    elements.append(Spacer(1, 20))
+
+    emitter_text = (
+        f"<b>Émetteur :</b><br/>"
+        f"{emitter_name}<br/>"
+        f"{emitter_address}<br/>"
+        f"{emitter_city}<br/>"
+        f"N° IDE : {emitter_ide}<br/>"
+        f"IBAN : {emitter_iban}<br/>"
+        f"Contact : {emitter_contact}"
+    )
+    recipient_text = (
+        f"<b>Destinataire :</b><br/>"
+        f"{recipient_name or '—'}<br/>"
+        f"{recipient_address or ''}<br/>"
+        f"{recipient_city or ''}"
+    )
+    address_table = Table(
+        [[Paragraph(emitter_text, normal_style), Paragraph(recipient_text, normal_style)]],
+        colWidths=[250, 250],
+    )
+    address_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(address_table)
+    elements.append(Spacer(1, 25))
+
+    elements.append(Paragraph("Détails de la prestation :", subtitle_style))
+
+    table_data = [["Description", "Quantité", "Prix Unitaire", "Total"]]
+    grand_total = 0.0
+    for item in items:
+        try:
+            qty = float(item.get("quantity") or 0)
+            unit_price = float(item.get("unit_price") or 0)
+            total_val = float(item.get("total") or (qty * unit_price))
+        except (TypeError, ValueError):
+            qty, unit_price, total_val = 0.0, 0.0, 0.0
+        grand_total += total_val
+        table_data.append([
+            item.get("description", ""),
+            f"{qty:g}",
+            f"{unit_price:.2f} CHF",
+            f"{total_val:.2f} CHF",
+        ])
+    table_data.append(["", "", "Total à payer :", f"{grand_total:.2f} CHF"])
+
+    table = Table(table_data, colWidths=[220, 60, 100, 100])
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), HexColor('#D91CD2')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), HexColor('#FFFFFF')),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+        ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -2), [HexColor('#FFFFFF'), HexColor('#F8F8F8')]),
+        ('GRID', (0, 0), (-1, -2), 0.5, HexColor('#DDDDDD')),
+        ('BACKGROUND', (0, -1), (-1, -1), HexColor('#1a1a2e')),
+        ('TEXTCOLOR', (0, -1), (-1, -1), HexColor('#FFFFFF')),
+        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, -1), (-1, -1), 11),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(table)
+    elements.append(Spacer(1, 25))
+
+    if notes:
+        elements.append(Paragraph("<b>Modalités de paiement :</b>", subtitle_style))
+        for line in notes.split("\n"):
+            line = line.strip()
+            if line:
+                elements.append(Paragraph(f"• {line}", small_style))
+        elements.append(Spacer(1, 15))
+
+    elements.append(Spacer(1, 30))
+    footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=HexColor('#999999'), alignment=TA_CENTER)
+    elements.append(Paragraph(
+        f"{emitter_name} — {emitter_address}, {emitter_city} — IBAN : {emitter_iban}",
+        footer_style,
+    ))
+
+    doc.build(elements)
+    buffer.seek(0)
+
+    # Sauvegarde dans MongoDB (best effort)
+    try:
+        await db.invoices.insert_one({
+            "invoice_number": invoice_number,
+            "date": invoice_date,
+            "emitter": emitter,
+            "recipient": recipient,
+            "items": items,
+            "total": grand_total,
+            "notes": notes,
+            "created_at": datetime.utcnow().isoformat(),
+        })
+    except Exception as e:
+        logger.warning(f"[V199] insert invoice failed: {e}")
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="facture_{invoice_number}.pdf"'
+        },
+    )
+
+
 # Include router
 fastapi_app.include_router(api_router)
 

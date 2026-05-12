@@ -154,6 +154,10 @@ const ConceptEditor = ({
   const showSettings = section === 'all' || section === 'settings';
   const showVitrine = section === 'all' || section === 'settings' || section === 'vitrine';
   const showBoutique = section === 'all' || section === 'settings' || section === 'boutique';
+  // V199: Filtres fins pour rendre chaque bloc boutique séparément depuis l'accordion Paiements
+  const showConditions = showBoutique || section === 'conditions';
+  const showLanding = showBoutique || section === 'landing';
+  const showLogos = showBoutique || section === 'logos';
 
   // v37.2: Titres dynamiques par section
   const sectionTitle = section === 'video-hero' ? '🎬 Vidéo Hero'
@@ -623,7 +627,8 @@ const ConceptEditor = ({
         </div>)}
 
         {/* v37.2: CGV & GOOGLE REVIEWS — section boutique */}
-        {showBoutique && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+        {/* V199: conditionné par showConditions pour pouvoir l'afficher seul depuis l'accordion */}
+        {showConditions && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <h3 className="text-purple-400 font-semibold mb-4">📋 Conditions & Avis</h3>
           {/* Conditions générales */}
           <div className="mb-4">
@@ -684,7 +689,8 @@ const ConceptEditor = ({
         </div>)}
 
         {/* Section d'atterrissage — v37.2: section boutique */}
-        {showBoutique && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+        {/* V199: conditionné par showLanding */}
+        {showLanding && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <LandingSectionSelector
             value={concept.defaultLandingSection || 'sessions'}
             onChange={(value) => setConcept({ ...concept, defaultLandingSection: value })}
@@ -783,7 +789,8 @@ const ConceptEditor = ({
         </div>)}
 
         {/* Logos de paiement — v37.2: section boutique */}
-        {showBoutique && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+        {/* V199: conditionné par showLogos */}
+        {showLogos && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <h3 className="text-white text-sm font-semibold mb-4">💳 Logos de paiement</h3>
           <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,0.4)' }}>
             Activez les logos qui s'afficheront dans le pied de page.

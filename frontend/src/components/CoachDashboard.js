@@ -28,7 +28,9 @@ import SmartLinksSection from "./coach/SmartLinksSection"; // v98: Liens Intelli
 import { parseMediaUrl, getMediaThumbnail } from "../services/MediaParser"; // Media Parser
 import SuperAdminPanel from "./SuperAdminPanel"; // v8.9 Super Admin Panel
 // v13.5: Composants extraits pour alléger CoachDashboard
-import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab, PaymentConfigTab, BrandingManager, SEOManager, FAQManager, ContactsManager } from "./dashboard";
+import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab, PaymentConfigTab, BrandingManager, SEOManager, FAQManager, ContactsManager, InvoiceGenerator } from "./dashboard";
+// V199: Accordéon paiements (5 sections pliables)
+import V199BoutiqueAccordion from "./dashboard/V199BoutiqueAccordion";
 import { copyToClipboard } from "../utils/clipboard"; // Utilitaire copier avec fallback mobile
 
 // v9.2.1: ErrorBoundary pour isoler les erreurs de composants
@@ -6663,27 +6665,23 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             )}
 
             {/* v37.2: Sous-onglet: 💳 Boutique & Paiements */}
+            {/* V199: Réorganisation en 5 sections pliables — seul "Configuration des Paiements" ouvert par défaut */}
             {offersSubTab === 'boutique-hub' && (
-              <>
-                <ConceptEditor
-                  concept={concept}
-                  setConcept={setConcept}
-                  conceptSaveStatus={conceptSaveStatus}
-                  saveConcept={saveConcept}
-                  API={API}
-                  t={t}
-                  isSuperAdmin={isSuperAdmin}
-                  coachEmail={safeCoachUser?.email || ''}
-                  courses={courses}
-                  setCourses={setCourses}
-                  section="boutique"
-                />
-                <PaymentConfigTab
-                  paymentConfig={vendorPaymentConfig}
-                  setPaymentConfig={setVendorPaymentConfig}
-                  coachEmail={coachUser?.email}
-                />
-              </>
+              <V199BoutiqueAccordion
+                concept={concept}
+                setConcept={setConcept}
+                conceptSaveStatus={conceptSaveStatus}
+                saveConcept={saveConcept}
+                API={API}
+                t={t}
+                isSuperAdmin={isSuperAdmin}
+                safeCoachUser={safeCoachUser}
+                courses={courses}
+                setCourses={setCourses}
+                coachUser={coachUser}
+                vendorPaymentConfig={vendorPaymentConfig}
+                setVendorPaymentConfig={setVendorPaymentConfig}
+              />
             )}
           </>
         )}
