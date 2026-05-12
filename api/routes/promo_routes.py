@@ -367,15 +367,26 @@ async def update_discount_code(code_id: str, updates: dict):
     liées (total_sessions/remaining_sessions/status). Sinon le badge
     affichait l'ancien total (ex. maxUses=9 mais sub.total_sessions=13).
     """
-    # Try by id first, then by code (case-insensitive)
+    # V200c: Try by id first, then by code (case-insensitive), then by _id string
     existing = await _db.discount_codes.find_one({"id": code_id})
     if not existing:
         existing = await _db.discount_codes.find_one({"code": {"$regex": f"^{code_id}$", "$options": "i"}})
     if not existing:
-        return {"error": "Code not found"}
+        # V200c: Essayer aussi par _id converti en ObjectId
+        try:
+            from bson import ObjectId
+            existing = await _db.discount_codes.find_one({"_id": ObjectId(code_id)})
+        except Exception:
+            pass
+    if not existing:
+        logger.error(f"[V200c] PUT /discount-codes/{code_id}: Code NOT FOUND — tried id, code regex, ObjectId")
+        raise HTTPException(status_code=404, detail=f"Code {code_id} not found")
 
+    logger.info(f"[V200c] PUT /discount-codes/{code_id}: Found code '{existing.get('code')}', applying updates: {list(updates.keys())}")
     await _db.discount_codes.update_one({"_id": existing["_id"]}, {"$set": updates})
     updated = await _db.discount_codes.find_one({"_id": existing["_id"]}, {"_id": 0})
+    logger.info(f"[V200c] PUT /discount-codes/{code_id}: Updated OK — expiresAt is now '{updated.get('expiresAt')}'")
+
 
     # V194: Propagation maxUses → subscriptions liées
     if isinstance(updates, dict) and "maxUses" in updates:

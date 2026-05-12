@@ -1758,11 +1758,27 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           maxUses: newCode.maxUses ? parseInt(newCode.maxUses) : null,
           expiresAt: newCode.expiresAt || null
         };
-        await axios.put(`${API}/discount-codes/${editingCode}`, updates);
-        setDiscountCodes(prev => prev.map(c => c.id === editingCode ? { ...c, ...updates } : c));
+        // V200c: Vérifier que le PUT a vraiment réussi
+        const putRes = await axios.put(`${API}/discount-codes/${editingCode}`, updates);
+        if (putRes.data?.error) {
+          setValidationMessage(`❌ Erreur: ${putRes.data.error}`);
+          setTimeout(() => setValidationMessage(''), 6000);
+          return;
+        }
+        // V200c: Recharger les codes depuis la base au lieu de mettre à jour localement
+        // Ça garantit que l'affichage correspond toujours à la base de données
+        try {
+          const freshCodes = await axios.get(`${API}/discount-codes`);
+          setDiscountCodes(freshCodes.data);
+        } catch (reloadErr) {
+          // Fallback: mise à jour locale si le reload échoue
+          setDiscountCodes(prev => prev.map(c => c.id === editingCode ? { ...c, ...updates } : c));
+        }
         setEditingCode(null);
         setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "" });
         setSelectedBeneficiaries([]);
+        setValidationMessage('✅ Code mis à jour !');
+        setTimeout(() => setValidationMessage(''), 3000);
         return;
       }
 
