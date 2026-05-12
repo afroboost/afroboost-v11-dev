@@ -3981,52 +3981,6 @@ def _v184_public_origin():
     return base.rstrip("/")
 
 
-# V201: Debug endpoint temporaire — diagnostic accès abonné (À SUPPRIMER APRÈS FIX)
-@api_router.get("/subscriber/debug/{access_code}")
-async def debug_subscriber_space(access_code: str):
-    """V201: Voir pourquoi un lien abonné échoue."""
-    code_upper = (access_code or "").strip().upper()
-    result = {"code_searched": code_upper}
-
-    # 1. Chercher dans subscriptions (exact)
-    sub_exact = await db.subscriptions.find_one(
-        {"code": code_upper}, {"_id": 0, "code": 1, "status": 1, "email": 1, "remaining_sessions": 1}
-    )
-    result["subscription_exact"] = sub_exact if sub_exact else "NOT FOUND"
-
-    # 2. Chercher dans subscriptions (regex case-insensitive)
-    sub_regex = await db.subscriptions.find_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0, "code": 1, "status": 1, "email": 1}
-    )
-    result["subscription_regex"] = sub_regex if sub_regex else "NOT FOUND"
-
-    # 3. Chercher dans subscriptions (active seulement)
-    sub_active = await db.subscriptions.find_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "status": "active"}, {"_id": 0, "code": 1, "status": 1}
-    )
-    result["subscription_active"] = sub_active if sub_active else "NOT FOUND"
-
-    # 4. Chercher dans discount_codes
-    discount = await db.discount_codes.find_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0, "code": 1, "active": 1, "maxUses": 1, "used": 1, "expiresAt": 1, "assignedEmail": 1}
-    )
-    result["discount_code"] = discount if discount else "NOT FOUND"
-
-    # 5. Codes similaires (les 6 premiers caractères)
-    prefix = code_upper[:6] if len(code_upper) >= 6 else code_upper
-    similar_subs = await db.subscriptions.find(
-        {"code": {"$regex": prefix, "$options": "i"}}, {"_id": 0, "code": 1, "status": 1}
-    ).to_list(10)
-    result["similar_subscriptions"] = similar_subs
-
-    similar_dc = await db.discount_codes.find(
-        {"code": {"$regex": prefix, "$options": "i"}}, {"_id": 0, "code": 1, "active": 1}
-    ).to_list(10)
-    result["similar_discount_codes"] = similar_dc
-
-    return result
-
-
 @api_router.get("/subscriber/space/{access_code}")
 async def get_subscriber_space(access_code: str):
     """V184: Données complètes de la page d'accès rapide d'un abonné."""
@@ -4091,12 +4045,23 @@ async def get_subscriber_space(access_code: str):
         expires_at = discount.get("expiresAt")
         coach_id_hint = discount.get("coach_id")
 
+    # V201: Chercher le nom dans chat_participants par email ou téléphone
     if not display_name and user_email:
-        participant = await db.chat_participants.find_one({"email": user_email}, {"_id": 0, "name": 1})
-        if participant:
-            display_name = participant.get("name")
+        try:
+            participant = await db.chat_participants.find_one(
+                {"$or": [{"email": user_email}, {"phone": user_email}]},
+                {"_id": 0, "name": 1}
+            )
+            if participant:
+                display_name = participant.get("name")
+        except Exception:
+            pass
     if not display_name:
-        display_name = (user_email.split("@")[0] if user_email else "Abonné")
+        # V201: Si c'est un numéro de téléphone, pas de split("@")
+        if user_email and "@" in user_email:
+            display_name = user_email.split("@")[0]
+        else:
+            display_name = "Abonné"
 
     # Coach branding (best-effort)
     coach = await _v184_find_coach_for_code(code_upper)
@@ -4127,20 +4092,24 @@ async def get_subscriber_space(access_code: str):
         occurrences.extend(_v184_next_occurrences(course, days_ahead=14))
     occurrences.sort(key=lambda o: o.get("datetime", ""))
 
-    # Historique de réservations de l'abonné (par email) — V187 expose quantity/guests/casques
-    # V196: ajoute courseTime pour permettre au frontend d'afficher l'heure locale brute
-    # (évite les décalages timezone des anciennes réservations stockées en UTC).
+    # Historique de réservations de l'abonné (par email ou téléphone)
+    # V201: Échapper les caractères regex spéciaux (ex: +41... contient un +)
+    import re as _re_mod
+    user_email_escaped = _re_mod.escape(user_email) if user_email else ""
     reservations_raw = []
     if user_email:
-        reservations_raw = await db.reservations.find(
-            {"userEmail": {"$regex": f"^{user_email}$", "$options": "i"}},
-            {
-                "_id": 0, "id": 1, "courseName": 1, "courseId": 1,
-                "datetime": 1, "createdAt": 1, "reservationCode": 1,
-                "quantity": 1, "userName": 1, "courseTime": 1,
-                "headphone_status": 1, "guests": 1, "guest_headphones": 1,
-            }
-        ).sort("createdAt", -1).to_list(50)
+        try:
+            reservations_raw = await db.reservations.find(
+                {"userEmail": {"$regex": f"^{user_email_escaped}$", "$options": "i"}},
+                {
+                    "_id": 0, "id": 1, "courseName": 1, "courseId": 1,
+                    "datetime": 1, "createdAt": 1, "reservationCode": 1,
+                    "quantity": 1, "userName": 1, "courseTime": 1,
+                    "headphone_status": 1, "guests": 1, "guest_headphones": 1,
+                }
+            ).sort("createdAt", -1).to_list(50)
+        except Exception as e:
+            logger.warning(f"[V201] Reservations lookup failed for '{user_email}': {e}")
 
     return {
         "success": True,
@@ -4233,12 +4202,16 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         raise HTTPException(status_code=404, detail="Cours introuvable")
 
     user_email = (subscription.get("email") or "").lower().strip()
-    user_name = subscription.get("name") or (user_email.split("@")[0] if user_email else "Abonné")
+    # V201: Nom fallback — ne pas split("@") sur un numéro de téléphone
+    user_name = subscription.get("name") or (user_email.split("@")[0] if "@" in user_email else "Abonné")
 
     # V185 F3: Empêcher la double réservation (même cours + même occurrence)
+    # V201: Échapper les caractères regex spéciaux (ex: +41...)
     if user_email:
+        import re as _re_mod
+        user_email_safe = _re_mod.escape(user_email)
         dup_query = {
-            "userEmail": {"$regex": f"^{user_email}$", "$options": "i"},
+            "userEmail": {"$regex": f"^{user_email_safe}$", "$options": "i"},
             "courseId": course_id,
         }
         if occurrence_iso:
