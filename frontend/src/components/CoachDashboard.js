@@ -1981,28 +1981,58 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   };
   
   // Delete reservation - SUPPRESSION DÉFINITIVE EN BASE
-  // V185 F4: Cycle du statut casque (Silent Disco) — null → taken → returned → null
+  // V186: Cycle du statut casque (Silent Disco) — null → taken → returned → null
+  // Fix: id fallback (_id, reservationCode), POST aliasing si PUT bloqué, diagnostic console.
   const cycleHeadphone = async (reservation) => {
-    if (!reservation?.id) return;
+    const targetId = reservation?.id || reservation?._id || reservation?.reservationCode;
+    if (!targetId) {
+      console.warn('[V186 HEADPHONE] Aucun identifiant exploitable sur la réservation:', reservation);
+      alert("Impossible : cette réservation n'a pas d'identifiant.");
+      return;
+    }
     const current = reservation.headphone_status || null;
     const next = current === 'taken' ? 'returned' : current === 'returned' ? null : 'taken';
+
     // Mise à jour optimiste
     setReservations(prev => prev.map(r => (
-      (r.id === reservation.id || r._id === reservation.id)
+      (r.id === targetId || r._id === targetId || r.reservationCode === targetId)
         ? { ...r, headphone_status: next }
         : r
     )));
+
+    const url = `${API}/reservations/${encodeURIComponent(targetId)}/headphone`;
+    const body = { status: next };
+
     try {
-      await axios.put(`${API}/reservations/${reservation.id}/headphone`, { status: next });
+      await axios.put(url, body);
     } catch (err) {
-      console.error('[V185 HEADPHONE] échec:', err);
-      // Rollback en cas d'erreur
-      setReservations(prev => prev.map(r => (
-        (r.id === reservation.id || r._id === reservation.id)
-          ? { ...r, headphone_status: current }
-          : r
-      )));
-      alert('Impossible de mettre à jour le statut du casque.');
+      console.error('[V186 HEADPHONE] PUT échec:', {
+        url,
+        body,
+        status: err?.response?.status,
+        data: err?.response?.data,
+        message: err?.message,
+      });
+      // Retry en POST au cas où PUT serait bloqué par un proxy/cache
+      try {
+        await axios.post(url, body);
+      } catch (err2) {
+        console.error('[V186 HEADPHONE] POST fallback échec:', {
+          url,
+          body,
+          status: err2?.response?.status,
+          data: err2?.response?.data,
+          message: err2?.message,
+        });
+        // Rollback
+        setReservations(prev => prev.map(r => (
+          (r.id === targetId || r._id === targetId || r.reservationCode === targetId)
+            ? { ...r, headphone_status: current }
+            : r
+        )));
+        const detail = err2?.response?.data?.detail || err?.response?.data?.detail || err2?.message || err?.message || 'erreur inconnue';
+        alert(`Impossible de mettre à jour le statut du casque.\n\n${detail}`);
+      }
     }
   };
 

@@ -52,6 +52,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const [shareCopied, setShareCopied] = useState(false);
   // V185 F3: État pour l'annulation de réservation
   const [cancellingId, setCancellingId] = useState(null);
+  // V186 F2: Compteurs par occurrence (multi-personnes)
+  const [quantities, setQuantities] = useState({});
+  // V186 F3: État accordéon conditions
+  const [termsOpen, setTermsOpen] = useState(false);
 
   const loadSpace = useCallback(async () => {
     if (!accessCode) {
@@ -79,14 +83,17 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const handleReserve = async (occurrence) => {
     if (!occurrence?.course_id || reservingKey) return;
     const reservationKey = `${occurrence.course_id}_${occurrence.datetime}`;
+    const qty = Math.max(1, Number(quantities[reservationKey]) || 1);
     setReservingKey(reservationKey);
     setActionError("");
     try {
       const res = await axios.post(
         `${API}/subscriber/space/${encodeURIComponent(accessCode)}/reserve/${encodeURIComponent(occurrence.course_id)}`,
-        { datetime: occurrence.datetime }
+        { datetime: occurrence.datetime, quantity: qty }
       );
       setConfirmedKeys((prev) => ({ ...prev, [reservationKey]: true }));
+      // V186: reset compteur après réservation
+      setQuantities((prev) => ({ ...prev, [reservationKey]: 1 }));
       if (typeof res.data?.remaining_sessions === "number") {
         setData((prev) =>
           prev
@@ -100,6 +107,16 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     } finally {
       setReservingKey(null);
     }
+  };
+
+  // V186 F2: helpers compteur
+  const getQty = (key) => Math.max(1, Number(quantities[key]) || 1);
+  const adjustQty = (key, delta, max) => {
+    setQuantities((prev) => {
+      const current = Math.max(1, Number(prev[key]) || 1);
+      const next = Math.min(Math.max(1, current + delta), Math.max(1, max));
+      return { ...prev, [key]: next };
+    });
   };
 
   // V185 F3: Annuler une réservation (avec confirmation et règle des 2h)
@@ -317,7 +334,14 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                     style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">{r.courseName || "Séance"}</p>
+                      <p className="text-sm font-medium truncate">
+                        {r.courseName || "Séance"}
+                        {r.quantity > 1 && (
+                          <span className="ml-2 text-xs font-normal" style={{ color: COLORS.primary }}>
+                            × {r.quantity} places
+                          </span>
+                        )}
+                      </p>
                       <p className="text-white/50 text-xs">{formatOccurrence(r.datetime)}</p>
                       {/* V185 F4: Pastille casque par réservation */}
                       {hp && (
@@ -380,18 +404,22 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           {courses.length === 0 ? (
             <p className="text-white/50 text-sm">Aucun cours disponible pour le moment.</p>
           ) : (
-            <ul className="space-y-2">
+            <ul className="space-y-3">
               {courses.slice(0, 12).map((occ) => {
                 const key = `${occ.course_id}_${occ.datetime}`;
                 const confirmed = confirmedKeys[key];
                 const isBusy = reservingKey === key;
+                const qty = getQty(key);
+                const maxQty = Math.max(1, remaining); // ne dépasse pas le solde
+                const dec = () => adjustQty(key, -1, maxQty);
+                const inc = () => adjustQty(key, +1, maxQty);
                 return (
                   <li
                     key={key}
-                    className="flex items-center justify-between gap-3 p-3 rounded-xl"
+                    className="p-3 rounded-xl"
                     style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
                   >
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0 mb-2">
                       <p className="text-sm font-medium truncate">{occ.name || "Cours"}</p>
                       <p className="text-white/50 text-xs">
                         {formatOccurrence(occ.datetime)}
@@ -400,22 +428,48 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                     </div>
                     {confirmed ? (
                       <span
-                        className="text-xs px-3 py-1 rounded-full"
+                        className="text-xs px-3 py-1 rounded-full inline-block"
                         style={{ background: "rgba(34,197,94,0.15)", color: "#86efac" }}
                       >
                         ✓ Réservé
                       </span>
                     ) : (
-                      <button
-                        type="button"
-                        disabled={isBusy || noSessions}
-                        onClick={() => handleReserve(occ)}
-                        className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-50"
-                        style={{ background: COLORS.primary, color: "white" }}
-                        data-testid={`reserve-${occ.course_id}`}
-                      >
-                        {isBusy ? "…" : "Réserver"}
-                      </button>
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        {/* V186 F2: Compteur de places */}
+                        <div className="flex items-center gap-2" data-testid={`qty-${occ.course_id}`}>
+                          <button
+                            type="button"
+                            onClick={dec}
+                            disabled={qty <= 1 || isBusy || noSessions}
+                            aria-label="Diminuer"
+                            className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
+                            style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}
+                          >
+                            −
+                          </button>
+                          <span className="text-sm font-semibold w-6 text-center">{qty}</span>
+                          <button
+                            type="button"
+                            onClick={inc}
+                            disabled={qty >= maxQty || isBusy || noSessions}
+                            aria-label="Augmenter"
+                            className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
+                            style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}
+                          >
+                            +
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={isBusy || noSessions}
+                          onClick={() => handleReserve(occ)}
+                          className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-50"
+                          style={{ background: COLORS.primary, color: "white" }}
+                          data-testid={`reserve-${occ.course_id}`}
+                        >
+                          {isBusy ? "…" : qty > 1 ? `Réserver ${qty} places` : "Réserver"}
+                        </button>
+                      </div>
                     )}
                   </li>
                 );
@@ -474,6 +528,60 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             >
               {shareCopied ? "✓ Lien copié" : "Copier mon lien personnel"}
             </button>
+          )}
+        </section>
+
+        {/* ===== V186 F3: Footer — Renouveler abonnement ===== */}
+        <section className="pt-2" data-testid="subscriber-space-footer">
+          {(() => {
+            const coachSlug = coach?.id || coach?.email || "";
+            const renewUrl = coachSlug ? `/coach/${encodeURIComponent(coachSlug)}` : "/";
+            const isEmpty = remaining <= 0;
+            return (
+              <a
+                href={renewUrl}
+                data-testid="renew-subscription-btn"
+                className={`block text-center font-semibold rounded-2xl transition-transform active:scale-95 ${isEmpty ? "py-4 text-base" : "py-3 text-sm"}`}
+                style={{
+                  background: isEmpty
+                    ? `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`
+                    : "rgba(217,28,210,0.18)",
+                  color: isEmpty ? "white" : "#F0A8EE",
+                  border: isEmpty ? "none" : `1px solid ${COLORS.primary}55`,
+                  boxShadow: isEmpty ? "0 6px 20px rgba(217,28,210,0.35)" : "none",
+                }}
+              >
+                🔄 Renouveler mon abonnement
+              </a>
+            );
+          })()}
+        </section>
+
+        {/* ===== V186 F3: Conditions d'utilisation (accordéon) ===== */}
+        <section
+          className="rounded-2xl"
+          style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
+          data-testid="subscriber-space-terms"
+        >
+          <button
+            type="button"
+            onClick={() => setTermsOpen((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 text-left text-sm font-medium"
+            style={{ color: "rgba(255,255,255,0.7)" }}
+            aria-expanded={termsOpen}
+          >
+            <span>📋 Conditions d'utilisation</span>
+            <span style={{ transform: termsOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▾</span>
+          </button>
+          {termsOpen && (
+            <ul className="px-4 pb-4 space-y-2 text-xs leading-relaxed" style={{ color: "rgba(255,255,255,0.45)" }}>
+              <li>• Chaque séance réservée est décomptée de votre solde.</li>
+              <li>• Vous pouvez annuler une réservation jusqu'à 2 heures avant le cours.</li>
+              <li>• Les séances non utilisées avant la date d'expiration de votre abonnement ne sont pas remboursables.</li>
+              <li>• Les casques audio doivent être retournés à la fin de chaque cours.</li>
+              <li>• En cas de perte ou de dommage du casque, des frais de remplacement pourront être appliqués.</li>
+              <li>• Pour toute question, contactez votre coach via le chat Afroboost.</li>
+            </ul>
           )}
         </section>
       </div>

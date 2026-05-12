@@ -4031,6 +4031,13 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     except Exception:
         body = {}
     occurrence_iso = body.get("datetime") if isinstance(body, dict) else None
+    # V186: Réservation multi-personnes — quantité optionnelle (défaut 1)
+    try:
+        quantity = int(body.get("quantity", 1)) if isinstance(body, dict) else 1
+    except (TypeError, ValueError):
+        quantity = 1
+    if quantity < 1 or quantity > 20:
+        raise HTTPException(status_code=400, detail="Nombre de places invalide (1 à 20)")
 
     subscription = await db.subscriptions.find_one(
         {"code": code_upper, "status": "active"}, {"_id": 0}
@@ -4041,6 +4048,11 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     remaining = subscription.get("remaining_sessions", 0)
     if remaining <= 0:
         raise HTTPException(status_code=400, detail="Plus de séances disponibles")
+    if remaining < quantity:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Séances insuffisantes : {remaining} restantes, {quantity} demandées"
+        )
 
     course = await db.courses.find_one({"id": course_id}, {"_id": 0})
     if not course or course.get("archived"):
@@ -4064,9 +4076,9 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
                 detail="Tu as déjà réservé cette séance."
             )
 
-    # Déduction subscription (source d'autorité)
-    new_remaining = remaining - 1
-    new_used = subscription.get("used_sessions", 0) + 1
+    # V186: Déduction subscription proportionnelle au nombre de places
+    new_remaining = remaining - quantity
+    new_used = subscription.get("used_sessions", 0) + quantity
     update_data = {
         "remaining_sessions": new_remaining,
         "used_sessions": new_used,
@@ -4076,10 +4088,10 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         update_data["status"] = "completed"
     await db.subscriptions.update_one({"id": subscription.get("id")}, {"$set": update_data})
 
-    # Incrément discount_codes.used (cohérent avec la logique de create_reservation)
+    # V186: Incrément discount_codes.used du nombre de places
     await db.discount_codes.update_one(
         {"code": {"$regex": f"^{code_upper}$", "$options": "i"}},
-        {"$inc": {"used": 1}}
+        {"$inc": {"used": quantity}}
     )
 
     coach_id = subscription.get("coach_id") or course.get("coach_id") or "bassi_default"
@@ -4097,7 +4109,7 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         "offerId": "",
         "offerName": subscription.get("offer_name") or "Abonnement",
         "price": 0.0,
-        "quantity": 1,
+        "quantity": quantity,  # V186: nombre de places (1 = solo, N = groupe)
         "totalPrice": 0.0,
         "discountCode": code_upper,
         "promoCode": code_upper,
@@ -4110,12 +4122,13 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     }
     await db.reservations.insert_one(reservation_doc)
     reservation_doc.pop("_id", None)
-    logger.info(f"[SUBSCRIBER_SPACE V184] Réservation {reservation_doc['reservationCode']} pour {user_email} ({course.get('name')})")
+    logger.info(f"[SUBSCRIBER_SPACE V186] Réservation {reservation_doc['reservationCode']} pour {user_email} ({course.get('name')}) × {quantity}")
 
     return {
         "success": True,
         "reservation": reservation_doc,
         "remaining_sessions": new_remaining,
+        "quantity": quantity,
     }
 
 
@@ -4192,12 +4205,19 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
         except Exception as e:
             logger.warning(f"[V185 CANCEL] Impossible de parser datetime {occurrence_iso}: {e}")
 
+    # V186: Recrédit proportionnel au nombre de places réservées
+    try:
+        qty_to_refund = int(reservation.get("quantity") or 1)
+    except (TypeError, ValueError):
+        qty_to_refund = 1
+    if qty_to_refund < 1:
+        qty_to_refund = 1
+
     # Suppression de la réservation
     await db.reservations.delete_one({"id": reservation_id})
 
-    # Recrédit de la séance
-    new_remaining = (subscription.get("remaining_sessions") or 0) + 1
-    new_used = max(0, (subscription.get("used_sessions") or 0) - 1)
+    new_remaining = (subscription.get("remaining_sessions") or 0) + qty_to_refund
+    new_used = max(0, (subscription.get("used_sessions") or 0) - qty_to_refund)
     update_data = {
         "remaining_sessions": new_remaining,
         "used_sessions": new_used,
@@ -4208,16 +4228,17 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
         {"id": subscription.get("id")}, {"$set": update_data}
     )
 
-    # Décrémenter discount_codes.used (sans descendre sous 0)
+    # V186: Décrémenter discount_codes.used du nombre de places (sans descendre sous 0)
     await db.discount_codes.update_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "used": {"$gt": 0}},
-        {"$inc": {"used": -1}}
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "used": {"$gte": qty_to_refund}},
+        {"$inc": {"used": -qty_to_refund}}
     )
 
-    logger.info(f"[V185 CANCEL] Réservation {reservation_id} annulée pour {user_email} (recrédit → {new_remaining})")
+    logger.info(f"[V186 CANCEL] Réservation {reservation_id} annulée pour {user_email} (recrédit +{qty_to_refund} → {new_remaining})")
     return {
         "success": True,
         "remaining_sessions": new_remaining,
+        "refunded_quantity": qty_to_refund,
         "cancelled_reservation_id": reservation_id,
     }
 

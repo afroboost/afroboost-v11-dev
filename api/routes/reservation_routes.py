@@ -730,33 +730,62 @@ async def delete_reservation(reservation_id: str):
     return {"success": True}
 
 
-# V185 F4: Suivi des casques (Silent Disco)
-@reservation_router.put("/reservations/{reservation_id}/headphone")
-async def update_reservation_headphone(reservation_id: str, request: Request):
-    """V185: Met à jour le statut du casque audio (Silent Disco).
+# V185 F4 + V186 fix: Suivi des casques (Silent Disco)
+async def _update_headphone_impl(reservation_id: str, request: Request):
+    """V186: Met à jour le statut du casque audio (Silent Disco).
     Valeurs acceptées : null, 'taken', 'returned'.
+    V186 fix: lookup robuste (id OU reservationCode), parsing tolérant du body.
     """
     body = {}
     try:
-        body = await request.json()
+        raw = await request.body()
+        if raw:
+            import json as _json
+            body = _json.loads(raw.decode("utf-8"))
     except Exception:
         body = {}
     status = body.get("status") if isinstance(body, dict) else None
+    if isinstance(status, str):
+        status = status.strip().lower() or None
     if status not in (None, "", "taken", "returned"):
-        raise HTTPException(status_code=400, detail="Statut casque invalide")
+        raise HTTPException(status_code=400, detail=f"Statut casque invalide: {status!r}")
 
-    reservation = await db.reservations.find_one({"id": reservation_id}, {"_id": 0, "id": 1})
+    # V186: lookup robuste — id de doc OU reservationCode
+    reservation = await db.reservations.find_one(
+        {"$or": [{"id": reservation_id}, {"reservationCode": reservation_id}]},
+        {"_id": 0, "id": 1, "reservationCode": 1}
+    )
     if not reservation:
-        raise HTTPException(status_code=404, detail="Réservation introuvable")
+        raise HTTPException(status_code=404, detail=f"Réservation introuvable: {reservation_id}")
 
     normalized = status if status else None
     update_payload = {
         "headphone_status": normalized,
         "headphone_updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    await db.reservations.update_one({"id": reservation_id}, {"$set": update_payload})
-    logger.info(f"[V185 HEADPHONE] {reservation_id} → {normalized}")
+    # Use the same OR filter for the update to hit the correct doc
+    await db.reservations.update_one(
+        {"$or": [{"id": reservation_id}, {"reservationCode": reservation_id}]},
+        {"$set": update_payload}
+    )
+    logger.info(f"[V186 HEADPHONE] {reservation_id} → {normalized}")
     return {"success": True, "reservation_id": reservation_id, "headphone_status": normalized}
+
+
+@reservation_router.put("/reservations/{reservation_id}/headphone")
+async def update_reservation_headphone_put(reservation_id: str, request: Request):
+    return await _update_headphone_impl(reservation_id, request)
+
+
+# V186: Accept PATCH/POST aliases (certains proxys/clients ne propagent pas PUT correctement)
+@reservation_router.patch("/reservations/{reservation_id}/headphone")
+async def update_reservation_headphone_patch(reservation_id: str, request: Request):
+    return await _update_headphone_impl(reservation_id, request)
+
+
+@reservation_router.post("/reservations/{reservation_id}/headphone")
+async def update_reservation_headphone_post(reservation_id: str, request: Request):
+    return await _update_headphone_impl(reservation_id, request)
 
 # === STAFF ACCESS: Validation QR uniquement (pas d'accès chat/réglages) ===
 @reservation_router.post("/staff/validate")
