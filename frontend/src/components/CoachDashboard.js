@@ -2531,11 +2531,28 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const searchTimeoutRef = useRef(null);
 
   // v104.4: uniqueCustomers — déplacé ici APRÈS chatParticipants useState (fix TDZ ReferenceError)
+  // V192: enrichi avec phone/whatsapp pour permettre la recherche par numéro
+  // dans la liste des codes promo (PromoCodesTab)
   const uniqueCustomers = useMemo(() => Array.from(new Map(
     [
-      ...reservations.map(r => ({ name: r.userName, email: r.userEmail })),
-      ...users.map(u => ({ name: u.name, email: u.email })),
-      ...chatParticipants.map(p => ({ name: p.name, email: p.email || p.whatsapp }))
+      ...reservations.map(r => ({
+        name: r.userName,
+        email: r.userEmail,
+        whatsapp: r.userWhatsapp || '',
+        phone: r.userWhatsapp || ''
+      })),
+      ...users.map(u => ({
+        name: u.name,
+        email: u.email,
+        whatsapp: u.whatsapp || '',
+        phone: u.phone || u.whatsapp || ''
+      })),
+      ...chatParticipants.map(p => ({
+        name: p.name,
+        email: p.email || p.whatsapp,
+        whatsapp: p.whatsapp || '',
+        phone: p.phone || p.whatsapp || ''
+      }))
     ]
     .filter(c => c.email && c.name && c.name !== 'Sans nom')
     .map(c => [c.email.toLowerCase(), c])

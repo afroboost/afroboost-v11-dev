@@ -155,49 +155,66 @@ const PromoCodesTab = ({
     setTimeout(() => setCopiedSpaceLinkId(null), 2000);
   };
 
-  // v150: Recherche multi-critères (code, nom, email, WhatsApp)
+  // V192: Recherche multi-critères corrigée (code, nom, email, téléphone/WhatsApp)
+  // Bugs fixés depuis v150 : .find→.some (multi-match), phone normalisé en
+  // chiffres, fallback nom/email sur les champs directs du code, code mort
+  // customerEmailsByNameOrPhone supprimé.
   const filteredDiscountCodes = useMemo(() => {
     if (!codesSearch) return discountCodes;
     const q = codesSearch.toLowerCase().trim();
+    if (!q) return discountCodes;
+    const qDigits = q.replace(/\D/g, ''); // chiffres uniquement pour matcher des numéros formatés
 
-    // Construire un lookup nom/whatsapp → emails à partir des contacts connus
-    const customerEmailsByNameOrPhone = new Map();
-    if (uniqueCustomers) {
-      uniqueCustomers.forEach(c => {
-        if (c.name) customerEmailsByNameOrPhone.set(c.name.toLowerCase(), c.email?.toLowerCase());
-        if (c.email) customerEmailsByNameOrPhone.set(c.email.toLowerCase(), c.email?.toLowerCase());
-        if (c.phone) customerEmailsByNameOrPhone.set(c.phone.replace(/\D/g, ''), c.email?.toLowerCase());
-        if (c.whatsapp) customerEmailsByNameOrPhone.set(c.whatsapp.replace(/\D/g, ''), c.email?.toLowerCase());
-      });
-    }
+    const matchesText = (v) => !!v && String(v).toLowerCase().includes(q);
+    const matchesPhone = (v) => {
+      if (!qDigits) return false;
+      const d = String(v || '').replace(/\D/g, '');
+      return d.length > 0 && d.includes(qDigits);
+    };
 
     return discountCodes.filter(c => {
-      // 1. Recherche par code
-      if (c.code?.toLowerCase().includes(q)) return true;
+      // 1. Code lui-même
+      if (matchesText(c.code)) return true;
 
-      // 2. Recherche par email assigné
-      if ((c.assignedEmail || '').toLowerCase().includes(q)) return true;
-      if (c.assignedEmails?.some(e => e.toLowerCase().includes(q))) return true;
+      // 2. Champs bénéficiaire directement sur le code
+      if (matchesText(c.name)) return true;
+      if (matchesText(c.assignedName)) return true;
+      if (matchesText(c.beneficiaryName)) return true;
+      if (matchesText(c.assignedEmail)) return true;
+      if (Array.isArray(c.assignedEmails) && c.assignedEmails.some(e => matchesText(e))) return true;
+      if (matchesText(c.assignedPhone) || matchesText(c.whatsapp)) return true;
+      if (matchesPhone(c.assignedPhone) || matchesPhone(c.whatsapp)) return true;
 
-      // 3. Recherche par nom d'abonné (subscriptions)
+      // 3. Abonnés ayant utilisé ce code (subscriptions)
       const subs = codeSubscriptions[c.code];
-      if (subs?.some(sub =>
-        (sub.name || '').toLowerCase().includes(q) ||
-        (sub.email || '').toLowerCase().includes(q)
+      if (Array.isArray(subs) && subs.some(sub =>
+        matchesText(sub.name) ||
+        matchesText(sub.email) ||
+        matchesText(sub.whatsapp) ||
+        matchesText(sub.phone) ||
+        matchesPhone(sub.whatsapp) ||
+        matchesPhone(sub.phone)
       )) return true;
 
-      // 4. Recherche par nom de contact → trouver son email → vérifier si assigné au code
-      const allEmails = [
-        ...(c.assignedEmails || []),
-        ...(c.assignedEmail ? [c.assignedEmail] : [])
-      ].map(e => e.toLowerCase());
-
-      if (uniqueCustomers) {
-        const matchingCustomer = uniqueCustomers.find(cust =>
-          (cust.name || '').toLowerCase().includes(q) ||
-          (cust.email || '').toLowerCase().includes(q)
+      // 4. Cross-référence : un contact (uniqueCustomers) dont l'email est
+      // assigné à ce code peut matcher via son nom/email/téléphone
+      if (Array.isArray(uniqueCustomers) && uniqueCustomers.length > 0) {
+        const assignedEmails = new Set(
+          [
+            ...(c.assignedEmails || []),
+            ...(c.assignedEmail ? [c.assignedEmail] : []),
+          ].map(e => (e || '').toLowerCase())
         );
-        if (matchingCustomer && allEmails.includes(matchingCustomer.email?.toLowerCase())) return true;
+        // Si aucune assignation, on n'a rien à cross-référencer
+        if (assignedEmails.size > 0) {
+          const someMatch = uniqueCustomers.some(cust => {
+            const custMatches = matchesText(cust.name) || matchesText(cust.email)
+              || matchesPhone(cust.phone) || matchesPhone(cust.whatsapp);
+            if (!custMatches) return false;
+            return assignedEmails.has((cust.email || '').toLowerCase());
+          });
+          if (someMatch) return true;
+        }
       }
 
       return false;
