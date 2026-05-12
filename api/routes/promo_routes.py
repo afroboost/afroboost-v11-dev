@@ -192,6 +192,63 @@ async def _resolve_offer_details(courses_list, max_uses, offer_name_override=Non
 
 
 # === v106.9: HELPER — Sanitize MongoDB docs for JSON serialization ===
+# V200: Parsing robuste d'une date d'expiration depuis MongoDB
+# Accepte: datetime, ISO string (YYYY-MM-DD[Thh:mm:ss][Z|+offset]), DD.MM.YYYY,
+#          DD/MM/YYYY, timestamp Unix (int/float secondes ou ms).
+# Retourne un datetime tz-aware en UTC, ou None si non parseable (→ on N'EXPIRE PAS).
+def _v200_parse_expiry(raw, code_str: str = ""):
+    if raw is None or raw == "":
+        return None
+
+    # 1. datetime natif (motor peut en renvoyer avant sanitize)
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+
+    # 2. Timestamp numérique (rare mais possible)
+    if isinstance(raw, (int, float)):
+        try:
+            ts = float(raw)
+            # Heuristique: > 10^12 → millisecondes, sinon secondes
+            if ts > 1e12:
+                ts = ts / 1000.0
+            return datetime.fromtimestamp(ts, tz=timezone.utc)
+        except (OSError, ValueError, OverflowError) as e:
+            logger.warning(f"[V200] Code {code_str}: timestamp invalide {raw!r}: {e}")
+            return None
+
+    # 3. String — plusieurs formats
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return None
+
+        # 3a. Format européen DD.MM.YYYY ou DD/MM/YYYY
+        import re
+        m = re.match(r'^(\d{1,2})[./](\d{1,2})[./](\d{4})$', s)
+        if m:
+            try:
+                day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                # Fin de journée pour rester valide tout le jour J
+                return datetime(year, month, day, 23, 59, 59, tzinfo=timezone.utc)
+            except (ValueError, OverflowError) as e:
+                logger.warning(f"[V200] Code {code_str}: DMY invalide {s!r}: {e}")
+                return None
+
+        # 3b. ISO standard
+        try:
+            iso = s.replace('Z', '+00:00')
+            if 'T' not in iso:
+                iso = iso + "T23:59:59+00:00"
+            dt = datetime.fromisoformat(iso)
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except ValueError as e:
+            logger.warning(f"[V200] Code {code_str}: ISO non parseable {s!r}: {e}")
+            return None
+
+    logger.warning(f"[V200] Code {code_str}: type expiresAt non supporté {type(raw).__name__}: {raw!r}")
+    return None
+
+
 def _sanitize_mongo_doc(doc):
     """Convertit les types non-sérialisables (datetime, ObjectId, bytes) en strings JSON-safe"""
     if not isinstance(doc, dict):
@@ -386,30 +443,20 @@ async def validate_discount_code(data: dict):
         # v106.9: Sanitize MongoDB doc — convert datetime/non-serializable to strings
         code = _sanitize_mongo_doc(code)
 
-        # Check expiration date
-        expiry_date = None
-        if code.get("expiresAt"):
-            # V200: Log brut pour diagnostiquer les codes affichés à tort comme expirés
-            logger.info(f"[VALIDATE] code={code_str} expiresAt={code['expiresAt']!r} (type={type(code['expiresAt']).__name__})")
-            try:
-                expiry = code["expiresAt"]
-                if isinstance(expiry, str):
-                    # Handle various date formats
-                    expiry = expiry.replace('Z', '+00:00')
-                    if 'T' not in expiry:
-                        expiry = expiry + "T23:59:59+00:00"
-                    expiry_date = datetime.fromisoformat(expiry)
-                elif isinstance(expiry, datetime):
-                    expiry_date = expiry
-                # v106.9: Ensure timezone-aware comparison
-                now_utc = datetime.now(timezone.utc)
-                if expiry_date:
-                    if expiry_date.tzinfo is None:
-                        expiry_date = expiry_date.replace(tzinfo=timezone.utc)
-                    if expiry_date < now_utc:
-                        return {"valid": False, "message": "Code promo expiré"}
-            except Exception as e:
-                logger.warning(f"[VALIDATE] Date parsing error for code {code_str}: {e}")
+        # V200: Check expiration date — parsing ROBUSTE multi-format
+        # Supporte: datetime, ISO (YYYY-MM-DD[Thh:mm:ss][Z|+offset]), DD.MM.YYYY, DD/MM/YYYY,
+        #           timestamp Unix (int/float). En cas d'échec de parsing → on N'EXPIRE PAS
+        # (better to accept a confusing code than to falsely reject one stocké au mauvais format).
+        expiry_date = _v200_parse_expiry(code.get("expiresAt"), code_str)
+        if expiry_date is not None:
+            now_utc = datetime.now(timezone.utc)
+            logger.info(
+                f"[V200 VALIDATE] code={code_str} raw={code.get('expiresAt')!r} "
+                f"parsed={expiry_date.isoformat()} now={now_utc.isoformat()} "
+                f"expired={expiry_date < now_utc}"
+            )
+            if expiry_date < now_utc:
+                return {"valid": False, "message": "Code promo expiré"}
 
         # Check max uses (global)
         if code.get("maxUses") and code.get("used", 0) >= code["maxUses"]:
@@ -736,6 +783,46 @@ async def sync_subscriptions_for_email(data: dict):
         "skipped": skipped,
         "message": f"{len(created)} abonnement(s) créé(s), {len(skipped)} déjà existant(s)"
     }
+
+
+# V200: Endpoint DEBUG TEMPORAIRE — retourne la valeur brute de expiresAt + le parsing
+# À SUPPRIMER une fois le diagnostic terminé. Ne renvoie pas d'info sensible.
+@promo_router.get("/debug/{code_str}")
+async def v200_debug_promo_code(code_str: str):
+    code = await _db.discount_codes.find_one(
+        {"code": {"$regex": f"^{code_str}$", "$options": "i"}},
+    )
+    if not code:
+        return {"error": "Code not found"}
+
+    raw_before_sanitize = code.get("expiresAt")
+    sanitized = _sanitize_mongo_doc({k: v for k, v in code.items() if k != "_id"})
+    raw_after_sanitize = sanitized.get("expiresAt")
+
+    info = {
+        "code": sanitized.get("code"),
+        "active": sanitized.get("active"),
+        "used": sanitized.get("used", 0),
+        "maxUses": sanitized.get("maxUses"),
+        "expiresAt_raw_before_sanitize": repr(raw_before_sanitize),
+        "expiresAt_type_before_sanitize": type(raw_before_sanitize).__name__,
+        "expiresAt_raw_after_sanitize": repr(raw_after_sanitize),
+        "expiresAt_type_after_sanitize": type(raw_after_sanitize).__name__,
+    }
+
+    parsed = _v200_parse_expiry(raw_after_sanitize, code_str)
+    if parsed is not None:
+        now_utc = datetime.now(timezone.utc)
+        info["parsed_iso"] = parsed.isoformat()
+        info["now_utc"] = now_utc.isoformat()
+        info["is_expired"] = parsed < now_utc
+        info["delta_days"] = (parsed - now_utc).days
+    else:
+        info["parsed_iso"] = None
+        info["is_expired"] = False
+        info["note"] = "Date non parseable → validate ne refuse pas le code (lenient)"
+
+    return info
 
 
 # === V156: Admin — update subscription by id ===
