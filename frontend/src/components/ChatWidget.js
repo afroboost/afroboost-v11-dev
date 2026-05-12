@@ -3596,6 +3596,83 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
     }
   };
 
+  // V191b: Cycle du statut casque depuis la page Chat coach (Transactions)
+  // guestIndex = null pour l'abonné principal, index 0-based pour un accompagnant
+  var cycleCoachHeadphone = function(reservation, guestIndex) {
+    var targetId = reservation && (reservation.id || reservation._id || reservation.reservationCode);
+    if (!targetId) return;
+    var isGuest = guestIndex != null && guestIndex >= 0;
+    var current = isGuest
+      ? ((reservation.guest_headphones || [])[guestIndex] || null)
+      : (reservation.headphone_status || null);
+    var next = current === 'taken' ? 'returned' : (current === 'returned' ? null : 'taken');
+
+    var applyStatus = function(newStatus) {
+      setCoachReservations(function(prev) {
+        return (prev || []).map(function(r) {
+          if (r.id !== targetId && r._id !== targetId && r.reservationCode !== targetId) return r;
+          if (!isGuest) {
+            return Object.assign({}, r, { headphone_status: newStatus });
+          }
+          var arr = Array.isArray(r.guest_headphones) ? r.guest_headphones.slice() : [];
+          while (arr.length <= guestIndex) arr.push(null);
+          arr[guestIndex] = newStatus;
+          return Object.assign({}, r, { guest_headphones: arr });
+        });
+      });
+    };
+    applyStatus(next);
+
+    var url = API + '/reservations/' + encodeURIComponent(targetId) + '/headphone';
+    var body = isGuest ? { status: next, guest_index: guestIndex } : { status: next };
+    axios.put(url, body).catch(function(err1) {
+      axios.post(url, body).catch(function(err2) {
+        console.error('[V191b HEADPHONE] échec', {
+          url: url, body: body,
+          status: err2 && err2.response && err2.response.status,
+          data: err2 && err2.response && err2.response.data
+        });
+        applyStatus(current);
+        alert('Impossible de mettre à jour le statut du casque.');
+      });
+    });
+  };
+
+  // V191b: Helper pour rendre la rangée de casques individuels (1 par personne)
+  var renderCoachHeadphoneRow = function(r) {
+    var guests = Array.isArray(r.guests) ? r.guests : [];
+    var guestHp = Array.isArray(r.guest_headphones) ? r.guest_headphones : [];
+    var mainName = ((r.userName || '') + '').split(' ')[0] || 'Abonné';
+    var styleFor = function(hp) {
+      if (hp === 'taken') return { bg: 'rgba(239,68,68,0.18)', col: '#ef4444', label: 'Casque pris' };
+      if (hp === 'returned') return { bg: 'rgba(34,197,94,0.18)', col: '#22c55e', label: 'Casque rendu' };
+      return { bg: 'rgba(255,255,255,0.06)', col: 'rgba(255,255,255,0.4)', label: 'Pas de casque' };
+    };
+    var makeToggle = function(name, hp, gIdx) {
+      var s = styleFor(hp);
+      return React.createElement('button', {
+        key: 'hp-' + (gIdx == null ? 'main' : gIdx),
+        type: 'button',
+        title: '🎧 ' + s.label + ' — clic pour changer',
+        onClick: function(e) { e.stopPropagation(); cycleCoachHeadphone(r, gIdx); },
+        style: {
+          display: 'inline-flex', alignItems: 'center', gap: '4px',
+          padding: '4px 7px', borderRadius: '6px',
+          background: s.bg, color: s.col, border: 'none', cursor: 'pointer',
+          fontSize: '11px', whiteSpace: 'nowrap', lineHeight: 1
+        }
+      }, '🎧 ' + name);
+    };
+    var children = [makeToggle(mainName, r.headphone_status || null, null)];
+    for (var i = 0; i < guests.length; i++) {
+      var gname = ((guests[i] || '') + '').split(' ')[0] || ('Invité ' + (i + 1));
+      children.push(makeToggle(gname, guestHp[i] || null, i));
+    }
+    return React.createElement('div', {
+      style: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }
+    }, children);
+  };
+
   // v162m: Charger TOUTES les transactions (reservations + souscriptions + achats)
   var loadCoachReservations = function() {
     var headers = {};
@@ -6517,6 +6594,15 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           var isValidated = txStatus === 'validé' || txStatus === 'payé' || txStatus === 'active' || txStatus === 'completed' || r.validated;
                           var dateStr = '';
                           try { dateStr = txDate ? new Date(txDate).toLocaleDateString('fr-FR') : ''; } catch(e) {}
+                          // V191b: réservations multi-personnes — quantité + accompagnants
+                          var qty = Number(r.quantity || 0);
+                          var hasGuests = Array.isArray(r.guests) && r.guests.length > 0;
+                          var isReservation = txType === 'reservation';
+                          var peopleLabel = '';
+                          if (hasGuests) {
+                            var mainFirst = ((r.userName || '') + '').split(' ')[0] || 'Abonné';
+                            peopleLabel = '👥 ' + [mainFirst].concat(r.guests).join(', ');
+                          }
                           return React.createElement('div', {
                             key: (r.reservationCode || r.id || r._tx_code || '') + '-' + idx,
                             style: {
@@ -6536,12 +6622,26 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                                 txLabel
                               )
                             ),
+                            // V191b: badge × N places
+                            (qty > 1) && React.createElement('div', {
+                              style: {
+                                display: 'inline-block', marginTop: '4px', padding: '2px 8px',
+                                borderRadius: '10px', fontSize: '10px', fontWeight: 600,
+                                background: 'rgba(217,28,210,0.18)', color: '#F0A8EE'
+                              }
+                            }, '× ' + qty + ' places'),
                             React.createElement('div', { style: { color: '#aaa', fontSize: '11px', marginTop: '4px' } },
                               txOffer + (txPrice > 0 ? ' • ' + txPrice + ' CHF' : '') + (txSessions ? ' • ' + txSessions + ' séances' : '')
                             ),
                             React.createElement('div', { style: { color: '#666', fontSize: '10px', marginTop: '2px' } },
                               (txCode ? 'Code: ' + txCode + ' • ' : '') + dateStr
-                            )
+                            ),
+                            // V191b: ligne des accompagnants
+                            peopleLabel && React.createElement('div', {
+                              style: { color: '#bbb', fontSize: '11px', marginTop: '6px' }
+                            }, peopleLabel),
+                            // V191b: rangée des casques individuels (cliquables) — réservations uniquement
+                            isReservation && renderCoachHeadphoneRow(r)
                           );
                         })
                       )}
