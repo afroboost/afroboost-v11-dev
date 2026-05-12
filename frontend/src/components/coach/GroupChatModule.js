@@ -298,18 +298,23 @@ const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, onOpenChat, onE
         )}
       </div>
       <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-        {/* V198: Toggle visibilité pour les abonnés (visible par défaut si champ absent) */}
+        {/* V198c: Toggle visibilité pour les abonnés — chip clairement visible (pill style) */}
         {onToggleVisibility && (
           <button onClick={e => { e.stopPropagation(); onToggleVisibility(group.id, group.visible_to_subscribers !== false); }}
             title={group.visible_to_subscribers !== false ? 'Visible par les abonnés — cliquer pour cacher' : 'Caché des abonnés — cliquer pour rendre visible'}
             style={{
-              background: 'none', border: 'none', padding: '4px', borderRadius: '6px',
-              color: group.visible_to_subscribers !== false ? '#D91CD2' : 'rgba(255,255,255,0.3)',
-              cursor: 'pointer', transition: 'all 0.2s',
+              display: 'inline-flex', alignItems: 'center', gap: '4px',
+              padding: '4px 10px', borderRadius: '12px',
+              border: 'none',
+              background: group.visible_to_subscribers !== false ? '#D91CD2' : '#555',
+              color: '#fff', fontSize: '11px', fontWeight: 600,
+              cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap'
             }}
             data-testid={'group-visibility-' + group.id}
           >
-            {group.visible_to_subscribers !== false ? <Eye size={14} /> : <EyeOff size={14} />}
+            {group.visible_to_subscribers !== false
+              ? (<><Eye size={12} /> Visible</>)
+              : (<><EyeOff size={12} /> Caché</>)}
           </button>
         )}
         {/* V155: Bouton Modifier */}

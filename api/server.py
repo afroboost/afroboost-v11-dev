@@ -8902,39 +8902,67 @@ async def get_conversations_advanced(
     except Exception:
         pass  # En cas d'erreur, on continue sans catégorisation abonné
 
+    # V198c: Batch des requêtes — passe de 3*N à 3 requêtes pour N sessions
+    session_ids = [s["id"] for s in sessions if s.get("id")]
+    all_pids_set = set()
+    for s in sessions:
+        for pid in (s.get("participant_ids") or [])[:10]:
+            if pid:
+                all_pids_set.add(pid)
+
+    # 1) Tous les participants des 10 premiers de chaque session en UNE requête
+    participants_map = {}
+    if all_pids_set:
+        async for p in db.chat_participants.find(
+            {"id": {"$in": list(all_pids_set)}},
+            {"_id": 0, "id": 1, "name": 1, "email": 1, "whatsapp": 1, "source": 1}
+        ):
+            pid = p.get("id")
+            if pid:
+                participants_map[pid] = {
+                    "id": pid,
+                    "name": p.get("name", "Inconnu"),
+                    "email": p.get("email", ""),
+                    "whatsapp": p.get("whatsapp", ""),
+                    "source": p.get("source", ""),
+                }
+
+    # 2) Dernier message + compteur par session via une seule pipeline d'agrégation
+    msg_stats = {}
+    if session_ids:
+        try:
+            pipeline = [
+                {"$match": {"session_id": {"$in": session_ids}, "is_deleted": {"$ne": True}}},
+                {"$sort": {"created_at": -1}},
+                {"$group": {
+                    "_id": "$session_id",
+                    "count": {"$sum": 1},
+                    "last_content": {"$first": "$content"},
+                    "last_sender_name": {"$first": "$sender_name"},
+                    "last_sender_type": {"$first": "$sender_type"},
+                    "last_created_at": {"$first": "$created_at"},
+                }},
+            ]
+            async for row in db.chat_messages.aggregate(pipeline):
+                msg_stats[row["_id"]] = row
+        except Exception as _e:
+            # En cas d'échec d'agrégation on retombe sur des valeurs par défaut (zéro message)
+            logger.warning(f"[CRM] aggregate msg_stats failed: {_e}")
+
     for session in sessions:
-        # Récupérer le dernier message
-        last_message = await db.chat_messages.find_one(
-            {"session_id": session["id"], "is_deleted": {"$ne": True}},
-            {"_id": 0},
-            sort=[("created_at", -1)]
-        )
-        
-        # V169: Récupérer les infos des participants — LIMITER à 10 max pour éviter
-        # des centaines de requêtes MongoDB sur les grands groupes (825+ membres)
+        sid = session.get("id")
         all_pids = session.get("participant_ids", [])
-        pids_to_load = all_pids[:10]  # Charger max 10 participants pour l'affichage
-        participants_info = []
-        if pids_to_load:
-            participants_cursor = db.chat_participants.find(
-                {"id": {"$in": pids_to_load}},
-                {"_id": 0, "id": 1, "name": 1, "email": 1, "whatsapp": 1, "source": 1}
-            )
-            async for participant in participants_cursor:
-                participants_info.append({
-                    "id": participant.get("id"),
-                    "name": participant.get("name", "Inconnu"),
-                    "email": participant.get("email", ""),
-                    "whatsapp": participant.get("whatsapp", ""),
-                    "source": participant.get("source", "")
-                })
-        
-        # Compter le nombre de messages
-        message_count = await db.chat_messages.count_documents({
-            "session_id": session["id"],
-            "is_deleted": {"$ne": True}
-        })
-        
+        pids_to_load = all_pids[:10]
+        participants_info = [participants_map[p] for p in pids_to_load if p in participants_map]
+
+        # Dernier message + compteur depuis le batch
+        stats = msg_stats.get(sid)
+        message_count = stats["count"] if stats else 0
+        last_content = stats.get("last_content", "") if stats else ""
+        last_sender_name = stats.get("last_sender_name", "") if stats else ""
+        last_sender_type = stats.get("last_sender_type", "") if stats else ""
+        last_created_at = stats.get("last_created_at", "") if stats else ""
+
         # v14.0: Extraire le nom, email et WhatsApp du premier participant pour l'affichage CRM
         first_participant_name = ""
         first_participant_email = ""
@@ -8958,20 +8986,20 @@ async def get_conversations_advanced(
         enriched_conversations.append({
             **session,
             "participants": participants_info,
-            "participant_count": len(all_pids),  # V169: Total membres (pour groupes)
-            "participantName": first_participant_name,  # v14.0: Pour l'affichage CRM
-            "participantEmail": first_participant_email,  # v14.0: Pour l'affichage CRM
-            "participantWhatsapp": first_participant_whatsapp,  # v16.0: WhatsApp pour CRM
-            "lastMessage": last_message.get("content", "")[:100] if last_message else "Nouvelle conversation",
+            "participant_count": len(all_pids),
+            "participantName": first_participant_name,
+            "participantEmail": first_participant_email,
+            "participantWhatsapp": first_participant_whatsapp,
+            "lastMessage": (last_content or "")[:100] if stats else "Nouvelle conversation",
             "last_message": {
-                "content": last_message.get("content", "")[:100] if last_message else "",
-                "sender_name": last_message.get("sender_name", "") if last_message else "",
-                "sender_type": last_message.get("sender_type", "") if last_message else "",
-                "created_at": last_message.get("created_at", "") if last_message else ""
-            } if last_message else None,
+                "content": (last_content or "")[:100],
+                "sender_name": last_sender_name,
+                "sender_type": last_sender_type,
+                "created_at": last_created_at,
+            } if stats else None,
             "message_count": message_count,
-            "messageCount": message_count,  # v14.0: Alias pour compatibilité frontend
-            "category": session_category,  # V198b: subscriber / visitor / smart_link
+            "messageCount": message_count,
+            "category": session_category,
         })
     
     logger.info(f"[CRM] Conversations: page={page}, limit={limit}, query='{query}', total={total}")
