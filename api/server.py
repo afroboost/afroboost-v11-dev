@@ -3603,6 +3603,28 @@ async def stripe_webhook(request: Request):
                 await db.discount_codes.insert_one(discount_doc)
                 logger.info(f"[PAYMENT] Code {new_code} cree pour {customer_email} ({sessions_count} seances)")
                 # v95.2: Auto-créer la subscription après paiement Stripe
+                # V195: Capture Stripe customer + payment method pour reconduction auto
+                stripe_customer_id = None
+                stripe_payment_method = None
+                amount_chf = 0.0
+                try:
+                    full_session = stripe.checkout.Session.retrieve(
+                        session.id,
+                        expand=["payment_intent.payment_method"]
+                    )
+                    stripe_customer_id = full_session.get("customer")
+                    amount_total = full_session.get("amount_total") or 0
+                    if amount_total:
+                        amount_chf = float(amount_total) / 100.0
+                    pi = full_session.get("payment_intent")
+                    if pi and isinstance(pi, dict):
+                        pm = pi.get("payment_method")
+                        if pm and isinstance(pm, dict):
+                            stripe_payment_method = pm.get("id")
+                        elif isinstance(pm, str):
+                            stripe_payment_method = pm
+                except Exception as v195_err:
+                    logger.warning(f"[V195] Capture payment method échouée: {v195_err}")
                 subscription_data = {
                     "id": str(uuid.uuid4()),
                     "email": customer_email.lower().strip(),
@@ -3616,10 +3638,18 @@ async def stripe_webhook(request: Request):
                     "status": "active",
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
-                    "source": "stripe_auto"
+                    "source": "stripe_auto",
+                    # V195: Reconduction automatique (opt-in par défaut au checkout Stripe)
+                    "auto_renew": bool(stripe_customer_id and stripe_payment_method),
+                    "renewal_price": amount_chf,
+                    "renewal_sessions": sessions_count,
+                    "renewal_warnings_sent": [],
+                    "stripe_customer_id": stripe_customer_id,
+                    "stripe_payment_method": stripe_payment_method,
+                    "last_renewal_date": None,
                 }
                 await db.subscriptions.insert_one(subscription_data)
-                logger.info(f"[PAYMENT] Subscription auto-creee: {customer_email} - {product_name} ({sessions_count} seances)")
+                logger.info(f"[PAYMENT] Subscription auto-creee: {customer_email} - {product_name} ({sessions_count} seances) auto_renew={subscription_data['auto_renew']}")
                 # v163: EMAIL CONFIRMATION — QR code (double usage) + Guide de connexion au chat
                 if RESEND_AVAILABLE and RESEND_API_KEY and customer_email:
                     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=https://afroboost.com/?qr={new_code}&format=png"
@@ -3759,6 +3789,28 @@ async def stripe_webhook(request: Request):
         elif event.type == 'checkout.session.expired':
             session = event.data.object
             await db.payment_transactions.update_one({"session_id": session.id}, {"$set": {"status": "expired", "webhook_received_at": datetime.now(timezone.utc).isoformat()}})
+        elif event.type == 'payment_intent.payment_failed':
+            # V195: échec d'un PaymentIntent — désactive auto_renew si la tentative
+            # provient d'un renouvellement automatique (metadata.type == "auto_renewal")
+            try:
+                pi = event.data.object
+                pi_metadata = (pi.get("metadata") or {}) if isinstance(pi, dict) else (pi.metadata or {})
+                if pi_metadata.get("type") == "auto_renewal":
+                    sub_id = pi_metadata.get("subscription_id")
+                    if sub_id:
+                        await db.subscriptions.update_one(
+                            {"id": sub_id},
+                            {
+                                "$set": {
+                                    "auto_renew": False,
+                                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                                },
+                                "$push": {"renewal_warnings_sent": "payment_failed"},
+                            }
+                        )
+                        logger.info(f"[V195 WEBHOOK] payment_intent.payment_failed → auto_renew désactivé pour subscription {sub_id}")
+            except Exception as v195_err:
+                logger.warning(f"[V195] Traitement payment_intent.payment_failed: {v195_err}")
         return {"received": True}
     except Exception as e:
         logger.error(f"Webhook error: {str(e)}")
@@ -4009,6 +4061,15 @@ async def get_subscriber_space(access_code: str):
             "used_sessions": used_sessions,
             "remaining_sessions": remaining_sessions,
             "expires_at": expires_at,
+            # V195: Reconduction automatique — exposée pour la toggle frontend
+            "auto_renew": bool((subscription or {}).get("auto_renew", False)),
+            "renewal_price": float((subscription or {}).get("renewal_price") or 0),
+            "renewal_sessions": int((subscription or {}).get("renewal_sessions") or 0),
+            "has_payment_method": bool(
+                (subscription or {}).get("stripe_customer_id")
+                and (subscription or {}).get("stripe_payment_method")
+            ),
+            "last_renewal_date": (subscription or {}).get("last_renewal_date"),
         },
         "offer": {
             "name": offer.get("name") if offer else offer_name,
@@ -4179,6 +4240,209 @@ async def get_space_link_by_email(email: str):
         "code": code,
         "url": f"{_v184_public_origin()}/espace/{code}",
     }
+
+
+# === V195: Reconduction automatique des abonnements ===
+
+@api_router.put("/subscriptions/{subscription_id}/auto-renew")
+async def toggle_subscription_auto_renew(subscription_id: str, request: Request):
+    """V195: Active ou désactive la reconduction automatique d'une subscription.
+    subscription_id = UUID stocké dans subscriptions.id (PAS un ObjectId Mongo).
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    desired = bool(body.get("auto_renew", False)) if isinstance(body, dict) else False
+
+    sub = await db.subscriptions.find_one({"id": subscription_id}, {"_id": 0})
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subscription introuvable")
+
+    # Garde-fou : on ne peut activer la reconduction que si on a une carte enregistrée
+    if desired and (not sub.get("stripe_customer_id") or not sub.get("stripe_payment_method")):
+        raise HTTPException(
+            status_code=400,
+            detail="Aucun moyen de paiement enregistré — la reconduction ne peut pas être activée."
+        )
+
+    await db.subscriptions.update_one(
+        {"id": subscription_id},
+        {"$set": {"auto_renew": desired, "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    logger.info(f"[V195 TOGGLE] subscription {subscription_id} auto_renew → {desired}")
+    return {"success": True, "subscription_id": subscription_id, "auto_renew": desired}
+
+
+async def _v195_send_renewal_notification(sub: dict, message: str, subject: str = None):
+    """V195: Envoie une notif de renouvellement par email (Resend) + WhatsApp si phone connu."""
+    email = (sub.get("email") or "").strip()
+    phone = sub.get("whatsapp") or sub.get("phone") or ""
+
+    # Email — réutilise le pattern Resend déjà utilisé dans server.py
+    if RESEND_AVAILABLE and RESEND_API_KEY and email:
+        try:
+            html = f"""<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#0a0a0a;color:#fff;padding:24px;">
+                <h1 style="color:#d91cd2;font-size:20px;margin:0 0 12px;">Afroboost</h1>
+                <p style="font-size:14px;line-height:1.6;color:#e2e8f0;">{message}</p>
+                <p style="font-size:11px;color:#888;margin-top:24px;">Pour gérer votre abonnement : <a style="color:#a855f7;" href="https://afroboost.com/espace/{sub.get('code','')}">afroboost.com/espace/{sub.get('code','')}</a></p>
+            </div>"""
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": "Afroboost <notifications@afroboost.com>",
+                "to": [email],
+                "subject": subject or "Afroboost — Renouvellement abonnement",
+                "html": html,
+            })
+        except Exception as e:
+            logger.warning(f"[V195] Email renouvellement échoué pour {email}: {e}")
+
+    # WhatsApp — réutilise send_whatsapp_direct si dispo
+    if phone:
+        try:
+            sender = globals().get("send_whatsapp_direct")
+            if callable(sender):
+                await sender(to_phone=phone, message=message)
+        except Exception as e:
+            logger.warning(f"[V195] WhatsApp renouvellement échoué pour {phone}: {e}")
+
+
+async def _v195_auto_renew(sub: dict) -> bool:
+    """V195: Tente une reconduction off-session via Stripe et recharge les séances."""
+    sub_id = sub.get("id")
+    customer_id = sub.get("stripe_customer_id")
+    payment_method = sub.get("stripe_payment_method")
+    price = float(sub.get("renewal_price") or 0)
+    sessions_count = int(sub.get("renewal_sessions") or 0)
+
+    if not (sub_id and customer_id and payment_method and price > 0 and sessions_count > 0):
+        logger.warning(f"[V195 RENEW] Infos manquantes pour {sub.get('email')} — skip")
+        return False
+
+    try:
+        pi = stripe.PaymentIntent.create(
+            amount=int(round(price * 100)),
+            currency="chf",
+            customer=customer_id,
+            payment_method=payment_method,
+            off_session=True,
+            confirm=True,
+            description=f"Renouvellement Afroboost — {sessions_count} séances",
+            metadata={
+                "type": "auto_renewal",
+                "subscription_id": str(sub_id),
+                "sessions": str(sessions_count),
+            },
+        )
+    except stripe.error.CardError as ce:
+        logger.warning(f"[V195 RENEW] Carte refusée pour {sub.get('email')}: {ce.user_message}")
+        await db.subscriptions.update_one(
+            {"id": sub_id},
+            {"$set": {"auto_renew": False}, "$push": {"renewal_warnings_sent": "payment_failed"}}
+        )
+        await _v195_send_renewal_notification(
+            sub,
+            "Le renouvellement automatique de votre abonnement Afroboost a échoué (carte refusée). Contactez votre coach pour renouveler manuellement.",
+            subject="Afroboost — Renouvellement échoué"
+        )
+        return False
+    except Exception as e:
+        logger.error(f"[V195 RENEW] Erreur Stripe pour {sub.get('email')}: {e}")
+        return False
+
+    if pi.status != "succeeded":
+        logger.warning(f"[V195 RENEW] PI status={pi.status} pour {sub.get('email')}")
+        return False
+
+    today_marker = f"renewed_{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+    await db.subscriptions.update_one(
+        {"id": sub_id},
+        {
+            "$set": {
+                "remaining_sessions": sessions_count,
+                "status": "active",
+                "last_renewal_date": datetime.now(timezone.utc).isoformat(),
+                "renewal_warnings_sent": [today_marker],
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            "$inc": {"total_sessions": sessions_count},
+        }
+    )
+    name = (sub.get("name") or "").split(" ")[0] or "Bonjour"
+    await _v195_send_renewal_notification(
+        sub,
+        f"{name}, votre abonnement Afroboost a été renouvelé avec succès — {sessions_count} nouvelles séances ajoutées ({price:.2f} CHF). Bonne danse !",
+        subject="Afroboost — Renouvellement confirmé"
+    )
+    logger.info(f"[V195 RENEW] OK pour {sub.get('email')} (+{sessions_count} séances, {price} CHF)")
+    return True
+
+
+@api_router.get("/cron/check-subscription-renewal")
+async def cron_check_subscription_renewal():
+    """V195: Vérification quotidienne — relance les abonnés à 3 et 1 séance,
+    déclenche le renouvellement automatique à 0 séance pour les opt-in."""
+    results = {"warnings_sent": 0, "renewed": 0, "errors": 0, "scanned": 0}
+
+    subs = await db.subscriptions.find(
+        {
+            "status": "active",
+            "auto_renew": True,
+            "remaining_sessions": {"$lte": 3, "$gte": 0},
+        },
+        {"_id": 0}
+    ).to_list(2000)
+    results["scanned"] = len(subs)
+
+    for sub in subs:
+        try:
+            remaining = int(sub.get("remaining_sessions") or 0)
+            warnings = sub.get("renewal_warnings_sent") or []
+            name = (sub.get("name") or "").split(" ")[0] or "Bonjour"
+            price = float(sub.get("renewal_price") or 0)
+            sessions_count = int(sub.get("renewal_sessions") or 0)
+
+            if remaining == 3 and "warning_3" not in warnings:
+                await _v195_send_renewal_notification(
+                    sub,
+                    f"{name}, il vous reste 3 séances Afroboost. La reconduction automatique est activée ({price:.2f} CHF pour {sessions_count} séances).",
+                )
+                await db.subscriptions.update_one(
+                    {"id": sub.get("id")},
+                    {"$push": {"renewal_warnings_sent": "warning_3"}}
+                )
+                results["warnings_sent"] += 1
+
+            elif remaining == 1 and "warning_1" not in warnings:
+                await _v195_send_renewal_notification(
+                    sub,
+                    f"{name}, il vous reste 1 séance Afroboost. Votre abonnement sera renouvelé automatiquement à la fin ({price:.2f} CHF pour {sessions_count} séances). Pour désactiver, allez sur votre espace abonné. Le montant n'est pas remboursable une fois prélevé.",
+                    subject="Afroboost — Dernière séance avant renouvellement",
+                )
+                await db.subscriptions.update_one(
+                    {"id": sub.get("id")},
+                    {"$push": {"renewal_warnings_sent": "warning_1"}}
+                )
+                results["warnings_sent"] += 1
+
+            elif remaining <= 0:
+                today_marker = f"renewed_{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+                already_renewed_today = any(
+                    isinstance(w, str) and w.startswith("renewed_") and w == today_marker
+                    for w in warnings
+                )
+                if already_renewed_today:
+                    continue
+                ok = await _v195_auto_renew(sub)
+                if ok:
+                    results["renewed"] += 1
+                else:
+                    results["errors"] += 1
+        except Exception as e:
+            logger.error(f"[V195 CRON] Erreur sur subscription {sub.get('id')}: {e}")
+            results["errors"] += 1
+
+    logger.info(f"[V195 CRON] check-subscription-renewal résultats: {results}")
+    return results
 
 
 # === V185 F3: Annulation d'une réservation depuis l'espace abonné (2h min) ===

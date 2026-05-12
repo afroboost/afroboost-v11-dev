@@ -54,6 +54,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const [cancellingId, setCancellingId] = useState(null);
   // V186 F2: Compteurs par occurrence (multi-personnes)
   const [quantities, setQuantities] = useState({});
+  // V195: État local pour le toggle reconduction automatique
+  const [autoRenewBusy, setAutoRenewBusy] = useState(false);
   // V187: Prénoms des accompagnants par occurrence (array de strings)
   const [guestNames, setGuestNames] = useState({});
 
@@ -314,6 +316,78 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             />
           </div>
         </section>
+
+        {/* ===== V195: Reconduction automatique ===== */}
+        {subscription?.id && (subscription.has_payment_method || subscription.auto_renew) && (
+          <section
+            className="rounded-2xl p-4"
+            style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
+            data-testid="subscriber-space-auto-renew"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-white text-sm font-semibold">Reconduction automatique</p>
+                <p className="text-white/50 text-xs mt-1">
+                  {subscription.auto_renew
+                    ? `${(Number(subscription.renewal_price) || 0).toFixed(2)} CHF pour ${subscription.renewal_sessions || 0} séances`
+                    : "Désactivée"}
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={!!subscription.auto_renew}
+                disabled={autoRenewBusy || !subscription.has_payment_method}
+                onClick={async () => {
+                  if (autoRenewBusy) return;
+                  const next = !subscription.auto_renew;
+                  setAutoRenewBusy(true);
+                  // Mise à jour optimiste
+                  setData((prev) => prev ? { ...prev, subscription: { ...prev.subscription, auto_renew: next } } : prev);
+                  try {
+                    await axios.put(`${API}/subscriptions/${encodeURIComponent(subscription.id)}/auto-renew`, { auto_renew: next });
+                  } catch (err) {
+                    // Rollback en cas d'erreur
+                    setData((prev) => prev ? { ...prev, subscription: { ...prev.subscription, auto_renew: !next } } : prev);
+                    const detail = err?.response?.data?.detail || "Modification impossible.";
+                    setActionError(detail);
+                  } finally {
+                    setAutoRenewBusy(false);
+                  }
+                }}
+                title={subscription.has_payment_method
+                  ? (subscription.auto_renew ? "Désactiver la reconduction" : "Activer la reconduction")
+                  : "Aucune carte enregistrée — souscription manuelle uniquement"}
+                className="flex-shrink-0 transition-all"
+                style={{
+                  width: 52, height: 28, borderRadius: 999, padding: 2, border: "none",
+                  background: subscription.auto_renew ? COLORS.primary : "rgba(255,255,255,0.15)",
+                  cursor: (autoRenewBusy || !subscription.has_payment_method) ? "not-allowed" : "pointer",
+                  opacity: (autoRenewBusy || !subscription.has_payment_method) ? 0.5 : 1,
+                  position: "relative",
+                }}
+              >
+                <span
+                  style={{
+                    display: "block", width: 24, height: 24, borderRadius: 999,
+                    background: "white", transition: "transform 0.2s",
+                    transform: `translateX(${subscription.auto_renew ? 24 : 0}px)`,
+                  }}
+                />
+              </button>
+            </div>
+            {subscription.auto_renew && (
+              <p className="text-[10px] mt-2" style={{ color: "#fbbf24" }}>
+                Le montant sera prélevé automatiquement à la fin de vos séances. Non remboursable.
+              </p>
+            )}
+            {!subscription.has_payment_method && (
+              <p className="text-[10px] mt-2 text-white/40">
+                Aucune carte enregistrée pour cet abonnement — renouvellement manuel uniquement.
+              </p>
+            )}
+          </section>
+        )}
 
         {/* ===== V189: Badge casque global — résumé par personne ===== */}
         {hasActiveHeadphone && (
