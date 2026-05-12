@@ -50,6 +50,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const [qrFullscreen, setQrFullscreen] = useState(false);
   const [actionError, setActionError] = useState("");
   const [shareCopied, setShareCopied] = useState(false);
+  // V185 F3: État pour l'annulation de réservation
+  const [cancellingId, setCancellingId] = useState(null);
 
   const loadSpace = useCallback(async () => {
     if (!accessCode) {
@@ -100,6 +102,36 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     }
   };
 
+  // V185 F3: Annuler une réservation (avec confirmation et règle des 2h)
+  const handleCancelReservation = async (reservation) => {
+    if (!reservation?.id || cancellingId) return;
+    const confirmed = typeof window !== "undefined"
+      ? window.confirm("Êtes-vous sûr de vouloir annuler cette séance ?")
+      : true;
+    if (!confirmed) return;
+
+    setCancellingId(reservation.id);
+    setActionError("");
+    try {
+      const res = await axios.delete(
+        `${API}/subscriber/space/${encodeURIComponent(accessCode)}/cancel/${encodeURIComponent(reservation.id)}`
+      );
+      setData((prev) => {
+        if (!prev) return prev;
+        const filteredReservations = (prev.reservations || []).filter((r) => r.id !== reservation.id);
+        const nextSubscription = typeof res.data?.remaining_sessions === "number"
+          ? { ...prev.subscription, remaining_sessions: res.data.remaining_sessions }
+          : prev.subscription;
+        return { ...prev, reservations: filteredReservations, subscription: nextSubscription };
+      });
+    } catch (err) {
+      const message = err?.response?.data?.detail || "Annulation impossible. Réessaye dans un instant.";
+      setActionError(message);
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: COLORS.bg, color: "white" }}>
@@ -135,10 +167,22 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const coach = data?.coach;
   const courses = data?.upcoming_courses || [];
 
+  // V185 F3: Réservations futures, triées par date croissante
+  const now = Date.now();
+  const upcomingReservations = (data?.reservations || [])
+    .filter((r) => r?.datetime && new Date(r.datetime).getTime() > now)
+    .sort((a, b) => new Date(a.datetime).getTime() - new Date(b.datetime).getTime());
+
+  // V185 F4: Réservation active (pour le badge casque global)
+  const activeHeadphone = (data?.reservations || []).find(
+    (r) => r?.headphone_status === "taken" || r?.headphone_status === "returned"
+  );
+
   const total = subscription.total_sessions || 0;
   const remaining = subscription.remaining_sessions || 0;
   const used = subscription.used_sessions || (total ? total - remaining : 0);
   const percentUsed = total > 0 ? Math.max(0, Math.min(100, Math.round((used / total) * 100))) : 0;
+  const noSessions = remaining <= 0;
 
   const firstName = (subscriber.name || "").split(" ")[0] || "Abonné";
   const shareUrl = typeof window !== "undefined"
@@ -207,6 +251,28 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           </div>
         </section>
 
+        {/* ===== V185 F4: Badge casque (Silent Disco) ===== */}
+        {activeHeadphone && (
+          <div
+            className="rounded-2xl px-4 py-3 flex items-center gap-3 text-sm font-medium"
+            style={{
+              background: activeHeadphone.headphone_status === "taken"
+                ? "rgba(239,68,68,0.15)"
+                : "rgba(34,197,94,0.15)",
+              border: `1px solid ${activeHeadphone.headphone_status === "taken" ? "rgba(239,68,68,0.35)" : "rgba(34,197,94,0.35)"}`,
+              color: activeHeadphone.headphone_status === "taken" ? "#fca5a5" : "#86efac",
+            }}
+            data-testid="headphone-badge"
+          >
+            <span style={{ fontSize: "20px" }}>🎧</span>
+            <span>
+              {activeHeadphone.headphone_status === "taken"
+                ? "Casque en votre possession"
+                : "Casque retourné ✓"}
+            </span>
+          </div>
+        )}
+
         {/* ===== Mon QR Code ===== */}
         <section
           className="rounded-2xl p-5 flex flex-col items-center"
@@ -229,6 +295,65 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           </button>
         </section>
 
+        {/* ===== V185 F3: Mes prochaines séances (avec annulation) ===== */}
+        {upcomingReservations.length > 0 && (
+          <section
+            className="rounded-2xl p-5"
+            style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
+            data-testid="subscriber-space-upcoming"
+          >
+            <h2 className="text-base font-semibold mb-3">Mes prochaines séances</h2>
+            <ul className="space-y-2">
+              {upcomingReservations.map((r) => {
+                const occurrenceTs = new Date(r.datetime).getTime();
+                const hoursAway = (occurrenceTs - now) / 3_600_000;
+                const tooLate = hoursAway < 2;
+                const isBusy = cancellingId === r.id;
+                const hp = r.headphone_status;
+                return (
+                  <li
+                    key={r.id}
+                    className="flex items-center justify-between gap-3 p-3 rounded-xl"
+                    style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">{r.courseName || "Séance"}</p>
+                      <p className="text-white/50 text-xs">{formatOccurrence(r.datetime)}</p>
+                      {/* V185 F4: Pastille casque par réservation */}
+                      {hp && (
+                        <p
+                          className="text-[10px] mt-1 inline-block px-2 py-0.5 rounded-full"
+                          style={{
+                            background: hp === "taken" ? "rgba(239,68,68,0.15)" : "rgba(34,197,94,0.15)",
+                            color: hp === "taken" ? "#fca5a5" : "#86efac",
+                          }}
+                        >
+                          🎧 {hp === "taken" ? "Casque pris" : "Casque rendu"}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={tooLate || isBusy}
+                      onClick={() => handleCancelReservation(r)}
+                      className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-40"
+                      title={tooLate ? "Annulation impossible moins de 2h avant" : "Annuler la séance"}
+                      style={{
+                        background: tooLate ? "rgba(255,255,255,0.06)" : "rgba(239,68,68,0.18)",
+                        color: tooLate ? "rgba(255,255,255,0.4)" : "#fca5a5",
+                        cursor: tooLate ? "not-allowed" : "pointer",
+                      }}
+                      data-testid={`cancel-reservation-${r.id}`}
+                    >
+                      {isBusy ? "…" : "Annuler"}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
         {/* ===== Réserver une séance ===== */}
         <section
           className="rounded-2xl p-5"
@@ -242,6 +367,14 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               style={{ background: "rgba(239,68,68,0.15)", color: "#fca5a5" }}
             >
               {actionError}
+            </p>
+          )}
+          {noSessions && (
+            <p
+              className="text-xs mb-3 px-3 py-2 rounded-lg"
+              style={{ background: "rgba(245,158,11,0.15)", color: "#fbbf24" }}
+            >
+              Plus de séances disponibles
             </p>
           )}
           {courses.length === 0 ? (
@@ -275,7 +408,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                     ) : (
                       <button
                         type="button"
-                        disabled={isBusy || remaining <= 0}
+                        disabled={isBusy || noSessions}
                         onClick={() => handleReserve(occ)}
                         className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-50"
                         style={{ background: COLORS.primary, color: "white" }}

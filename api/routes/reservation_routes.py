@@ -729,6 +729,35 @@ async def delete_reservation(reservation_id: str):
     await db.reservations.delete_one({"id": reservation_id})
     return {"success": True}
 
+
+# V185 F4: Suivi des casques (Silent Disco)
+@reservation_router.put("/reservations/{reservation_id}/headphone")
+async def update_reservation_headphone(reservation_id: str, request: Request):
+    """V185: Met à jour le statut du casque audio (Silent Disco).
+    Valeurs acceptées : null, 'taken', 'returned'.
+    """
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    status = body.get("status") if isinstance(body, dict) else None
+    if status not in (None, "", "taken", "returned"):
+        raise HTTPException(status_code=400, detail="Statut casque invalide")
+
+    reservation = await db.reservations.find_one({"id": reservation_id}, {"_id": 0, "id": 1})
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Réservation introuvable")
+
+    normalized = status if status else None
+    update_payload = {
+        "headphone_status": normalized,
+        "headphone_updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.reservations.update_one({"id": reservation_id}, {"$set": update_payload})
+    logger.info(f"[V185 HEADPHONE] {reservation_id} → {normalized}")
+    return {"success": True, "reservation_id": reservation_id, "headphone_status": normalized}
+
 # === STAFF ACCESS: Validation QR uniquement (pas d'accès chat/réglages) ===
 @reservation_router.post("/staff/validate")
 async def staff_validate_reservation(request: Request):

@@ -46,6 +46,51 @@ export default function ContactsManager({ API, coachEmail }) {
   const [shareLinkBusy, setShareLinkBusy] = useState(null); // email en cours
   const [shareLinkStatus, setShareLinkStatus] = useState({}); // { email: 'copied' | 'none' | 'error' }
 
+  // V185 F1: Modal "Ajouter un contact" manuel
+  const [showAddContactModal, setShowAddContactModal] = useState(false);
+  const [newContact, setNewContact] = useState({ name: '', email: '', whatsapp: '' });
+  const [addingContact, setAddingContact] = useState(false);
+  const [addContactError, setAddContactError] = useState('');
+
+  const normalizeE164 = (phone) => {
+    if (!phone) return '';
+    const cleaned = phone.replace(/[\s\-().]/g, '');
+    if (cleaned.startsWith('+')) return cleaned;
+    if (cleaned.startsWith('00')) return '+' + cleaned.slice(2);
+    if (/^\d+$/.test(cleaned)) return cleaned; // accept national if no prefix typed
+    return cleaned;
+  };
+
+  const handleAddContact = useCallback(async () => {
+    setAddContactError('');
+    const name = (newContact.name || '').trim();
+    const email = (newContact.email || '').trim().toLowerCase();
+    const whatsapp = normalizeE164((newContact.whatsapp || '').trim());
+
+    if (!name) { setAddContactError('Le nom est requis'); return; }
+    if (!email && !whatsapp) { setAddContactError('Email ou WhatsApp requis'); return; }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setAddContactError('Email invalide'); return;
+    }
+    if (whatsapp && !/^\+?\d{8,15}$/.test(whatsapp)) {
+      setAddContactError("Format WhatsApp invalide (ex: +41767639928)"); return;
+    }
+
+    setAddingContact(true);
+    try {
+      const body = { name, email, whatsapp, source: 'manual' };
+      await axios.post(`${API}/chat/participants`, body, { headers });
+      setShowAddContactModal(false);
+      setNewContact({ name: '', email: '', whatsapp: '' });
+      loadContacts();
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      setAddContactError(detail || 'Impossible de créer le contact');
+    } finally {
+      setAddingContact(false);
+    }
+  }, [API, coachEmail, newContact]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleShareSubscriberLink = useCallback(async (email) => {
     if (!email || shareLinkBusy === email) return;
     setShareLinkBusy(email);
@@ -589,6 +634,18 @@ export default function ContactsManager({ API, coachEmail }) {
         }}>
           🔄
         </button>
+        {/* V185 F1: Bouton "Ajouter un contact" manuel */}
+        <button
+          onClick={() => { setAddContactError(''); setShowAddContactModal(true); }}
+          data-testid="add-contact-btn"
+          style={{
+            padding: '10px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
+            background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', border: 'none',
+            color: 'white', cursor: 'pointer', whiteSpace: 'nowrap'
+          }}
+        >
+          ✨ Ajouter un contact
+        </button>
       </div>
 
       {/* V146: Barre d'actions sélection */}
@@ -973,6 +1030,119 @@ export default function ContactsManager({ API, coachEmail }) {
           </div>
         )}
       </div>
+
+      {/* V185 F1: Modal "Ajouter un contact" manuel */}
+      {showAddContactModal && (
+        <div
+          onClick={() => !addingContact && setShowAddContactModal(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 1000, padding: '16px'
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#0A0A0F', border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '16px', padding: '24px', maxWidth: '420px', width: '100%',
+              color: 'white'
+            }}
+          >
+            <h2 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '4px' }}>
+              ✨ Ajouter un contact
+            </h2>
+            <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)', marginBottom: '18px' }}>
+              Saisis les coordonnées du contact à ajouter au CRM.
+            </p>
+
+            <label style={{ display: 'block', fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '4px' }}>
+              Nom *
+            </label>
+            <input
+              type="text"
+              value={newContact.name}
+              onChange={(e) => setNewContact(prev => ({ ...prev, name: e.target.value }))}
+              placeholder="Marie Dupont"
+              autoFocus
+              style={{
+                width: '100%', padding: '10px 12px', borderRadius: '8px',
+                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                color: 'white', fontSize: '14px', marginBottom: '12px'
+              }}
+            />
+
+            <label style={{ display: 'block', fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '4px' }}>
+              Email
+            </label>
+            <input
+              type="email"
+              value={newContact.email}
+              onChange={(e) => setNewContact(prev => ({ ...prev, email: e.target.value }))}
+              placeholder="marie@example.com"
+              style={{
+                width: '100%', padding: '10px 12px', borderRadius: '8px',
+                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                color: 'white', fontSize: '14px', marginBottom: '12px'
+              }}
+            />
+
+            <label style={{ display: 'block', fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '4px' }}>
+              WhatsApp (format international)
+            </label>
+            <input
+              type="tel"
+              value={newContact.whatsapp}
+              onChange={(e) => setNewContact(prev => ({ ...prev, whatsapp: e.target.value }))}
+              placeholder="+41 76 763 99 28"
+              style={{
+                width: '100%', padding: '10px 12px', borderRadius: '8px',
+                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                color: 'white', fontSize: '14px', marginBottom: '4px'
+              }}
+            />
+            <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', marginBottom: '14px' }}>
+              Au moins un des deux (email ou WhatsApp) est requis.
+            </p>
+
+            {addContactError && (
+              <p style={{
+                padding: '8px 12px', borderRadius: '8px',
+                background: 'rgba(239,68,68,0.15)', color: '#fca5a5',
+                fontSize: '12px', marginBottom: '14px'
+              }}>
+                {addContactError}
+              </p>
+            )}
+
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowAddContactModal(false)}
+                disabled={addingContact}
+                style={{
+                  padding: '10px 16px', borderRadius: '8px', fontSize: '13px',
+                  background: 'transparent', border: '1px solid rgba(255,255,255,0.15)',
+                  color: 'rgba(255,255,255,0.7)', cursor: 'pointer'
+                }}
+              >
+                Annuler
+              </button>
+              <button
+                onClick={handleAddContact}
+                disabled={addingContact}
+                data-testid="confirm-add-contact"
+                style={{
+                  padding: '10px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600,
+                  background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', border: 'none',
+                  color: 'white', cursor: addingContact ? 'wait' : 'pointer'
+                }}
+              >
+                {addingContact ? '…' : 'Ajouter'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

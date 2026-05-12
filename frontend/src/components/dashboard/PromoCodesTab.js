@@ -80,6 +80,8 @@ const PromoCodesTab = ({
 }) => {
   const fileInputRef = useRef(null);
   const [copiedCodeId, setCopiedCodeId] = useState(null); // v14.0: État pour bouton "Copié"
+  // V185 F2: Feedback pour le bouton "Lien d'accès rapide"
+  const [copiedSpaceLinkId, setCopiedSpaceLinkId] = useState(null);
 
   // V154: Category targeting for promo codes
   var [promoCategories, setPromoCategories] = useState([]);
@@ -134,6 +136,23 @@ const PromoCodesTab = ({
       setCopiedCodeId(code.id);
       setTimeout(() => setCopiedCodeId(null), 2000);
     }
+  };
+
+  // V185 F2: Copier le lien d'accès rapide /espace/{code}
+  const copySpaceLinkToClipboard = async (code) => {
+    const url = `${window.location.origin}/espace/${code.code}`;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch (err) {
+      const ta = document.createElement('textarea');
+      ta.value = url;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    setCopiedSpaceLinkId(code.id);
+    setTimeout(() => setCopiedSpaceLinkId(null), 2000);
   };
 
   // v150: Recherche multi-critères (code, nom, email, WhatsApp)
@@ -721,6 +740,18 @@ const PromoCodesTab = ({
                   </button>
                 )}
                 
+                {/* V185 F2: Bouton Lien d'accès rapide (uniquement codes actifs) */}
+                {code.active && (
+                  <button
+                    onClick={() => copySpaceLinkToClipboard(code)}
+                    className={`px-3 py-1.5 rounded text-xs font-medium ${copiedSpaceLinkId === code.id ? 'bg-green-500/20 text-green-400' : 'bg-pink-500/20 text-pink-400 hover:bg-pink-500/40'}`}
+                    title={copiedSpaceLinkId === code.id ? 'Lien copié !' : `Copier ${window.location.origin}/espace/${code.code}`}
+                    data-testid={`share-space-link-${code.id}`}
+                  >
+                    {copiedSpaceLinkId === code.id ? '✓ Copié' : '🔗 Lien'}
+                  </button>
+                )}
+
                 {/* Bouton Dupliquer */}
                 {duplicateCode && (
                   <button

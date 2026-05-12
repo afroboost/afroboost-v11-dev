@@ -1981,6 +1981,31 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   };
   
   // Delete reservation - SUPPRESSION DÉFINITIVE EN BASE
+  // V185 F4: Cycle du statut casque (Silent Disco) — null → taken → returned → null
+  const cycleHeadphone = async (reservation) => {
+    if (!reservation?.id) return;
+    const current = reservation.headphone_status || null;
+    const next = current === 'taken' ? 'returned' : current === 'returned' ? null : 'taken';
+    // Mise à jour optimiste
+    setReservations(prev => prev.map(r => (
+      (r.id === reservation.id || r._id === reservation.id)
+        ? { ...r, headphone_status: next }
+        : r
+    )));
+    try {
+      await axios.put(`${API}/reservations/${reservation.id}/headphone`, { status: next });
+    } catch (err) {
+      console.error('[V185 HEADPHONE] échec:', err);
+      // Rollback en cas d'erreur
+      setReservations(prev => prev.map(r => (
+        (r.id === reservation.id || r._id === reservation.id)
+          ? { ...r, headphone_status: current }
+          : r
+      )));
+      alert('Impossible de mettre à jour le statut du casque.');
+    }
+  };
+
   const deleteReservation = async (reservationId) => {
     if (window.confirm("⚠️ SUPPRESSION DÉFINITIVE\n\nCette réservation sera supprimée de la base de données.\n\nConfirmer la suppression ?")) {
       try {
@@ -5764,6 +5789,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               onPageChange: (page) => loadReservations(page, reservationPagination.limit),
               onValidateReservation: validateReservation,
               onDeleteReservation: deleteReservation,
+              onCycleHeadphone: cycleHeadphone, // V185 F4: Suivi casques Silent Disco
               formatDateTime: (date) => {
                 if (!date) return '-';
                 try {

@@ -31,6 +31,7 @@ const ReservationTab = ({
     onPageChange,
     onValidateReservation,
     onDeleteReservation,
+    onCycleHeadphone, // V185 F4: cycle 🎧 gris → rouge → vert → gris
     formatDateTime
   } = handlers;
 
@@ -124,12 +125,13 @@ const ReservationTab = ({
         {reservations.map(r => {
           const isProduct = r.selectedVariants || r.trackingNumber || r.shippingStatus !== 'pending';
           return (
-            <ReservationCard 
-              key={r.id} 
+            <ReservationCard
+              key={r.id}
               reservation={r}
               isProduct={isProduct}
               onValidate={() => onValidateReservation(r.id)}
               onDelete={() => onDeleteReservation(r.id)}
+              onCycleHeadphone={onCycleHeadphone ? () => onCycleHeadphone(r) : null}
               formatDateTime={formatDateTime}
             />
           );
@@ -157,12 +159,13 @@ const ReservationTab = ({
             {reservations.map(r => {
               const isProduct = r.selectedVariants || r.trackingNumber || r.shippingStatus !== 'pending';
               return (
-                <ReservationRow 
+                <ReservationRow
                   key={r.id}
                   reservation={r}
                   isProduct={isProduct}
                   onValidate={() => onValidateReservation(r.id)}
                   onDelete={() => onDeleteReservation(r.id)}
+                  onCycleHeadphone={onCycleHeadphone ? () => onCycleHeadphone(r) : null}
                   formatDateTime={formatDateTime}
                 />
               );
@@ -179,7 +182,32 @@ const ReservationTab = ({
 
 // === SOUS-COMPOSANTS MÉMOÏSÉS ===
 
-const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete, formatDateTime }) => (
+// V185 F4: Bouton 🎧 Casque cyclique (gris → rouge → vert → gris)
+const HeadphoneToggle = memo(({ status, onClick, compact }) => {
+  const map = {
+    taken: { color: '#ef4444', bg: 'rgba(239,68,68,0.18)', label: 'Casque pris', next: 'returned' },
+    returned: { color: '#22c55e', bg: 'rgba(34,197,94,0.18)', label: 'Casque rendu', next: null },
+  };
+  const meta = map[status] || { color: 'rgba(255,255,255,0.4)', bg: 'rgba(255,255,255,0.06)', label: 'Pas de casque', next: 'taken' };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={`🎧 ${meta.label} — clic pour changer`}
+      data-testid="headphone-toggle"
+      style={{
+        padding: compact ? '4px 6px' : '6px 8px', borderRadius: '8px',
+        background: meta.bg, color: meta.color, border: 'none', cursor: 'pointer',
+        fontSize: compact ? '12px' : '14px', lineHeight: 1, whiteSpace: 'nowrap'
+      }}
+    >
+      🎧
+    </button>
+  );
+});
+HeadphoneToggle.displayName = 'HeadphoneToggle';
+
+const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete, onCycleHeadphone, formatDateTime }) => (
   <div className={`p-4 rounded-lg glass ${r.validated ? 'border border-green-500/30' : 'border border-purple-500/20'}`}>
     <div className="flex justify-between items-start mb-3">
       <div>
@@ -231,16 +259,20 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
       )}
     </div>
     
-    <div className="flex gap-2">
+    <div className="flex gap-2 items-center">
       {!r.validated && (
-        <button 
+        <button
           onClick={onValidate}
           className="flex-1 px-3 py-1.5 rounded text-xs bg-green-600/20 text-green-400 hover:bg-green-600/40"
         >
           ✅ Valider
         </button>
       )}
-      <button 
+      {/* V185 F4: Casque Silent Disco */}
+      {onCycleHeadphone && (
+        <HeadphoneToggle status={r.headphone_status} onClick={onCycleHeadphone} />
+      )}
+      <button
         onClick={onDelete}
         className="px-3 py-1.5 rounded text-xs bg-red-600/20 text-red-400 hover:bg-red-600/40"
       >
@@ -250,7 +282,7 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
   </div>
 ));
 
-const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, formatDateTime }) => (
+const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, onCycleHeadphone, formatDateTime }) => (
   <tr className="hover:bg-white/5">
     <td className="py-3 text-pink-400 font-medium">{r.reservationCode || '-'}</td>
     <td className="py-3">
@@ -306,16 +338,20 @@ const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, 
       )}
     </td>
     <td className="py-3 text-right">
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-2 items-center">
         {!r.validated && (
-          <button 
+          <button
             onClick={onValidate}
             className="px-2 py-1 rounded text-xs bg-green-600/20 text-green-400 hover:bg-green-600/40"
           >
             ✅
           </button>
         )}
-        <button 
+        {/* V185 F4: Casque Silent Disco */}
+        {onCycleHeadphone && (
+          <HeadphoneToggle status={r.headphone_status} onClick={onCycleHeadphone} compact />
+        )}
+        <button
           onClick={onDelete}
           className="px-2 py-1 rounded text-xs bg-red-600/20 text-red-400 hover:bg-red-600/40"
         >

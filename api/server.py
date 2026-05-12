@@ -4049,6 +4049,21 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     user_email = (subscription.get("email") or "").lower().strip()
     user_name = subscription.get("name") or (user_email.split("@")[0] if user_email else "Abonné")
 
+    # V185 F3: Empêcher la double réservation (même cours + même occurrence)
+    if user_email:
+        dup_query = {
+            "userEmail": {"$regex": f"^{user_email}$", "$options": "i"},
+            "courseId": course_id,
+        }
+        if occurrence_iso:
+            dup_query["datetime"] = occurrence_iso
+        existing_reservation = await db.reservations.find_one(dup_query, {"_id": 0, "id": 1})
+        if existing_reservation:
+            raise HTTPException(
+                status_code=409,
+                detail="Tu as déjà réservé cette séance."
+            )
+
     # Déduction subscription (source d'autorité)
     new_remaining = remaining - 1
     new_used = subscription.get("used_sessions", 0) + 1
@@ -4129,6 +4144,81 @@ async def get_space_link_by_email(email: str):
         "email": email_clean,
         "code": code,
         "url": f"{_v184_public_origin()}/espace/{code}",
+    }
+
+
+# === V185 F3: Annulation d'une réservation depuis l'espace abonné (2h min) ===
+@api_router.delete("/subscriber/space/{access_code}/cancel/{reservation_id}")
+async def cancel_reservation_from_space(access_code: str, reservation_id: str):
+    """V185: Annule une réservation de l'abonné — recrédit 1 séance si > 2h avant le cours."""
+    code_upper = (access_code or "").strip().upper()
+    if not code_upper:
+        raise HTTPException(status_code=400, detail="Code d'accès requis")
+    if not reservation_id:
+        raise HTTPException(status_code=400, detail="Réservation requise")
+
+    subscription = await db.subscriptions.find_one(
+        {"code": code_upper, "status": {"$in": ["active", "completed"]}}, {"_id": 0}
+    )
+    if not subscription:
+        raise HTTPException(status_code=404, detail="Abonnement introuvable")
+
+    user_email = (subscription.get("email") or "").lower().strip()
+    reservation = await db.reservations.find_one({"id": reservation_id}, {"_id": 0})
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Réservation introuvable")
+
+    # Vérifier l'appartenance (par email ou par discountCode)
+    res_email = (reservation.get("userEmail") or "").lower().strip()
+    res_code = (reservation.get("discountCode") or reservation.get("promoCode") or "").upper().strip()
+    if user_email and res_email and res_email != user_email and res_code != code_upper:
+        raise HTTPException(status_code=403, detail="Cette réservation ne t'appartient pas")
+
+    # Vérifier la règle des 2h avant le cours
+    occurrence_iso = reservation.get("datetime")
+    if occurrence_iso:
+        try:
+            occurrence_dt = datetime.fromisoformat(occurrence_iso.replace("Z", "+00:00"))
+            if occurrence_dt.tzinfo is None:
+                occurrence_dt = occurrence_dt.replace(tzinfo=timezone.utc)
+            hours_until = (occurrence_dt - datetime.now(timezone.utc)).total_seconds() / 3600.0
+            if hours_until < 2:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Annulation impossible, moins de 2h avant le cours"
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"[V185 CANCEL] Impossible de parser datetime {occurrence_iso}: {e}")
+
+    # Suppression de la réservation
+    await db.reservations.delete_one({"id": reservation_id})
+
+    # Recrédit de la séance
+    new_remaining = (subscription.get("remaining_sessions") or 0) + 1
+    new_used = max(0, (subscription.get("used_sessions") or 0) - 1)
+    update_data = {
+        "remaining_sessions": new_remaining,
+        "used_sessions": new_used,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "status": "active",  # Re-réactive si l'abonnement avait été marqué "completed"
+    }
+    await db.subscriptions.update_one(
+        {"id": subscription.get("id")}, {"$set": update_data}
+    )
+
+    # Décrémenter discount_codes.used (sans descendre sous 0)
+    await db.discount_codes.update_one(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "used": {"$gt": 0}},
+        {"$inc": {"used": -1}}
+    )
+
+    logger.info(f"[V185 CANCEL] Réservation {reservation_id} annulée pour {user_email} (recrédit → {new_remaining})")
+    return {
+        "success": True,
+        "remaining_sessions": new_remaining,
+        "cancelled_reservation_id": reservation_id,
     }
 
 
