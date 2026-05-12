@@ -271,10 +271,29 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     .filter((r) => r?.datetime && new Date(r.datetime).getTime() > now)
     .sort((a, b) => new Date(a.datetime).getTime() - new Date(b.datetime).getTime());
 
-  // V185 F4: Réservation active (pour le badge casque global)
-  const activeHeadphone = (data?.reservations || []).find(
-    (r) => r?.headphone_status === "taken" || r?.headphone_status === "returned"
-  );
+  // V189: Résumé casque par personne — agrège tous les casques actifs (taken/returned)
+  // sur toutes les réservations à venir, et n'affiche le badge global QUE si au moins
+  // un casque est encore "taken" (= non rendu).
+  const headphoneSummary = (() => {
+    const items = [];
+    const subscriberName = (subscriber?.name || "").split(" ")[0] || "Moi";
+    for (const r of (data?.reservations || [])) {
+      if (!r) continue;
+      if (r.headphone_status === "taken" || r.headphone_status === "returned") {
+        items.push({ name: subscriberName, hp: r.headphone_status });
+      }
+      const guests = Array.isArray(r.guests) ? r.guests : [];
+      const guestHp = Array.isArray(r.guest_headphones) ? r.guest_headphones : [];
+      guests.forEach((g, i) => {
+        const hp = guestHp[i];
+        if (hp === "taken" || hp === "returned") {
+          items.push({ name: g || `Invité ${i + 1}`, hp });
+        }
+      });
+    }
+    return items;
+  })();
+  const hasActiveHeadphone = headphoneSummary.some((p) => p.hp === "taken");
 
   const total = subscription.total_sessions || 0;
   const remaining = subscription.remaining_sessions || 0;
@@ -349,25 +368,29 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           </div>
         </section>
 
-        {/* ===== V185 F4: Badge casque (Silent Disco) ===== */}
-        {activeHeadphone && (
+        {/* ===== V189: Badge casque global — résumé par personne ===== */}
+        {hasActiveHeadphone && (
           <div
-            className="rounded-2xl px-4 py-3 flex items-center gap-3 text-sm font-medium"
+            className="rounded-2xl px-4 py-3"
             style={{
-              background: activeHeadphone.headphone_status === "taken"
-                ? "rgba(239,68,68,0.15)"
-                : "rgba(34,197,94,0.15)",
-              border: `1px solid ${activeHeadphone.headphone_status === "taken" ? "rgba(239,68,68,0.35)" : "rgba(34,197,94,0.35)"}`,
-              color: activeHeadphone.headphone_status === "taken" ? "#fca5a5" : "#86efac",
+              background: "rgba(239,68,68,0.12)",
+              border: "1px solid rgba(239,68,68,0.3)",
             }}
             data-testid="headphone-badge"
           >
-            <span style={{ fontSize: "20px" }}>🎧</span>
-            <span>
-              {activeHeadphone.headphone_status === "taken"
-                ? "Casque en votre possession"
-                : "Casque retourné ✓"}
-            </span>
+            <p className="text-xs text-white/70 mb-1">Casques en cours</p>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm">
+              {headphoneSummary.map((p, idx) => (
+                <span key={idx} className="inline-flex items-center gap-1">
+                  <span style={{ color: p.hp === "taken" ? "#ef4444" : "#22c55e" }}>
+                    {p.hp === "taken" ? "🔴" : "🟢"}
+                  </span>
+                  <span style={{ color: p.hp === "taken" ? "#fca5a5" : "#86efac" }}>
+                    {p.name}
+                  </span>
+                </span>
+              ))}
+            </div>
           </div>
         )}
 
@@ -442,13 +465,20 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-white/70">
                             {display.map((p, idx) => (
                               <span key={idx} className="inline-flex items-center gap-1">
+                                {/* V189: cible tactile élargie (min 32x32) pour mobile */}
                                 <button
                                   type="button"
                                   onClick={() => cycleHeadphone(r, p.guestIndex)}
                                   title={`🎧 ${HP_LABEL[p.hp] || "Pas de casque"} — clic pour changer`}
                                   data-testid={`subscriber-headphone-${r.id}-${p.guestIndex ?? "main"}`}
-                                  className="rounded p-0.5 hover:bg-white/5 transition-colors"
-                                  style={{ color: HP_STYLE[p.hp] || "rgba(255,255,255,0.3)", lineHeight: 1 }}
+                                  className="rounded-full hover:bg-white/10 active:bg-white/20 transition-colors flex items-center justify-center"
+                                  style={{
+                                    color: HP_STYLE[p.hp] || "rgba(255,255,255,0.3)",
+                                    lineHeight: 1,
+                                    width: 32,
+                                    height: 32,
+                                    fontSize: 16,
+                                  }}
                                 >
                                   🎧
                                 </button>
