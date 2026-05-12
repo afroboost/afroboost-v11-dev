@@ -82,6 +82,8 @@ const PromoCodesTab = ({
   const [copiedCodeId, setCopiedCodeId] = useState(null); // v14.0: État pour bouton "Copié"
   // V185 F2: Feedback pour le bouton "Lien d'accès rapide"
   const [copiedSpaceLinkId, setCopiedSpaceLinkId] = useState(null);
+  // V193: filtre dédié pour la grille des bénéficiaires (chips)
+  const [beneficiariesFilter, setBeneficiariesFilter] = useState('');
 
   // V154: Category targeting for promo codes
   var [promoCategories, setPromoCategories] = useState([]);
@@ -220,6 +222,28 @@ const PromoCodesTab = ({
       return false;
     });
   }, [codesSearch, discountCodes, codeSubscriptions, uniqueCustomers]);
+
+  // V193: Filtre dédié pour les chips bénéficiaires (recherche nom / email / téléphone)
+  const filteredBeneficiaries = useMemo(() => {
+    if (!Array.isArray(uniqueCustomers)) return [];
+    const q = (beneficiariesFilter || '').toLowerCase().trim();
+    if (!q) return uniqueCustomers;
+    const qDigits = q.replace(/\D/g, '');
+    const matchesText = (v) => !!v && String(v).toLowerCase().includes(q);
+    const matchesPhone = (v) => {
+      if (!qDigits) return false;
+      const d = String(v || '').replace(/\D/g, '');
+      return d.length > 0 && d.includes(qDigits);
+    };
+    return uniqueCustomers.filter(c =>
+      matchesText(c.name) ||
+      matchesText(c.email) ||
+      matchesText(c.phone) ||
+      matchesText(c.whatsapp) ||
+      matchesPhone(c.phone) ||
+      matchesPhone(c.whatsapp)
+    );
+  }, [uniqueCustomers, beneficiariesFilter]);
 
   // v104: Auto-remplir maxUses quand un article est sélectionné
   const resolvedSessionsFromOffer = useMemo(() => {
@@ -478,25 +502,51 @@ const PromoCodesTab = ({
           <label className="block text-white text-xs mb-2 opacity-70">
             👥 Sélectionner les bénéficiaires ({selectedBeneficiaries?.length || 0} sélectionné{(selectedBeneficiaries?.length || 0) > 1 ? 's' : ''})
           </label>
-          <div className="border border-purple-500/30 rounded-lg p-3 bg-purple-900/10" style={{ maxHeight: '120px', overflowY: 'auto' }}>
+          {/* V193: Filtre dédié pour les chips bénéficiaires */}
+          <div className="relative mb-2">
+            <input
+              type="text"
+              placeholder="🔍 Filtrer les bénéficiaires..."
+              value={beneficiariesFilter}
+              onChange={(e) => setBeneficiariesFilter(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg neon-input text-xs"
+              data-testid="beneficiaries-filter-input"
+            />
+            {beneficiariesFilter && (
+              <button
+                type="button"
+                onClick={() => setBeneficiariesFilter('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-white/40 hover:text-white text-xs"
+                aria-label="Effacer le filtre"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <div className="border border-purple-500/30 rounded-lg p-3 bg-purple-900/10" style={{ maxHeight: '160px', overflowY: 'auto' }}>
             <div className="flex flex-wrap gap-2">
-              {uniqueCustomers && uniqueCustomers.length > 0 ? uniqueCustomers.map((c, i) => (
+              {filteredBeneficiaries.length > 0 ? filteredBeneficiaries.map((c, i) => (
                 <button
-                  key={i}
+                  key={c.email || i}
                   type="button"
                   onClick={() => toggleBeneficiarySelection && toggleBeneficiarySelection(c.email)}
                   className={`px-2 py-1 rounded text-xs transition-all flex items-center gap-1 ${
-                    selectedBeneficiaries?.includes(c.email) 
-                      ? 'bg-pink-600 text-white' 
+                    selectedBeneficiaries?.includes(c.email)
+                      ? 'bg-pink-600 text-white'
                       : 'bg-gray-700 text-white hover:bg-gray-600'
                   }`}
                   data-testid={`beneficiary-${i}`}
+                  title={c.email + (c.whatsapp ? ' · ' + c.whatsapp : '')}
                 >
                   {selectedBeneficiaries?.includes(c.email) && <span>✓</span>}
                   {c.name ? c.name.split(' ')[0] : 'Contact'}
                 </button>
               )) : (
-                <span className="text-white text-xs opacity-50">Aucun contact disponible</span>
+                <span className="text-white text-xs opacity-50">
+                  {beneficiariesFilter
+                    ? `Aucun bénéficiaire ne correspond à "${beneficiariesFilter}"`
+                    : 'Aucun contact disponible'}
+                </span>
               )}
             </div>
           </div>

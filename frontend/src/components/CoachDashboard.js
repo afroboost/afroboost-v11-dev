@@ -2057,6 +2057,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   
   // Add manual contact to users list (for beneficiary dropdown)
   // SYNCHRONISATION CRM: Ajoute aussi dans chat_participants
+  // V193: refetch défensif de chat_participants après création — au cas où
+  // l'upsert serveur ait dédupliqué ou modifié le doc (ex. email déjà existant).
   const addManualContact = async (e) => {
     e.preventDefault();
     if (!manualContact.name || !manualContact.email) return;
@@ -2068,7 +2070,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         whatsapp: manualContact.whatsapp || ""
       });
       setUsers([...users, response.data]);
-      
+
       // 2. SYNCHRONISATION: Créer aussi dans chat_participants (CRM global)
       try {
         await addManualChatParticipant(
@@ -2080,7 +2082,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       } catch (crmErr) {
         console.warn("CRM sync warning:", crmErr);
       }
-      
+
+      // V193: refetch défensif (l'upsert serveur peut différer du retour optimiste)
+      try {
+        const refresh = await axios.get(`${API}/chat/participants`, getCoachHeaders());
+        if (Array.isArray(refresh?.data)) setChatParticipants(refresh.data);
+      } catch (refetchErr) {
+        console.warn("Chat participants refetch warning:", refetchErr);
+      }
+
       setManualContact({ name: "", email: "", whatsapp: "" });
       setShowManualContactForm(false);
     } catch (err) {
