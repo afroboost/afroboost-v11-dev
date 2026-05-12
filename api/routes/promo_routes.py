@@ -412,6 +412,35 @@ async def update_discount_code(code_id: str, updates: dict):
                     propagated += 1
                 if propagated:
                     logger.info(f"[V194 UPDATE_CODE] {code_str} maxUses→{new_max_int}, {propagated} subscriptions resynchronisées")
+
+    # V200: Propagation expiresAt → subscriptions liées
+    # Quand le coach change la date d'expiration d'un code, TOUTES les subscriptions
+    # liées à ce code doivent aussi être mises à jour
+    if isinstance(updates, dict) and "expiresAt" in updates:
+        new_expires = updates.get("expiresAt")
+        code_str = (existing.get("code") or updated.get("code") or "").strip()
+        if code_str:
+            # V200: Formater la date pour les subscriptions
+            expiry_for_sub = None
+            if new_expires:
+                try:
+                    if 'T' not in str(new_expires):
+                        expiry_for_sub = str(new_expires) + "T23:59:59+00:00"
+                    else:
+                        expiry_for_sub = str(new_expires)
+                except Exception:
+                    expiry_for_sub = str(new_expires)
+
+            result = await _db.subscriptions.update_many(
+                {"code": {"$regex": f"^{code_str}$", "$options": "i"}},
+                {"$set": {
+                    "expires_at": expiry_for_sub,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }}
+            )
+            if result.modified_count:
+                logger.info(f"[V200 UPDATE_CODE] {code_str} expiresAt→{new_expires}, {result.modified_count} subscriptions mises à jour")
+
     return updated
 
 
