@@ -4845,29 +4845,39 @@ async def create_credit_checkout(request: Request):
         else:
             frontend_url = "https://afroboost.com"
         
-        # Créer la session Stripe Checkout
-        checkout_session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
-            line_items=[{
-                "price": price_id,
-                "quantity": 1
-            }],
-            mode="payment",
-            success_url=f"{frontend_url}?credit_success=true&session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{frontend_url}?credit_cancelled=true",
-            customer_email=caller_email,
-            metadata={
+        # V195: Créer la session Stripe Checkout — essai card+twint, fallback card seul
+        # (TWINT requiert CHF + le pack a un prix CHF, donc compatible ici)
+        common_kwargs = {
+            "line_items": [{"price": price_id, "quantity": 1}],
+            "mode": "payment",
+            "success_url": f"{frontend_url}?credit_success=true&session_id={{CHECKOUT_SESSION_ID}}",
+            "cancel_url": f"{frontend_url}?credit_cancelled=true",
+            "customer_email": caller_email,
+            "metadata": {
                 "type": "credit_purchase",  # v13.0: Type pour le webhook
                 "pack_id": pack_id,
                 "pack_name": pack.get("name", ""),
                 "credits": str(pack.get("credits", 0)),
                 "price_chf": str(pack.get("price", 0)),
                 "customer_email": caller_email,
-                "customer_name": coach.get("name", "")
-            }
-        )
-        
-        logger.info(f"[CREDIT-CHECKOUT] Session créée pour {caller_email}, pack={pack.get('name')}, crédits={pack.get('credits')}")
+                "customer_name": coach.get("name", ""),
+            },
+        }
+        try:
+            checkout_session = stripe.checkout.Session.create(
+                payment_method_types=["card", "twint"],
+                **common_kwargs
+            )
+            chosen_methods = ["card", "twint"]
+        except stripe.error.InvalidRequestError as twint_err:
+            logger.warning(f"[CREDIT-CHECKOUT V195] TWINT indisponible, fallback card seul: {twint_err}")
+            checkout_session = stripe.checkout.Session.create(
+                payment_method_types=["card"],
+                **common_kwargs
+            )
+            chosen_methods = ["card"]
+
+        logger.info(f"[CREDIT-CHECKOUT] Session créée pour {caller_email}, pack={pack.get('name')}, crédits={pack.get('credits')}, payment_methods={chosen_methods}")
         return {"checkout_url": checkout_session.url, "session_id": checkout_session.id}
         
     except HTTPException:
