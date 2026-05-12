@@ -305,15 +305,56 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
 
 @promo_router.put("/{code_id}")
 async def update_discount_code(code_id: str, updates: dict):
-    """Met à jour un code promo — cherche par id OU par code"""
+    """Met à jour un code promo — cherche par id OU par code.
+    V194: Si maxUses change, propage à toutes les subscriptions actives
+    liées (total_sessions/remaining_sessions/status). Sinon le badge
+    affichait l'ancien total (ex. maxUses=9 mais sub.total_sessions=13).
+    """
     # Try by id first, then by code (case-insensitive)
     existing = await _db.discount_codes.find_one({"id": code_id})
     if not existing:
         existing = await _db.discount_codes.find_one({"code": {"$regex": f"^{code_id}$", "$options": "i"}})
     if not existing:
         return {"error": "Code not found"}
+
     await _db.discount_codes.update_one({"_id": existing["_id"]}, {"$set": updates})
     updated = await _db.discount_codes.find_one({"_id": existing["_id"]}, {"_id": 0})
+
+    # V194: Propagation maxUses → subscriptions liées
+    if isinstance(updates, dict) and "maxUses" in updates:
+        new_max = updates.get("maxUses")
+        try:
+            new_max_int = int(new_max) if new_max is not None else None
+        except (TypeError, ValueError):
+            new_max_int = None
+        if new_max_int is not None and new_max_int >= 0:
+            code_str = (existing.get("code") or updated.get("code") or "").strip()
+            if code_str:
+                subs = await _db.subscriptions.find(
+                    {"code": {"$regex": f"^{code_str}$", "$options": "i"}},
+                    {"_id": 0, "id": 1, "used_sessions": 1, "remaining_sessions": 1, "status": 1}
+                ).to_list(500)
+                propagated = 0
+                for sub in subs:
+                    used = int(sub.get("used_sessions") or 0)
+                    new_remaining = max(0, new_max_int - used)
+                    new_status = sub.get("status") or "active"
+                    if new_status == "completed" and new_remaining > 0:
+                        new_status = "active"  # ré-ouverture si on remonte le plafond
+                    elif new_remaining <= 0 and used >= new_max_int:
+                        new_status = "completed"
+                    await _db.subscriptions.update_one(
+                        {"id": sub.get("id")},
+                        {"$set": {
+                            "total_sessions": new_max_int,
+                            "remaining_sessions": new_remaining,
+                            "status": new_status,
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }}
+                    )
+                    propagated += 1
+                if propagated:
+                    logger.info(f"[V194 UPDATE_CODE] {code_str} maxUses→{new_max_int}, {propagated} subscriptions resynchronisées")
     return updated
 
 

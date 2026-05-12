@@ -758,31 +758,50 @@ const PromoCodesTab = ({
                   Utilisé: {code.usedCount || code.used || 0}/{code.maxUses || '∞'}
                   {code.expiresAt && ` • Expire: ${formatDate(code.expiresAt)}`}
                 </p>
-                {/* v95: Séances par abonné */}
-                {codeSubscriptions[code.code]?.length > 0 && (
-                  <div className="mt-2 space-y-1">
-                    {codeSubscriptions[code.code].map(sub => (
-                      <div key={sub.id} className="flex items-center gap-2 text-xs">
-                        <span className="text-purple-400">👤</span>
-                        <span className="text-white/60">{sub.name || sub.email}</span>
-                        <span className="px-1.5 py-0.5 rounded text-[10px]" style={{
-                          background: sub.remaining_sessions <= 0
-                            ? 'rgba(239,68,68,0.2)'
-                            : sub.remaining_sessions <= 2
-                              ? 'rgba(245,158,11,0.2)'
-                              : 'rgba(34,197,94,0.2)',
-                          color: sub.remaining_sessions <= 0
-                            ? '#ef4444'
-                            : sub.remaining_sessions <= 2
-                              ? '#f59e0b'
-                              : '#22c55e'
-                        }}>
-                          {sub.remaining_sessions === -1 ? '∞' : `${sub.used_sessions}/${sub.total_sessions}`} séances
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                {/* V194: Séances par abonné — dédupe par email et utilise code.maxUses
+                    comme dénominateur (source de vérité) au lieu du total_sessions
+                    figé de la subscription (qui peut être obsolète) */}
+                {codeSubscriptions[code.code]?.length > 0 && (() => {
+                  const seenEmails = new Set();
+                  const uniqueSubs = codeSubscriptions[code.code].filter(sub => {
+                    const key = (sub.email || sub.id || '').toLowerCase();
+                    if (!key || seenEmails.has(key)) return false;
+                    seenEmails.add(key);
+                    return true;
+                  });
+                  const liveMax = Number(code.maxUses) > 0 ? Number(code.maxUses) : null;
+                  return (
+                    <div className="mt-2 space-y-1">
+                      {uniqueSubs.map(sub => {
+                        // Préférer code.maxUses (à jour) à sub.total_sessions (peut être obsolète)
+                        const denom = liveMax != null ? liveMax : sub.total_sessions;
+                        const used = Number(sub.used_sessions) || 0;
+                        const remaining = denom != null ? Math.max(0, denom - used) : sub.remaining_sessions;
+                        const showInfinite = sub.remaining_sessions === -1;
+                        return (
+                          <div key={sub.id || sub.email} className="flex items-center gap-2 text-xs">
+                            <span className="text-purple-400">👤</span>
+                            <span className="text-white/60">{sub.name || sub.email}</span>
+                            <span className="px-1.5 py-0.5 rounded text-[10px]" style={{
+                              background: remaining <= 0
+                                ? 'rgba(239,68,68,0.2)'
+                                : remaining <= 2
+                                  ? 'rgba(245,158,11,0.2)'
+                                  : 'rgba(34,197,94,0.2)',
+                              color: remaining <= 0
+                                ? '#ef4444'
+                                : remaining <= 2
+                                  ? '#f59e0b'
+                                  : '#22c55e'
+                            }}>
+                              {showInfinite ? '∞' : `${used}/${denom != null ? denom : '?'}`} séances
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
               
               {/* BOUTONS D'ACTION */}
