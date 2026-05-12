@@ -814,6 +814,39 @@ async def sync_subscriptions_for_email(data: dict):
     }
 
 
+# V200b: Endpoint FIX — corrige directement la date d'expiration en base
+# Appeler : GET /api/discount-codes/fix-expiry/BASSBOOSTX-11/2027-05-05
+# À SUPPRIMER après usage
+@promo_router.get("/fix-expiry/{code_str}/{new_date}")
+async def v200_fix_expiry(code_str: str, new_date: str):
+    """V200b: Corrige la date d'expiration d'un code ET de toutes ses subscriptions"""
+    # Mettre à jour le code promo
+    result = await _db.discount_codes.update_one(
+        {"code": {"$regex": f"^{code_str}$", "$options": "i"}},
+        {"$set": {"expiresAt": new_date}}
+    )
+    if result.matched_count == 0:
+        return {"error": f"Code {code_str} not found"}
+
+    # Mettre à jour TOUTES les subscriptions liées
+    expiry_for_sub = new_date + "T23:59:59+00:00" if 'T' not in new_date else new_date
+    sub_result = await _db.subscriptions.update_many(
+        {"code": {"$regex": f"^{code_str}$", "$options": "i"}},
+        {"$set": {
+            "expires_at": expiry_for_sub,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+
+    return {
+        "success": True,
+        "code": code_str,
+        "new_expiresAt": new_date,
+        "code_updated": result.modified_count,
+        "subscriptions_updated": sub_result.modified_count
+    }
+
+
 # V200: Endpoint DEBUG TEMPORAIRE — retourne la valeur brute de expiresAt + le parsing
 # À SUPPRIMER une fois le diagnostic terminé. Ne renvoie pas d'info sensible.
 @promo_router.get("/debug/{code_str}")
