@@ -790,7 +790,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         <section
           ref={reserveSectionRef}
           className="rounded-2xl p-5"
-          style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
+          style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, overflow: "hidden" }}
           data-testid="subscriber-space-reservation"
         >
           <h2 className="text-base font-semibold mb-3">Réserver une séance</h2>
@@ -844,7 +844,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             return (
               <div>
                 {/* Boutons de dates — scrollable horizontalement */}
-                <div className="flex gap-2 overflow-x-auto pb-3 mb-3" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
+                <div className="flex gap-2 overflow-x-auto pb-3 mb-3" style={{ scrollbarWidth: "none", msOverflowStyle: "none", maxWidth: "100%", WebkitOverflowScrolling: "touch" }}>
                   {visibleCourses.map((c, i) => {
                     const d = formatDateBtn(c);
                     const isSelected = i === safeIdx;
