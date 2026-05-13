@@ -4113,6 +4113,24 @@ async def debug_discount_code(access_code: str):
     }
 
 
+@api_router.post("/admin/fix-stripe-amount/{access_code}")
+async def fix_stripe_amount(access_code: str, request: Request):
+    """V207c: Fix ponctuel — écrire stripe_amount en base pour un code existant."""
+    body = await request.json()
+    amount = body.get("stripe_amount")
+    if amount is None:
+        raise HTTPException(status_code=400, detail="stripe_amount requis")
+    code_upper = (access_code or "").strip().upper()
+    result = await db.discount_codes.update_one(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}},
+        {"$set": {"stripe_amount": float(amount)}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail=f"Code {code_upper} introuvable")
+    logger.info(f"[V207c] stripe_amount={amount} écrit pour {code_upper}")
+    return {"success": True, "code": code_upper, "stripe_amount": float(amount)}
+
+
 @api_router.get("/subscriber/space/{access_code}")
 async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     """V184: Données complètes de la page d'accès rapide d'un abonné.
