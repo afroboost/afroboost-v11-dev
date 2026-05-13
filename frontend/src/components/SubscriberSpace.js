@@ -307,8 +307,9 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     );
   }
 
-  // V202: Si le backend retourne multi_member: true sans membre identifié → écran d'inscription
-  if (data?.multi_member && !data?.member && !data?.subscriber?.email) {
+  // V202/V203: Si le backend retourne multi_member: true → écran d'inscription
+  // La seule condition fiable est data.multi_member (le backend ne le met que quand il faut)
+  if (data?.multi_member) {
     const mm = data;
     const mmCoach = mm.coach;
     const mmSub = mm.subscription || {};
