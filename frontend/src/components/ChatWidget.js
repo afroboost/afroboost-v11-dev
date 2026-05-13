@@ -3776,6 +3776,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
         var msg = 'Erreur de validation';
         if (typeof detail === 'string') msg = detail;
         else if (detail && detail.message) msg = detail.message;
+        else if (err.response && err.response.data) msg = 'HTTP ' + status + ': ' + (typeof err.response.data === 'string' ? err.response.data.substring(0, 100) : JSON.stringify(err.response.data).substring(0, 100));
+        else if (err.message) msg = 'Réseau: ' + err.message;
         setQrScanResult({ success: false, message: msg });
       });
   };
