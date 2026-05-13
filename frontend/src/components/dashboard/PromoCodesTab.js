@@ -611,22 +611,21 @@ const PromoCodesTab = ({
                 Auto-détecté : {resolvedSessionsFromOffer.count} séance(s) — {resolvedSessionsFromOffer.name}
               </p>
             )}
-            {/* V203: Afficher compteur + bouton réinitialiser en mode édition */}
-            {editingCode && newCode.currentUsed > 0 && (
+            {/* V206: Compteur d'utilisations modifiable en mode édition */}
+            {editingCode && (
               <div className="flex items-center gap-2 mt-2">
-                <span className="text-xs text-yellow-400">
-                  ⚠️ {newCode.resetUsed ? '0' : newCode.currentUsed} séance(s) déjà comptée(s)
-                </span>
-                {!newCode.resetUsed ? (
-                  <button
-                    type="button"
-                    onClick={() => setNewCode({ ...newCode, resetUsed: true })}
-                    className="text-xs px-2 py-1 rounded bg-red-600/30 text-red-300 hover:bg-red-600/50 transition-colors"
-                  >
-                    🔄 Remettre à 0
-                  </button>
-                ) : (
-                  <span className="text-xs text-green-400">✅ Sera remis à 0</span>
+                <span className="text-xs text-yellow-400">⚠️ Utilisé :</span>
+                <input
+                  type="number"
+                  min="0"
+                  max={newCode.maxUses || 999}
+                  value={newCode.customUsed !== undefined ? newCode.customUsed : newCode.currentUsed || 0}
+                  onChange={(e) => setNewCode({ ...newCode, customUsed: Math.max(0, parseInt(e.target.value) || 0), resetUsed: true })}
+                  className="w-16 text-center text-xs px-2 py-1 rounded bg-white/10 border border-white/20 text-white"
+                />
+                <span className="text-xs text-white/50">/ {newCode.maxUses || '∞'}</span>
+                {(newCode.customUsed !== undefined && newCode.customUsed !== newCode.currentUsed) && (
+                  <span className="text-xs text-green-400">✅ Sera mis à jour</span>
                 )}
               </div>
             )}

@@ -1764,9 +1764,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           shared_sessions: newCode.shared_sessions !== false,
           stripe_amount: newCode.stripe_amount ? parseFloat(newCode.stripe_amount) : null,
         };
-        // V203: Réinitialiser le compteur si demandé par le coach
+        // V206: Modifier le compteur d'utilisations (valeur exacte ou remise à 0)
         if (newCode.resetUsed) {
-          updates.used = 0;
+          updates.used = newCode.customUsed !== undefined ? newCode.customUsed : 0;
         }
         // V200c: Vérifier que le PUT a vraiment réussi
         const putRes = await axios.put(`${API}/discount-codes/${editingCode}`, updates);
@@ -1974,8 +1974,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       multi_member: !!code.multi_member,
       shared_sessions: code.shared_sessions !== false,
       stripe_amount: code.stripe_amount || "",
-      // V203: Charger le compteur d'utilisations pour permettre la réinitialisation
+      // V206: Charger le compteur d'utilisations — modifiable directement
       currentUsed: code.usedCount || code.used || 0,
+      customUsed: undefined,
       resetUsed: false,
     });
     setSelectedBeneficiaries(emails);
