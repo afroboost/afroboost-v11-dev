@@ -1107,6 +1107,24 @@ async def qr_scan_validate(request: Request):
             logger.warning(f"[QR-V213] Discount code '{code}' trouvé mais inactif (active={discount_any.get('active')})")
             raise HTTPException(status_code=400, detail=f"Le code {code} est désactivé.")
 
+        # CAS C ter (V213c): Si on a un member_slug, chercher directement dans code_members
+        # Le code scanné pourrait être le code du groupe sous un nom différent
+        if member_slug_from_qr:
+            logger.info(f"[QR-V213] Recherche directe par slug '{member_slug_from_qr}' dans code_members")
+            member_by_slug = await db.code_members.find_one(
+                {"slug": {"$regex": f"^{member_slug_from_qr}$", "$options": "i"}}, {"_id": 0}
+            )
+            if member_by_slug:
+                member_code = (member_by_slug.get("code") or "").upper()
+                logger.info(f"[QR-V213] Membre trouvé via slug! code du membre='{member_code}', code scanné='{code}'")
+                # Chercher le discount_code avec le vrai code du membre
+                if member_code:
+                    real_discount = await db.discount_codes.find_one(
+                        {"code": {"$regex": f"^{member_code}$", "$options": "i"}, "active": True}, {"_id": 0}
+                    )
+                    if real_discount:
+                        return await _validate_discount_code_presence(member_code, real_discount, member_slug_from_qr, forced_course_id)
+
         # CAS D (V213): Code d'accès utilisateur AFRO-XXXX — cherche dans users
         logger.info(f"[QR-V213] CAS C échoué, recherche CAS D (users.accessCode) pour code='{code}'")
         user_by_access = await db.users.find_one(
@@ -1114,6 +1132,33 @@ async def qr_scan_validate(request: Request):
         )
         if user_by_access:
             return await _validate_user_access_code(code, user_by_access, forced_course_id)
+
+        # CAS E (V213c): Chercher dans les réservations par discountCode ou promoCode
+        # Au cas où le code serait stocké sous un nom de champ différent
+        logger.info(f"[QR-V213] Dernière tentative: recherche dans reservations par discountCode/promoCode")
+        from datetime import timedelta as _td_e
+        _swiss = timezone(_td_e(hours=2))
+        _today = datetime.now(_swiss).strftime("%Y-%m-%d")
+        direct_res = await db.reservations.find_one({
+            "$or": [
+                {"discountCode": {"$regex": f"^{code}$", "$options": "i"}},
+                {"promoCode": {"$regex": f"^{code}$", "$options": "i"}}
+            ],
+            "datetime": {"$regex": _today}
+        }, {"_id": 0})
+        if direct_res:
+            if not direct_res.get("validated"):
+                await db.reservations.update_one(
+                    {"id": direct_res.get("id")},
+                    {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
+                )
+                logger.info(f"[QR-V213] CAS E: Réservation trouvée directement par code '{code}'")
+                return {"success": True, "type": "reservation", "message": "Présence validée !",
+                        "reservation": {"userName": direct_res.get("userName", ""), "reservationCode": direct_res.get("reservationCode", code),
+                                        "courseName": direct_res.get("courseName", "")}}
+            return {"success": True, "type": "reservation", "message": "Déjà validé",
+                    "reservation": {"userName": direct_res.get("userName", ""), "reservationCode": direct_res.get("reservationCode", code),
+                                    "courseName": direct_res.get("courseName", "")}}
 
         logger.warning(f"[QR-V213] Aucun CAS ne correspond pour code='{code}' (slug={member_slug_from_qr})")
         raise HTTPException(status_code=404, detail=f"Code '{code}' introuvable. Vérifie que le code est correct.")
