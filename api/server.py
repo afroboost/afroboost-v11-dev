@@ -4151,72 +4151,81 @@ async def fix_stripe_amount(access_code: str, request: Request):
 
 @api_router.get("/admin/fix-all-stripe")
 async def fix_all_stripe_amounts():
-    """V207f: Corrige TOUS les codes — détecte le prix depuis l'offre liée et écrit stripe_amount.
-    Un simple GET suffit, pas besoin de body ni de console."""
-    all_codes = await db.discount_codes.find({}, {"_id": 1, "code": 1, "courses": 1, "stripe_amount": 1}).to_list(1000)
+    """V207i: Corrige TOUS les codes — gère les doublons.
+    Étape 1: Grouper par code, trouver le meilleur stripe_amount
+    Étape 2: Propager à TOUS les documents du même code (update_many)
+    """
+    from collections import defaultdict
+    all_codes = await db.discount_codes.find({}).to_list(1000)
+
+    # Grouper par code (case-insensitive)
+    code_groups = defaultdict(list)
+    for doc in all_codes:
+        key = (doc.get("code") or "").strip().upper()
+        if key:
+            code_groups[key].append(doc)
+
     results = []
     fixed_count = 0
 
-    for code_doc in all_codes:
-        code_str = code_doc.get("code", "")
-        current_amount = code_doc.get("stripe_amount")
+    for code_upper, docs in code_groups.items():
+        # Chercher stripe_amount dans TOUS les doublons
+        best_amount = None
+        for d in docs:
+            amt = d.get("stripe_amount")
+            if amt is not None:
+                try:
+                    amt = float(amt)
+                    if amt > 0:
+                        best_amount = amt
+                        break
+                except (TypeError, ValueError):
+                    pass
 
-        # Déjà configuré → on passe
-        if current_amount is not None and current_amount > 0:
-            results.append({"code": code_str, "status": "ok", "stripe_amount": current_amount})
-            continue
+        # Fallback: offres liées
+        if not best_amount:
+            for d in docs:
+                for cid in (d.get("courses") or []):
+                    offer = await db.offers.find_one({"id": cid}, {"_id": 0, "price": 1})
+                    if offer and offer.get("price"):
+                        try:
+                            best_amount = float(offer["price"])
+                        except (TypeError, ValueError):
+                            pass
+                        if best_amount and best_amount > 0:
+                            break
+                if best_amount:
+                    break
 
-        # Chercher le prix dans l'offre liée
-        courses = code_doc.get("courses") or []
-        offer_price = None
-        for course_id in courses:
-            offer = await db.offers.find_one({"id": course_id}, {"_id": 0, "price": 1, "name": 1})
-            if offer and offer.get("price"):
-                offer_price = float(offer["price"])
-                break
-
-        # Fallback 2: chercher dans les subscriptions liées
-        if not offer_price:
+        # Fallback: subscription offer_price
+        if not best_amount:
             sub = await db.subscriptions.find_one(
-                {"code": {"$regex": f"^{code_str}$", "$options": "i"}, "offer_price": {"$exists": True, "$ne": None}},
+                {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "offer_price": {"$ne": None}},
                 {"_id": 0, "offer_price": 1}
             )
             if sub and sub.get("offer_price"):
                 try:
-                    offer_price = float(sub["offer_price"])
+                    best_amount = float(sub["offer_price"])
                 except (TypeError, ValueError):
                     pass
 
-        # Fallback 3: chercher le prix dans la collection courses
-        if not offer_price:
-            for course_id in courses:
-                course = await db.courses.find_one({"id": course_id}, {"_id": 0, "price": 1})
-                if course and course.get("price"):
-                    try:
-                        offer_price = float(course["price"])
-                        break
-                    except (TypeError, ValueError):
-                        pass
-
-        if offer_price and offer_price > 0:
-            await db.discount_codes.update_one(
-                {"_id": code_doc["_id"]},
-                {"$set": {"stripe_amount": offer_price}}
+        if best_amount and best_amount > 0:
+            # Propager à TOUS les documents de ce code
+            r = await db.discount_codes.update_many(
+                {"code": {"$regex": f"^{code_upper}$", "$options": "i"}},
+                {"$set": {"stripe_amount": best_amount}}
             )
-            fixed_count += 1
-            results.append({"code": code_str, "status": "fixed", "stripe_amount": offer_price})
-            logger.info(f"[V207f] {code_str} → stripe_amount={offer_price}")
+            needs_fix = sum(1 for d in docs if not d.get("stripe_amount") or float(d.get("stripe_amount", 0) or 0) <= 0)
+            if needs_fix > 0:
+                fixed_count += needs_fix
+            results.append({
+                "code": code_upper, "status": "fixed" if needs_fix > 0 else "ok",
+                "stripe_amount": best_amount, "docs": len(docs),
+            })
         else:
-            results.append({"code": code_str, "status": "no_price_found", "courses": courses})
+            results.append({"code": code_upper, "status": "no_price", "docs": len(docs)})
 
-    return {
-        "success": True,
-        "total_codes": len(all_codes),
-        "fixed": fixed_count,
-        "already_ok": len([r for r in results if r["status"] == "ok"]),
-        "no_price": len([r for r in results if r["status"] == "no_offer_price"]),
-        "results": results
-    }
+    return {"success": True, "unique_codes": len(code_groups), "fixed": fixed_count, "results": results}
 
 
 @api_router.get("/subscriber/space/{access_code}")
