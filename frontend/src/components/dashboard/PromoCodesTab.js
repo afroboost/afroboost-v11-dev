@@ -611,8 +611,27 @@ const PromoCodesTab = ({
                 Auto-détecté : {resolvedSessionsFromOffer.count} séance(s) — {resolvedSessionsFromOffer.name}
               </p>
             )}
+            {/* V203: Afficher compteur + bouton réinitialiser en mode édition */}
+            {editingCode && newCode.currentUsed > 0 && (
+              <div className="flex items-center gap-2 mt-2">
+                <span className="text-xs text-yellow-400">
+                  ⚠️ {newCode.resetUsed ? '0' : newCode.currentUsed} séance(s) déjà comptée(s)
+                </span>
+                {!newCode.resetUsed ? (
+                  <button
+                    type="button"
+                    onClick={() => setNewCode({ ...newCode, resetUsed: true })}
+                    className="text-xs px-2 py-1 rounded bg-red-600/30 text-red-300 hover:bg-red-600/50 transition-colors"
+                  >
+                    🔄 Remettre à 0
+                  </button>
+                ) : (
+                  <span className="text-xs text-green-400">✅ Sera remis à 0</span>
+                )}
+              </div>
+            )}
           </div>
-          
+
           {/* Date d'expiration */}
           <div>
             <label className="block text-white text-xs mb-1 opacity-70">📅 Date d'expiration</label>
