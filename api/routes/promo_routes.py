@@ -388,6 +388,26 @@ async def update_discount_code(code_id: str, updates: dict):
     logger.info(f"[V200c] PUT /discount-codes/{code_id}: Updated OK — expiresAt is now '{updated.get('expiresAt')}'")
 
 
+    # V206: Propagation used → subscriptions liées (synchroniser le compteur)
+    if isinstance(updates, dict) and "used" in updates:
+        new_used = int(updates.get("used", 0))
+        code_str = (existing.get("code") or updated.get("code") or "").strip()
+        if code_str:
+            total = int(updated.get("maxUses") or 0)
+            new_remaining = max(0, total - new_used)
+            new_status = "active" if new_remaining > 0 else "completed"
+            result = await _db.subscriptions.update_many(
+                {"code": {"$regex": f"^{code_str}$", "$options": "i"}},
+                {"$set": {
+                    "used_sessions": new_used,
+                    "remaining_sessions": new_remaining,
+                    "status": new_status,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }}
+            )
+            if result.modified_count:
+                logger.info(f"[V206] {code_str} used→{new_used}, {result.modified_count} subscriptions synchronisées")
+
     # V194: Propagation maxUses → subscriptions liées
     if isinstance(updates, dict) and "maxUses" in updates:
         new_max = updates.get("maxUses")
