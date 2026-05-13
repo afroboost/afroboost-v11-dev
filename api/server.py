@@ -3982,14 +3982,15 @@ def _v184_public_origin():
 
 
 @api_router.get("/subscriber/space/{access_code}")
-async def get_subscriber_space(access_code: str):
-    """V184: Données complètes de la page d'accès rapide d'un abonné."""
+async def get_subscriber_space(access_code: str, m: Optional[str] = None):
+    """V184: Données complètes de la page d'accès rapide d'un abonné.
+    V202: Supporte les codes multi-membres via ?m=slug."""
     code_upper = (access_code or "").strip().upper()
     if not code_upper:
         raise HTTPException(status_code=400, detail="Code d'accès requis")
 
     # V201: Log pour diagnostic
-    logger.info(f"[V201] subscriber/space called with access_code='{access_code}', code_upper='{code_upper}'")
+    logger.info(f"[V202] subscriber/space code={code_upper}, member_slug={m}")
 
     # V201: Lookup case-insensitive + fallback sans filtre status
     subscription = await db.subscriptions.find_one(
@@ -4024,7 +4025,99 @@ async def get_subscriber_space(access_code: str):
         logger.error(f"[V201] Code {code_upper} introuvable! Similar subs: {[s.get('code') for s in similar_subs]}, Similar discount_codes: {[c.get('code') for c in similar_codes]}")
         raise HTTPException(status_code=404, detail=f"Code abonné introuvable. Code cherché: {code_upper}")
 
-    if subscription:
+    # V202: Multi-membre — vérifier si le code est en mode multi-membre
+    is_multi = (discount or {}).get("multi_member", False)
+    stripe_amount = (discount or {}).get("stripe_amount")  # V202: prix Stripe en CHF
+    stripe_product = (discount or {}).get("name") or "Abonnement Afroboost"
+
+    # V202: Si multi-membre et un membre spécifié via ?m=slug
+    member = None
+    if m:
+        member = await db.code_members.find_one(
+            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "slug": m},
+            {"_id": 0}
+        )
+        if not member:
+            raise HTTPException(status_code=404, detail="Membre introuvable. Vérifie ton lien personnel.")
+
+    # V202: Coach branding (chargé tôt pour multi-membre join screen aussi)
+    coach = await _v184_find_coach_for_code(code_upper)
+    coach_id_hint_early = (subscription or {}).get("coach_id") or (discount or {}).get("coach_id")
+    if not coach and coach_id_hint_early:
+        coach = await db.coaches.find_one(
+            {"$or": [{"email": coach_id_hint_early}, {"id": coach_id_hint_early}]}, {"_id": 0}
+        )
+    coach_payload = None
+    if coach:
+        coach_payload = {
+            "id": coach.get("id") or coach.get("email"),
+            "name": coach.get("platform_name") or coach.get("name") or "",
+            "logo_url": coach.get("logo_url") or coach.get("photo_url") or "",
+        }
+
+    # V202: Si multi-membre et PAS de ?m= → retourner l'écran d'inscription
+    if is_multi and not member:
+        members_list = await db.code_members.find(
+            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}},
+            {"_id": 0, "slug": 1, "name": 1}
+        ).to_list(200)
+        # Infos basiques du code pour l'écran d'inscription
+        _total = (subscription or {}).get("total_sessions") or (discount or {}).get("maxUses") or 0
+        _used = (subscription or {}).get("used_sessions") or (discount or {}).get("used") or 0
+        _remaining = (subscription or {}).get("remaining_sessions")
+        if _remaining is None:
+            _remaining = max(0, _total - _used)
+        _offer = (subscription or {}).get("offer_name") or (discount or {}).get("name") or "Abonnement"
+        _expires = (subscription or {}).get("expires_at") or (discount or {}).get("expiresAt")
+        _shared = (discount or {}).get("shared_sessions", True)
+        return {
+            "success": True,
+            "multi_member": True,
+            "shared_sessions": _shared,
+            "code": code_upper,
+            "members": members_list,
+            "subscription": {
+                "offer_name": _offer,
+                "total_sessions": _total,
+                "remaining_sessions": _remaining,
+                "expires_at": _expires,
+            },
+            "coach": coach_payload,
+            "stripe_amount": stripe_amount,
+            "stripe_product": stripe_product,
+        }
+
+    # --- Extraction des données abonné (mode classique OU membre identifié) ---
+
+    if member:
+        # V202: Utiliser l'identité du membre
+        user_email = (member.get("email") or member.get("whatsapp") or "").lower().strip()
+        display_name = member.get("name") or "Abonné"
+        # Sessions: partagées ou individuelles selon le mode du code
+        shared_sessions = (discount or {}).get("shared_sessions", True)
+        if shared_sessions:
+            # Séances partagées — utiliser le pool commun
+            if subscription:
+                total_sessions = subscription.get("total_sessions") or (discount.get("maxUses") if discount else 0) or 0
+                used_sessions = subscription.get("used_sessions") or 0
+                remaining_sessions = subscription.get("remaining_sessions")
+                if remaining_sessions is None:
+                    remaining_sessions = max(0, total_sessions - used_sessions)
+            else:
+                total_sessions = (discount or {}).get("maxUses") or 0
+                used_sessions = (discount or {}).get("used") or 0
+                remaining_sessions = max(0, total_sessions - used_sessions)
+        else:
+            # V202: Quota individuel par membre
+            total_sessions = member.get("total_sessions") or (discount or {}).get("maxUses") or 0
+            used_sessions = member.get("used_sessions") or 0
+            remaining_sessions = member.get("remaining_sessions")
+            if remaining_sessions is None:
+                remaining_sessions = max(0, total_sessions - used_sessions)
+        offer_name = (subscription or {}).get("offer_name") or (discount or {}).get("name") or "Abonnement"
+        expires_at = (subscription or {}).get("expires_at") or (discount or {}).get("expiresAt")
+        coach_id_hint = (subscription or {}).get("coach_id") or (discount or {}).get("coach_id")
+    elif subscription:
         user_email = (subscription.get("email") or "").lower().strip()
         display_name = subscription.get("name")
         total_sessions = subscription.get("total_sessions") or (discount.get("maxUses") if discount else 0) or 0
@@ -4057,25 +4150,22 @@ async def get_subscriber_space(access_code: str):
         except Exception:
             pass
     if not display_name:
-        # V201: Si c'est un numéro de téléphone, pas de split("@")
         if user_email and "@" in user_email:
             display_name = user_email.split("@")[0]
         else:
             display_name = "Abonné"
 
-    # Coach branding (best-effort)
-    coach = await _v184_find_coach_for_code(code_upper)
-    if not coach and coach_id_hint:
+    # V202: Coach déjà chargé plus haut — juste fallback si coach_id_hint spécifique
+    if not coach and coach_id_hint and coach_id_hint != coach_id_hint_early:
         coach = await db.coaches.find_one(
             {"$or": [{"email": coach_id_hint}, {"id": coach_id_hint}]}, {"_id": 0}
         )
-    coach_payload = None
-    if coach:
-        coach_payload = {
-            "id": coach.get("id") or coach.get("email"),
-            "name": coach.get("platform_name") or coach.get("name") or "",
-            "logo_url": coach.get("logo_url") or coach.get("photo_url") or "",
-        }
+        if coach:
+            coach_payload = {
+                "id": coach.get("id") or coach.get("email"),
+                "name": coach.get("platform_name") or coach.get("name") or "",
+                "logo_url": coach.get("logo_url") or coach.get("photo_url") or "",
+            }
 
     # Offer details (optionnel)
     offer = await db.offers.find_one({"name": offer_name}, {"_id": 0}) if offer_name else None
@@ -4113,6 +4203,8 @@ async def get_subscriber_space(access_code: str):
 
     return {
         "success": True,
+        "multi_member": is_multi,
+        "member": {"slug": member.get("slug"), "name": member.get("name")} if member else None,
         "subscriber": {
             "name": display_name,
             "email": user_email,
@@ -4125,7 +4217,6 @@ async def get_subscriber_space(access_code: str):
             "used_sessions": used_sessions,
             "remaining_sessions": remaining_sessions,
             "expires_at": expires_at,
-            # V195: Reconduction automatique — exposée pour la toggle frontend
             "auto_renew": bool((subscription or {}).get("auto_renew", False)),
             "renewal_price": float((subscription or {}).get("renewal_price") or 0),
             "renewal_sessions": int((subscription or {}).get("renewal_sessions") or 0),
@@ -4143,7 +4234,161 @@ async def get_subscriber_space(access_code: str):
         "coach": coach_payload,
         "upcoming_courses": occurrences,
         "reservations": reservations_raw,
+        "stripe_amount": stripe_amount,
+        "stripe_product": stripe_product,
     }
+
+
+# V202: Endpoint pour rejoindre un espace abonné multi-membre
+@api_router.post("/subscriber/space/{access_code}/join")
+async def join_subscriber_space(access_code: str, request: Request):
+    """V202: Un utilisateur rejoint un code partagé. Crée un membre et retourne son slug personnel."""
+    code_upper = (access_code or "").strip().upper()
+    if not code_upper:
+        raise HTTPException(status_code=400, detail="Code d'accès requis")
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    name = (body.get("name") or "").strip()
+    email = (body.get("email") or "").strip().lower()
+    whatsapp = (body.get("whatsapp") or "").strip()
+
+    if not name:
+        raise HTTPException(status_code=400, detail="Prénom requis")
+    if not email and not whatsapp:
+        raise HTTPException(status_code=400, detail="Email ou WhatsApp requis")
+
+    # Vérifier que le code existe
+    discount = await db.discount_codes.find_one(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+    )
+    if not discount:
+        raise HTTPException(status_code=404, detail="Code introuvable")
+
+    # Vérifier si le membre existe déjà (par email ou whatsapp)
+    import re as _re_mod
+    existing = None
+    if email:
+        existing = await db.code_members.find_one(
+            {"code": {"$regex": f"^{code_upper}$", "$options": "i"},
+             "email": {"$regex": f"^{_re_mod.escape(email)}$", "$options": "i"}},
+            {"_id": 0}
+        )
+    if not existing and whatsapp:
+        existing = await db.code_members.find_one(
+            {"code": {"$regex": f"^{code_upper}$", "$options": "i"},
+             "whatsapp": whatsapp},
+            {"_id": 0}
+        )
+
+    if existing:
+        existing.pop("_id", None)
+        logger.info(f"[V202] Member already exists for {code_upper}: {existing.get('name')} ({existing.get('slug')})")
+        return {"success": True, "member": existing, "already_existed": True}
+
+    # Créer le nouveau membre
+    slug = uuid.uuid4().hex[:8]
+    # V202: Si séances individuelles, initialiser le quota personnel
+    shared = discount.get("shared_sessions", True)
+    member_doc = {
+        "id": str(uuid.uuid4()),
+        "code": code_upper,
+        "slug": slug,
+        "name": name,
+        "email": email,
+        "whatsapp": whatsapp,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if not shared:
+        member_doc["total_sessions"] = discount.get("maxUses") or 0
+        member_doc["used_sessions"] = 0
+        member_doc["remaining_sessions"] = discount.get("maxUses") or 0
+
+    await db.code_members.insert_one(member_doc)
+    member_doc.pop("_id", None)
+    logger.info(f"[V202] New member joined {code_upper}: {name} ({slug}), shared={shared}")
+
+    return {"success": True, "member": member_doc, "already_existed": False}
+
+
+# V202: Endpoint Stripe Checkout depuis l'espace abonné
+@api_router.post("/subscriber/space/{access_code}/stripe-checkout")
+async def subscriber_stripe_checkout(access_code: str, request: Request):
+    """V202: Crée une session Stripe Checkout pour payer l'abonnement lié au code."""
+    code_upper = (access_code or "").strip().upper()
+
+    discount = await db.discount_codes.find_one(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+    )
+    if not discount:
+        raise HTTPException(status_code=404, detail="Code introuvable")
+
+    amount = discount.get("stripe_amount")
+    if not amount or float(amount) <= 0:
+        raise HTTPException(status_code=400, detail="Aucun montant configuré pour ce code")
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    origin_url = body.get("originUrl") or "https://afroboost.com"
+    member_slug = body.get("member_slug") or ""
+    customer_email = body.get("email") or ""
+
+    product_name = discount.get("name") or "Abonnement Afroboost"
+    amount_cents = int(float(amount) * 100)
+
+    success_url = f"{origin_url}/espace/{code_upper}?status=success&session_id={{CHECKOUT_SESSION_ID}}"
+    if member_slug:
+        success_url += f"&m={member_slug}"
+    cancel_url = f"{origin_url}/espace/{code_upper}"
+    if member_slug:
+        cancel_url += f"?m={member_slug}"
+
+    try:
+        session = stripe.checkout.Session.create(
+            payment_method_types=['card', 'twint'],
+            line_items=[{
+                'price_data': {
+                    'currency': 'chf',
+                    'product_data': {'name': product_name},
+                    'unit_amount': amount_cents,
+                },
+                'quantity': 1,
+            }],
+            mode='payment',
+            success_url=success_url,
+            cancel_url=cancel_url,
+            customer_email=customer_email or None,
+            metadata={
+                "source": "subscriber_space",
+                "code": code_upper,
+                "member_slug": member_slug,
+                "product_name": product_name,
+            },
+        )
+
+        await db.payment_transactions.insert_one({
+            "id": str(uuid.uuid4()),
+            "session_id": session.id,
+            "amount": float(amount),
+            "currency": "chf",
+            "product_name": product_name,
+            "customer_email": customer_email,
+            "metadata": {"code": code_upper, "member_slug": member_slug},
+            "payment_status": "pending",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+        return {"success": True, "checkout_url": session.url, "session_id": session.id}
+    except Exception as e:
+        logger.error(f"[V202] Stripe checkout error for {code_upper}: {e}")
+        raise HTTPException(status_code=500, detail="Erreur lors de la création du paiement")
 
 
 @api_router.post("/subscriber/space/{access_code}/reserve/{course_id}")
@@ -4177,18 +4422,60 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
             if isinstance(g, str):
                 clean = g.strip()
                 if clean:
-                    guests.append(clean[:50])  # limite anti-abus
-    # Tronquer si plus de guests que de places supplémentaires
+                    guests.append(clean[:50])
     expected_guests = max(0, quantity - 1)
     guests = guests[:expected_guests]
 
+    # V202: Récupérer le membre si spécifié
+    member_slug = body.get("member_slug") if isinstance(body, dict) else None
+    member = None
+    if member_slug:
+        member = await db.code_members.find_one(
+            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "slug": member_slug},
+            {"_id": 0}
+        )
+
+    # V202: Chercher subscription (fallback case-insensitive)
     subscription = await db.subscriptions.find_one(
-        {"code": code_upper, "status": "active"}, {"_id": 0}
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "status": "active"}, {"_id": 0}
     )
     if not subscription:
-        raise HTTPException(status_code=404, detail="Abonnement introuvable ou inactif")
+        # V202: Fallback — subscription avec n'importe quel status
+        subscription = await db.subscriptions.find_one(
+            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+        )
+    if not subscription:
+        # V202: Dernier fallback — utiliser discount_codes pour les infos de session
+        dc = await db.discount_codes.find_one(
+            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+        )
+        if not dc:
+            raise HTTPException(status_code=404, detail="Abonnement introuvable")
+        # Créer une subscription virtuelle à partir du discount_code
+        subscription = {
+            "code": dc.get("code"),
+            "email": dc.get("assignedEmail") or "",
+            "name": dc.get("name") or "",
+            "remaining_sessions": max(0, (dc.get("maxUses") or 0) - (dc.get("used") or 0)),
+            "used_sessions": dc.get("used") or 0,
+            "total_sessions": dc.get("maxUses") or 0,
+            "coach_id": dc.get("coach_id"),
+            "offer_name": dc.get("name") or "Abonnement",
+            "_is_virtual": True,
+        }
 
-    remaining = subscription.get("remaining_sessions", 0)
+    # V202: Déterminer les séances disponibles (partagées ou individuelles)
+    discount_for_mode = await db.discount_codes.find_one(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0, "shared_sessions": 1}
+    )
+    shared_mode = (discount_for_mode or {}).get("shared_sessions", True)
+
+    if member and not shared_mode:
+        # Quota individuel du membre
+        remaining = member.get("remaining_sessions", 0)
+    else:
+        remaining = subscription.get("remaining_sessions", 0)
+
     if remaining <= 0:
         raise HTTPException(status_code=400, detail="Plus de séances disponibles")
     if remaining < quantity:
@@ -4201,9 +4488,13 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     if not course or course.get("archived"):
         raise HTTPException(status_code=404, detail="Cours introuvable")
 
-    user_email = (subscription.get("email") or "").lower().strip()
-    # V201: Nom fallback — ne pas split("@") sur un numéro de téléphone
-    user_name = subscription.get("name") or (user_email.split("@")[0] if "@" in user_email else "Abonné")
+    # V202: Utiliser l'identité du membre si disponible, sinon celle de la subscription
+    if member:
+        user_email = (member.get("email") or member.get("whatsapp") or "").lower().strip()
+        user_name = member.get("name") or "Abonné"
+    else:
+        user_email = (subscription.get("email") or "").lower().strip()
+        user_name = subscription.get("name") or (user_email.split("@")[0] if "@" in user_email else "Abonné")
 
     # V185 F3: Empêcher la double réservation (même cours + même occurrence)
     # V201: Échapper les caractères regex spéciaux (ex: +41...)
@@ -4223,17 +4514,33 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
                 detail="Tu as déjà réservé cette séance."
             )
 
-    # V186: Déduction subscription proportionnelle au nombre de places
+    # V186/V202: Déduction des séances — partagées ou individuelles
     new_remaining = remaining - quantity
-    new_used = subscription.get("used_sessions", 0) + quantity
-    update_data = {
-        "remaining_sessions": new_remaining,
-        "used_sessions": new_used,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
-    if new_remaining <= 0:
-        update_data["status"] = "completed"
-    await db.subscriptions.update_one({"id": subscription.get("id")}, {"$set": update_data})
+
+    if member and not shared_mode:
+        # V202: Déduire du quota individuel du membre
+        member_used = member.get("used_sessions", 0) + quantity
+        member_remaining = new_remaining
+        await db.code_members.update_one(
+            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "slug": member_slug},
+            {"$set": {
+                "used_sessions": member_used,
+                "remaining_sessions": member_remaining,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }}
+        )
+    else:
+        # Déduire du pool partagé (subscription)
+        if not subscription.get("_is_virtual"):
+            new_used = subscription.get("used_sessions", 0) + quantity
+            update_data = {
+                "remaining_sessions": new_remaining,
+                "used_sessions": new_used,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if new_remaining <= 0:
+                update_data["status"] = "completed"
+            await db.subscriptions.update_one({"id": subscription.get("id")}, {"$set": update_data})
 
     # V186: Incrément discount_codes.used du nombre de places
     await db.discount_codes.update_one(

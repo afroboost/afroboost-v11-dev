@@ -1,7 +1,8 @@
 // V184: Page d'accès rapide abonné
+// V202: Multi-membres, lien personnel, Stripe, scroll fluide
 // Lien public /espace/AFR-XXXXXX — bienvenue, séances, QR, réservation, guide
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
@@ -65,6 +66,14 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     return match ? decodeURIComponent(match[1]).toUpperCase() : "";
   }, [propCode]);
 
+  // V202: Lire le slug membre depuis ?m=xxx dans l'URL
+  const [memberSlug, setMemberSlug] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("m") || "";
+    } catch { return ""; }
+  });
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
@@ -73,14 +82,19 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const [qrFullscreen, setQrFullscreen] = useState(false);
   const [actionError, setActionError] = useState("");
   const [shareCopied, setShareCopied] = useState(false);
-  // V185 F3: État pour l'annulation de réservation
   const [cancellingId, setCancellingId] = useState(null);
-  // V186 F2: Compteurs par occurrence (multi-personnes)
   const [quantities, setQuantities] = useState({});
-  // V195: État local pour le toggle reconduction automatique
   const [autoRenewBusy, setAutoRenewBusy] = useState(false);
-  // V187: Prénoms des accompagnants par occurrence (array de strings)
   const [guestNames, setGuestNames] = useState({});
+
+  // V202: États pour le formulaire d'inscription multi-membre
+  const [joinForm, setJoinForm] = useState({ name: "", email: "", whatsapp: "" });
+  const [joinLoading, setJoinLoading] = useState(false);
+  const [joinError, setJoinError] = useState("");
+  const [stripeLoading, setStripeLoading] = useState(false);
+
+  // V202: Ref pour scroll fluide vers la section réservation
+  const reserveSectionRef = useRef(null);
 
   const loadSpace = useCallback(async () => {
     if (!accessCode) {
@@ -91,7 +105,11 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await axios.get(`${API}/subscriber/space/${encodeURIComponent(accessCode)}`);
+      // V202: Passer le slug membre dans la query si disponible
+      const url = memberSlug
+        ? `${API}/subscriber/space/${encodeURIComponent(accessCode)}?m=${encodeURIComponent(memberSlug)}`
+        : `${API}/subscriber/space/${encodeURIComponent(accessCode)}`;
+      const res = await axios.get(url);
       setData(res.data);
     } catch (err) {
       const message = err?.response?.data?.detail || "Impossible de charger ton espace abonné.";
@@ -99,11 +117,67 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     } finally {
       setLoading(false);
     }
-  }, [accessCode]);
+  }, [accessCode, memberSlug]);
 
   useEffect(() => {
     loadSpace();
   }, [loadSpace]);
+
+  // V202: Rejoindre un code multi-membre
+  const handleJoin = async (e) => {
+    e.preventDefault();
+    if (!joinForm.name.trim()) { setJoinError("Prénom requis"); return; }
+    if (!joinForm.email.trim() && !joinForm.whatsapp.trim()) {
+      setJoinError("Email ou WhatsApp requis"); return;
+    }
+    setJoinLoading(true);
+    setJoinError("");
+    try {
+      const res = await axios.post(
+        `${API}/subscriber/space/${encodeURIComponent(accessCode)}/join`,
+        { name: joinForm.name.trim(), email: joinForm.email.trim(), whatsapp: joinForm.whatsapp.trim() }
+      );
+      const slug = res.data?.member?.slug;
+      if (slug) {
+        setMemberSlug(slug);
+        // V202: Mettre à jour l'URL sans recharger la page
+        const newUrl = `${window.location.pathname}?m=${slug}`;
+        window.history.replaceState(null, "", newUrl);
+      }
+    } catch (err) {
+      setJoinError(err?.response?.data?.detail || "Inscription impossible. Réessaye.");
+    } finally {
+      setJoinLoading(false);
+    }
+  };
+
+  // V202: Paiement Stripe
+  const handleStripeCheckout = async () => {
+    if (stripeLoading) return;
+    setStripeLoading(true);
+    try {
+      const res = await axios.post(
+        `${API}/subscriber/space/${encodeURIComponent(accessCode)}/stripe-checkout`,
+        {
+          originUrl: window.location.origin,
+          member_slug: memberSlug || "",
+          email: data?.subscriber?.email || joinForm.email || "",
+        }
+      );
+      if (res.data?.checkout_url) {
+        window.location.href = res.data.checkout_url;
+      }
+    } catch (err) {
+      setActionError(err?.response?.data?.detail || "Erreur paiement. Réessaye.");
+    } finally {
+      setStripeLoading(false);
+    }
+  };
+
+  // V202: Scroll fluide vers la section réservation
+  const scrollToReservation = () => {
+    reserveSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const handleReserve = async (occurrence) => {
     if (!occurrence?.course_id || reservingKey) return;
@@ -118,9 +192,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     setReservingKey(reservationKey);
     setActionError("");
     try {
+      // V202: Passer le member_slug si identifié
       const res = await axios.post(
         `${API}/subscriber/space/${encodeURIComponent(accessCode)}/reserve/${encodeURIComponent(occurrence.course_id)}`,
-        { datetime: occurrence.datetime, quantity: qty, guests }
+        { datetime: occurrence.datetime, quantity: qty, guests, member_slug: memberSlug || undefined }
       );
       setConfirmedKeys((prev) => ({ ...prev, [reservationKey]: true }));
       // V186/V187: reset compteur + guests après réservation
@@ -232,6 +307,118 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     );
   }
 
+  // V202: Si le backend retourne multi_member: true sans membre identifié → écran d'inscription
+  if (data?.multi_member && !data?.member && !data?.subscriber?.email) {
+    const mm = data;
+    const mmCoach = mm.coach;
+    const mmSub = mm.subscription || {};
+    const mmMembers = mm.members || [];
+    return (
+      <div className="min-h-screen pb-16" style={{ background: COLORS.bg, color: "white" }}>
+        <div className="max-w-md mx-auto px-4 pt-6 space-y-5">
+          {/* Header */}
+          <header className="flex items-center gap-3">
+            {mmCoach?.logo_url ? (
+              <img src={mmCoach.logo_url} alt={mmCoach?.name || "Coach"}
+                className="w-12 h-12 rounded-full object-cover"
+                style={{ border: `2px solid ${COLORS.primary}` }} />
+            ) : (
+              <div className="w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold"
+                style={{ background: `linear-gradient(135deg, ${COLORS.primary}, #8b5cf6)` }}>
+                A
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <h1 className="text-xl font-semibold leading-tight">Bienvenue !</h1>
+              <p className="text-white/50 text-xs truncate">{mmCoach?.name || "Afroboost"} · {mm.code}</p>
+            </div>
+          </header>
+
+          {/* Infos code */}
+          <section className="rounded-2xl p-5" style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}>
+            <p className="text-white/60 text-xs uppercase tracking-wider mb-1">{mmSub.offer_name || "Abonnement"}</p>
+            <p className="text-lg font-semibold">
+              <span style={{ color: COLORS.primary }}>{mmSub.remaining_sessions || 0}</span>
+              <span className="text-white/40 text-sm"> / {mmSub.total_sessions || 0} séances</span>
+            </p>
+          </section>
+
+          {/* Formulaire d'inscription */}
+          <section className="rounded-2xl p-5" style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}>
+            <h2 className="text-base font-semibold mb-1">Rejoindre cet abonnement</h2>
+            <p className="text-white/50 text-xs mb-4">Entre tes infos pour obtenir ton lien personnel</p>
+
+            {joinError && (
+              <p className="text-xs mb-3 px-3 py-2 rounded-lg"
+                style={{ background: "rgba(239,68,68,0.15)", color: "#fca5a5" }}>{joinError}</p>
+            )}
+
+            <form onSubmit={handleJoin} className="space-y-3">
+              <div>
+                <label className="text-xs text-white/50 block mb-1">Prénom *</label>
+                <input type="text" value={joinForm.name}
+                  onChange={(e) => setJoinForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder="Ton prénom" maxLength={50} required
+                  className="w-full px-3 py-2 rounded-lg text-sm"
+                  style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }} />
+              </div>
+              <div>
+                <label className="text-xs text-white/50 block mb-1">Email</label>
+                <input type="email" value={joinForm.email}
+                  onChange={(e) => setJoinForm(f => ({ ...f, email: e.target.value }))}
+                  placeholder="ton@email.com" maxLength={100}
+                  className="w-full px-3 py-2 rounded-lg text-sm"
+                  style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }} />
+              </div>
+              <div>
+                <label className="text-xs text-white/50 block mb-1">WhatsApp</label>
+                <input type="tel" value={joinForm.whatsapp}
+                  onChange={(e) => setJoinForm(f => ({ ...f, whatsapp: e.target.value }))}
+                  placeholder="+41 7X XXX XX XX" maxLength={20}
+                  className="w-full px-3 py-2 rounded-lg text-sm"
+                  style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }} />
+              </div>
+              <button type="submit" disabled={joinLoading}
+                className="w-full py-3 rounded-xl text-sm font-semibold transition-transform active:scale-95 disabled:opacity-50"
+                style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`, color: "white" }}>
+                {joinLoading ? "Inscription..." : "Obtenir mon lien personnel"}
+              </button>
+            </form>
+          </section>
+
+          {/* V202: Bouton paiement Stripe si un montant est configuré */}
+          {mm.stripe_amount && parseFloat(mm.stripe_amount) > 0 && (
+            <button type="button" onClick={handleStripeCheckout} disabled={stripeLoading}
+              className="w-full py-3 rounded-xl text-sm font-semibold transition-transform active:scale-95 disabled:opacity-50"
+              style={{ background: "rgba(217,28,210,0.18)", color: "#F0A8EE", border: `1px solid ${COLORS.primary}55` }}>
+              {stripeLoading ? "Redirection..." : `💳 Payer ${parseFloat(mm.stripe_amount).toFixed(2)} CHF`}
+            </button>
+          )}
+
+          {/* Membres déjà inscrits — sélection rapide */}
+          {mmMembers.length > 0 && (
+            <section className="rounded-2xl p-5" style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}>
+              <p className="text-white/60 text-xs uppercase tracking-wider mb-3">Déjà inscrit ? Choisis ton profil</p>
+              <div className="space-y-2">
+                {mmMembers.map((mem) => (
+                  <button key={mem.slug} type="button"
+                    onClick={() => {
+                      setMemberSlug(mem.slug);
+                      window.history.replaceState(null, "", `${window.location.pathname}?m=${mem.slug}`);
+                    }}
+                    className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium transition-transform active:scale-[0.98]"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    👤 {mem.name}
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   const subscription = data?.subscription || {};
   const subscriber = data?.subscriber || {};
   const coach = data?.coach;
@@ -274,8 +461,11 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const noSessions = remaining <= 0;
 
   const firstName = (subscriber.name || "").split(" ")[0] || "Abonné";
+  // V202: Le lien personnel inclut ?m=slug si c'est un membre
   const shareUrl = typeof window !== "undefined"
-    ? `${window.location.origin}/espace/${subscriber.code || accessCode}`
+    ? memberSlug
+      ? `${window.location.origin}/espace/${subscriber.code || accessCode}?m=${memberSlug}`
+      : `${window.location.origin}/espace/${subscriber.code || accessCode}`
     : "";
 
   const handleShareCopy = async () => {
@@ -338,7 +528,24 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               }}
             />
           </div>
+          {/* V202: Bouton scroll vers réservation — accès rapide */}
+          {remaining > 0 && courses.length > 0 && (
+            <button type="button" onClick={scrollToReservation}
+              className="mt-3 w-full py-2 rounded-xl text-sm font-semibold transition-transform active:scale-95"
+              style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`, color: "white" }}>
+              📅 Réserver une séance
+            </button>
+          )}
         </section>
+
+        {/* V202: Bouton paiement Stripe si un montant est configuré */}
+        {data?.stripe_amount && parseFloat(data.stripe_amount) > 0 && (
+          <button type="button" onClick={handleStripeCheckout} disabled={stripeLoading}
+            className="w-full py-3 rounded-xl text-sm font-semibold transition-transform active:scale-95 disabled:opacity-50"
+            style={{ background: "rgba(217,28,210,0.18)", color: "#F0A8EE", border: `1px solid ${COLORS.primary}55` }}>
+            {stripeLoading ? "Redirection..." : `💳 Payer ${parseFloat(data.stripe_amount).toFixed(2)} CHF`}
+          </button>
+        )}
 
         {/* ===== V195: Reconduction automatique ===== */}
         {subscription?.id && (subscription.has_payment_method || subscription.auto_renew) && (
@@ -555,6 +762,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
 
         {/* ===== Réserver une séance ===== */}
         <section
+          ref={reserveSectionRef}
           className="rounded-2xl p-5"
           style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
           data-testid="subscriber-space-reservation"
