@@ -216,17 +216,20 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         `${API}/subscriber/space/${encodeURIComponent(accessCode)}/reserve/${encodeURIComponent(occurrence.course_id)}`,
         { datetime: occurrence.datetime, quantity: qty, guests, member_slug: memberSlug || undefined }
       );
-      setConfirmedKeys((prev) => ({ ...prev, [reservationKey]: true }));
+      // V213g: Injecter la nouvelle réservation dans data pour que le useEffect la voie
+      // et que le vert reste visible instantanément (pas besoin de rafraîchir)
+      const newRes = res.data?.reservation || { courseId: occurrence.course_id, datetime: occurrence.datetime };
+      setData((prev) => {
+        if (!prev) return prev;
+        const updatedReservations = [...(prev.reservations || []), newRes];
+        const updatedSub = typeof res.data?.remaining_sessions === "number"
+          ? { ...prev.subscription, remaining_sessions: res.data.remaining_sessions }
+          : prev.subscription;
+        return { ...prev, reservations: updatedReservations, subscription: updatedSub };
+      });
       // V186/V187: reset compteur + guests après réservation
       setQuantities((prev) => ({ ...prev, [reservationKey]: 1 }));
       setGuestNames((prev) => ({ ...prev, [reservationKey]: [] }));
-      if (typeof res.data?.remaining_sessions === "number") {
-        setData((prev) =>
-          prev
-            ? { ...prev, subscription: { ...prev.subscription, remaining_sessions: res.data.remaining_sessions } }
-            : prev
-        );
-      }
     } catch (err) {
       const status = err?.response?.status;
       const message = err?.response?.data?.detail || "Réservation impossible. Réessaye dans un instant.";
