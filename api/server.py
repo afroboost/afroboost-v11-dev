@@ -4097,6 +4097,22 @@ def _v184_public_origin():
     return base.rstrip("/")
 
 
+@api_router.get("/debug/discount/{access_code}")
+async def debug_discount_code(access_code: str):
+    """V207: Endpoint temporaire pour diagnostiquer stripe_amount manquant."""
+    code_upper = (access_code or "").strip().upper()
+    discount = await db.discount_codes.find_one(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+    )
+    return {
+        "code": code_upper,
+        "discount_found": discount is not None,
+        "stripe_amount": (discount or {}).get("stripe_amount"),
+        "multi_member": (discount or {}).get("multi_member"),
+        "all_keys": list((discount or {}).keys()),
+    }
+
+
 @api_router.get("/subscriber/space/{access_code}")
 async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     """V184: Données complètes de la page d'accès rapide d'un abonné.
