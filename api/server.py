@@ -4532,7 +4532,57 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
         "is_payer": not is_multi or (
             user_email and (discount or {}).get("assignedEmail", "").lower().strip() == user_email
         ),
+        # V212: Liste des membres pour la payeuse (gestion du groupe)
+        "group_members": None,
     }
+
+    # V212: Si payeuse d'un groupe, inclure la liste des membres
+    is_payer = response_data["is_payer"]
+    if is_multi and is_payer:
+        try:
+            all_members = await db.code_members.find(
+                {"code": {"$regex": f"^{code_upper}$", "$options": "i"}},
+                {"_id": 0, "id": 1, "slug": 1, "name": 1, "email": 1, "whatsapp": 1, "blocked": 1, "created_at": 1}
+            ).to_list(200)
+            response_data["group_members"] = all_members
+        except Exception as e:
+            logger.warning(f"[V212] Erreur chargement membres: {e}")
+
+    return response_data
+
+
+# V212: Bloquer/débloquer un membre du groupe
+@api_router.post("/subscriber/space/{access_code}/member/{member_slug}/block")
+async def toggle_block_member(access_code: str, member_slug: str, request: Request):
+    """V212: La payeuse peut bloquer/débloquer un membre du groupe."""
+    code_upper = (access_code or "").strip().upper()
+    body = await request.json() if request else {}
+    blocked = body.get("blocked", True)
+
+    # Vérifier que le code existe et que c'est un groupe
+    discount = await db.discount_codes.find_one(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+    )
+    if not discount or not discount.get("multi_member"):
+        raise HTTPException(status_code=404, detail="Code groupe introuvable")
+
+    # Vérifier que le membre existe
+    member = await db.code_members.find_one(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "slug": member_slug},
+        {"_id": 0}
+    )
+    if not member:
+        raise HTTPException(status_code=404, detail="Membre introuvable")
+
+    # Mettre à jour le statut
+    await db.code_members.update_one(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "slug": member_slug},
+        {"$set": {"blocked": blocked}}
+    )
+
+    action = "bloqué" if blocked else "débloqué"
+    logger.info(f"[V212] Membre {member.get('name')} ({member_slug}) {action} dans {code_upper}")
+    return {"success": True, "member_slug": member_slug, "blocked": blocked}
 
 
 # V202: Endpoint pour rejoindre un espace abonné multi-membre
@@ -4797,6 +4847,10 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
             {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "slug": member_slug},
             {"_id": 0}
         )
+
+    # V212: Bloquer la réservation si le membre est bloqué
+    if member and member.get("blocked"):
+        raise HTTPException(status_code=403, detail="Ton accès a été suspendu. Contacte le responsable du groupe.")
 
     # V202: Chercher subscription (fallback case-insensitive)
     subscription = await db.subscriptions.find_one(

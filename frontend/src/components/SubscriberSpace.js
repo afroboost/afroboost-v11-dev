@@ -1112,6 +1112,60 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           })()}
         </section>
 
+        {/* ===== V212: Gérer les membres du groupe (payeur uniquement) ===== */}
+        {data?.is_payer && data?.group_members?.length > 0 && (
+          <section
+            className="rounded-2xl p-4"
+            style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
+            data-testid="group-members-management"
+          >
+            <h2 className="text-base font-semibold mb-3">Membres du groupe</h2>
+            <div className="space-y-2">
+              {data.group_members.map((member) => (
+                <div
+                  key={member.slug || member.id}
+                  className="flex items-center justify-between gap-2 rounded-xl px-3 py-2"
+                  style={{
+                    background: member.blocked ? "rgba(239,68,68,0.10)" : "rgba(255,255,255,0.04)",
+                    border: member.blocked ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(255,255,255,0.08)",
+                  }}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate" style={{ color: member.blocked ? "#fca5a5" : "white" }}>
+                      {member.name || "Sans nom"}
+                    </p>
+                    <p className="text-xs truncate" style={{ color: "rgba(255,255,255,0.5)" }}>
+                      {member.email || member.whatsapp || "—"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await axios.post(`${API}/subscriber/space/${encodeURIComponent(accessCode)}/member/${encodeURIComponent(member.slug)}/block`);
+                        loadSpace();
+                      } catch (err) {
+                        console.error("[V212] Block error:", err);
+                      }
+                    }}
+                    className="flex-shrink-0 text-xs font-medium rounded-lg px-3 py-1.5 transition-colors"
+                    style={{
+                      background: member.blocked ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+                      color: member.blocked ? "#86efac" : "#fca5a5",
+                      border: member.blocked ? "1px solid rgba(34,197,94,0.3)" : "1px solid rgba(239,68,68,0.3)",
+                    }}
+                  >
+                    {member.blocked ? "Débloquer" : "Bloquer"}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs mt-3" style={{ color: "rgba(255,255,255,0.4)" }}>
+              Un membre bloqué ne pourra plus réserver de séances.
+            </p>
+          </section>
+        )}
+
         {/* ===== V187: Conditions d'utilisation = lien vers la page CGU ===== */}
         <div className="text-center pt-2 pb-1">
           <a
