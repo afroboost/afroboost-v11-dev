@@ -125,6 +125,24 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     loadSpace();
   }, [loadSpace]);
 
+  // V208c: Initialiser confirmedKeys avec les réservations existantes
+  // pour que les ✓ apparaissent au chargement de la page
+  useEffect(() => {
+    if (!data?.reservations?.length) return;
+    const now = Date.now();
+    const keys = {};
+    for (const r of data.reservations) {
+      if (!r?.courseId || !r?.datetime) continue;
+      // Ne marquer que les réservations futures
+      if (new Date(r.datetime).getTime() > now) {
+        keys[`${r.courseId}_${r.datetime}`] = true;
+      }
+    }
+    if (Object.keys(keys).length > 0) {
+      setConfirmedKeys((prev) => ({ ...prev, ...keys }));
+    }
+  }, [data?.reservations]);
+
   // V202: Rejoindre un code multi-membre
   const handleJoin = async (e) => {
     e.preventDefault();
@@ -263,6 +281,15 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       const res = await axios.delete(
         `${API}/subscriber/space/${encodeURIComponent(accessCode)}/cancel/${encodeURIComponent(reservation.id)}`
       );
+      // V208c: Retirer le ✓ de la date annulée
+      if (reservation.courseId && reservation.datetime) {
+        const cancelKey = `${reservation.courseId}_${reservation.datetime}`;
+        setConfirmedKeys((prev) => {
+          const next = { ...prev };
+          delete next[cancelKey];
+          return next;
+        });
+      }
       setData((prev) => {
         if (!prev) return prev;
         const filteredReservations = (prev.reservations || []).filter((r) => r.id !== reservation.id);

@@ -4451,24 +4451,32 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
         occurrences.extend(_v184_next_occurrences(course, days_ahead=14))
     occurrences.sort(key=lambda o: o.get("datetime", ""))
 
-    # Historique de réservations de l'abonné (par email ou téléphone)
-    # V201: Échapper les caractères regex spéciaux (ex: +41... contient un +)
+    # V208c: Historique de réservations — par member_slug pour les groupes, par email sinon
     import re as _re_mod
     user_email_escaped = _re_mod.escape(user_email) if user_email else ""
     reservations_raw = []
-    if user_email:
-        try:
+    res_projection = {
+        "_id": 0, "id": 1, "courseName": 1, "courseId": 1,
+        "datetime": 1, "createdAt": 1, "reservationCode": 1,
+        "quantity": 1, "userName": 1, "courseTime": 1,
+        "headphone_status": 1, "guests": 1, "guest_headphones": 1,
+        "member_slug": 1,
+    }
+    try:
+        if is_multi and member and member.get("slug"):
+            # V208c: Groupe → filtrer par member_slug pour que chaque membre
+            # ne voie QUE ses propres réservations
+            reservations_raw = await db.reservations.find(
+                {"member_slug": member["slug"]},
+                res_projection
+            ).sort("createdAt", -1).to_list(50)
+        elif user_email:
             reservations_raw = await db.reservations.find(
                 {"userEmail": {"$regex": f"^{user_email_escaped}$", "$options": "i"}},
-                {
-                    "_id": 0, "id": 1, "courseName": 1, "courseId": 1,
-                    "datetime": 1, "createdAt": 1, "reservationCode": 1,
-                    "quantity": 1, "userName": 1, "courseTime": 1,
-                    "headphone_status": 1, "guests": 1, "guest_headphones": 1,
-                }
+                res_projection
             ).sort("createdAt", -1).to_list(50)
-        except Exception as e:
-            logger.warning(f"[V201] Reservations lookup failed for '{user_email}': {e}")
+    except Exception as e:
+        logger.warning(f"[V208c] Reservations lookup failed: {e}")
 
     return {
         "success": True,
@@ -5199,7 +5207,20 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
         {"$inc": {"used": -qty_to_refund}}
     )
 
-    logger.info(f"[V186 CANCEL] Réservation {reservation_id} annulée pour {user_email} (recrédit +{qty_to_refund} → {new_remaining})")
+    # V208c: Recrédit du membre individuel (groupe avec séances non-partagées)
+    res_member_slug = reservation.get("member_slug")
+    if res_member_slug:
+        discount = await db.discount_codes.find_one(
+            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0, "shared_sessions": 1}
+        )
+        if discount and not discount.get("shared_sessions", True):
+            await db.code_members.update_one(
+                {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "slug": res_member_slug},
+                {"$inc": {"used_sessions": -qty_to_refund, "remaining_sessions": qty_to_refund}}
+            )
+            logger.info(f"[V208c CANCEL] Member {res_member_slug} recredited +{qty_to_refund}")
+
+    logger.info(f"[V208c CANCEL] Réservation {reservation_id} annulée pour {user_email} (recrédit +{qty_to_refund} → {new_remaining})")
     return {
         "success": True,
         "remaining_sessions": new_remaining,
