@@ -228,8 +228,14 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         );
       }
     } catch (err) {
+      const status = err?.response?.status;
       const message = err?.response?.data?.detail || "Réservation impossible. Réessaye dans un instant.";
       setActionError(message);
+      // V211c: Si 409 "déjà réservé" → marquer la date en vert + recharger les données
+      if (status === 409) {
+        setConfirmedKeys((prev) => ({ ...prev, [reservationKey]: true }));
+        loadSpace(); // Recharger pour récupérer la réservation depuis le backend
+      }
     } finally {
       setReservingKey(null);
     }

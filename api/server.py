@@ -4464,19 +4464,34 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     }
     try:
         if is_multi and member and member.get("slug"):
-            # V208c: Groupe → filtrer par member_slug pour que chaque membre
-            # ne voie QUE ses propres réservations
+            # V211c: Groupe → chercher par member_slug OU par email+code (anciennes réservations)
+            member_email = (member.get("email") or "").lower().strip()
+            member_email_escaped = _re_mod.escape(member_email) if member_email else ""
+            slug_query = {"member_slug": member["slug"]}
             reservations_raw = await db.reservations.find(
-                {"member_slug": member["slug"]},
-                res_projection
+                slug_query, res_projection
             ).sort("createdAt", -1).to_list(50)
+            # V211c: Fallback — anciennes réservations sans member_slug (avant V208)
+            if member_email_escaped:
+                seen_ids = {r["id"] for r in reservations_raw if r.get("id")}
+                old_reservations = await db.reservations.find(
+                    {
+                        "userEmail": {"$regex": f"^{member_email_escaped}$", "$options": "i"},
+                        "discountCode": {"$regex": f"^{code_upper}$", "$options": "i"},
+                        "$or": [{"member_slug": {"$exists": False}}, {"member_slug": ""}, {"member_slug": None}],
+                    },
+                    res_projection
+                ).sort("createdAt", -1).to_list(50)
+                for old_r in old_reservations:
+                    if old_r.get("id") not in seen_ids:
+                        reservations_raw.append(old_r)
         elif user_email:
             reservations_raw = await db.reservations.find(
                 {"userEmail": {"$regex": f"^{user_email_escaped}$", "$options": "i"}},
                 res_projection
             ).sort("createdAt", -1).to_list(50)
     except Exception as e:
-        logger.warning(f"[V208c] Reservations lookup failed: {e}")
+        logger.warning(f"[V211c] Reservations lookup failed: {e}")
 
     return {
         "success": True,
@@ -4850,21 +4865,38 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     if user_email or member_slug:
         import re as _re_mod
         if member_slug:
-            # V208: Groupe — vérifier par member_slug pour autoriser
-            # plusieurs membres du groupe à réserver la même session
-            dup_query = {
-                "member_slug": member_slug,
-                "courseId": course_id,
-            }
+            # V208: Groupe — vérifier par member_slug
+            dup_query = {"member_slug": member_slug, "courseId": course_id}
+            if occurrence_iso:
+                dup_query["datetime"] = occurrence_iso
+            existing_reservation = await db.reservations.find_one(dup_query, {"_id": 0, "id": 1})
+            # V211c: Fallback — anciennes réservations sans member_slug (avant V208)
+            if not existing_reservation and user_email:
+                user_email_safe = _re_mod.escape(user_email)
+                old_dup_query = {
+                    "userEmail": {"$regex": f"^{user_email_safe}$", "$options": "i"},
+                    "courseId": course_id,
+                    "$or": [{"member_slug": {"$exists": False}}, {"member_slug": ""}, {"member_slug": None}],
+                }
+                if occurrence_iso:
+                    old_dup_query["datetime"] = occurrence_iso
+                existing_reservation = await db.reservations.find_one(old_dup_query, {"_id": 0, "id": 1})
+                # V211c: Migrer l'ancienne réservation avec le bon member_slug
+                if existing_reservation:
+                    await db.reservations.update_one(
+                        {"id": existing_reservation["id"]},
+                        {"$set": {"member_slug": member_slug}}
+                    )
+                    logger.info(f"[V211c] Migrated old reservation {existing_reservation['id']} → member_slug={member_slug}")
         else:
             user_email_safe = _re_mod.escape(user_email)
             dup_query = {
                 "userEmail": {"$regex": f"^{user_email_safe}$", "$options": "i"},
                 "courseId": course_id,
             }
-        if occurrence_iso:
-            dup_query["datetime"] = occurrence_iso
-        existing_reservation = await db.reservations.find_one(dup_query, {"_id": 0, "id": 1})
+            if occurrence_iso:
+                dup_query["datetime"] = occurrence_iso
+            existing_reservation = await db.reservations.find_one(dup_query, {"_id": 0, "id": 1})
         if existing_reservation:
             raise HTTPException(
                 status_code=409,
