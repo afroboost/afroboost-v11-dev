@@ -201,6 +201,9 @@ export const QRScannerModal = ({ onClose, onValidate, scanResult, scanError, onM
     } else if (decodedText.includes('/validate/')) {
       // URL de validation réservation: .../reservations/{code}/validate
       code = decodedText.split('/validate/').pop().split('/')[0].split('?')[0].toUpperCase();
+    } else if (decodedText.includes('::')) {
+      // V213: Code groupe avec member slug: CODE::slug — ne pas toucher la casse du slug
+      code = decodedText.trim();
     } else if (decodedText.match(/AF[A-Z0-9]+/i)) {
       // Code de réservation direct (AF1368C426, etc.)
       const match = decodedText.match(/AF[A-Z0-9]{6,}/i);

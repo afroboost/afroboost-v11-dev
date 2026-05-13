@@ -6,8 +6,8 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v212';
-var SW_VERSION = 212;
+var CACHE_NAME = 'afroboost-v213';
+var SW_VERSION = 213;
 
 var PRECACHE_URLS = [
   '/',

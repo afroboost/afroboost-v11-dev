@@ -714,7 +714,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         >
           <p className="text-white/60 text-xs uppercase tracking-wider mb-3">Mon QR Code</p>
           <div className="bg-white p-3 rounded-xl">
-            <QRCodeSVG value={subscriber.code || accessCode} size={160} level="M" includeMargin={false} />
+            <QRCodeSVG value={memberSlug ? `${subscriber.code || accessCode}::${memberSlug}` : (subscriber.code || accessCode)} size={160} level="M" includeMargin={false} />
           </div>
           <p className="text-white/40 text-xs mt-3 font-mono">{subscriber.code || accessCode}</p>
           <button
@@ -1186,7 +1186,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         <DialogContent className="max-w-sm bg-white">
           <DialogTitle className="text-center text-black text-base font-semibold">QR Code abonné</DialogTitle>
           <div className="flex flex-col items-center gap-3 py-4">
-            <QRCodeSVG value={subscriber.code || accessCode} size={280} level="H" includeMargin={false} />
+            <QRCodeSVG value={memberSlug ? `${subscriber.code || accessCode}::${memberSlug}` : (subscriber.code || accessCode)} size={280} level="H" includeMargin={false} />
             <p className="text-black font-mono text-sm">{subscriber.code || accessCode}</p>
             <p className="text-black/60 text-xs">Présente ce code au coach à l'entrée</p>
           </div>

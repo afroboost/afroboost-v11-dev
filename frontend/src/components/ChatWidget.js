@@ -6969,9 +6969,16 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         }}>
                           {qrScanResult.success ? '✅ ' : '❌ '}
                           {qrScanResult.message}
-                          {qrScanResult.userName && (
+                          {(qrScanResult.userName || (qrScanResult.reservation && qrScanResult.reservation.userName)) && (
                             <div style={{ color: '#fff', marginTop: '4px', fontSize: '12px' }}>
-                              {qrScanResult.userName} {qrScanResult.courseName ? '— ' + qrScanResult.courseName : ''}
+                              {qrScanResult.userName || qrScanResult.reservation.userName}
+                              {(qrScanResult.courseName || (qrScanResult.reservation && qrScanResult.reservation.courseName))
+                                ? ' — ' + (qrScanResult.courseName || qrScanResult.reservation.courseName) : ''}
+                            </div>
+                          )}
+                          {qrScanResult.subscriber && (
+                            <div style={{ color: '#86efac', marginTop: '4px', fontSize: '11px', fontWeight: 600 }}>
+                              {qrScanResult.subscriber.remaining}/{qrScanResult.subscriber.total} séances restantes
                             </div>
                           )}
                         </div>
