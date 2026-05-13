@@ -4770,14 +4770,23 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         user_name = subscription.get("name") or (user_email.split("@")[0] if "@" in user_email else "Abonné")
 
     # V185 F3: Empêcher la double réservation (même cours + même occurrence)
-    # V201: Échapper les caractères regex spéciaux (ex: +41...)
-    if user_email:
+    # V208: Pour les groupes, vérifier par member_slug (pas juste email)
+    # car plusieurs membres peuvent partager le même email
+    if user_email or member_slug:
         import re as _re_mod
-        user_email_safe = _re_mod.escape(user_email)
-        dup_query = {
-            "userEmail": {"$regex": f"^{user_email_safe}$", "$options": "i"},
-            "courseId": course_id,
-        }
+        if member_slug:
+            # V208: Groupe — vérifier par member_slug pour autoriser
+            # plusieurs membres du groupe à réserver la même session
+            dup_query = {
+                "member_slug": member_slug,
+                "courseId": course_id,
+            }
+        else:
+            user_email_safe = _re_mod.escape(user_email)
+            dup_query = {
+                "userEmail": {"$regex": f"^{user_email_safe}$", "$options": "i"},
+                "courseId": course_id,
+            }
         if occurrence_iso:
             dup_query["datetime"] = occurrence_iso
         existing_reservation = await db.reservations.find_one(dup_query, {"_id": 0, "id": 1})
@@ -4841,6 +4850,7 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         "discountCode": code_upper,
         "promoCode": code_upper,
         "source": "subscriber_space",
+        "member_slug": member_slug,  # V208: Identifiant du membre (groupe)
         "type": "ticket",
         "validated": False,
         "validatedAt": None,
