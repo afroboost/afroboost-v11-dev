@@ -4254,9 +4254,11 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
             subscription = sub_any
 
     # Fallback historique : un code peut exister dans discount_codes sans subscription créée
-    discount = await db.discount_codes.find_one(
+    # V207j: Trier par stripe_amount DESC pour prendre le document avec prix en priorité (cas doublons)
+    _discount_list = await db.discount_codes.find(
         {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
-    )
+    ).sort("stripe_amount", -1).to_list(1)
+    discount = _discount_list[0] if _discount_list else None
 
     # V201: Log détaillé
     logger.info(f"[V201] Code {code_upper}: subscription={'found' if subscription else 'NOT FOUND'}, discount={'found' if discount else 'NOT FOUND'}")
