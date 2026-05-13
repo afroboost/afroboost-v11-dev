@@ -881,17 +881,17 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                     const isConfirmed = confirmedKeys[cKey];
                     return (
                       <button key={i} type="button"
-                        onClick={() => setSelectedCourseIdx(i)}
+                        onClick={() => { setSelectedCourseIdx(i); setActionError(""); }}
                         className="flex flex-col items-center px-2 py-2 rounded-xl text-xs transition-all"
                         style={{
                           background: isConfirmed
                             ? "rgba(34,197,94,0.25)"
                             : isSelected
-                              ? `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`
+                              ? "rgba(255,255,255,0.10)"
                               : "rgba(255,255,255,0.04)",
                           border: isConfirmed
                             ? "2px solid #22c55e"
-                            : isSelected ? "none" : "1px solid rgba(255,255,255,0.08)",
+                            : isSelected ? "2px solid rgba(255,255,255,0.5)" : "1px solid rgba(255,255,255,0.08)",
                           color: isConfirmed ? "#86efac" : isSelected ? "white" : "rgba(255,255,255,0.6)",
                         }}
                       >
