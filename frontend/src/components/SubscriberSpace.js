@@ -385,12 +385,13 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                 style={{ background: "rgba(239,68,68,0.15)", color: "#fca5a5" }}>{joinError}</p>
             )}
 
-            <form onSubmit={handleJoin} className="space-y-3">
+            <form onSubmit={handleJoin} className="space-y-3" autoComplete="off">
               <div>
                 <label className="text-xs text-white/50 block mb-1">Prénom *</label>
                 <input type="text" value={joinForm.name}
                   onChange={(e) => setJoinForm(f => ({ ...f, name: e.target.value }))}
                   placeholder="Ton prénom" maxLength={50} required
+                  autoComplete="off" name="join-name-field"
                   className="w-full px-3 py-2 rounded-lg text-sm"
                   style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }} />
               </div>
@@ -399,6 +400,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                 <input type="email" value={joinForm.email}
                   onChange={(e) => setJoinForm(f => ({ ...f, email: e.target.value }))}
                   placeholder="ton@email.com" maxLength={100}
+                  autoComplete="off" name="join-email-field"
                   className="w-full px-3 py-2 rounded-lg text-sm"
                   style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }} />
               </div>
@@ -407,6 +409,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                 <input type="tel" value={joinForm.whatsapp}
                   onChange={(e) => setJoinForm(f => ({ ...f, whatsapp: e.target.value }))}
                   placeholder="+41 7X XXX XX XX" maxLength={20}
+                  autoComplete="off" name="join-whatsapp-field"
                   className="w-full px-3 py-2 rounded-lg text-sm"
                   style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }} />
               </div>
@@ -881,11 +884,15 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                         onClick={() => setSelectedCourseIdx(i)}
                         className="flex flex-col items-center px-2 py-2 rounded-xl text-xs transition-all"
                         style={{
-                          background: isSelected
-                            ? `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`
-                            : isConfirmed ? "rgba(34,197,94,0.15)" : "rgba(255,255,255,0.04)",
-                          border: isSelected ? "none" : "1px solid rgba(255,255,255,0.08)",
-                          color: isSelected ? "white" : isConfirmed ? "#86efac" : "rgba(255,255,255,0.6)",
+                          background: isConfirmed
+                            ? "rgba(34,197,94,0.25)"
+                            : isSelected
+                              ? `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`
+                              : "rgba(255,255,255,0.04)",
+                          border: isConfirmed
+                            ? "2px solid #22c55e"
+                            : isSelected ? "none" : "1px solid rgba(255,255,255,0.08)",
+                          color: isConfirmed ? "#86efac" : isSelected ? "white" : "rgba(255,255,255,0.6)",
                         }}
                       >
                         <span className="font-semibold" style={{ fontSize: "11px" }}>{d.date}</span>
@@ -908,14 +915,40 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                       {occ.locationName ? ` · ${occ.locationName}` : ""}
                     </p>
                   </div>
-                  {confirmed ? (
-                    <span
-                      className="text-xs px-3 py-1 rounded-full inline-block"
-                      style={{ background: "rgba(34,197,94,0.15)", color: "#86efac" }}
-                    >
-                      ✓ Réservé
-                    </span>
-                  ) : (
+                  {confirmed ? (() => {
+                    // V210: Trouver la réservation correspondante pour pouvoir l'annuler
+                    const matchingRes = (data?.reservations || []).find(
+                      (r) => r?.courseId === occ.course_id && r?.datetime === occ.datetime
+                    );
+                    const occTs = new Date(occ.datetime).getTime();
+                    const hoursAway = (occTs - Date.now()) / 3_600_000;
+                    const tooLate = hoursAway < 2;
+                    const isCancelling = matchingRes && cancellingId === matchingRes.id;
+                    return (
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className="text-xs px-3 py-1 rounded-full inline-block"
+                          style={{ background: "rgba(34,197,94,0.15)", color: "#86efac" }}
+                        >
+                          ✓ Réservé
+                        </span>
+                        {matchingRes && (
+                          <button type="button"
+                            disabled={tooLate || isCancelling}
+                            onClick={() => handleCancelReservation(matchingRes)}
+                            className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-40"
+                            title={tooLate ? "Annulation impossible moins de 2h avant" : "Annuler pour changer de séance"}
+                            style={{
+                              background: tooLate ? "rgba(255,255,255,0.06)" : "rgba(239,68,68,0.18)",
+                              color: tooLate ? "rgba(255,255,255,0.4)" : "#fca5a5",
+                              cursor: tooLate ? "not-allowed" : "pointer",
+                            }}>
+                            {isCancelling ? "…" : "Annuler"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })() : (
                     <>
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-2" data-testid={`qty-${occ.course_id}`}>
