@@ -11904,12 +11904,21 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
         return False
 
 async def send_push_by_email(email: str, title: str, body: str, data: dict = None):
-    """V180: Envoie une notification push à tous les participants liés à un email (helper coach/admin)."""
+    """V180/V206: Envoie une notification push à tous les participants liés à un email."""
     if not email or not WEBPUSH_AVAILABLE or not VAPID_PRIVATE_KEY:
         return False
     email_lower = email.lower().strip()
-    # V181: Chercher dans chat_participants ET users (CRM)
     candidate_pids = set()
+    # V206: Chercher directement dans push_subscriptions par email ET par coach_ prefix
+    try:
+        async for ps in db.push_subscriptions.find({"email": email_lower}, {"_id": 0, "participant_id": 1}):
+            if ps.get("participant_id"):
+                candidate_pids.add(ps["participant_id"])
+    except Exception:
+        pass
+    # V206: Aussi chercher avec le préfixe coach_ (enregistré par le dashboard)
+    candidate_pids.add(f"coach_{email_lower}")
+    # V181: Chercher dans chat_participants ET users (CRM)
     try:
         async for p in db.chat_participants.find({"email": email_lower}, {"_id": 0, "id": 1}):
             if p.get("id"):
@@ -11929,7 +11938,7 @@ async def send_push_by_email(email: str, title: str, body: str, data: dict = Non
         if await send_push_notification(pid, title, body, data):
             sent += 1
     if sent > 0:
-        logger.info(f"[PUSH-V180] {sent} notif(s) -> {email_lower}: {title}")
+        logger.info(f"[PUSH-V206] {sent} notif(s) -> {email_lower}: {title}")
     return sent > 0
 
 

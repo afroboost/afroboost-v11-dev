@@ -48,8 +48,16 @@ async def _send_push_to_email(email: str, title: str, body: str, data: dict = No
         return False
     import json as _json
     email_lower = email.lower().strip()
-    # V181: Chercher dans chat_participants ET users (CRM) pour trouver tous les participant_ids
     candidate_pids = set()
+    # V206: Chercher directement dans push_subscriptions par email + préfixe coach_
+    try:
+        async for ps in db.push_subscriptions.find({"email": email_lower}, {"_id": 0, "participant_id": 1}):
+            if ps.get("participant_id"):
+                candidate_pids.add(ps["participant_id"])
+    except Exception:
+        pass
+    candidate_pids.add(f"coach_{email_lower}")
+    # V181: Chercher dans chat_participants ET users (CRM)
     try:
         async for p in db.chat_participants.find({"email": email_lower}, {"_id": 0, "id": 1}):
             if p.get("id"):
@@ -499,6 +507,7 @@ class ReservationBase(BaseModel):
     subscriptionId: Optional[str] = None  # v95: ID de l'abonnement utilisé
     source: Optional[str] = "website"
     type: Optional[str] = "ticket"
+    coach_id: Optional[str] = None  # V206: accepter coach_id depuis le body (vitrine)
 
 class ReservationCreate(ReservationBase):
     pass
@@ -518,7 +527,8 @@ class Reservation(ReservationBase):
 async def get_reservations(request: Request, page: int = 1, limit: int = 20, all_data: bool = False):
     """Get reservations with pagination - Filtré par coach_id"""
     caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    base_query = {} if is_super_admin(caller_email) else {"coach_id": caller_email} if caller_email else {"coach_id": "__no_access__"}
+    # V206: Super admin voit tout (y compris bassi_default)
+    base_query = {} if is_super_admin(caller_email) else {"coach_id": {"$in": [caller_email, "bassi_default"]}} if caller_email else {"coach_id": "__no_access__"}
     projection = {
         "_id": 0, "id": 1, "reservationCode": 1, "userName": 1, "userEmail": 1,
         "userWhatsapp": 1, "courseName": 1, "courseTime": 1, "datetime": 1,
@@ -655,8 +665,14 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
         else:
             logger.info(f"[RESERVATION] Code promo invalide: {promo_code}")
 
-    # Créer la réservation avec coach_id par défaut
+    # V206: Créer la réservation — coach_id depuis header OU body OU défaut
     caller_email = request.headers.get("X-User-Email", "").lower().strip() if request else None
+    # Priorité: 1) header X-User-Email, 2) body coach_id, 3) "bassi_default"
+    effective_coach_id = caller_email if caller_email and not is_super_admin(caller_email) else None
+    if not effective_coach_id and reservation.coach_id:
+        effective_coach_id = reservation.coach_id.lower().strip()
+    if not effective_coach_id:
+        effective_coach_id = "bassi_default"
     reservation_data = Reservation(
         userName=reservation.userName, userEmail=reservation.userEmail, userWhatsapp=reservation.userWhatsapp,
         userLanguage=reservation.userLanguage,
@@ -666,7 +682,7 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
         selectedVariants=reservation.selectedVariants, variantsText=reservation.variantsText,
         isProduct=reservation.isProduct, promoCode=promo_code, subscriptionId=subscription_id,
         source=reservation.source, type=reservation.type,
-        coach_id=caller_email if caller_email and not is_super_admin(caller_email) else "bassi_default"
+        coach_id=effective_coach_id
     ).model_dump()
     await db.reservations.insert_one(reservation_data)
     reservation_data.pop("_id", None)
@@ -696,6 +712,19 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
             ))
         except Exception as _e:
             logger.warning(f"[PUSH-V180] notif réservation échec: {_e}")
+
+    # V206: Notification push au COACH pour chaque nouvelle réservation
+    try:
+        COACH_EMAIL = "contact.artboost@gmail.com"
+        course_name = (reservation.courseName or reservation.offerName or "cours")
+        asyncio.create_task(_send_push_to_email(
+            COACH_EMAIL,
+            f"📅 Nouvelle réservation !",
+            f"{reservation.userName} — {course_name}",
+            {"type": "new_reservation", "customer": reservation.userName, "course": course_name}
+        ))
+    except Exception as _e:
+        logger.warning(f"[PUSH-V206] notif coach réservation échec: {_e}")
 
     return reservation_data
 
