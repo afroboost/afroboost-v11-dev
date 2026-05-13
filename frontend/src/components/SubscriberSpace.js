@@ -844,7 +844,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             return (
               <div>
                 {/* Boutons de dates — scrollable horizontalement */}
-                <div className="flex gap-2 overflow-x-auto pb-3 mb-3" style={{ scrollbarWidth: "none", msOverflowStyle: "none", maxWidth: "100%", WebkitOverflowScrolling: "touch" }}>
+                <div className="grid pb-3 mb-3" style={{ gridTemplateColumns: `repeat(${Math.min(visibleCourses.length, 4)}, 1fr)`, gap: "8px" }}>
                   {visibleCourses.map((c, i) => {
                     const d = formatDateBtn(c);
                     const isSelected = i === safeIdx;
@@ -853,14 +853,13 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                     return (
                       <button key={i} type="button"
                         onClick={() => setSelectedCourseIdx(i)}
-                        className="flex-shrink-0 flex flex-col items-center px-3 py-2 rounded-xl text-xs transition-all"
+                        className="flex flex-col items-center px-2 py-2 rounded-xl text-xs transition-all"
                         style={{
                           background: isSelected
                             ? `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`
                             : isConfirmed ? "rgba(34,197,94,0.15)" : "rgba(255,255,255,0.04)",
                           border: isSelected ? "none" : "1px solid rgba(255,255,255,0.08)",
                           color: isSelected ? "white" : isConfirmed ? "#86efac" : "rgba(255,255,255,0.6)",
-                          minWidth: "76px",
                         }}
                       >
                         <span className="font-semibold" style={{ fontSize: "11px" }}>{d.date}</span>
