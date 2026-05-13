@@ -1051,7 +1051,18 @@ async def _validate_user_access_code(code: str, user: dict, forced_course_id: st
 
 @reservation_router.post("/qr/scan-validate")
 async def qr_scan_validate(request: Request):
-    """V176: Scan QR coach. Gère codes réservation ET codes abonné (auto-détection cours)."""
+    """V176/V213d: Scan QR coach — gère TOUS les types de codes."""
+    try:
+        return await _qr_scan_validate_inner(request)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[QR-V213d] ERREUR INTERNE: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"Erreur interne scanner: {type(e).__name__}: {str(e)}")
+
+
+async def _qr_scan_validate_inner(request: Request):
+    """V213d: Logique interne du scan QR."""
     body = await request.json()
     code = body.get("code", "").strip().upper()
     if not code:
@@ -1160,8 +1171,8 @@ async def qr_scan_validate(request: Request):
                     "reservation": {"userName": direct_res.get("userName", ""), "reservationCode": direct_res.get("reservationCode", code),
                                     "courseName": direct_res.get("courseName", "")}}
 
-        logger.warning(f"[QR-V213] Aucun CAS ne correspond pour code='{code}' (slug={member_slug_from_qr})")
-        raise HTTPException(status_code=404, detail=f"Code '{code}' introuvable. Vérifie que le code est correct.")
+        logger.warning(f"[QR-V213d] Aucun CAS ne correspond pour code='{code}' (slug={member_slug_from_qr})")
+        raise HTTPException(status_code=404, detail=f"[V213d] Code '{code}' introuvable (slug={member_slug_from_qr}). Aucun résultat dans reservations, subscriptions, discount_codes, users.")
 
     remaining = int(subscription.get("remaining_sessions", 0))
     if remaining <= 0:
