@@ -1005,6 +1005,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             const isGroup = data?.multi_member;
             const canPay = isGroup ? data?.is_payer !== false : true;
             const hasStripe = data?.stripe_amount && Number(data.stripe_amount) > 0 && canPay;
+            console.log('[V207] Payment btn debug:', { stripe_amount: data?.stripe_amount, isGroup, canPay, hasStripe, is_payer: data?.is_payer });
             const btnStyle = {
               background: isEmpty
                 ? `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`

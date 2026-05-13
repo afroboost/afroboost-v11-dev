@@ -4145,6 +4145,7 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     is_multi = (discount or {}).get("multi_member", False)
     stripe_amount = (discount or {}).get("stripe_amount")  # V202: prix Stripe en CHF
     stripe_product = (discount or {}).get("name") or "Abonnement Afroboost"
+    logger.info(f"[V207] Code {code_upper}: is_multi={is_multi}, stripe_amount={stripe_amount}, discount keys={list((discount or {}).keys())}")
 
     # V202: Si multi-membre et un membre spécifié via ?m=slug
     member = None

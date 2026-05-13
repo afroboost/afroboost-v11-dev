@@ -139,6 +139,10 @@ class DiscountCode(BaseModel):
     active: bool = True
     coach_id: Optional[str] = None  # v9.3.0: Isolation par coach
     targetCategories: Optional[List[str]] = []  # V154: Ciblage par catégories
+    # V207: Champs multi-membre + Stripe (manquaient → stripe_amount jamais sauvé à la création)
+    multi_member: bool = False
+    shared_sessions: bool = True
+    stripe_amount: Optional[float] = None
 
 
 class DiscountCodeCreate(BaseModel):
@@ -152,6 +156,10 @@ class DiscountCodeCreate(BaseModel):
     coach_id: Optional[str] = None  # v9.3.0: Isolation par coach
     targetCategories: Optional[List[str]] = []  # V154: Ciblage par catégories
     offerName: Optional[str] = None  # v162: Nom de l'offre depuis le frontend
+    # V207: Champs multi-membre + Stripe
+    multi_member: bool = False
+    shared_sessions: bool = True
+    stripe_amount: Optional[float] = None
 
 
 # === v104: HELPER — Résoudre les détails de l'offre liée à un code ===
