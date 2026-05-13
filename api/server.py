@@ -4588,6 +4588,28 @@ async def join_subscriber_space(access_code: str, request: Request):
     return {"success": True, "member": member_doc, "already_existed": False}
 
 
+# V208b: Admin — lister et purger les membres d'un code groupe
+@api_router.get("/admin/code-members/{access_code}")
+async def admin_list_code_members(access_code: str):
+    """Liste tous les membres inscrits pour un code groupe."""
+    code_upper = (access_code or "").strip().upper()
+    members = await db.code_members.find(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+    ).to_list(100)
+    return {"code": code_upper, "count": len(members), "members": members}
+
+
+@api_router.delete("/admin/code-members/{access_code}")
+async def admin_purge_code_members(access_code: str):
+    """Supprime TOUS les membres d'un code groupe (pour réinitialiser)."""
+    code_upper = (access_code or "").strip().upper()
+    result = await db.code_members.delete_many(
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}
+    )
+    logger.info(f"[V208b] Purged {result.deleted_count} members from code {code_upper}")
+    return {"success": True, "code": code_upper, "deleted": result.deleted_count}
+
+
 # V202: Endpoint Stripe Checkout depuis l'espace abonné
 @api_router.post("/subscriber/space/{access_code}/stripe-checkout")
 async def subscriber_stripe_checkout(access_code: str, request: Request):
