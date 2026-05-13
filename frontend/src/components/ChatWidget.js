@@ -3750,7 +3750,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
     if (!qrScanCode.trim()) return;
     setQrScanResult(null);
     var payload = { code: qrScanCode.trim().toUpperCase() };
-    if (forcedCourseId) payload.courseId = forcedCourseId;
+    if (forcedCourseId && typeof forcedCourseId === 'string') payload.courseId = forcedCourseId;
     axios.post(API + '/qr/scan-validate', payload)
       .then(function(res) {
         setQrScanResult(res.data);
