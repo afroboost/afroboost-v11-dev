@@ -3609,7 +3609,8 @@ async def stripe_webhook(request: Request):
                     try:
                         line_items = stripe.checkout.Session.list_line_items(session.id, limit=1)
                         if line_items and line_items.data:
-                            product_name = line_items.data[0].description or line_items.data[0].get("price", {}).get("product", {}).get("name", "") or "Abonnement Afroboost"
+                            li = line_items.data[0]
+                            product_name = li.description or (li.price and li.price.product and getattr(li.price.product, "name", "")) or "Abonnement Afroboost"
                     except Exception as li_err:
                         logger.warning(f"[WEBHOOK] Impossible de lire line_items: {li_err}")
                 if not product_name:
