@@ -1001,7 +1001,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         <section className="pt-2" data-testid="subscriber-space-footer">
           {(() => {
             const isEmpty = remaining <= 0;
-            const hasStripe = data?.stripe_amount && Number(data.stripe_amount) > 0;
+            // V206f: Individuel → toujours visible | Groupe → seulement le payeur
+            const isGroup = data?.multi_member;
+            const canPay = isGroup ? data?.is_payer !== false : true;
+            const hasStripe = data?.stripe_amount && Number(data.stripe_amount) > 0 && canPay;
             const btnStyle = {
               background: isEmpty
                 ? `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`
