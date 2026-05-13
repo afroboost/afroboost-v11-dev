@@ -616,15 +616,55 @@ const PromoCodesTab = ({
           {/* Date d'expiration */}
           <div>
             <label className="block text-white text-xs mb-1 opacity-70">📅 Date d'expiration</label>
-            <input 
-              type="date" 
-              value={newCode.expiresAt || ''} 
+            <input
+              type="date"
+              value={newCode.expiresAt || ''}
               onChange={e => setNewCode({ ...newCode, expiresAt: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg neon-input text-sm" 
+              className="w-full px-3 py-2 rounded-lg neon-input text-sm"
               data-testid="expires-at-input"
             />
           </div>
-          
+
+          {/* V202: Montant Stripe (CHF) */}
+          <div>
+            <label className="block text-white text-xs mb-1 opacity-70">💳 Prix Stripe (CHF)</label>
+            <input
+              type="number" step="0.01" min="0"
+              placeholder="Laisser vide si gratuit"
+              value={newCode.stripe_amount || ''}
+              onChange={e => setNewCode({ ...newCode, stripe_amount: e.target.value })}
+              className="w-full px-3 py-2 rounded-lg neon-input text-sm"
+              data-testid="stripe-amount-input"
+            />
+          </div>
+        </div>
+
+        {/* V202: Options multi-membre */}
+        <div className="flex flex-wrap gap-4 mb-4 p-3 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={!!newCode.multi_member}
+              onChange={e => setNewCode({ ...newCode, multi_member: e.target.checked })}
+              className="w-4 h-4 rounded" data-testid="multi-member-toggle" />
+            <span className="text-white text-xs">👥 Code partagé (multi-membres)</span>
+          </label>
+
+          {newCode.multi_member && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={newCode.shared_sessions !== false}
+                onChange={e => setNewCode({ ...newCode, shared_sessions: e.target.checked })}
+                className="w-4 h-4 rounded" data-testid="shared-sessions-toggle" />
+              <span className="text-white text-xs">🔄 Séances partagées entre membres</span>
+            </label>
+          )}
+
+          {newCode.multi_member && !newCode.shared_sessions && (
+            <p className="text-xs w-full" style={{ color: '#a78bfa' }}>
+              Chaque membre aura son propre quota de {newCode.maxUses || '?'} séances
+            </p>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
           {/* Articles autorisés */}
           <div>
             <label className="block text-white text-xs mb-1 opacity-70">📦 Articles autorisés</label>
@@ -749,6 +789,18 @@ const PromoCodesTab = ({
               <div className="flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-white font-bold text-lg">{code.code}</span>
+                  {/* V202: Badge multi-membre */}
+                  {code.multi_member && (
+                    <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(139,92,246,0.3)', color: '#c4b5fd' }}>
+                      👥 Multi
+                    </span>
+                  )}
+                  {/* V202: Badge prix Stripe */}
+                  {code.stripe_amount && parseFloat(code.stripe_amount) > 0 && (
+                    <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(34,197,94,0.2)', color: '#86efac' }}>
+                      💳 {parseFloat(code.stripe_amount).toFixed(0)} CHF
+                    </span>
+                  )}
                   {/* v14.0: Bouton Copier le code */}
                   <button
                     onClick={() => copyCodeToClipboard(code)}

@@ -1054,7 +1054,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [concept, setConcept] = useState({ appName: "Afroboost", description: "", heroImageUrl: "", logoUrl: "", faviconUrl: "", termsText: "", termsTextPartners: "", googleReviewsUrl: "", defaultLandingSection: "sessions", vitrineSectionOrder: "sessions-first", externalLink1Title: "", externalLink1Url: "", externalLink2Title: "", externalLink2Url: "", paymentTwint: false, paymentPaypal: false, paymentCreditCard: false, eventPosterEnabled: false, eventPosterMediaUrl: "" });
   const [discountCodes, setDiscountCodes] = useState([]);
   const [codesSearch, setCodesSearch] = useState(''); // Recherche locale codes promo
-  const [newCode, setNewCode] = useState({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "" });
+  const [newCode, setNewCode] = useState({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "", multi_member: false, shared_sessions: true, stripe_amount: "" });
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [batchLoading, setBatchLoading] = useState(false);
   const [selectedBeneficiaries, setSelectedBeneficiaries] = useState([]); // Multi-select pour bénéficiaires
@@ -1756,7 +1756,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           assignedEmail: beneficiaryEmail,
           courses: newCode.courses,
           maxUses: newCode.maxUses ? parseInt(newCode.maxUses) : null,
-          expiresAt: newCode.expiresAt || null
+          expiresAt: newCode.expiresAt || null,
+          // V202: Options multi-membre + Stripe
+          multi_member: !!newCode.multi_member,
+          shared_sessions: newCode.shared_sessions !== false,
+          stripe_amount: newCode.stripe_amount ? parseFloat(newCode.stripe_amount) : null,
         };
         // V200c: Vérifier que le PUT a vraiment réussi
         const putRes = await axios.put(`${API}/discount-codes/${editingCode}`, updates);
@@ -1775,7 +1779,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           setDiscountCodes(prev => prev.map(c => c.id === editingCode ? { ...c, ...updates } : c));
         }
         setEditingCode(null);
-        setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "" });
+        setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "", multi_member: false, shared_sessions: true, stripe_amount: "" });
         setSelectedBeneficiaries([]);
         setValidationMessage('✅ Code mis à jour !');
         setTimeout(() => setValidationMessage(''), 3000);
@@ -1804,10 +1808,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         assignedEmail: beneficiaryEmail,
         courses: newCode.courses, maxUses: newCode.maxUses ? parseInt(newCode.maxUses) : null,
         expiresAt: newCode.expiresAt || null,
-        offerName: (newCode.courses && newCode.courses.length > 0 && offers.find(function(o) { return o.id === newCode.courses[0]; })) ? offers.find(function(o) { return o.id === newCode.courses[0]; }).name : null
+        offerName: (newCode.courses && newCode.courses.length > 0 && offers.find(function(o) { return o.id === newCode.courses[0]; })) ? offers.find(function(o) { return o.id === newCode.courses[0]; }).name : null,
+        // V202: Options multi-membre + Stripe
+        multi_member: !!newCode.multi_member,
+        shared_sessions: newCode.shared_sessions !== false,
+        stripe_amount: newCode.stripe_amount ? parseFloat(newCode.stripe_amount) : null,
       });
       setDiscountCodes([...discountCodes, response.data]);
-      setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "" });
+      setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "", multi_member: false, shared_sessions: true, stripe_amount: "" });
       setSelectedBeneficiaries([]);
     } catch (error) {
       console.error('[PROMO] Erreur création/édition code:', error);
@@ -1853,7 +1861,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       }
       
       setDiscountCodes(prev => [...prev, ...createdCodes]);
-      setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "" });
+      setNewCode({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "", multi_member: false, shared_sessions: true, stripe_amount: "" });
       setSelectedBeneficiaries([]);
       setIsBatchMode(false);
       alert(`✅ ${count} codes créés avec succès !`);
@@ -1955,7 +1963,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       maxUses: code.maxUses || "",
       expiresAt: code.expiresAt || "",
       batchCount: 1,
-      prefix: ""
+      prefix: "",
+      // V202: Charger les options multi-membre + Stripe
+      multi_member: !!code.multi_member,
+      shared_sessions: code.shared_sessions !== false,
+      stripe_amount: code.stripe_amount || "",
     });
     setSelectedBeneficiaries(emails);
     setEditingCode(code.id); // Marque le code en cours d'édition
