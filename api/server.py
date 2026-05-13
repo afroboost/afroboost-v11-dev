@@ -4131,6 +4131,44 @@ async def fix_stripe_amount(access_code: str, request: Request):
     return {"success": True, "code": code_upper, "stripe_amount": float(amount)}
 
 
+@api_router.post("/admin/batch-fix-stripe")
+async def batch_fix_stripe(request: Request):
+    """V207d: Met à jour stripe_amount pour plusieurs codes en une fois.
+    Body: { "updates": [ {"code": "BASSBOOSTX-11", "stripe_amount": 70}, ... ] }
+    """
+    body = await request.json()
+    updates_list = body.get("updates", [])
+    if not updates_list:
+        raise HTTPException(status_code=400, detail="updates requis (liste de {code, stripe_amount})")
+    results = []
+    for item in updates_list:
+        code_str = (item.get("code") or "").strip().upper()
+        amount = item.get("stripe_amount")
+        if not code_str or amount is None:
+            results.append({"code": code_str, "status": "skipped", "reason": "code ou montant manquant"})
+            continue
+        r = await db.discount_codes.update_one(
+            {"code": {"$regex": f"^{code_str}$", "$options": "i"}},
+            {"$set": {"stripe_amount": float(amount)}}
+        )
+        if r.matched_count:
+            results.append({"code": code_str, "status": "updated", "stripe_amount": float(amount)})
+            logger.info(f"[V207d] {code_str} → stripe_amount={amount}")
+        else:
+            results.append({"code": code_str, "status": "not_found"})
+    return {"success": True, "results": results}
+
+
+@api_router.get("/admin/codes-missing-stripe")
+async def codes_missing_stripe():
+    """V207d: Liste tous les codes actifs sans stripe_amount configuré."""
+    codes = await db.discount_codes.find(
+        {"$or": [{"stripe_amount": None}, {"stripe_amount": {"$exists": False}}]},
+        {"_id": 0, "code": 1, "name": 1, "assignedEmail": 1, "maxUses": 1, "used": 1, "multi_member": 1, "active": 1}
+    ).to_list(500)
+    return {"codes": codes, "count": len(codes)}
+
+
 @api_router.get("/subscriber/space/{access_code}")
 async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     """V184: Données complètes de la page d'accès rapide d'un abonné.
