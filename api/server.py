@@ -4098,18 +4098,36 @@ def _v184_public_origin():
 
 
 @api_router.get("/debug/discount/{access_code}")
-async def debug_discount_code(access_code: str):
-    """V207: Endpoint temporaire pour diagnostiquer stripe_amount manquant."""
+async def debug_discount_code(access_code: str, fix: Optional[float] = None):
+    """V207e: Diagnostic + fix stripe_amount via ?fix=70"""
     code_upper = (access_code or "").strip().upper()
     discount = await db.discount_codes.find_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}
     )
+    if not discount:
+        return {"code": code_upper, "error": "Code introuvable"}
+
+    # V207e: Si ?fix=XX → écrire stripe_amount directement en base
+    fixed = False
+    if fix is not None and fix > 0:
+        await db.discount_codes.update_one(
+            {"_id": discount["_id"]},
+            {"$set": {"stripe_amount": fix}}
+        )
+        fixed = True
+        logger.info(f"[V207e] stripe_amount={fix} écrit pour {code_upper}")
+
+    # Relire après fix
+    if fixed:
+        discount = await db.discount_codes.find_one({"_id": discount["_id"]})
+
     return {
         "code": code_upper,
-        "discount_found": discount is not None,
-        "stripe_amount": (discount or {}).get("stripe_amount"),
-        "multi_member": (discount or {}).get("multi_member"),
-        "all_keys": list((discount or {}).keys()),
+        "discount_found": True,
+        "stripe_amount": discount.get("stripe_amount"),
+        "multi_member": discount.get("multi_member"),
+        "fixed": fixed,
+        "all_keys": [k for k in discount.keys() if k != "_id"],
     }
 
 
