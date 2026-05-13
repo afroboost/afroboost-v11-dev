@@ -125,23 +125,22 @@ export default function SubscriberSpace({ accessCode: propCode }) {
     loadSpace();
   }, [loadSpace]);
 
-  // V208c: Initialiser confirmedKeys avec les réservations existantes
-  // pour que les ✓ apparaissent au chargement de la page
+  // V210: Réinitialiser confirmedKeys quand on change de membre
+  // IMPORTANT: remplacer (pas merger) pour ne pas garder les ✓ d'un autre membre
   useEffect(() => {
-    if (!data?.reservations?.length) return;
-    const now = Date.now();
     const keys = {};
-    for (const r of data.reservations) {
-      if (!r?.courseId || !r?.datetime) continue;
-      // Ne marquer que les réservations futures
-      if (new Date(r.datetime).getTime() > now) {
-        keys[`${r.courseId}_${r.datetime}`] = true;
+    const now = Date.now();
+    if (data?.reservations?.length) {
+      for (const r of data.reservations) {
+        if (!r?.courseId || !r?.datetime) continue;
+        if (new Date(r.datetime).getTime() > now) {
+          keys[`${r.courseId}_${r.datetime}`] = true;
+        }
       }
     }
-    if (Object.keys(keys).length > 0) {
-      setConfirmedKeys((prev) => ({ ...prev, ...keys }));
-    }
-  }, [data?.reservations]);
+    // Toujours remplacer — si vide, ça remet à zéro (pas de résidus d'un autre membre)
+    setConfirmedKeys(keys);
+  }, [data]);
 
   // V202: Rejoindre un code multi-membre
   const handleJoin = async (e) => {
