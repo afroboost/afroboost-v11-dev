@@ -914,6 +914,38 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
             member_email = member.get("email", "")
         else:
             raise HTTPException(status_code=404, detail="Membre non trouvé dans ce groupe")
+    elif is_multi and not member_slug:
+        # V213: Groupe multi-membre scanné sans slug — on cherche toutes les réservations du groupe pour aujourd'hui
+        from datetime import timedelta as _td2
+        swiss_tz2 = timezone(_td2(hours=2))
+        today_str2 = datetime.now(swiss_tz2).strftime("%Y-%m-%d")
+        today_reservations = await db.reservations.find(
+            {"discountCode": {"$regex": f"^{code}$", "$options": "i"}, "datetime": {"$regex": today_str2}, "validated": {"$ne": True}},
+            {"_id": 0}
+        ).to_list(50)
+        if today_reservations:
+            # Valider toutes les réservations non-validées du groupe pour aujourd'hui
+            names = []
+            for r in today_reservations:
+                await db.reservations.update_one(
+                    {"id": r.get("id")},
+                    {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
+                )
+                names.append(r.get("userName", "?"))
+            logger.info(f"[QR-SCAN-V213] Groupe {code}: {len(today_reservations)} présences validées")
+            return {"success": True, "type": "subscription",
+                    "message": f"{len(today_reservations)} présence(s) validée(s)",
+                    "reservation": {"userName": ", ".join(names), "reservationCode": code, "courseName": today_reservations[0].get("courseName", "")},
+                    "subscriber": {"name": f"Groupe {code}", "remaining": discount.get("remaining_sessions", 0), "total": discount.get("total_sessions", 0)}}
+        # Vérifier s'il y a des réservations déjà validées
+        already_validated = await db.reservations.count_documents(
+            {"discountCode": {"$regex": f"^{code}$", "$options": "i"}, "datetime": {"$regex": today_str2}, "validated": True}
+        )
+        if already_validated > 0:
+            return {"success": True, "type": "subscription", "message": f"Déjà validé ({already_validated} présence(s))",
+                    "reservation": {"userName": f"Groupe {code}", "reservationCode": code, "courseName": ""},
+                    "subscriber": {"name": f"Groupe {code}", "remaining": discount.get("remaining_sessions", 0), "total": discount.get("total_sessions", 0)}}
+        raise HTTPException(status_code=404, detail=f"Aucune réservation pour le groupe {code} aujourd'hui.")
     elif not is_multi:
         member_name = discount.get("name") or discount.get("userName") or "Abonné"
         member_email = discount.get("email", "")
@@ -962,6 +994,61 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
                         detail=f"{member_name} n'a pas de réservation pour aujourd'hui. Demande-lui de réserver d'abord.")
 
 
+async def _validate_user_access_code(code: str, user: dict, forced_course_id: str = None):
+    """V213 CAS D: Valider la présence via code d'accès AFRO-XXXX.
+    Cherche une réservation existante pour aujourd'hui et la valide."""
+    from datetime import timedelta as _td
+    swiss_tz = timezone(_td(hours=2))
+    now_swiss = datetime.now(swiss_tz)
+    today_str = now_swiss.strftime("%Y-%m-%d")
+
+    user_email = (user.get("email") or "").lower().strip()
+    user_name = user.get("name") or "Utilisateur"
+
+    if not user_email:
+        raise HTTPException(status_code=400, detail="Pas d'email associé à ce code d'accès")
+
+    # Chercher une réservation pour aujourd'hui
+    res_query = {
+        "userEmail": {"$regex": f"^{user_email.replace('.', '[.]')}$", "$options": "i"},
+        "datetime": {"$regex": today_str}
+    }
+    reservation = await db.reservations.find_one(res_query, {"_id": 0})
+
+    if reservation:
+        if reservation.get("validated"):
+            return {"success": True, "type": "reservation", "message": "Déjà validé",
+                    "reservation": {"userName": reservation.get("userName", user_name),
+                                    "reservationCode": reservation.get("reservationCode", code),
+                                    "courseName": reservation.get("courseName", "")}}
+        await db.reservations.update_one(
+            {"id": reservation.get("id")},
+            {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
+        )
+        logger.info(f"[QR-SCAN-V213] Validé via AFRO code: {user_name} ({code}) -> {reservation.get('courseName')}")
+        return {"success": True, "type": "reservation", "message": "Présence validée !",
+                "reservation": {"userName": reservation.get("userName", user_name),
+                                "reservationCode": reservation.get("reservationCode", code),
+                                "courseName": reservation.get("courseName", "")}}
+
+    # Pas de réservation — chercher un abonnement actif pour déduire une séance
+    sub = await db.subscriptions.find_one(
+        {"email": {"$regex": f"^{user_email.replace('.', '[.]')}$", "$options": "i"}, "status": "active"}, {"_id": 0}
+    )
+    if sub:
+        # Rediriger vers le flux CAS B en passant le code subscription
+        # Pour éviter la duplication de code, on retourne l'info pour relancer
+        remaining = int(sub.get("remaining_sessions", 0))
+        total = sub.get("total_sessions", remaining)
+        return {"success": True, "type": "subscription",
+                "message": f"{user_name} n'a pas réservé aujourd'hui mais a un abonnement actif ({remaining}/{total} séances).",
+                "reservation": {"userName": user_name, "reservationCode": code, "courseName": ""},
+                "subscriber": {"name": user_name, "remaining": remaining, "total": total}}
+
+    raise HTTPException(status_code=404,
+                        detail=f"{user_name} n'a pas de réservation pour aujourd'hui.")
+
+
 @reservation_router.post("/qr/scan-validate")
 async def qr_scan_validate(request: Request):
     """V176: Scan QR coach. Gère codes réservation ET codes abonné (auto-détection cours)."""
@@ -1007,7 +1094,14 @@ async def qr_scan_validate(request: Request):
         if discount:
             return await _validate_discount_code_presence(code, discount, member_slug_from_qr, forced_course_id)
 
-        raise HTTPException(status_code=404, detail="Code introuvable (ni réservation, ni abonnement, ni code promo)")
+        # CAS D (V213): Code d'accès utilisateur AFRO-XXXX — cherche dans users
+        user_by_access = await db.users.find_one(
+            {"accessCode": {"$regex": f"^{code}$", "$options": "i"}}, {"_id": 0}
+        )
+        if user_by_access:
+            return await _validate_user_access_code(code, user_by_access, forced_course_id)
+
+        raise HTTPException(status_code=404, detail="Code introuvable. Vérifie que le code est correct.")
 
     remaining = int(subscription.get("remaining_sessions", 0))
     if remaining <= 0:
