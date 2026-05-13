@@ -4175,6 +4175,29 @@ async def fix_all_stripe_amounts():
                 offer_price = float(offer["price"])
                 break
 
+        # Fallback 2: chercher dans les subscriptions liées
+        if not offer_price:
+            sub = await db.subscriptions.find_one(
+                {"code": {"$regex": f"^{code_str}$", "$options": "i"}, "offer_price": {"$exists": True, "$ne": None}},
+                {"_id": 0, "offer_price": 1}
+            )
+            if sub and sub.get("offer_price"):
+                try:
+                    offer_price = float(sub["offer_price"])
+                except (TypeError, ValueError):
+                    pass
+
+        # Fallback 3: chercher le prix dans la collection courses
+        if not offer_price:
+            for course_id in courses:
+                course = await db.courses.find_one({"id": course_id}, {"_id": 0, "price": 1})
+                if course and course.get("price"):
+                    try:
+                        offer_price = float(course["price"])
+                        break
+                    except (TypeError, ValueError):
+                        pass
+
         if offer_price and offer_price > 0:
             await db.discount_codes.update_one(
                 {"_id": code_doc["_id"]},
@@ -4182,9 +4205,9 @@ async def fix_all_stripe_amounts():
             )
             fixed_count += 1
             results.append({"code": code_str, "status": "fixed", "stripe_amount": offer_price})
-            logger.info(f"[V207f] {code_str} → stripe_amount={offer_price} (depuis offre)")
+            logger.info(f"[V207f] {code_str} → stripe_amount={offer_price}")
         else:
-            results.append({"code": code_str, "status": "no_offer_price", "courses": courses})
+            results.append({"code": code_str, "status": "no_price_found", "courses": courses})
 
     return {
         "success": True,
