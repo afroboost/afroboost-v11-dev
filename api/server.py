@@ -45,6 +45,8 @@ from api.routes.cinetpay_routes import router as cinetpay_router, init_db as ini
 # v15.0: Import routes paiement multi-vendeurs
 from api.routes.payment_config_routes import router as payment_config_router, init_db as init_payment_config_db
 from api.routes.checkout_routes import router as checkout_router, init_db as init_checkout_db
+# V205: Import routes catégories contacts
+from api.routes.contact_categories_routes import category_router, init_category_db
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -14165,6 +14167,10 @@ fastapi_app.include_router(payment_config_router)
 init_payment_config_db(db)
 fastapi_app.include_router(checkout_router)
 init_checkout_db(db)
+
+# V205: Routes catégories contacts
+fastapi_app.include_router(category_router, prefix="/api")
+init_category_db(db)
 
 fastapi_app.add_middleware(
     CORSMiddleware,

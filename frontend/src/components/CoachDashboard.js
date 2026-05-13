@@ -631,7 +631,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // v9.2.5: État de chargement initial
   const [dashboardReady, setDashboardReady] = useState(false);
   const [loadError, setLoadError] = useState(null);
-  
+  // V205: État pour les messages de validation (manquait → ReferenceError)
+  const [validationMessage, setValidationMessage] = useState('');
+
   // Email Super Admin
   // v9.5.6: Liste des Super Admins autorisés
   const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
@@ -1539,7 +1541,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
         // v15.0: Charger la config paiement multi-vendeurs
         try {
-          const pcRes = await axios.get(`${API}/api/payment-config`, headers);
+          const pcRes = await axios.get(`${API}/payment-config`, headers);
           setVendorPaymentConfig(pcRes.data || {});
         } catch (pcErr) { console.warn('[PAYMENT-CONFIG] Load:', pcErr); }
 

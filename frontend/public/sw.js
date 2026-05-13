@@ -164,6 +164,11 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
+  // V205: Ne pas cacher les requêtes POST/PUT/DELETE (Cache API ne supporte que GET)
+  if (event.request.method !== 'GET') {
+    return;
+  }
+
   // Tout le reste → network-first avec fallback cache
   event.respondWith(
     fetch(event.request)
