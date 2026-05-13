@@ -86,6 +86,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const [quantities, setQuantities] = useState({});
   const [autoRenewBusy, setAutoRenewBusy] = useState(false);
   const [guestNames, setGuestNames] = useState({});
+  // V203f: Index de la séance affichée (système compact)
+  const [selectedCourseIdx, setSelectedCourseIdx] = useState(0);
 
   // V202: États pour le formulaire d'inscription multi-membre
   const [joinForm, setJoinForm] = useState({ name: "", email: "", whatsapp: "" });
@@ -504,6 +506,20 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   return (
     <div className="min-h-screen pb-16" style={{ background: COLORS.bg, color: "white" }}>
       <div className="max-w-md mx-auto px-4 pt-6 space-y-5">
+        {/* V203f: Bouton retour vers la page d'inscription multi-membre */}
+        {data?.multi_member && memberSlug && (
+          <button
+            type="button"
+            onClick={() => {
+              setMemberSlug("");
+              window.history.replaceState(null, "", window.location.pathname);
+            }}
+            className="text-xs text-white/50 hover:text-white transition-colors"
+          >
+            ← Retour à la page du groupe
+          </button>
+        )}
+
         {/* ===== Welcome ===== */}
         <header className="flex items-center gap-3" data-testid="subscriber-space-header">
           {coach?.logo_url ? (
@@ -784,7 +800,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           </section>
         )}
 
-        {/* ===== Réserver une séance ===== */}
+        {/* ===== V203f: Réserver une séance — version compacte avec boutons dates ===== */}
         <section
           ref={reserveSectionRef}
           className="rounded-2xl p-5"
@@ -810,110 +826,137 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           )}
           {courses.length === 0 ? (
             <p className="text-white/50 text-sm">Aucun cours disponible pour le moment.</p>
-          ) : (
-            <ul className="space-y-3">
-              {courses.slice(0, 12).map((occ) => {
-                const key = `${occ.course_id}_${occ.datetime}`;
-                const confirmed = confirmedKeys[key];
-                const isBusy = reservingKey === key;
-                const qty = getQty(key);
-                const maxQty = Math.max(1, remaining); // ne dépasse pas le solde
-                const dec = () => adjustQty(key, -1, maxQty);
-                const inc = () => adjustQty(key, +1, maxQty);
-                return (
-                  <li
-                    key={key}
-                    className="p-3 rounded-xl"
-                    style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
-                  >
-                    <div className="min-w-0 mb-2">
-                      <p className="text-sm font-medium truncate">{occ.name || "Cours"}</p>
-                      <p className="text-white/50 text-xs">
-                        {formatOccurrence(occ)}
-                        {occ.locationName ? ` · ${occ.locationName}` : ""}
-                      </p>
-                    </div>
-                    {confirmed ? (
-                      <span
-                        className="text-xs px-3 py-1 rounded-full inline-block"
-                        style={{ background: "rgba(34,197,94,0.15)", color: "#86efac" }}
+          ) : (() => {
+            const visibleCourses = courses.slice(0, 12);
+            const safeIdx = Math.min(selectedCourseIdx, visibleCourses.length - 1);
+            const occ = visibleCourses[safeIdx];
+            if (!occ) return null;
+            const key = `${occ.course_id}_${occ.datetime}`;
+            const confirmed = confirmedKeys[key];
+            const isBusy = reservingKey === key;
+            const qty = getQty(key);
+            const maxQty = Math.max(1, remaining);
+            const dec = () => adjustQty(key, -1, maxQty);
+            const inc = () => adjustQty(key, +1, maxQty);
+
+            // Formater les boutons de dates
+            const formatDateBtn = (o) => {
+              try {
+                if (o.date) {
+                  const d = new Date(o.date + "T12:00:00");
+                  const jour = d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
+                  return { date: jour, time: o.time || "" };
+                }
+                const d = new Date(o.datetime || o);
+                return {
+                  date: d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" }),
+                  time: d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
+                };
+              } catch { return { date: "—", time: "" }; }
+            };
+
+            return (
+              <div>
+                {/* Boutons de dates — scrollable horizontalement */}
+                <div className="flex gap-2 overflow-x-auto pb-3 mb-3" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
+                  {visibleCourses.map((c, i) => {
+                    const d = formatDateBtn(c);
+                    const isSelected = i === safeIdx;
+                    const cKey = `${c.course_id}_${c.datetime}`;
+                    const isConfirmed = confirmedKeys[cKey];
+                    return (
+                      <button key={i} type="button"
+                        onClick={() => setSelectedCourseIdx(i)}
+                        className="flex-shrink-0 flex flex-col items-center px-3 py-2 rounded-xl text-xs transition-all"
+                        style={{
+                          background: isSelected
+                            ? `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`
+                            : isConfirmed ? "rgba(34,197,94,0.15)" : "rgba(255,255,255,0.04)",
+                          border: isSelected ? "none" : "1px solid rgba(255,255,255,0.08)",
+                          color: isSelected ? "white" : isConfirmed ? "#86efac" : "rgba(255,255,255,0.6)",
+                          minWidth: "70px",
+                        }}
                       >
-                        ✓ Réservé
-                      </span>
-                    ) : (
-                      <>
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          {/* V186 F2: Compteur de places */}
-                          <div className="flex items-center gap-2" data-testid={`qty-${occ.course_id}`}>
-                            <button
-                              type="button"
-                              onClick={dec}
-                              disabled={qty <= 1 || isBusy || noSessions}
-                              aria-label="Diminuer"
-                              className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
-                              style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}
-                            >
-                              −
-                            </button>
-                            <span className="text-sm font-semibold w-6 text-center">{qty}</span>
-                            <button
-                              type="button"
-                              onClick={inc}
-                              disabled={qty >= maxQty || isBusy || noSessions}
-                              aria-label="Augmenter"
-                              className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
-                              style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}
-                            >
-                              +
-                            </button>
-                          </div>
-                          <button
-                            type="button"
-                            disabled={isBusy || noSessions}
-                            onClick={() => handleReserve(occ)}
-                            className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-50"
-                            style={{ background: COLORS.primary, color: "white" }}
-                            data-testid={`reserve-${occ.course_id}`}
-                          >
-                            {isBusy ? "…" : qty > 1 ? `Réserver ${qty} places` : "Réserver"}
+                        <span className="font-semibold" style={{ fontSize: "11px" }}>{d.date}</span>
+                        <span style={{ fontSize: "10px", opacity: 0.7 }}>{d.time}</span>
+                        {isConfirmed && <span style={{ fontSize: "10px" }}>✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Séance sélectionnée */}
+                <div
+                  className="p-4 rounded-xl"
+                  style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
+                >
+                  <div className="min-w-0 mb-3">
+                    <p className="text-sm font-medium">{occ.name || "Cours"}</p>
+                    <p className="text-white/50 text-xs">
+                      {formatOccurrence(occ)}
+                      {occ.locationName ? ` · ${occ.locationName}` : ""}
+                    </p>
+                  </div>
+                  {confirmed ? (
+                    <span
+                      className="text-xs px-3 py-1 rounded-full inline-block"
+                      style={{ background: "rgba(34,197,94,0.15)", color: "#86efac" }}
+                    >
+                      ✓ Réservé
+                    </span>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2" data-testid={`qty-${occ.course_id}`}>
+                          <button type="button" onClick={dec}
+                            disabled={qty <= 1 || isBusy || noSessions} aria-label="Diminuer"
+                            className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
+                            style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}>
+                            −
+                          </button>
+                          <span className="text-sm font-semibold w-6 text-center">{qty}</span>
+                          <button type="button" onClick={inc}
+                            disabled={qty >= maxQty || isBusy || noSessions} aria-label="Augmenter"
+                            className="w-8 h-8 rounded-full text-sm font-bold disabled:opacity-30"
+                            style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}>
+                            +
                           </button>
                         </div>
+                        <button type="button" disabled={isBusy || noSessions}
+                          onClick={() => handleReserve(occ)}
+                          className="text-xs font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
+                          style={{ background: COLORS.primary, color: "white" }}
+                          data-testid={`reserve-${occ.course_id}`}>
+                          {isBusy ? "…" : qty > 1 ? `Réserver ${qty} places` : "Réserver"}
+                        </button>
+                      </div>
 
-                        {/* V187: liste des places + saisie des prénoms accompagnants */}
-                        {qty > 1 && (
-                          <ol className="mt-3 space-y-1 text-xs text-white/70">
-                            <li className="flex items-center gap-2">
-                              <span className="w-4 text-white/40">1.</span>
-                              <span className="flex-1">{firstName} <span className="text-white/40">(moi)</span></span>
+                      {qty > 1 && (
+                        <ol className="mt-3 space-y-1 text-xs text-white/70">
+                          <li className="flex items-center gap-2">
+                            <span className="w-4 text-white/40">1.</span>
+                            <span className="flex-1">{firstName} <span className="text-white/40">(moi)</span></span>
+                          </li>
+                          {Array.from({ length: qty - 1 }).map((_, i) => (
+                            <li key={i} className="flex items-center gap-2">
+                              <span className="w-4 text-white/40">{i + 2}.</span>
+                              <input type="text"
+                                value={(guestNames[key] || [])[i] || ""}
+                                onChange={(e) => setGuestName(key, i, e.target.value)}
+                                placeholder="Prénom" maxLength={50}
+                                data-testid={`guest-input-${occ.course_id}-${i}`}
+                                className="flex-1 px-2 py-1 rounded text-xs"
+                                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }} />
                             </li>
-                            {Array.from({ length: qty - 1 }).map((_, i) => (
-                              <li key={i} className="flex items-center gap-2">
-                                <span className="w-4 text-white/40">{i + 2}.</span>
-                                <input
-                                  type="text"
-                                  value={(guestNames[key] || [])[i] || ""}
-                                  onChange={(e) => setGuestName(key, i, e.target.value)}
-                                  placeholder="Prénom"
-                                  maxLength={50}
-                                  data-testid={`guest-input-${occ.course_id}-${i}`}
-                                  className="flex-1 px-2 py-1 rounded text-xs"
-                                  style={{
-                                    background: "rgba(255,255,255,0.05)",
-                                    border: "1px solid rgba(255,255,255,0.12)",
-                                    color: "white",
-                                  }}
-                                />
-                              </li>
-                            ))}
-                          </ol>
-                        )}
-                      </>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+                          ))}
+                        </ol>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
           {remaining <= 0 && (
             <p className="text-white/50 text-xs mt-3">
               Tu as utilisé toutes tes séances. Contacte ton coach pour renouveler.
