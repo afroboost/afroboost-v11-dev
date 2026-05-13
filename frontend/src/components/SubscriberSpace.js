@@ -335,12 +335,15 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             </div>
           </header>
 
-          {/* Infos code */}
+          {/* V203: Infos code — affichage clair restantes vs utilisées */}
           <section className="rounded-2xl p-5" style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}>
-            <p className="text-white/60 text-xs uppercase tracking-wider mb-1">{mmSub.offer_name || "Abonnement"}</p>
+            <p className="text-white/60 text-xs uppercase tracking-wider mb-1">Séances restantes</p>
             <p className="text-lg font-semibold">
               <span style={{ color: COLORS.primary }}>{mmSub.remaining_sessions || 0}</span>
-              <span className="text-white/40 text-sm"> / {mmSub.total_sessions || 0} séances</span>
+              <span className="text-white/40 text-sm"> / {mmSub.total_sessions || 0}</span>
+            </p>
+            <p className="text-white/40 text-xs mt-1">
+              {(mmSub.total_sessions || 0) - (mmSub.remaining_sessions || 0)} séance(s) utilisée(s)
             </p>
           </section>
 
