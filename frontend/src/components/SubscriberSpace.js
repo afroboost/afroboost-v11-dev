@@ -997,13 +997,11 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           )}
         </section>
 
-        {/* ===== V186/V203: Footer — Renouveler abonnement (Stripe si configuré) ===== */}
+        {/* ===== V206e: Footer — Paiement Stripe avec icônes carte + TWINT ===== */}
         <section className="pt-2" data-testid="subscriber-space-footer">
           {(() => {
-            const coachSlug = coach?.id || coach?.email || "";
-            const renewUrl = coachSlug ? `/coach/${encodeURIComponent(coachSlug)}` : "/";
             const isEmpty = remaining <= 0;
-            const hasStripe = data?.stripe_amount && Number(data.stripe_amount) > 0 && data?.is_payer !== false;
+            const hasStripe = data?.stripe_amount && Number(data.stripe_amount) > 0;
             const btnStyle = {
               background: isEmpty
                 ? `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`
@@ -1012,7 +1010,6 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               border: isEmpty ? "none" : `1px solid ${COLORS.primary}55`,
               boxShadow: isEmpty ? "0 6px 20px rgba(217,28,210,0.35)" : "none",
             };
-            // V204: Si Stripe configuré → paiement Stripe, sinon → page coach
             if (hasStripe) {
               return (
                 <button
@@ -1020,32 +1017,29 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                   onClick={handleStripeCheckout}
                   disabled={stripeLoading}
                   data-testid="renew-subscription-btn"
-                  className={`w-full flex items-center justify-center gap-2 font-semibold rounded-2xl transition-transform active:scale-95 ${isEmpty ? "py-4 text-base" : "py-3 text-sm"}`}
+                  className={`w-full flex items-center justify-center gap-3 font-semibold rounded-2xl transition-transform active:scale-95 ${isEmpty ? "py-4 text-base" : "py-3 text-sm"}`}
                   style={btnStyle}
                 >
                   {stripeLoading ? "Redirection..." : (
                     <>
-                      <svg width="20" height="14" viewBox="0 0 20 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <rect x="0.5" y="0.5" width="19" height="13" rx="2" stroke="currentColor"/>
-                        <line x1="0" y1="4" x2="20" y2="4" stroke="currentColor"/>
-                        <rect x="2" y="8" width="5" height="2" rx="0.5" fill="currentColor" opacity="0.5"/>
+                      {/* Icône carte de crédit */}
+                      <svg width="22" height="16" viewBox="0 0 22 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="0.5" y="0.5" width="21" height="15" rx="2.5" stroke="currentColor"/>
+                        <line x1="0" y1="5" x2="22" y2="5" stroke="currentColor" strokeWidth="1.5"/>
+                        <rect x="2" y="9" width="5" height="2" rx="0.5" fill="currentColor" opacity="0.5"/>
                       </svg>
                       Renouveler mon abonnement
+                      {/* Icône TWINT */}
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect width="24" height="24" rx="6" fill="currentColor" opacity="0.15"/>
+                        <path d="M12 4L14.5 8.5L19.5 9.5L16 13.5L17 19L12 16.5L7 19L8 13.5L4.5 9.5L9.5 8.5L12 4Z" fill="currentColor" opacity="0.7"/>
+                      </svg>
                     </>
                   )}
                 </button>
               );
             }
-            return (
-              <a
-                href={renewUrl}
-                data-testid="renew-subscription-btn"
-                className={`block text-center font-semibold rounded-2xl transition-transform active:scale-95 ${isEmpty ? "py-4 text-base" : "py-3 text-sm"}`}
-                style={btnStyle}
-              >
-                🔄 Renouveler mon abonnement
-              </a>
-            );
+            return null;
           })()}
         </section>
 
