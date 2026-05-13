@@ -1066,6 +1066,9 @@ async def qr_scan_validate(request: Request):
         parts = code.split("::", 1)
         code = parts[0].strip().upper()
         member_slug_from_qr = parts[1].strip()
+        logger.info(f"[QR-V213] Code avec slug détecté: code='{code}', slug='{member_slug_from_qr}'")
+    else:
+        logger.info(f"[QR-V213] Code simple: '{code}'")
 
     # CAS A : code de réservation existante
     reservation = await db.reservations.find_one({"reservationCode": code}, {"_id": 0})
@@ -1088,20 +1091,32 @@ async def qr_scan_validate(request: Request):
             raise HTTPException(status_code=400, detail="Abonnement inactif ou expiré")
 
         # CAS C (V213): Code promo / groupe — cherche dans discount_codes
+        logger.info(f"[QR-V213] CAS B échoué, recherche CAS C (discount_codes) pour code='{code}'")
         discount = await db.discount_codes.find_one(
             {"code": {"$regex": f"^{code}$", "$options": "i"}, "active": True}, {"_id": 0}
         )
         if discount:
+            logger.info(f"[QR-V213] CAS C trouvé: discount code '{code}', multi_member={discount.get('multi_member')}, slug={member_slug_from_qr}")
             return await _validate_discount_code_presence(code, discount, member_slug_from_qr, forced_course_id)
 
+        # CAS C bis: discount_code inactif ?
+        discount_any = await db.discount_codes.find_one(
+            {"code": {"$regex": f"^{code}$", "$options": "i"}}, {"_id": 0}
+        )
+        if discount_any:
+            logger.warning(f"[QR-V213] Discount code '{code}' trouvé mais inactif (active={discount_any.get('active')})")
+            raise HTTPException(status_code=400, detail=f"Le code {code} est désactivé.")
+
         # CAS D (V213): Code d'accès utilisateur AFRO-XXXX — cherche dans users
+        logger.info(f"[QR-V213] CAS C échoué, recherche CAS D (users.accessCode) pour code='{code}'")
         user_by_access = await db.users.find_one(
             {"accessCode": {"$regex": f"^{code}$", "$options": "i"}}, {"_id": 0}
         )
         if user_by_access:
             return await _validate_user_access_code(code, user_by_access, forced_course_id)
 
-        raise HTTPException(status_code=404, detail="Code introuvable. Vérifie que le code est correct.")
+        logger.warning(f"[QR-V213] Aucun CAS ne correspond pour code='{code}' (slug={member_slug_from_qr})")
+        raise HTTPException(status_code=404, detail=f"Code '{code}' introuvable. Vérifie que le code est correct.")
 
     remaining = int(subscription.get("remaining_sessions", 0))
     if remaining <= 0:
