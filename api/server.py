@@ -3845,6 +3845,91 @@ async def stripe_webhook(request: Request):
         logger.error(f"Webhook error: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Webhook error: {str(e)}")
 
+# === V204d: Admin — Créer code manuellement pour un paiement manqué ===
+@api_router.post("/admin/create-code")
+async def admin_create_code(request: Request):
+    """Créer un code d'accès manuellement (admin uniquement)."""
+    try:
+        body = await request.json()
+        admin_email = (body.get("admin_email") or "").lower().strip()
+        if not is_super_admin(admin_email):
+            raise HTTPException(status_code=403, detail="Non autorisé")
+
+        customer_email = (body.get("customer_email") or "").lower().strip()
+        sessions_count = int(body.get("sessions", 10))
+        product_name = body.get("product_name", "Abonnement Afroboost")
+        customer_name = body.get("customer_name", customer_email.split("@")[0])
+        amount = float(body.get("amount", 0))
+
+        if not customer_email:
+            raise HTTPException(status_code=400, detail="customer_email requis")
+
+        new_code = f"AFR-{str(uuid.uuid4())[:6].upper()}"
+        discount_doc = {
+            "id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100,
+            "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0,
+            "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(),
+            "source": "admin_manual"
+        }
+        await db.discount_codes.insert_one(discount_doc)
+
+        subscription_data = {
+            "id": str(uuid.uuid4()), "email": customer_email, "name": customer_name,
+            "code": new_code, "offer_name": product_name,
+            "total_sessions": sessions_count, "used_sessions": 0,
+            "remaining_sessions": sessions_count, "expires_at": None, "status": "active",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "source": "admin_manual", "auto_renew": False,
+            "renewal_price": amount, "renewal_sessions": sessions_count,
+            "renewal_warnings_sent": [], "stripe_customer_id": None,
+            "stripe_payment_method": None, "last_renewal_date": None,
+        }
+        await db.subscriptions.insert_one(subscription_data)
+
+        # Envoyer email de bienvenue
+        if RESEND_AVAILABLE and RESEND_API_KEY and customer_email:
+            qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=https://afroboost.com/?qr={new_code}&format=png"
+            chat_url = f"https://afroboost.com/?qr={new_code}"
+            html = f"""<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;background:#0a0a0a;color:#fff;">
+                <div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:28px 24px;text-align:center;">
+                    <h1 style="color:white;margin:0;font-size:24px;">Bienvenue chez Afroboost !</h1>
+                    <p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">Ta souscription est confirmee</p>
+                </div>
+                <div style="padding:28px 24px;">
+                    <p style="color:#e2e8f0;font-size:15px;">Merci pour ton achat {customer_name} ! Voici ton code d'acces :</p>
+                    <div style="background:rgba(147,51,234,0.15);border:1px solid rgba(147,51,234,0.3);border-radius:14px;padding:22px;margin:16px 0;text-align:center;">
+                        <p style="margin:0 0 6px;color:#888;font-size:12px;text-transform:uppercase;">Ton code d'acces personnel</p>
+                        <p style="margin:0;color:#d91cd2;font-size:30px;font-weight:bold;letter-spacing:3px;">{new_code}</p>
+                        <p style="margin:10px 0 20px;color:#888;font-size:13px;">{sessions_count} seance(s) incluse(s)</p>
+                        <img src="{qr_url}" alt="QR Code" width="180" height="180" style="background:white;padding:12px;border-radius:10px;display:block;margin:0 auto;"/>
+                    </div>
+                    <div style="text-align:center;margin:20px 0;">
+                        <a href="{chat_url}" style="display:inline-block;background:#d91cd2;color:white;padding:14px 32px;text-decoration:none;border-radius:10px;font-weight:bold;">Acceder a mon espace</a>
+                    </div>
+                </div>
+            </div>"""
+            try:
+                await asyncio.to_thread(resend.Emails.send, {
+                    "from": "Afroboost <notifications@afroboost.com>",
+                    "to": [customer_email],
+                    "subject": f"Bienvenue chez Afroboost - Ton code {new_code}",
+                    "html": html
+                })
+            except Exception as mail_err:
+                logger.warning(f"[ADMIN] Email error: {mail_err}")
+
+        logger.info(f"[ADMIN] Code {new_code} créé pour {customer_email} ({sessions_count} séances) par {admin_email}")
+        return {
+            "status": "ok", "code": new_code, "email": customer_email,
+            "sessions": sessions_count, "link": f"https://afroboost.com/espace/{new_code}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[ADMIN] create-code error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # === ESPACE ABONNÉ — Lookup par code AFR-XXXXXX v11.0 ===
 @api_router.get("/subscriber/{code}")
 async def get_subscriber_by_code(code: str):
