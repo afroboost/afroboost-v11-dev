@@ -399,22 +399,42 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             </button>
           )}
 
-          {/* Membres déjà inscrits — sélection rapide */}
+          {/* V203d: Membres déjà inscrits — accès rapide + copier lien */}
           {mmMembers.length > 0 && (
             <section className="rounded-2xl p-5" style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}>
               <p className="text-white/60 text-xs uppercase tracking-wider mb-3">Déjà inscrit ? Choisis ton profil</p>
               <div className="space-y-2">
-                {mmMembers.map((mem) => (
-                  <button key={mem.slug} type="button"
-                    onClick={() => {
-                      setMemberSlug(mem.slug);
-                      window.history.replaceState(null, "", `${window.location.pathname}?m=${mem.slug}`);
-                    }}
-                    className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium transition-transform active:scale-[0.98]"
-                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                    👤 {mem.name}
-                  </button>
-                ))}
+                {mmMembers.map((mem) => {
+                  const memLink = `${window.location.origin}/espace/${mm.code}?m=${mem.slug}`;
+                  return (
+                    <div key={mem.slug} className="flex items-center gap-2">
+                      <button type="button"
+                        onClick={() => {
+                          setMemberSlug(mem.slug);
+                          window.history.replaceState(null, "", `${window.location.pathname}?m=${mem.slug}`);
+                        }}
+                        className="flex-1 flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-transform active:scale-[0.98]"
+                        style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                        <span>👤 {mem.name}</span>
+                        <span className="text-white/30">→</span>
+                      </button>
+                      <button type="button" title="Copier le lien personnel"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const r = await copyToClipboard(memLink);
+                          if (r.success) {
+                            const btn = e.currentTarget;
+                            btn.textContent = "✅";
+                            setTimeout(() => { btn.textContent = "🔗"; }, 1500);
+                          }
+                        }}
+                        className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl text-sm transition-colors hover:bg-white/10"
+                        style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                        🔗
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </section>
           )}
@@ -949,25 +969,42 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           )}
         </section>
 
-        {/* ===== V186 F3: Footer — Renouveler abonnement ===== */}
+        {/* ===== V186/V203: Footer — Renouveler abonnement (Stripe si configuré) ===== */}
         <section className="pt-2" data-testid="subscriber-space-footer">
           {(() => {
             const coachSlug = coach?.id || coach?.email || "";
             const renewUrl = coachSlug ? `/coach/${encodeURIComponent(coachSlug)}` : "/";
             const isEmpty = remaining <= 0;
+            const hasStripe = data?.stripe_amount && Number(data.stripe_amount) > 0;
+            const btnStyle = {
+              background: isEmpty
+                ? `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`
+                : "rgba(217,28,210,0.18)",
+              color: isEmpty ? "white" : "#F0A8EE",
+              border: isEmpty ? "none" : `1px solid ${COLORS.primary}55`,
+              boxShadow: isEmpty ? "0 6px 20px rgba(217,28,210,0.35)" : "none",
+            };
+            // V203: Si Stripe est configuré, bouton déclenche le paiement Stripe
+            if (hasStripe) {
+              return (
+                <button
+                  type="button"
+                  onClick={handleStripeCheckout}
+                  disabled={stripeLoading}
+                  data-testid="renew-subscription-btn"
+                  className={`w-full text-center font-semibold rounded-2xl transition-transform active:scale-95 ${isEmpty ? "py-4 text-base" : "py-3 text-sm"}`}
+                  style={btnStyle}
+                >
+                  {stripeLoading ? "Redirection..." : `💳 Renouveler mon abonnement — ${Number(data.stripe_amount).toFixed(0)} CHF`}
+                </button>
+              );
+            }
             return (
               <a
                 href={renewUrl}
                 data-testid="renew-subscription-btn"
                 className={`block text-center font-semibold rounded-2xl transition-transform active:scale-95 ${isEmpty ? "py-4 text-base" : "py-3 text-sm"}`}
-                style={{
-                  background: isEmpty
-                    ? `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`
-                    : "rgba(217,28,210,0.18)",
-                  color: isEmpty ? "white" : "#F0A8EE",
-                  border: isEmpty ? "none" : `1px solid ${COLORS.primary}55`,
-                  boxShadow: isEmpty ? "0 6px 20px rgba(217,28,210,0.35)" : "none",
-                }}
+                style={btnStyle}
               >
                 🔄 Renouveler mon abonnement
               </a>
