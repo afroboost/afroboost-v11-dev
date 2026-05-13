@@ -3592,12 +3592,40 @@ async def stripe_webhook(request: Request):
                     except Exception as mail_err:
                         logger.warning(f"[WEBHOOK] Email coach error: {mail_err}")
             else:
-                # Paiement Client standard
+                # Paiement Client standard (ou paiement sans metadata)
                 await db.payment_transactions.update_one({"session_id": session.id}, {"$set": {"payment_status": session.payment_status, "status": "completed", "webhook_received_at": datetime.now(timezone.utc).isoformat()}})
-                # v8.1: CREATION AUTOMATIQUE CODE D'ACCES
+
+                # V204: Si c'est un paiement subscriber_space, juste logger (le code existe déjà)
+                if metadata.get("source") == "subscriber_space":
+                    logger.info(f"[WEBHOOK] Paiement subscriber_space reçu pour code={metadata.get('code')}, pas de création de code")
+                    return {"status": "ok", "type": "subscriber_space_payment"}
+
+                # v8.1 / V204: CREATION AUTOMATIQUE CODE D'ACCES
                 customer_email = session.get("customer_email") or metadata.get("customer_email", "")
-                product_name = metadata.get("product_name", "Abonnement Afroboost")
-                sessions_count = 10 if "10" in product_name else (5 if "5" in product_name else 1)
+
+                # V204: Extraire le nom du produit depuis metadata OU depuis line_items Stripe
+                product_name = metadata.get("product_name", "")
+                if not product_name:
+                    try:
+                        line_items = stripe.checkout.Session.list_line_items(session.id, limit=1)
+                        if line_items and line_items.data:
+                            product_name = line_items.data[0].description or line_items.data[0].get("price", {}).get("product", {}).get("name", "") or "Abonnement Afroboost"
+                    except Exception as li_err:
+                        logger.warning(f"[WEBHOOK] Impossible de lire line_items: {li_err}")
+                if not product_name:
+                    product_name = "Abonnement Afroboost"
+
+                # V204: Calcul intelligent du nombre de séances depuis le nom du produit
+                import re as _re_webhook
+                sessions_count = 1  # défaut
+                # Chercher "x10", "x5", "x20", "x40" etc. dans le nom
+                x_match = _re_webhook.search(r'x\s*(\d+)', product_name, _re_webhook.IGNORECASE)
+                if x_match:
+                    sessions_count = int(x_match.group(1))
+                elif "10" in product_name:
+                    sessions_count = 10
+                elif "5" in product_name:
+                    sessions_count = 5
                 new_code = f"AFR-{str(uuid.uuid4())[:6].upper()}"
                 discount_doc = {"id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100, "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0, "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(), "source": "stripe_payment", "session_id": session.id}
                 await db.discount_codes.insert_one(discount_doc)
