@@ -4593,6 +4593,51 @@ async def join_subscriber_space(access_code: str, request: Request):
     member_doc.pop("_id", None)
     logger.info(f"[V202] New member joined {code_upper}: {name} ({slug}), shared={shared}")
 
+    # V209: Ajouter automatiquement le membre comme contact (users collection)
+    # pour qu'il apparaisse dans l'onglet Contacts du dashboard
+    try:
+        contact_exists = False
+        if email:
+            contact_exists = bool(await db.users.find_one(
+                {"email": {"$regex": f"^{_re_mod.escape(email)}$", "$options": "i"}},
+                {"_id": 0, "id": 1}
+            ))
+        if not contact_exists and whatsapp:
+            contact_exists = bool(await db.users.find_one(
+                {"phone": whatsapp}, {"_id": 0, "id": 1}
+            ))
+        if not contact_exists:
+            # Trouver le coach associé au code pour lier le contact
+            coach_id_for_contact = (discount.get("coach_id") or discount.get("assignedEmail") or "").lower().strip()
+            contact_doc = {
+                "id": str(uuid.uuid4()),
+                "name": name,
+                "email": email or "",
+                "phone": whatsapp or "",
+                "source": "group_member",
+                "group_code": code_upper,
+                "coach_id": coach_id_for_contact,
+                "createdAt": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.users.insert_one(contact_doc)
+            contact_doc.pop("_id", None)
+            logger.info(f"[V209] Contact créé pour membre {name} ({email or whatsapp}) du groupe {code_upper}")
+    except Exception as e:
+        logger.warning(f"[V209] Erreur création contact pour {name}: {e}")
+
+    # V209: Notification push au coach — nouveau membre inscrit
+    try:
+        coach_email_for_push = (discount.get("coach_id") or discount.get("assignedEmail") or "").lower().strip()
+        if coach_email_for_push:
+            await send_push_by_email(
+                coach_email_for_push,
+                "Nouveau membre inscrit",
+                f"{name} a rejoint le groupe {code_upper}",
+                {"type": "new_member", "code": code_upper, "member_name": name}
+            )
+    except Exception as e:
+        logger.warning(f"[V209] Erreur push nouveau membre: {e}")
+
     return {"success": True, "member": member_doc, "already_existed": False}
 
 
@@ -4893,6 +4938,24 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     await db.reservations.insert_one(reservation_doc)
     reservation_doc.pop("_id", None)
     logger.info(f"[SUBSCRIBER_SPACE V187] Réservation {reservation_doc['reservationCode']} pour {user_email} ({course.get('name')}) × {quantity} guests={guests}")
+
+    # V209: Notification push au coach — nouvelle réservation
+    try:
+        coach_email_push = (coach_id if coach_id and "@" in coach_id else "").lower().strip()
+        if not coach_email_push:
+            coach_email_push = (subscription.get("coach_id") or "").lower().strip()
+        if coach_email_push:
+            # Formater la date pour la notif
+            notif_date = occurrence_iso[:10] if occurrence_iso else ""
+            notif_time = course.get("time") or ""
+            await send_push_by_email(
+                coach_email_push,
+                f"Nouvelle réservation",
+                f"{user_name} a réservé {course.get('name', 'une séance')} ({notif_date} {notif_time})",
+                {"type": "new_reservation", "code": code_upper, "reservation_id": reservation_doc["id"]}
+            )
+    except Exception as e:
+        logger.warning(f"[V209] Erreur push réservation: {e}")
 
     return {
         "success": True,
