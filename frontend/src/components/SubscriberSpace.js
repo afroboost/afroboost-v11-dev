@@ -392,14 +392,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             </form>
           </section>
 
-          {/* V202: Bouton paiement Stripe si un montant est configuré */}
-          {mm.stripe_amount && parseFloat(mm.stripe_amount) > 0 && (
-            <button type="button" onClick={handleStripeCheckout} disabled={stripeLoading}
-              className="w-full py-3 rounded-xl text-sm font-semibold transition-transform active:scale-95 disabled:opacity-50"
-              style={{ background: "rgba(217,28,210,0.18)", color: "#F0A8EE", border: `1px solid ${COLORS.primary}55` }}>
-              {stripeLoading ? "Redirection..." : `💳 Payer ${parseFloat(mm.stripe_amount).toFixed(2)} CHF`}
-            </button>
-          )}
+          {/* V204: Bouton paiement supprimé ici — seul le bouton Renouveler en bas suffit */}
 
           {/* V203d: Membres déjà inscrits — accès rapide + copier lien */}
           {mmMembers.length > 0 && (
@@ -578,14 +571,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           )}
         </section>
 
-        {/* V202: Bouton paiement Stripe si un montant est configuré */}
-        {data?.stripe_amount && parseFloat(data.stripe_amount) > 0 && (
-          <button type="button" onClick={handleStripeCheckout} disabled={stripeLoading}
-            className="w-full py-3 rounded-xl text-sm font-semibold transition-transform active:scale-95 disabled:opacity-50"
-            style={{ background: "rgba(217,28,210,0.18)", color: "#F0A8EE", border: `1px solid ${COLORS.primary}55` }}>
-            {stripeLoading ? "Redirection..." : `💳 Payer ${parseFloat(data.stripe_amount).toFixed(2)} CHF`}
-          </button>
-        )}
+        {/* V204: Bouton paiement en haut supprimé — le bouton "Renouveler" en bas suffit */}
 
         {/* ===== V195: Reconduction automatique ===== */}
         {subscription?.id && (subscription.has_payment_method || subscription.auto_renew) && (
@@ -874,7 +860,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                             : isConfirmed ? "rgba(34,197,94,0.15)" : "rgba(255,255,255,0.04)",
                           border: isSelected ? "none" : "1px solid rgba(255,255,255,0.08)",
                           color: isSelected ? "white" : isConfirmed ? "#86efac" : "rgba(255,255,255,0.6)",
-                          minWidth: "70px",
+                          minWidth: "76px",
                         }}
                       >
                         <span className="font-semibold" style={{ fontSize: "11px" }}>{d.date}</span>
@@ -1018,7 +1004,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             const coachSlug = coach?.id || coach?.email || "";
             const renewUrl = coachSlug ? `/coach/${encodeURIComponent(coachSlug)}` : "/";
             const isEmpty = remaining <= 0;
-            const hasStripe = data?.stripe_amount && Number(data.stripe_amount) > 0;
+            const hasStripe = data?.stripe_amount && Number(data.stripe_amount) > 0 && data?.is_payer !== false;
             const btnStyle = {
               background: isEmpty
                 ? `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`
@@ -1027,7 +1013,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               border: isEmpty ? "none" : `1px solid ${COLORS.primary}55`,
               boxShadow: isEmpty ? "0 6px 20px rgba(217,28,210,0.35)" : "none",
             };
-            // V203: Si Stripe est configuré, bouton déclenche le paiement Stripe
+            // V204: Si Stripe configuré → paiement Stripe, sinon → page coach
             if (hasStripe) {
               return (
                 <button
@@ -1035,10 +1021,19 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                   onClick={handleStripeCheckout}
                   disabled={stripeLoading}
                   data-testid="renew-subscription-btn"
-                  className={`w-full text-center font-semibold rounded-2xl transition-transform active:scale-95 ${isEmpty ? "py-4 text-base" : "py-3 text-sm"}`}
+                  className={`w-full flex items-center justify-center gap-2 font-semibold rounded-2xl transition-transform active:scale-95 ${isEmpty ? "py-4 text-base" : "py-3 text-sm"}`}
                   style={btnStyle}
                 >
-                  {stripeLoading ? "Redirection..." : `💳 Renouveler mon abonnement — ${Number(data.stripe_amount).toFixed(0)} CHF`}
+                  {stripeLoading ? "Redirection..." : (
+                    <>
+                      <svg width="20" height="14" viewBox="0 0 20 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="0.5" y="0.5" width="19" height="13" rx="2" stroke="currentColor"/>
+                        <line x1="0" y1="4" x2="20" y2="4" stroke="currentColor"/>
+                        <rect x="2" y="8" width="5" height="2" rx="0.5" fill="currentColor" opacity="0.5"/>
+                      </svg>
+                      Renouveler mon abonnement
+                    </>
+                  )}
                 </button>
               );
             }

@@ -4236,6 +4236,10 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
         "reservations": reservations_raw,
         "stripe_amount": stripe_amount,
         "stripe_product": stripe_product,
+        # V204: Seul le responsable du paiement voit le bouton Stripe
+        "is_payer": not is_multi or (
+            user_email and (discount or {}).get("assignedEmail", "").lower().strip() == user_email
+        ),
     }
 
 
