@@ -1311,6 +1311,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
     }).catch(() => {});
   }, []);
 
+  // === V214: FLOW UNIFIÉ EMAIL-FIRST ===
+  const [emailCheckValue, setEmailCheckValue] = useState(''); // Email saisi dans le champ unifié
+  const [emailChecking, setEmailChecking] = useState(false); // Loading pendant vérification email
+  const [emailCheckDone, setEmailCheckDone] = useState(false); // Email vérifié, afficher le bon formulaire
+  const [isKnownSubscriber, setIsKnownSubscriber] = useState(false); // true si abonné trouvé
+
   // === FORMULAIRE ABONNÉ (4 champs: Nom, WhatsApp, Email, Code Promo) ===
   const [showSubscriberForm, setShowSubscriberForm] = useState(false); // Afficher le formulaire abonné
   const [subscriberFormData, setSubscriberFormData] = useState({ name: '', whatsapp: '', email: '', code: '' });
@@ -2507,6 +2513,45 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
       setRecoverError(msg);
     } finally {
       setRecoverLoading(false);
+    }
+  };
+
+  // === V214: VÉRIFICATION EMAIL UNIFIÉE ===
+  // Un seul champ email → on vérifie si l'utilisateur est abonné ou visiteur
+  const handleEmailCheck = async (e) => {
+    e.preventDefault();
+    var emailVal = emailCheckValue.trim();
+    if (!emailVal) return;
+    setEmailChecking(true);
+    try {
+      // Tenter de récupérer l'abonné par email
+      var res = await axios.post(API + '/subscriber/recover', { email: emailVal });
+      if (res.data && res.data.code) {
+        // Abonné trouvé → pré-remplir le formulaire abonné
+        setIsKnownSubscriber(true);
+        setSubscriberFormData(function(prev) {
+          return {
+            name: res.data.name || prev.name || '',
+            whatsapp: res.data.whatsapp || prev.whatsapp || '',
+            email: emailVal,
+            code: res.data.code
+          };
+        });
+        setEmailCheckDone(true);
+        setShowSubscriberForm(true);
+      } else {
+        // Pas d'abonné → mode visiteur
+        setIsKnownSubscriber(false);
+        setLeadData(function(prev) { return { ...prev, email: emailVal }; });
+        setEmailCheckDone(true);
+      }
+    } catch (err) {
+      // Erreur = pas trouvé → mode visiteur
+      setIsKnownSubscriber(false);
+      setLeadData(function(prev) { return { ...prev, email: emailVal }; });
+      setEmailCheckDone(true);
+    } finally {
+      setEmailChecking(false);
     }
   };
 
@@ -5688,7 +5733,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                     formData={subscriberFormData}
                     setFormData={setSubscriberFormData}
                     onSubmit={handleSubscriberFormSubmit}
-                    onCancel={() => { setShowSubscriberForm(false); setError(''); }}
+                    onCancel={() => { setShowSubscriberForm(false); setEmailCheckDone(false); setEmailCheckValue(''); setError(''); }}
                     error={error}
                     isLoading={validatingCode}
                   />
@@ -5959,202 +6004,222 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                     </button>
                   </div>
                 ) : (
-                  /* === FORMULAIRE VISITEUR CLASSIQUE (3 champs) === */
-                  <form 
-                    onSubmit={handleSubmitLead}
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '12px',
-                      minHeight: 'min-content'
-                    }}
-                  >
-                    <p className="text-white text-sm text-center mb-2">
-                      Avant de commencer, présentez-vous !
-                    </p>
-                    
-                    {error && (
-                      <div style={{ 
-                        background: 'rgba(239, 68, 68, 0.2)', 
-                        color: '#ef4444', 
-                        padding: '8px 12px', 
-                        borderRadius: '8px',
-                        fontSize: '12px'
-                      }}>
-                        {error}
+                  /* === V214: FLOW UNIFIÉ — UN SEUL CHAMP EMAIL === */
+                  emailCheckDone && !isKnownSubscriber ? (
+                    /* Email vérifié, pas abonné → formulaire visiteur simplifié (prénom + WhatsApp) */
+                    <form
+                      onSubmit={handleSubmitLead}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '12px',
+                        minHeight: 'min-content'
+                      }}
+                    >
+                      <div style={{ textAlign: 'center', marginBottom: '4px' }}>
+                        <p style={{ color: '#22c55e', fontSize: '12px', marginBottom: '8px' }}>
+                          {emailCheckValue}
+                        </p>
+                        <p className="text-white text-sm">
+                          Complétez vos infos pour commencer
+                        </p>
                       </div>
-                    )}
-                    
-                    <div>
-                      <label className="block text-white text-xs mb-1" style={{ opacity: 0.7 }}>Prénom *</label>
-                      <input
-                        type="text"
-                        value={leadData.firstName}
-                        onChange={(e) => setLeadData({ ...leadData, firstName: e.target.value })}
-                        placeholder="Votre prénom"
-                        className="w-full px-3 py-2 rounded-lg text-sm"
-                        style={{
-                          background: 'rgba(255,255,255,0.1)',
-                          border: '1px solid rgba(255,255,255,0.2)',
-                          color: '#fff',
-                          outline: 'none'
-                        }}
-                        data-testid="lead-firstname"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label className="block text-white text-xs mb-1" style={{ opacity: 0.7 }}>Numéro WhatsApp *</label>
-                      <input
-                        type="tel"
-                        value={leadData.whatsapp}
-                        onChange={(e) => setLeadData({ ...leadData, whatsapp: e.target.value })}
-                        placeholder="+41 79 123 45 67"
-                        className="w-full px-3 py-2 rounded-lg text-sm"
-                        style={{
-                          background: 'rgba(255,255,255,0.1)',
-                          border: '1px solid rgba(255,255,255,0.2)',
-                          color: '#fff',
-                          outline: 'none'
-                        }}
-                        data-testid="lead-whatsapp"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label className="block text-white text-xs mb-1" style={{ opacity: 0.7 }}>Email *</label>
-                      <input
-                        type="email"
-                        value={leadData.email}
-                        onChange={(e) => setLeadData({ ...leadData, email: e.target.value })}
-                        placeholder="votre@email.com"
-                        className="w-full px-3 py-2 rounded-lg text-sm"
-                        style={{
-                          background: 'rgba(255,255,255,0.1)',
-                          border: '1px solid rgba(255,255,255,0.2)',
-                          color: '#fff',
-                          outline: 'none'
-                        }}
-                        data-testid="lead-email"
-                      />
-                    </div>
-                    
-                    <button
-                      type="submit"
-                      disabled={isLoading}
-                      className="py-3 rounded-lg font-semibold text-sm transition-all"
-                      style={{
-                        background: '#D91CD2', /* v9.4.2: Violet Afroboost */
-                        color: '#fff',
-                        border: 'none',
-                        cursor: isLoading ? 'wait' : 'pointer',
-                        opacity: isLoading ? 0.7 : 1,
-                        marginTop: '8px'
-                      }}
-                      data-testid="lead-submit"
-                    >
-                      {isLoading ? 'Chargement...' : 'Commencer le chat 💬'}
-                    </button>
-                    
-                    {/* === SÉPARATEUR === */}
-                    <div style={{ 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      gap: '12px',
-                      margin: '8px 0'
-                    }}>
-                      <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.2)' }} />
-                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px' }}>ou</span>
-                      <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.2)' }} />
-                    </div>
-                    
-                    {/* === BOUTON ABONNÉ === */}
-                    <button
-                      type="button"
-                      onClick={() => { setShowSubscriberForm(true); setError(''); }}
-                      className="py-3 rounded-lg font-semibold text-sm transition-all"
-                      style={{
-                        background: 'linear-gradient(135deg, rgba(147, 51, 234, 0.3), rgba(99, 102, 241, 0.3))',
-                        color: '#a855f7',
-                        border: '1px solid rgba(147, 51, 234, 0.4)',
-                        cursor: 'pointer'
-                      }}
-                      data-testid="subscriber-btn"
-                    >
-                      S'identifier comme abonné
-                    </button>
 
-                    {/* === v160: BOUTON COACH === */}
-                    <button
-                      type="button"
-                      onClick={() => { setShowCoachLoginForm(true); setError(''); }}
-                      className="py-3 rounded-lg font-semibold text-sm transition-all"
-                      style={{
-                        background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
-                        color: '#fff',
-                        border: 'none',
-                        cursor: 'pointer',
-                        marginTop: '8px',
-                        boxShadow: '0 2px 10px rgba(217,28,210,0.3)'
-                      }}
-                      data-testid="coach-login-btn"
-                    >
-                      🎟️ Je suis coach partenaire
-                    </button>
+                      {error && (
+                        <div style={{
+                          background: 'rgba(239, 68, 68, 0.2)',
+                          color: '#ef4444',
+                          padding: '8px 12px',
+                          borderRadius: '8px',
+                          fontSize: '12px'
+                        }}>
+                          {error}
+                        </div>
+                      )}
 
-                    {/* === v11.6: LIEN RETROUVER MES ACCÈS === */}
-                    <button
-                      type="button"
-                      onClick={() => { setShowRecoverForm(true); setRecoverError(''); setRecoverResult(null); setError(''); }}
-                      style={{
-                        background: 'none',
-                        color: '#f59e0b',
-                        border: 'none',
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                        textDecoration: 'underline',
-                        padding: '2px 0',
-                        textAlign: 'center'
-                      }}
-                      data-testid="recover-access-link"
-                    >
-                      🔑 Code perdu ? Retrouver mes accès
-                    </button>
+                      <div>
+                        <label className="block text-white text-xs mb-1" style={{ opacity: 0.7 }}>Prénom *</label>
+                        <input
+                          type="text"
+                          value={leadData.firstName}
+                          onChange={(e) => setLeadData({ ...leadData, firstName: e.target.value })}
+                          placeholder="Votre prénom"
+                          className="w-full px-3 py-2 rounded-lg text-sm"
+                          style={{
+                            background: 'rgba(255,255,255,0.1)',
+                            border: '1px solid rgba(255,255,255,0.2)',
+                            color: '#fff',
+                            outline: 'none'
+                          }}
+                          data-testid="lead-firstname"
+                        />
+                      </div>
 
-                    {/* v84: Bouton Devenir Partenaire — Dashboard si Mode Coach actif, sinon Devenir Partenaire */}
-                    {(platformSettings.partner_access_enabled || isCoachMode) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (isCoachMode) {
-                          window.location.hash = '#coach-dashboard';
-                        } else {
-                          window.dispatchEvent(new CustomEvent('openBecomeCoach'));
-                        }
-                      }}
-                      className="text-xs font-medium transition-all hover:scale-105"
+                      <div>
+                        <label className="block text-white text-xs mb-1" style={{ opacity: 0.7 }}>Numéro WhatsApp *</label>
+                        <input
+                          type="tel"
+                          value={leadData.whatsapp}
+                          onChange={(e) => setLeadData({ ...leadData, whatsapp: e.target.value })}
+                          placeholder="+41 79 123 45 67"
+                          className="w-full px-3 py-2 rounded-lg text-sm"
+                          style={{
+                            background: 'rgba(255,255,255,0.1)',
+                            border: '1px solid rgba(255,255,255,0.2)',
+                            color: '#fff',
+                            outline: 'none'
+                          }}
+                          data-testid="lead-whatsapp"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isLoading}
+                        className="py-3 rounded-lg font-semibold text-sm transition-all"
+                        style={{
+                          background: '#D91CD2',
+                          color: '#fff',
+                          border: 'none',
+                          cursor: isLoading ? 'wait' : 'pointer',
+                          opacity: isLoading ? 0.7 : 1,
+                          marginTop: '4px'
+                        }}
+                        data-testid="lead-submit"
+                      >
+                        {isLoading ? 'Chargement...' : 'Commencer le chat'}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => { setEmailCheckDone(false); setEmailCheckValue(''); }}
+                        style={{
+                          background: 'none',
+                          color: 'rgba(255,255,255,0.5)',
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          textDecoration: 'underline'
+                        }}
+                      >
+                        ← Changer d'email
+                      </button>
+                    </form>
+                  ) : (
+                    /* === V214: ÉCRAN D'ACCUEIL — UN SEUL CHAMP EMAIL === */
+                    <form
+                      onSubmit={handleEmailCheck}
                       style={{
-                        width: '100%',
-                        padding: '10px',
-                        marginTop: '8px',
-                        borderRadius: '8px',
-                        background: isCoachMode
-                          ? 'linear-gradient(135deg, rgba(217, 28, 210, 0.3), rgba(139, 92, 246, 0.3))'
-                          : 'transparent',
-                        color: '#D91CD2',
-                        border: '1px solid rgba(217, 28, 210, 0.4)',
-                        cursor: 'pointer'
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '14px',
+                        minHeight: 'min-content'
                       }}
-                      data-testid={isCoachMode ? "partner-dashboard-btn" : "become-partner-chat-btn"}
                     >
-                      {isCoachMode ? '🏠 Mon Espace Partenaire' : '✨ Devenir Partenaire'}
-                    </button>
-                    )}
-                    
-                    <p className="text-center text-xs" style={{ color: 'rgba(255,255,255,0.4)', marginTop: '8px' }}>
-                      Vos données sont protégées et utilisées uniquement pour vous contacter.
-                    </p>
-                  </form>
+                      <div style={{ textAlign: 'center', marginBottom: '4px' }}>
+                        <span style={{ fontSize: '32px' }}>💬</span>
+                        <p className="text-white text-sm" style={{ marginTop: '8px', fontWeight: '600' }}>
+                          Bienvenue chez Afroboost
+                        </p>
+                        <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', marginTop: '4px' }}>
+                          Entrez votre email pour commencer
+                        </p>
+                      </div>
+
+                      {error && (
+                        <div style={{
+                          background: 'rgba(239, 68, 68, 0.2)',
+                          color: '#ef4444',
+                          padding: '8px 12px',
+                          borderRadius: '8px',
+                          fontSize: '12px'
+                        }}>
+                          {error}
+                        </div>
+                      )}
+
+                      <div>
+                        <input
+                          type="email"
+                          value={emailCheckValue}
+                          onChange={(e) => setEmailCheckValue(e.target.value)}
+                          placeholder="votre@email.com"
+                          required
+                          className="w-full px-4 py-3 rounded-lg text-sm"
+                          style={{
+                            background: 'rgba(255,255,255,0.1)',
+                            border: '1px solid rgba(217, 28, 210, 0.4)',
+                            color: '#fff',
+                            outline: 'none',
+                            fontSize: '15px'
+                          }}
+                          data-testid="email-check-input"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={emailChecking}
+                        className="py-3 rounded-lg font-semibold text-sm transition-all"
+                        style={{
+                          background: '#D91CD2',
+                          color: '#fff',
+                          border: 'none',
+                          cursor: emailChecking ? 'wait' : 'pointer',
+                          opacity: emailChecking ? 0.7 : 1,
+                          fontSize: '14px'
+                        }}
+                        data-testid="email-check-submit"
+                      >
+                        {emailChecking ? 'Vérification...' : 'Continuer'}
+                      </button>
+
+                      {/* Liens discrets en bas */}
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'center',
+                        gap: '16px',
+                        marginTop: '4px'
+                      }}>
+                        <button
+                          type="button"
+                          onClick={() => { setShowCoachLoginForm(true); setError(''); }}
+                          style={{
+                            background: 'none',
+                            color: 'rgba(255,255,255,0.4)',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: '11px',
+                            textDecoration: 'underline',
+                            padding: 0
+                          }}
+                          data-testid="coach-login-link"
+                        >
+                          Espace coach
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setShowRecoverForm(true); setRecoverError(''); setRecoverResult(null); setError(''); }}
+                          style={{
+                            background: 'none',
+                            color: 'rgba(255,255,255,0.4)',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: '11px',
+                            textDecoration: 'underline',
+                            padding: 0
+                          }}
+                          data-testid="recover-access-link"
+                        >
+                          Code perdu ?
+                        </button>
+                      </div>
+
+                      <p className="text-center text-xs" style={{ color: 'rgba(255,255,255,0.3)', marginTop: '2px' }}>
+                        Vos données sont protégées
+                      </p>
+                    </form>
+                  )
                 )}
               </div>
             )}

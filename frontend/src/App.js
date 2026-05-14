@@ -2655,6 +2655,14 @@ function App() {
     // Aussi parser les params dans le hash (ex: #coach-dashboard?session_id=xxx)
     const hashParams = new URLSearchParams(hash.split('?')[1] || '');
     
+    // v214: Détection #session_id= pour auto-ouvrir le modal OAuth (retour Google)
+    // CORRIGE LE BUG: OAuth redirige vers homepage sans traiter le session_id
+    if (hash.includes('session_id=')) {
+      console.log('[APP] 🔑 v214 - Retour OAuth détecté — auto-ouverture modal login');
+      setShowCoachLogin(true);
+      return;
+    }
+
     // v11.0: Détection #reset-password pour afficher le modal de réinitialisation
     if (hash.includes('reset-password') && hash.includes('token=')) {
       console.log('[APP] 🔑 v11.0 - Lien de réinitialisation mot de passe détecté');

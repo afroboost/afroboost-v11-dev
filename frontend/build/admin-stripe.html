@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Afroboost — Configurer prix Stripe</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, sans-serif; background: #0A0A0F; color: white; padding: 20px; }
+  h1 { color: #D91CD2; margin-bottom: 8px; font-size: 1.4rem; }
+  .subtitle { color: rgba(255,255,255,0.5); margin-bottom: 24px; font-size: 0.9rem; }
+  .loading { text-align: center; padding: 40px; color: rgba(255,255,255,0.5); }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+  th { text-align: left; padding: 10px 8px; color: #D91CD2; font-size: 0.75rem; text-transform: uppercase; border-bottom: 1px solid rgba(255,255,255,0.1); }
+  td { padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.85rem; }
+  .code-name { font-weight: 600; color: #FF2DAA; }
+  .email { color: rgba(255,255,255,0.5); font-size: 0.75rem; }
+  .sessions { color: rgba(255,255,255,0.7); }
+  input[type="number"] {
+    width: 80px; padding: 6px 8px; border-radius: 8px;
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+    color: white; font-size: 0.85rem; text-align: center;
+  }
+  input[type="number"]:focus { outline: none; border-color: #D91CD2; }
+  .btn-save {
+    background: linear-gradient(135deg, #D91CD2, #FF2DAA);
+    color: white; border: none; padding: 12px 32px; border-radius: 12px;
+    font-weight: 600; font-size: 1rem; cursor: pointer;
+    transition: transform 0.1s;
+  }
+  .btn-save:hover { transform: scale(1.02); }
+  .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
+  .status { margin-top: 16px; padding: 12px; border-radius: 8px; }
+  .status.ok { background: rgba(34,197,94,0.15); color: #86efac; }
+  .status.err { background: rgba(239,68,68,0.15); color: #fca5a5; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; margin-left: 6px; }
+  .badge-group { background: rgba(59,130,246,0.2); color: #93c5fd; }
+  .badge-ok { background: rgba(34,197,94,0.2); color: #86efac; }
+  .footer { margin-top: 24px; text-align: center; }
+  .footer a { color: #D91CD2; text-decoration: none; }
+</style>
+</head>
+<body>
+  <h1>💳 Configurer les prix Stripe</h1>
+  <p class="subtitle">Codes sans prix Stripe configuré — entre le montant en CHF pour chaque code</p>
+
+  <div id="content"><div class="loading">Chargement des codes...</div></div>
+
+  <div class="footer">
+    <a href="/dashboard">← Retour au dashboard</a>
+  </div>
+
+<script>
+const API = '/api';
+let codesData = [];
+
+async function loadCodes() {
+  try {
+    const res = await fetch(API + '/admin/codes-missing-stripe');
+    const data = await res.json();
+    codesData = data.codes || [];
+    render();
+  } catch (e) {
+    document.getElementById('content').innerHTML = '<div class="status err">Erreur: ' + e.message + '</div>';
+  }
+}
+
+function render() {
+  if (codesData.length === 0) {
+    document.getElementById('content').innerHTML = '<div class="status ok">✅ Tous les codes ont déjà un prix Stripe configuré !</div>';
+    return;
+  }
+
+  let html = '<table><thead><tr><th>Code</th><th>Bénéficiaire</th><th>Séances</th><th>Prix CHF</th></tr></thead><tbody>';
+
+  for (let i = 0; i < codesData.length; i++) {
+    const c = codesData[i];
+    const isGroup = c.multi_member ? '<span class="badge badge-group">Groupe</span>' : '';
+    const email = c.assignedEmail || '—';
+    const sessions = (c.used || 0) + '/' + (c.maxUses || '?');
+
+    html += '<tr>';
+    html += '<td><span class="code-name">' + c.code + '</span>' + isGroup + '</td>';
+    html += '<td class="email">' + email + '</td>';
+    html += '<td class="sessions">' + sessions + '</td>';
+    html += '<td><input type="number" id="price-' + i + '" min="0" max="9999" step="5" placeholder="CHF"></td>';
+    html += '</tr>';
+  }
+
+  html += '</tbody></table>';
+  html += '<button class="btn-save" onclick="saveAll()">💾 Enregistrer tous les prix</button>';
+  html += '<div id="status"></div>';
+
+  document.getElementById('content').innerHTML = html;
+}
+
+async function saveAll() {
+  const updates = [];
+  for (let i = 0; i < codesData.length; i++) {
+    const input = document.getElementById('price-' + i);
+    const val = parseFloat(input.value);
+    if (val > 0) {
+      updates.push({ code: codesData[i].code, stripe_amount: val });
+    }
+  }
+
+  if (updates.length === 0) {
+    document.getElementById('status').innerHTML = '<div class="status err">⚠️ Entre au moins un prix avant de sauvegarder</div>';
+    return;
+  }
+
+  const btn = document.querySelector('.btn-save');
+  btn.disabled = true;
+  btn.textContent = 'Enregistrement...';
+
+  try {
+    const res = await fetch(API + '/admin/batch-fix-stripe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updates: updates })
+    });
+    const data = await res.json();
+
+    const updated = data.results.filter(r => r.status === 'updated');
+    document.getElementById('status').innerHTML = '<div class="status ok">✅ ' + updated.length + ' code(s) mis à jour ! Le bouton paiement apparaîtra maintenant sur ces espaces abonnés.</div>';
+
+    // Recharger pour voir les codes restants
+    setTimeout(loadCodes, 2000);
+  } catch (e) {
+    document.getElementById('status').innerHTML = '<div class="status err">❌ Erreur: ' + e.message + '</div>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 Enregistrer tous les prix';
+  }
+}
+
+loadCodes();
+</script>
+</body>
+</html>

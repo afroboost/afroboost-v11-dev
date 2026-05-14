@@ -375,25 +375,45 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
           </div>
         )}
 
-        {/* === MODE CHOIX (par défaut) === */}
+        {/* === V214: MODE CHOIX — Email par défaut, Google en secondaire === */}
         {authMode === 'choice' && (
           <>
-            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', textAlign: 'center', marginBottom: '12px' }}>Déjà partenaire ?</p>
+            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', textAlign: 'center', marginBottom: '12px' }}>Connectez-vous à votre espace</p>
 
-            {/* Bouton Google */}
+            {/* Bouton Email (principal) */}
+            <button
+              onClick={() => { resetForm(); setAuthMode('login'); }}
+              disabled={isLoading}
+              style={{
+                ...primaryBtnStyle,
+                background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)',
+                color: '#fff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px',
+                boxShadow: '0 4px 15px rgba(139,92,246,0.3)',
+                marginBottom: '10px'
+              }}
+            >
+              <EmailIcon />
+              <span>Se connecter avec Email</span>
+            </button>
+
+            {/* Bouton Google (secondaire) */}
             <button
               onClick={handleGoogleLogin}
               disabled={isLoading}
               style={{
                 ...primaryBtnStyle,
-                background: '#ffffff',
-                color: '#1f1f1f',
+                background: 'rgba(255,255,255,0.08)',
+                color: 'rgba(255,255,255,0.7)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '10px',
-                boxShadow: '0 4px 15px rgba(255,255,255,0.15)',
-                marginBottom: '10px'
+                border: '1px solid rgba(255,255,255,0.15)',
+                marginBottom: '0'
               }}
               data-testid="google-login-btn"
             >
@@ -402,27 +422,7 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
               ) : (
                 <GoogleIcon />
               )}
-              <span>{isLoading ? 'Connexion...' : 'Se connecter avec Google'}</span>
-            </button>
-
-            {/* Bouton Email */}
-            <button
-              onClick={() => { resetForm(); setAuthMode('login'); }}
-              disabled={isLoading}
-              style={{
-                ...primaryBtnStyle,
-                background: 'rgba(139,92,246,0.2)',
-                color: '#c4b5fd',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '10px',
-                border: '1px solid rgba(139,92,246,0.4)',
-                marginBottom: '0'
-              }}
-            >
-              <EmailIcon />
-              <span>Se connecter avec Email</span>
+              <span>{isLoading ? 'Connexion...' : 'Google'}</span>
             </button>
 
             {/* Séparateur */}
@@ -444,7 +444,7 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
               }}
               data-testid="become-partner-btn"
             >
-              ✨ Devenir Partenaire
+              Devenir Partenaire
             </button>
           </>
         )}
