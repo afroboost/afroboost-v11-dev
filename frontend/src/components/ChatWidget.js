@@ -2524,9 +2524,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
     if (!emailVal) return;
     setEmailChecking(true);
     try {
-      // Tenter de récupérer l'abonné par email
-      var res = await axios.post(API + '/subscriber/recover', { email: emailVal });
-      if (res.data && res.data.code) {
+      // V215: Vérification légère (pas d'envoi d'email, pas de rate-limit)
+      var res = await axios.get(API + '/subscriber/check', { params: { email: emailVal } });
+      if (res.data && res.data.found && res.data.code) {
         // Abonné trouvé → pré-remplir le formulaire abonné
         setIsKnownSubscriber(true);
         setSubscriberFormData(function(prev) {

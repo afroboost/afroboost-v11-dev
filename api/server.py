@@ -5517,6 +5517,36 @@ async def recover_subscriber_access(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# === V215: VÉRIFICATION LÉGÈRE ABONNÉ ===
+@api_router.get("/subscriber/check")
+async def check_subscriber_exists(email: str = ""):
+    """
+    Vérifie si un abonné existe pour cet email (code promo actif assigné).
+    Contrairement à /subscriber/recover : pas d'envoi d'email, pas de rate-limit.
+    Utilisé par le flow email-first du ChatWidget pour router abonné/visiteur.
+    """
+    try:
+        email = (email or "").lower().strip()
+        if not email:
+            return {"found": False}
+
+        # Recherche directe par assignedEmail (même logique que /subscriber/recover)
+        discount = await db.discount_codes.find_one(
+            {"assignedEmail": email, "active": True},
+            {"_id": 0}
+        )
+        if not discount:
+            return {"found": False}
+
+        code = discount.get("code", "").upper()
+        name = discount.get("name", email.split("@")[0])
+        return {"found": True, "code": code, "name": name}
+    except Exception as e:
+        logger.error(f"[SUBSCRIBER-CHECK] Error: {e}")
+        # En cas d'erreur, on ne bloque pas : l'utilisateur sera traité comme visiteur
+        return {"found": False}
+
+
 # === STRIPE CHECKOUT POUR COACHS PARTENAIRES v8.9 ===
 @api_router.post("/stripe/create-coach-checkout")
 async def create_coach_checkout(request: Request):
