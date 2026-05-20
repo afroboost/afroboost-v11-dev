@@ -5292,11 +5292,27 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
     if not reservation_id:
         raise HTTPException(status_code=400, detail="Réservation requise")
 
+    # V215b: Aligner sur /reserve — case-insensitive + fallback statuts + fallback discount_codes
     subscription = await db.subscriptions.find_one(
-        {"code": code_upper, "status": {"$in": ["active", "completed"]}}, {"_id": 0}
+        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "status": "active"}, {"_id": 0}
     )
     if not subscription:
-        raise HTTPException(status_code=404, detail="Abonnement introuvable")
+        subscription = await db.subscriptions.find_one(
+            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+        )
+    if not subscription:
+        dc = await db.discount_codes.find_one(
+            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+        )
+        if not dc:
+            raise HTTPException(status_code=404, detail="Abonnement introuvable")
+        subscription = {
+            "code": dc.get("code"),
+            "email": dc.get("assignedEmail") or "",
+            "remaining_sessions": max(0, (dc.get("maxUses") or 0) - (dc.get("used") or 0)),
+            "used_sessions": dc.get("used") or 0,
+            "_is_virtual": True,
+        }
 
     user_email = (subscription.get("email") or "").lower().strip()
     reservation = await db.reservations.find_one({"id": reservation_id}, {"_id": 0})
@@ -5346,9 +5362,11 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "status": "active",  # Re-réactive si l'abonnement avait été marqué "completed"
     }
-    await db.subscriptions.update_one(
-        {"id": subscription.get("id")}, {"$set": update_data}
-    )
+    # V215b: Skip si subscription virtuelle (cas discount_code seul)
+    if not subscription.get("_is_virtual") and subscription.get("id"):
+        await db.subscriptions.update_one(
+            {"id": subscription.get("id")}, {"$set": update_data}
+        )
 
     # V186: Décrémenter discount_codes.used du nombre de places (sans descendre sous 0)
     await db.discount_codes.update_one(
@@ -14688,6 +14706,33 @@ async def shutdown_db_client():
     """Close database connections on shutdown."""
     client.close()
     logger.info("[SYSTEM] Database connections closed")
+
+# Export for Vercel Serverless
+# ============================================
+# Docker Static File Serving (React SPA)
+# Only active when /app/static exists (Docker build)
+# In Vercel, this directory won't exist — no impact
+# ============================================
+import os as _os
+_STATIC_DIR = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "static")
+
+if _os.path.isdir(_STATIC_DIR):
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse as _FileResponse
+
+    # Serve /static/js, /static/css, /static/media etc. from the CRA build
+    _static_assets = _os.path.join(_STATIC_DIR, "static")
+    if _os.path.isdir(_static_assets):
+        fastapi_app.mount("/static", StaticFiles(directory=_static_assets), name="cra-static-assets")
+
+    # Catch-all: serve index.html for any non-API route (SPA routing)
+    @fastapi_app.get("/{full_path:path}")
+    async def _serve_spa(full_path: str):
+        """Serve React SPA — returns index.html for all non-API, non-static paths."""
+        file_path = _os.path.join(_STATIC_DIR, full_path)
+        if full_path and _os.path.isfile(file_path):
+            return _FileResponse(file_path)
+        return _FileResponse(_os.path.join(_STATIC_DIR, "index.html"))
 
 # Export for Vercel Serverless
 app = fastapi_app
