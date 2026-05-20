@@ -569,6 +569,46 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
                 </div>
               )}
             </div>
+
+            {/* Bouton Annuler la réservation */}
+            {details.reservationId && !msg._cancelled && (
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (!window.confirm('Voulez-vous vraiment annuler cette réservation ?')) return;
+                  try {
+                    await axios.delete(`${API}/reservations/${details.reservationId}`);
+                    // Marquer le message comme annulé
+                    setMessages(prev => prev.map(m =>
+                      m.id === msg.id ? { ...m, _cancelled: true, reservationDetails: { ...m.reservationDetails } } : m
+                    ));
+                  } catch (err) {
+                    console.error('[CANCEL] Erreur:', err);
+                    alert('Erreur lors de l\'annulation. Réessayez.');
+                  }
+                }}
+                style={{
+                  marginTop: '12px', padding: '10px 16px', borderRadius: '10px',
+                  border: '1px solid rgba(239, 68, 68, 0.4)', background: 'rgba(239, 68, 68, 0.1)',
+                  color: '#f87171', fontSize: '12px', fontWeight: '600',
+                  cursor: 'pointer', width: '100%',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                ❌ Annuler la réservation
+              </button>
+            )}
+            {msg._cancelled && (
+              <div style={{
+                marginTop: '12px', padding: '10px', borderRadius: '10px',
+                background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)',
+                textAlign: 'center'
+              }}>
+                <span style={{ color: '#f87171', fontSize: '12px', fontWeight: '600' }}>
+                  ❌ Réservation annulée
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -2373,6 +2413,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
           isReservationSummary: true,
           isLocalOnly: true,
           reservationDetails: {
+            reservationId: res.data.id || res.data.reservationCode || null,
             courseName: selectedCourse.name,
             courseTime: selectedCourse.time,
             reservationDate: formattedDateTime.charAt(0).toUpperCase() + formattedDateTime.slice(1), // v11.5

@@ -757,9 +757,50 @@ async def validate_reservation(reservation_code: str):
 
 @reservation_router.delete("/reservations/{reservation_id}")
 async def delete_reservation(reservation_id: str):
-    """Supprime une réservation"""
-    await db.reservations.delete_one({"id": reservation_id})
-    return {"success": True}
+    """Supprime une réservation et recrédite la séance à l'abonné si applicable"""
+    # Récupérer la réservation avant suppression pour recréditer
+    reservation = await db.reservations.find_one(
+        {"$or": [{"id": reservation_id}, {"reservationCode": reservation_id}]},
+        {"_id": 0}
+    )
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Réservation introuvable")
+
+    # Recréditer la séance si l'abonné avait un code promo / abonnement
+    promo_code = (reservation.get("promoCode") or "").strip().upper()
+    user_email = (reservation.get("userEmail") or "").strip().lower()
+    recredited = False
+
+    if user_email and promo_code and promo_code != "N/A":
+        # Chercher l'abonnement actif ou complété pour cet email + code
+        sub = await db.subscriptions.find_one(
+            {"email": user_email, "code": promo_code, "status": {"$in": ["active", "completed"]}},
+            {"_id": 0}
+        )
+        if sub:
+            new_remaining = sub.get("remaining_sessions", 0) + 1
+            new_used = max(0, sub.get("used_sessions", 0) - 1)
+            update_data = {
+                "remaining_sessions": new_remaining,
+                "used_sessions": new_used,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            # Si le statut était "completed", le remettre à "active"
+            if sub.get("status") == "completed":
+                update_data["status"] = "active"
+            await db.subscriptions.update_one(
+                {"id": sub.get("id")},
+                {"$set": update_data}
+            )
+            recredited = True
+            logger.info(f"[CANCEL] Séance recréditée: {user_email} - {new_remaining} restantes")
+
+    # Supprimer la réservation
+    await db.reservations.delete_one(
+        {"$or": [{"id": reservation_id}, {"reservationCode": reservation_id}]}
+    )
+    logger.info(f"[CANCEL] Réservation {reservation_id} annulée par {user_email}")
+    return {"success": True, "recredited": recredited}
 
 
 # V185 F4 + V186 fix + V188: Suivi des casques (Silent Disco)
