@@ -571,19 +571,25 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             </div>
 
             {/* Bouton Annuler la réservation */}
-            {details.reservationId && !msg._cancelled && (
+            {details.reservationId && !msg._cancelled && !msg._cancelling && (
               <button
                 onClick={async (e) => {
                   e.stopPropagation();
                   if (!window.confirm('Voulez-vous vraiment annuler cette réservation ?')) return;
+                  // Anti double-clic
+                  setMessages(prev => prev.map(m =>
+                    m.id === msg.id ? { ...m, _cancelling: true } : m
+                  ));
                   try {
                     await axios.delete(`${API}/reservations/${details.reservationId}`);
-                    // Marquer le message comme annulé
                     setMessages(prev => prev.map(m =>
-                      m.id === msg.id ? { ...m, _cancelled: true, reservationDetails: { ...m.reservationDetails } } : m
+                      m.id === msg.id ? { ...m, _cancelled: true, _cancelling: false } : m
                     ));
                   } catch (err) {
                     console.error('[CANCEL] Erreur:', err);
+                    setMessages(prev => prev.map(m =>
+                      m.id === msg.id ? { ...m, _cancelling: false } : m
+                    ));
                     alert('Erreur lors de l\'annulation. Réessayez.');
                   }
                 }}
@@ -597,6 +603,14 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
               >
                 ❌ Annuler la réservation
               </button>
+            )}
+            {msg._cancelling && (
+              <div style={{
+                marginTop: '12px', padding: '10px', borderRadius: '10px',
+                background: 'rgba(255, 255, 255, 0.05)', textAlign: 'center'
+              }}>
+                <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px' }}>⏳ Annulation en cours...</span>
+              </div>
             )}
             {msg._cancelled && (
               <div style={{
