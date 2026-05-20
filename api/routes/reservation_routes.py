@@ -876,7 +876,7 @@ async def delete_reservation(reservation_id: str):
                             <p style="color:white;font-size:14px;margin:0;">{res_code}</p>
                         </div>
                         <p style="color:{'#22c55e' if recredited else '#f87171'};font-size:13px;margin:0;">
-                            {'✅ Séance recréditée à l\'abonné' if recredited else '⚠️ Pas de recrédit (pas d\'abonnement trouvé)'}
+                            {"✅ Séance recréditée" if recredited else "⚠️ Pas de recrédit (pas d abonnement trouvé)"}
                         </p>
                     </div>
                 </div>"""
