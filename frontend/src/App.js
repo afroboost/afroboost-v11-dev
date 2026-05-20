@@ -86,9 +86,9 @@ const detectStripeSuccess = () => {
   const urlParams = new URLSearchParams(window.location.search);
   const hash = window.location.hash;
   
+  // V217: Ne capturer QUE les paiements partenaire/coach (success=true)
+  // NE PAS capturer status=success (checkout standard) ni payment=success (vitrine)
   const isSuccess = urlParams.get('success') === 'true' ||
-                    urlParams.get('status') === 'success' ||
-                    urlParams.get('payment') === 'success' ||
                     hash.includes('success=true') ||
                     hash.includes('welcome=true');
   
@@ -3176,7 +3176,7 @@ function App() {
     const paymentParam = urlParams.get('payment');
     const isPaymentSuccess = statusParam === 'success' || paymentParam === 'success' || urlParams.get('payment_success') === 'true';
     const isPaymentCanceled = statusParam === 'canceled' || paymentParam === 'canceled' || urlParams.get('payment_canceled') === 'true';
-    const sessionId = urlParams.get('session_id');
+    const sessionId = urlParams.get('session_id') || urlParams.get('txn'); // V217: support vitrine txn param
     
     // Nettoyer l'URL après affichage du ticket
     const cleanUrl = () => {
@@ -3186,6 +3186,7 @@ function App() {
       url.searchParams.delete('payment_success');
       url.searchParams.delete('payment_canceled');
       url.searchParams.delete('session_id');
+      url.searchParams.delete('txn'); // V217: clean vitrine txn param
       window.history.replaceState({}, document.title, url.pathname);
     };
     
@@ -4799,7 +4800,8 @@ function App() {
       {/* v158.7: SuccessOverlay et PaymentSuccessPage désactivés.
           L'utilisateur reçoit sa confirmation par email (avec QR code, code AFRO-XXXX, guide).
           Pas de popup écran pour ne pas distraire et éviter les double-notifications. */}
-      {false && showSuccess && lastReservation && (
+      {/* V217: Réactiver SuccessOverlay — confirmation visuelle après paiement */}
+      {showSuccess && lastReservation && (
         <SuccessOverlay
           t={t}
           data={lastReservation}
