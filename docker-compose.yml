@@ -1,0 +1,27 @@
+version: "3.8"
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - MONGO_URL=${MONGO_URL}
+      - DB_NAME=${DB_NAME:-afroboost_db}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
+      - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
+      - VAPID_CLAIMS_EMAIL=${VAPID_CLAIMS_EMAIL:-contact@afroboost.ch}
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - META_WHATSAPP_TOKEN=${META_WHATSAPP_TOKEN:-}
+      - META_WHATSAPP_PHONE_ID=${META_WHATSAPP_PHONE_ID:-}
+      - META_WHATSAPP_VERIFY_TOKEN=${META_WHATSAPP_VERIFY_TOKEN:-afroboost_webhook_2024}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
+      - JWT_SECRET=${JWT_SECRET:-}
+      - CINETPAY_API_KEY=${CINETPAY_API_KEY:-}
+      - CINETPAY_SITE_ID=${CINETPAY_SITE_ID:-}
+    restart: unless-stopped
