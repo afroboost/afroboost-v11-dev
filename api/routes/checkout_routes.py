@@ -673,27 +673,69 @@ async def _process_successful_payment(
     import string
     access_code = f"AFR-{''.join(random.choices(string.ascii_uppercase + string.digits, k=6))}"
 
-    # 3. Stocker le code dans discount_codes (même collection que les codes existants)
+    # V216: Calculer le nombre de séances depuis les items
+    import re as _re_checkout
+    sessions_count = 0
+    items_product_name = ""
+    for item in items:
+        item_data = item.dict() if hasattr(item, 'dict') else item
+        item_name = item_data.get("name", "")
+        item_qty = int(item_data.get("quantity", 1))
+        if not items_product_name:
+            items_product_name = item_name
+        # Chercher "x10", "x5", etc. dans le nom
+        x_match = _re_checkout.search(r'x\s*(\d+)', item_name, _re_checkout.IGNORECASE)
+        if x_match:
+            sessions_count += int(x_match.group(1)) * item_qty
+        else:
+            sessions_count += item_qty
+    if sessions_count <= 0:
+        sessions_count = 1
+
+    # 3. Stocker le code dans discount_codes (champs compatibles avec subscriber check)
     await db["discount_codes"].insert_one({
         "id": str(uuid.uuid4()),
         "code": access_code,
+        "name": customer_name,
         "coach_id": coach_email,
-        "customer_name": customer_name,
-        "customer_email": customer_email,
-        "customer_phone": customer_phone,
-        "type": "access",
-        "value": 0,
-        "max_uses": 999,
-        "current_uses": 0,
+        "assignedEmail": customer_email.lower().strip(),
+        "type": "100%",
+        "value": 100,
+        "maxUses": sessions_count,
+        "used": 0,
         "active": True,
+        "courses": [],
         "source": "checkout_payment",
         "transaction_id": transaction_id,
         "payment_method": payment_method,
         "total_paid": total,
         "currency": currency,
-        "items": [i.dict() if hasattr(i, 'dict') else i for i in items],
         "created_at": datetime.now(timezone.utc).isoformat()
     })
+
+    # V216: Créer la subscription (suivi séances restantes)
+    subscription_id = str(uuid.uuid4())
+    await db["subscriptions"].insert_one({
+        "id": subscription_id,
+        "email": customer_email.lower().strip(),
+        "name": customer_name,
+        "code": access_code,
+        "offer_name": items_product_name or "Achat Afroboost",
+        "total_sessions": sessions_count,
+        "used_sessions": 0,
+        "remaining_sessions": sessions_count,
+        "expires_at": None,
+        "status": "active",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "source": "checkout_vitrine",
+        "coach_id": coach_email,
+        "auto_renew": False,
+        "renewal_price": total,
+        "renewal_sessions": sessions_count,
+        "renewal_warnings_sent": [],
+    })
+    logger.info(f"[CHECKOUT] Code {access_code} + subscription crees pour {customer_email} ({sessions_count} seances)")
 
     # 4. Créer les réservations pour chaque item de type "course"
     for item in items:
@@ -711,8 +753,9 @@ async def _process_successful_payment(
                 "offerName": item_data.get("name", ""),
                 "totalPrice": item_data.get("price", 0),
                 "quantity": item_data.get("quantity", 1),
-                "promoCode": discount_code or access_code,
+                "promoCode": access_code,
                 "discountCode": access_code,
+                "subscriptionId": subscription_id,
                 "status": "confirmed",
                 "payment_method": payment_method,
                 "transaction_id": transaction_id,
