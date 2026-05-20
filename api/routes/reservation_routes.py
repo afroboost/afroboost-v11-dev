@@ -757,7 +757,7 @@ async def validate_reservation(reservation_code: str):
 
 @reservation_router.delete("/reservations/{reservation_id}")
 async def delete_reservation(reservation_id: str):
-    """Supprime une réservation et recrédite la séance à l'abonné si applicable"""
+    """Supprime une réservation et recrédite la séance à l'abonné si applicable — V216"""
     # Récupérer la réservation avant suppression pour recréditer
     reservation = await db.reservations.find_one(
         {"$or": [{"id": reservation_id}, {"reservationCode": reservation_id}]},
@@ -768,15 +768,39 @@ async def delete_reservation(reservation_id: str):
 
     # Recréditer la séance si l'abonné avait un code promo / abonnement
     promo_code = (reservation.get("promoCode") or "").strip().upper()
+    subscription_id = (reservation.get("subscriptionId") or "").strip()
     user_email = (reservation.get("userEmail") or "").strip().lower()
     recredited = False
 
-    if user_email and promo_code and promo_code != "N/A":
-        # Chercher l'abonnement actif ou complété pour cet email + code
-        sub = await db.subscriptions.find_one(
-            {"email": user_email, "code": promo_code, "status": {"$in": ["active", "completed"]}},
-            {"_id": 0}
-        )
+    logger.info(f"[CANCEL] Tentative annulation: res={reservation_id} email={user_email} promo={promo_code} subId={subscription_id}")
+
+    if user_email:
+        sub = None
+        # V216: Recherche par subscriptionId d'abord (plus fiable)
+        if subscription_id:
+            sub = await db.subscriptions.find_one(
+                {"id": subscription_id, "status": {"$in": ["active", "completed"]}},
+                {"_id": 0}
+            )
+            logger.info(f"[CANCEL] Recherche par subscriptionId={subscription_id}: {'trouvé' if sub else 'non trouvé'}")
+
+        # Fallback: recherche par email + code promo
+        if not sub and promo_code and promo_code != "N/A":
+            sub = await db.subscriptions.find_one(
+                {"email": user_email, "code": promo_code, "status": {"$in": ["active", "completed"]}},
+                {"_id": 0}
+            )
+            logger.info(f"[CANCEL] Recherche par email+code: {'trouvé' if sub else 'non trouvé'}")
+
+        # V216: Fallback ultime — chercher par email seul (un seul abonnement actif)
+        if not sub and promo_code and promo_code != "N/A":
+            sub = await db.subscriptions.find_one(
+                {"email": user_email, "status": {"$in": ["active", "completed"]}},
+                {"_id": 0}
+            )
+            if sub:
+                logger.info(f"[CANCEL] Trouvé par email seul: code={sub.get('code')} remaining={sub.get('remaining_sessions')}")
+
         if sub:
             new_remaining = sub.get("remaining_sessions", 0) + 1
             new_used = max(0, sub.get("used_sessions", 0) - 1)
@@ -793,13 +817,74 @@ async def delete_reservation(reservation_id: str):
                 {"$set": update_data}
             )
             recredited = True
-            logger.info(f"[CANCEL] Séance recréditée: {user_email} - {new_remaining} restantes")
+            logger.info(f"[CANCEL] Séance recréditée: {user_email} - {new_remaining} restantes (sub: {sub.get('id')})")
+        else:
+            logger.warning(f"[CANCEL] Aucun abonnement trouvé pour {user_email} / {promo_code} — pas de recrédit")
 
     # Supprimer la réservation
     await db.reservations.delete_one(
         {"$or": [{"id": reservation_id}, {"reservationCode": reservation_id}]}
     )
-    logger.info(f"[CANCEL] Réservation {reservation_id} annulée par {user_email}")
+    logger.info(f"[CANCEL] Réservation {reservation_id} supprimée — recredited={recredited}")
+
+    # V216: Notifier le coach par email + sauvegarder le log d'annulation
+    user_name = reservation.get("userName", user_email)
+    course_name = reservation.get("courseName") or reservation.get("offerName") or "cours"
+    course_date = reservation.get("datetime") or reservation.get("selectedDatesText") or ""
+    res_code = reservation.get("reservationCode", reservation_id)
+
+    # Sauvegarder l'annulation dans notifications collection
+    try:
+        await db.notifications.insert_one({
+            "id": f"cancel_{reservation_id}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
+            "type": "reservation_cancelled",
+            "title": f"❌ Annulation: {user_name}",
+            "message": f"{user_name} a annulé sa réservation pour {course_name} ({course_date}). Code: {res_code}. Séance recréditée: {'Oui' if recredited else 'Non'}.",
+            "user_email": user_email,
+            "reservation_code": res_code,
+            "recredited": recredited,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "read": False,
+            "coach_id": reservation.get("coach_id", "bassi_default"),
+        })
+    except Exception as _e:
+        logger.warning(f"[CANCEL] Erreur sauvegarde notification: {_e}")
+
+    # Envoyer email au coach
+    try:
+        if _RESEND_OK and _RESEND_KEY:
+            import resend as _resend_lib
+            _resend_lib.api_key = _RESEND_KEY
+            await asyncio.to_thread(_resend_lib.Emails.send, {
+                "from": "Afroboost <notifications@afroboost.com>",
+                "to": [SUPER_ADMIN_EMAIL],
+                "subject": f"❌ Annulation: {user_name} - {course_name}",
+                "html": f"""<div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;background:#0a0a0a;color:#fff;border-radius:16px;overflow:hidden;">
+                    <div style="background:linear-gradient(135deg,#ef4444,#dc2626);padding:20px;text-align:center;">
+                        <h2 style="color:white;margin:0;font-size:18px;">❌ Réservation annulée</h2>
+                    </div>
+                    <div style="padding:24px;">
+                        <p style="color:#e2e8f0;font-size:14px;margin:0 0 12px;">
+                            <strong>{user_name}</strong> ({user_email}) a annulé sa réservation.
+                        </p>
+                        <div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:14px;margin:0 0 12px;">
+                            <p style="color:#a78bfa;font-size:12px;margin:0 0 4px;">COURS</p>
+                            <p style="color:white;font-size:14px;margin:0 0 10px;">{course_name}</p>
+                            <p style="color:#a78bfa;font-size:12px;margin:0 0 4px;">DATE</p>
+                            <p style="color:white;font-size:14px;margin:0 0 10px;">{course_date}</p>
+                            <p style="color:#a78bfa;font-size:12px;margin:0 0 4px;">CODE RÉSA</p>
+                            <p style="color:white;font-size:14px;margin:0;">{res_code}</p>
+                        </div>
+                        <p style="color:{'#22c55e' if recredited else '#f87171'};font-size:13px;margin:0;">
+                            {'✅ Séance recréditée à l\'abonné' if recredited else '⚠️ Pas de recrédit (pas d\'abonnement trouvé)'}
+                        </p>
+                    </div>
+                </div>"""
+            })
+            logger.info(f"[CANCEL] Email notification envoyé au coach pour {res_code}")
+    except Exception as _e:
+        logger.warning(f"[CANCEL] Erreur envoi email coach: {_e}")
+
     return {"success": True, "recredited": recredited}
 
 

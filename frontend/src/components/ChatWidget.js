@@ -391,7 +391,22 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
   
   if (msg.isReservationSummary && msg.reservationDetails) {
     const details = msg.reservationDetails;
-    
+
+    // V216: Carte annulée — disparaît avec animation
+    if (msg._cancelled) {
+      return (
+        <div style={{
+          alignSelf: 'flex-start', maxWidth: '320px', padding: '12px 16px',
+          background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)',
+          borderRadius: '14px', textAlign: 'center',
+          animation: 'fadeOut 3s ease-in-out forwards',
+        }}>
+          <span style={{ color: '#f87171', fontSize: '12px' }}>✅ Réservation annulée — séance recréditée</span>
+          <style>{`@keyframes fadeOut { 0%{opacity:1;max-height:80px} 60%{opacity:1;max-height:80px} 100%{opacity:0;max-height:0;padding:0;margin:0;border:none;overflow:hidden} }`}</style>
+        </div>
+      );
+    }
+
     // v10.4: Version minimisée après fermeture
     if (isMinimized) {
       return (
