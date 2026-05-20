@@ -356,7 +356,7 @@ const InlineCtaButton = ({ label, url }) => {
  * Couleurs: Violet (#8B5CF6) pour le Coach, Gris foncé pour les membres/IA
  */
 // V172: vitrineCoachName ajouté aux props (utilisé dans le récap réservation)
-const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUserId, profilePhotoUrl, onReservationClick, onZoomPhoto, onDelete, vitrineCoachName }) => {
+const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUserId, profilePhotoUrl, onReservationClick, onZoomPhoto, onDelete, vitrineCoachName, onCancelReservation }) => {
   // v10.4: Fallback robuste pour texte (content, text, body - jamais vide)
   const messageText = msg.content || msg.text || msg.body || '';
   const htmlContent = parseMessageContent(messageText);
@@ -571,27 +571,12 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             </div>
 
             {/* Bouton Annuler la réservation */}
-            {details.reservationId && !msg._cancelled && !msg._cancelling && (
+            {details.reservationId && !msg._cancelled && !msg._cancelling && onCancelReservation && (
               <button
-                onClick={async (e) => {
+                onClick={(e) => {
                   e.stopPropagation();
                   if (!window.confirm('Voulez-vous vraiment annuler cette réservation ?')) return;
-                  // Anti double-clic
-                  setMessages(prev => prev.map(m =>
-                    m.id === msg.id ? { ...m, _cancelling: true } : m
-                  ));
-                  try {
-                    await axios.delete(`${API}/reservations/${details.reservationId}`);
-                    setMessages(prev => prev.map(m =>
-                      m.id === msg.id ? { ...m, _cancelled: true, _cancelling: false } : m
-                    ));
-                  } catch (err) {
-                    console.error('[CANCEL] Erreur:', err);
-                    setMessages(prev => prev.map(m =>
-                      m.id === msg.id ? { ...m, _cancelling: false } : m
-                    ));
-                    alert('Erreur lors de l\'annulation. Réessayez.');
-                  }
+                  onCancelReservation(msg.id, details.reservationId);
                 }}
                 style={{
                   marginTop: '12px', padding: '10px 16px', borderRadius: '10px',
@@ -970,6 +955,10 @@ const MemoizedMessageBubble = memo(MessageBubble, (prevProps, nextProps) => {
 
   // v153: Si is_deleted change, on doit re-rendre
   if (prevProps.msg.is_deleted !== nextProps.msg.is_deleted) return false;
+
+  // Si _cancelled ou _cancelling change, on doit re-rendre
+  if (prevProps.msg._cancelled !== nextProps.msg._cancelled) return false;
+  if (prevProps.msg._cancelling !== nextProps.msg._cancelling) return false;
 
   // Si l'avatar change (utilisateur a uploadé une nouvelle photo), on doit re-rendre
   if (prevProps.msg.senderPhotoUrl !== nextProps.msg.senderPhotoUrl) return false;
@@ -4523,6 +4512,26 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
   };
 
   // Envoyer un message au chat avec contexte de session
+  // === ANNULATION RÉSERVATION ===
+  const handleCancelReservation = async (msgId, reservationId) => {
+    // Anti double-clic : marquer comme "en cours"
+    setMessages(prev => prev.map(m =>
+      m.id === msgId ? { ...m, _cancelling: true } : m
+    ));
+    try {
+      await axios.delete(`${API}/reservations/${reservationId}`);
+      setMessages(prev => prev.map(m =>
+        m.id === msgId ? { ...m, _cancelled: true, _cancelling: false } : m
+      ));
+    } catch (err) {
+      console.error('[CANCEL] Erreur annulation:', err);
+      setMessages(prev => prev.map(m =>
+        m.id === msgId ? { ...m, _cancelling: false } : m
+      ));
+      alert('Erreur lors de l\'annulation. Réessayez.');
+    }
+  };
+
   const handleDeleteMessage = async (messageId) => {
     try {
       await axios.put(`${API}/chat/messages/${messageId}/delete`);
@@ -7258,6 +7267,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           onReservationClick={function() {}}
                           onZoomPhoto={function(url) { setZoomedChatPhoto(url); }}
                           onDelete={function(messageId) { handleDeleteMessage(messageId); }}
+                          onCancelReservation={handleCancelReservation}
                           vitrineCoachName={vitrineCoachName}
                         />
                       ); })}
@@ -7843,6 +7853,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           onReservationClick={() => setShowReservationPanel(true)}
                           onZoomPhoto={(url) => setZoomedChatPhoto(url)}
                           onDelete={(messageId) => handleDeleteMessage(messageId)}
+                          onCancelReservation={handleCancelReservation}
                           vitrineCoachName={vitrineCoachName}
                         />
                         {/* V197: Bouton "Parler à Coach Bassi" sous les réponses prédéfinies */}
