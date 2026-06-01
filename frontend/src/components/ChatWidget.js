@@ -351,6 +351,249 @@ const InlineCtaButton = ({ label, url }) => {
 };
 
 /**
+ * V218: Écran de paiement affiché après le tunnel d'onboarding
+ * quand le lien intelligent a une end_action de type "payment".
+ * Propose Stripe Checkout (carte + TWINT intégré) + fallback TWINT direct.
+ * Style premium Afroboost: fond noir, glow violet #D91CD2.
+ */
+const PaymentScreen = ({
+  clientData,
+  paymentAction,
+  paymentLinksConfig,
+  setPaymentLinksConfig,
+  isLoading,
+  setIsLoading,
+  error,
+  setError,
+  linkToken,
+  onSkipToChat
+}) => {
+  // Montant configuré dans l'action (peut être 0/null si non configuré)
+  const configuredAmount = paymentAction && paymentAction.config && Number(paymentAction.config.amount) > 0
+    ? Number(paymentAction.config.amount)
+    : 0;
+  const productLabel = (paymentAction && paymentAction.config && paymentAction.config.label)
+    || (clientData && clientData.linkData && clientData.linkData.title)
+    || 'Réservation Afroboost';
+
+  // Permettre une saisie libre si aucun montant n'est configuré
+  const [customAmount, setCustomAmount] = React.useState(configuredAmount > 0 ? '' : '');
+  const finalAmount = configuredAmount > 0 ? configuredAmount : Number(customAmount || 0);
+
+  // Charger les liens de paiement (TWINT direct fallback) si pas déjà fait
+  React.useEffect(() => {
+    if (paymentLinksConfig) return;
+    axios.get(`${API}/payment-links`).then(res => {
+      if (res && res.data) setPaymentLinksConfig(res.data);
+    }).catch(() => { /* silencieux — TWINT direct optionnel */ });
+  }, [paymentLinksConfig, setPaymentLinksConfig]);
+
+  const twintDirectUrl = (paymentLinksConfig && paymentLinksConfig.twint && String(paymentLinksConfig.twint).trim()) || '';
+
+  const handleStripeCheckout = async () => {
+    setError('');
+    if (!finalAmount || finalAmount <= 0) {
+      setError('Veuillez indiquer un montant valide en CHF.');
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const res = await axios.post(`${API}/create-checkout-session`, {
+        productName: productLabel,
+        amount: finalAmount,
+        customerEmail: clientData.email,
+        originUrl: window.location.origin,
+        reservationData: {
+          id: clientData.participantId || '',
+          courseName: productLabel,
+          offerName: productLabel,
+          link_token: linkToken || ''
+        }
+      });
+      if (res.data && res.data.url) {
+        // Conserver l'info que l'utilisateur paie via un lien intelligent (pour retour)
+        try {
+          localStorage.setItem('afroboost_smartlink_payment', JSON.stringify({
+            linkToken: linkToken || '',
+            clientData,
+            amount: finalAmount,
+            at: new Date().toISOString()
+          }));
+        } catch (e) { /* silencieux */ }
+        window.location.href = res.data.url;
+      } else {
+        throw new Error('URL de paiement indisponible');
+      }
+    } catch (err) {
+      console.error('[PAYMENT] Stripe checkout error:', err);
+      setError((err.response && err.response.data && err.response.data.detail) || 'Erreur lors de la création du paiement. Réessayez.');
+      setIsLoading(false);
+    }
+  };
+
+  const handleTwintDirect = () => {
+    if (!twintDirectUrl) {
+      setError('TWINT non configuré. Utilisez la carte ou TWINT via Stripe.');
+      return;
+    }
+    try {
+      localStorage.setItem('afroboost_smartlink_payment', JSON.stringify({
+        linkToken: linkToken || '',
+        clientData,
+        amount: finalAmount,
+        method: 'twint_direct',
+        at: new Date().toISOString()
+      }));
+    } catch (e) { /* silencieux */ }
+    window.open(twintDirectUrl, '_blank');
+  };
+
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start',
+      padding: '32px 24px', minHeight: '400px',
+      background: 'linear-gradient(180deg, #0a0a0a 0%, #1a0a1a 100%)',
+      borderRadius: '16px', width: '100%', maxWidth: '420px', margin: '0 auto'
+    }}>
+      {/* Logo + titre */}
+      <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+        <img
+          src="/logo192.png"
+          alt="Afroboost"
+          style={{
+            width: '56px', height: '56px', borderRadius: '50%', marginBottom: '8px',
+            border: '2px solid rgba(217,28,210,0.3)',
+            boxShadow: '0 0 16px rgba(217,28,210,0.2)'
+          }}
+        />
+        <h2 style={{ color: '#ffffff', fontSize: '20px', fontWeight: 700, margin: '0 0 6px 0' }}>
+          Finaliser le paiement 💳
+        </h2>
+        <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '13px', margin: 0 }}>
+          Bonjour {clientData.firstName} — Plus qu'une étape avant ton accès.
+        </p>
+      </div>
+
+      {/* Récap */}
+      <div style={{
+        width: '100%', maxWidth: '340px', marginBottom: '20px',
+        padding: '14px 16px', borderRadius: '12px',
+        background: 'rgba(217,28,210,0.08)',
+        border: '1px solid rgba(217,28,210,0.25)',
+        boxShadow: '0 0 12px rgba(217,28,210,0.12)'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+          <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '12px' }}>Article</span>
+          <span style={{ color: '#fff', fontSize: '13px', fontWeight: 600, textAlign: 'right', maxWidth: '60%', wordBreak: 'break-word' }}>
+            {productLabel}
+          </span>
+        </div>
+        {configuredAmount > 0 ? (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '12px' }}>Montant</span>
+            <span style={{ color: '#D91CD2', fontSize: '18px', fontWeight: 700 }}>
+              {configuredAmount.toFixed(2)} CHF
+            </span>
+          </div>
+        ) : (
+          <div style={{ marginTop: '8px' }}>
+            <label style={{ display: 'block', color: 'rgba(255,255,255,0.6)', fontSize: '12px', marginBottom: '6px' }}>
+              Montant (CHF)
+            </label>
+            <input
+              type="number"
+              min="1"
+              step="0.5"
+              value={customAmount}
+              onChange={(e) => setCustomAmount(e.target.value)}
+              placeholder="Ex: 25"
+              style={{
+                width: '100%', padding: '10px 12px', borderRadius: '10px',
+                border: '1px solid rgba(255,255,255,0.15)',
+                background: 'rgba(0,0,0,0.4)', color: '#fff', fontSize: '15px',
+                outline: 'none', boxSizing: 'border-box'
+              }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Erreur */}
+      {error && (
+        <div style={{
+          width: '100%', maxWidth: '340px', marginBottom: '12px',
+          padding: '8px 12px', borderRadius: '8px',
+          background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.35)',
+          color: '#fca5a5', fontSize: '12px', textAlign: 'center'
+        }}>
+          {error}
+        </div>
+      )}
+
+      {/* Bouton CARTE + TWINT via Stripe */}
+      <button
+        onClick={handleStripeCheckout}
+        disabled={isLoading}
+        style={{
+          width: '100%', maxWidth: '340px', padding: '14px 20px', borderRadius: '12px',
+          border: 'none',
+          background: isLoading ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+          color: '#ffffff', fontSize: '15px', fontWeight: 700,
+          cursor: isLoading ? 'wait' : 'pointer',
+          boxShadow: isLoading ? 'none' : '0 4px 20px rgba(217,28,210,0.4)',
+          marginBottom: '10px',
+          transition: 'all 0.2s ease'
+        }}
+      >
+        {isLoading ? '⏳ Redirection…' : '💳 Payer (Carte ou TWINT)'}
+      </button>
+
+      {/* Bouton TWINT direct (si lien TWINT configuré) */}
+      {twintDirectUrl && (
+        <button
+          onClick={handleTwintDirect}
+          disabled={isLoading}
+          style={{
+            width: '100%', maxWidth: '340px', padding: '12px 20px', borderRadius: '12px',
+            border: '1px solid rgba(217,28,210,0.4)',
+            background: 'rgba(217,28,210,0.08)',
+            color: '#fff', fontSize: '14px', fontWeight: 600,
+            cursor: isLoading ? 'not-allowed' : 'pointer',
+            marginBottom: '10px',
+            transition: 'all 0.2s ease',
+            opacity: isLoading ? 0.5 : 1
+          }}
+        >
+          📱 Payer par TWINT (lien direct)
+        </button>
+      )}
+
+      {/* Skip vers chat (optionnel) */}
+      {onSkipToChat && (
+        <button
+          onClick={onSkipToChat}
+          disabled={isLoading}
+          style={{
+            marginTop: '8px', background: 'transparent', border: 'none',
+            color: 'rgba(255,255,255,0.4)', fontSize: '12px',
+            textDecoration: 'underline', cursor: isLoading ? 'not-allowed' : 'pointer'
+          }}
+        >
+          Passer et continuer la conversation
+        </button>
+      )}
+
+      {/* Footer sécurité */}
+      <p style={{
+        color: 'rgba(255,255,255,0.25)', fontSize: '11px', marginTop: '20px', textAlign: 'center'
+      }}>
+        🔒 Paiement sécurisé par Stripe — CHF
+      </p>
+    </div>
+  );
+};
+
+/**
  * Composant pour afficher un message avec liens cliquables et emojis
  * Affiche le nom de l'expéditeur au-dessus de chaque bulle
  * Couleurs: Violet (#8B5CF6) pour le Coach, Gris foncé pour les membres/IA
@@ -1417,6 +1660,14 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
   // === v16.0: TUNNEL D'ONBOARDING (liens personnalisés) ===
   const [showOnboardingTunnel, setShowOnboardingTunnel] = useState(false); // Tunnel actif
   const [currentLinkToken, setCurrentLinkToken] = useState(null); // Token du lien actuel
+
+  // === V218: ÉCRAN DE PAIEMENT POST-TUNNEL (end_actions.payment) ===
+  const [showPaymentScreen, setShowPaymentScreen] = useState(false);
+  const [paymentClientData, setPaymentClientData] = useState(null); // {firstName, email, whatsapp, participantId, sessionId, linkData}
+  const [paymentAction, setPaymentAction] = useState(null); // {type:'payment', config:{amount,...}}
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentError, setPaymentError] = useState('');
+  const [paymentLinksConfig, setPaymentLinksConfig] = useState(null); // {twint, stripe, ...}
 
   // === v11.6: RÉCUPÉRATION D'ACCÈS & MON PASS ===
   const [showRecoverForm, setShowRecoverForm] = useState(false); // Formulaire "Retrouver mes accès"
@@ -5794,7 +6045,21 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                     onComplete={async (participantId, sessionId, clientData) => {
                       console.log('[CHATWIDGET] ✅ Onboarding terminé:', { participantId, sessionId });
                       setShowOnboardingTunnel(false);
-                      // Lancer le chat via smart-entry (réutilise le flux existant)
+
+                      // V218: Si le lien a une end_action "payment" → afficher l'écran de paiement AVANT le chat
+                      const endActions = (clientData && clientData.linkData && clientData.linkData.end_actions) || [];
+                      const paymentAct = Array.isArray(endActions) ? endActions.find(a => a && a.type === 'payment') : null;
+
+                      if (paymentAct) {
+                        console.log('[CHATWIDGET] 💳 Action paiement détectée, affichage écran paiement');
+                        setPaymentAction(paymentAct);
+                        setPaymentClientData({ ...clientData, participantId, sessionId });
+                        setPaymentError('');
+                        setShowPaymentScreen(true);
+                        return;
+                      }
+
+                      // Pas d'action paiement → flux normal (chat) — comportement identique à avant
                       try {
                         await handleSmartEntry(clientData, currentLinkToken);
                       } catch (err) {
@@ -5802,6 +6067,32 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         setMessages([{
                           type: 'ai',
                           text: `Bienvenue ${clientData.firstName} ! 😊 Comment puis-je vous aider ?`
+                        }]);
+                      }
+                    }}
+                  />
+                ) : showPaymentScreen && paymentClientData ? (
+                  /* === V218: ÉCRAN DE PAIEMENT (end_actions.payment) === */
+                  <PaymentScreen
+                    clientData={paymentClientData}
+                    paymentAction={paymentAction}
+                    paymentLinksConfig={paymentLinksConfig}
+                    setPaymentLinksConfig={setPaymentLinksConfig}
+                    isLoading={paymentLoading}
+                    setIsLoading={setPaymentLoading}
+                    error={paymentError}
+                    setError={setPaymentError}
+                    linkToken={currentLinkToken}
+                    onSkipToChat={async () => {
+                      // Permettre à l'utilisateur d'accéder au chat sans payer (skip)
+                      setShowPaymentScreen(false);
+                      try {
+                        await handleSmartEntry(paymentClientData, currentLinkToken);
+                      } catch (err) {
+                        console.error('[CHATWIDGET] Erreur skip-payment:', err);
+                        setMessages([{
+                          type: 'ai',
+                          text: `Bienvenue ${paymentClientData.firstName} ! 😊`
                         }]);
                       }
                     }}

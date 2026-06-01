@@ -15,6 +15,7 @@ import React, { memo, useState, useEffect, useCallback } from 'react';
 
 const STORAGE_KEY = 'afroboost_subscriber_info';
 const PROFILE_KEY = 'afroboost_profile';
+const IDENTITY_KEY = 'afroboost_identity'; // V218: identité posée par handleSmartEntry (tunnel/onboarding)
 
 /**
  * Teste si localStorage est réellement disponible et persistant
@@ -61,6 +62,20 @@ const loadSavedInfo = () => {
         const name = (profile.name || '').trim();
         const whatsapp = (profile.whatsapp || '').trim();
         const email = (profile.email || '').trim();
+        if (name || whatsapp || email) {
+          return { name, whatsapp, email };
+        }
+      }
+    }
+    // V218 Source 3 (fallback) : identité posée par le tunnel/onboarding (handleSmartEntry)
+    // Utilise firstName → name pour ne pas redemander les infos déjà collectées
+    const identityRaw = localStorage.getItem(IDENTITY_KEY);
+    if (identityRaw) {
+      const identity = JSON.parse(identityRaw);
+      if (identity && typeof identity === 'object') {
+        const name = (identity.firstName || identity.name || '').trim();
+        const whatsapp = (identity.whatsapp || '').trim();
+        const email = (identity.email || '').trim();
         if (name || whatsapp || email) {
           return { name, whatsapp, email };
         }

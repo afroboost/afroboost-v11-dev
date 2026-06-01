@@ -160,6 +160,7 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
         email: formData.email.trim(),
         whatsapp: formData.whatsapp.trim(),
         tunnelAnswers: tunnelData,
+        linkData: linkData, // V218: expose end_actions to ChatWidget for payment flow
       });
     } catch (err) {
       console.error('[ONBOARDING] Erreur smart-entry:', err);
@@ -167,7 +168,7 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
     } finally {
       setLoading(false);
     }
-  }, [currentStep, totalSteps, formData, tunnelAnswers, linkToken, onComplete, step, tunnelQuestions, API, getCurrentValue, validateStep]);
+  }, [currentStep, totalSteps, formData, tunnelAnswers, linkToken, linkData, onComplete, step, tunnelQuestions, API, getCurrentValue, validateStep]);
 
   const handleBack = useCallback(() => {
     if (currentStep > 1) { setCurrentStep(prev => prev - 1); setError(''); }
