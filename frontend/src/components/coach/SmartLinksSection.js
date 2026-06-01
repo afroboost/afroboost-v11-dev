@@ -632,6 +632,81 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                 })}
               </div>
 
+              {/* V219: Configuration du montant si action paiement activée */}
+              {(linkData.end_actions || []).find(a => a.type === 'payment') && (
+                <div style={{
+                  background: 'rgba(245, 158, 11, 0.06)',
+                  border: '1px solid rgba(245, 158, 11, 0.2)',
+                  borderRadius: '12px', padding: '16px',
+                  display: 'flex', flexDirection: 'column', gap: '12px',
+                }}>
+                  <p style={{ color: '#f59e0b', fontSize: '13px', fontWeight: '700', margin: 0 }}>
+                    💰 Configuration du paiement
+                  </p>
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>
+                        Montant (CHF)
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="0.5"
+                        placeholder="Ex: 25"
+                        value={(() => {
+                          const pa = (linkData.end_actions || []).find(a => a.type === 'payment');
+                          return (pa && pa.config && pa.config.amount) || '';
+                        })()}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          const parsed = raw === '' ? '' : (parseFloat(raw) || '');
+                          const updated = (linkData.end_actions || []).map(a =>
+                            a.type === 'payment'
+                              ? { ...a, config: { ...(a.config || {}), amount: parsed } }
+                              : a
+                          );
+                          updateField('end_actions', updated);
+                        }}
+                        style={{
+                          width: '100%', padding: '10px 12px', borderRadius: '8px',
+                          background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(245,158,11,0.2)',
+                          color: '#fff', fontSize: '14px', boxSizing: 'border-box',
+                        }}
+                      />
+                    </div>
+                    <div style={{ flex: 2 }}>
+                      <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>
+                        Description (optionnel)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Ex: Place Afroboost Silent"
+                        value={(() => {
+                          const pa = (linkData.end_actions || []).find(a => a.type === 'payment');
+                          return (pa && pa.config && pa.config.description) || '';
+                        })()}
+                        onChange={(e) => {
+                          const updated = (linkData.end_actions || []).map(a =>
+                            a.type === 'payment'
+                              ? { ...a, config: { ...(a.config || {}), description: e.target.value } }
+                              : a
+                          );
+                          updateField('end_actions', updated);
+                        }}
+                        style={{
+                          width: '100%', padding: '10px 12px', borderRadius: '8px',
+                          background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(245,158,11,0.2)',
+                          color: '#fff', fontSize: '14px', boxSizing: 'border-box',
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px', margin: 0 }}>
+                    Si vide, le client pourra choisir le montant lui-même.
+                  </p>
+                </div>
+              )}
+
               {/* Résumé */}
               <div style={{
                 background: 'rgba(217,28,210,0.06)',
@@ -664,6 +739,19 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                       {(linkData.end_actions || []).length} action{(linkData.end_actions || []).length > 1 ? 's' : ''}
                     </span>
                   </div>
+                  {/* V219: ligne Prix configuré */}
+                  {(() => {
+                    const pa = (linkData.end_actions || []).find(a => a.type === 'payment');
+                    const amt = pa && pa.config && pa.config.amount;
+                    return amt ? (
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>💰 Prix</span>
+                        <span style={{ color: '#f59e0b', fontSize: '11px', fontWeight: '600' }}>
+                          {amt} CHF
+                        </span>
+                      </div>
+                    ) : null;
+                  })()}
                   {linkData.custom_prompt && (
                     <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
                       <span style={{ color: 'rgba(139,92,246,0.6)', fontSize: '10px' }}>

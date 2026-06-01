@@ -372,7 +372,8 @@ const PaymentScreen = ({
   const configuredAmount = paymentAction && paymentAction.config && Number(paymentAction.config.amount) > 0
     ? Number(paymentAction.config.amount)
     : 0;
-  const productLabel = (paymentAction && paymentAction.config && paymentAction.config.label)
+  // V219: priorité à la description configurée par le coach (puis fallback)
+  const productLabel = (paymentAction && paymentAction.config && (paymentAction.config.description || paymentAction.config.label))
     || (clientData && clientData.linkData && clientData.linkData.title)
     || 'Réservation Afroboost';
 
