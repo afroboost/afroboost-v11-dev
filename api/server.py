@@ -3273,20 +3273,40 @@ class CreateCheckoutRequest(BaseModel):
 @api_router.post("/create-checkout-session")
 async def create_checkout_session(request: CreateCheckoutRequest):
     """
-    Crée une session Stripe Checkout avec support pour cartes et TWINT.
-    TWINT nécessite la devise CHF.
+    V220/V221: Crée une session Stripe Checkout.
+    Lit la clé Stripe depuis partner_payment_config (dashboard admin) d'abord,
+    puis fallback sur la variable d'environnement STRIPE_SECRET_KEY.
+    Utilise une variable locale pour ne pas muter le global stripe.api_key.
     """
-    if not stripe.api_key:
-        raise HTTPException(status_code=500, detail="Stripe API key not configured")
-    
+    # V220: Lire la clé Stripe depuis la base de données (dashboard admin) d'abord
+    active_stripe_key = None
+
+    # Chercher dans partner_payment_config pour les Super Admins
+    for admin_email in SUPER_ADMIN_EMAILS:
+        config = await db["partner_payment_config"].find_one({"coach_email": admin_email})
+        if config and config.get("stripe_secret_key") and config.get("stripe_enabled"):
+            active_stripe_key = config["stripe_secret_key"]
+            logger.info(f"[CHECKOUT] Using Stripe key from dashboard (partner_payment_config) for {admin_email}")
+            break
+
+    # V220: Fallback sur la variable d'environnement si pas de clé en base
+    if not active_stripe_key:
+        active_stripe_key = os.environ.get('STRIPE_SECRET_KEY')
+        if active_stripe_key:
+            logger.info("[CHECKOUT] Using Stripe key from environment variable STRIPE_SECRET_KEY")
+
+    # V221: Vérifier qu'on a bien une clé (sans muter le global)
+    if not active_stripe_key:
+        raise HTTPException(status_code=500, detail="Stripe API key not configured. Configurez votre clé dans le tableau de bord > Paiements.")
+
     # Construire les URLs dynamiquement basées sur l'origine frontend
     # {CHECKOUT_SESSION_ID} est remplacé automatiquement par Stripe
     success_url = f"{request.originUrl}?status=success&session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{request.originUrl}?status=canceled"
-    
+
     # Montant en centimes (Stripe utilise les plus petites unités)
     amount_cents = int(request.amount * 100)
-    
+
     # Préparer les metadata
     metadata = {
         "product_name": request.productName,
@@ -3296,12 +3316,12 @@ async def create_checkout_session(request: CreateCheckoutRequest):
     if request.reservationData:
         metadata["reservation_id"] = request.reservationData.get("id", "")
         metadata["course_name"] = request.reservationData.get("courseName", "")
-    
+
     # Méthodes de paiement: card + twint (devise CHF obligatoire pour TWINT)
     payment_methods = ['card', 'twint']
-    
+
     try:
-        # Créer la session Stripe avec card + twint
+        # V221: Passer api_key en paramètre au lieu de muter stripe.api_key global
         session = stripe.checkout.Session.create(
             payment_method_types=payment_methods,
             line_items=[{
@@ -3319,8 +3339,9 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             cancel_url=cancel_url,
             customer_email=request.customerEmail,
             metadata=metadata,
+            api_key=active_stripe_key,
         )
-        
+
         # Créer l'entrée dans payment_transactions
         transaction = {
             "id": str(uuid.uuid4()),
@@ -3335,20 +3356,21 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             "created_at": datetime.now(timezone.utc).isoformat()
         }
         await db.payment_transactions.insert_one(transaction)
-        
+
         logger.info(f"Stripe session created with payment methods: {payment_methods}, session_id: {session.id}")
-        
+
         return {
             "sessionId": session.id,
             "url": session.url,
             "paymentMethods": payment_methods
         }
-        
+
     except stripe.error.InvalidRequestError as e:
         # Si TWINT cause une erreur (non activé sur le compte), fallback sur card seul
         logger.warning(f"TWINT not available, falling back to card only: {str(e)}")
-        
+
         try:
+            # V221: Passer api_key en paramètre aussi pour le fallback
             session = stripe.checkout.Session.create(
                 payment_method_types=['card'],
                 line_items=[{
@@ -3366,8 +3388,9 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                 cancel_url=cancel_url,
                 customer_email=request.customerEmail,
                 metadata=metadata,
+                api_key=active_stripe_key,
             )
-            
+
             # Créer l'entrée dans payment_transactions
             transaction = {
                 "id": str(uuid.uuid4()),
@@ -3383,20 +3406,20 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
             await db.payment_transactions.insert_one(transaction)
-            
+
             logger.info(f"Stripe session created with card only (TWINT fallback), session_id: {session.id}")
-            
+
             return {
                 "sessionId": session.id,
                 "url": session.url,
                 "paymentMethods": ['card'],
                 "warning": "TWINT not available on this Stripe account"
             }
-            
+
         except stripe.error.StripeError as fallback_error:
             logger.error(f"Stripe fallback error: {str(fallback_error)}")
             raise HTTPException(status_code=500, detail=f"Payment error: {str(fallback_error)}")
-            
+
     except stripe.error.StripeError as e:
         logger.error(f"Stripe error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Payment error: {str(e)}")
