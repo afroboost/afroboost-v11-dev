@@ -29,6 +29,9 @@ class PaymentConfigUpdate(BaseModel):
     paypal_client_secret: str = ""
     paypal_mode: str = "sandbox"  # "sandbox" | "live"
 
+    # V222: TWINT direct link
+    twint_direct_url: str = ""
+
     # Mobile Money (CinetPay)
     mobile_money_enabled: bool = False
     cinetpay_api_key: str = ""
@@ -81,6 +84,7 @@ async def get_payment_config(request: Request):
             "paypal_client_id": "",
             "paypal_client_secret": "",
             "paypal_mode": "sandbox",
+            "twint_direct_url": "",
             "mobile_money_enabled": False,
             "cinetpay_api_key": "",
             "cinetpay_site_id": "",
@@ -99,6 +103,7 @@ async def get_payment_config(request: Request):
         "paypal_client_id": config.get("paypal_client_id", ""),  # Client ID = pas secret
         "paypal_client_secret": mask_key(config.get("paypal_client_secret", "")),
         "paypal_mode": config.get("paypal_mode", "sandbox"),
+        "twint_direct_url": config.get("twint_direct_url", ""),
         "mobile_money_enabled": config.get("mobile_money_enabled", False),
         "cinetpay_api_key": mask_key(config.get("cinetpay_api_key", "")),
         "cinetpay_site_id": config.get("cinetpay_site_id", ""),  # Site ID = pas secret
