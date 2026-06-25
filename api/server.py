@@ -3218,7 +3218,14 @@ async def get_payment_links(request: Request):
         default_links["id"] = link_id
         default_links["coach_id"] = user_email if not is_admin else None
         await db.payment_links.insert_one(default_links)
-        return default_links
+        links = default_links
+    # V222: Fallback TWINT URL from partner_payment_config if payment_links.twint is empty
+    if not links.get("twint", "").strip():
+        for admin_email in SUPER_ADMIN_EMAILS:
+            config = await db["partner_payment_config"].find_one({"coach_email": admin_email})
+            if config and config.get("twint_direct_url", "").strip():
+                links["twint"] = config["twint_direct_url"].strip()
+                break
     return links
 
 @api_router.put("/payment-links")

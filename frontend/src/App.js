@@ -2569,6 +2569,8 @@ function App() {
 
   const [showSuccess, setShowSuccess] = useState(false);
   const [showConfirmPayment, setShowConfirmPayment] = useState(false);
+  // V222: Choix Carte/TWINT
+  const [showPaymentChoice, setShowPaymentChoice] = useState(false);
   const [showPaymentSuccessPage, setShowPaymentSuccessPage] = useState(false); // Page de succès Stripe
   const [validationMessage, setValidationMessage] = useState("");
   const [pendingReservation, setPendingReservation] = useState(null);
@@ -3236,10 +3238,13 @@ function App() {
             
             // Mettre à jour le ticket avec le vrai code de réservation
             setLastReservation(res.data);
-            
+
             // METTRE À JOUR le ticket sauvegardé avec les vraies données
             saveTicketToStorage(res.data);
-            
+
+            // V222: NOTIFICATION AU COACH — manquait dans le flux Stripe !
+            notifyCoachAutomatic(res.data);
+
             // Nettoyer localStorage après succès
             localStorage.removeItem('pendingReservation');
             
@@ -4010,8 +4015,16 @@ function App() {
     try { await axios.post(`${API}/users`, { name: userName, email: userEmail, whatsapp: userWhatsapp }); }
     catch (err) { console.error("User creation error:", err); }
 
-    // STRIPE CHECKOUT (card + twint) si activé dans le concept
+    // STRIPE CHECKOUT (card) si activé dans le concept
     if (hasStripeCheckout) {
+      // V222: Si un lien TWINT direct est configuré, proposer le choix Carte/TWINT
+      const twintDirectUrl = paymentLinks.twint?.trim();
+      if (twintDirectUrl) {
+        setPendingReservation(reservation);
+        setShowPaymentChoice(true);
+        return;
+      }
+      // Pas de TWINT → Stripe Checkout direct
       setLoading(true);
       try {
         const checkoutResponse = await axios.post(`${API}/create-checkout-session`, {
@@ -4025,10 +4038,10 @@ function App() {
             offerName: reservation.offerName
           }
         });
-        
+
         // Sauvegarder la réservation en attente pour la finaliser après paiement
         localStorage.setItem('pendingReservation', JSON.stringify(reservation));
-        
+
         // Rediriger vers Stripe Checkout
         if (checkoutResponse.data.url) {
           window.location.href = checkoutResponse.data.url;
@@ -4055,6 +4068,49 @@ function App() {
     setTimeout(() => setShowConfirmPayment(true), 800);
   };
 
+  // V222: Payer par carte depuis le choix Carte/TWINT
+  const handlePaymentChoiceCard = async () => {
+    if (!pendingReservation) return;
+    setShowPaymentChoice(false);
+    setLoading(true);
+    try {
+      const checkoutResponse = await axios.post(`${API}/create-checkout-session`, {
+        productName: `${pendingReservation.offerName} - ${pendingReservation.courseName}`,
+        amount: pendingReservation.totalPrice,
+        customerEmail: pendingReservation.userEmail,
+        originUrl: window.location.origin,
+        reservationData: {
+          id: pendingReservation.userId,
+          courseName: pendingReservation.courseName,
+          offerName: pendingReservation.offerName
+        }
+      });
+      localStorage.setItem('pendingReservation', JSON.stringify(pendingReservation));
+      if (checkoutResponse.data.url) {
+        window.location.href = checkoutResponse.data.url;
+      } else {
+        throw new Error('No checkout URL received');
+      }
+    } catch (err) {
+      console.error("Stripe checkout error:", err);
+      setValidationMessage(err.response?.data?.detail || 'Erreur lors de la création du paiement');
+      setTimeout(() => setValidationMessage(""), 4000);
+      setLoading(false);
+    }
+  };
+
+  // V222: Payer par TWINT depuis le choix Carte/TWINT
+  const handlePaymentChoiceTwint = () => {
+    if (!pendingReservation) return;
+    setShowPaymentChoice(false);
+    const twintUrl = paymentLinks.twint?.trim();
+    if (twintUrl) {
+      setPendingReservation(pendingReservation);
+      window.open(twintUrl, '_blank');
+      setTimeout(() => setShowConfirmPayment(true), 800);
+    }
+  };
+
   const confirmPayment = async () => {
     if (!pendingReservation) return;
     setLoading(true);
@@ -4073,8 +4129,8 @@ function App() {
       // NOTIFICATION AUTOMATIQUE AU COACH (email + WhatsApp API)
       notifyCoachAutomatic(res.data);
 
-      // v158.7: Ne plus afficher le popup — tout arrive par email
-      // setShowSuccess(true);
+      // V222: Réactiver SuccessOverlay pour que le client VOIT sa confirmation
+      setShowSuccess(true);
       // v159: Notification toast "consultez votre email"
       try {
         const existingToast = document.getElementById('v159-email-toast');
@@ -4796,6 +4852,57 @@ function App() {
         `}</style>
       )}
 
+      {/* V222: Choix Carte / TWINT */}
+      {showPaymentChoice && pendingReservation && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.85)', zIndex: 99999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '20px'
+        }} onClick={() => { setShowPaymentChoice(false); setPendingReservation(null); }}>
+          <div style={{
+            background: 'linear-gradient(180deg, #1a1a2e 0%, #0a0a0f 100%)',
+            borderRadius: '20px', padding: '32px 28px', maxWidth: '400px', width: '100%',
+            border: '1px solid rgba(217,28,210,0.3)',
+            boxShadow: '0 20px 60px rgba(217,28,210,0.2)',
+            textAlign: 'center'
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '40px', marginBottom: '12px' }}>💳</div>
+            <h3 style={{ color: '#fff', fontSize: '20px', fontWeight: 700, margin: '0 0 8px' }}>
+              Choisissez votre mode de paiement
+            </h3>
+            <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '14px', margin: '0 0 8px' }}>
+              {pendingReservation.offerName} — {pendingReservation.courseName}
+            </p>
+            <p style={{ color: '#D91CD2', fontSize: '22px', fontWeight: 700, margin: '0 0 24px' }}>
+              CHF {pendingReservation.totalPrice?.toFixed(2)}
+            </p>
+            <button onClick={handlePaymentChoiceCard} style={{
+              width: '100%', padding: '16px', borderRadius: '14px', border: 'none',
+              background: 'linear-gradient(135deg, #D91CD2, #9B59B6)', color: '#fff',
+              fontSize: '16px', fontWeight: 700, cursor: 'pointer', marginBottom: '12px',
+              boxShadow: '0 4px 20px rgba(217,28,210,0.4)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px'
+            }}>
+              <span>💳</span> Payer par carte
+            </button>
+            <button onClick={handlePaymentChoiceTwint} style={{
+              width: '100%', padding: '16px', borderRadius: '14px',
+              border: '2px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.05)',
+              color: '#fff', fontSize: '16px', fontWeight: 700, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px'
+            }}>
+              <span>📱</span> Payer par TWINT
+            </button>
+            <button onClick={() => { setShowPaymentChoice(false); setPendingReservation(null); }} style={{
+              marginTop: '16px', background: 'none', border: 'none',
+              color: 'rgba(255,255,255,0.4)', fontSize: '13px', cursor: 'pointer'
+            }}>
+              Annuler
+            </button>
+          </div>
+        </div>
+      )}
       {showConfirmPayment && <ConfirmPaymentOverlay t={t} onConfirm={confirmPayment} onCancel={() => { setShowConfirmPayment(false); setPendingReservation(null); }} />}
       {/* v158.7: SuccessOverlay et PaymentSuccessPage désactivés.
           L'utilisateur reçoit sa confirmation par email (avec QR code, code AFRO-XXXX, guide).

@@ -223,6 +223,37 @@ const PaymentConfigTab = ({ paymentConfig, setPaymentConfig, coachEmail }) => {
         )}
       </div>
 
+      {/* ===== V222: SECTION TWINT DIRECT ===== */}
+      <div style={sectionStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '24px' }}>📱</span>
+            <div>
+              <h3 style={{ color: 'white', fontSize: '16px', fontWeight: '600', margin: 0 }}>TWINT (lien direct)</h3>
+              <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: '2px 0 0' }}>
+                Lien de paiement TWINT — proposé en alternative à la carte
+              </p>
+            </div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div>
+            <label style={labelStyle}>Lien TWINT (URL complète)</label>
+            <input
+              type="text"
+              value={paymentConfig?.twint_direct_url || ''}
+              onChange={(e) => handleChange('twint_direct_url', e.target.value)}
+              placeholder="https://... votre lien TWINT"
+              style={inputStyle}
+              data-testid="twint-url-input"
+            />
+            <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px', margin: '6px 0 0' }}>
+              Si configuré, les clients verront le choix "Carte" ou "TWINT" au moment de payer.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* ===== SECTION PAYPAL ===== */}
       <div style={sectionStyle}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
