@@ -539,7 +539,11 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   // V223: profil incomplet → écran de bienvenue, une seule fois. Lien
   // "Plus tard" obligatoire : sans lui, un abonné existant sans name/whatsapp
   // serait enfermé hors de crédits déjà payés.
-  const needsOnboarding = !onboardingDone && subscriber &&
+  // V223: jamais pour un membre secondaire — le PUT .../profile écrit sur
+  // subscriptions filtré par code seul, donc un membre écraserait le WhatsApp
+  // du titulaire, relu ensuite par tout le groupe. L'onboarding ne concerne
+  // que l'acheteur.
+  const needsOnboarding = !onboardingDone && !data?.member &&
     (!subscriber.name || !subscriber.whatsapp);
   if (needsOnboarding) {
     return (

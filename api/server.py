@@ -4627,7 +4627,9 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
             # V223: sans ce champ, subscriber.whatsapp est toujours undefined
             # côté front et l'écran d'onboarding se rouvre à chaque chargement,
             # pour tous les abonnés, même après l'avoir rempli.
-            "whatsapp": (subscription or {}).get("whatsapp", ""),
+            # Branché par membre, symétriquement à display_name ci-dessus : sinon
+            # un membre secondaire recevrait le WhatsApp du titulaire du groupe.
+            "whatsapp": (member.get("whatsapp") if member else (subscription or {}).get("whatsapp")) or "",
         },
         "subscription": {
             "id": (subscription or {}).get("id"),
