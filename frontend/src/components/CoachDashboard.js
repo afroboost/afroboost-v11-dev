@@ -2330,7 +2330,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       countdown_enabled: offer.countdown_enabled || false,
       countdown_text: offer.countdown_text || '',
       countdown_date: offer.countdown_date || '',
-      countdown_time: offer.countdown_time || '23:59'
+      countdown_time: offer.countdown_time || '23:59',
+      // V223: recharger les paliers, sinon le formulaire s'ouvre vide et
+      // l'enregistrement écrase en base les valeurs déjà configurées.
+      progressive_pricing: offer.progressive_pricing || false,
+      price_early_bird: offer.price_early_bird ?? null,
+      price_standard: offer.price_standard ?? null,
+      price_last_minute: offer.price_last_minute ?? null,
+      early_bird_days_before: offer.early_bird_days_before ?? 7,
+      standard_hours_before: offer.standard_hours_before ?? 24,
+      pack_sessions: offer.pack_sessions ?? null
     });
     setEditingOfferId(offer.id);
     // Scroll vers le formulaire
@@ -2345,7 +2354,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       category: "service", isProduct: false, variants: null, tva: 0, shippingCost: 0, stock: -1,
       // v152: Reset des champs de durée de validité
       duration_value: '', duration_unit: '', is_auto_prolong: true,
-      countdown_enabled: false, countdown_text: '', countdown_date: '', countdown_time: '23:59'
+      countdown_enabled: false, countdown_text: '', countdown_date: '', countdown_time: '23:59',
+      // V223: sans ce reset, la section prix progressif resterait ouverte et
+      // pré-remplie pour l'offre suivante.
+      progressive_pricing: false, price_early_bird: null, price_standard: null,
+      price_last_minute: null, early_bird_days_before: 7, standard_hours_before: 24,
+      pack_sessions: null
     });
     setEditingOfferId(null);
   };
@@ -2357,6 +2371,18 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     console.log("[V61] addOffer called, raw newOffer:", JSON.stringify({duration_value: newOffer.duration_value, duration_unit: newOffer.duration_unit, is_auto_prolong: newOffer.is_auto_prolong}));
     try {
       // Filtrer les images non vides
+      // V223: helpers de normalisation. Une saisie vidée doit produire null,
+      // jamais NaN (non sérialisable en JSON) ni 0 (qui vaudrait « gratuit »).
+      const v223Num = (val) => {
+        if (val === '' || val === null || val === undefined) return null;
+        const n = parseFloat(val);
+        return isNaN(n) ? null : n;
+      };
+      const v223Int = (val, fallback) => {
+        if (val === '' || val === null || val === undefined) return fallback;
+        const n = parseInt(val, 10);
+        return isNaN(n) ? fallback : n;
+      };
       const filteredImages = (newOffer.images || []).filter(url => url && url.trim());
       // v61: Blindage total — conversion explicite, jamais de string vide
       const dv = newOffer.duration_value;
@@ -2383,7 +2409,20 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         countdown_enabled: newOffer.countdown_enabled || false,
         countdown_text: newOffer.countdown_text || '',
         countdown_date: newOffer.countdown_date || '',
-        countdown_time: newOffer.countdown_time || '23:59'
+        countdown_time: newOffer.countdown_time || '23:59',
+        // V223: prix progressif + pack. Cet objet est une liste blanche : sans
+        // ces lignes, les champs saisis dans le formulaire ne sont pas envoyés,
+        // et une simple modification d'offre les remettrait à zéro en base.
+        // null (et non 0) quand le champ est vide : le backend les typant
+        // Optional[float], null signifie « palier non défini » et fait
+        // retomber le calcul sur le prix de base.
+        progressive_pricing: newOffer.progressive_pricing || false,
+        price_early_bird: v223Num(newOffer.price_early_bird),
+        price_standard: v223Num(newOffer.price_standard),
+        price_last_minute: v223Num(newOffer.price_last_minute),
+        early_bird_days_before: v223Int(newOffer.early_bird_days_before, 7),
+        standard_hours_before: v223Int(newOffer.standard_hours_before, 24),
+        pack_sessions: v223Int(newOffer.pack_sessions, null)
       };
       console.log("[V61] Sending offerData:", JSON.stringify(offerData));
 
@@ -2412,7 +2451,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         images: ["", "", "", "", ""],
         category: "service", isProduct: false, variants: null, tva: 0, shippingCost: 0, stock: -1,
         duration_value: '', duration_unit: '', is_auto_prolong: true,
-        countdown_enabled: false, countdown_text: '', countdown_date: '', countdown_time: '23:59'
+        countdown_enabled: false, countdown_text: '', countdown_date: '', countdown_time: '23:59',
+      // V223: sans ce reset, la section prix progressif resterait ouverte et
+      // pré-remplie pour l'offre suivante.
+      progressive_pricing: false, price_early_bird: null, price_standard: null,
+      price_last_minute: null, early_bird_days_before: 7, standard_hours_before: 24,
+      pack_sessions: null
       });
     } catch (err) {
       console.error("[V61] Erreur offre:", err);

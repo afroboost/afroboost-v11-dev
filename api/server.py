@@ -3357,27 +3357,30 @@ async def create_checkout_session(request: CreateCheckoutRequest):
     success_url = f"{request.originUrl}?status=success&session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{request.originUrl}?status=canceled"
     
-    # V223: si une offre est désignée, le SERVEUR fait autorité sur le prix et
-    # sur le nombre de crédits. Le client ne peut ni se fabriquer un tarif ni
-    # s'attribuer des crédits : cet endpoint est public.
-    # Sans offerId, on conserve strictement le comportement d'avant V223.
-    server_price = None
+    # V223: le nombre de crédits et le palier sont relus EN BASE à partir de
+    # offerId. Ils ne sont jamais acceptés du client : cet endpoint est public,
+    # et les recevoir permettrait de payer 1 CHF en demandant 1000 crédits.
+    #
+    # Le MONTANT, lui, reste celui calculé par le client. Ce n'est pas un oubli :
+    # le total légitime dépend du nombre de dates sélectionnées et des codes
+    # promo, que le serveur ne connaît pas ici. Le rendre autoritatif ferait
+    # payer une seule date à qui en réserve trois. C'est une faiblesse
+    # préexistante (le montant était déjà libre avant V223, tout comme le nom
+    # de produit qui pilotait la regex de crédits) et elle n'est pas aggravée.
     server_pack_sessions = ""
     server_tier = ""
     if request.offerId:
         _offer = await db.offers.find_one({"id": request.offerId}, {"_id": 0})
         if not _offer:
             raise HTTPException(status_code=404, detail="Offre introuvable")
-        _priced = compute_active_price(_offer)
-        server_price = _priced["price"]
-        server_tier = _priced["tier"]
+        server_tier = compute_active_price(_offer)["tier"]
         _ps = _offer.get("pack_sessions")
         if isinstance(_ps, int) and _ps > 0:
             server_pack_sessions = str(_ps)
 
     # Montant en centimes (Stripe utilise les plus petites unités).
     # round() et non int() : int(0.29 * 100) vaut 28 en virgule flottante.
-    amount_cents = round((server_price if server_price is not None else request.amount) * 100)
+    amount_cents = round(request.amount * 100)
 
     # Préparer les metadata
     metadata = {
