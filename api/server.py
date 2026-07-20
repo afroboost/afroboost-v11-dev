@@ -399,6 +399,19 @@ class Offer(BaseModel):
     countdown_date: Optional[str] = None
     countdown_time: Optional[str] = None
     countdown_text: Optional[str] = None
+    # V223: Prix progressif 3 paliers — référence temporelle = countdown_date
+    progressive_pricing: bool = False
+    price_early_bird: Optional[float] = None
+    price_standard: Optional[float] = None
+    price_last_minute: Optional[float] = None
+    early_bird_days_before: int = 7
+    standard_hours_before: int = 24
+    # V223: Pack de crédits (remplace la déduction par regex sur le nom produit)
+    pack_sessions: Optional[int] = None
+    # V223: Calculés à la lecture. DOIVENT être déclarés ici, sinon le
+    # response_model=List[Offer] de GET /offers les filtrerait silencieusement.
+    active_price: Optional[float] = None
+    active_tier: Optional[str] = None
 
 class OfferCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -420,6 +433,14 @@ class OfferCreate(BaseModel):
     tva: float = 0.0
     shippingCost: float = 0.0
     stock: int = -1
+    # V223: Prix progressif 3 paliers
+    progressive_pricing: bool = False
+    price_early_bird: Optional[float] = None
+    price_standard: Optional[float] = None
+    price_last_minute: Optional[float] = None
+    early_bird_days_before: int = 7
+    standard_hours_before: int = 24
+    pack_sessions: Optional[int] = None
     coach_id: Optional[str] = None  # v19: Ownership
     # v61: Durée de validité — accepte int ou string pour tolérance frontend
     duration_value: Optional[Union[int, str]] = None
