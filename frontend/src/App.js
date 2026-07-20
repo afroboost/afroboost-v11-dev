@@ -1207,6 +1207,25 @@ const OfferCard = ({ offer, selected, onClick }) => {
   );
 };
 
+// V223: libellé et couleur du palier tarifaire actif
+// V223: prix unitaire effectif d'une offre. Point de vérité unique, utilisé
+// pour l'affichage ET pour le calcul du total, afin que le prix montré au
+// client soit toujours celui qui lui sera débité. Le serveur recalcule ce
+// même prix au moment du paiement (compute_active_price) : cette fonction ne
+// fait donc jamais autorité, elle reflète.
+const v223UnitPrice = (offer) => {
+  if (!offer) return 0;
+  return (offer.progressive_pricing && offer.active_price != null)
+    ? offer.active_price
+    : offer.price;
+};
+
+const V223_TIERS = {
+  early_bird:  { label: '🎯 Early Bird', color: '#22c55e' },
+  standard:    { label: 'Standard',      color: '#eab308' },
+  last_minute: { label: '🔥 Last Minute', color: '#ef4444' },
+};
+
 // Offer Card for Horizontal Slider - With LED effect, Loupe, Info icon + Discrete dots
 const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
   const [showDescription, setShowDescription] = useState(false);
@@ -1408,8 +1427,21 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
                   textShadow: selected ? '0 0 15px rgba(217, 28, 210, 0.6)' : 'none'
                 }}
               >
-                CHF {offer.price}.-
+                {/* V223: prix du palier actif, sinon rendu d'origine */}
+                CHF {offer.progressive_pricing && offer.active_price != null
+                       ? offer.active_price
+                       : offer.price}.-
               </span>
+              {/* V223: badge du palier tarifaire */}
+              {offer.progressive_pricing && V223_TIERS[offer.active_tier] && (
+                <span style={{
+                  fontSize: 11, padding: '2px 8px', borderRadius: 999,
+                  background: `${V223_TIERS[offer.active_tier].color}22`,
+                  color: V223_TIERS[offer.active_tier].color,
+                }}>
+                  {V223_TIERS[offer.active_tier].label}
+                </span>
+              )}
               {offer.tva > 0 && (
                 <span className="text-xs text-white opacity-50">TVA {offer.tva}%</span>
               )}
@@ -3663,10 +3695,10 @@ function App() {
           let discountText = '';
           
           if (code.type === '100%' || (code.type === '%' && parseFloat(code.value) >= 100)) {
-            discountAmount = selectedOffer ? selectedOffer.price : 0;
+            discountAmount = selectedOffer ? v223UnitPrice(selectedOffer) : 0;
             discountText = `Code validé : -${discountAmount.toFixed(2)} CHF (GRATUIT)`;
           } else if (code.type === '%') {
-            discountAmount = selectedOffer ? (selectedOffer.price * parseFloat(code.value) / 100) : 0;
+            discountAmount = selectedOffer ? (v223UnitPrice(selectedOffer) * parseFloat(code.value) / 100) : 0;
             discountText = `Code validé : -${discountAmount.toFixed(2)} CHF (-${code.value}%)`;
           } else if (code.type === 'CHF') {
             discountAmount = parseFloat(code.value);
@@ -3711,7 +3743,7 @@ function App() {
     // Pour les services/cours: utiliser le nombre de dates sélectionnées
     const isPhysicalProduct = selectedOffer?.isProduct || selectedOffer?.isPhysicalProduct;
     const multiplier = isPhysicalProduct ? quantity : Math.max(1, selectedDates.length);
-    let total = selectedOffer.price * multiplier;
+    let total = v223UnitPrice(selectedOffer) * multiplier;
     if (appliedDiscount) {
       if (appliedDiscount.type === "100%" || (appliedDiscount.type === "%" && parseFloat(appliedDiscount.value) >= 100)) total = 0;
       else if (appliedDiscount.type === "%") total = total * (1 - parseFloat(appliedDiscount.value) / 100);
@@ -3944,7 +3976,7 @@ function App() {
       datetime: dt.toISOString(),
       offerId: selectedOffer.id, 
       offerName: selectedOffer.name,
-      price: selectedOffer.price, 
+      price: v223UnitPrice(selectedOffer), 
       quantity: dateCount, // Nombre de dates sélectionnées comme quantité
       totalPrice,
       discountCode: appliedDiscount?.code || null,
@@ -4032,6 +4064,9 @@ function App() {
           amount: totalPrice,
           customerEmail: userEmail,
           originUrl: window.location.origin,
+          // V223: le serveur relit pack_sessions et le palier depuis cette
+          // offre en base. On n'envoie jamais le nombre de crédits nous-mêmes.
+          offerId: selectedOffer?.id || null,
           reservationData: {
             id: reservation.userId,
             courseName: reservation.courseName,
@@ -5832,7 +5867,7 @@ function App() {
                     <>
                       <div className="flex justify-between items-center text-white text-sm mb-2">
                         <span>{selectedOffer.name}</span>
-                        <span>CHF {selectedOffer.price.toFixed(2)}</span>
+                        <span>CHF {v223UnitPrice(selectedOffer).toFixed(2)}</span>
                       </div>
                       
                       {/* Pour les services/cours: Afficher les dates sélectionnées */}
@@ -5889,16 +5924,16 @@ function App() {
                       {/* Sous-total pour produits physiques */}
                       {(selectedOffer?.isProduct || selectedOffer?.isPhysicalProduct) && quantity > 1 && (
                         <div className="flex justify-between text-white text-xs opacity-60 mb-1">
-                          <span>Sous-total ({quantity} x CHF {selectedOffer.price.toFixed(2)})</span>
-                          <span>CHF {(selectedOffer.price * quantity).toFixed(2)}</span>
+                          <span>Sous-total ({quantity} x CHF {v223UnitPrice(selectedOffer).toFixed(2)})</span>
+                          <span>CHF {(v223UnitPrice(selectedOffer) * quantity).toFixed(2)}</span>
                         </div>
                       )}
                       
                       {/* Sous-total pour services/cours avec multi-dates */}
                       {!selectedOffer?.isProduct && !selectedOffer?.isPhysicalProduct && selectedDates.length > 1 && (
                         <div className="flex justify-between text-white text-xs opacity-60 mb-1">
-                          <span>Sous-total ({selectedDates.length} dates x CHF {selectedOffer.price.toFixed(2)})</span>
-                          <span>CHF {(selectedOffer.price * selectedDates.length).toFixed(2)}</span>
+                          <span>Sous-total ({selectedDates.length} dates x CHF {v223UnitPrice(selectedOffer).toFixed(2)})</span>
+                          <span>CHF {(v223UnitPrice(selectedOffer) * selectedDates.length).toFixed(2)}</span>
                         </div>
                       )}
                       

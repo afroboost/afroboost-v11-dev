@@ -521,6 +521,81 @@ const OffersManager = ({
           </div>
         </div>
 
+        {/* V223: Prix progressif 3 paliers */}
+        <div className="mt-4 p-4 rounded-lg" style={{ background: '#000', border: '1px solid rgba(217,28,210,0.2)' }}>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!newOffer.progressive_pricing}
+              onChange={e => setNewOffer({ ...newOffer, progressive_pricing: e.target.checked })}
+              className="accent-[#D91CD2] w-4 h-4"
+            />
+            <span className="text-white text-sm font-medium">📊 Activer les 3 paliers de prix</span>
+          </label>
+          <p className="text-xs mt-1 ml-7" style={{ color: 'rgba(255,255,255,0.5)' }}>
+            Récompense les réservations en avance et capture les réservations de dernière minute.
+          </p>
+
+          {newOffer.progressive_pricing && (
+            <div className="mt-4 space-y-3">
+              {!newOffer.countdown_date && (
+                <p className="text-xs p-2 rounded" style={{ background: 'rgba(217,28,210,0.1)', color: '#D91CD2' }}>
+                  ⚠️ Activez le compte à rebours ci-dessous : sans date de référence, les
+                  paliers ne s'appliquent pas et le prix normal reste affiché.
+                </p>
+              )}
+              {[
+                { key: 'price_early_bird', label: '✨ Early Bird (plus de 7 jours avant)' },
+                { key: 'price_standard', label: '⏱ Standard (plus de 24h avant)' },
+                { key: 'price_last_minute', label: '⚡ Last Minute (moins de 24h)' },
+              ].map(f => (
+                <div key={f.key}>
+                  <label className="block text-xs mb-1" style={{ color: 'rgba(255,255,255,0.7)' }}>{f.label}</label>
+                  <input
+                    type="number"
+                    value={newOffer[f.key] ?? ''}
+                    onChange={e => setNewOffer({ ...newOffer, [f.key]: e.target.value === '' ? null : parseFloat(e.target.value) })}
+                    className="w-full px-3 py-2 rounded-lg neon-input text-sm"
+                    placeholder="CHF"
+                  />
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => {
+                  const base = parseFloat(newOffer.price) || 0;
+                  setNewOffer({
+                    ...newOffer,
+                    price_early_bird: base,
+                    price_standard: Math.round(base * 1.33),
+                    price_last_minute: base * 2,
+                  });
+                }}
+                className="text-xs underline"
+                style={{ color: '#D91CD2' }}
+              >
+                Réinitialiser aux valeurs suggérées
+              </button>
+            </div>
+          )}
+
+          <div className="mt-4">
+            <label className="block text-xs mb-1" style={{ color: 'rgba(255,255,255,0.7)' }}>
+              Nombre de séances incluses (pack)
+            </label>
+            <input
+              type="number"
+              value={newOffer.pack_sessions ?? ''}
+              onChange={e => setNewOffer({ ...newOffer, pack_sessions: e.target.value === '' ? null : parseInt(e.target.value, 10) })}
+              className="w-full px-3 py-2 rounded-lg neon-input text-sm"
+              placeholder="ex: 10"
+            />
+            <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.5)' }}>
+              Si rempli, l'acheteur reçoit un espace personnel avec ce nombre de crédits.
+            </p>
+          </div>
+        </div>
+
         {/* === DURÉE DE VALIDITÉ (NOUVEAU) === */}
         <div style={{ marginTop: '14px', padding: '14px', borderRadius: '10px', border: '2px solid #D91CD2', background: 'rgba(217, 28, 210, 0.08)', boxShadow: '0 0 12px rgba(217, 28, 210, 0.25)' }}>
           <p style={{ fontSize: '14px', color: '#D91CD2', marginBottom: '12px', fontWeight: 'bold' }}>⏱ DURÉE DE VALIDITÉ (NOUVEAU)</p>
