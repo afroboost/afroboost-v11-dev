@@ -21,6 +21,10 @@ Ces règles s'appliquent implicitement à **toutes** les tâches.
 - Devise : `CHF` en minuscules côté Stripe, `"CHF"` en majuscules dans les réponses API.
 - Palette dashboard : fond noir, bordures `rgba(217,28,210,0.2)`, accent `#D91CD2`, texte blanc.
 - Ne **jamais** `git push` — le push sur `main` déclenche un déploiement en production. Commits locaux uniquement.
+- 🔴 **`DB_NAME=promo-credits-lab` EST LA BASE DE PRODUCTION.** Un serveur lancé en local avec le `.env` du projet écrit chez de vrais abonnés payants.
+  - Vérifications autorisées : **lecture seule** (`GET`, `curl`, ouverture d'une page).
+  - **Interdit sans accord explicite de l'utilisateur** : tout `POST`/`PUT`/`DELETE` de vérification, toute création de code `AFR-`, toute soumission du formulaire d'onboarding, tout achat de test.
+  - En cas de doute sur l'effet d'écriture d'une vérification : ne pas l'exécuter, la signaler dans le compte rendu de tâche.
 - Ne jamais mettre `frontend/build/` dans un commit (des modifications non liées y sont déjà présentes dans l'arbre de travail).
 
 ## Points de vigilance identifiés à l'exploration
@@ -1099,10 +1103,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Vérification de signature du webhook** (`server.py:3469`) — faille réelle, à corriger dans un commit dédié comme indiqué en §8 de la spec.
 
-## Questions ouvertes avant exécution
+## Questions tranchées (20 juillet 2026)
 
-Ces trois points de la spec sont restés sans réponse et doivent être tranchés avant de lancer la tâche 9 :
-
-1. `DB_NAME` — `docker-compose.yml:11` pointe sur `afroboost_db`, la production annoncée est `promo-credits-lab`. À confirmer avant tout test sur données réelles.
-2. Raison de la désactivation de `PaymentSuccessPage` en v158.7.
-3. Confirmation que la branche `else` du webhook (`server.py:3624-3849`) est bien celle qui traite les achats d'offres — c'est le fondement de l'abandon des chantiers 2C et 2E.
+1. **`DB_NAME` = `promo-credits-lab`, et c'est la PRODUCTION.** Voir la contrainte de sécurité en tête de plan.
+2. **`PaymentSuccessPage`** — raison de la désactivation v158.7 perdue. Décision : **on ne la réactive pas**. Le parcours par email suffit. La section « Hors périmètre » est définitive.
+3. **Webhook confirmé** : la branche `else` de `server.py:3624-3849` traite bien les achats d'offres. L'abandon des chantiers 2C et 2E est validé.
