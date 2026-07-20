@@ -1207,6 +1207,13 @@ const OfferCard = ({ offer, selected, onClick }) => {
   );
 };
 
+// V223: libellé et couleur du palier tarifaire actif
+const V223_TIERS = {
+  early_bird:  { label: '🎯 Early Bird', color: '#22c55e' },
+  standard:    { label: 'Standard',      color: '#eab308' },
+  last_minute: { label: '🔥 Last Minute', color: '#ef4444' },
+};
+
 // Offer Card for Horizontal Slider - With LED effect, Loupe, Info icon + Discrete dots
 const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
   const [showDescription, setShowDescription] = useState(false);
@@ -1408,8 +1415,21 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
                   textShadow: selected ? '0 0 15px rgba(217, 28, 210, 0.6)' : 'none'
                 }}
               >
-                CHF {offer.price}.-
+                {/* V223: prix du palier actif, sinon rendu d'origine */}
+                CHF {offer.progressive_pricing && offer.active_price != null
+                       ? offer.active_price
+                       : offer.price}.-
               </span>
+              {/* V223: badge du palier tarifaire */}
+              {offer.progressive_pricing && V223_TIERS[offer.active_tier] && (
+                <span style={{
+                  fontSize: 11, padding: '2px 8px', borderRadius: 999,
+                  background: `${V223_TIERS[offer.active_tier].color}22`,
+                  color: V223_TIERS[offer.active_tier].color,
+                }}>
+                  {V223_TIERS[offer.active_tier].label}
+                </span>
+              )}
               {offer.tva > 0 && (
                 <span className="text-xs text-white opacity-50">TVA {offer.tva}%</span>
               )}
