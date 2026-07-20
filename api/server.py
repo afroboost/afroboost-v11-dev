@@ -5234,6 +5234,43 @@ async def toggle_subscription_auto_renew(subscription_id: str, request: Request)
     return {"success": True, "subscription_id": subscription_id, "auto_renew": desired}
 
 
+# V223: Complément de profil depuis l'espace abonné
+class SubscriberProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    whatsapp: Optional[str] = None
+
+
+@api_router.put("/subscriptions/{code}/profile")
+async def update_subscriber_profile(code: str, payload: SubscriberProfileUpdate):
+    code_upper = (code or "").strip().upper()
+    subscription = await db.subscriptions.find_one({"code": code_upper}, {"_id": 0})
+    if not subscription:
+        raise HTTPException(status_code=404, detail="Code introuvable")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    updates = {"updated_at": now_iso}
+    if payload.name:
+        updates["name"] = payload.name.strip()
+    if payload.whatsapp:
+        updates["whatsapp"] = payload.whatsapp.strip()
+
+    await db.subscriptions.update_one({"code": code_upper}, {"$set": updates})
+
+    # V223: le CRM lit chat_participants — la collection « contacts » n'existe
+    # pas ; y écrire rendrait ces données invisibles au dashboard.
+    email = subscription.get("email") or ""
+    if email:
+        await db.chat_participants.update_one(
+            {"email": email},
+            {"$set": {**updates, "email": email, "source": "espace_onboarding",
+                      "code": code_upper},
+             "$setOnInsert": {"id": str(uuid.uuid4()), "created_at": now_iso}},
+            upsert=True,
+        )
+
+    return {"success": True}
+
+
 async def _v195_send_renewal_notification(sub: dict, message: str, subject: str = None):
     """V195: Envoie une notif de renouvellement par email (Resend) + WhatsApp si phone connu."""
     email = (sub.get("email") or "").strip()
