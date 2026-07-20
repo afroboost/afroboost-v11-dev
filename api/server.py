@@ -3316,10 +3316,12 @@ class CreateCheckoutRequest(BaseModel):
     customerEmail: Optional[str] = None
     originUrl: str  # URL d'origine du frontend pour construire success/cancel URLs
     reservationData: Optional[dict] = None  # Données de réservation pour metadata
-    packSessions: Optional[int] = None  # V223
-    # V223: borné — au-delà de 500 caractères, Stripe rejette la valeur de
-    # metadata et la création de session échoue.
-    tier: Optional[str] = Field(default=None, max_length=64)
+    # V223: identifiant de l'offre. Quand il est fourni, le serveur fait
+    # AUTORITÉ : il relit le prix et le nombre de crédits depuis la base.
+    # Le nombre de crédits n'est délibérément PAS un champ d'entrée : cet
+    # endpoint est public, et l'accepter du client permettrait de payer 1 CHF
+    # en demandant 1000 crédits.
+    offerId: Optional[str] = None
 
 @api_router.post("/create-checkout-session")
 async def create_checkout_session(request: CreateCheckoutRequest):
@@ -3354,18 +3356,38 @@ async def create_checkout_session(request: CreateCheckoutRequest):
     # {CHECKOUT_SESSION_ID} est remplacé automatiquement par Stripe
     success_url = f"{request.originUrl}?status=success&session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{request.originUrl}?status=canceled"
+    
+    # V223: si une offre est désignée, le SERVEUR fait autorité sur le prix et
+    # sur le nombre de crédits. Le client ne peut ni se fabriquer un tarif ni
+    # s'attribuer des crédits : cet endpoint est public.
+    # Sans offerId, on conserve strictement le comportement d'avant V223.
+    server_price = None
+    server_pack_sessions = ""
+    server_tier = ""
+    if request.offerId:
+        _offer = await db.offers.find_one({"id": request.offerId}, {"_id": 0})
+        if not _offer:
+            raise HTTPException(status_code=404, detail="Offre introuvable")
+        _priced = compute_active_price(_offer)
+        server_price = _priced["price"]
+        server_tier = _priced["tier"]
+        _ps = _offer.get("pack_sessions")
+        if isinstance(_ps, int) and _ps > 0:
+            server_pack_sessions = str(_ps)
 
-    # Montant en centimes (Stripe utilise les plus petites unités)
-    amount_cents = int(request.amount * 100)
+    # Montant en centimes (Stripe utilise les plus petites unités).
+    # round() et non int() : int(0.29 * 100) vaut 28 en virgule flottante.
+    amount_cents = round((server_price if server_price is not None else request.amount) * 100)
 
     # Préparer les metadata
     metadata = {
         "product_name": request.productName,
         "customer_email": request.customerEmail or "",
         "source": "afroboost_checkout",
-        # V223: crédits explicites + palier tarifaire
-        "pack_sessions": str(getattr(request, "packSessions", "") or ""),
-        "tier": getattr(request, "tier", "") or "",
+        # V223: valeurs calculées côté serveur uniquement, jamais reçues du client
+        "pack_sessions": server_pack_sessions,
+        "tier": server_tier,
+        "offer_id": request.offerId or "",
     }
     if request.reservationData:
         metadata["reservation_id"] = request.reservationData.get("id", "")
