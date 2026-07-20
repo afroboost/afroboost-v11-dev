@@ -3554,7 +3554,11 @@ async def stripe_webhook(request: Request):
         # secret est configuré, sans rien casser s'il ne l'est pas encore :
         # activer inconditionnellement ferait échouer TOUS les paiements tant
         # que la variable d'environnement n'est pas renseignée.
-        _wh_secret = os.environ.get('STRIPE_WEBHOOK_SECRET')
+        # Variable DÉDIÉE, surtout pas STRIPE_WEBHOOK_SECRET : celle-ci est déjà
+        # utilisée par /api/stripe/webhook (stripe_routes.py), et Stripe génère
+        # un secret DIFFÉRENT par endpoint. Réutiliser la même ferait échouer la
+        # signature ici, donc rejeter TOUS les paiements clients en 400.
+        _wh_secret = os.environ.get('STRIPE_WEBHOOK_SECRET_CHECKOUT')
         if _wh_secret:
             _sig = request.headers.get('stripe-signature', '')
             try:
@@ -3564,8 +3568,10 @@ async def stripe_webhook(request: Request):
                 raise HTTPException(status_code=400, detail="Signature invalide")
         else:
             logger.warning(
-                "[WEBHOOK] STRIPE_WEBHOOK_SECRET absent — webhook NON authentifié. "
-                "Configurez cette variable pour empêcher la création de packs sans paiement."
+                "[WEBHOOK] STRIPE_WEBHOOK_SECRET_CHECKOUT absent — webhook NON "
+                "authentifié. Renseignez-la avec le secret de signature de "
+                "l'endpoint /api/webhook/stripe (Stripe Dashboard > Webhooks) "
+                "pour empêcher la création de packs sans paiement."
             )
             event = stripe.Event.construct_from(stripe.util.json.loads(body), stripe.api_key)
         if event.type == 'checkout.session.completed':
