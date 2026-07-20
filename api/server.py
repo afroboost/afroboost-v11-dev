@@ -3377,13 +3377,25 @@ async def create_checkout_session(request: CreateCheckoutRequest):
     server_pack_sessions = ""
     server_tier = ""
     if request.offerId:
-        _offer = await db.offers.find_one({"id": request.offerId}, {"_id": 0})
-        if not _offer:
-            raise HTTPException(status_code=404, detail="Offre introuvable")
-        server_tier = compute_active_price(_offer)["tier"]
-        _ps = _offer.get("pack_sessions")
-        if isinstance(_ps, int) and _ps > 0:
-            server_pack_sessions = str(_ps)
+        try:
+            _offer = await db.offers.find_one({"id": request.offerId}, {"_id": 0})
+        except Exception as _off_err:
+            _offer = None
+            logger.warning(f"[V223] Lecture de l'offre {request.offerId} échouée: {_off_err}")
+        if _offer:
+            server_tier = compute_active_price(_offer)["tier"]
+            _ps = _offer.get("pack_sessions")
+            if isinstance(_ps, int) and _ps > 0:
+                server_pack_sessions = str(_ps)
+        else:
+            # V223: offre introuvable (archivée entre l'affichage et le paiement,
+            # cache navigateur, autre canal). On NE bloque PAS le paiement : on
+            # retombe sur le comportement d'avant V223, sans crédits de pack.
+            # Un 404 ici empêcherait un client de payer pour une donnée annexe.
+            logger.warning(
+                f"[V223] Offre {request.offerId} introuvable — paiement poursuivi "
+                f"sans crédits de pack"
+            )
 
     # Montant en centimes (Stripe utilise les plus petites unités).
     # round() et non int() : int(0.29 * 100) vaut 28 en virgule flottante.
