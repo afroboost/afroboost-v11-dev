@@ -104,10 +104,16 @@ def test_frontiere_exactement_24h_bascule_en_last_minute():
 
 
 def test_fenetre_early_bird_a_zero_est_respectee():
-    """early_bird_days_before=0 signifie « aucune fenêtre Early Bird », pas 7 jours."""
+    """early_bird_days_before=0 signifie « aucune fenêtre Early Bird », pas 7 jours.
+
+    `now` doit tomber ENTRE le défaut bugué (7 j) et la valeur réelle (0 j),
+    sinon le test est tautologique : à 30 jours, 30 > 7 et 30 > 0 donnent tous
+    deux early_bird et le test passe même avec le bug. À 3 jours, un défaut à 7
+    donnerait standard — l'écart est observable.
+    """
     res = compute_active_price(_offer(early_bird_days_before=0),
-                               now=REF - timedelta(days=30))
+                               now=REF - timedelta(days=3))
     assert res["tier"] == "early_bird"
     res2 = compute_active_price(_offer(early_bird_days_before=0, price_early_bird=None),
-                                now=REF - timedelta(days=30))
+                                now=REF - timedelta(days=3))
     assert res2["price"] == 30.0
