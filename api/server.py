@@ -3309,6 +3309,13 @@ async def get_coach_payment_links(coach_email: str):
 
 # --- Stripe Checkout avec TWINT ---
 
+# V223: plafond des crédits déduits du nom de produit (regex V204). Ce nom est
+# fourni par le client sur un endpoint public : sans borne, il suffit d'acheter
+# un « Abo x999 » à 1 CHF pour obtenir 999 crédits. Ne s'applique jamais aux
+# crédits relus en base via offer_id, qui font autorité.
+V223_MAX_SESSIONS_REGEX = 40
+
+
 class CreateCheckoutRequest(BaseModel):
     """Requête pour créer une session de paiement Stripe"""
     productName: str
@@ -3541,7 +3548,26 @@ async def stripe_webhook(request: Request):
     """Webhook Stripe - Gère les paiements coach, crédits et clients."""
     try:
         body = await request.body()
-        event = stripe.Event.construct_from(stripe.util.json.loads(body), stripe.api_key)
+        # V223: vérification de signature OPPORTUNISTE. Sans STRIPE_WEBHOOK_SECRET,
+        # cet endpoint accepte n'importe quel POST anonyme — donc n'importe qui
+        # peut se faire créditer un pack sans payer. On l'active dès que le
+        # secret est configuré, sans rien casser s'il ne l'est pas encore :
+        # activer inconditionnellement ferait échouer TOUS les paiements tant
+        # que la variable d'environnement n'est pas renseignée.
+        _wh_secret = os.environ.get('STRIPE_WEBHOOK_SECRET')
+        if _wh_secret:
+            _sig = request.headers.get('stripe-signature', '')
+            try:
+                event = stripe.Webhook.construct_event(body, _sig, _wh_secret)
+            except Exception as _sig_err:
+                logger.warning(f"[WEBHOOK] Signature Stripe invalide, rejet: {_sig_err}")
+                raise HTTPException(status_code=400, detail="Signature invalide")
+        else:
+            logger.warning(
+                "[WEBHOOK] STRIPE_WEBHOOK_SECRET absent — webhook NON authentifié. "
+                "Configurez cette variable pour empêcher la création de packs sans paiement."
+            )
+            event = stripe.Event.construct_from(stripe.util.json.loads(body), stripe.api_key)
         if event.type == 'checkout.session.completed':
             session = event.data.object
             metadata = session.metadata or {}
@@ -3737,6 +3763,12 @@ async def stripe_webhook(request: Request):
                 _pack = str(metadata.get("pack_sessions") or "")
                 if _pack.isdigit() and int(_pack) > 0:
                     sessions_count = int(_pack)
+                elif metadata.get("offer_id"):
+                    # V223: l'offre a été résolue en base au moment du checkout et
+                    # ne déclare aucun pack — c'est donc une prestation à l'unité.
+                    # Surtout PAS de repli sur la regex ici : elle accorderait 10
+                    # crédits à une offre nommée « Cours du 10 mai ».
+                    sessions_count = 1
                 else:
                     # V204 — logique d'origine, strictement inchangée
                     # Chercher "x10", "x5", "x20", "x40" etc. dans le nom
@@ -3747,6 +3779,15 @@ async def stripe_webhook(request: Request):
                         sessions_count = 10
                     elif "5" in product_name:
                         sessions_count = 5
+                    # V223: le nom du produit vient du client sur un endpoint
+                    # public. Sans plafond, « Abo x999 » payé 1 CHF donnerait
+                    # 999 crédits. 40 couvre le plus gros pack réellement vendu.
+                    if sessions_count > V223_MAX_SESSIONS_REGEX:
+                        logger.warning(
+                            f"[V223] sessions_count={sessions_count} déduit du nom "
+                            f"« {product_name} » — plafonné à {V223_MAX_SESSIONS_REGEX}"
+                        )
+                        sessions_count = V223_MAX_SESSIONS_REGEX
                 new_code = f"AFR-{str(uuid.uuid4())[:6].upper()}"
                 discount_doc = {"id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100, "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0, "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(), "source": "stripe_payment", "session_id": session.id}
                 await db.discount_codes.insert_one(discount_doc)
