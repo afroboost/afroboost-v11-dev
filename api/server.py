@@ -47,6 +47,8 @@ from api.routes.payment_config_routes import router as payment_config_router, in
 from api.routes.checkout_routes import router as checkout_router, init_db as init_checkout_db
 # V205: Import routes catégories contacts
 from api.routes.contact_categories_routes import category_router, init_category_db
+# V223: Calcul prix progressif (module pur, sans accès DB)
+from api.pricing import compute_active_price  # V223
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -1120,6 +1122,15 @@ def calculate_expiration_date(from_date_str: str, duration_value: int, duration_
     return (from_date + delta).isoformat()
 
 # --- Offers ---
+# V223: enrichit une liste d'offres avec le prix actif calculé à la lecture
+# (évite une requête /active-price supplémentaire par carte côté frontend).
+def _enrich_offers_with_active_price(offers_list):
+    for _o in offers_list:
+        _p = compute_active_price(_o)
+        _o["active_price"] = _p["price"]
+        _o["active_tier"] = _p["tier"]
+    return offers_list
+
 @api_router.get("/offers", response_model=List[Offer])
 async def get_offers():
     offers = await db.offers.find({}, {"_id": 0}).to_list(100)
@@ -1130,8 +1141,16 @@ async def get_offers():
             {"id": str(uuid.uuid4()), "name": "Abonnement 1 mois", "price": 109, "thumbnail": "", "videoUrl": "", "description": "", "visible": True}
         ]
         await db.offers.insert_many(default_offers)
-        return default_offers
-    return offers
+        return _enrich_offers_with_active_price(default_offers)  # V223
+    return _enrich_offers_with_active_price(offers)  # V223
+
+# V223: Prix actif d'une offre — utilisé par la page activité
+@api_router.get("/offers/{offer_id}/active-price")
+async def get_offer_active_price(offer_id: str):
+    offer = await db.offers.find_one({"id": offer_id}, {"_id": 0})
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offre introuvable")
+    return compute_active_price(offer)
 
 @api_router.post("/offers", response_model=Offer)
 async def create_offer(offer: OfferCreate, request: Request):
