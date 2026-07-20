@@ -96,6 +96,16 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const [joinError, setJoinError] = useState("");
   const [stripeLoading, setStripeLoading] = useState(false);
   const [onboardingDone, setOnboardingDone] = useState(false); // V223
+  // V223: refus mémorisé par code, pour que "Plus tard" survive au rechargement.
+  // localStorage peut lever (mode privé Safari, quota) : on ne bloque jamais
+  // l'accès à des crédits payés pour un problème de stockage.
+  const [onboardingDismissed, setOnboardingDismissed] = useState(() => {
+    try {
+      return !!window.localStorage.getItem(`afb_onb_${accessCode || ""}`);
+    } catch (e) {
+      return false;
+    }
+  });
 
   // V202: Ref pour scroll fluide vers la section réservation
   const reserveSectionRef = useRef(null);
@@ -543,14 +553,28 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   // subscriptions filtré par code seul, donc un membre écraserait le WhatsApp
   // du titulaire, relu ensuite par tout le groupe. L'onboarding ne concerne
   // que l'acheteur.
+  // V223: on ne teste QUE le WhatsApp. Le backend fait toujours retomber
+  // display_name sur le préfixe de l'e-mail, puis sur "Abonné" : subscriber.name
+  // n'est jamais vide, le tester ne servirait à rien.
+  // V223: le refus est persisté par code. Sans cela, "Plus tard" ne survivrait
+  // pas au rechargement et l'écran reviendrait à chaque visite, indéfiniment,
+  // pour tout abonné existant sans WhatsApp — une régression visible par tous.
   const needsOnboarding = !onboardingDone && !data?.member &&
-    (!subscriber.name || !subscriber.whatsapp);
+    !subscriber.whatsapp && !onboardingDismissed;
   if (needsOnboarding) {
     return (
       <SubscriberOnboarding
         code={accessCode}
         subscription={subscriber}
-        onDone={() => setOnboardingDone(true)}
+        onDone={() => {
+          // V223: mémoriser le refus pour ne pas rouvrir l'écran à chaque visite
+          try {
+            window.localStorage.setItem(`afb_onb_${accessCode || ""}`, "1");
+          } catch (e) {
+            /* stockage indisponible : on continue, l'accès prime */
+          }
+          setOnboardingDone(true);
+        }}
       />
     );
   }
