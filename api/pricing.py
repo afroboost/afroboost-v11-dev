@@ -56,8 +56,12 @@ def compute_active_price(offer: dict, now: Optional[datetime] = None) -> dict:
     now = now or datetime.now(timezone.utc)
     remaining = reference - now
 
-    days_before = int(offer.get("early_bird_days_before") or 7)
-    hours_before = int(offer.get("standard_hours_before") or 24)
+    # V223: un 0 explicite est une valeur valide (« aucune fenêtre »), il ne
+    # doit pas être confondu avec un champ absent.
+    _days = offer.get("early_bird_days_before")
+    _hours = offer.get("standard_hours_before")
+    days_before = int(_days) if _days is not None else 7
+    hours_before = int(_hours) if _hours is not None else 24
 
     if remaining > timedelta(days=days_before):
         tier, tier_price = "early_bird", offer.get("price_early_bird")

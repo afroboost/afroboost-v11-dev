@@ -3,7 +3,6 @@
 Module pur : aucune connexion MongoDB, aucun serveur requis.
 """
 from datetime import datetime, timezone, timedelta
-import pytest
 
 from api.pricing import compute_active_price
 
@@ -78,9 +77,11 @@ def test_palier_non_defini_retombe_sur_prix_de_base():
 
 
 def test_countdown_time_absent_utilise_minuit():
+    """Référence = 2026-09-01 00:00. À 12h avant, on est en last_minute.
+    Si le défaut était 19:00 au lieu de minuit, l'écart serait de 31h → standard."""
     res = compute_active_price(_offer(countdown_time=None),
-                               now=datetime(2026, 8, 20, tzinfo=timezone.utc))
-    assert res["tier"] == "early_bird"
+                               now=datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc))
+    assert res["tier"] == "last_minute"
 
 
 def test_countdown_date_malformee_retombe_sur_regular():
@@ -94,3 +95,19 @@ def test_prix_absent_vaut_zero_sans_planter():
     res = compute_active_price({}, now=REF)
     assert res["price"] == 0.0
     assert res["tier"] == "regular"
+
+
+def test_frontiere_exactement_24h_bascule_en_last_minute():
+    """Symétrique du seuil 7 jours : à égalité on n'est plus « plus de 24h avant »."""
+    res = compute_active_price(_offer(), now=REF - timedelta(hours=24))
+    assert res["tier"] == "last_minute"
+
+
+def test_fenetre_early_bird_a_zero_est_respectee():
+    """early_bird_days_before=0 signifie « aucune fenêtre Early Bird », pas 7 jours."""
+    res = compute_active_price(_offer(early_bird_days_before=0),
+                               now=REF - timedelta(days=30))
+    assert res["tier"] == "early_bird"
+    res2 = compute_active_price(_offer(early_bird_days_before=0, price_early_bird=None),
+                                now=REF - timedelta(days=30))
+    assert res2["price"] == 30.0
