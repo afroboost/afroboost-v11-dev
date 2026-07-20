@@ -3316,6 +3316,8 @@ class CreateCheckoutRequest(BaseModel):
     customerEmail: Optional[str] = None
     originUrl: str  # URL d'origine du frontend pour construire success/cancel URLs
     reservationData: Optional[dict] = None  # Données de réservation pour metadata
+    packSessions: Optional[int] = None  # V223
+    tier: Optional[str] = None          # V223
 
 @api_router.post("/create-checkout-session")
 async def create_checkout_session(request: CreateCheckoutRequest):
@@ -3358,7 +3360,10 @@ async def create_checkout_session(request: CreateCheckoutRequest):
     metadata = {
         "product_name": request.productName,
         "customer_email": request.customerEmail or "",
-        "source": "afroboost_checkout"
+        "source": "afroboost_checkout",
+        # V223: crédits explicites + palier tarifaire
+        "pack_sessions": str(getattr(request, "packSessions", "") or ""),
+        "tier": getattr(request, "tier", "") or "",
     }
     if request.reservationData:
         metadata["reservation_id"] = request.reservationData.get("id", "")
@@ -3673,7 +3678,13 @@ async def stripe_webhook(request: Request):
                     return {"status": "ok", "type": "subscriber_space_payment"}
 
                 # v8.1 / V204: CREATION AUTOMATIQUE CODE D'ACCES
-                customer_email = session.get("customer_email") or metadata.get("customer_email", "")
+                # V223: quand Stripe collecte lui-même l'email (parcours sans
+                # formulaire), il le place dans customer_details.email et NON
+                # dans customer_email. Sans ce repli, l'acheteur paie et ne
+                # reçoit ni code ni accès à son espace.
+                customer_email = (session.get("customer_details") or {}).get("email") \
+                    or session.get("customer_email") \
+                    or metadata.get("customer_email", "")
 
                 # V204: Extraire le nom du produit depuis metadata OU depuis line_items Stripe
                 product_name = metadata.get("product_name", "")
@@ -3688,17 +3699,24 @@ async def stripe_webhook(request: Request):
                 if not product_name:
                     product_name = "Abonnement Afroboost"
 
-                # V204: Calcul intelligent du nombre de séances depuis le nom du produit
+                # V223: si l'offre déclare ses crédits, on les utilise.
+                # La regex V204 devient le repli des offres historiques : elle
+                # accorde 10 crédits à un produit nommé « Cours du 10 mai ».
                 import re as _re_webhook
                 sessions_count = 1  # défaut
-                # Chercher "x10", "x5", "x20", "x40" etc. dans le nom
-                x_match = _re_webhook.search(r'x\s*(\d+)', product_name, _re_webhook.IGNORECASE)
-                if x_match:
-                    sessions_count = int(x_match.group(1))
-                elif "10" in product_name:
-                    sessions_count = 10
-                elif "5" in product_name:
-                    sessions_count = 5
+                _pack = metadata.get("pack_sessions") or ""
+                if _pack.isdigit() and int(_pack) > 0:
+                    sessions_count = int(_pack)
+                else:
+                    # V204 — logique d'origine, strictement inchangée
+                    # Chercher "x10", "x5", "x20", "x40" etc. dans le nom
+                    x_match = _re_webhook.search(r'x\s*(\d+)', product_name, _re_webhook.IGNORECASE)
+                    if x_match:
+                        sessions_count = int(x_match.group(1))
+                    elif "10" in product_name:
+                        sessions_count = 10
+                    elif "5" in product_name:
+                        sessions_count = 5
                 new_code = f"AFR-{str(uuid.uuid4())[:6].upper()}"
                 discount_doc = {"id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100, "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0, "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(), "source": "stripe_payment", "session_id": session.id}
                 await db.discount_codes.insert_one(discount_doc)
