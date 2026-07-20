@@ -3317,7 +3317,9 @@ class CreateCheckoutRequest(BaseModel):
     originUrl: str  # URL d'origine du frontend pour construire success/cancel URLs
     reservationData: Optional[dict] = None  # Données de réservation pour metadata
     packSessions: Optional[int] = None  # V223
-    tier: Optional[str] = None          # V223
+    # V223: borné — au-delà de 500 caractères, Stripe rejette la valeur de
+    # metadata et la création de session échoue.
+    tier: Optional[str] = Field(default=None, max_length=64)
 
 @api_router.post("/create-checkout-session")
 async def create_checkout_session(request: CreateCheckoutRequest):
@@ -3704,7 +3706,10 @@ async def stripe_webhook(request: Request):
                 # accorde 10 crédits à un produit nommé « Cours du 10 mai ».
                 import re as _re_webhook
                 sessions_count = 1  # défaut
-                _pack = metadata.get("pack_sessions") or ""
+                # V223: str() car le webhook n'authentifie pas ses appels — un POST
+                # forgé avec un pack_sessions numérique (non-chaîne) ferait sinon
+                # planter .isdigit() en AttributeError.
+                _pack = str(metadata.get("pack_sessions") or "")
                 if _pack.isdigit() and int(_pack) > 0:
                     sessions_count = int(_pack)
                 else:
