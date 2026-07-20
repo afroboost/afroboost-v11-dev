@@ -7,6 +7,7 @@ import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { copyToClipboard } from "../utils/clipboard";
+import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
@@ -94,6 +95,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const [joinLoading, setJoinLoading] = useState(false);
   const [joinError, setJoinError] = useState("");
   const [stripeLoading, setStripeLoading] = useState(false);
+  const [onboardingDone, setOnboardingDone] = useState(false); // V223
 
   // V202: Ref pour scroll fluide vers la section réservation
   const reserveSectionRef = useRef(null);
@@ -533,6 +535,21 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       setTimeout(() => setShareCopied(false), 2000);
     }
   };
+
+  // V223: profil incomplet → écran de bienvenue, une seule fois. Lien
+  // "Plus tard" obligatoire : sans lui, un abonné existant sans name/whatsapp
+  // serait enfermé hors de crédits déjà payés.
+  const needsOnboarding = !onboardingDone && subscriber &&
+    (!subscriber.name || !subscriber.whatsapp);
+  if (needsOnboarding) {
+    return (
+      <SubscriberOnboarding
+        code={accessCode}
+        subscription={subscriber}
+        onDone={() => setOnboardingDone(true)}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen pb-16" style={{ background: COLORS.bg, color: "white" }}>
