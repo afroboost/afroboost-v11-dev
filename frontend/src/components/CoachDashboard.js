@@ -1018,6 +1018,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // v37.2: Sous-onglet du HUB "Gestion" — 4 sections centralisées
   const [offersSubTab, setOffersSubTab] = useState('contenus');
 
+  // V226: la gestion des horaires se fait desormais UNIQUEMENT dans le wizard
+  // d'offre (OfferWizard, etape 2 « Logistique »), qui couvre tout le cycle de
+  // vie : creer, modifier, rattacher, retirer de l'offre, archiver/restaurer,
+  // supprimer, masquer/republier. La section « Cours » du dashboard fait donc
+  // doublon et est neutralisee.
+  // RIEN N'EST SUPPRIME : CoursesManager.js reste intact et la section se
+  // reaffiche en repassant cette constante a `true`.
+  const SHOW_COURSES_SECTION = false;
+
   // v37.2: Auto-scroll + auto-load audio course on sub-tab change
   const handleSubTabChange = (subTabId) => {
     setOffersSubTab(subTabId);
@@ -5086,6 +5095,29 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     } catch (err) { console.error("Error updating tracking:", err); }
   };
 
+  // V226: recâblage du suivi d'expédition dans l'onglet Réservations.
+  // `updateTracking` ci-dessus n'était plus branché nulle part depuis l'extraction
+  // de ReservationTab, et ne peut pas l'être en l'état : il fait
+  // `setReservations(res.data)` alors que GET /reservations renvoie
+  // {data, pagination} — `reservations` deviendrait un objet et le `reservations.map`
+  // de l'onglet planterait la page entière. Il lui manque aussi getCoachHeaders(),
+  // donc le rechargement reviendrait vide pour un coach partenaire.
+  // On le laisse intact (aucune suppression) et on branche cette version, qui
+  // recharge la page courante via loadReservations — le seul chemin qui lit
+  // correctement res.data.data et res.data.pagination.
+  const updateTrackingV226 = async (reservationId, trackingNumber, shippingStatus) => {
+    try {
+      await axios.put(
+        `${API}/reservations/${reservationId}/tracking`,
+        { trackingNumber: trackingNumber || null, shippingStatus: shippingStatus || 'pending' },
+        getCoachHeaders()
+      );
+      await loadReservations(reservationPagination.page, reservationPagination.limit);
+    } catch (err) {
+      console.error("[V226] Erreur mise à jour du suivi d'expédition:", err);
+    }
+  };
+
   // v37.2: "Ma Page" et "Paiements" supprimés — centralisés dans le HUB Gestion
   const baseTabs = [
     { id: "reservations", label: t('reservations') },
@@ -5998,6 +6030,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               onValidateReservation: validateReservation,
               onDeleteReservation: deleteReservation,
               onCycleHeadphone: cycleHeadphone, // V185 F4: Suivi casques Silent Disco
+              onUpdateTracking: updateTrackingV226, // V226: n° de colis + statut d'expédition
               formatDateTime: (date) => {
                 if (!date) return '-';
                 try {
@@ -6084,7 +6117,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             {/* v159: Sous-onglets séparés — Contenus / Audio / Social / Emojis */}
             {['contenus', 'audio', 'social', 'emojis'].includes(offersSubTab) && (
               <>
-                {offersSubTab === 'contenus' && (
+                {/* V226: section « Cours » neutralisee — voir SHOW_COURSES_SECTION */}
+                {SHOW_COURSES_SECTION && offersSubTab === 'contenus' && (
                 <CoursesManager
                   courses={courses}
                   setCourses={setCourses}
@@ -6335,6 +6369,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     API={API}
                     t={t}
                     courses={courses}
+                    // V226 CORRECTIF 1: permet au wizard d'offre de purger un
+                    // horaire supprime de la liste du dashboard, sinon
+                    // reproposee au rattachement et fatale a l'enregistrement
+                    // suivant (PUT /courses/{id} en 404).
+                    setCourses={setCourses}
                     isSuperAdmin={isSuperAdmin}
                     coachEmail={safeCoachUser?.email}
                     consumeCredit={consumeCredit}

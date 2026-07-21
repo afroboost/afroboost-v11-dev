@@ -25,6 +25,12 @@ const OffersManager = ({
   coachEmail,
   consumeCredit,
   courses = [],
+  // V226 CORRECTIF 1: prop OPTIONNELLE, le `setCourses` de CoachDashboard.
+  // Fournie, la suppression d'un horaire depuis le wizard purge la liste
+  // `courses` du dashboard. Absente, repli silencieux (voir onCoursesChanged).
+  // V226 REVUE FINALE: ne sert plus qu'a purger — elle repercute aussi les
+  // AJOUTS et les MISES A JOUR d'horaires faits depuis le wizard.
+  setCourses,
   t
 }) => {
   const [aiLoading, setAiLoading] = React.useState(false);
@@ -278,6 +284,57 @@ const OffersManager = ({
     persistOfferOrder(reordered);
   };
 
+  // V226: glisser-deposer sur la GRILLE de cartes.
+  //
+  // Etat dedie (et non `draggingId`/`dragOverId` de v159) : ces derniers restent
+  // rattaches a l'ancien rendu en liste conserve plus bas, ainsi qu'aux handlers
+  // tactiles qui le pilotent. On ne melange pas les deux mecaniques.
+  const [gridDragId, setGridDragId] = React.useState(null);
+  const [gridDragOverId, setGridDragOverId] = React.useState(null);
+
+  // V226: reordonnancement DEDIE a la grille. Il opere sur `orderedOffers`,
+  // c'est-a-dire l'ordre REELLEMENT AFFICHE (tri par `position`), et non sur
+  // l'etat brut `offers` comme le fait `handleDrop` de v159 : les index calcules
+  // ici correspondent donc a ce que le coach voit a l'ecran. C'est la meme regle
+  // que `moveOffer` (fleches ▲▼), dont ce handler est l'equivalent a la souris.
+  const reorderGridOffers = (draggedId, targetId) => {
+    const from = orderedOffers.findIndex(o => o.id === draggedId);
+    const to = orderedOffers.findIndex(o => o.id === targetId);
+    if (from < 0 || to < 0 || from === to) return;
+    // V226: meme garde de propriete que les fleches — PUT /offers/{id} n'a aucun
+    // controle de proprietaire cote serveur.
+    if (!isOwnOffer(orderedOffers[from])) return;
+    const reordered = [...orderedOffers];
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(to, 0, moved);
+    // V226: persistance deleguee a persistOfferOrder (reindexation 0..n-1 et PUT
+    // sur les seules offres dont la position change reellement).
+    persistOfferOrder(reordered);
+  };
+
+  const handleGridDragStart = (e, offer) => {
+    setGridDragId(offer.id);
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', offer.id); } catch (err) {}
+    }
+  };
+  const handleGridDragOver = (e, offer) => {
+    // V226: preventDefault est indispensable, sans quoi le navigateur refuse le depot.
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    if (gridDragId && gridDragId !== offer.id) setGridDragOverId(offer.id);
+  };
+  const handleGridDragEnd = () => { setGridDragId(null); setGridDragOverId(null); };
+  const handleGridDrop = (e, offer) => {
+    e.preventDefault();
+    const draggedId = gridDragId;
+    setGridDragId(null);
+    setGridDragOverId(null);
+    if (!draggedId || draggedId === offer.id) return;
+    reorderGridOffers(draggedId, offer.id);
+  };
+
   // V224: filtre de recherche extrait une seule fois — il etait duplique dans
   // les rendus mobile et desktop.
   const filteredOffers = offersSearch
@@ -446,6 +503,18 @@ const OffersManager = ({
               // faire (ticket backend separe) — ceci en limite l'exposition.
               canMoveUp={!offersSearch && isOwnOffer(offer) && orderIdx > 0}
               canMoveDown={!offersSearch && isOwnOffer(offer) && orderIdx >= 0 && orderIdx < orderedOffers.length - 1}
+              // V226: glisser-deposer. Desactive pendant une recherche active
+              // (meme regle que les fleches) : la grille n'affiche alors qu'une
+              // partie des offres, un depot y designerait une position calculee
+              // face a des voisins invisibles. Le reordonnancement lui-meme
+              // opere de toute facon sur orderedOffers, jamais sur filteredOffers.
+              draggable={!offersSearch && isOwnOffer(offer)}
+              onDragStart={offersSearch ? undefined : handleGridDragStart}
+              onDragOver={offersSearch ? undefined : handleGridDragOver}
+              onDrop={offersSearch ? undefined : handleGridDrop}
+              onDragEnd={offersSearch ? undefined : handleGridDragEnd}
+              isDragging={gridDragId === offer.id}
+              isDragOver={gridDragOverId === offer.id && gridDragId !== offer.id}
             />
           );
         })}
@@ -464,6 +533,36 @@ const OffersManager = ({
         // V225: active l'edition des horaires dans l'etape 2 du wizard
         // (POST /courses a l'ajout, PUT /courses/{id} a l'enregistrement).
         API={API}
+        // V226 CORRECTIF 1: purge du cours supprime dans l'etat du dashboard.
+        // Sans cela, la prop `courses` — chargee une seule fois et jamais
+        // rafraichie — reproposerait l'horaire supprime dans « Ou rattacher un
+        // cours existant » : le rattacher puis enregistrer produit un 404 sur
+        // `PUT /courses/{id}`, ce qui fait echouer les horaires ET empeche
+        // l'ecriture de l'offre. Repli silencieux si `setCourses` est absent.
+        //
+        // V226 REVUE FINALE: le cablage n'etait qu'une PURGE, si bien qu'un
+        // horaire cree, duplique, renomme, republie ou restaure depuis le wizard
+        // ne remontait jamais ici. Le wizard envoie desormais un descripteur
+        // ({ type: 'remove' | 'upsert' }) et ce reducteur sait aussi ajouter et
+        // fusionner. La fusion est PARTIELLE (`{ ...c, ...course }`) : le
+        // changement de visibilite n'envoie que `{ id, visible }` et ne doit pas
+        // effacer le nom, l'heure ni le lieu deja connus du parent.
+        onCoursesChanged={setCourses
+          ? (change) => setCourses(prev => {
+              const list = prev || [];
+              if (!change || !change.type) return list;
+              if (change.type === 'remove') {
+                return list.filter(c => c.id !== change.id);
+              }
+              if (change.type === 'upsert' && change.course && change.course.id) {
+                const next = change.course;
+                return list.some(c => c.id === next.id)
+                  ? list.map(c => (c.id === next.id ? { ...c, ...next } : c))
+                  : [...list, { ...next }];
+              }
+              return list;
+            })
+          : undefined}
       />
 
       {/* Conteneur scrollable pour les offres */}

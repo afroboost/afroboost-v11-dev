@@ -1252,16 +1252,24 @@ const v225FormatAmount = (amount) => {
 // deux DOIVENT decider a l'identique, sinon la carte propose un paiement que
 // handleSelectOffer refuse.
 //
-// Le test porte sur `isProduct`/`isPhysicalProduct` ET sur `type` : le modele
-// Offer (api/server.py:366) ne declare PAS de champ `type` et OfferCreate est
-// en extra="ignore", donc `type` est toujours absent d'une offre venant de la
-// base. Il n'est conserve ici que pour les pseudo-offres construites cote
-// client (achats audio/video, App.js ~5967 et ~6043), qui le posent en dur.
+// V226: tout ce qui est payant part en checkout Stripe, produits physiques et
+// achats audio/video compris. Seules les offres a 0 CHF gardent le formulaire :
+// Stripe refuse un montant nul, c'est une limite de plateforme et non un choix.
+//
+// Verifie avant elargissement : `shippingCost` et `tva` n'entrent dans aucun
+// calcul de total (calculateTotal ne les lit pas), et `isAudio` n'est consomme
+// ni par le backend ni par le dashboard. Aucune donnee exploitee n'est perdue.
+//
+// V226: le nom reste `v225IsDirectCheckout`. Il est le point de decision UNIQUE,
+// consomme par handleSelectOffer ET par le bouton de la carte : le renommer
+// imposerait de toucher ses deux consommateurs et creerait un risque de
+// divergence. L'ancien test sur `isProduct`/`type` est retire, pas contourne —
+// il n'existait que pour reserver ces achats au formulaire, ce que la V226
+// supprime. L'adresse de livraison est desormais collectee par Stripe
+// (payload `collectShipping`) et les variantes par la carte (payload `variants`).
 const v225IsDirectCheckout = (offer) => {
   if (!offer) return false;
-  const isProduct = offer.isProduct || offer.isPhysicalProduct
-    || offer.type === 'product' || offer.type === 'audio' || offer.type === 'video';
-  return !isProduct && v223UnitPrice(offer) > 0;
+  return v223UnitPrice(offer) > 0;
 };
 
 const V223_TIERS = {
@@ -1289,6 +1297,28 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   const [videoError, setVideoError] = useState(false);
   // V225: quantite choisie sur la carte, relayee a startProgressiveCheckout.
   const [v225Qty, setV225Qty] = useState(1);
+  // V226: variantes choisies sur la carte ({ size, color, weight }). Depuis que
+  // les produits physiques payants partent en checkout direct, le formulaire —
+  // qui portait jusqu'ici les selecteurs de variantes (~l.4632) — n'est plus
+  // atteint : sans ces selecteurs le coach recevrait une commande sans savoir
+  // quoi expedier. Les cles sont volontairement celles de `selectedVariants`
+  // du formulaire (size/color/weight), pour que les deux parcours produisent
+  // exactement la meme forme de donnee.
+  const [v226Variants, setV226Variants] = useState({});
+  // V226: retour visuel quand le visiteur clique la carte sans avoir choisi une
+  // variante. `v226FlashDim` porte la cle de la dimension a signaler, et les
+  // refs permettent de l'amener dans le champ de vision. Aucune dependance
+  // ajoutee : scrollIntoView natif + une bordure pilotee par l'etat React.
+  const [v226FlashDim, setV226FlashDim] = useState(null);
+  const v226SelectRefs = useRef({});
+  const v226FlashTimerRef = useRef(null);
+  // V226: le timer ne doit pas survivre au demontage de la carte — le slider
+  // recycle ses instances, un setState tardif viserait un composant demonte.
+  useEffect(() => {
+    return () => {
+      if (v226FlashTimerRef.current) clearTimeout(v226FlashTimerRef.current);
+    };
+  }, []);
   const defaultImage = "https://picsum.photos/seed/default/400/300";
   
   // PRIORITÉ: offer.images[0] > offer.thumbnail > defaultImage
@@ -1338,6 +1368,57 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   useEffect(() => {
     setV225Qty(1);
   }, [offer.id]);
+
+  // V226: meme raison que la quantite ci-dessus — une instance de carte recyclee
+  // par le slider ferait heriter la nouvelle offre des variantes choisies sur la
+  // precedente, et expedierait une taille M jamais demandee.
+  useEffect(() => {
+    setV226Variants({});
+  }, [offer.id]);
+
+  // V226: dimensions de variantes REELLEMENT proposees par cette offre.
+  // `offer.variants` vaut `{ sizes: [...], colors: [...], weights: [...] }`, avec
+  // des tableaux potentiellement vides ou absents : on ne retient que les
+  // dimensions non vides, pour ne jamais exiger un choix qui n'est pas offert.
+  const v226VariantDims = [
+    { key: 'size',   list: offer.variants?.sizes,   label: 'Taille',  prompt: 'une taille' },
+    { key: 'color',  list: offer.variants?.colors,  label: 'Couleur', prompt: 'une couleur' },
+    { key: 'weight', list: offer.variants?.weights, label: 'Poids',   prompt: 'un poids' }
+  ].filter(d => Array.isArray(d.list) && d.list.length > 0);
+
+  // V226: dimensions proposees mais pas encore choisies. Tant qu'il en reste
+  // une, l'achat est bloque — cote formulaire, la meme regle existe deja
+  // (~l.4632) ; on la reproduit ici parce que le formulaire n'est plus atteint.
+  const v226MissingDims = v226VariantDims.filter(d => !v226Variants[d.key]);
+  const v226BlockedByVariant = v225IsDirectCheckout(offer) && v226MissingDims.length > 0;
+
+  // V226: point d'entree UNIQUE de l'achat direct depuis la carte, partage par
+  // le bouton et par le clic sur le corps de carte. Il re-teste lui-meme les
+  // deux gardes (eligibilite et variantes completes) : un appelant ne peut pas
+  // le contourner par inadvertance.
+  const v226BuyDirect = () => {
+    if (!v225IsDirectCheckout(offer)) return;
+    if (v226MissingDims.length > 0) {
+      // V226: ce chemin etait SILENCIEUX. Un visiteur qui clique la photo ou le
+      // titre n'obtenait aucun retour : le libelle du bouton dit quoi faire,
+      // encore faut-il le remarquer. On amene le premier selecteur non renseigne
+      // dans le champ de vision et on le fait clignoter. La garde elle-meme est
+      // inchangee : l'achat reste refuse tant qu'il manque une variante.
+      const first = v226MissingDims[0].key;
+      const el = v226SelectRefs.current[first];
+      if (el && typeof el.scrollIntoView === 'function') {
+        try {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (_) { /* navigateurs sans options : ignore */ }
+      }
+      setV226FlashDim(first);
+      if (v226FlashTimerRef.current) clearTimeout(v226FlashTimerRef.current);
+      v226FlashTimerRef.current = setTimeout(() => setV226FlashDim(null), 1200);
+      return;
+    }
+    if (typeof startProgressiveCheckout !== 'function') return;
+    startProgressiveCheckout(offer, v225Qty, v226VariantDims.length > 0 ? v226Variants : null);
+  };
 
   // V224: ratio MESURE sur les metadonnees reelles (videoWidth/videoHeight),
   // jamais deduit de l'URL — une video 9:16 doit rester en portrait.
@@ -1511,7 +1592,28 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
         style={{ width: 'max(280px, min(340px, 80vw))', minWidth: 'max(280px, min(340px, 80vw))', padding: '6px' }}
       >
         <div
-          onClick={onClick}
+          /* V226: la carte entiere est cliquable et declenche l'achat. Depuis
+             que les produits payants partent en checkout direct, ce clic-la
+             atteindrait Stripe SANS les variantes choisies juste au-dessus —
+             le coach recevrait une commande sans savoir quoi expedier. On le
+             route donc vers v226BuyDirect, exactement comme le bouton.
+             L'interception est volontairement LIMITEE aux offres qui proposent
+             des variantes : partout ailleurs le clic garde strictement le
+             comportement V224/V225 (delegation a `onClick`).
+             V226 CORRECTIF: le nettoyage cours/dates que cette interception
+             court-circuitait (enveloppe `onSelectOffer` du slider produits) vit
+             desormais dans startProgressiveCheckout, donc il a lieu quel que
+             soit le chemin d'entree dans le checkout direct. */
+          onClick={(e) => {
+            if (v225IsDirectCheckout(offer) && v226VariantDims.length > 0) {
+              // V226: variante proposee non choisie → v226BuyDirect absorbe le
+              // clic ET signale visuellement le selecteur manquant (scroll +
+              // flash), au lieu de ne rien faire du tout.
+              v226BuyDirect();
+              return;
+            }
+            if (typeof onClick === 'function') onClick(e);
+          }}
           className={`offer-card-slider rounded-xl overflow-visible cursor-pointer transition-all duration-300`}
           style={{
             boxShadow: selected
@@ -1764,8 +1866,20 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
             {/* V224: metadonnees d'activite — chaque ligne est masquee si sa donnee
                 est absente, pour que les offres existantes (qui n'ont aucun de ces
                 champs) restent visuellement inchangees. */}
+            {/* V226: emoji ⏱/📍/👥 remplaces par des SVG inline (memes conditions
+                de masquage, inchangees). Ces trois lignes ne sont jamais
+                cliquables ici (a la difference du lien Maps du cours lie
+                ci-dessus, ~l.1654-1669, qui garde son propre stopPropagation
+                intact et n'est pas touche) : stroke #aaa, pas de couleur
+                d'accent. */}
             {offer.duration_minutes ? (
-              <p className="text-xs mt-1" style={{ color: '#aaa' }}>⏱ {offer.duration_minutes} min</p>
+              <p className="text-xs mt-1 flex items-center gap-1" style={{ color: '#aaa' }}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+                {offer.duration_minutes} min
+              </p>
             ) : null}
             {/* V225 (revue): plus de lieu affiche deux fois. Une offre portant a
                 la fois `offer.location` (V224) et des cours lies avec
@@ -1774,7 +1888,13 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 change RIEN pour les offres existantes, qui n'ont aucun cours lie
                 — `v225CourseLoc` y vaut null et la ligne V224 reste rendue. */}
             {offer.location && !v225CourseLoc ? (
-              <p className="text-xs mt-1" style={{ color: '#aaa' }}>📍 {offer.location}</p>
+              <p className="text-xs mt-1 flex items-center gap-1" style={{ color: '#aaa' }}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                  <circle cx="12" cy="10" r="3" />
+                </svg>
+                {offer.location}
+              </p>
             ) : null}
             {/* V224: `!= null` et non la veracite — une capacite de 0 (complet,
                 ou activite fermee aux inscriptions) est une valeur legitime que
@@ -1787,8 +1907,14 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 les inscrits demanderait une agregation cote serveur : chantier
                 separe, hors perimetre. */}
             {offer.max_participants != null ? (
-              <p className="text-xs mt-1" style={{ color: '#aaa' }}>
-                👥 {offer.max_participants} places
+              <p className="text-xs mt-1 flex items-center gap-1" style={{ color: '#aaa' }}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+                {offer.max_participants} places
               </p>
             ) : null}
             {/* V224: prochaine seance, derivee des cours lies */}
@@ -1832,29 +1958,78 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
               </div>
             )}
 
+            {/* V226: selecteurs de variantes, rendus AVANT le bouton.
+                Meme condition de rendu que la quantite (v225IsDirectCheckout) :
+                sur une offre a 0 CHF le formulaire reste le parcours, et c'est
+                LUI qui porte les selecteurs (~l.4632) — les dupliquer ici
+                donnerait deux sources de verite pour la meme donnee.
+                stopPropagation sur onClick ET onChange : la carte entiere est
+                cliquable, ouvrir le menu deroulant partirait sinon en paiement.
+                C'est exactement le piege deja rencontre sur le selecteur de
+                quantite ci-dessus. */}
+            {v225IsDirectCheckout(offer) && v226VariantDims.map(dim => (
+              <div key={dim.key} style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '8px 0' }}>
+                <span style={{ fontSize: '12px', color: '#aaa' }}>{dim.label}</span>
+                <select
+                  /* V226: reference consommee par v226BuyDirect pour amener ce
+                     selecteur dans le champ de vision quand il manque. */
+                  ref={el => { v226SelectRefs.current[dim.key] = el; }}
+                  value={v226Variants[dim.key] || ''}
+                  onClick={e => e.stopPropagation()}
+                  onChange={e => {
+                    e.stopPropagation();
+                    const val = e.target.value;
+                    setV226Variants(prev => ({ ...prev, [dim.key]: val }));
+                    // V226: le visiteur a repondu au signal, on l'eteint.
+                    if (v226FlashDim === dim.key) setV226FlashDim(null);
+                  }}
+                  className="v224-input text-xs"
+                  /* V226: bordure de signalement. Elle ne fait que remplacer la
+                     couleur du liseré existant pendant 1,2s — aucune mise en page
+                     ne bouge, la largeur de bordure reste 1px. */
+                  style={{
+                    background: '#0a0a0f',
+                    border: v226FlashDim === dim.key ? '1px solid #FF2DAA' : '1px solid #333',
+                    boxShadow: v226FlashDim === dim.key ? '0 0 10px rgba(255, 45, 170, 0.7)' : 'none',
+                    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+                    borderRadius: '8px', color: '#fff', padding: '4px 8px'
+                  }}
+                  data-testid={`offer-variant-${dim.key}-${offer.id}`}
+                >
+                  <option value="">—</option>
+                  {dim.list.map(v => <option key={String(v)} value={String(v)}>{String(v)}</option>)}
+                </select>
+              </div>
+            ))}
+
             <div className="mt-3 flex items-center justify-end">
               <button
                 type="button"
-                disabled={checkoutBusy}
+                /* V226: on bloque aussi tant qu'une variante proposee n'est pas
+                   choisie. Sans cela le coach recoit une commande sans savoir
+                   quoi expedier. checkoutBusy reste la garde d'origine. */
+                disabled={checkoutBusy || v226BlockedByVariant}
                 onClick={(e) => {
                   e.stopPropagation();
                   // V225: l'aiguillage passe par v225IsDirectCheckout, point de
                   // decision UNIQUE partage avec handleSelectOffer (~l.4182). Ne
-                  // PAS redériver le predicat ici : produits physiques et offres
-                  // gratuites ne doivent pas partir en checkout direct, et deux
-                  // copies de la regle divergeraient a la premiere evolution.
-                  if (v225IsDirectCheckout(offer) && typeof startProgressiveCheckout === 'function') {
-                    startProgressiveCheckout(offer, v225Qty);
+                  // PAS redériver le predicat ici : les offres gratuites ne
+                  // doivent pas partir en checkout direct, et deux copies de la
+                  // regle divergeraient a la premiere evolution.
+                  // V226: l'achat direct passe par v226BuyDirect, qui relaie la
+                  // quantite ET les variantes et re-teste les deux gardes.
+                  if (v225IsDirectCheckout(offer)) {
+                    v226BuyDirect();
                   } else if (typeof onClick === 'function') {
                     onClick(offer);
                   }
                 }}
                 className="text-xs px-3 py-2 rounded-lg font-semibold transition-all"
                 style={{
-                  background: checkoutBusy ? '#5a2a58' : '#D91CD2',
+                  background: (checkoutBusy || v226BlockedByVariant) ? '#5a2a58' : '#D91CD2',
                   color: '#fff',
-                  opacity: checkoutBusy ? 0.7 : 1,
-                  cursor: checkoutBusy ? 'wait' : 'pointer'
+                  opacity: (checkoutBusy || v226BlockedByVariant) ? 0.7 : 1,
+                  cursor: checkoutBusy ? 'wait' : v226BlockedByVariant ? 'not-allowed' : 'pointer'
                 }}
                 data-testid={`offer-reserve-${offer.id}`}
               >
@@ -1869,9 +2044,26 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                     100 % des offres. v225FormatAmount coupe les decimales d'un
                     montant entier et conserve celles d'un montant fractionnaire.
                     Le montant lui-meme reste issu de v223UnitPrice, inchange. */}
+                {/* V226: le prix ne s'affiche plus deux fois. En quantite 1 le
+                    bouton dit juste « Reserver » — le prix unitaire est deja
+                    visible dans le corps de la carte (CHF {v225FormatAmount...}
+                    plus haut, ~l.1703). Le total + multiplicateur ne
+                    reapparaissent qu'a partir de 2, ou ils apportent une
+                    information nouvelle (le total) que le corps de carte ne
+                    donne pas. checkoutBusy reste la garde en tete de ternaire,
+                    inchangee. */}
+                {/* V226: quand une variante manque, le bouton dit LAQUELLE
+                    (« Choisissez une taille ») plutot que de rester un
+                    « Réserver » inerte que le visiteur clique sans comprendre.
+                    Le libelle passe avant le total : il porte l'action a faire
+                    maintenant. checkoutBusy reste en tete de ternaire. */}
                 {checkoutBusy
                   ? 'Un instant…'
-                  : `Réserver — ${v225FormatAmount(v223UnitPrice(offer) * (v225IsDirectCheckout(offer) ? v225Qty : 1))} CHF`}
+                  : v226BlockedByVariant
+                    ? `Choisissez ${v226MissingDims.map(d => d.prompt).join(' et ')}`
+                    : v225IsDirectCheckout(offer) && v225Qty > 1
+                      ? `Réserver — ${v225FormatAmount(v223UnitPrice(offer) * v225Qty)} CHF (${v225Qty}x)`
+                      : 'Réserver'}
               </button>
             </div>
           </div>
@@ -4325,7 +4517,11 @@ function App() {
   // V225: second parametre `quantity` (defaut 1) — la carte d'offre (tache 5)
   // l'appelle avec la quantite choisie. Un appelant qui l'omet obtient
   // exactement le comportement V224.
-  const startProgressiveCheckout = async (offer, quantity = 1) => {
+  // V226: troisieme parametre `variants` (defaut null) — les variantes choisies
+  // sur la carte ({ size, color, weight }). Optionnel : les appelants existants
+  // (handleSelectOffer ~l.4461, qui appelle avec 2 arguments) continuent de
+  // fonctionner a l'identique et envoient `variants: null`.
+  const startProgressiveCheckout = async (offer, quantity = 1, variants = null) => {
     // V224: garde de ré-entrance — sans elle, un double-clic pendant l'appel
     // réseau (démarrage à froid Vercel possible) crée plusieurs sessions
     // Stripe et plusieurs lignes payment_transactions pour le même achat.
@@ -4341,6 +4537,33 @@ function App() {
       // réservation fantôme sur l'ancien cours, avec ticket et notification
       // au coach erronés.
       localStorage.removeItem('pendingReservation');
+      // V226: nettoyage cours/dates, deplace ICI depuis l'enveloppe
+      // `onSelectOffer` du slider produits (~l.6354). Cette enveloppe n'etait
+      // atteinte que par `onClick` ; depuis que la racine de la carte intercepte
+      // le clic des offres a variantes (~l.1574), elle est court-circuitee et le
+      // nettoyage sautait — mais uniquement pour les offres a variantes, donc le
+      // comportement divergeait selon leur presence.
+      // Scenario reel corrige : seance choisie → clic sur un produit a variantes
+      // → le checkout echoue (reseau) et on reste sur la page → clic sur une
+      // offre a 0 CHF → handleSubmit construisait la reservation avec le
+      // `courseId` et la date PERIMES.
+      // Place dans startProgressiveCheckout, ces deux resets couvrent TOUS les
+      // chemins d'entree du checkout direct (v226BuyDirect et handleSelectOffer)
+      // et non plus un seul point de montage. Ils sont idempotents et sans effet
+      // sur les autres appelants.
+      //
+      // Attention, le slider SERVICES passe aussi par ici (onSelectOffer =
+      // handleSelectOffer) : une offre de service payante, donc potentiellement
+      // liee a des cours, purge desormais elle aussi la selection. C'est voulu.
+      // En nominal la page part chez Stripe et l'etat React disparait ; en cas
+      // d'echec reseau, purger evite qu'une reservation ulterieure herite d'un
+      // cours et d'une date perimes — le defaut que ce correctif ferme.
+      //
+      // L'enveloppe du slider produits conserve ses propres resets (aucun code
+      // supprime) : ils couvrent le parcours formulaire des offres a 0 CHF, qui
+      // ne passe jamais ici.
+      setSelectedCourse(null);
+      setSelectedDates([]);
       // V224: marqueur du parcours progressif. Il remplace `pendingReservation`
       // comme preuve « ce retour Stripe est un achat CLIENT », que l'heuristique
       // du fallback partenaire (V224_PROGRESSIVE_KEY plus bas) consulte pour ne
@@ -4378,7 +4601,23 @@ function App() {
         // un code promo. On delegue la saisie a Stripe Checkout. Le parcours
         // classique ne l'active PAS : il a deja son propre champ promo, et
         // cumuler les deux systemes permettrait deux remises sur un meme achat.
-        allowPromotionCodes: true
+        allowPromotionCodes: true,
+        // V226: le formulaire ne collecte plus l'adresse pour ces achats.
+        // C'est donc Stripe Checkout qui la demande (CH, FR, DE, IT, AT, BE),
+        // et uniquement pour un produit physique : un cours ou un achat audio
+        // n'a rien a livrer, leur imposer une adresse ajouterait un ecran
+        // inutile entre le client et le paiement.
+        collectShipping: !!(offer.isProduct || offer.isPhysicalProduct || offer.type === 'product'),
+        // V226: recopiees par le backend dans les metadata Stripe sous le
+        // prefixe `variant_`. `null` quand l'offre ne propose aucune variante.
+        variants: variants || null,
+        // V226 REVUE FINALE: marqueur POSITIF d'achat audio/video. Un tel achat
+        // n'a ni adresse ni variante : sans ce drapeau, le webhook n'a aucun
+        // moyen de le distinguer d'un achat de COURS (qui, lui, ne doit creer
+        // aucune reservation) et la vente disparaissait de l'onglet Reservations,
+        // alors qu'avant la V226 handleSubmit y creait une ligne « Achat Audio ».
+        // Le serveur le retranscrit en metadata `v226_audio`.
+        isAudioPurchase: !!(offer && (offer.type === 'audio' || offer.type === 'video'))
       };
       // V224: `customerEmail` est volontairement ABSENT du payload.
       // Ne jamais l'envoyer a "" : Stripe rejette la chaine vide comme adresse
@@ -4412,18 +4651,34 @@ function App() {
   const handleSelectOffer = (offer) => {
     // V225: toutes les offres de service payantes partent en achat direct.
     // (Elargit la garde V224 qui ne visait que `progressive_pricing`.)
-    // Deux exclusions, imposees par la plateforme et non par le design :
-    //  - produit physique : l'adresse de livraison se saisit dans le formulaire
-    //    (App.js ~l.6203) et serait perdue ;
+    // V226: l'exclusion des produits physiques est LEVEE — l'adresse de
+    // livraison est desormais collectee par Stripe (payload `collectShipping`)
+    // et les variantes par la carte d'offre, donc plus rien n'est perdu a
+    // sauter le formulaire. Il ne reste qu'une seule exclusion, imposee par la
+    // plateforme et non par le design :
     //  - offre a 0 CHF : Stripe refuse un montant nul.
-    // Ces deux cas gardent le parcours actuel, formulaire compris.
+    // Ce seul cas garde le parcours actuel, formulaire compris.
+    //
+    // V226 NOTE: ce chemin appelle startProgressiveCheckout SANS variantes
+    // (2 arguments). C'est volontaire : il est atteint par des appelants qui
+    // n'ont pas de selecteur de variantes (achats audio/video ~l.6417 et
+    // ~l.6493, carrousel video ~l.5887), tous sur des offres sans variantes.
+    // Le seul parcours pouvant porter des variantes — la carte d'offre — passe
+    // par v226BuyDirect, qui les relaie et refuse tant qu'il en manque une.
     const v225IsProduct = offer && (offer.isProduct || offer.isPhysicalProduct
       || offer.type === 'product' || offer.type === 'audio' || offer.type === 'video');
     const v225UnitPrice = offer ? v223UnitPrice(offer) : 0;
     // V225 correctif: l'aiguillage est delegue au point de verite unique
     // v225IsDirectCheckout (App.js ~l.1248), partage avec le bouton de la carte
-    // (tache 5). Les deux constantes ci-dessus restent calculees : elles sont
-    // reutilisees plus bas pour lever la contrainte de date.
+    // (tache 5).
+    //
+    // V226 REVUE FINALE — correction d'un commentaire trompeur : les deux
+    // constantes ci-dessus ne sont PLUS relues nulle part. La levee de la
+    // contrainte de date, quelques lignes plus bas, redérive `isProduct`
+    // directement depuis `v225IsDirectCheckout(offer)`. Elles sont conservees
+    // telles quelles (aucune suppression de code) mais ne servent que de trace
+    // lisible du predicat historique ; ne pas les reintroduire dans une decision
+    // sans reverifier qu'elles disent la meme chose que v225IsDirectCheckout.
     if (v225IsDirectCheckout(offer)) {
       startProgressiveCheckout(offer, 1);
       return;
@@ -6188,6 +6443,10 @@ function App() {
               pendingOffer={pendingOffer}
               onSelectOffer={(product) => {
                 // Pour les produits, pas besoin de cours/dates
+                // V226: ces deux resets sont CONSERVES — ils couvrent le
+                // parcours formulaire (offre a 0 CHF), qui ne passe jamais par
+                // startProgressiveCheckout. Le checkout direct, lui, les refait
+                // desormais lui-meme : ils y sont idempotents.
                 setSelectedCourse(null);
                 setSelectedDates([]);
                 handleSelectOffer(product);
