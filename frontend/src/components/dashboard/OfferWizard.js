@@ -123,6 +123,17 @@ export default function OfferWizard({
   const [coursesError, setCoursesError] = useState('');
   const [coursesSaving, setCoursesSaving] = useState(false);
   const [addingCourse, setAddingCourse] = useState(false);
+  // V226: id de l'horaire en cours d'ecriture (suppression / archivage /
+  // publication). Sert uniquement a neutraliser les boutons de LA carte
+  // concernee pendant la requete, sans figer tout le wizard.
+  const [courseBusyId, setCourseBusyId] = useState(null);
+  // V226: horaires ARCHIVES pendant cette session du wizard, conserves pour
+  // pouvoir les restaurer immediatement. Rappel : `GET /courses` (server.py
+  // l.1001) filtre `archived: {$ne: true}`, donc un horaire archive disparait
+  // definitivement de la liste au prochain chargement — c'etait deja le cas
+  // avec CoursesManager, dont la section « Cours archives » ne montrait elle
+  // aussi que les archivages de la session en cours.
+  const [sessionArchivedCourses, setSessionArchivedCourses] = useState([]);
 
   useEffect(() => {
     if (open) {
@@ -146,6 +157,9 @@ export default function OfferWizard({
       // nouvelle ouverture repart d'une ardoise vierge : les cours de l'offre
       // chargee sont juges par `visibleCourses` seul, comme avant.
       setSessionOwnedCourseIds([]);
+      // V226: nouvelle ouverture = aucun archivage a restaurer.
+      setSessionArchivedCourses([]);
+      setCourseBusyId(null);
       setCoursesError('');
       // V224: pre-remplissage des chaines brutes depuis les tableaux existants.
       const raw = {};
@@ -241,6 +255,129 @@ export default function OfferWizard({
       ...prev,
       linked_course_ids: (prev.linked_course_ids || []).filter(x => x !== id)
     }));
+  };
+
+  // V226: retire l'id de TOUS les registres locaux. Utilise par la suppression
+  // et l'archivage, qui font disparaitre l'horaire de l'offre ET de la liste
+  // editable — a la difference du delien, qui ne touche que le lien.
+  const forgetCourse = (id) => {
+    setLinkedCourses(prev => prev.filter(c => c.id !== id));
+    setDirtyCourseIds(prev => prev.filter(x => x !== id));
+    setSessionCreatedCourseIds(prev => prev.filter(x => x !== id));
+    setSessionOwnedCourseIds(prev => prev.filter(x => x !== id));
+    setForm(prev => ({
+      ...prev,
+      linked_course_ids: (prev.linked_course_ids || []).filter(x => x !== id)
+    }));
+  };
+
+  // V226: SUPPRESSION DEFINITIVE. Reutilise `DELETE /courses/{id}` (server.py
+  // l.1060), le meme endpoint que le hard delete existant : il efface le cours
+  // ET ses reservations liees. Rien de nouveau cote serveur.
+  // Garde-fou : `DELETE /courses/{id}` ne verifie QUE l'authentification, pas
+  // la propriete. On n'expose donc le bouton que sur un horaire editable —
+  // exactement la condition qui autorise deja l'edition (`isCourseEditable`) —
+  // et on la revalide ici, pour qu'un appel ne puisse pas contourner le rendu.
+  const deleteCourse = async (id) => {
+    if (!canEditCourses || courseBusyId || !isCourseEditable(id)) return;
+    const course = linkedCourses.find(c => c.id === id);
+    const label = (course && course.name) ? course.name : 'cet horaire';
+    if (!window.confirm(
+      `Supprimer définitivement l'horaire « ${label} » ?\n\n` +
+      'Le cours et ses réservations seront effacés de la base. ' +
+      'Cette action est irréversible.\n\n' +
+      'Pour le retirer de l\'offre sans le supprimer, utilisez « Retirer de l\'offre ».'
+    )) return;
+    setCourseBusyId(id);
+    setCoursesError('');
+    try {
+      await axios.delete(`${API}/courses/${id}`);
+      forgetCourse(id);
+    } catch (err) {
+      console.error('[V226] Suppression de l\'horaire echouee:', err);
+      setCoursesError('Impossible de supprimer l\'horaire. Vérifiez votre connexion et réessayez.');
+    } finally {
+      setCourseBusyId(null);
+    }
+  };
+
+  // V226: ARCHIVAGE. Reutilise `PUT /courses/{id}/archive` (server.py l.1051),
+  // exactement l'appel de `archiveCourse` dans CoursesManager.js l.93.
+  // Meme garde-fou de propriete que la suppression.
+  const archiveCourse = async (id) => {
+    if (!canEditCourses || courseBusyId || !isCourseEditable(id)) return;
+    const course = linkedCourses.find(c => c.id === id);
+    const label = (course && course.name) ? course.name : 'cet horaire';
+    if (!window.confirm(
+      `Archiver l'horaire « ${label} » ?\n\n` +
+      'Il sera masqué et retiré de cette offre. Vous pourrez le restaurer ' +
+      'tant que vous n\'aurez pas fermé cette fenêtre.'
+    )) return;
+    setCourseBusyId(id);
+    setCoursesError('');
+    try {
+      await axios.put(`${API}/courses/${id}/archive`);
+      if (course) setSessionArchivedCourses(prev => [...prev, { ...course, archived: true }]);
+      forgetCourse(id);
+    } catch (err) {
+      console.error('[V226] Archivage de l\'horaire echoue:', err);
+      setCoursesError('Impossible d\'archiver l\'horaire. Vérifiez votre connexion et réessayez.');
+    } finally {
+      setCourseBusyId(null);
+    }
+  };
+
+  // V226: RESTAURATION d'un horaire archive dans cette session. Reutilise
+  // `PUT /courses/{id}` avec `archived: false`, comme `restoreCourse`
+  // (CoursesManager.js l.103). On ne renvoie que la cle `archived` : le $set
+  // partiel du serveur laisse tout le reste intact.
+  const restoreCourse = async (course) => {
+    if (!canEditCourses || courseBusyId) return;
+    setCourseBusyId(course.id);
+    setCoursesError('');
+    try {
+      await axios.put(`${API}/courses/${course.id}`, { archived: false });
+      setSessionArchivedCourses(prev => prev.filter(c => c.id !== course.id));
+      // L'horaire redevient editable dans cette session : il a ete cree ou
+      // reconnu editable avant l'archivage, donc il appartient bien au coach.
+      setSessionOwnedCourseIds(prev => (prev.includes(course.id) ? prev : [...prev, course.id]));
+      setLinkedCourses(prev => (prev.some(c => c.id === course.id)
+        ? prev
+        : [...prev, { ...course, archived: false }]));
+      setForm(prev => {
+        const ids = prev.linked_course_ids || [];
+        return ids.includes(course.id) ? prev : { ...prev, linked_course_ids: [...ids, course.id] };
+      });
+    } catch (err) {
+      console.error('[V226] Restauration de l\'horaire echouee:', err);
+      setCoursesError('Impossible de restaurer l\'horaire. Vérifiez votre connexion et réessayez.');
+    } finally {
+      setCourseBusyId(null);
+    }
+  };
+
+  // V226: PUBLICATION / MASQUAGE d'un horaire, ecrit IMMEDIATEMENT.
+  // C'est le seul recours pour un horaire reste en `visible: false` apres une
+  // session de wizard abandonnee (correctif V225) : `GET /courses` le renvoie
+  // toujours (seul `archived` est filtre), il apparait donc bien dans la liste
+  // avec son badge « masqué » et ce bouton le republie.
+  // L'ecriture est immediate et non differee a `handleSave` : `buildCoursePayload`
+  // n'emet `visible` que pour les cours crees dans CETTE session, et ce choix
+  // V225 — ne jamais republier un horaire volontairement masque au dos du coach —
+  // ne doit pas etre contourne. Ici c'est le coach qui le demande explicitement.
+  const setCourseVisibility = async (id, nextVisible) => {
+    if (!canEditCourses || courseBusyId || !isCourseEditable(id)) return;
+    setCourseBusyId(id);
+    setCoursesError('');
+    try {
+      await axios.put(`${API}/courses/${id}`, { visible: nextVisible });
+      setLinkedCourses(prev => prev.map(c => (c.id === id ? { ...c, visible: nextVisible } : c)));
+    } catch (err) {
+      console.error('[V226] Changement de visibilite echoue:', err);
+      setCoursesError('Impossible de changer la visibilité de l\'horaire. Réessayez.');
+    } finally {
+      setCourseBusyId(null);
+    }
   };
 
   // V225: lie un cours DEJA existant (remplace l'usage « cocher une case »).
@@ -755,6 +892,20 @@ export default function OfferWizard({
                     📍 {course.locationName || course.location}
                   </p>
                 )}
+                {/* V226: le badge « masqué » s'affiche sur TOUTE carte dont
+                    `visible === false`, y compris celle-ci. Pas de bouton de
+                    republication en revanche : l'horaire n'appartient pas au
+                    coach, seul son proprietaire peut le republier. */}
+                {course.visible === false && (
+                  <p className="text-xs mt-2">
+                    <span
+                      className="px-2 py-1 rounded-lg"
+                      style={{ background: 'rgba(249,115,22,0.15)', color: '#f97316' }}
+                    >
+                      🚫 Masqué
+                    </span>
+                  </p>
+                )}
                 <p className="text-xs mt-2" style={HINT_STYLE}>
                   🔒 Horaire géré par un autre compte — lecture seule.
                 </p>
@@ -824,9 +975,160 @@ export default function OfferWizard({
                   style={INPUT_STYLE}
                   className="text-sm v224-input mt-2"
                 />
+
+                {/* V226: etat de publication de l'horaire.
+                    Un horaire cree dans CETTE session est publie automatiquement
+                    a l'enregistrement (V225) : on n'affiche donc pas de bouton,
+                    pour ne pas court-circuiter ce garde-fou.
+                    Pour TOUT autre horaire, `visible === false` affiche le badge
+                    « masqué » et le bouton de republication — c'est le seul
+                    recours pour un horaire laisse masque par une session
+                    abandonnee, une fois la section « Cours » retiree. */}
+                <div className="flex items-center justify-between gap-2 mt-3">
+                  {sessionCreatedCourseIds.includes(course.id) ? (
+                    <span className="text-xs" style={HINT_STYLE}>
+                      🕓 Sera publié à l'enregistrement de l'offre
+                    </span>
+                  ) : (
+                    <>
+                      <span
+                        className="text-xs px-2 py-1 rounded-lg"
+                        style={course.visible === false
+                          ? { background: 'rgba(249,115,22,0.15)', color: '#f97316' }
+                          : { background: 'rgba(34,197,94,0.12)', color: '#22c55e' }}
+                      >
+                        {course.visible === false ? '🚫 Masqué' : '👁️ Visible'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setCourseVisibility(course.id, course.visible === false)}
+                        disabled={courseBusyId === course.id}
+                        title={course.visible === false
+                          ? 'Rendre cet horaire visible sur la vitrine publique'
+                          : 'Masquer cet horaire de la vitrine publique (il reste dans l\'offre)'}
+                        className="text-xs px-3 py-1 rounded-lg"
+                        style={{
+                          background: 'none',
+                          border: `1px solid ${course.visible === false ? PINK : '#333'}`,
+                          color: course.visible === false ? PINK : 'rgba(255,255,255,0.6)',
+                          cursor: courseBusyId === course.id ? 'wait' : 'pointer',
+                          opacity: courseBusyId === course.id ? 0.5 : 1
+                        }}
+                        data-testid={`course-visibility-${course.id}`}
+                      >
+                        {course.visible === false ? '👁️ Republier' : 'Masquer'}
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                {/* V226: actions destructives, separees visuellement du reste de
+                    la carte. Le ✕ ci-dessus RETIRE de l'offre (aucun effet en
+                    base) ; ces deux boutons-ci touchent la base. */}
+                <div className="mt-3 pt-2" style={{ borderTop: '1px solid #333' }}>
+                  <p className="text-xs mb-2" style={HINT_STYLE}>
+                    ✕ retire l'horaire de cette offre — le cours reste en base.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => unlinkCourse(course.id)}
+                      disabled={courseBusyId === course.id}
+                      className="text-xs px-3 py-1.5 rounded-lg"
+                      style={{
+                        background: 'none',
+                        border: '1px solid #333',
+                        color: 'rgba(255,255,255,0.6)',
+                        cursor: courseBusyId === course.id ? 'wait' : 'pointer'
+                      }}
+                      data-testid={`course-unlink-${course.id}`}
+                    >
+                      ✕ Retirer de l'offre
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => archiveCourse(course.id)}
+                      disabled={courseBusyId === course.id}
+                      title="Archiver cet horaire : il est masqué et retiré de l'offre"
+                      className="text-xs px-3 py-1.5 rounded-lg"
+                      style={{
+                        background: 'none',
+                        border: '1px solid rgba(249,115,22,0.4)',
+                        color: '#f97316',
+                        cursor: courseBusyId === course.id ? 'wait' : 'pointer',
+                        opacity: courseBusyId === course.id ? 0.5 : 1
+                      }}
+                      data-testid={`course-archive-${course.id}`}
+                    >
+                      📁 Archiver
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteCourse(course.id)}
+                      disabled={courseBusyId === course.id}
+                      title="Supprimer définitivement cet horaire de la base"
+                      className="text-xs px-3 py-1.5 rounded-lg"
+                      style={{
+                        background: 'none',
+                        border: '1px solid rgba(239,68,68,0.4)',
+                        color: '#ef4444',
+                        cursor: courseBusyId === course.id ? 'wait' : 'pointer',
+                        opacity: courseBusyId === course.id ? 0.5 : 1
+                      }}
+                      data-testid={`course-delete-${course.id}`}
+                    >
+                      🗑 Supprimer l'horaire
+                    </button>
+                  </div>
+                </div>
               </div>
             )))}
           </div>
+
+          {/* V226: horaires archives PENDANT cette session, restaurables d'un
+              clic. Sans ce bloc, l'archivage depuis le wizard serait sans
+              retour possible — le meme piege que la section « Cours » comblait
+              jusqu'ici (CoursesManager.js l.369-390). */}
+          {sessionArchivedCourses.length > 0 && (
+            <div className="mt-3 pt-3" style={{ borderTop: '1px solid #333' }}>
+              <p className="text-xs mb-2" style={{ color: '#f97316' }}>
+                📁 Archivés dans cette session ({sessionArchivedCourses.length})
+              </p>
+              <div className="space-y-2">
+                {sessionArchivedCourses.map(course => (
+                  <div
+                    key={course.id}
+                    className="flex items-center justify-between gap-2 p-2 rounded-xl"
+                    style={{ background: '#0a0a0f', border: '1px solid rgba(249,115,22,0.3)', borderRadius: '12px' }}
+                  >
+                    <span className="text-xs text-white">
+                      {course.name || 'Cours'}
+                      <span className="text-white/50 ml-2">
+                        {Number.isInteger(course.weekday) ? WEEKDAYS[course.weekday] : ''}
+                        {course.time ? ` • ${course.time}` : ''}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => restoreCourse(course)}
+                      disabled={courseBusyId === course.id}
+                      className="text-xs px-3 py-1 rounded-lg whitespace-nowrap"
+                      style={{
+                        background: 'none',
+                        border: '1px solid rgba(34,197,94,0.4)',
+                        color: '#22c55e',
+                        cursor: courseBusyId === course.id ? 'wait' : 'pointer',
+                        opacity: courseBusyId === course.id ? 0.5 : 1
+                      }}
+                      data-testid={`course-restore-${course.id}`}
+                    >
+                      ↩️ Restaurer
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <button
             type="button"
@@ -864,6 +1166,13 @@ export default function OfferWizard({
                   .filter(c => !linkedCourses.some(lc => lc.id === c.id))
                   .map(c => (
                     <option key={c.id} value={c.id}>
+                      {/* V226: on signale les horaires masques ici aussi. Un
+                          horaire laisse en `visible: false` par une session
+                          abandonnee n'est lie a AUCUNE offre (l'offre n'a
+                          jamais ete enregistree) : cette liste est donc le seul
+                          endroit ou le coach peut le retrouver pour le
+                          rattacher, puis le republier. */}
+                      {c.visible === false ? '🚫 ' : ''}
                       {(c.name || 'Cours')}
                       {Number.isInteger(c.weekday) ? ` • ${WEEKDAYS[c.weekday]}` : ''}
                       {c.time ? ` ${c.time}` : ''}
@@ -1237,9 +1546,12 @@ export default function OfferWizard({
                 // immediatement remontait le formulaire sans le nouvel id : le
                 // POST se resolvait sur un wizard ferme (cours orphelin + setState
                 // sur composant demonte).
-                disabled={coursesSaving || addingCourse}
+                // V226: meme raison pour `courseBusyId` — on n'enregistre pas
+                // l'offre pendant qu'une suppression, un archivage ou un
+                // changement de visibilite est en vol.
+                disabled={coursesSaving || addingCourse || !!courseBusyId}
                 className="text-sm font-medium px-5 py-2 rounded-lg"
-                style={{ background: PINK, color: '#fff', border: 'none', cursor: (coursesSaving || addingCourse) ? 'wait' : 'pointer', opacity: (coursesSaving || addingCourse) ? 0.6 : 1 }}
+                style={{ background: PINK, color: '#fff', border: 'none', cursor: (coursesSaving || addingCourse || courseBusyId) ? 'wait' : 'pointer', opacity: (coursesSaving || addingCourse || courseBusyId) ? 0.6 : 1 }}
               >
                 {coursesSaving ? '⏳ Enregistrement...' : (isEditing ? 'Enregistrer' : 'Créer l\'offre')}
               </button>

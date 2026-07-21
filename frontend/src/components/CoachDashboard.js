@@ -1018,6 +1018,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // v37.2: Sous-onglet du HUB "Gestion" — 4 sections centralisées
   const [offersSubTab, setOffersSubTab] = useState('contenus');
 
+  // V226: la gestion des horaires se fait desormais UNIQUEMENT dans le wizard
+  // d'offre (OfferWizard, etape 2 « Logistique »), qui couvre tout le cycle de
+  // vie : creer, modifier, rattacher, retirer de l'offre, archiver/restaurer,
+  // supprimer, masquer/republier. La section « Cours » du dashboard fait donc
+  // doublon et est neutralisee.
+  // RIEN N'EST SUPPRIME : CoursesManager.js reste intact et la section se
+  // reaffiche en repassant cette constante a `true`.
+  const SHOW_COURSES_SECTION = false;
+
   // v37.2: Auto-scroll + auto-load audio course on sub-tab change
   const handleSubTabChange = (subTabId) => {
     setOffersSubTab(subTabId);
@@ -6084,7 +6093,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             {/* v159: Sous-onglets séparés — Contenus / Audio / Social / Emojis */}
             {['contenus', 'audio', 'social', 'emojis'].includes(offersSubTab) && (
               <>
-                {offersSubTab === 'contenus' && (
+                {/* V226: section « Cours » neutralisee — voir SHOW_COURSES_SECTION */}
+                {SHOW_COURSES_SECTION && offersSubTab === 'contenus' && (
                 <CoursesManager
                   courses={courses}
                   setCourses={setCourses}
