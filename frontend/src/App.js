@@ -4102,7 +4102,12 @@ function App() {
         productName: offer.name,
         amount: v223UnitPrice(offer),
         originUrl: window.location.origin,
-        offerId: offer.id
+        offerId: offer.id,
+        // V224: ce parcours n'a pas de formulaire, donc aucun endroit ou saisir
+        // un code promo. On delegue la saisie a Stripe Checkout. Le parcours
+        // classique ne l'active PAS : il a deja son propre champ promo, et
+        // cumuler les deux systemes permettrait deux remises sur un meme achat.
+        allowPromotionCodes: true
       };
       // V224: `customerEmail` est volontairement ABSENT du payload.
       // Ne jamais l'envoyer a "" : Stripe rejette la chaine vide comme adresse

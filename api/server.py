@@ -3340,6 +3340,17 @@ class CreateCheckoutRequest(BaseModel):
     # endpoint est public, et l'accepter du client permettrait de payer 1 CHF
     # en demandant 1000 crédits.
     offerId: Optional[str] = None
+    # V224: affiche le champ « Code promo » de Stripe Checkout.
+    #
+    # Réservé au parcours progressif, qui n'a pas de formulaire et donc aucun
+    # endroit où saisir un code. Le parcours classique garde son propre champ
+    # promo (collection `discount_codes`) : activer les deux sur un même achat
+    # permettrait de cumuler deux remises issues de systèmes qui s'ignorent.
+    #
+    # ATTENTION : ce champ accepte les codes du Dashboard STRIPE, pas ceux de
+    # la collection `discount_codes` du dashboard coach. Les deux systèmes sont
+    # distincts et ne se connaissent pas.
+    allowPromotionCodes: bool = False
 
 @api_router.post("/create-checkout-session")
 async def create_checkout_session(request: CreateCheckoutRequest):
@@ -3447,6 +3458,7 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             success_url=success_url,
             cancel_url=cancel_url,
             customer_email=request.customerEmail,
+            allow_promotion_codes=request.allowPromotionCodes,  # V224
             metadata=metadata,
             api_key=active_stripe_key,
         )
@@ -3496,6 +3508,10 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                 success_url=success_url,
                 cancel_url=cancel_url,
                 customer_email=request.customerEmail,
+                # V224: le fallback carte-seule doit rester identique au chemin
+                # nominal, sinon le champ promo disparaitrait pour tout compte
+                # sans TWINT active.
+                allow_promotion_codes=request.allowPromotionCodes,
                 metadata=metadata,
                 api_key=active_stripe_key,
             )
