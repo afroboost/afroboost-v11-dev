@@ -415,6 +415,13 @@ class Offer(BaseModel):
     standard_hours_before: int = 24
     # V223: Pack de crédits (remplace la déduction par regex sur le nom produit)
     pack_sessions: Optional[int] = None
+    # V225: libelles personnalises des paliers. Obligatoirement symetrique entre
+    # Offer et OfferCreate : PUT /offers fait `$set: offer.model_dump()` sur
+    # OfferCreate en extra="ignore", donc un champ absent ici serait efface en
+    # base a chaque sauvegarde d'offre.
+    label_early_bird: Optional[str] = None
+    label_standard: Optional[str] = None
+    label_last_minute: Optional[str] = None
     # V223: Calculés à la lecture. DOIVENT être déclarés ici, sinon le
     # response_model=List[Offer] de GET /offers les filtrerait silencieusement.
     active_price: Optional[float] = None
@@ -454,6 +461,13 @@ class OfferCreate(BaseModel):
     early_bird_days_before: int = 7
     standard_hours_before: int = 24
     pack_sessions: Optional[int] = None
+    # V225: libelles personnalises des paliers. Obligatoirement symetrique entre
+    # Offer et OfferCreate : PUT /offers fait `$set: offer.model_dump()` sur
+    # OfferCreate en extra="ignore", donc un champ absent ici serait efface en
+    # base a chaque sauvegarde d'offre.
+    label_early_bird: Optional[str] = None
+    label_standard: Optional[str] = None
+    label_last_minute: Optional[str] = None
     coach_id: Optional[str] = None  # v19: Ownership
     # v61: Durée de validité — accepte int ou string pour tolérance frontend
     duration_value: Optional[Union[int, str]] = None
