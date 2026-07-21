@@ -113,6 +113,13 @@ export default function OfferWizard({
   // n'est jamais envoyee : un horaire delibrement masque depuis CoursesManager
   // ne doit pas redevenir public parce qu'une offre liee est reenregistree.
   const [sessionCreatedCourseIds, setSessionCreatedCourseIds] = useState([]);
+  // V225 REVUE FINALE: ids des cours crees par CE wizard, jamais vides tant que
+  // le wizard reste ouvert. Distinct de `sessionCreatedCourseIds`, qui est vide
+  // apres le premier enregistrement reussi (pour ne pas re-emettre
+  // `visible: true`). Sans cet ensemble persistant, un cours tout juste cree
+  // redeviendrait « lecture seule » des que l'enregistrement des horaires a
+  // reussi mais que celui de l'offre a echoue — le wizard restant alors ouvert.
+  const [sessionOwnedCourseIds, setSessionOwnedCourseIds] = useState([]);
   const [coursesError, setCoursesError] = useState('');
   const [coursesSaving, setCoursesSaving] = useState(false);
   const [addingCourse, setAddingCourse] = useState(false);
@@ -135,6 +142,10 @@ export default function OfferWizard({
       // V225 CORRECTIF 1: nouvelle ouverture = nouvelle session. Aucun cours
       // n'a encore ete cree ici, donc aucun basculement de visibilite permis.
       setSessionCreatedCourseIds([]);
+      // V225 REVUE FINALE: idem pour l'ensemble « possede par ce wizard ». Une
+      // nouvelle ouverture repart d'une ardoise vierge : les cours de l'offre
+      // chargee sont juges par `visibleCourses` seul, comme avant.
+      setSessionOwnedCourseIds([]);
       setCoursesError('');
       // V224: pre-remplissage des chaines brutes depuis les tableaux existants.
       const raw = {};
@@ -191,7 +202,16 @@ export default function OfferWizard({
   // Une offre historique peut referencer le cours d'un autre coach (ou un
   // `bassi_default`) : il reste AFFICHE — il fait partie de l'offre — mais en
   // lecture seule, et aucun PUT n'est emis dessus.
-  const isCourseEditable = (id) => visibleCourses.some(c => c.id === id);
+  // V225 REVUE FINALE: un cours cree dans CETTE session du wizard appartient au
+  // coach par construction (le serveur lui a assigne `coach_id` depuis
+  // X-User-Email lors du POST). Il doit donc etre editable IMMEDIATEMENT.
+  // Sans cette clause, `visibleCourses` — derive de la prop `courses`, etat du
+  // parent charge une seule fois et jamais rafraichi apres le POST — ignore le
+  // cours tout juste cree : il tombait dans la branche lecture seule, etait
+  // exclu de `toPersist`, donc n'etait jamais publie (`visible` restait false)
+  // tout en etant deja reference dans `linked_course_ids` de l'offre.
+  const isCourseEditable = (id) =>
+    sessionOwnedCourseIds.includes(id) || visibleCourses.some(c => c.id === id);
 
   const markDirty = (id) => setDirtyCourseIds(prev => (prev.includes(id) ? prev : [...prev, id]));
 
@@ -262,6 +282,10 @@ export default function OfferWizard({
       // V225 CORRECTIF 1: on trace l'id comme « cree dans cette session ». Seul
       // ce marqueur autorisera `buildCoursePayload` a poser `visible: true`.
       setSessionCreatedCourseIds(prev => (prev.includes(created.id) ? prev : [...prev, created.id]));
+      // V225 REVUE FINALE: marque aussi le cours comme « possede par ce wizard »,
+      // ce qui le rend editable sans attendre un rafraichissement de la prop
+      // `courses` du parent (qui n'a jamais lieu).
+      setSessionOwnedCourseIds(prev => (prev.includes(created.id) ? prev : [...prev, created.id]));
       setLinkedCourses(prev => [...prev, { ...created }]);
       setForm(prev => ({
         ...prev,
