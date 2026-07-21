@@ -79,6 +79,22 @@ GATE NON FRANCHI : le masquage des flèches ▲▼ attend la vérification manue
 du DnD (souris + session coach), impossible depuis cet environnement. Tâche 6
 faite SANS masquer les flèches.
 
+Tâche 6 : correctifs appliqués (commits 79e15df, 20a910a), re-revue en cours
+  - wizard : suppression, republication d'un horaire masqué, badge « masqué »
+  - section Cours masquée par la constante SHOW_COURSES_SECTION
+  - revue avait rendu NON APPROUVÉ, défauts corrigés :
+    (H-1) BLOQUANT un horaire supprimé restait proposé au rattachement ->
+          PUT 404 -> l'OFFRE ENTIÈRE ne s'enregistrait plus, sans indice.
+          Prop onCoursesChanged câblée jusqu'à CoachDashboard.setCourses.
+    (M-1) supprimer un horaire partagé rend d'autres offres silencieusement
+          non réservables -> avertissement ajouté au confirm
+    (M-2) 4 commentaires renvoyaient vers CoursesManager, voie disparue
+    (B-1) bouton Archiver retiré du rendu : GET /courses filtre archived,
+          donc un archivé disparaissait sans retour à la fermeture du wizard
+  - DÉVIATION VALIDÉE de l'implémenteur sur B-2 : ma consigne littérale aurait
+    rendu non restaurable un horaire créé puis archivé dans la même session
+    (archiveCourse purge sessionOwnedCourseIds)
+
 (en cours)
 
 ## Constats mineurs à trier avant merge
