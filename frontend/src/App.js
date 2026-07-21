@@ -1305,6 +1305,20 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // du formulaire (size/color/weight), pour que les deux parcours produisent
   // exactement la meme forme de donnee.
   const [v226Variants, setV226Variants] = useState({});
+  // V226: retour visuel quand le visiteur clique la carte sans avoir choisi une
+  // variante. `v226FlashDim` porte la cle de la dimension a signaler, et les
+  // refs permettent de l'amener dans le champ de vision. Aucune dependance
+  // ajoutee : scrollIntoView natif + une bordure pilotee par l'etat React.
+  const [v226FlashDim, setV226FlashDim] = useState(null);
+  const v226SelectRefs = useRef({});
+  const v226FlashTimerRef = useRef(null);
+  // V226: le timer ne doit pas survivre au demontage de la carte — le slider
+  // recycle ses instances, un setState tardif viserait un composant demonte.
+  useEffect(() => {
+    return () => {
+      if (v226FlashTimerRef.current) clearTimeout(v226FlashTimerRef.current);
+    };
+  }, []);
   const defaultImage = "https://picsum.photos/seed/default/400/300";
   
   // PRIORITÉ: offer.images[0] > offer.thumbnail > defaultImage
@@ -1384,7 +1398,24 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // le contourner par inadvertance.
   const v226BuyDirect = () => {
     if (!v225IsDirectCheckout(offer)) return;
-    if (v226MissingDims.length > 0) return;
+    if (v226MissingDims.length > 0) {
+      // V226: ce chemin etait SILENCIEUX. Un visiteur qui clique la photo ou le
+      // titre n'obtenait aucun retour : le libelle du bouton dit quoi faire,
+      // encore faut-il le remarquer. On amene le premier selecteur non renseigne
+      // dans le champ de vision et on le fait clignoter. La garde elle-meme est
+      // inchangee : l'achat reste refuse tant qu'il manque une variante.
+      const first = v226MissingDims[0].key;
+      const el = v226SelectRefs.current[first];
+      if (el && typeof el.scrollIntoView === 'function') {
+        try {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (_) { /* navigateurs sans options : ignore */ }
+      }
+      setV226FlashDim(first);
+      if (v226FlashTimerRef.current) clearTimeout(v226FlashTimerRef.current);
+      v226FlashTimerRef.current = setTimeout(() => setV226FlashDim(null), 1200);
+      return;
+    }
     if (typeof startProgressiveCheckout !== 'function') return;
     startProgressiveCheckout(offer, v225Qty, v226VariantDims.length > 0 ? v226Variants : null);
   };
@@ -1568,12 +1599,16 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
              route donc vers v226BuyDirect, exactement comme le bouton.
              L'interception est volontairement LIMITEE aux offres qui proposent
              des variantes : partout ailleurs le clic garde strictement le
-             comportement V224/V225 (delegation a `onClick`), ce qui preserve le
-             nettoyage cours/dates fait par l'enveloppe du slider produits. */
+             comportement V224/V225 (delegation a `onClick`).
+             V226 CORRECTIF: le nettoyage cours/dates que cette interception
+             court-circuitait (enveloppe `onSelectOffer` du slider produits) vit
+             desormais dans startProgressiveCheckout, donc il a lieu quel que
+             soit le chemin d'entree dans le checkout direct. */
           onClick={(e) => {
             if (v225IsDirectCheckout(offer) && v226VariantDims.length > 0) {
-              // V226: variante proposee non choisie → on absorbe le clic. Le
-              // bouton, desactive, porte le libelle qui dit quoi faire.
+              // V226: variante proposee non choisie → v226BuyDirect absorbe le
+              // clic ET signale visuellement le selecteur manquant (scroll +
+              // flash), au lieu de ne rien faire du tout.
               v226BuyDirect();
               return;
             }
@@ -1936,15 +1971,29 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
               <div key={dim.key} style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '8px 0' }}>
                 <span style={{ fontSize: '12px', color: '#aaa' }}>{dim.label}</span>
                 <select
+                  /* V226: reference consommee par v226BuyDirect pour amener ce
+                     selecteur dans le champ de vision quand il manque. */
+                  ref={el => { v226SelectRefs.current[dim.key] = el; }}
                   value={v226Variants[dim.key] || ''}
                   onClick={e => e.stopPropagation()}
                   onChange={e => {
                     e.stopPropagation();
                     const val = e.target.value;
                     setV226Variants(prev => ({ ...prev, [dim.key]: val }));
+                    // V226: le visiteur a repondu au signal, on l'eteint.
+                    if (v226FlashDim === dim.key) setV226FlashDim(null);
                   }}
                   className="v224-input text-xs"
-                  style={{ background: '#0a0a0f', border: '1px solid #333', borderRadius: '8px', color: '#fff', padding: '4px 8px' }}
+                  /* V226: bordure de signalement. Elle ne fait que remplacer la
+                     couleur du liseré existant pendant 1,2s — aucune mise en page
+                     ne bouge, la largeur de bordure reste 1px. */
+                  style={{
+                    background: '#0a0a0f',
+                    border: v226FlashDim === dim.key ? '1px solid #FF2DAA' : '1px solid #333',
+                    boxShadow: v226FlashDim === dim.key ? '0 0 10px rgba(255, 45, 170, 0.7)' : 'none',
+                    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+                    borderRadius: '8px', color: '#fff', padding: '4px 8px'
+                  }}
                   data-testid={`offer-variant-${dim.key}-${offer.id}`}
                 >
                   <option value="">—</option>
@@ -4488,6 +4537,26 @@ function App() {
       // réservation fantôme sur l'ancien cours, avec ticket et notification
       // au coach erronés.
       localStorage.removeItem('pendingReservation');
+      // V226: nettoyage cours/dates, deplace ICI depuis l'enveloppe
+      // `onSelectOffer` du slider produits (~l.6354). Cette enveloppe n'etait
+      // atteinte que par `onClick` ; depuis que la racine de la carte intercepte
+      // le clic des offres a variantes (~l.1574), elle est court-circuitee et le
+      // nettoyage sautait — mais uniquement pour les offres a variantes, donc le
+      // comportement divergeait selon leur presence.
+      // Scenario reel corrige : seance choisie → clic sur un produit a variantes
+      // → le checkout echoue (reseau) et on reste sur la page → clic sur une
+      // offre a 0 CHF → handleSubmit construisait la reservation avec le
+      // `courseId` et la date PERIMES.
+      // Place dans startProgressiveCheckout, ces deux resets couvrent TOUS les
+      // chemins d'entree du checkout direct (v226BuyDirect et handleSelectOffer)
+      // et non plus un seul point de montage. Ils sont idempotents et sans effet
+      // sur les autres appelants : ce sont tous des achats produit/audio/video
+      // qui n'utilisent ni cours ni dates, et l'enveloppe du slider produits les
+      // fait deja. Elle les conserve d'ailleurs telles quelles (aucun code
+      // supprime) : elles couvrent le parcours formulaire des offres a 0 CHF,
+      // qui ne passe jamais ici.
+      setSelectedCourse(null);
+      setSelectedDates([]);
       // V224: marqueur du parcours progressif. Il remplace `pendingReservation`
       // comme preuve « ce retour Stripe est un achat CLIENT », que l'heuristique
       // du fallback partenaire (V224_PROGRESSIVE_KEY plus bas) consulte pour ne
@@ -6353,6 +6422,10 @@ function App() {
               pendingOffer={pendingOffer}
               onSelectOffer={(product) => {
                 // Pour les produits, pas besoin de cours/dates
+                // V226: ces deux resets sont CONSERVES — ils couvrent le
+                // parcours formulaire (offre a 0 CHF), qui ne passe jamais par
+                // startProgressiveCheckout. Le checkout direct, lui, les refait
+                // desormais lui-meme : ils y sont idempotents.
                 setSelectedCourse(null);
                 setSelectedDates([]);
                 handleSelectOffer(product);
