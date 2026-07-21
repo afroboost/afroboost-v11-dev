@@ -82,8 +82,12 @@ export default function OfferCard({
             .filter(Boolean).join(' · ')}
         </p>
         {offer.location && <p className="text-xs mt-1" style={{ color: '#ccc' }}>📍 {offer.location}</p>}
+        {/* V224 (revue finale): capacite, et non compteur. Le rendu precedent
+            ecrivait un « 0/ » en dur — il n'existe aucun champ participants_count
+            cote backend pour l'alimenter. Cohérent avec la carte publique
+            (App.js). Le comptage reel des inscrits est un chantier separe. */}
         {offer.max_participants != null && (
-          <p className="text-xs mt-1" style={{ color: '#ccc' }}>👥 0/{offer.max_participants} participants</p>
+          <p className="text-xs mt-1" style={{ color: '#ccc' }}>👥 {offer.max_participants} places</p>
         )}
 
         <div className="flex gap-2 mt-3">
