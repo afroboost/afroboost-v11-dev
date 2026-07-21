@@ -1764,8 +1764,20 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
             {/* V224: metadonnees d'activite — chaque ligne est masquee si sa donnee
                 est absente, pour que les offres existantes (qui n'ont aucun de ces
                 champs) restent visuellement inchangees. */}
+            {/* V226: emoji ⏱/📍/👥 remplaces par des SVG inline (memes conditions
+                de masquage, inchangees). Ces trois lignes ne sont jamais
+                cliquables ici (a la difference du lien Maps du cours lie
+                ci-dessus, ~l.1654-1669, qui garde son propre stopPropagation
+                intact et n'est pas touche) : stroke #aaa, pas de couleur
+                d'accent. */}
             {offer.duration_minutes ? (
-              <p className="text-xs mt-1" style={{ color: '#aaa' }}>⏱ {offer.duration_minutes} min</p>
+              <p className="text-xs mt-1 flex items-center gap-1" style={{ color: '#aaa' }}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+                {offer.duration_minutes} min
+              </p>
             ) : null}
             {/* V225 (revue): plus de lieu affiche deux fois. Une offre portant a
                 la fois `offer.location` (V224) et des cours lies avec
@@ -1774,7 +1786,13 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 change RIEN pour les offres existantes, qui n'ont aucun cours lie
                 — `v225CourseLoc` y vaut null et la ligne V224 reste rendue. */}
             {offer.location && !v225CourseLoc ? (
-              <p className="text-xs mt-1" style={{ color: '#aaa' }}>📍 {offer.location}</p>
+              <p className="text-xs mt-1 flex items-center gap-1" style={{ color: '#aaa' }}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                  <circle cx="12" cy="10" r="3" />
+                </svg>
+                {offer.location}
+              </p>
             ) : null}
             {/* V224: `!= null` et non la veracite — une capacite de 0 (complet,
                 ou activite fermee aux inscriptions) est une valeur legitime que
@@ -1787,8 +1805,14 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 les inscrits demanderait une agregation cote serveur : chantier
                 separe, hors perimetre. */}
             {offer.max_participants != null ? (
-              <p className="text-xs mt-1" style={{ color: '#aaa' }}>
-                👥 {offer.max_participants} places
+              <p className="text-xs mt-1 flex items-center gap-1" style={{ color: '#aaa' }}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+                {offer.max_participants} places
               </p>
             ) : null}
             {/* V224: prochaine seance, derivee des cours lies */}
