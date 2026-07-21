@@ -62,6 +62,25 @@ const OffersManager = ({
     setDragOverId(offerId);
   };
   const handleDragEnd = () => { setDraggingId(null); setDragOverId(null); };
+
+  // V224: persistance de l'ordre extraite de handleDrop pour etre partagee avec
+  // les boutons monter/descendre des cartes. La regle reste celle de v159 :
+  // `position` = index dans la liste reordonnee. Seule addition : on ne PUT que
+  // les offres dont la position change reellement, pour ne pas emettre N
+  // requetes a chaque petit deplacement (au premier reordonnancement, aucune
+  // offre n'a encore de `position`, donc toutes sont bien ecrites).
+  const persistOfferOrder = async (reordered) => {
+    const withPositions = reordered.map((o, i) => ({ ...o, position: i }));
+    setOffers(withPositions);
+    try {
+      const changed = withPositions.filter(o => {
+        const prev = offers.find(p => p.id === o.id);
+        return !prev || prev.position !== o.position;
+      });
+      await Promise.all(changed.map(o => updateOffer(o)));
+    } catch (err) { console.error('[V159] reorder error:', err); }
+  };
+
   const handleDrop = async (e, targetOfferId) => {
     e.preventDefault();
     const draggedId = draggingId;
@@ -74,11 +93,9 @@ const OffersManager = ({
     const reordered = [...offers];
     const [moved] = reordered.splice(fromIdx, 1);
     reordered.splice(toIdx, 0, moved);
-    setOffers(reordered);
     // Sauvegarder l'ordre via PUT sur chaque offre (champ position)
-    try {
-      await Promise.all(reordered.map((o, i) => updateOffer({ ...o, position: i })));
-    } catch (err) { console.error('[V159] reorder error:', err); }
+    // V224: setOffers + PUT delegues a persistOfferOrder (meme logique).
+    await persistOfferOrder(reordered);
   };
   // Touch handlers pour mobile (swipe vertical pour réordonner)
   const handleTouchStart = (e, offerId) => {
@@ -237,14 +254,38 @@ const OffersManager = ({
     return await fetchEnhancedText(text);
   };
 
+  // V224: la grille suit l'ordre du champ `position`, exactement comme la
+  // vitrine publique (App.js l.4506) : ce que le coach reorganise ici est donc
+  // bien ce que verront ses clients. Le tri est stable, les offres sans
+  // `position` restent en fin de liste dans leur ordre d'origine.
+  const orderedOffers = React.useMemo(() => {
+    return [...offers].sort((a, b) => {
+      const pa = typeof a.position === 'number' ? a.position : 999999;
+      const pb = typeof b.position === 'number' ? b.position : 999999;
+      return pa - pb;
+    });
+  }, [offers]);
+
+  // V224: reorganisation depuis la grille de cartes. On travaille sur
+  // orderedOffers (l'ordre affiche) et on reutilise persistOfferOrder.
+  const moveOffer = (offer, direction) => {
+    const from = orderedOffers.findIndex(o => o.id === offer.id);
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= orderedOffers.length) return;
+    const reordered = [...orderedOffers];
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(to, 0, moved);
+    persistOfferOrder(reordered);
+  };
+
   // V224: filtre de recherche extrait une seule fois — il etait duplique dans
   // les rendus mobile et desktop.
   const filteredOffers = offersSearch
-    ? offers.filter(o =>
+    ? orderedOffers.filter(o =>
         o.name?.toLowerCase().includes(offersSearch.toLowerCase()) ||
         o.description?.toLowerCase().includes(offersSearch.toLowerCase())
       )
-    : offers;
+    : orderedOffers;
 
   // V224: etat d'ouverture du wizard.
   const [wizardOpen, setWizardOpen] = React.useState(false);
@@ -271,10 +312,14 @@ const OffersManager = ({
   // V224: le wizard remonte tout d'un coup ; on aligne newOffer (pour que le
   // formulaire reste coherent) puis on delegue a addOffer EN LUI PASSANT les
   // valeurs, ce qui evite de dependre de l'application asynchrone du state.
-  const handleWizardSave = (formValues) => {
+  // V224: on n'attend PAS setNewOffer pour enregistrer (les valeurs sont
+  // passees a addOffer), et surtout on ne ferme le wizard QUE si
+  // l'enregistrement a reussi : sinon les 3 etapes de saisie seraient perdues,
+  // openCreate() appelant cancelEditOffer() qui remet le formulaire a vide.
+  const handleWizardSave = async (formValues) => {
     setNewOffer(formValues);
-    setWizardOpen(false);
-    addOffer(null, formValues);
+    const saved = await addOffer(null, formValues);
+    if (saved) setWizardOpen(false);
   };
 
   // V224: bascule visible/masquee depuis une carte. On met a jour le state local
@@ -369,16 +414,30 @@ const OffersManager = ({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {filteredOffers.map(offer => (
-          <OfferCard
-            key={offer.id}
-            offer={offer}
-            onEdit={openEdit}
-            onDuplicate={openDuplicate}
-            onDelete={handleDelete}
-            onToggleVisible={handleToggleVisible}
-          />
-        ))}
+        {filteredOffers.map(offer => {
+          // V224: index dans l'ordre reel (et non dans la liste filtree), pour
+          // que les fleches deplacent l'offre par rapport a ses vrais voisins.
+          const orderIdx = orderedOffers.findIndex(o => o.id === offer.id);
+          return (
+            <OfferCard
+              key={offer.id}
+              offer={offer}
+              onEdit={openEdit}
+              onDuplicate={openDuplicate}
+              onDelete={handleDelete}
+              onToggleVisible={handleToggleVisible}
+              // V224: affordance « offre protegee »
+              canDelete={isOwnOffer(offer)}
+              // V224: reorganisation. Masquee pendant une recherche : la liste
+              // affichee n'etant pas complete, les fleches designeraient des
+              // voisins invisibles.
+              onMoveUp={offersSearch ? undefined : (o) => moveOffer(o, -1)}
+              onMoveDown={offersSearch ? undefined : (o) => moveOffer(o, 1)}
+              canMoveUp={!offersSearch && orderIdx > 0}
+              canMoveDown={!offersSearch && orderIdx >= 0 && orderIdx < orderedOffers.length - 1}
+            />
+          );
+        })}
       </div>
 
       <OfferWizard

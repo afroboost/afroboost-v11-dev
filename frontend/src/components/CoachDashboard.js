@@ -2381,10 +2381,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // strictement identique a avant (l'ancien formulaire l'appelle en onSubmit et
   // ne passe qu'un evenement). Avec lui, on lit les valeurs remontees par le
   // wizard au lieu du state `newOffer`, dont la mise a jour est asynchrone.
+  // V224: retourne true si l'enregistrement a reussi, false sinon. L'ancien
+  // formulaire l'appelle en onSubmit et ignore la valeur de retour : son
+  // comportement reste strictement identique.
   const addOffer = async (e, overrideValues) => {
     if (e && typeof e.preventDefault === 'function') e.preventDefault();
     const src = overrideValues || newOffer;
-    if (!src.name) return;
+    if (!src.name) return false; // V224: rien n'a ete enregistre
     console.log("[V61] addOffer called, raw newOffer:", JSON.stringify({duration_value: src.duration_value, duration_unit: src.duration_unit, is_auto_prolong: src.is_auto_prolong}));
     try {
       // Filtrer les images non vides
@@ -2491,11 +2494,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       videoUrl: '', linked_course_ids: [],
       duration_minutes: '', location: '', max_participants: ''
       });
+      return true; // V224: enregistrement reussi
     } catch (err) {
       console.error("[V61] Erreur offre:", err);
       // v61: Afficher l'erreur RÉELLE du serveur
       const serverMsg = err?.response?.data?.detail || err?.response?.data?.message || err?.message || "Erreur inconnue";
       alert(`❌ Erreur: ${typeof serverMsg === 'string' ? serverMsg : JSON.stringify(serverMsg)}`);
+      return false; // V224: la saisie doit rester recuperable cote appelant
     }
   };
 
