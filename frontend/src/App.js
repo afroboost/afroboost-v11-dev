@@ -1869,9 +1869,19 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                     100 % des offres. v225FormatAmount coupe les decimales d'un
                     montant entier et conserve celles d'un montant fractionnaire.
                     Le montant lui-meme reste issu de v223UnitPrice, inchange. */}
+                {/* V226: le prix ne s'affiche plus deux fois. En quantite 1 le
+                    bouton dit juste « Reserver » — le prix unitaire est deja
+                    visible dans le corps de la carte (CHF {v225FormatAmount...}
+                    plus haut, ~l.1703). Le total + multiplicateur ne
+                    reapparaissent qu'a partir de 2, ou ils apportent une
+                    information nouvelle (le total) que le corps de carte ne
+                    donne pas. checkoutBusy reste la garde en tete de ternaire,
+                    inchangee. */}
                 {checkoutBusy
                   ? 'Un instant…'
-                  : `Réserver — ${v225FormatAmount(v223UnitPrice(offer) * (v225IsDirectCheckout(offer) ? v225Qty : 1))} CHF`}
+                  : v225IsDirectCheckout(offer) && v225Qty > 1
+                    ? `Réserver — ${v225FormatAmount(v223UnitPrice(offer) * v225Qty)} CHF (${v225Qty}x)`
+                    : 'Réserver'}
               </button>
             </div>
           </div>
