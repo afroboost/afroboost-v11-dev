@@ -1235,6 +1235,18 @@ const v223UnitPrice = (offer) => {
     : offer.price;
 };
 
+// V225: format monetaire affiche sur la carte d'offre.
+// Le grand prix rend « CHF 20.- » ; le bouton rendait « 20.00 CHF » quinze
+// pixels plus bas, soit deux formats pour le meme montant sur 100 % des offres
+// en production. Un montant entier s'affiche donc sans decimales, un montant
+// fractionnaire les conserve (19.50 reste « 19.50 »).
+// Ne calcule RIEN : consomme uniquement ce que v223UnitPrice a determine.
+const v225FormatAmount = (amount) => {
+  const n = Number(amount);
+  if (!isFinite(n)) return '0';
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+};
+
 // V225: point de verite unique de l'aiguillage achat direct.
 // Consomme par handleSelectOffer et par le bouton de la carte (tache 5) : les
 // deux DOIVENT decider a l'identique, sinon la carte propose un paiement que
@@ -1416,6 +1428,27 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
       });
     }
     return formatDate(next, course.time, lang);
+  })();
+
+  // V225 (revue): lieu issu des cours lies, calcule UNE fois pour deux usages —
+  // le rendu de la ligne epingle ci-dessous, et la suppression du doublon avec
+  // la ligne V224 `offer.location` (~l.1735). Vaut null pour toute offre sans
+  // cours lie, cas de 100 % des offres en base : rien ne change pour elles.
+  const v225CourseLoc = (offer.linkedCourses || []).find(c => c && c.locationName) || null;
+
+  // V225 (revue): URL du lien de lieu.
+  // 1) `mapsUrl` vaut "" par defaut dans le modele (api/server.py:346) et les
+  //    cours seedes l'ont vide : c'est le cas le PLUS courant. Un href="#" avec
+  //    target="_blank" ouvrait alors un onglet vide dupliquant la page. On
+  //    fabrique donc une recherche Google Maps sur le nom du lieu.
+  // 2) Garde XSS : le champ est saisi au dashboard par le coach ; une URL
+  //    `javascript:` y passerait. On n'accepte `mapsUrl` que s'il commence par
+  //    http, sinon on retombe sur la recherche.
+  const v225LocHref = (() => {
+    if (!v225CourseLoc) return null;
+    const raw = typeof v225CourseLoc.mapsUrl === 'string' ? v225CourseLoc.mapsUrl.trim() : '';
+    if (/^https?:\/\//i.test(raw)) return raw;
+    return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(v225CourseLoc.locationName);
   })();
 
   return (
@@ -1613,11 +1646,14 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 Rendu null si aucun cours lie ne porte de `locationName` — donc
                 invisible pour toutes les offres existantes. */}
             {(() => {
-              const loc = (offer.linkedCourses || []).find(c => c && c.locationName);
+              // V225 (revue): `loc` et son href sont desormais derives une seule
+              // fois en amont (v225CourseLoc / v225LocHref) — la ligne epingle et
+              // la de-duplication avec `offer.location` partagent la meme source.
+              const loc = v225CourseLoc;
               if (!loc) return null;
               return (
                 <a
-                  href={loc.mapsUrl || '#'}
+                  href={v225LocHref}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={e => e.stopPropagation()}
@@ -1720,7 +1756,13 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
             {offer.duration_minutes ? (
               <p className="text-xs mt-1" style={{ color: '#aaa' }}>⏱ {offer.duration_minutes} min</p>
             ) : null}
-            {offer.location ? (
+            {/* V225 (revue): plus de lieu affiche deux fois. Une offre portant a
+                la fois `offer.location` (V224) et des cours lies avec
+                `locationName` rendait les deux lignes. Le lieu du cours est le
+                plus precis (et cliquable vers Maps) : il prime. La condition ne
+                change RIEN pour les offres existantes, qui n'ont aucun cours lie
+                — `v225CourseLoc` y vaut null et la ligne V224 reste rendue. */}
+            {offer.location && !v225CourseLoc ? (
               <p className="text-xs mt-1" style={{ color: '#aaa' }}>📍 {offer.location}</p>
             ) : null}
             {/* V224: `!= null` et non la veracite — une capacite de 0 (complet,
@@ -1810,9 +1852,15 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 {/* V225: le total suit la quantite. Le facteur n'est applique
                     que sur le chemin achat direct — seul cas ou la quantite est
                     reellement transmise au checkout. */}
+                {/* V225 (revue): format aligne sur le grand prix (« CHF 20.- »).
+                    `.toFixed(2)` affichait « 20.00 CHF » quinze pixels sous
+                    « CHF 20.- » — deux formats pour le meme montant, visible sur
+                    100 % des offres. v225FormatAmount coupe les decimales d'un
+                    montant entier et conserve celles d'un montant fractionnaire.
+                    Le montant lui-meme reste issu de v223UnitPrice, inchange. */}
                 {checkoutBusy
                   ? 'Un instant…'
-                  : `Réserver — ${(v223UnitPrice(offer) * (v225IsDirectCheckout(offer) ? v225Qty : 1)).toFixed(2)} CHF`}
+                  : `Réserver — ${v225FormatAmount(v223UnitPrice(offer) * (v225IsDirectCheckout(offer) ? v225Qty : 1))} CHF`}
               </button>
             </div>
           </div>
@@ -1852,9 +1900,20 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
   // V225: la carte a desormais un plancher de 280px (voir OfferCardSlider) et le
   // conteneur un gap de 16px. Le pas de defilement doit refleter les deux, sinon
   // l'auto-play s'arrete progressivement a cote des cartes.
+  // V225 (revue): le `+ 12` (padding: 6px de part et d'autre du wrapper) etait un
+  // SUR-COMPTE, deja present avant la V225. `@tailwind base` est actif
+  // (src/index.css:1), donc le preflight impose `box-sizing: border-box` : la
+  // largeur declaree `max(280px, min(340px, 80vw))` INCLUT deja ces 6px de
+  // padding. Le pas reel vaut donc largeur + gap, et rien d'autre.
+  // Consequence du sur-compte : `snap-mandatory` rattrapait la derive sur les
+  // premieres cartes, mais au-dela d'une quinzaine l'ecart cumule depassait une
+  // demi-carte et `Math.round(scrollLeft / CARD_WIDTH)` (~l.1920) renvoyait le
+  // mauvais index.
+  // Repli 356 = 340 (largeur max) + 16 (gap-4), valeur desktop, pour le rendu
+  // sans `window` (SSR / pre-rendu).
   const CARD_WIDTH = typeof window !== 'undefined'
-    ? Math.max(280, Math.min(340, window.innerWidth * 0.8)) + 12 + 16
-    : 368;
+    ? Math.max(280, Math.min(340, window.innerWidth * 0.8)) + 16
+    : 356;
   const AUTO_PLAY_INTERVAL = 3500; // 3.5 secondes entre chaque slide
 
   // V225: enrichissement de chaque offre de ses cours complets. Fait ICI, une
