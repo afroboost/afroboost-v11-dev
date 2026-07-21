@@ -138,3 +138,26 @@ CHAÎNE D'ACHAT VALIDÉE DE BOUT EN BOUT par le relecteur final : montant affich
 - DETTE héritée V224 : PUT /offers/{id} sans contrôle de propriétaire.
 - GET /courses n'a aucun filtre par coach (limite 100) ; l'endpoint vitrine
   limite à 20 et ne filtre ni archived ni visible.
+
+RE-VÉRIFICATION DES CORRECTIFS (opus) : PRÊT À FUSIONNER.
+  - chemin nominal ET chemin d'échec du bloquant 1 tracés pas à pas
+  - écart de l'implémenteur VALIDÉ : sessionCreatedCourseIds seul laissait un
+    trou réel (vidé après le PUT ; si l'offre échoue ensuite, le wizard reste
+    ouvert et l'horaire redevenait lecture seule). Ma consigne était incomplète.
+  - bloquant 2 : pas de sur-filtrage, les cours seedés sans les champs passent
+  - bloquant 3 : 3 × 19.90 -> « 59.70 » = exactement les 5970 centimes prélevés
+  - sessionOwnedCourseIds n'est alimenté que par la réponse du POST : un cours
+    d'un autre coach ne peut pas devenir éditable par cette voie
+
+## Reste à trancher par le propriétaire (non bloquant)
+- AUDIT pack_sessions EN BASE avant déploiement : toute offre multi-séances
+  dont le champ est vide n'accordera qu'UN crédit (le repli par nom de produit
+  est désactivé dès qu'une offre est identifiée). C'est de l'argent.
+- aucune porte d'entrée pour un client détenant déjà des crédits depuis la
+  page d'accueil (le champ code promo vivait dans le formulaire retiré)
+- reconduction automatique après un achat en quantité : vérifier qu'un achat
+  de 5 unités n'engendre pas un prélèvement récurrent de 5×
+- fenêtre étroite : si les PUT horaires réussissent et que l'offre échoue, un
+  cours public orphelin subsiste. Visible et masquable depuis CoursesManager.
+
+=== LOT V225 TERMINÉ. NON POUSSÉ, NON FUSIONNÉ. ===
