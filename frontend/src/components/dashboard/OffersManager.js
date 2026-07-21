@@ -461,6 +461,9 @@ const OffersManager = ({
         isSuperAdmin={isSuperAdmin}
         coachEmail={coachEmail}
         onEnhanceDescription={handleWizardEnhanceDescription}
+        // V225: active l'edition des horaires dans l'etape 2 du wizard
+        // (POST /courses a l'ajout, PUT /courses/{id} a l'enregistrement).
+        API={API}
       />
 
       {/* Conteneur scrollable pour les offres */}

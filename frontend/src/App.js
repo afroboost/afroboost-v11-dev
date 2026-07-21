@@ -1235,6 +1235,35 @@ const v223UnitPrice = (offer) => {
     : offer.price;
 };
 
+// V225: format monetaire affiche sur la carte d'offre.
+// Le grand prix rend « CHF 20.- » ; le bouton rendait « 20.00 CHF » quinze
+// pixels plus bas, soit deux formats pour le meme montant sur 100 % des offres
+// en production. Un montant entier s'affiche donc sans decimales, un montant
+// fractionnaire les conserve (19.50 reste « 19.50 »).
+// Ne calcule RIEN : consomme uniquement ce que v223UnitPrice a determine.
+const v225FormatAmount = (amount) => {
+  const n = Number(amount);
+  if (!isFinite(n)) return '0';
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+};
+
+// V225: point de verite unique de l'aiguillage achat direct.
+// Consomme par handleSelectOffer et par le bouton de la carte (tache 5) : les
+// deux DOIVENT decider a l'identique, sinon la carte propose un paiement que
+// handleSelectOffer refuse.
+//
+// Le test porte sur `isProduct`/`isPhysicalProduct` ET sur `type` : le modele
+// Offer (api/server.py:366) ne declare PAS de champ `type` et OfferCreate est
+// en extra="ignore", donc `type` est toujours absent d'une offre venant de la
+// base. Il n'est conserve ici que pour les pseudo-offres construites cote
+// client (achats audio/video, App.js ~5967 et ~6043), qui le posent en dur.
+const v225IsDirectCheckout = (offer) => {
+  if (!offer) return false;
+  const isProduct = offer.isProduct || offer.isPhysicalProduct
+    || offer.type === 'product' || offer.type === 'audio' || offer.type === 'video';
+  return !isProduct && v223UnitPrice(offer) > 0;
+};
+
 const V223_TIERS = {
   early_bird:  { label: '🎯 Early Bird', color: '#22c55e' },
   standard:    { label: 'Standard',      color: '#eab308' },
@@ -1258,6 +1287,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   // V224: repli si le fichier video est illisible (404, codec non supporte).
   const [videoError, setVideoError] = useState(false);
+  // V225: quantite choisie sur la carte, relayee a startProgressiveCheckout.
+  const [v225Qty, setV225Qty] = useState(1);
   const defaultImage = "https://picsum.photos/seed/default/400/300";
   
   // PRIORITÉ: offer.images[0] > offer.thumbnail > defaultImage
@@ -1300,6 +1331,13 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   useEffect(() => {
     setVideoError(false);
   }, [currentImage]);
+
+  // V225: la quantite repart a 1 des que la carte change d'offre. Sans cela, un
+  // slider qui recycle la meme instance de composant ferait heriter la nouvelle
+  // offre de la quantite choisie sur la precedente.
+  useEffect(() => {
+    setV225Qty(1);
+  }, [offer.id]);
 
   // V224: ratio MESURE sur les metadonnees reelles (videoWidth/videoHeight),
   // jamais deduit de l'URL — une video 9:16 doit rester en portrait.
@@ -1392,6 +1430,27 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
     return formatDate(next, course.time, lang);
   })();
 
+  // V225 (revue): lieu issu des cours lies, calcule UNE fois pour deux usages —
+  // le rendu de la ligne epingle ci-dessous, et la suppression du doublon avec
+  // la ligne V224 `offer.location` (~l.1735). Vaut null pour toute offre sans
+  // cours lie, cas de 100 % des offres en base : rien ne change pour elles.
+  const v225CourseLoc = (offer.linkedCourses || []).find(c => c && c.locationName) || null;
+
+  // V225 (revue): URL du lien de lieu.
+  // 1) `mapsUrl` vaut "" par defaut dans le modele (api/server.py:346) et les
+  //    cours seedes l'ont vide : c'est le cas le PLUS courant. Un href="#" avec
+  //    target="_blank" ouvrait alors un onglet vide dupliquant la page. On
+  //    fabrique donc une recherche Google Maps sur le nom du lieu.
+  // 2) Garde XSS : le champ est saisi au dashboard par le coach ; une URL
+  //    `javascript:` y passerait. On n'accepte `mapsUrl` que s'il commence par
+  //    http, sinon on retombe sur la recherche.
+  const v225LocHref = (() => {
+    if (!v225CourseLoc) return null;
+    const raw = typeof v225CourseLoc.mapsUrl === 'string' ? v225CourseLoc.mapsUrl.trim() : '';
+    if (/^https?:\/\//i.test(raw)) return raw;
+    return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(v225CourseLoc.locationName);
+  })();
+
   return (
     <>
       {/* Zoom Modal - flèches uniquement dans le zoom */}
@@ -1444,7 +1503,12 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
       {/* V119.1: Cartes agrandies, responsive, glow fin et élégant */}
       <div
         className="flex-shrink-0 snap-start"
-        style={{ width: 'min(340px, 80vw)', minWidth: 'min(340px, 80vw)', padding: '6px' }}
+        /* V225: plancher de largeur. `min(340px, 80vw)` seul tombait a 256px sur
+           un telephone de 320px, trop etroit pour les nouvelles lignes (lieu,
+           horaires, 3 paliers). max(280px, ...) garantit 280px en mobile et
+           laisse 340px en desktop (>= les 320px demandes). Le pas de
+           defilement CARD_WIDTH d'OffersSliderAutoPlay reprend la meme formule. */
+        style={{ width: 'max(280px, min(340px, 80vw))', minWidth: 'max(280px, min(340px, 80vw))', padding: '6px' }}
       >
         <div
           onClick={onClick}
@@ -1574,6 +1638,52 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 <span onClick={(e) => { e.stopPropagation(); setShowDescription(true); }} className="text-xs cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
               </div>
             )}
+
+            {/* V225: lieu cliquable vers Google Maps.
+                stopPropagation VITAL : la carte entiere porte un onClick qui
+                declenche la selection de l'offre, donc le checkout. Sans lui, un
+                visiteur qui clique le lieu partirait en paiement.
+                Rendu null si aucun cours lie ne porte de `locationName` — donc
+                invisible pour toutes les offres existantes. */}
+            {(() => {
+              // V225 (revue): `loc` et son href sont desormais derives une seule
+              // fois en amont (v225CourseLoc / v225LocHref) — la ligne epingle et
+              // la de-duplication avec `offer.location` partagent la meme source.
+              const loc = v225CourseLoc;
+              if (!loc) return null;
+              return (
+                <a
+                  href={v225LocHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  className="text-xs"
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#D91CD2', textDecoration: 'none', marginBottom: '6px' }}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                    <circle cx="12" cy="10" r="3" />
+                  </svg>
+                  <span>{loc.locationName}</span>
+                </a>
+              );
+            })()}
+
+            {/* V225: horaires des cours lies. `linkedCourses` vaut [] pour toute
+                offre sans `linked_course_ids` : .map sur [] ne rend rien, aucune
+                ligne vide. Un cours sans `weekday`/`time` exploitable est ignore
+                plutot que d'afficher « undefined · undefined ». */}
+            {(offer.linkedCourses || []).map(course => {
+              const days = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+              const day = days[course.weekday];
+              if (!day && !course.time) return null;
+              return (
+                <div key={course.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px', color: '#aaa', fontSize: '12px' }}>
+                  <span>🕐</span>
+                  <span>{[day, course.time].filter(Boolean).join(' · ')}</span>
+                </div>
+              );
+            })}
             <div className="flex items-baseline gap-2">
               <span
                 className="text-2xl font-bold"
@@ -1585,7 +1695,12 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 {/* V223: prix du palier actif, sinon rendu d'origine */}
                 {/* V224: passe par v223UnitPrice, point de verite unique du prix
                     cote client — la logique n'est plus reimplementee ici. */}
-                CHF {v223UnitPrice(offer)}.-
+                {/* V225 REVUE FINALE: meme format que le bouton d'achat quelques
+                    pixels plus bas. Sans cela un prix a 19.50 rendait « 19.5 »
+                    ici et « 19.50 » sur le bouton. Le montant reste issu de
+                    v223UnitPrice, point de verite unique — v225FormatAmount ne
+                    fait que le mettre en forme. */}
+                CHF {v225FormatAmount(v223UnitPrice(offer))}.-
               </span>
               {/* V223: badge du palier tarifaire */}
               {offer.progressive_pricing && V223_TIERS[offer.active_tier] && (
@@ -1594,7 +1709,11 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                   background: `${V223_TIERS[offer.active_tier].color}22`,
                   color: V223_TIERS[offer.active_tier].color,
                 }}>
-                  {V223_TIERS[offer.active_tier].label}
+                  {/* V225: le libelle personnalise prime. Sans cela le badge
+                      affichait « 🎯 Early Bird » pendant que la grille des
+                      paliers, quelques pixels plus bas sur la MEME carte,
+                      affichait « Prevente Ete » — deux noms pour un seul palier. */}
+                  {offer[`label_${offer.active_tier}`] || V223_TIERS[offer.active_tier].label}
                 </span>
               )}
               {offer.tva > 0 && (
@@ -1605,13 +1724,56 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
               <p className="text-xs text-white opacity-50 mt-1">+ CHF {offer.shippingCost} frais de port</p>
             )}
 
+            {/* V225: les 3 paliers tarifaires, libelles personnalisables.
+                Tout le bloc est conditionne a `progressive_pricing` : une offre a
+                prix fixe (cas de toutes les offres existantes) n'en voit rien.
+                `!= null` et NON la veracite : un palier a 0 est legitime (offre
+                d'appel gratuite en prevente) et `t.price &&` le masquerait. */}
+            {offer.progressive_pricing && (
+              <div style={{ display: 'flex', gap: '6px', margin: '8px 0' }}>
+                {[
+                  { key: 'early_bird', price: offer.price_early_bird, label: offer.label_early_bird || 'Prévente', color: '#22c55e' },
+                  { key: 'standard', price: offer.price_standard, label: offer.label_standard || 'Standard', color: '#eab308' },
+                  { key: 'last_minute', price: offer.price_last_minute, label: offer.label_last_minute || 'Dernière min.', color: '#ef4444' },
+                ].filter(t => t.price != null).map(tier => {
+                  const isActive = offer.active_tier === tier.key;
+                  return (
+                    <div key={tier.key} style={{
+                      flex: 1,
+                      padding: '6px 4px',
+                      borderRadius: '8px',
+                      textAlign: 'center',
+                      background: isActive ? `${tier.color}15` : '#1a1a2e',
+                      border: `1px solid ${isActive ? tier.color : '#333'}`,
+                      opacity: isActive ? 1 : 0.5,
+                    }}>
+                      <div style={{ fontSize: '10px', color: isActive ? tier.color : '#888', fontWeight: 600 }}>
+                        {tier.label}{isActive ? ' ✓' : ''}
+                      </div>
+                      <div style={{ fontSize: '14px', fontWeight: 700, color: isActive ? '#fff' : '#666' }}>
+                        {/* V225 REVUE FINALE: meme mise en forme que le grand
+                            prix et que le bouton d'achat. */}
+                        {v225FormatAmount(tier.price)} CHF
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {/* V224: metadonnees d'activite — chaque ligne est masquee si sa donnee
                 est absente, pour que les offres existantes (qui n'ont aucun de ces
                 champs) restent visuellement inchangees. */}
             {offer.duration_minutes ? (
               <p className="text-xs mt-1" style={{ color: '#aaa' }}>⏱ {offer.duration_minutes} min</p>
             ) : null}
-            {offer.location ? (
+            {/* V225 (revue): plus de lieu affiche deux fois. Une offre portant a
+                la fois `offer.location` (V224) et des cours lies avec
+                `locationName` rendait les deux lignes. Le lieu du cours est le
+                plus precis (et cliquable vers Maps) : il prime. La condition ne
+                change RIEN pour les offres existantes, qui n'ont aucun cours lie
+                — `v225CourseLoc` y vaut null et la ligne V224 reste rendue. */}
+            {offer.location && !v225CourseLoc ? (
               <p className="text-xs mt-1" style={{ color: '#aaa' }}>📍 {offer.location}</p>
             ) : null}
             {/* V224: `!= null` et non la veracite — une capacite de 0 (complet,
@@ -1645,13 +1807,45 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 reproduire cet aiguillage ici : sur le slider produits, l'onClick
                 enveloppant remet a zero le cours et les dates avant de deleguer,
                 nettoyage qu'un court-circuit ferait sauter. */}
+            {/* V225: selecteur de quantite, 1..5.
+                N'est rendu QUE pour une offre reellement eligible a l'achat
+                direct (v225IsDirectCheckout) : c'est le seul chemin ou la
+                quantite atteint effectivement le paiement. L'afficher sur un
+                produit physique ou une offre gratuite promettrait une
+                multiplication que `onClick(offer)` ignore — le bouton
+                annoncerait un total que le checkout ne facturerait pas.
+                stopPropagation sur onClick ET onChange : la carte entiere est
+                cliquable, ouvrir le menu deroulant partirait sinon en checkout. */}
+            {v225IsDirectCheckout(offer) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '8px 0' }}>
+                <span style={{ fontSize: '12px', color: '#aaa' }}>Quantité</span>
+                <select
+                  value={v225Qty}
+                  onClick={e => e.stopPropagation()}
+                  onChange={e => { e.stopPropagation(); setV225Qty(parseInt(e.target.value, 10) || 1); }}
+                  className="v224-input text-xs"
+                  style={{ background: '#0a0a0f', border: '1px solid #333', borderRadius: '8px', color: '#fff', padding: '4px 8px' }}
+                  data-testid={`offer-qty-${offer.id}`}
+                >
+                  {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+            )}
+
             <div className="mt-3 flex items-center justify-end">
               <button
                 type="button"
                 disabled={checkoutBusy}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (typeof onClick === 'function') {
+                  // V225: l'aiguillage passe par v225IsDirectCheckout, point de
+                  // decision UNIQUE partage avec handleSelectOffer (~l.4182). Ne
+                  // PAS redériver le predicat ici : produits physiques et offres
+                  // gratuites ne doivent pas partir en checkout direct, et deux
+                  // copies de la regle divergeraient a la premiere evolution.
+                  if (v225IsDirectCheckout(offer) && typeof startProgressiveCheckout === 'function') {
+                    startProgressiveCheckout(offer, v225Qty);
+                  } else if (typeof onClick === 'function') {
                     onClick(offer);
                   }
                 }}
@@ -1666,7 +1860,18 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
               >
                 {/* V224: retour visuel pendant l'appel reseau — un demarrage a
                     froid Vercel peut durer plusieurs secondes sur mobile. */}
-                {checkoutBusy ? 'Un instant…' : `Réserver — ${v223UnitPrice(offer)} CHF`}
+                {/* V225: le total suit la quantite. Le facteur n'est applique
+                    que sur le chemin achat direct — seul cas ou la quantite est
+                    reellement transmise au checkout. */}
+                {/* V225 (revue): format aligne sur le grand prix (« CHF 20.- »).
+                    `.toFixed(2)` affichait « 20.00 CHF » quinze pixels sous
+                    « CHF 20.- » — deux formats pour le meme montant, visible sur
+                    100 % des offres. v225FormatAmount coupe les decimales d'un
+                    montant entier et conserve celles d'un montant fractionnaire.
+                    Le montant lui-meme reste issu de v223UnitPrice, inchange. */}
+                {checkoutBusy
+                  ? 'Un instant…'
+                  : `Réserver — ${v225FormatAmount(v223UnitPrice(offer) * (v225IsDirectCheckout(offer) ? v225Qty : 1))} CHF`}
               </button>
             </div>
           </div>
@@ -1703,8 +1908,51 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
   }, [offers, hasShownHint]);
   
   // V119.1: Largeur carte responsive — min(340px, 80vw) + 12px padding
-  const CARD_WIDTH = typeof window !== 'undefined' ? Math.min(340, window.innerWidth * 0.8) + 12 : 352;
+  // V225: la carte a desormais un plancher de 280px (voir OfferCardSlider) et le
+  // conteneur un gap de 16px. Le pas de defilement doit refleter les deux, sinon
+  // l'auto-play s'arrete progressivement a cote des cartes.
+  // V225 (revue): le `+ 12` (padding: 6px de part et d'autre du wrapper) etait un
+  // SUR-COMPTE, deja present avant la V225. `@tailwind base` est actif
+  // (src/index.css:1), donc le preflight impose `box-sizing: border-box` : la
+  // largeur declaree `max(280px, min(340px, 80vw))` INCLUT deja ces 6px de
+  // padding. Le pas reel vaut donc largeur + gap, et rien d'autre.
+  // Consequence du sur-compte : `snap-mandatory` rattrapait la derive sur les
+  // premieres cartes, mais au-dela d'une quinzaine l'ecart cumule depassait une
+  // demi-carte et `Math.round(scrollLeft / CARD_WIDTH)` (~l.1920) renvoyait le
+  // mauvais index.
+  // Repli 356 = 340 (largeur max) + 16 (gap-4), valeur desktop, pour le rendu
+  // sans `window` (SSR / pre-rendu).
+  const CARD_WIDTH = typeof window !== 'undefined'
+    ? Math.max(280, Math.min(340, window.innerWidth * 0.8)) + 16
+    : 356;
   const AUTO_PLAY_INTERVAL = 3500; // 3.5 secondes entre chaque slide
+
+  // V225: enrichissement de chaque offre de ses cours complets. Fait ICI, une
+  // seule fois, plutot qu'aux deux points de montage (offres ~l.5688 et boutique
+  // ~l.5937) : les deux passent deja `courses`, donc les deux en beneficient
+  // sans duplication.
+  // Une offre sans `linked_course_ids` (cas de TOUTES les offres actuellement en
+  // base) obtient `linkedCourses: []` — les blocs lieu et horaires ci-dessous se
+  // masquent alors d'eux-memes.
+  // V225 REVUE FINALE: le catalogue est filtre sur `visible`/`archived` AVANT
+  // l'enrichissement. Il consommait l'etat BRUT `courses` : or `GET /courses`
+  // filtre `archived` mais PAS `visible` (accueil), et l'endpoint vitrine ne
+  // filtre NI l'un NI l'autre (pages partenaires). Le jour, l'heure et
+  // l'adresse d'un horaire delibrement masque — ou archive — se retrouvaient
+  // donc publies sur la carte, alors qu'ils etaient jusqu'ici exclus de la
+  // grille de dates (cf. `baseCourses`, ~l.5179). Filtrer ICI couvre les DEUX
+  // points de montage (offres et boutique) sans dupliquer le filtre.
+  const v225EnrichedOffers = useMemo(() => {
+    const list = Array.isArray(offers) ? offers : [];
+    const catalog = (Array.isArray(courses) ? courses : [])
+      .filter(c => c && c.visible !== false && c.archived !== true);
+    return list.map(o => ({
+      ...o,
+      linkedCourses: (o.linked_course_ids || [])
+        .map(id => catalog.find(c => c && c.id === id))
+        .filter(Boolean)
+    }));
+  }, [offers, courses]);
   
   // Auto-play effect
   useEffect(() => {
@@ -1772,7 +2020,8 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
       <div 
         ref={sliderRef}
         onScroll={handleScroll}
-        className="flex gap-1 overflow-x-auto snap-x snap-mandatory pb-4 hide-scrollbar"
+        /* V225: gap-4 (16px) — les cartes etaient quasi jointives (gap-1 = 4px) */
+        className="flex gap-4 overflow-x-auto snap-x snap-mandatory pb-4 hide-scrollbar"
         style={{
           scrollBehavior: 'smooth',
           WebkitOverflowScrolling: 'touch',
@@ -1785,7 +2034,8 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
         }}
         data-testid="offers-slider"
       >
-        {offers.map((offer) => (
+        {/* V225: on itere sur les offres ENRICHIES, pas sur `offers` brut */}
+        {v225EnrichedOffers.map((offer) => (
           <OfferCardSlider
             key={offer.id}
             offer={offer}
@@ -4072,7 +4322,10 @@ function App() {
 
   // V224 — Parcours progressif : le client paie d'abord, reserve ensuite depuis
   // /espace/<code>. Aucune reservation n'est creee ici.
-  const startProgressiveCheckout = async (offer) => {
+  // V225: second parametre `quantity` (defaut 1) — la carte d'offre (tache 5)
+  // l'appelle avec la quantite choisie. Un appelant qui l'omet obtient
+  // exactement le comportement V224.
+  const startProgressiveCheckout = async (offer, quantity = 1) => {
     // V224: garde de ré-entrance — sans elle, un double-clic pendant l'appel
     // réseau (démarrage à froid Vercel possible) crée plusieurs sessions
     // Stripe et plusieurs lignes payment_transactions pour le même achat.
@@ -4093,16 +4346,34 @@ function App() {
       // du fallback partenaire (V224_PROGRESSIVE_KEY plus bas) consulte pour ne
       // pas propulser le client vers l'ecran de connexion Partenaire.
       // Pose AVANT l'appel reseau : si la redirection part, la cle est la.
+      // V225 REVUE FINALE: la quantite est bornee UNE SEULE FOIS, ici, puis
+      // reutilisee par le marqueur de confirmation et par le payload Stripe.
+      // Les deux doivent parler de la meme quantite, sinon l'ecran de
+      // confirmation annonce un montant que Stripe n'a pas preleve.
+      const v225SafeQty = Math.max(1, Math.min(5, parseInt(quantity, 10) || 1));
       localStorage.setItem(V224_PROGRESSIVE_KEY, JSON.stringify({
         offerName: offer.name,
-        amount: v223UnitPrice(offer),
+        // V225 REVUE FINALE: montant TOTAL reellement debite (unitaire x qte), et
+        // non le prix unitaire. Cette valeur n'alimente QUE l'ecran « Paiement
+        // confirme » (lu ~l.3749, affiche ~l.5645) : un client achetant
+        // 3 x 20 CHF etait debite de 60 CHF par Stripe et lisait « CHF 20.- »
+        // sur le tout premier ecran suivant un prelevement reel.
+        amount: v223UnitPrice(offer) * v225SafeQty,
         ts: Date.now()
       }));
       const payload = {
         productName: offer.name,
+        // V225: reste le prix UNITAIRE — c'est Stripe qui multiplie (voir
+        // `quantity` ci-dessous). Ne surtout pas y mettre le total.
         amount: v223UnitPrice(offer),
         originUrl: window.location.origin,
         offerId: offer.id,
+        // V225: `amount` reste le prix UNITAIRE (v223UnitPrice). Stripe multiplie
+        // unit_amount x quantity : envoyer un total ici ferait payer total x N.
+        // Seul CE point d'appel porte la quantite ; les deux autres appelants de
+        // create-checkout-session (~l.4441 et ~l.4491) envoient deja un TOTAL
+        // calcule et ne doivent surtout pas recevoir de `quantity`.
+        quantity: v225SafeQty, // V225
         // V224: ce parcours n'a pas de formulaire, donc aucun endroit ou saisir
         // un code promo. On delegue la saisie a Stripe Checkout. Le parcours
         // classique ne l'active PAS : il a deja son propre champ promo, et
@@ -4139,10 +4410,22 @@ function App() {
 
   // Sélection d'offre avec smooth scroll vers le formulaire "Vos informations"
   const handleSelectOffer = (offer) => {
-    // V224: une offre progressive court-circuite le choix d'horaire et le
-    // formulaire client — elle part directement en checkout.
-    if (offer && offer.progressive_pricing) {
-      startProgressiveCheckout(offer);
+    // V225: toutes les offres de service payantes partent en achat direct.
+    // (Elargit la garde V224 qui ne visait que `progressive_pricing`.)
+    // Deux exclusions, imposees par la plateforme et non par le design :
+    //  - produit physique : l'adresse de livraison se saisit dans le formulaire
+    //    (App.js ~l.6203) et serait perdue ;
+    //  - offre a 0 CHF : Stripe refuse un montant nul.
+    // Ces deux cas gardent le parcours actuel, formulaire compris.
+    const v225IsProduct = offer && (offer.isProduct || offer.isPhysicalProduct
+      || offer.type === 'product' || offer.type === 'audio' || offer.type === 'video');
+    const v225UnitPrice = offer ? v223UnitPrice(offer) : 0;
+    // V225 correctif: l'aiguillage est delegue au point de verite unique
+    // v225IsDirectCheckout (App.js ~l.1248), partage avec le bouton de la carte
+    // (tache 5). Les deux constantes ci-dessus restent calculees : elles sont
+    // reutilisees plus bas pour lever la contrainte de date.
+    if (v225IsDirectCheckout(offer)) {
+      startProgressiveCheckout(offer, 1);
       return;
     }
     // v56: Toggle — si la même offre est déjà sélectionnée, on la désélectionne (ferme le formulaire)
@@ -4162,7 +4445,21 @@ function App() {
 
     // v158/v159: FORCER la sélection d'une session AVANT de pouvoir choisir une offre
     // Sauf pour produits/audio/video qui ne nécessitent pas de session
-    const isProduct = offer && (offer.type === 'product' || offer.type === 'audio' || offer.type === 'video');
+    // V225: le test historique ne connait que `type`, champ qui n'existe pas
+    // dans le modele Offer (api/server.py:366) : il valait donc toujours faux
+    // pour une offre de la base, et tous les produits exigeaient une date que
+    // plus aucune interface ne permet de choisir depuis showSessions = false.
+    // On appelle v225IsDirectCheckout plutot que de redériver le predicat a la
+    // main : redérivé, il faudrait le maintenir en phase avec l'original a
+    // chaque evolution — exactement la divergence que l'extraction du helper
+    // visait a supprimer. La negation couvre produits, 0 CHF, et price
+    // undefined/null (NaN), qui tomberaient sinon dans la meme impasse.
+    //
+    // V225 TODO: cette levee est INCONDITIONNELLE parce que showSessions vaut
+    // false. Si la grille de dates redevient un jour rendue, reconditionner :
+    // sinon une offre gratuite ayant des linked_course_ids sauterait le choix
+    // de date et creerait une reservation a courseId 'N/A'.
+    const isProduct = !v225IsDirectCheckout(offer);
     if (!isProduct && (!selectedCourse || !selectedDates || selectedDates.length === 0)) {
       // v159: Mémoriser l'offre cliquée pour l'appliquer automatiquement dès qu'une session est choisie
       setPendingOffer(offer);
@@ -4281,7 +4578,13 @@ function App() {
     // Pour les produits physiques et audios, pas besoin de cours/dates
     const isPhysicalProduct = selectedOffer?.isProduct || selectedOffer?.isPhysicalProduct;
     const isAudioPurchase = selectedOffer?.type === 'audio'; // v54: achat audio autonome
-    if (!isPhysicalProduct && !isAudioPurchase && (!selectedCourse || selectedDates.length === 0)) return;
+    // V225: symetrique de la levee faite dans handleSelectOffer (~l.4210).
+    // Une offre gratuite (ou a price undefined/null) n'a plus aucune interface
+    // pour choisir une date depuis showSessions = false : exiger un cours ici
+    // ouvrirait le formulaire pour refuser la soumission en silence, le client
+    // remplissant tout sans jamais comprendre pourquoi rien ne se passe.
+    const v225IsFreeOffer = !(v223UnitPrice(selectedOffer) > 0);
+    if (!isPhysicalProduct && !isAudioPurchase && !v225IsFreeOffer && (!selectedCourse || selectedDates.length === 0)) return;
     if (!selectedOffer || !hasAcceptedTerms) return;
 
     // Direct validation - private fields only
@@ -4345,7 +4648,12 @@ function App() {
       selectedDates: selectedDates, // Toutes les dates sélectionnées
       selectedDatesText: selectedDatesText || null, // Texte formaté des dates
       courseId: selectedCourse?.id || 'N/A',
-      courseName: selectedCourse?.name || (isAudioPurchase ? 'Achat Audio' : 'Produit physique'),
+      // V225: repli sur le nom de l'offre avant « Produit physique ». Depuis que
+      // les offres gratuites atteignent ce chemin sans cours selectionne, le
+      // repli historique libellait une offre de SERVICE gratuite « Produit
+      // physique » — un libelle faux qui partait dans le ticket, l'email client
+      // et la vue coach.
+      courseName: selectedCourse?.name || (isAudioPurchase ? 'Achat Audio' : (selectedOffer?.name || 'Produit physique')),
       courseTime: selectedCourse?.time || '', 
       datetime: dt.toISOString(),
       offerId: selectedOffer.id, 
@@ -5356,7 +5664,10 @@ function App() {
             ) : null}
             {progressiveConfirm.amount != null ? (
               <p className="text-2xl font-bold mb-4" style={{ color: '#D91CD2' }}>
-                CHF {progressiveConfirm.amount}.-
+                {/* V225 REVUE FINALE: meme mise en forme que la carte d'offre.
+                    Le total (unitaire x qte) peut etre fractionnaire — 3 x 19.50
+                    rendrait « 58.5 » sans cela. */}
+                CHF {v225FormatAmount(progressiveConfirm.amount)}.-
               </p>
             ) : null}
             <p className="text-sm mb-2" style={{ color: 'rgba(255,255,255,0.85)' }}>
@@ -5551,11 +5862,19 @@ function App() {
           const activeOffer = selectedOffer || pendingOffer;
           const isOffersFirst = true; // v159: force offers-first (UX plus simple)
           // Afficher sessions UNIQUEMENT si: une offre est active OU si l'utilisateur filtre par "sessions" OU s'il n'y a pas d'offres
-          const showSessions = activeFilter !== 'shop' && visibleCourses.length > 0 && (
+          // V225: calcul d'origine conserve volontairement (lisibilite +
+          // reactivation possible), mais renomme et NON consomme.
+          // eslint-disable-next-line no-unused-vars
+          const showSessionsLegacy = activeFilter !== 'shop' && visibleCourses.length > 0 && (
             activeFilter === 'sessions' || !!activeOffer || filteredServices.length === 0
           )
           // V224: pas de grille d'horaires pour une offre progressive
           && !activeOffer?.progressive_pricing;
+
+          // V225: les horaires sont desormais affiches sur chaque carte, et toutes les
+          // offres de service partent en achat direct. La grille de dates n'a plus de
+          // role. Le calcul d'origine est conserve juste au-dessus, non consomme.
+          const showSessions = false;
 
           // --- BLOC SESSIONS ---
           const sessionsBlock = showSessions && (

@@ -415,6 +415,13 @@ class Offer(BaseModel):
     standard_hours_before: int = 24
     # V223: Pack de crédits (remplace la déduction par regex sur le nom produit)
     pack_sessions: Optional[int] = None
+    # V225: libelles personnalises des paliers. Obligatoirement symetrique entre
+    # Offer et OfferCreate : PUT /offers fait `$set: offer.model_dump()` sur
+    # OfferCreate en extra="ignore", donc un champ absent ici serait efface en
+    # base a chaque sauvegarde d'offre.
+    label_early_bird: Optional[str] = None
+    label_standard: Optional[str] = None
+    label_last_minute: Optional[str] = None
     # V223: Calculés à la lecture. DOIVENT être déclarés ici, sinon le
     # response_model=List[Offer] de GET /offers les filtrerait silencieusement.
     active_price: Optional[float] = None
@@ -454,6 +461,13 @@ class OfferCreate(BaseModel):
     early_bird_days_before: int = 7
     standard_hours_before: int = 24
     pack_sessions: Optional[int] = None
+    # V225: libelles personnalises des paliers. Obligatoirement symetrique entre
+    # Offer et OfferCreate : PUT /offers fait `$set: offer.model_dump()` sur
+    # OfferCreate en extra="ignore", donc un champ absent ici serait efface en
+    # base a chaque sauvegarde d'offre.
+    label_early_bird: Optional[str] = None
+    label_standard: Optional[str] = None
+    label_last_minute: Optional[str] = None
     coach_id: Optional[str] = None  # v19: Ownership
     # v61: Durée de validité — accepte int ou string pour tolérance frontend
     duration_value: Optional[Union[int, str]] = None
@@ -3351,6 +3365,28 @@ class CreateCheckoutRequest(BaseModel):
     # la collection `discount_codes` du dashboard coach. Les deux systèmes sont
     # distincts et ne se connaissent pas.
     allowPromotionCodes: bool = False
+    # V225: nombre d'unites achetees (ex: 2 places pour un couple).
+    # Borne cote serveur : cet endpoint est public, la limite de l'interface
+    # ne protege rien.
+    #
+    # INVARIANT CRITIQUE — `amount` doit etre le prix UNITAIRE des que
+    # quantity > 1. Stripe facture unit_amount x quantity : envoyer un total
+    # deja calcule avec une quantite N ferait payer total x N.
+    #
+    # Or DEUX appelants envoient aujourd'hui un TOTAL, pas un unitaire :
+    #   - frontend/src/App.js:4436  -> amount: totalPrice
+    #   - frontend/src/App.js:4486  -> amount: pendingReservation.totalPrice
+    # Ces deux parcours (reservation classique) n'envoient PAS de quantity et
+    # restent donc corrects a quantity=1. Seul le parcours d'achat direct
+    # envoie un prix unitaire et peut porter une quantite > 1.
+    #
+    # Avant de brancher `quantity` sur un nouvel appelant : verifier que cet
+    # appelant envoie bien un prix UNITAIRE dans `amount`.
+    #
+    # Optional : Pydantic v2 rejette None sur un int, donc un client postant
+    # "quantity": null se bloquerait lui-meme le paiement (422). Le bornage
+    # ci-dessous neutralise le None via `or 1`.
+    quantity: Optional[int] = 1
 
 @api_router.post("/create-checkout-session")
 async def create_checkout_session(request: CreateCheckoutRequest):
@@ -3423,6 +3459,9 @@ async def create_checkout_session(request: CreateCheckoutRequest):
     # round() et non int() : int(0.29 * 100) vaut 28 en virgule flottante.
     amount_cents = round(request.amount * 100)
 
+    # V225: 1..5. Un client peut poster ce qu'il veut ; le plafond est ici.
+    safe_quantity = max(1, min(5, int(request.quantity or 1)))
+
     # Préparer les metadata
     metadata = {
         "product_name": request.productName,
@@ -3432,6 +3471,12 @@ async def create_checkout_session(request: CreateCheckoutRequest):
         "pack_sessions": server_pack_sessions,
         "tier": server_tier,
         "offer_id": request.offerId or "",
+        # V225: quantite bornee cote serveur (1..5), jamais la valeur brute du
+        # client. Elle transite par metadata et non par les line items : le
+        # webhook lit une cle Stripe globale, alors que ce checkout peut avoir
+        # ete cree avec la cle du dashboard (partner_payment_config). Toute
+        # relecture via l'API Stripe echouerait alors silencieusement.
+        "quantity": str(safe_quantity),
     }
     if request.reservationData:
         metadata["reservation_id"] = request.reservationData.get("id", "")
@@ -3452,7 +3497,7 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                     },
                     'unit_amount': amount_cents,
                 },
-                'quantity': 1,
+                'quantity': safe_quantity,  # V225
             }],
             mode='payment',
             success_url=success_url,
@@ -3472,6 +3517,10 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             "product_name": request.productName,
             "customer_email": request.customerEmail,
             "metadata": metadata,
+            # V225: `amount` reste le prix UNITAIRE alors que le client paie
+            # amount x quantity. Sans cette ligne, l'ecart entre la transaction
+            # et le versement Stripe n'est pas reconciliable a la main.
+            "quantity": safe_quantity,
             "payment_status": "pending",
             "payment_methods": payment_methods,
             "created_at": datetime.now(timezone.utc).isoformat()
@@ -3502,7 +3551,7 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                         },
                         'unit_amount': amount_cents,
                     },
-                    'quantity': 1,
+                    'quantity': safe_quantity,  # V225: identique au chemin nominal
                 }],
                 mode='payment',
                 success_url=success_url,
@@ -3525,6 +3574,9 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                 "product_name": request.productName,
                 "customer_email": request.customerEmail,
                 "metadata": metadata,
+                # V225: idem chemin nominal — `amount` est unitaire, le client
+                # paie amount x quantity.
+                "quantity": safe_quantity,
                 "payment_status": "pending",
                 "payment_methods": ['card'],
                 "warning": "TWINT not available",
@@ -3863,6 +3915,33 @@ async def stripe_webhook(request: Request):
                             f"« {product_name} » — plafonné à {V223_MAX_SESSIONS_REGEX}"
                         )
                         sessions_count = V223_MAX_SESSIONS_REGEX
+
+                # V225: la quantite est relue dans metadata, ou le checkout l'a
+                # posee apres bornage serveur — jamais acceptee du client au
+                # moment du webhook, meme regle que V223 pour les credits.
+                # Sans ce multiplicateur, un client achetant 3 packs de 10
+                # paierait 3 fois et recevrait 10 credits.
+                #
+                # Volontairement PAS de lecture via l'API Stripe : le webhook
+                # utilise la cle globale STRIPE_SECRET_KEY, alors que le
+                # checkout privilegie celle de partner_payment_config. Des
+                # qu'un admin renseigne une cle differente au dashboard, tout
+                # appel Stripe depuis ici echouerait et chaque acheteur de N
+                # unites ne recevrait que les credits d'une seule.
+                #
+                # str() car le webhook n'authentifie pas ses appels : un POST
+                # forge avec une quantite numerique (non-chaine) ferait sinon
+                # planter .isdigit() en AttributeError.
+                purchased_qty = 1
+                _qty = str(metadata.get("quantity") or "")
+                if _qty.isdigit() and int(_qty) > 0:
+                    # Re-bornage a la lecture : on ne fait jamais confiance a
+                    # une valeur relue, meme posee par nous.
+                    purchased_qty = max(1, min(5, int(_qty)))
+                if purchased_qty > 1:
+                    sessions_count = sessions_count * purchased_qty
+                    logger.info(f"[V225] {purchased_qty} unites achetees -> {sessions_count} credits")
+
                 new_code = f"AFR-{str(uuid.uuid4())[:6].upper()}"
                 discount_doc = {"id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100, "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0, "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(), "source": "stripe_payment", "session_id": session.id}
                 await db.discount_codes.insert_one(discount_doc)
@@ -3919,6 +3998,14 @@ async def stripe_webhook(request: Request):
                 if RESEND_AVAILABLE and RESEND_API_KEY and customer_email:
                     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=https://afroboost.com/?qr={new_code}&format=png"
                     chat_url = f"https://afroboost.com/?qr={new_code}"
+                    # V225: sans ce lien, le client vient de payer et n'a aucun
+                    # chemin evident vers la reservation de sa seance — l'email
+                    # ne pointait que vers le chat (?qr=).
+                    # f-string sur new_code, deja une chaine construite plus haut :
+                    # aucune valeur externe, donc aucun chemin qui puisse lever
+                    # dans le webhook (ou une exception priverait l'acheteur de
+                    # son code AFR et de ses credits).
+                    espace_url = f"https://afroboost.com/espace/{new_code}"  # V225
                     html = f"""<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;background:#0a0a0a;color:#fff;">
                         <div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:28px 24px;text-align:center;">
                             <h1 style="color:white;margin:0;font-size:24px;">Bienvenue chez Afroboost !</h1>
@@ -3941,9 +4028,15 @@ async def stripe_webhook(request: Request):
                                 </p>
                             </div>
 
+                            <!-- V225: BOUTON PRINCIPAL — RESERVER SA SEANCE -->
+                            <div style="text-align:center;margin:0 0 24px;">
+                                <a href="{espace_url}" style="display:inline-block;background:#d91cd2;color:white;padding:16px 36px;text-decoration:none;border-radius:12px;font-weight:bold;font-size:16px;">&#128197; Reserver ma seance</a>
+                                <p style="color:#a855f7;font-size:12px;margin:10px 0 0;line-height:1.5;">Ton espace personnel : choisis ta date et confirme en un clic.</p>
+                            </div>
+
                             <!-- BOUTON ACCES DIRECT CHAT -->
                             <div style="text-align:center;margin:0 0 28px;">
-                                <a href="{chat_url}" style="display:inline-block;background:#d91cd2;color:white;padding:14px 32px;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">Acceder a mon espace chat</a>
+                                <a href="{chat_url}" style="display:inline-block;background:transparent;color:#d91cd2;border:1px solid #d91cd2;padding:14px 32px;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">Acceder a mon espace chat</a>
                                 <p style="color:#666;font-size:11px;margin:10px 0 0;">Ce lien te connecte automatiquement avec ton code</p>
                             </div>
 

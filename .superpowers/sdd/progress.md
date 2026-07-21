@@ -1,146 +1,163 @@
-# V224 — Journal d'exécution
+# V225 — Journal d'exécution
 
-Plan : docs/superpowers/plans/2026-07-21-v224-refonte-ui.md
-Spec : docs/superpowers/specs/2026-07-21-v224-refonte-ui-design.md
-Branche : v224-refonte-ui (partie de origin/main @ 4d04985, V223 fusionné)
-Périmètre : tâches 1 à 6.
-Base de données : PRODUCTION → vérifications en lecture seule. Ne jamais git push.
+Plan : docs/superpowers/plans/2026-07-21-v225-cartes-completes.md
+Spec : docs/superpowers/specs/2026-07-21-v225-cartes-completes-design.md
+Branche : v225-cartes-completes (depuis main @ 31cdeb7, V224 fusionné)
+Périmètre : tâches 1 à 7.
 Règle absolue utilisateur : NE SUPPRIMER AUCUN CODE EXISTANT (tout est additif).
+Ne pas pousser sans demande explicite de l'utilisateur.
 
 ## Avancement
-Tâche 1 : TERMINÉE (commit 27ddc1e, revue clean, 17/17 tests verts)
-  - 3 champs symétriques sur Offer et OfferCreate, test AST tests/test_offer_fields_v224.py
-  - invariant $set/extra="ignore" confirmé fermé par le relecteur
+Tâche 1 : TERMINÉE (commit 4f20892, revue clean, 21/21 tests verts)
+  - 3 champs label_* symétriques sur Offer et OfferCreate
+  - tests/test_offer_labels_v225.py, analyse AST (FastAPI absent en local)
+  - relecteur a vérifié que le test n'est pas tautologique : il échoue bien si
+    un champ manque d'un seul côté ou est mal orthographié
 
-Tâche 2 : TERMINÉE (commit 412976f, revue clean, build OK)
-  - 5 champs dans les 4 zones : état initial, offerData, startEditOffer, 2 resets
-  - ?? et non || sur les 2 entiers ; v223Int(val, null) laisse passer un 0 légitime
-  - bug linked_course_ids confirmé réel par le relecteur (case cochée -> jamais envoyée)
+Tâche 2 : TERMINÉE (commits 5b4f8d7, 08a74f8 — re-revue clean, 21/21 tests)
+  - quantity 1..5 bornée serveur, appliquée aux DEUX Session.create
+  - crédits = pack_sessions × quantité
+  - défaut MAJEUR trouvé en revue et corrigé : la quantité était relue via
+    list_line_items avec la clé Stripe GLOBALE, alors que le checkout lit
+    partner_payment_config EN PRIORITÉ. Chemin nominal, pas cas limite : dès
+    qu'une clé dashboard diffère de l'env, tout acheteur de N recevait les
+    crédits de 1. Basculé sur metadata — mécanisme déjà établi par V223 pour
+    pack_sessions — posé serveur, relu ET re-borné au webhook.
+  - PIÈGE DOCUMENTÉ : `amount` doit être UNITAIRE dès que quantity > 1. Deux
+    appelants envoient un TOTAL (App.js:4438 et 4488) ; seul le parcours
+    d'achat direct envoie un unitaire. À NE PAS oublier en tâche 4.
 
-Tâche 3 : TERMINÉE (commits 34ddb15, e83cdcb, 3ce5443 — re-revue clean, build OK)
-  - OfferWizard.js : modal 3 étapes, 27 champs, state local, onSave unique
-  - 5 défauts trouvés en revue et corrigés :
-    (1) IMPORTANT inputs variants contrôlés sur valeur normalisée -> la virgule
-        était détruite à la frappe, une seule variante saisissable. State brut.
-    (2) IMPORTANT overlay onClick -> une sélection de texte relâchée hors panneau
-        fermait le modal et perdait 20 champs. Passé en onMouseDown + test cible.
-    (3) IMPORTANT bouton « Aide IA » sans équivalent -> fonctionnalité inatteignable
-        une fois l'ancien formulaire masqué. Prop optionnelle onEnhanceDescription.
-    (6) focus invisible ; .neon-input inutilisable (border !important au repos)
-        -> nouvelle classe .v224-input dans App.css, purement additive, focus seul
-    (7) preview vidéo : ajout youtu.be, Vimeo, URL YouTube avec paramètres
-  - DETTE : youtube.com/shorts/ID non reconnu par la preview (cosmétique)
+Tâche 3 : TERMINÉE (commit f62393a, revue clean, 21/21 tests)
+  - bouton « Réserver ma séance » vers /espace/{code} dans l'email post-paiement
+  - enrichissement active_price/active_tier sur l'endpoint vitrine
+  - import retenu : coach_routes -> api.pricing (PAS api.server, qui importe
+    déjà coach_routes ligne 35 : l'inverse aurait créé un cycle)
+  - try/except PAR OFFRE : une offre corrompue n'en emporte pas 19 autres
+  - relecteur a vérifié que le bloc email est HORS du try existant, donc la
+    sûreté vient de ce que l'ajout est du texte pur, sans await ni accès payload
 
-À CÂBLER IMPÉRATIVEMENT EN TÂCHE 4 (sinon régressions silencieuses) :
-  - isSuperAdmin + coachEmail : sans eux, un coach non-admin voit les cours des AUTRES coachs
-  - onEnhanceDescription : sans elle, le bouton Aide IA reste inerte
-  - initialOffer={newOffer} (référence stable, jamais {{...newOffer}})
+Tâche 4 : TERMINÉE (commits 28cc250, cb6fe56, ab76328, + dedup — re-revue clean)
+  - achat direct pour les offres de service payantes, showSessions = false
+    (calcul d'origine conservé sous showSessionsLegacy)
+  - 2 BLOQUANTS trouvés en revue et corrigés :
+    (1) CRITIQUE tous les produits physiques devenaient INACHETABLES. Le modèle
+        Offer (server.py:366) ne déclare AUCUN champ `type` et OfferCreate est
+        en extra="ignore" : le test `offer.type === 'product'` valait TOUJOURS
+        faux pour une offre de la base. Défaut préexistant mais franchissable ;
+        showSessions=false a supprimé l'échappatoire. Formulaire jamais ouvert,
+        adresse de livraison inatteignable.
+    (2) offres de service à 0 CHF dans la même impasse, double verrou.
+  - helper v225IsDirectCheckout extrait en portée module = point de décision
+    UNIQUE, appelé par handleSelectOffer ET (tâche 5) par le bouton de la carte
+  - courseName : une offre de service gratuite était libellée « Produit
+    physique » dans le ticket, l'email client et la vue coach
 
-Tâche 4 : TERMINÉE (commits 79aa5db, dda6e8e, 3af7049 — re-revue clean, build OK)
-  - OfferCard.js + grille 2 colonnes + montage du wizard dans OffersManager
-  - addOffer refactorisé : accepte des valeurs en argument, renvoie un booléen.
-    Chemin onSubmit de l'ancien formulaire vérifié intact (3 return seulement).
-  - 3 props critiques câblées : isSuperAdmin/coachEmail (sinon fuite entre
-    locataires), onEnhanceDescription (sinon Aide IA inatteignable)
+Tâche 5 : TERMINÉE (commits e99d8bc, 66354d5 — re-revue clean, build OK)
+  - OfferCardSlider : lieu GPS cliquable, horaires, 3 paliers, quantité, gap 16px
+  - sélecteur de quantité CONDITIONNÉ à v225IsDirectCheckout : sinon le bouton
+    annoncerait un total que le parcours ne facturerait pas (produit/gratuit)
   - défauts trouvés en revue et corrigés :
-    (1) IMPORTANT le wizard se fermait avant de savoir si le POST/PUT avait
-        réussi -> 3 étapes de saisie irrécupérables en cas d'échec réseau
-    (2) IMPORTANT glisser-déposer de réorganisation (position) inatteignable
-        -> boutons ▲/▼ sur les cartes, persistOfferOrder partagé avec handleDrop
-    (3,4,5) nom affiché 2x, « undefined CHF », affordance « 🔒 Protégée » perdue
-    (6) le wizard sautait à l'étape 1 pendant l'enregistrement (setNewOffer
-        changeait la référence de initialOffer) -> ligne retirée
+    (1) href={mapsUrl || '#'} + target=_blank ouvrait un ONGLET VIDE quand
+        mapsUrl est absent — or il vaut "" par défaut et les cours seedés
+        l'ont vide : c'était le cas le plus fréquent. URL de recherche Maps.
+    (2) deux formats de prix dans la même carte (CHF 20.- vs 20.00 CHF)
+    (3) CARD_WIDTH sur-comptait 12px (box-sizing: border-box via preflight)
+    (4) lieu affiché 2x si offer.location ET cours lié
+    (5) mapsUrl injecté brut dans href -> garde startsWith('http')
+  - parité EXACTE avec le pré-V225 confirmée pour tout prix entier
 
-Tâche 5 : TERMINÉE (commits 2e0d3a8, 7ebad16 — re-revue clean, build OK)
-  - startProgressiveCheckout + gardes sur handleSelectOffer et showSessions
-  - NON-RÉGRESSION DÉMONTRÉE par le relecteur : membre gauche de showSessions
-    strictement booléen, activeOffer null -> garde neutre. Offre classique ->
-    chute sur le « v56: Toggle » d'origine, inchangé ligne pour ligne.
-  - chaîne de livraison du code AFR remontée et validée de bout en bout :
-    customer_details.email (3767) + pack_sessions relu en base depuis offerId
+Tâche 6 : TERMINÉE (commits 1b80fed + correctifs — revue clean, build OK)
+  - PROGRESSIVE_TIERS étendue (labelKey + placeholder), pas dupliquée
+  - les QUATRE zones vérifiées par le relecteur sur le code : état initial,
+    offerData, startEditOffer, cancelEditOffer ET reset post-création
+  - relecteur a aussi confirmé qu'aucune autre voie d'écriture n'efface les
+    libellés : handleToggleVisible passe par updateOffer (objet complet)
+  - 2 correctifs : badge de palier figé sur V223_TIERS alors que la grille
+    juste en dessous affichait le libellé personnalisé ; .trim() manquant
+
+Tâche 7 : TERMINÉE (commits d0f6201, 0d67564, feca138 — revue clean, build OK)
+  - horaires éditables dans l'étape 2 : nom, jour, heure, lieu, Maps
+  - écart assumé et validé en revue : ajout d'un sélecteur « rattacher un cours
+    existant », sans quoi un horaire délié par erreur devenait inatteignable
   - défauts trouvés en revue et corrigés :
-    (1) IMPORTANT réservation FANTÔME : pendingReservation survit à un abandon
-        de checkout ; un client qui abandonne un parcours classique puis achète
-        une offre progressive voyait le ticket de l'ancienne offre ET créait une
-        réservation parasite avec notification au coach. removeItem ajouté.
-    (2) IMPORTANT aucun retour visuel + double-clic -> N sessions Stripe.
-        Garde de ré-entrance if (loading) return.
+    (1) MOYEN un horaire créé puis abandonné restait PUBLIC sur la vitrine
+        (POST au clic avec visible: true). Créé masqué, publié à l'enregistrement.
+    (2) linkedCourses construit depuis la prop brute, pas filtrée par coach ->
+        cours d'un autre coach pleinement éditable. Lecture seule hors périmètre.
+    (3) clic rapide Ajouter puis Enregistrer -> cours orphelin
+  - ERREUR DE MA CONSIGNE, rattrapée : forcer visible:true sur TOUS les cours
+    persistés republiait un horaire délibérément masqué par le coach. Corrigé :
+    seuls les cours créés dans la session sont publiés ; pour les autres la clé
+    `visible` n'est pas envoyée du tout ($set partiel = valeur en base intacte).
 
-Tâche 6 : TERMINÉE (commits a632c3c, de731bc, e3d7e1e — re-revue clean, build OK)
-  - OfferCardSlider INLINE d'App.js (le bon des 3 composants homonymes)
-  - getNextOccurrences retourne des Date natives, PAS des {label} : le code du
-    plan aurait affiché « Mon Jul 27 2026 00:00:00 GMT+0200 ». Formaté via formatDate.
-  - défauts trouvés en revue et corrigés :
-    (1) IMPORTANT le lock d'orientation ne pouvait JAMAIS marcher : branché sur
-        loadedmetadata avec preload="metadata", donc au chargement de page, hors
-        plein écran où l'API rejette toujours. Ratio mémorisé en ref, lock APRÈS
-        résolution du plein écran, unlock sur fullscreenchange + au démontage.
-    (2) IMPORTANT parseMediaUrl détectait par SOUS-CHAÎNE : une image dont l'URL
-        contient « .mov » devenait un <video> noir sans repli. Extension exigée
-        en fin de chemin, avant ? et #.
-    (3) routage dupliqué -> divergence réelle sur le slider produits (le bouton
-        court-circuitait setSelectedCourse(null)). Un seul point de vérité.
-    (4) le bloc prix réimplémentait v223UnitPrice -> appel de la fonction
-    (5) pas de repli si la vidéo échoue -> onError vers la branche image
+=== LOT V225 : 7 TÂCHES TERMINÉES ===
 
-=== LOT V224 : 6 TÂCHES TERMINÉES ===
+REVUE FINALE DE BRANCHE (opus) : « À CORRIGER AVANT FUSION » — 3 bloquants nés
+ENTRE les tâches. Tous corrigés :
+  B1 (3182571) « + Ajouter un horaire » TOTALEMENT INOPÉRANT. Jonction de deux
+     de mes propres consignes : créer l'horaire masqué (pour qu'un abandon ne
+     soit pas public) + lecture seule hors visibleCourses. Le cours créé n'étant
+     pas dans la prop `courses` du parent, il s'affichait « 🔒 lecture seule »,
+     n'entrait pas dans toPersist, et restait donc invisible À JAMAIS — tout en
+     apparaissant sur la carte publique via linked_course_ids.
+     L'implémenteur a ajouté sessionOwnedCourseIds car sessionCreatedCourseIds
+     est vidé après le PUT : si l'offre échouait ensuite, le bug revenait.
+  B2 (83959f2) la carte publique exposait les horaires MASQUÉS et ARCHIVÉS
+     (jour, heure, adresse). linkedCourses lisait `courses` brut au lieu de
+     baseCourses. GET /courses ne filtre pas `visible`, l'endpoint vitrine ne
+     filtre ni visible ni archived. Régression de confidentialité.
+  B3 (1ff88c5) la confirmation affichait le PRIX UNITAIRE après un débit :
+     3 × 20 CHF prélevés, « Paiement confirmé — CHF 20.- » affiché.
+  C4 (fc243f0) v225FormatAmount appliqué au grand prix, aux paliers, et au
+     montant de confirmation devenu total donc potentiellement fractionnaire.
 
-REVUE FINALE DE BRANCHE (opus) : « À CORRIGER AVANT FUSION » — 4 bloquants, tous
-nés ENTRE les tâches, donc invisibles aux revues individuelles. Tous corrigés :
-  B1 (06eeb07) CRITIQUE : le client qui payait une offre progressive atterrissait
-     sur l'écran de connexion PARTENAIRE. L'heuristique isPartnerPayment
-     distinguait coach/client par la PRÉSENCE de pendingReservation ; le
-     correctif anti-réservation-fantôme de la tâche 5 efface cette clé. L'effet
-     partenaire s'exécutant en premier supprimait status et session_id de l'URL,
-     si bien qu'AUCUN ticket n'était affiché. Marqueur dédié + confirmation client.
-  B2 (e5f32ac) `position` remis à null à chaque enregistrement depuis le wizard
-     (absent des 2 listes blanches). V224 en faisait le cœur de la boucle d'usage :
-     le coach rangeait ses offres, en modifiait une, elle sautait en fin de
-     grille ET de vitrine publique.
-  B3 (06eeb07) le loading GLOBAL désactivait toutes les cartes après un retour
-     bfcache depuis Stripe -> boutique entière morte. État checkoutBusy dédié
-     + écouteur pageshow.
-  B4 (06eeb07, 67073ff) participants_count n'existe dans AUCUN modèle : un cours
-     complet affichait « 0/50 ». Remplacé par une capacité « 50 places ».
-  A  (f9000ba) la vente progressive s'affichait « Client — — 0 CHF » au dashboard.
-     Webhook enrichit payment_transactions (email réel + montant).
-  B  (56466db) flèches ▲▼ actives sur les offres d'autres coachs -> isOwnOffer.
-
-RE-REVUE DES CORRECTIFS : 1 NOUVEAU bloquant, né de la JONCTION de B1 et B3.
-  (e9662a5) Le marqueur progressif n'était effacé sur aucun chemin d'abandon
-     (onglet fermé, retour navigateur). Il survivait, et l'achat CLASSIQUE
-     suivant était pris pour un progressif : finalizeReservation jamais appelé,
-     le client payait sans réservation créée, sans ticket, coach non notifié.
-     La réservation en attente prime désormais ; retour classique purge le marqueur.
+CHAÎNE D'ACHAT VALIDÉE DE BOUT EN BOUT par le relecteur final : montant affiché
+= montant facturé = crédits accordés = ce que le client peut consommer.
 
 ## Constats mineurs à trier avant merge
-- SÉCURITÉ (préexistante, hors périmètre) : PUT /offers/{id} ne vérifie que
-  require_auth, sans contrôle de propriétaire — contrairement à DELETE. La
-  grille affiche les offres des autres coachs, et un clic sur ▲ déclenche un
-  $set sur toutes celles dont la position change. Comportement identique au
-  DnD v159, mais désormais atteignable d'un simple tap. Tâche backend dédiée.
-- bfcache (PRÉEXISTANT, touche AUSSI le parcours classique) : setLoading(true)
-  puis window.location.href sans reset ; un retour navigateur depuis Stripe
-  restauré depuis le bfcache laisse loading=true et le bouton inerte pour la
-  session. Aucun listener pageshow/persisted dans App.js. Ticket séparé.
-- parcours progressif : aucun code promo applicable (pas de formulaire) — à
-  valider comme choix produit
-- retour de paiement progressif : ticket générique « Réservation Afroboost »,
-  totalPrice '-', sans mention du code AFR ni du lien /espace/<code>
-- OfferCardSlider : prop startProgressiveCheckout relayée mais non consommée
-  (aiguillage centralisé dans handleSelectOffer) — commentaire ajouté, prop
-  conservée pour ne rien retirer hors périmètre
-- une offre EXISTANTE portant linked_course_ids affichera désormais la ligne
-  « Prochaine séance » : seul changement visible sur des offres déjà en prod
-- OfferCard : libellés en dur (« Masquer », « Active ») non internationalisés,
-  alors que l'ancienne liste utilisait t('visible')
-- attributs data-testid (edit-offer-*, delete-offer-*, offer-keywords) sortis
-  du DOM rendu ; test_reports/ y fait référence
-- conteneur scrollable maxHeight 500px de l'ancienne liste non repris
-- accordéon horaires par offre non repris (lien cours↔offre reste éditable
-  dans l'étape 2 du wizard)
-- preview vidéo du wizard : youtube.com/shorts/ID non reconnu (cosmétique)
-- handleDrop calcule depuis `offers` brut alors que la grille affiche
-  `orderedOffers` : inoffensif tant que l'ancien rendu est sous {false && …}
-- la grille du dashboard trie tout ensemble, la vitrine trie produits et
-  services séparément : un coach mêlant les deux ne voit pas un miroir exact
+- DETTE SÉCURITÉ (préexistante, AGGRAVÉE en exposition par la tâche 7) :
+  PUT /courses/{id}, PUT /courses/{id}/archive et DELETE /courses/{id} n'ont
+  aucun contrôle de propriétaire ; POST /courses accepte un coach_id arbitraire ;
+  require_auth ne lit qu'un en-tête déclaratif sans jeton. Mettre l'édition de
+  cours dans le wizard rend la faille bien plus atteignable. Chantier dédié.
+- email du flux ADMIN MANUEL (server.py:4222) toujours sans lien /espace/ :
+  le client reçoit un email sans bouton de réservation. Ticket séparé.
+- coach_routes.py:479 duplique _enrich_offers_with_active_price (server.py:1152).
+  Déplacer le helper dans api/pricing.py dans un lot ultérieur.
+- v225FormatAmount non appliqué au grand prix ni aux paliers : un prix
+  fractionnaire donne « CHF 19.5.- » au-dessus de « 19.50 CHF ». Sans effet
+  sur les offres actuelles (toutes à prix entier).
+- CARD_WIDTH n'est pas recalculé au resize/rotation (préexistant).
+- PRÉEXISTANT, hors périmètre : une offre vidéo (type 'video', price > 0) ouvre
+  le formulaire mais handleSubmit la rejette en silence — ni produit physique,
+  ni audio, ni gratuite, donc elle exige un cours et des dates. Jamais réparé
+  par l'achat direct puisque la vidéo est classée « produit ».
+- list_line_items résiduel (server.py:3873, PRÉEXISTANT) : même fragilité de
+  clé Stripe pour le repli sur product_name. Gravité faible (atteint seulement
+  si product_name vide, or il est obligatoire sur le modèle). Ticket séparé.
+- DETTE héritée V224 : PUT /offers/{id} sans contrôle de propriétaire.
+- GET /courses n'a aucun filtre par coach (limite 100) ; l'endpoint vitrine
+  limite à 20 et ne filtre ni archived ni visible.
+
+RE-VÉRIFICATION DES CORRECTIFS (opus) : PRÊT À FUSIONNER.
+  - chemin nominal ET chemin d'échec du bloquant 1 tracés pas à pas
+  - écart de l'implémenteur VALIDÉ : sessionCreatedCourseIds seul laissait un
+    trou réel (vidé après le PUT ; si l'offre échoue ensuite, le wizard reste
+    ouvert et l'horaire redevenait lecture seule). Ma consigne était incomplète.
+  - bloquant 2 : pas de sur-filtrage, les cours seedés sans les champs passent
+  - bloquant 3 : 3 × 19.90 -> « 59.70 » = exactement les 5970 centimes prélevés
+  - sessionOwnedCourseIds n'est alimenté que par la réponse du POST : un cours
+    d'un autre coach ne peut pas devenir éditable par cette voie
+
+## Reste à trancher par le propriétaire (non bloquant)
+- AUDIT pack_sessions EN BASE avant déploiement : toute offre multi-séances
+  dont le champ est vide n'accordera qu'UN crédit (le repli par nom de produit
+  est désactivé dès qu'une offre est identifiée). C'est de l'argent.
+- aucune porte d'entrée pour un client détenant déjà des crédits depuis la
+  page d'accueil (le champ code promo vivait dans le formulaire retiré)
+- reconduction automatique après un achat en quantité : vérifier qu'un achat
+  de 5 unités n'engendre pas un prélèvement récurrent de 5×
+- fenêtre étroite : si les PUT horaires réussissent et que l'offre échoue, un
+  cours public orphelin subsiste. Visible et masquable depuis CoursesManager.
+
+=== LOT V225 TERMINÉ. NON POUSSÉ, NON FUSIONNÉ. ===

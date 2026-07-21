@@ -9,6 +9,10 @@ import os
 import logging
 import stripe
 
+# V225: import de api.pricing (module pur) et NON de api.server — server.py
+# importe deja coach_routes (server.py:35), l'import inverse serait circulaire.
+from api.pricing import compute_active_price  # V225
+
 logger = logging.getLogger(__name__)
 
 # v9.5.6: Liste des Super Admins autorisés
@@ -473,6 +477,22 @@ async def get_coach_vitrine(username: str):
         # v29: Concept personnel du partenaire
         concept_id = f"concept_{coach_email}"
     offers = await db.offers.find(coach_filter, {"_id": 0}).to_list(20)
+    # V225: meme enrichissement que _enrich_offers_with_active_price
+    # (server.py:1152) — sans lui, active_price/active_tier sont absents sur les
+    # pages partenaires et les paliers de prix y restent inertes.
+    # Pour une offre sans progressive_pricing, compute_active_price renvoie
+    # regular() : price == float(offer["price"]), donc le prix affiche
+    # aujourd'hui chez les partenaires est strictement inchange.
+    for _offer in offers:  # V225
+        try:
+            _active = compute_active_price(_offer)
+            _offer["active_price"] = _active["price"]
+            _offer["active_tier"] = _active["tier"]
+        except Exception as _pricing_err:
+            # La vitrine est une page publique : un champ de prix malforme en
+            # base ne doit jamais la faire tomber en 500. On laisse alors
+            # l'offre sans active_price, le frontend retombe sur price.
+            logger.warning(f"[V225] active_price non calcule pour l'offre {_offer.get('id')}: {_pricing_err}")
     courses = await db.courses.find(coach_filter, {"_id": 0}).to_list(20)
     # v29: Charger le concept (heroVideos, appName, couleurs, etc.) côté serveur
     concept = await db.concept.find_one({"id": concept_id}, {"_id": 0})
