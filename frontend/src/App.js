@@ -4550,11 +4550,18 @@ function App() {
       // Place dans startProgressiveCheckout, ces deux resets couvrent TOUS les
       // chemins d'entree du checkout direct (v226BuyDirect et handleSelectOffer)
       // et non plus un seul point de montage. Ils sont idempotents et sans effet
-      // sur les autres appelants : ce sont tous des achats produit/audio/video
-      // qui n'utilisent ni cours ni dates, et l'enveloppe du slider produits les
-      // fait deja. Elle les conserve d'ailleurs telles quelles (aucun code
-      // supprime) : elles couvrent le parcours formulaire des offres a 0 CHF,
-      // qui ne passe jamais ici.
+      // sur les autres appelants.
+      //
+      // Attention, le slider SERVICES passe aussi par ici (onSelectOffer =
+      // handleSelectOffer) : une offre de service payante, donc potentiellement
+      // liee a des cours, purge desormais elle aussi la selection. C'est voulu.
+      // En nominal la page part chez Stripe et l'etat React disparait ; en cas
+      // d'echec reseau, purger evite qu'une reservation ulterieure herite d'un
+      // cours et d'une date perimes — le defaut que ce correctif ferme.
+      //
+      // L'enveloppe du slider produits conserve ses propres resets (aucun code
+      // supprime) : ils couvrent le parcours formulaire des offres a 0 CHF, qui
+      // ne passe jamais ici.
       setSelectedCourse(null);
       setSelectedDates([]);
       // V224: marqueur du parcours progressif. Il remplace `pendingReservation`
