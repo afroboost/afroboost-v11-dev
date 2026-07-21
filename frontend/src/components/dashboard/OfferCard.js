@@ -55,7 +55,17 @@ export default function OfferCard({
   onMoveUp,
   onMoveDown,
   canMoveUp = false,
-  canMoveDown = false
+  canMoveDown = false,
+  // V226: glisser-deposer. Props OPTIONNELLES : un montage qui ne les passe pas
+  // obtient exactement la carte d'avant (draggable=false, aucun handler, curseur
+  // par defaut, bordure et opacite inchangees).
+  draggable = false,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  isDragging = false,
+  isDragOver = false
 }) {
   const cover = (offer.images || []).find(Boolean) || offer.thumbnail || '';
   const isVisible = offer.visible !== false;
@@ -66,11 +76,27 @@ export default function OfferCard({
   return (
     <div
       className="transition-all"
+      // V226: la carte n'est glissable que si le parent l'autorise explicitement.
+      draggable={draggable}
+      data-offer-id={offer.id}
+      onDragStart={draggable && onDragStart ? (e) => onDragStart(e, offer) : undefined}
+      // V226: onDragOver/onDrop restent actifs meme sur une carte non glissable :
+      // une carte doit pouvoir servir de CIBLE de depot sans etre elle-meme
+      // deplacable (offre d'un autre coach, par exemple).
+      onDragOver={onDragOver ? (e) => onDragOver(e, offer) : undefined}
+      onDrop={onDrop ? (e) => onDrop(e, offer) : undefined}
+      onDragEnd={onDragEnd ? (e) => onDragEnd(e, offer) : undefined}
       style={{
         background: '#1a1a2e',
-        border: '1px solid rgba(217,28,210,0.2)',
+        // V226: retour visuel sur la cible survolee. La largeur reste a 1px et
+        // le halo est un box-shadow : aucun decalage de mise en page au survol.
+        border: `1px solid ${isDragOver ? PINK : 'rgba(217,28,210,0.2)'}`,
+        boxShadow: isDragOver ? `0 0 0 2px rgba(217,28,210,0.45)` : 'none',
         borderRadius: '12px',
-        overflow: 'hidden'
+        overflow: 'hidden',
+        // V226: grab au repos, grabbing pendant le deplacement.
+        cursor: draggable ? (isDragging ? 'grabbing' : 'grab') : 'default',
+        opacity: isDragging ? 0.5 : 1
       }}
     >
       {cover ? (
