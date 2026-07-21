@@ -3772,8 +3772,19 @@ function App() {
   // V224 — Parcours progressif : le client paie d'abord, reserve ensuite depuis
   // /espace/<code>. Aucune reservation n'est creee ici.
   const startProgressiveCheckout = async (offer) => {
+    // V224: garde de ré-entrance — sans elle, un double-clic pendant l'appel
+    // réseau (démarrage à froid Vercel possible) crée plusieurs sessions
+    // Stripe et plusieurs lignes payment_transactions pour le même achat.
+    if (loading) return;
     try {
       setLoading(true);
+      // V224: efface toute réservation en attente laissée par un parcours
+      // classique abandonné (retour navigateur après un checkout non finalisé).
+      // Sans ce nettoyage, le handler de retour Stripe (~l.3229) réutiliserait
+      // cette clé au retour de CE paiement progressif et créerait une
+      // réservation fantôme sur l'ancien cours, avec ticket et notification
+      // au coach erronés.
+      localStorage.removeItem('pendingReservation');
       const payload = {
         productName: offer.name,
         amount: v223UnitPrice(offer),
