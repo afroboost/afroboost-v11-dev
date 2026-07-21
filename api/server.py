@@ -387,6 +387,11 @@ class Offer(BaseModel):
     tva: float = 0.0  # TVA percentage
     shippingCost: float = 0.0  # Frais de port
     stock: int = -1  # -1 = unlimited
+    # V224: metadonnees d'activite affichees sur les cartes publiques.
+    # Chaque ligne se masque cote client quand sa valeur est absente.
+    duration_minutes: Optional[int] = None
+    location: Optional[str] = ""
+    max_participants: Optional[int] = None
     coach_id: Optional[str] = None  # v19: Ownership — email du coach propriétaire
     # v59: Durée de validité & prolongation automatique
     duration_value: Optional[int] = None  # ex: 2 (nombre)
@@ -435,6 +440,12 @@ class OfferCreate(BaseModel):
     tva: float = 0.0
     shippingCost: float = 0.0
     stock: int = -1
+    # V224: obligatoirement symetrique avec Offer. PUT /offers fait
+    # `$set: offer.model_dump()` sur ce modele en extra="ignore" : un champ
+    # absent ici est efface en base a chaque sauvegarde d'offre.
+    duration_minutes: Optional[int] = None
+    location: Optional[str] = ""
+    max_participants: Optional[int] = None
     # V223: Prix progressif 3 paliers
     progressive_pricing: bool = False
     price_early_bird: Optional[float] = None
