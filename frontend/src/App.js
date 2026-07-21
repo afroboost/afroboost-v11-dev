@@ -3488,12 +3488,20 @@ function App() {
       window.history.replaceState({}, document.title, url.pathname);
     };
     
-    // V224: marqueur du parcours progressif, lu UNE fois puis efface. Teste
-    // avant `pendingReservation` : startProgressiveCheckout efface cette
-    // derniere cle, les deux ne coexistent donc jamais pour un meme achat.
+    // V224: marqueur du parcours progressif, lu UNE fois puis efface.
+    //
+    // Le test exige EN PLUS l'absence de `pendingReservation`. Les deux cles ne
+    // coexistent jamais pour un meme achat, mais elles le peuvent d'un achat a
+    // l'autre : un abandon sur la page Stripe (onglet ferme, retour navigateur)
+    // ne passe par aucun de nos chemins d'effacement, et laisse le marqueur en
+    // place. Sans cette garde, l'achat CLASSIQUE suivant serait pris pour un
+    // progressif : finalizeReservation ne serait jamais appele, le client
+    // paierait sans qu'aucune reservation ne soit creee, sans ticket, et sans
+    // que le coach soit notifie. La reservation en attente prime donc toujours.
     const progressiveRaw = localStorage.getItem(V224_PROGRESSIVE_KEY);
+    const pendingRaw = localStorage.getItem('pendingReservation');
 
-    if (isPaymentSuccess && sessionId && progressiveRaw) {
+    if (isPaymentSuccess && sessionId && progressiveRaw && !pendingRaw) {
       // V224: parcours progressif — aucune reservation n'a ete creee, il n'y a
       // donc aucun ticket a afficher. Le client recoit son code d'acces AFR par
       // email (envoye par le webhook Stripe) et reserve ensuite depuis son
@@ -3596,9 +3604,14 @@ function App() {
         saveTicketToStorage(minimalTicket);
       }
       
+      // V224: purge d'un eventuel marqueur progressif abandonne. On sort d'un
+      // retour CLASSIQUE : si un marqueur trainait, il vient d'un checkout
+      // progressif abandonne et n'a plus aucune raison de survivre.
+      localStorage.removeItem(V224_PROGRESSIVE_KEY);
+
       // Nettoyer l'URL APRÈS affichage du ticket
       setTimeout(cleanUrl, 100);
-      
+
     } else if (isPaymentCanceled) {
       // Paiement annulé - afficher un message
       localStorage.removeItem('pendingReservation');
