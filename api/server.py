@@ -3387,6 +3387,12 @@ class CreateCheckoutRequest(BaseModel):
     # "quantity": null se bloquerait lui-meme le paiement (422). Le bornage
     # ci-dessous neutralise le None via `or 1`.
     quantity: Optional[int] = 1
+    # V226: produit physique — Stripe collecte l'adresse de livraison, que le
+    # parcours direct ne peut plus recueillir via le formulaire.
+    collectShipping: bool = False
+    # V226: variantes choisies sur la carte (taille, couleur…). Recopiees dans
+    # les metadata Stripe pour que le coach sache quoi expedier.
+    variants: Optional[dict] = None
 
 @api_router.post("/create-checkout-session")
 async def create_checkout_session(request: CreateCheckoutRequest):
@@ -3482,6 +3488,20 @@ async def create_checkout_session(request: CreateCheckoutRequest):
         metadata["reservation_id"] = request.reservationData.get("id", "")
         metadata["course_name"] = request.reservationData.get("courseName", "")
 
+    # V226: chaque variante devient une cle metadata. Stripe plafonne a 50 cles
+    # et 500 caracteres par valeur : on borne pour ne pas faire echouer la
+    # session sur une saisie aberrante.
+    if request.variants:
+        for _k, _v in list(request.variants.items())[:10]:
+            metadata[f"variant_{str(_k)[:20]}"] = str(_v)[:100]
+
+    # V226: passe en kwargs aux deux Session.create, nominal et fallback.
+    v226_shipping = {
+        'shipping_address_collection': {
+            'allowed_countries': ['CH', 'FR', 'DE', 'IT', 'AT', 'BE']
+        }
+    } if request.collectShipping else {}
+
     # Méthodes de paiement: card + twint (devise CHF obligatoire pour TWINT)
     payment_methods = ['card', 'twint']
 
@@ -3506,6 +3526,7 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             allow_promotion_codes=request.allowPromotionCodes,  # V224
             metadata=metadata,
             api_key=active_stripe_key,
+            **v226_shipping,  # V226: vide si collectShipping est False
         )
 
         # Créer l'entrée dans payment_transactions
@@ -3563,6 +3584,10 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                 allow_promotion_codes=request.allowPromotionCodes,
                 metadata=metadata,
                 api_key=active_stripe_key,
+                # V226: la collecte d'adresse doit rester identique au chemin
+                # nominal, sinon elle disparaitrait pour tout compte sans TWINT
+                # active — donc des commandes non expediables.
+                **v226_shipping,
             )
 
             # Créer l'entrée dans payment_transactions
