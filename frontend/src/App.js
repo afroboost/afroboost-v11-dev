@@ -1227,7 +1227,10 @@ const V223_TIERS = {
 };
 
 // Offer Card for Horizontal Slider - With LED effect, Loupe, Info icon + Discrete dots
-const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
+// V224: `courses`, `lang`, `startProgressiveCheckout` et `loading` sont fournis par
+// App via OffersSliderAutoPlay. Tous ont une valeur par defaut : un appelant qui ne
+// les passe pas obtient exactement le rendu d'avant la V224.
+const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang = 'fr', startProgressiveCheckout, loading = false }) => {
   const [showDescription, setShowDescription] = useState(false);
   const [showZoom, setShowZoom] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -1260,7 +1263,64 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
     e.stopPropagation();
     setCurrentImageIndex(prev => prev < images.length - 1 ? prev + 1 : 0);
   };
-  
+
+  // V224: type du media courant. Seuls les fichiers video lisibles nativement
+  // (.mp4/.webm/.mov/...) changent de rendu ; YouTube, Vimeo et les images
+  // conservent strictement le rendu <img> d'origine.
+  const currentMedia = parseMediaUrl(currentImage);
+  const isVideo = currentMedia && currentMedia.type === 'video';
+
+  // V224: passage en plein ecran a la lecture. Chaque prefixe navigateur est
+  // tente ; un echec est avale pour ne jamais interrompre la lecture.
+  const handlePlay = (e) => {
+    const el = e.currentTarget;
+    const req = el.requestFullscreen || el.webkitEnterFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+    if (req) {
+      try {
+        Promise.resolve(req.call(el)).catch(() => {});
+      } catch (_) { /* ignore */ }
+    }
+  };
+
+  // V224: le ratio est MESURE sur les metadonnees reelles (videoWidth/videoHeight),
+  // jamais deduit de l'URL — une video 9:16 doit rester en portrait.
+  const handleMeta = (e) => {
+    const v = e.currentTarget;
+    if (!v.videoWidth || !v.videoHeight) return;
+    const isLandscape = v.videoWidth > v.videoHeight;
+    // V224: la rotation est un confort, jamais un prerequis. L'API est absente
+    // ou refusee sur iOS Safari et rejette sa promesse hors plein ecran : un
+    // echec ne doit en aucun cas empecher la lecture.
+    if (isLandscape && window.screen && window.screen.orientation && window.screen.orientation.lock) {
+      try {
+        Promise.resolve(window.screen.orientation.lock('landscape')).catch(() => {});
+      } catch (_) { /* ignore */ }
+    }
+  };
+
+  // V224: prochaine seance, derivee du premier cours lie a l'offre.
+  // getNextOccurrences retourne des objets Date (pas des objets { label }) :
+  // le formatage passe par formatDate(date, course.time, lang), comme
+  // renderDates le fait deja pour la liste d'horaires.
+  const nextSessionLabel = (() => {
+    const linkedIds = Array.isArray(offer.linked_course_ids) ? offer.linked_course_ids : [];
+    if (!linkedIds.length || !Array.isArray(courses) || !courses.length) return null;
+    const linked = linkedIds.map(id => courses.find(c => c && c.id === id)).filter(Boolean);
+    if (!linked.length) return null;
+    const course = linked[0];
+    if (course.weekday == null) return null;
+    const next = getNextOccurrences(course.weekday, 1)[0];
+    if (!next) return null;
+    // V224: formatDate concatene " • <heure>" ; sans heure renseignee on evite
+    // le separateur orphelin en formatant la date seule.
+    if (!course.time) {
+      return next.toLocaleDateString(lang === 'de' ? 'de-CH' : lang === 'en' ? 'en-GB' : 'fr-CH', {
+        weekday: 'short', day: '2-digit', month: '2-digit'
+      });
+    }
+    return formatDate(next, course.time, lang);
+  })();
+
   return (
     <>
       {/* Zoom Modal - flèches uniquement dans le zoom */}
@@ -1336,6 +1396,21 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
           <div style={{ position: 'relative', height: '220px', overflow: 'hidden' }}>
             {!showDescription ? (
               <>
+                {/* V224: media video lisible nativement — vignette + controles,
+                    plein ecran a la lecture. Tout autre media garde le <img>. */}
+                {isVideo ? (
+                  <video
+                    src={currentMedia.url}
+                    className="w-full h-full"
+                    style={{ objectFit: 'cover', objectPosition: 'center', height: '220px', background: '#000' }}
+                    playsInline
+                    controls
+                    preload="metadata"
+                    onClick={(e) => e.stopPropagation()}
+                    onPlay={handlePlay}
+                    onLoadedMetadata={handleMeta}
+                  />
+                ) : (
                 <img
                   src={currentImage}
                   alt={offer.name}
@@ -1343,6 +1418,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
                   style={{ objectFit: 'cover', objectPosition: 'center', height: '220px' }}
                   onError={(e) => { e.target.src = defaultImage; }}
                 />
+                )}
 
                 {/* Points discrets cliquables - PAS de flèches */}
                 {hasMultipleImages && (
@@ -1358,6 +1434,9 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
                 )}
 
                 {/* Photo Icon - Top Left */}
+                {/* V224: masque sur une video — la modale d'agrandissement rend un
+                    <img> et afficherait une image cassee pour un fichier video. */}
+                {!isVideo && (
                 <div
                   className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-all hover:scale-110"
                   style={{
@@ -1374,6 +1453,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
                     <polyline points="21 15 16 10 5 21"/>
                   </svg>
                 </div>
+                )}
 
                 {/* Selected indicator */}
                 {selected && (
@@ -1449,7 +1529,62 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
             {offer.isProduct && offer.shippingCost > 0 && (
               <p className="text-xs text-white opacity-50 mt-1">+ CHF {offer.shippingCost} frais de port</p>
             )}
+
+            {/* V224: metadonnees d'activite — chaque ligne est masquee si sa donnee
+                est absente, pour que les offres existantes (qui n'ont aucun de ces
+                champs) restent visuellement inchangees. */}
+            {offer.duration_minutes ? (
+              <p className="text-xs mt-1" style={{ color: '#aaa' }}>⏱ {offer.duration_minutes} min</p>
+            ) : null}
+            {offer.location ? (
+              <p className="text-xs mt-1" style={{ color: '#aaa' }}>📍 {offer.location}</p>
+            ) : null}
+            {/* V224: `!= null` et non la veracite — `0 ?` masquerait une jauge
+                legitimement a zero (aucun inscrit pour l'instant). */}
+            {offer.max_participants != null ? (
+              <p className="text-xs mt-1" style={{ color: '#aaa' }}>
+                👥 {offer.participants_count != null ? offer.participants_count : 0}/{offer.max_participants} participants
+              </p>
+            ) : null}
+            {/* V224: prochaine seance, derivee des cours lies */}
+            {nextSessionLabel ? (
+              <p className="text-xs mt-2" style={{ color: '#ccc' }}>
+                Prochaine séance :<br />
+                <span style={{ color: '#fff' }}>{nextSessionLabel}</span>
+              </p>
+            ) : null}
+
             <OfferCountdown offer={offer} />
+
+            {/* V224: bouton Reserver. Une offre progressive part directement en
+                checkout ; toute autre offre conserve strictement le parcours
+                existant via onClick (handleSelectOffer → horaires + formulaire). */}
+            <div className="mt-3 flex items-center justify-end">
+              <button
+                type="button"
+                disabled={loading}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (offer.progressive_pricing && typeof startProgressiveCheckout === 'function') {
+                    startProgressiveCheckout(offer);
+                  } else if (typeof onClick === 'function') {
+                    onClick(offer);
+                  }
+                }}
+                className="text-xs px-3 py-2 rounded-lg font-semibold transition-all"
+                style={{
+                  background: loading ? '#5a2a58' : '#D91CD2',
+                  color: '#fff',
+                  opacity: loading ? 0.7 : 1,
+                  cursor: loading ? 'wait' : 'pointer'
+                }}
+                data-testid={`offer-reserve-${offer.id}`}
+              >
+                {/* V224: retour visuel pendant l'appel reseau — un demarrage a
+                    froid Vercel peut durer plusieurs secondes sur mobile. */}
+                {loading ? 'Un instant…' : `Réserver — ${v223UnitPrice(offer)} CHF`}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1459,7 +1594,9 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
 
 // === OFFERS SLIDER WITH AUTO-PLAY ===
 // Carrousel horizontal avec défilement automatique pour montrer qu'il y a plusieurs offres
-const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOffer }) => {
+// V224: `courses`, `lang`, `startProgressiveCheckout` et `loading` ne sont que
+// relayes vers OfferCardSlider — ce composant ne s'en sert pas lui-meme.
+const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOffer, courses = [], lang = 'fr', startProgressiveCheckout, loading = false }) => {
   const sliderRef = useRef(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -1571,6 +1708,11 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
             selected={selectedOffer?.id === offer.id}
             pending={pendingOffer?.id === offer.id && !selectedOffer}
             onClick={() => onSelectOffer(offer)}
+            /* V224 */
+            courses={courses}
+            lang={lang}
+            startProgressiveCheckout={startProgressiveCheckout}
+            loading={loading}
           />
         ))}
       </div>
@@ -5246,6 +5388,11 @@ function App() {
                 selectedOffer={selectedOffer}
                 pendingOffer={pendingOffer}
                 onSelectOffer={handleSelectOffer}
+                /* V224 */
+                courses={courses}
+                lang={lang}
+                startProgressiveCheckout={startProgressiveCheckout}
+                loading={loading}
               />
             </div>
           );
@@ -5494,6 +5641,11 @@ function App() {
                 setSelectedDates([]);
                 handleSelectOffer(product);
               }}
+              /* V224 */
+              courses={courses}
+              lang={lang}
+              startProgressiveCheckout={startProgressiveCheckout}
+              loading={loading}
             />
           </div>
         )}
