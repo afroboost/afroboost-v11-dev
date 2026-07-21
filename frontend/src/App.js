@@ -1275,6 +1275,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   // V224: repli si le fichier video est illisible (404, codec non supporte).
   const [videoError, setVideoError] = useState(false);
+  // V225: quantite choisie sur la carte, relayee a startProgressiveCheckout.
+  const [v225Qty, setV225Qty] = useState(1);
   const defaultImage = "https://picsum.photos/seed/default/400/300";
   
   // PRIORITÉ: offer.images[0] > offer.thumbnail > defaultImage
@@ -1317,6 +1319,13 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   useEffect(() => {
     setVideoError(false);
   }, [currentImage]);
+
+  // V225: la quantite repart a 1 des que la carte change d'offre. Sans cela, un
+  // slider qui recycle la meme instance de composant ferait heriter la nouvelle
+  // offre de la quantite choisie sur la precedente.
+  useEffect(() => {
+    setV225Qty(1);
+  }, [offer.id]);
 
   // V224: ratio MESURE sur les metadonnees reelles (videoWidth/videoHeight),
   // jamais deduit de l'URL — une video 9:16 doit rester en portrait.
@@ -1461,7 +1470,12 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
       {/* V119.1: Cartes agrandies, responsive, glow fin et élégant */}
       <div
         className="flex-shrink-0 snap-start"
-        style={{ width: 'min(340px, 80vw)', minWidth: 'min(340px, 80vw)', padding: '6px' }}
+        /* V225: plancher de largeur. `min(340px, 80vw)` seul tombait a 256px sur
+           un telephone de 320px, trop etroit pour les nouvelles lignes (lieu,
+           horaires, 3 paliers). max(280px, ...) garantit 280px en mobile et
+           laisse 340px en desktop (>= les 320px demandes). Le pas de
+           defilement CARD_WIDTH d'OffersSliderAutoPlay reprend la meme formule. */
+        style={{ width: 'max(280px, min(340px, 80vw))', minWidth: 'max(280px, min(340px, 80vw))', padding: '6px' }}
       >
         <div
           onClick={onClick}
@@ -1591,6 +1605,49 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 <span onClick={(e) => { e.stopPropagation(); setShowDescription(true); }} className="text-xs cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
               </div>
             )}
+
+            {/* V225: lieu cliquable vers Google Maps.
+                stopPropagation VITAL : la carte entiere porte un onClick qui
+                declenche la selection de l'offre, donc le checkout. Sans lui, un
+                visiteur qui clique le lieu partirait en paiement.
+                Rendu null si aucun cours lie ne porte de `locationName` — donc
+                invisible pour toutes les offres existantes. */}
+            {(() => {
+              const loc = (offer.linkedCourses || []).find(c => c && c.locationName);
+              if (!loc) return null;
+              return (
+                <a
+                  href={loc.mapsUrl || '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  className="text-xs"
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#D91CD2', textDecoration: 'none', marginBottom: '6px' }}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                    <circle cx="12" cy="10" r="3" />
+                  </svg>
+                  <span>{loc.locationName}</span>
+                </a>
+              );
+            })()}
+
+            {/* V225: horaires des cours lies. `linkedCourses` vaut [] pour toute
+                offre sans `linked_course_ids` : .map sur [] ne rend rien, aucune
+                ligne vide. Un cours sans `weekday`/`time` exploitable est ignore
+                plutot que d'afficher « undefined · undefined ». */}
+            {(offer.linkedCourses || []).map(course => {
+              const days = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+              const day = days[course.weekday];
+              if (!day && !course.time) return null;
+              return (
+                <div key={course.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px', color: '#aaa', fontSize: '12px' }}>
+                  <span>🕐</span>
+                  <span>{[day, course.time].filter(Boolean).join(' · ')}</span>
+                </div>
+              );
+            })}
             <div className="flex items-baseline gap-2">
               <span
                 className="text-2xl font-bold"
@@ -1620,6 +1677,41 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
             </div>
             {offer.isProduct && offer.shippingCost > 0 && (
               <p className="text-xs text-white opacity-50 mt-1">+ CHF {offer.shippingCost} frais de port</p>
+            )}
+
+            {/* V225: les 3 paliers tarifaires, libelles personnalisables.
+                Tout le bloc est conditionne a `progressive_pricing` : une offre a
+                prix fixe (cas de toutes les offres existantes) n'en voit rien.
+                `!= null` et NON la veracite : un palier a 0 est legitime (offre
+                d'appel gratuite en prevente) et `t.price &&` le masquerait. */}
+            {offer.progressive_pricing && (
+              <div style={{ display: 'flex', gap: '6px', margin: '8px 0' }}>
+                {[
+                  { key: 'early_bird', price: offer.price_early_bird, label: offer.label_early_bird || 'Prévente', color: '#22c55e' },
+                  { key: 'standard', price: offer.price_standard, label: offer.label_standard || 'Standard', color: '#eab308' },
+                  { key: 'last_minute', price: offer.price_last_minute, label: offer.label_last_minute || 'Dernière min.', color: '#ef4444' },
+                ].filter(t => t.price != null).map(tier => {
+                  const isActive = offer.active_tier === tier.key;
+                  return (
+                    <div key={tier.key} style={{
+                      flex: 1,
+                      padding: '6px 4px',
+                      borderRadius: '8px',
+                      textAlign: 'center',
+                      background: isActive ? `${tier.color}15` : '#1a1a2e',
+                      border: `1px solid ${isActive ? tier.color : '#333'}`,
+                      opacity: isActive ? 1 : 0.5,
+                    }}>
+                      <div style={{ fontSize: '10px', color: isActive ? tier.color : '#888', fontWeight: 600 }}>
+                        {tier.label}{isActive ? ' ✓' : ''}
+                      </div>
+                      <div style={{ fontSize: '14px', fontWeight: 700, color: isActive ? '#fff' : '#666' }}>
+                        {tier.price} CHF
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             )}
 
             {/* V224: metadonnees d'activite — chaque ligne est masquee si sa donnee
@@ -1662,13 +1754,45 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 reproduire cet aiguillage ici : sur le slider produits, l'onClick
                 enveloppant remet a zero le cours et les dates avant de deleguer,
                 nettoyage qu'un court-circuit ferait sauter. */}
+            {/* V225: selecteur de quantite, 1..5.
+                N'est rendu QUE pour une offre reellement eligible a l'achat
+                direct (v225IsDirectCheckout) : c'est le seul chemin ou la
+                quantite atteint effectivement le paiement. L'afficher sur un
+                produit physique ou une offre gratuite promettrait une
+                multiplication que `onClick(offer)` ignore — le bouton
+                annoncerait un total que le checkout ne facturerait pas.
+                stopPropagation sur onClick ET onChange : la carte entiere est
+                cliquable, ouvrir le menu deroulant partirait sinon en checkout. */}
+            {v225IsDirectCheckout(offer) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '8px 0' }}>
+                <span style={{ fontSize: '12px', color: '#aaa' }}>Quantité</span>
+                <select
+                  value={v225Qty}
+                  onClick={e => e.stopPropagation()}
+                  onChange={e => { e.stopPropagation(); setV225Qty(parseInt(e.target.value, 10) || 1); }}
+                  className="v224-input text-xs"
+                  style={{ background: '#0a0a0f', border: '1px solid #333', borderRadius: '8px', color: '#fff', padding: '4px 8px' }}
+                  data-testid={`offer-qty-${offer.id}`}
+                >
+                  {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+            )}
+
             <div className="mt-3 flex items-center justify-end">
               <button
                 type="button"
                 disabled={checkoutBusy}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (typeof onClick === 'function') {
+                  // V225: l'aiguillage passe par v225IsDirectCheckout, point de
+                  // decision UNIQUE partage avec handleSelectOffer (~l.4182). Ne
+                  // PAS redériver le predicat ici : produits physiques et offres
+                  // gratuites ne doivent pas partir en checkout direct, et deux
+                  // copies de la regle divergeraient a la premiere evolution.
+                  if (v225IsDirectCheckout(offer) && typeof startProgressiveCheckout === 'function') {
+                    startProgressiveCheckout(offer, v225Qty);
+                  } else if (typeof onClick === 'function') {
                     onClick(offer);
                   }
                 }}
@@ -1683,7 +1807,12 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
               >
                 {/* V224: retour visuel pendant l'appel reseau — un demarrage a
                     froid Vercel peut durer plusieurs secondes sur mobile. */}
-                {checkoutBusy ? 'Un instant…' : `Réserver — ${v223UnitPrice(offer)} CHF`}
+                {/* V225: le total suit la quantite. Le facteur n'est applique
+                    que sur le chemin achat direct — seul cas ou la quantite est
+                    reellement transmise au checkout. */}
+                {checkoutBusy
+                  ? 'Un instant…'
+                  : `Réserver — ${(v223UnitPrice(offer) * (v225IsDirectCheckout(offer) ? v225Qty : 1)).toFixed(2)} CHF`}
               </button>
             </div>
           </div>
@@ -1720,8 +1849,31 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
   }, [offers, hasShownHint]);
   
   // V119.1: Largeur carte responsive — min(340px, 80vw) + 12px padding
-  const CARD_WIDTH = typeof window !== 'undefined' ? Math.min(340, window.innerWidth * 0.8) + 12 : 352;
+  // V225: la carte a desormais un plancher de 280px (voir OfferCardSlider) et le
+  // conteneur un gap de 16px. Le pas de defilement doit refleter les deux, sinon
+  // l'auto-play s'arrete progressivement a cote des cartes.
+  const CARD_WIDTH = typeof window !== 'undefined'
+    ? Math.max(280, Math.min(340, window.innerWidth * 0.8)) + 12 + 16
+    : 368;
   const AUTO_PLAY_INTERVAL = 3500; // 3.5 secondes entre chaque slide
+
+  // V225: enrichissement de chaque offre de ses cours complets. Fait ICI, une
+  // seule fois, plutot qu'aux deux points de montage (offres ~l.5688 et boutique
+  // ~l.5937) : les deux passent deja `courses`, donc les deux en beneficient
+  // sans duplication.
+  // Une offre sans `linked_course_ids` (cas de TOUTES les offres actuellement en
+  // base) obtient `linkedCourses: []` — les blocs lieu et horaires ci-dessous se
+  // masquent alors d'eux-memes.
+  const v225EnrichedOffers = useMemo(() => {
+    const list = Array.isArray(offers) ? offers : [];
+    const catalog = Array.isArray(courses) ? courses : [];
+    return list.map(o => ({
+      ...o,
+      linkedCourses: (o.linked_course_ids || [])
+        .map(id => catalog.find(c => c && c.id === id))
+        .filter(Boolean)
+    }));
+  }, [offers, courses]);
   
   // Auto-play effect
   useEffect(() => {
@@ -1789,7 +1941,8 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
       <div 
         ref={sliderRef}
         onScroll={handleScroll}
-        className="flex gap-1 overflow-x-auto snap-x snap-mandatory pb-4 hide-scrollbar"
+        /* V225: gap-4 (16px) — les cartes etaient quasi jointives (gap-1 = 4px) */
+        className="flex gap-4 overflow-x-auto snap-x snap-mandatory pb-4 hide-scrollbar"
         style={{
           scrollBehavior: 'smooth',
           WebkitOverflowScrolling: 'touch',
@@ -1802,7 +1955,8 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
         }}
         data-testid="offers-slider"
       >
-        {offers.map((offer) => (
+        {/* V225: on itere sur les offres ENRICHIES, pas sur `offers` brut */}
+        {v225EnrichedOffers.map((offer) => (
           <OfferCardSlider
             key={offer.id}
             offer={offer}
