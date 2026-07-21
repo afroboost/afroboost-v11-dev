@@ -171,7 +171,7 @@ export default function OfferWizard({
           onChange={(e) => set('name', e.target.value)}
           placeholder="Ex: Cours à l'unité"
           style={INPUT_STYLE}
-          className="text-sm"
+          className="text-sm v224-input"
         />
       </div>
 
@@ -184,7 +184,7 @@ export default function OfferWizard({
           onChange={(e) => set('price', e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
           placeholder="30"
           style={INPUT_STYLE}
-          className="text-sm"
+          className="text-sm v224-input"
         />
       </div>
 
@@ -195,7 +195,7 @@ export default function OfferWizard({
             type="checkbox"
             checked={!!form.progressive_pricing}
             onChange={(e) => set('progressive_pricing', e.target.checked)}
-            className="accent-[#D91CD2] w-4 h-4"
+            className="accent-[#D91CD2] w-4 h-4 v224-input"
           />
           <span className="text-white text-sm font-medium">📊 Activer les 3 paliers de prix</span>
         </label>
@@ -220,7 +220,7 @@ export default function OfferWizard({
                   onChange={(e) => set(f.key, e.target.value === '' ? null : parseFloat(e.target.value))}
                   placeholder="CHF"
                   style={INPUT_STYLE}
-                  className="text-sm"
+                  className="text-sm v224-input"
                 />
               </div>
             ))}
@@ -253,7 +253,7 @@ export default function OfferWizard({
             onChange={(e) => set('pack_sessions', e.target.value === '' ? null : parseInt(e.target.value, 10))}
             placeholder="ex: 10"
             style={INPUT_STYLE}
-            className="text-sm"
+            className="text-sm v224-input"
           />
           <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.5)' }}>
             Si rempli, l'acheteur reçoit un espace personnel avec ce nombre de crédits.
@@ -292,7 +292,7 @@ export default function OfferWizard({
           maxLength={3000}
           placeholder="Description détaillée de votre offre (jusqu'à 3000 caractères)"
           style={INPUT_STYLE}
-          className="text-sm"
+          className="text-sm v224-input"
         />
         <p className="text-xs mt-1" style={HINT_STYLE}>{(form.description || '').length}/3000</p>
       </div>
@@ -306,7 +306,7 @@ export default function OfferWizard({
           onChange={(e) => set('keywords', e.target.value)}
           placeholder="session, séance, cardio, danse, afro... (séparés par virgules)"
           style={INPUT_STYLE}
-          className="text-sm"
+          className="text-sm v224-input"
         />
         <p className="text-xs mt-1" style={HINT_STYLE}>💡 Aide les clients à trouver cette offre</p>
       </div>
@@ -322,7 +322,7 @@ export default function OfferWizard({
             type="checkbox"
             checked={!!form.countdown_enabled}
             onChange={(e) => set('countdown_enabled', e.target.checked)}
-            className="w-4 h-4"
+            className="w-4 h-4 v224-input"
             style={{ accentColor: '#f59e0b' }}
             data-testid="countdown-toggle"
           />
@@ -339,7 +339,7 @@ export default function OfferWizard({
                 onChange={(e) => set('countdown_text', e.target.value)}
                 placeholder="L'OFFRE FINIT DANS :"
                 style={INPUT_STYLE}
-                className="text-sm"
+                className="text-sm v224-input"
               />
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -350,7 +350,7 @@ export default function OfferWizard({
                   value={form.countdown_date || ''}
                   onChange={(e) => set('countdown_date', e.target.value)}
                   style={INPUT_STYLE}
-                  className="text-sm"
+                  className="text-sm v224-input"
                 />
               </div>
               <div>
@@ -360,7 +360,7 @@ export default function OfferWizard({
                   value={form.countdown_time || '23:59'}
                   onChange={(e) => set('countdown_time', e.target.value)}
                   style={INPUT_STYLE}
-                  className="text-sm"
+                  className="text-sm v224-input"
                 />
               </div>
             </div>
@@ -397,7 +397,7 @@ export default function OfferWizard({
               onChange={(e) => set('duration_value', parseInt(e.target.value, 10) || '')}
               placeholder="Ex: 2"
               style={INPUT_STYLE}
-              className="text-sm"
+              className="text-sm v224-input"
             />
           </div>
           <div>
@@ -406,7 +406,7 @@ export default function OfferWizard({
               value={form.duration_unit || ''}
               onChange={(e) => set('duration_unit', e.target.value || null)}
               style={INPUT_STYLE}
-              className="text-sm"
+              className="text-sm v224-input"
             >
               <option value="">Sans limite</option>
               <option value="days">Jours</option>
@@ -422,7 +422,7 @@ export default function OfferWizard({
                 type="checkbox"
                 checked={form.is_auto_prolong !== false}
                 onChange={(e) => set('is_auto_prolong', e.target.checked)}
-                className="w-4 h-4"
+                className="w-4 h-4 v224-input"
                 style={{ accentColor: PINK }}
               />
               Prolonger automatiquement à l'expiration
@@ -473,7 +473,7 @@ export default function OfferWizard({
                         ? [...linkedIds, course.id]
                         : linkedIds.filter(id => id !== course.id)
                     )}
-                    className="w-4 h-4"
+                    className="w-4 h-4 v224-input"
                   />
                   <span className="flex-1">
                     <span className="font-medium">{course.name || course.title || 'Cours'}</span>
@@ -502,7 +502,7 @@ export default function OfferWizard({
             onChange={(e) => set('duration_minutes', e.target.value === '' ? '' : parseInt(e.target.value, 10))}
             placeholder="60"
             style={INPUT_STYLE}
-            className="text-sm"
+            className="text-sm v224-input"
           />
         </div>
         <div>
@@ -513,7 +513,7 @@ export default function OfferWizard({
             onChange={(e) => set('location', e.target.value)}
             placeholder="Ex: Salle Afroboost, Lausanne"
             style={INPUT_STYLE}
-            className="text-sm"
+            className="text-sm v224-input"
           />
         </div>
         <div>
@@ -525,7 +525,7 @@ export default function OfferWizard({
             onChange={(e) => set('max_participants', e.target.value === '' ? '' : parseInt(e.target.value, 10))}
             placeholder="20"
             style={INPUT_STYLE}
-            className="text-sm"
+            className="text-sm v224-input"
           />
         </div>
       </div>
@@ -538,7 +538,7 @@ export default function OfferWizard({
             value={form.category || 'service'}
             onChange={(e) => set('category', e.target.value)}
             style={INPUT_STYLE}
-            className="text-sm"
+            className="text-sm v224-input"
           >
             <option value="service">🎧 Service / Cours</option>
             <option value="tshirt">👕 T-shirt</option>
@@ -552,7 +552,7 @@ export default function OfferWizard({
             type="checkbox"
             checked={!!form.isProduct}
             onChange={(e) => set('isProduct', e.target.checked)}
-            className="w-5 h-5"
+            className="w-5 h-5 v224-input"
           />
           Produit physique
         </label>
@@ -561,7 +561,7 @@ export default function OfferWizard({
             type="checkbox"
             checked={!!form.visible}
             onChange={(e) => set('visible', e.target.checked)}
-            className="w-5 h-5"
+            className="w-5 h-5 v224-input"
           />
           Visible
         </label>
@@ -581,7 +581,7 @@ export default function OfferWizard({
                 onChange={(e) => set('tva', parseFloat(e.target.value) || 0)}
                 placeholder="7.7"
                 style={INPUT_STYLE}
-                className="text-sm"
+                className="text-sm v224-input"
               />
             </div>
             <div>
@@ -593,7 +593,7 @@ export default function OfferWizard({
                 onChange={(e) => set('shippingCost', parseFloat(e.target.value) || 0)}
                 placeholder="9.90"
                 style={INPUT_STYLE}
-                className="text-sm"
+                className="text-sm v224-input"
               />
             </div>
             <div>
@@ -604,7 +604,7 @@ export default function OfferWizard({
                 onChange={(e) => set('stock', parseInt(e.target.value, 10) || -1)}
                 placeholder="-1"
                 style={INPUT_STYLE}
-                className="text-sm"
+                className="text-sm v224-input"
               />
             </div>
           </div>
@@ -626,7 +626,7 @@ export default function OfferWizard({
                   onChange={(e) => setVariant(key, e.target.value)}
                   placeholder={placeholder}
                   style={INPUT_STYLE}
-                  className="text-sm"
+                  className="text-sm v224-input"
                 />
               ))}
             </div>
@@ -653,7 +653,7 @@ export default function OfferWizard({
               }}
               placeholder={`Image ${i + 1}`}
               style={INPUT_STYLE}
-              className="text-sm"
+              className="text-sm v224-input"
             />
           ))}
         </div>
@@ -667,7 +667,7 @@ export default function OfferWizard({
           onChange={(e) => set('videoUrl', e.target.value)}
           placeholder="https://www.youtube.com/watch?v=... ou lien .mp4"
           style={INPUT_STYLE}
-          className="text-sm"
+          className="text-sm v224-input"
         />
         {form.videoUrl && (
           <div className="mt-3" style={{ borderRadius: '8px', overflow: 'hidden' }}>

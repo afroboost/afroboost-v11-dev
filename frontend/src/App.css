@@ -753,6 +753,17 @@ select option {
   box-shadow: 0 0 15px rgba(217, 28, 210, 0.3), 0 0 25px rgba(217, 28, 210, 0.15);
 }
 
+/* V224: focus-only state for OfferWizard.js inputs. Ne definit QUE :focus —
+   l'etat de repos reste entierement pilote par les styles inline du wizard.
+   !important necessaire : sans lui, le `border` inline (repos) reste
+   prioritaire meme au focus, car un style inline bat une regle de classe
+   sans !important. */
+.v224-input:focus {
+  border: 1px solid #D91CD2 !important;
+  box-shadow: 0 0 15px rgba(217, 28, 210, 0.3), 0 0 25px rgba(217, 28, 210, 0.15);
+  outline: none;
+}
+
 /* Valid Code Input */
 .valid-code {
   border: 2px solid #22c55e !important;
