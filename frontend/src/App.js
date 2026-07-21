@@ -4396,7 +4396,12 @@ function App() {
       selectedDates: selectedDates, // Toutes les dates sélectionnées
       selectedDatesText: selectedDatesText || null, // Texte formaté des dates
       courseId: selectedCourse?.id || 'N/A',
-      courseName: selectedCourse?.name || (isAudioPurchase ? 'Achat Audio' : 'Produit physique'),
+      // V225: repli sur le nom de l'offre avant « Produit physique ». Depuis que
+      // les offres gratuites atteignent ce chemin sans cours selectionne, le
+      // repli historique libellait une offre de SERVICE gratuite « Produit
+      // physique » — un libelle faux qui partait dans le ticket, l'email client
+      // et la vue coach.
+      courseName: selectedCourse?.name || (isAudioPurchase ? 'Achat Audio' : (selectedOffer?.name || 'Produit physique')),
       courseTime: selectedCourse?.time || '', 
       datetime: dt.toISOString(),
       offerId: selectedOffer.id, 
