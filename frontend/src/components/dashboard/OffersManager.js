@@ -437,8 +437,15 @@ const OffersManager = ({
               // voisins invisibles.
               onMoveUp={offersSearch ? undefined : (o) => moveOffer(o, -1)}
               onMoveDown={offersSearch ? undefined : (o) => moveOffer(o, 1)}
-              canMoveUp={!offersSearch && orderIdx > 0}
-              canMoveDown={!offersSearch && orderIdx >= 0 && orderIdx < orderedOffers.length - 1}
+              // V224 (revue finale): garde de propriete. La grille n'est pas
+              // filtree par coach_id (comportement historique), or moveOffer →
+              // persistOfferOrder emet un PUT sur CHAQUE offre dont la position
+              // change, et PUT /offers/{id} n'a aucun controle de proprietaire
+              // cote serveur. Sans cette garde, un coach non-admin reordonne la
+              // vitrine d'un autre coach en un tap. Le controle serveur reste a
+              // faire (ticket backend separe) — ceci en limite l'exposition.
+              canMoveUp={!offersSearch && isOwnOffer(offer) && orderIdx > 0}
+              canMoveDown={!offersSearch && isOwnOffer(offer) && orderIdx >= 0 && orderIdx < orderedOffers.length - 1}
             />
           );
         })}
