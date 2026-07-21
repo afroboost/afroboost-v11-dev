@@ -1695,7 +1695,12 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 {/* V223: prix du palier actif, sinon rendu d'origine */}
                 {/* V224: passe par v223UnitPrice, point de verite unique du prix
                     cote client — la logique n'est plus reimplementee ici. */}
-                CHF {v223UnitPrice(offer)}.-
+                {/* V225 REVUE FINALE: meme format que le bouton d'achat quelques
+                    pixels plus bas. Sans cela un prix a 19.50 rendait « 19.5 »
+                    ici et « 19.50 » sur le bouton. Le montant reste issu de
+                    v223UnitPrice, point de verite unique — v225FormatAmount ne
+                    fait que le mettre en forme. */}
+                CHF {v225FormatAmount(v223UnitPrice(offer))}.-
               </span>
               {/* V223: badge du palier tarifaire */}
               {offer.progressive_pricing && V223_TIERS[offer.active_tier] && (
@@ -1746,7 +1751,9 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                         {tier.label}{isActive ? ' ✓' : ''}
                       </div>
                       <div style={{ fontSize: '14px', fontWeight: 700, color: isActive ? '#fff' : '#666' }}>
-                        {tier.price} CHF
+                        {/* V225 REVUE FINALE: meme mise en forme que le grand
+                            prix et que le bouton d'achat. */}
+                        {v225FormatAmount(tier.price)} CHF
                       </div>
                     </div>
                   );
@@ -5657,7 +5664,10 @@ function App() {
             ) : null}
             {progressiveConfirm.amount != null ? (
               <p className="text-2xl font-bold mb-4" style={{ color: '#D91CD2' }}>
-                CHF {progressiveConfirm.amount}.-
+                {/* V225 REVUE FINALE: meme mise en forme que la carte d'offre.
+                    Le total (unitaire x qte) peut etre fractionnaire — 3 x 19.50
+                    rendrait « 58.5 » sans cela. */}
+                CHF {v225FormatAmount(progressiveConfirm.amount)}.-
               </p>
             ) : null}
             <p className="text-sm mb-2" style={{ color: 'rgba(255,255,255,0.85)' }}>
