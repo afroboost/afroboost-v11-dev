@@ -4339,13 +4339,25 @@ function App() {
       // du fallback partenaire (V224_PROGRESSIVE_KEY plus bas) consulte pour ne
       // pas propulser le client vers l'ecran de connexion Partenaire.
       // Pose AVANT l'appel reseau : si la redirection part, la cle est la.
+      // V225 REVUE FINALE: la quantite est bornee UNE SEULE FOIS, ici, puis
+      // reutilisee par le marqueur de confirmation et par le payload Stripe.
+      // Les deux doivent parler de la meme quantite, sinon l'ecran de
+      // confirmation annonce un montant que Stripe n'a pas preleve.
+      const v225SafeQty = Math.max(1, Math.min(5, parseInt(quantity, 10) || 1));
       localStorage.setItem(V224_PROGRESSIVE_KEY, JSON.stringify({
         offerName: offer.name,
-        amount: v223UnitPrice(offer),
+        // V225 REVUE FINALE: montant TOTAL reellement debite (unitaire x qte), et
+        // non le prix unitaire. Cette valeur n'alimente QUE l'ecran « Paiement
+        // confirme » (lu ~l.3749, affiche ~l.5645) : un client achetant
+        // 3 x 20 CHF etait debite de 60 CHF par Stripe et lisait « CHF 20.- »
+        // sur le tout premier ecran suivant un prelevement reel.
+        amount: v223UnitPrice(offer) * v225SafeQty,
         ts: Date.now()
       }));
       const payload = {
         productName: offer.name,
+        // V225: reste le prix UNITAIRE — c'est Stripe qui multiplie (voir
+        // `quantity` ci-dessous). Ne surtout pas y mettre le total.
         amount: v223UnitPrice(offer),
         originUrl: window.location.origin,
         offerId: offer.id,
@@ -4354,7 +4366,7 @@ function App() {
         // Seul CE point d'appel porte la quantite ; les deux autres appelants de
         // create-checkout-session (~l.4441 et ~l.4491) envoient deja un TOTAL
         // calcule et ne doivent surtout pas recevoir de `quantity`.
-        quantity: Math.max(1, Math.min(5, parseInt(quantity, 10) || 1)), // V225
+        quantity: v225SafeQty, // V225
         // V224: ce parcours n'a pas de formulaire, donc aucun endroit ou saisir
         // un code promo. On delegue la saisie a Stripe Checkout. Le parcours
         // classique ne l'active PAS : il a deja son propre champ promo, et
