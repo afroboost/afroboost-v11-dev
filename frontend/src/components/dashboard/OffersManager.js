@@ -316,8 +316,12 @@ const OffersManager = ({
   // passees a addOffer), et surtout on ne ferme le wizard QUE si
   // l'enregistrement a reussi : sinon les 3 etapes de saisie seraient perdues,
   // openCreate() appelant cancelEditOffer() qui remet le formulaire a vide.
+  // V224: surtout PAS de setNewOffer(formValues) ici. Il changerait la reference
+  // de initialOffer pendant que le modal est ouvert, ce qui declenche l'effet
+  // [open, initialOffer] du wizard et le renvoie a l'etape 1 le temps de la
+  // requete — puis l'y laisse en cas d'echec. addOffer recoit deja les valeurs
+  // en argument et reinitialise newOffer lui-meme en cas de succes.
   const handleWizardSave = async (formValues) => {
-    setNewOffer(formValues);
     const saved = await addOffer(null, formValues);
     if (saved) setWizardOpen(false);
   };
