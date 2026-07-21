@@ -107,6 +107,12 @@ export default function OfferWizard({
   // V225: ids des cours reellement modifies par le coach. Seuls ceux-ci feront
   // l'objet d'un PUT a l'enregistrement — on n'emet pas N requetes a chaque fois.
   const [dirtyCourseIds, setDirtyCourseIds] = useState([]);
+  // V225 CORRECTIF 1: ids des cours CREES PENDANT CETTE SESSION du wizard. Eux
+  // seuls naissent `visible: false` et doivent donc etre bascules a
+  // `visible: true` a l'enregistrement. Pour TOUT autre cours, la cle `visible`
+  // n'est jamais envoyee : un horaire delibrement masque depuis CoursesManager
+  // ne doit pas redevenir public parce qu'une offre liee est reenregistree.
+  const [sessionCreatedCourseIds, setSessionCreatedCourseIds] = useState([]);
   const [coursesError, setCoursesError] = useState('');
   const [coursesSaving, setCoursesSaving] = useState(false);
   const [addingCourse, setAddingCourse] = useState(false);
@@ -126,6 +132,9 @@ export default function OfferWizard({
           .map(c => ({ ...c }))   // copie : on n'edite jamais la prop du parent
       );
       setDirtyCourseIds([]);
+      // V225 CORRECTIF 1: nouvelle ouverture = nouvelle session. Aucun cours
+      // n'a encore ete cree ici, donc aucun basculement de visibilite permis.
+      setSessionCreatedCourseIds([]);
       setCoursesError('');
       // V224: pre-remplissage des chaines brutes depuis les tableaux existants.
       const raw = {};
@@ -250,6 +259,9 @@ export default function OfferWizard({
       });
       const created = res.data;
       if (!created || !created.id) throw new Error('Reponse invalide');
+      // V225 CORRECTIF 1: on trace l'id comme « cree dans cette session ». Seul
+      // ce marqueur autorisera `buildCoursePayload` a poser `visible: true`.
+      setSessionCreatedCourseIds(prev => (prev.includes(created.id) ? prev : [...prev, created.id]));
       setLinkedCourses(prev => [...prev, { ...created }]);
       setForm(prev => ({
         ...prev,
@@ -268,21 +280,27 @@ export default function OfferWizard({
   // l.1045). Une valeur `null`/`undefined` serait donc IGNOREE et l'effacement
   // d'un champ silencieusement perdu. On normalise tout en chaine : un champ
   // vide part en chaine VIDE, jamais en null.
-  // V225 CORRECTIF 1: c'est ICI, et nulle part ailleurs, que l'horaire devient
-  // public. Tout cours persiste par le wizard bascule a `visible: true` — y
-  // compris un cours cree lors d'une session precedente restee inachevee, puis
-  // rattache a nouveau via « rattacher un cours existant ».
+  // V225 CORRECTIF 1: seul un cours CREE DANS CETTE SESSION du wizard (donc ne
+  // en `visible: false`) recoit `visible: true`. Pour tout autre cours, la cle
+  // `visible` est totalement ABSENTE du payload : le PUT fait un `$set` partiel
+  // (server.py l.1045), donc une cle absente laisse la valeur en base intacte.
+  // C'est le point crucial — un horaire delibrement masque par le coach depuis
+  // CoursesManager reste masque, meme si l'offre qui le reference est
+  // reenregistree. On ne decide jamais a la place du coach.
   // Aucune autre cle n'est ajoutee : le $set partiel du serveur preserve
   // `playlist`, `audio_tracks` et `coach_id` des cours existants.
-  const buildCoursePayload = (c) => ({
-    name: (c.name || '').trim(),
-    weekday: Number.isInteger(c.weekday) ? c.weekday : parseInt(c.weekday, 10) || 0,
-    time: c.time || '',
-    locationName: c.locationName || '',
-    location: c.locationName || '',
-    mapsUrl: c.mapsUrl || '',
-    visible: true
-  });
+  const buildCoursePayload = (c) => {
+    const payload = {
+      name: (c.name || '').trim(),
+      weekday: Number.isInteger(c.weekday) ? c.weekday : parseInt(c.weekday, 10) || 0,
+      time: c.time || '',
+      locationName: c.locationName || '',
+      location: c.locationName || '',
+      mapsUrl: c.mapsUrl || ''
+    };
+    if (sessionCreatedCourseIds.includes(c.id)) payload.visible = true;
+    return payload;
+  };
 
   const handleSave = async () => {
     // Seule contrainte bloquante : le nom. Le backend le type `name: str`
@@ -295,13 +313,16 @@ export default function OfferWizard({
 
     // V225: persistance des horaires MODIFIES uniquement, avant de remonter
     // l'offre au parent (qui, lui, garde sa requete unique POST/PUT).
-    // V225 CORRECTIF 1: on y ajoute tout horaire encore NON VISIBLE — cree a
-    // l'instant, ou cree lors d'une session precedente abandonnee puis rattache
-    // — pour qu'il devienne public au moment ou l'offre est reellement
-    // enregistree, et a ce moment-la seulement.
-    // V225 CORRECTIF 2: on n'ecrit jamais un cours hors du perimetre du coach.
+    // V225 CORRECTIF 1: on y ajoute les horaires CREES DANS CETTE SESSION, pour
+    // qu'ils deviennent publics au moment ou l'offre est reellement enregistree,
+    // et a ce moment-la seulement. On n'utilise PLUS `!c.visible` comme critere :
+    // un horaire masque volontairement par le coach serait republie contre son
+    // gre. Effet assume : un horaire cree lors d'une session ANTERIEURE restee
+    // inachevee demeure invisible — le coach le retrouve dans CoursesManager et
+    // l'y publie s'il le souhaite.
+    // V225 CORRECTIF 2 (v224): on n'ecrit jamais un cours hors du perimetre du coach.
     const toPersist = canEditCourses
-      ? linkedCourses.filter(c => isCourseEditable(c.id) && (dirtyCourseIds.includes(c.id) || !c.visible))
+      ? linkedCourses.filter(c => isCourseEditable(c.id) && (dirtyCourseIds.includes(c.id) || sessionCreatedCourseIds.includes(c.id)))
       : [];
     if (toPersist.length) {
       const unnamed = toPersist.find(c => !(c.name || '').trim());
@@ -316,11 +337,20 @@ export default function OfferWizard({
           toPersist.map(c => axios.put(`${API}/courses/${c.id}`, buildCoursePayload(c)))
         );
         // V225 CORRECTIF 1: l'etat local suit le basculement cote serveur, pour
-        // qu'un second enregistrement ne re-emette pas les memes PUT.
+        // qu'un second enregistrement ne re-emette pas les memes PUT. On ne
+        // touche `visible` QUE pour les cours crees dans cette session : pour
+        // les autres, la valeur en base n'a pas ete modifiee, donc l'etat local
+        // ne doit rien inventer.
         setLinkedCourses(prev => prev.map(c => (
-          toPersist.some(p => p.id === c.id) ? { ...c, visible: true } : c
+          sessionCreatedCourseIds.includes(c.id) && toPersist.some(p => p.id === c.id)
+            ? { ...c, visible: true }
+            : c
         )));
         setDirtyCourseIds([]);
+        // V225 CORRECTIF 1: le basculement a eu lieu, ces cours sont desormais
+        // des cours ordinaires. Les oublier evite de re-emettre `visible: true`
+        // a chaque enregistrement ulterieur.
+        setSessionCreatedCourseIds([]);
       } catch (err) {
         // V225: on NE ferme PAS le wizard en silence — meme principe que
         // handleWizardSave (OffersManager.js) qui ne ferme que si l'offre a
@@ -666,7 +696,12 @@ export default function OfferWizard({
             {/* V225 CORRECTIF 2: un cours hors du perimetre du coach reste
                 AFFICHE (il fait partie de l'offre, le masquer deroute) mais en
                 LECTURE SEULE. Il n'est pas retire de `linked_course_ids`. */}
-            {linkedCourses.filter(course => !isCourseEditable(course.id)).map(course => (
+            {/* V225 CORRECTIF 2: une SEULE passe sur `linkedCourses`, dans son
+                ordre d'origine. L'ancien rendu separait les cartes en deux
+                listes (lecture seule puis editables), ce qui reordonnait
+                l'affichage des qu'une offre melangeait les deux cas. Le
+                caractere editable se decide desormais carte par carte. */}
+            {linkedCourses.map(course => (!isCourseEditable(course.id) ? (
               <div
                 key={course.id}
                 className="p-3 rounded-xl"
@@ -700,9 +735,7 @@ export default function OfferWizard({
                   🔒 Horaire géré par un autre compte — lecture seule.
                 </p>
               </div>
-            ))}
-
-            {linkedCourses.filter(course => isCourseEditable(course.id)).map(course => (
+            ) : (
               <div
                 key={course.id}
                 className="p-3 rounded-xl"
@@ -768,7 +801,7 @@ export default function OfferWizard({
                   className="text-sm v224-input mt-2"
                 />
               </div>
-            ))}
+            )))}
           </div>
 
           <button
