@@ -660,7 +660,14 @@ function parseMediaUrl(url) {
   // Video files - MP4, WebM, MOV, AVI
   const videoExtensions = ['.mp4', '.webm', '.mov', '.avi', '.m4v', '.ogv'];
   const lowerUrl = trimmedUrl.toLowerCase();
-  if (videoExtensions.some(ext => lowerUrl.includes(ext))) {
+  // V224: l'extension n'est reconnue qu'en FIN de chemin, avant une eventuelle
+  // chaine de requete (?) ou une ancre (#). L'ancien `includes()` cherchait une
+  // sous-chaine n'importe ou : une image hebergee sur un domaine `cdn.movie...`
+  // ou dans un dossier `/x.movies/` etait rendue en <video> noir, sans repli.
+  // Les URL d'upload de la plateforme sont de la forme /api/files/{id}/{nom.ext},
+  // l'extension y est bien en fin de chemin : aucun cas d'usage n'est perdu.
+  const lowerPath = lowerUrl.split('#')[0].split('?')[0];
+  if (videoExtensions.some(ext => lowerPath.endsWith(ext))) {
     return { type: 'video', url: trimmedUrl };
   }
   
@@ -1234,6 +1241,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   const [showDescription, setShowDescription] = useState(false);
   const [showZoom, setShowZoom] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  // V224: repli si le fichier video est illisible (404, codec non supporte).
+  const [videoError, setVideoError] = useState(false);
   const defaultImage = "https://picsum.photos/seed/default/400/300";
   
   // PRIORITÉ: offer.images[0] > offer.thumbnail > defaultImage
@@ -1268,35 +1277,82 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // (.mp4/.webm/.mov/...) changent de rendu ; YouTube, Vimeo et les images
   // conservent strictement le rendu <img> d'origine.
   const currentMedia = parseMediaUrl(currentImage);
-  const isVideo = currentMedia && currentMedia.type === 'video';
+  // V224: une video qui echoue au chargement retombe sur la branche <img>, qui
+  // elle-meme retombe sur defaultImage via son onError — plus de cadre noir.
+  const isVideo = currentMedia && currentMedia.type === 'video' && !videoError;
+
+  // V224: on repart d'une video "saine" des que le media affiche change.
+  useEffect(() => {
+    setVideoError(false);
+  }, [currentImage]);
+
+  // V224: ratio MESURE sur les metadonnees reelles (videoWidth/videoHeight),
+  // jamais deduit de l'URL — une video 9:16 doit rester en portrait.
+  // On se contente de MEMORISER ce ratio : `loadedmetadata` se declenche des le
+  // chargement de la page (preload="metadata"), donc hors plein ecran, la ou
+  // screen.orientation.lock() rejette systematiquement. Le verrouillage est
+  // reporte au passage effectif en plein ecran (handlePlay).
+  const isLandscapeRef = useRef(false);
+  const videoRef = useRef(null);
+
+  const handleMeta = (e) => {
+    const v = e.currentTarget;
+    if (!v.videoWidth || !v.videoHeight) return;
+    isLandscapeRef.current = v.videoWidth > v.videoHeight;
+  };
+
+  // V224: deverrouillage de l'orientation. Sans lui, le visiteur ressortirait de
+  // la video avec l'orientation de son telephone figee en paysage.
+  const unlockOrientation = () => {
+    try {
+      if (window.screen && window.screen.orientation && window.screen.orientation.unlock) {
+        window.screen.orientation.unlock();
+      }
+    } catch (_) { /* ignore */ }
+  };
 
   // V224: passage en plein ecran a la lecture. Chaque prefixe navigateur est
   // tente ; un echec est avale pour ne jamais interrompre la lecture.
   const handlePlay = (e) => {
     const el = e.currentTarget;
     const req = el.requestFullscreen || el.webkitEnterFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
-    if (req) {
-      try {
-        Promise.resolve(req.call(el)).catch(() => {});
-      } catch (_) { /* ignore */ }
-    }
+    if (!req) return;
+    try {
+      Promise.resolve(req.call(el))
+        .then(() => {
+          // V224: la rotation est un confort, jamais un prerequis. Elle n'est
+          // tentee qu'UNE FOIS le plein ecran obtenu, et seulement pour une
+          // video paysage. iOS Safari n'expose pas l'API ou rejette : c'est un
+          // cas normal, avale silencieusement.
+          if (!isLandscapeRef.current) return;
+          if (!(window.screen && window.screen.orientation && window.screen.orientation.lock)) return;
+          Promise.resolve(window.screen.orientation.lock('landscape')).catch(() => {});
+        })
+        .catch(() => {});
+    } catch (_) { /* ignore */ }
   };
 
-  // V224: le ratio est MESURE sur les metadonnees reelles (videoWidth/videoHeight),
-  // jamais deduit de l'URL — une video 9:16 doit rester en portrait.
-  const handleMeta = (e) => {
-    const v = e.currentTarget;
-    if (!v.videoWidth || !v.videoHeight) return;
-    const isLandscape = v.videoWidth > v.videoHeight;
-    // V224: la rotation est un confort, jamais un prerequis. L'API est absente
-    // ou refusee sur iOS Safari et rejette sa promesse hors plein ecran : un
-    // echec ne doit en aucun cas empecher la lecture.
-    if (isLandscape && window.screen && window.screen.orientation && window.screen.orientation.lock) {
-      try {
-        Promise.resolve(window.screen.orientation.lock('landscape')).catch(() => {});
-      } catch (_) { /* ignore */ }
-    }
-  };
+  // V224: sortie du plein ecran → deverrouillage. `fullscreenchange` couvre
+  // Android/desktop, `webkitendfullscreen` couvre le lecteur natif iOS.
+  useEffect(() => {
+    if (!isVideo) return undefined;
+    const el = videoRef.current;
+    const onFullscreenChange = () => {
+      const fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
+      if (!fsEl) unlockOrientation();
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+    if (el) el.addEventListener('webkitendfullscreen', unlockOrientation);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', onFullscreenChange);
+      if (el) el.removeEventListener('webkitendfullscreen', unlockOrientation);
+      // V224: filet de securite — un demontage pendant le plein ecran ne doit
+      // pas laisser l'orientation verrouillee.
+      unlockOrientation();
+    };
+  }, [isVideo]);
 
   // V224: prochaine seance, derivee du premier cours lie a l'offre.
   // getNextOccurrences retourne des objets Date (pas des objets { label }) :
@@ -1400,6 +1456,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                     plein ecran a la lecture. Tout autre media garde le <img>. */}
                 {isVideo ? (
                   <video
+                    ref={videoRef}
                     src={currentMedia.url}
                     className="w-full h-full"
                     style={{ objectFit: 'cover', objectPosition: 'center', height: '220px', background: '#000' }}
@@ -1409,6 +1466,9 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                     onClick={(e) => e.stopPropagation()}
                     onPlay={handlePlay}
                     onLoadedMetadata={handleMeta}
+                    /* V224: repli — on bascule sur la branche <img>, qui retombe
+                       elle-meme sur defaultImage via son propre onError. */
+                    onError={() => setVideoError(true)}
                   />
                 ) : (
                 <img
@@ -1508,9 +1568,9 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 }}
               >
                 {/* V223: prix du palier actif, sinon rendu d'origine */}
-                CHF {offer.progressive_pricing && offer.active_price != null
-                       ? offer.active_price
-                       : offer.price}.-
+                {/* V224: passe par v223UnitPrice, point de verite unique du prix
+                    cote client — la logique n'est plus reimplementee ici. */}
+                CHF {v223UnitPrice(offer)}.-
               </span>
               {/* V223: badge du palier tarifaire */}
               {offer.progressive_pricing && V223_TIERS[offer.active_tier] && (
@@ -1556,18 +1616,19 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
 
             <OfferCountdown offer={offer} />
 
-            {/* V224: bouton Reserver. Une offre progressive part directement en
-                checkout ; toute autre offre conserve strictement le parcours
-                existant via onClick (handleSelectOffer → horaires + formulaire). */}
+            {/* V224: bouton Reserver. Il delegue au seul point de verite du
+                parcours : onClick → handleSelectOffer, qui aiguille lui-meme les
+                offres progressives vers startProgressiveCheckout. Ne pas
+                reproduire cet aiguillage ici : sur le slider produits, l'onClick
+                enveloppant remet a zero le cours et les dates avant de deleguer,
+                nettoyage qu'un court-circuit ferait sauter. */}
             <div className="mt-3 flex items-center justify-end">
               <button
                 type="button"
                 disabled={loading}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (offer.progressive_pricing && typeof startProgressiveCheckout === 'function') {
-                    startProgressiveCheckout(offer);
-                  } else if (typeof onClick === 'function') {
+                  if (typeof onClick === 'function') {
                     onClick(offer);
                   }
                 }}
