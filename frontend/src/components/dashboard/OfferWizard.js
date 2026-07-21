@@ -177,6 +177,13 @@ export default function OfferWizard({
   // V225: l'edition des cours n'est possible que si l'URL d'API est fournie.
   const canEditCourses = !!API;
 
+  // V225 CORRECTIF 2: un cours lie n'est editable que s'il appartient au
+  // perimetre du coach (meme filtre que `visibleCourses`, defini plus bas).
+  // Une offre historique peut referencer le cours d'un autre coach (ou un
+  // `bassi_default`) : il reste AFFICHE — il fait partie de l'offre — mais en
+  // lecture seule, et aucun PUT n'est emis dessus.
+  const isCourseEditable = (id) => visibleCourses.some(c => c.id === id);
+
   const markDirty = (id) => setDirtyCourseIds(prev => (prev.includes(id) ? prev : [...prev, id]));
 
   // V225: une frappe ne touche QUE l'etat local. Rien n'est persiste avant
@@ -223,6 +230,11 @@ export default function OfferWizard({
   // (api/server.py l.353-363) : on l'envoie meme vide, sinon la requete est
   // rejetee. Aucun `coach_id` n'est transmis : le serveur l'assigne depuis
   // l'en-tete X-User-Email (server.py l.1026-1029), comportement voulu.
+  // V225 CORRECTIF 1: le cours nait `visible: false`. Le POST a lieu au clic
+  // (il faut un id pour editer le cours), mais un horaire cree puis abandonne
+  // — « Annuler », onglet ferme, crash — ne doit JAMAIS apparaitre sur la
+  // vitrine publique. Le passage a `visible: true` se fait uniquement dans
+  // `buildCoursePayload`, donc au moment de l'enregistrement effectif.
   const addCourse = async () => {
     if (!canEditCourses || addingCourse) return;
     setAddingCourse(true);
@@ -234,7 +246,7 @@ export default function OfferWizard({
         time: '18:30',
         locationName: '',
         mapsUrl: '',
-        visible: true
+        visible: false
       });
       const created = res.data;
       if (!created || !created.id) throw new Error('Reponse invalide');
@@ -256,13 +268,20 @@ export default function OfferWizard({
   // l.1045). Une valeur `null`/`undefined` serait donc IGNOREE et l'effacement
   // d'un champ silencieusement perdu. On normalise tout en chaine : un champ
   // vide part en chaine VIDE, jamais en null.
+  // V225 CORRECTIF 1: c'est ICI, et nulle part ailleurs, que l'horaire devient
+  // public. Tout cours persiste par le wizard bascule a `visible: true` — y
+  // compris un cours cree lors d'une session precedente restee inachevee, puis
+  // rattache a nouveau via « rattacher un cours existant ».
+  // Aucune autre cle n'est ajoutee : le $set partiel du serveur preserve
+  // `playlist`, `audio_tracks` et `coach_id` des cours existants.
   const buildCoursePayload = (c) => ({
     name: (c.name || '').trim(),
     weekday: Number.isInteger(c.weekday) ? c.weekday : parseInt(c.weekday, 10) || 0,
     time: c.time || '',
     locationName: c.locationName || '',
     location: c.locationName || '',
-    mapsUrl: c.mapsUrl || ''
+    mapsUrl: c.mapsUrl || '',
+    visible: true
   });
 
   const handleSave = async () => {
@@ -276,9 +295,16 @@ export default function OfferWizard({
 
     // V225: persistance des horaires MODIFIES uniquement, avant de remonter
     // l'offre au parent (qui, lui, garde sa requete unique POST/PUT).
-    if (canEditCourses && dirtyCourseIds.length) {
-      const modified = linkedCourses.filter(c => dirtyCourseIds.includes(c.id));
-      const unnamed = modified.find(c => !(c.name || '').trim());
+    // V225 CORRECTIF 1: on y ajoute tout horaire encore NON VISIBLE — cree a
+    // l'instant, ou cree lors d'une session precedente abandonnee puis rattache
+    // — pour qu'il devienne public au moment ou l'offre est reellement
+    // enregistree, et a ce moment-la seulement.
+    // V225 CORRECTIF 2: on n'ecrit jamais un cours hors du perimetre du coach.
+    const toPersist = canEditCourses
+      ? linkedCourses.filter(c => isCourseEditable(c.id) && (dirtyCourseIds.includes(c.id) || !c.visible))
+      : [];
+    if (toPersist.length) {
+      const unnamed = toPersist.find(c => !(c.name || '').trim());
       if (unnamed) {
         setStep(2);
         setCoursesError('Chaque horaire doit porter un nom.');
@@ -287,8 +313,13 @@ export default function OfferWizard({
       setCoursesSaving(true);
       try {
         await Promise.all(
-          modified.map(c => axios.put(`${API}/courses/${c.id}`, buildCoursePayload(c)))
+          toPersist.map(c => axios.put(`${API}/courses/${c.id}`, buildCoursePayload(c)))
         );
+        // V225 CORRECTIF 1: l'etat local suit le basculement cote serveur, pour
+        // qu'un second enregistrement ne re-emette pas les memes PUT.
+        setLinkedCourses(prev => prev.map(c => (
+          toPersist.some(p => p.id === c.id) ? { ...c, visible: true } : c
+        )));
         setDirtyCourseIds([]);
       } catch (err) {
         // V225: on NE ferme PAS le wizard en silence — meme principe que
@@ -632,7 +663,46 @@ export default function OfferWizard({
           )}
 
           <div className="space-y-3">
-            {linkedCourses.map(course => (
+            {/* V225 CORRECTIF 2: un cours hors du perimetre du coach reste
+                AFFICHE (il fait partie de l'offre, le masquer deroute) mais en
+                LECTURE SEULE. Il n'est pas retire de `linked_course_ids`. */}
+            {linkedCourses.filter(course => !isCourseEditable(course.id)).map(course => (
+              <div
+                key={course.id}
+                className="p-3 rounded-xl"
+                style={{ background: '#0a0a0f', border: '1px solid #333', borderRadius: '12px', opacity: 0.75 }}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm text-white">
+                    <span className="font-medium">{course.name || course.title || 'Cours'}</span>
+                    <span className="text-white/50 text-xs ml-2">
+                      {Number.isInteger(course.weekday) ? WEEKDAYS[course.weekday] : ''}
+                      {course.time ? ` • ${course.time}` : ''}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => unlinkCourse(course.id)}
+                    title="Retirer cet horaire de l'offre (le cours n'est pas supprimé)"
+                    aria-label="Retirer cet horaire de l'offre"
+                    className="text-sm leading-none px-2 py-2 rounded-lg"
+                    style={{ color: 'rgba(255,255,255,0.5)', background: 'none', border: '1px solid #333', cursor: 'pointer' }}
+                  >
+                    ✕
+                  </button>
+                </div>
+                {(course.locationName || course.location) && (
+                  <p className="text-xs mt-1" style={HINT_STYLE}>
+                    📍 {course.locationName || course.location}
+                  </p>
+                )}
+                <p className="text-xs mt-2" style={HINT_STYLE}>
+                  🔒 Horaire géré par un autre compte — lecture seule.
+                </p>
+              </div>
+            ))}
+
+            {linkedCourses.filter(course => isCourseEditable(course.id)).map(course => (
               <div
                 key={course.id}
                 className="p-3 rounded-xl"
@@ -1105,9 +1175,14 @@ export default function OfferWizard({
                 type="button"
                 onClick={handleSave}
                 // V225: pendant l'ecriture des horaires, on evite le double-clic.
-                disabled={coursesSaving}
+                // V225 CORRECTIF 3: `addingCourse` bloque aussi l'enregistrement.
+                // Sans cela, « + Ajouter un horaire » puis « Enregistrer »
+                // immediatement remontait le formulaire sans le nouvel id : le
+                // POST se resolvait sur un wizard ferme (cours orphelin + setState
+                // sur composant demonte).
+                disabled={coursesSaving || addingCourse}
                 className="text-sm font-medium px-5 py-2 rounded-lg"
-                style={{ background: PINK, color: '#fff', border: 'none', cursor: coursesSaving ? 'wait' : 'pointer', opacity: coursesSaving ? 0.6 : 1 }}
+                style={{ background: PINK, color: '#fff', border: 'none', cursor: (coursesSaving || addingCourse) ? 'wait' : 'pointer', opacity: (coursesSaving || addingCourse) ? 0.6 : 1 }}
               >
                 {coursesSaving ? '⏳ Enregistrement...' : (isEditing ? 'Enregistrer' : 'Créer l\'offre')}
               </button>
