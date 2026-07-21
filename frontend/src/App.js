@@ -1927,9 +1927,18 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
   // Une offre sans `linked_course_ids` (cas de TOUTES les offres actuellement en
   // base) obtient `linkedCourses: []` — les blocs lieu et horaires ci-dessous se
   // masquent alors d'eux-memes.
+  // V225 REVUE FINALE: le catalogue est filtre sur `visible`/`archived` AVANT
+  // l'enrichissement. Il consommait l'etat BRUT `courses` : or `GET /courses`
+  // filtre `archived` mais PAS `visible` (accueil), et l'endpoint vitrine ne
+  // filtre NI l'un NI l'autre (pages partenaires). Le jour, l'heure et
+  // l'adresse d'un horaire delibrement masque — ou archive — se retrouvaient
+  // donc publies sur la carte, alors qu'ils etaient jusqu'ici exclus de la
+  // grille de dates (cf. `baseCourses`, ~l.5179). Filtrer ICI couvre les DEUX
+  // points de montage (offres et boutique) sans dupliquer le filtre.
   const v225EnrichedOffers = useMemo(() => {
     const list = Array.isArray(offers) ? offers : [];
-    const catalog = Array.isArray(courses) ? courses : [];
+    const catalog = (Array.isArray(courses) ? courses : [])
+      .filter(c => c && c.visible !== false && c.archived !== true);
     return list.map(o => ({
       ...o,
       linkedCourses: (o.linked_course_ids || [])
