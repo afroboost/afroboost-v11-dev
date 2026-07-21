@@ -26,6 +26,15 @@ identifie une commande produit par selectedVariants/trackingNumber/shippingStatu
 traiter ses commandes depuis Afroboost. Décision : recopier la commande depuis
 le webhook. Vaut aussi pour audio/vidéo.
 
+TÂCHE 8 AJOUTÉE (décision propriétaire après revue tâche 6) : masquer la
+section Cours faisait perdre 3 fonctions sans équivalent — dupliquer un cours,
+« Demander un avis » et le toggle d'avis automatique. La 2e est le SEUL appelant
+de POST /api/reviews/request dans tout le frontend : l'endpoint devenait
+injoignable. Décision : les reporter dans le wizard.
+CORRECTION D'UNE PRÉMISSE FAUSSE DE MA PART : CoursesManager n'a JAMAIS eu de
+suppression, seulement archivage et visibilité. La suppression ajoutée au wizard
+est un ajout net, pas un rattrapage.
+
 ## Avancement
 Tâches 1+2 : TERMINÉES (commits 6e7eb0b, 40351a2 — revue clean, builds OK)
   - bouton « Réserver » seul en quantité 1 ; total + (Nx) au-delà
@@ -42,6 +51,33 @@ Tâche 3 : TERMINÉE (commit 2ba2805, revue clean sans réserve, 21/21 tests)
     tier ni quantity — la règle V223 tient
   - pire cas metadata calculé : 19 clés / 28 car. de clé / 100 car. de valeur,
     contre 50 / 40 / 500 autorisés
+
+Tâche 4 : TERMINÉE (commits c14fa46, 3126415, + commentaire — re-revue clean)
+  - v225IsDirectCheckout élargi à tout ce qui est payant ; 0 CHF garde le formulaire
+  - sélecteur de variantes, bouton bloqué tant qu'une dimension manque
+  - défauts trouvés en revue et corrigés :
+    (1) l'implémenteur a fermé de lui-même un trou hors brief : la RACINE de la
+        carte partait chez Stripe SANS variantes, contournant le bouton désactivé
+    (2) MEDIUM le nettoyage cours/dates du slider produits sautait pour les
+        offres à variantes -> une réservation gratuite ultérieure pouvait
+        hériter d'un courseId et d'une date périmés. Resets déplacés dans
+        startProgressiveCheckout, donc sur TOUS les chemins d'entrée.
+    (3) clic racine silencieux quand une variante manque -> scrollIntoView + flash
+    (4) commentaire faux : il affirmait que tous les appelants sont des achats
+        produit/audio/video sans cours, or le slider SERVICES passe par là
+
+Tâche 5 : TERMINÉE (commit 33674ce, revue clean, build OK)
+  - DnD câblé sur OfferCard (il ne l'était PAS : les handlers vivaient sur
+    l'ancien rendu sous {false && ...})
+  - reorderGridOffers opère sur orderedOffers (l'ordre AFFICHÉ) et jamais sur
+    l'état brut — le piège identifié en revue V224
+  - glisser désactivé sous recherche active (grille partielle = positions fausses)
+  - isOwnOffer appliqué à DEUX niveaux : attribut draggable + revérification
+  - handleDrop v159 conservé, rattaché à l'ancien rendu
+
+GATE NON FRANCHI : le masquage des flèches ▲▼ attend la vérification manuelle
+du DnD (souris + session coach), impossible depuis cet environnement. Tâche 6
+faite SANS masquer les flèches.
 
 (en cours)
 
