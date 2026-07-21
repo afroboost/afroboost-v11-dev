@@ -3768,6 +3768,36 @@ async def stripe_webhook(request: Request):
                     or session.get("customer_email") \
                     or metadata.get("customer_email", "")
 
+                # V224: reporter dans payment_transactions l'email et le montant
+                # reellement encaisses. Le parcours progressif n'envoie pas
+                # customerEmail au checkout (Stripe le collecte lui-meme) et ne
+                # cree aucune reservation : la vente n'apparait donc au coach
+                # qu'en ligne "payment", que la lecture du dashboard
+                # (~l.14336-14339) alimente depuis metadata.customer_email et
+                # amount_total — tous deux absents du document. Le coach voyait
+                # « Client — — 0 CHF ». On reutilise ici les valeurs deja
+                # resolues, sans aucun appel Stripe supplementaire.
+                try:
+                    _v224_set = {}
+                    if customer_email:
+                        _v224_set["metadata.customer_email"] = customer_email
+                    _v224_name = (session.get("customer_details") or {}).get("name") or ""
+                    # Le nom n'est ecrit que s'il est VIDE en base : ne jamais
+                    # ecraser un customer_name fourni par le parcours classique.
+                    if _v224_name and not metadata.get("customer_name"):
+                        _v224_set["metadata.customer_name"] = _v224_name
+                    _v224_amount = session.get("amount_total")
+                    if _v224_amount:
+                        _v224_set["amount_total"] = _v224_amount
+                    if _v224_set:
+                        await db.payment_transactions.update_one(
+                            {"session_id": session.id}, {"$set": _v224_set}
+                        )
+                except Exception as _v224_err:
+                    # Jamais bloquant : l'enrichissement d'affichage ne doit pas
+                    # empecher la creation du code d'acces plus bas.
+                    logger.warning(f"[V224] Enrichissement payment_transactions echoue: {_v224_err}")
+
                 # V204: Extraire le nom du produit depuis metadata OU depuis line_items Stripe
                 product_name = metadata.get("product_name", "")
                 if not product_name:
