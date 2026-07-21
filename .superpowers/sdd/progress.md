@@ -95,7 +95,33 @@ Tâche 6 : correctifs appliqués (commits 79e15df, 20a910a), re-revue en cours
     rendu non restaurable un horaire créé puis archivé dans la même session
     (archiveCourse purge sessionOwnedCourseIds)
 
-(en cours)
+Tâche 6 : TERMINÉE (re-revue clean)
+Tâche 7 : TERMINÉE (commits 0808099 + 537936d)
+  - webhook recopie shipping_details + variantes dans reservations, upsert
+    $setOnInsert sur stripe_session_id (Stripe rejoue ses webhooks)
+  - AUCUN Session.retrieve ajouté : le piège de la clé partenaire est contourné
+    en lisant l'objet session de l'événement, pas résolu
+  - revue a rendu NON CONFORME : le webhook écrivait une donnée que RIEN ne
+    pouvait lire. Complété : projection GET /reservations, affichage dans
+    ReservationTab, recâblage du suivi d'expédition.
+  - 2 prises importantes du complément :
+    (a) isProduct valait VRAI pour d'anciennes réservations de cours
+        (shippingStatus absent -> undefined !== 'pending'). Y accrocher le bloc
+        aurait affiché un formulaire de colis sur des réservations de cours.
+        -> hasShippingData() exige une preuve positive.
+    (b) updateTracking était INCOMPATIBLE : setReservations(res.data) alors que
+        l'API renvoie {data, pagination} -> la page aurait planté au premier
+        changement de statut. Doublé par updateTrackingV226.
+Tâche 8 : TERMINÉE (commit 1e4124f, revue clean)
+  - duplication, demande d'avis et toggle d'avis auto reportés dans le wizard
+  - duplication respecte la règle V225 : visible:false, publié à l'enregistrement
+  - CONSTAT : le toggle d'avis automatique n'émet AUCUNE requête, il n'écrit
+    que dans localStorage. Aucun code backend ne le lit, le cron ne peut pas
+    lire un localStorage. Réglage sans effet réel, AVANT comme APRÈS. Préexistant.
+
+=== LOT V226 : 8 TÂCHES TERMINÉES. Revue finale de branche à suivre. ===
+GATE EN ATTENTE : masquage des flèches ▲▼, subordonné à la vérification
+manuelle du glisser-déposer par le propriétaire.
 
 ## Constats mineurs à trier avant merge
 - OfferCard.js:124,134 — icône tracée en #aaa alors que le texte porteur est
