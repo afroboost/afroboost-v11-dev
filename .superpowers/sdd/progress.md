@@ -90,7 +90,29 @@ Tâche 7 : TERMINÉE (commits d0f6201, 0d67564, feca138 — revue clean, build O
     seuls les cours créés dans la session sont publiés ; pour les autres la clé
     `visible` n'est pas envoyée du tout ($set partiel = valeur en base intacte).
 
-=== LOT V225 : 7 TÂCHES TERMINÉES. Revue finale de branche à suivre. ===
+=== LOT V225 : 7 TÂCHES TERMINÉES ===
+
+REVUE FINALE DE BRANCHE (opus) : « À CORRIGER AVANT FUSION » — 3 bloquants nés
+ENTRE les tâches. Tous corrigés :
+  B1 (3182571) « + Ajouter un horaire » TOTALEMENT INOPÉRANT. Jonction de deux
+     de mes propres consignes : créer l'horaire masqué (pour qu'un abandon ne
+     soit pas public) + lecture seule hors visibleCourses. Le cours créé n'étant
+     pas dans la prop `courses` du parent, il s'affichait « 🔒 lecture seule »,
+     n'entrait pas dans toPersist, et restait donc invisible À JAMAIS — tout en
+     apparaissant sur la carte publique via linked_course_ids.
+     L'implémenteur a ajouté sessionOwnedCourseIds car sessionCreatedCourseIds
+     est vidé après le PUT : si l'offre échouait ensuite, le bug revenait.
+  B2 (83959f2) la carte publique exposait les horaires MASQUÉS et ARCHIVÉS
+     (jour, heure, adresse). linkedCourses lisait `courses` brut au lieu de
+     baseCourses. GET /courses ne filtre pas `visible`, l'endpoint vitrine ne
+     filtre ni visible ni archived. Régression de confidentialité.
+  B3 (1ff88c5) la confirmation affichait le PRIX UNITAIRE après un débit :
+     3 × 20 CHF prélevés, « Paiement confirmé — CHF 20.- » affiché.
+  C4 (fc243f0) v225FormatAmount appliqué au grand prix, aux paliers, et au
+     montant de confirmation devenu total donc potentiellement fractionnaire.
+
+CHAÎNE D'ACHAT VALIDÉE DE BOUT EN BOUT par le relecteur final : montant affiché
+= montant facturé = crédits accordés = ce que le client peut consommer.
 
 ## Constats mineurs à trier avant merge
 - DETTE SÉCURITÉ (préexistante, AGGRAVÉE en exposition par la tâche 7) :
