@@ -129,3 +129,29 @@ manuelle du glisser-déposer par le propriétaire.
 - les SVG n'ont ni shrink-0 ni aria-hidden (hygiène, pas de défaut actuel)
 - ClockIcon extraite mais non utilisée dans dashboard/OfferCard.js (no-unused-vars
   n'est pas activé dans ce projet, donc aucun avertissement)
+
+REVUE FINALE DE BRANCHE (opus) : « À CORRIGER AVANT FUSION » — 2 bloquants nés
+ENTRE les tâches, corrigés au commit 0f645a9 :
+  B1 HAUT : le webhook devait DEVINER la nature de l'achat (`if _ship or
+     _variants`). Un produit SANS variantes reposait entièrement sur la présence
+     de shipping_details dans l'objet session. Version d'API différente = la
+     commande était perdue EN SILENCE, sans log. Marqueur v226_physical posé
+     côté serveur au checkout, immunisé aux changements d'API Stripe.
+  B2 : les achats audio/vidéo ne créaient plus aucune réservation, contredisant
+     la décision consignée. Second marqueur + création par le webhook.
+  M1/M2 : un horaire créé/masqué depuis le wizard disparaissait à la
+     réouverture. onCoursesChanged accepte désormais upsert et remove.
+
+RE-VÉRIFICATION : PRÊT À FUSIONNER.
+  - B1 vérifié de bout en bout, marqueur posé serveur et non déduit
+  - le relecteur a corrigé une prudence excessive : audioTrackIds n'a JAMAIS
+    existé sur ce document, rien n'est perdu par rapport à l'historique
+  - selectedVariants: None sur l'audio est finement vu — un dict vide aurait
+    été truthy et collé un bloc d'expédition sur une vente audio
+  - 1 constat BAS : le réducteur upsert appende si l'id est absent ; un upsert
+    partiel ({id, visible}) insérerait alors un moignon. Actuellement
+    INATTEIGNABLE (tous les chemins upsertent l'objet complet d'abord).
+
+=== LOT V226 TERMINÉ. NON POUSSÉ, NON FUSIONNÉ. ===
+GATE OUVERT : masquage des flèches ▲▼ en attente de la vérification manuelle
+du glisser-déposer par le propriétaire (souris + session coach).
