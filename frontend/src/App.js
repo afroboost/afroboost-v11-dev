@@ -1704,7 +1704,11 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                   background: `${V223_TIERS[offer.active_tier].color}22`,
                   color: V223_TIERS[offer.active_tier].color,
                 }}>
-                  {V223_TIERS[offer.active_tier].label}
+                  {/* V225: le libelle personnalise prime. Sans cela le badge
+                      affichait « 🎯 Early Bird » pendant que la grille des
+                      paliers, quelques pixels plus bas sur la MEME carte,
+                      affichait « Prevente Ete » — deux noms pour un seul palier. */}
+                  {offer[`label_${offer.active_tier}`] || V223_TIERS[offer.active_tier].label}
                 </span>
               )}
               {offer.tva > 0 && (

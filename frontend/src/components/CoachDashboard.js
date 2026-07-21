@@ -2463,9 +2463,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         pack_sessions: v223Int(src.pack_sessions, null),
         // V225: libelles des paliers. Sans ces lignes, les champs saisis dans le
         // wizard ne sont pas envoyes et le PUT les remettrait a zero en base.
-        label_early_bird: src.label_early_bird || null,
-        label_standard: src.label_standard || null,
-        label_last_minute: src.label_last_minute || null,
+        // V225: .trim() avant le repli — un libelle compose uniquement d'espaces
+        // est truthy, partirait en base et defairait le repli cote carte, qui
+        // afficherait alors une pastille au libelle vide.
+        label_early_bird: (src.label_early_bird || '').trim() || null,
+        label_standard: (src.label_standard || '').trim() || null,
+        label_last_minute: (src.label_last_minute || '').trim() || null,
         // V224: medias. videoUrl existait deja dans les modeles backend mais
         // n'etait jamais rempli par l'UI.
         videoUrl: src.videoUrl || "",
