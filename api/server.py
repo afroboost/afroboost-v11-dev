@@ -3368,7 +3368,25 @@ class CreateCheckoutRequest(BaseModel):
     # V225: nombre d'unites achetees (ex: 2 places pour un couple).
     # Borne cote serveur : cet endpoint est public, la limite de l'interface
     # ne protege rien.
-    quantity: int = 1
+    #
+    # INVARIANT CRITIQUE — `amount` doit etre le prix UNITAIRE des que
+    # quantity > 1. Stripe facture unit_amount x quantity : envoyer un total
+    # deja calcule avec une quantite N ferait payer total x N.
+    #
+    # Or DEUX appelants envoient aujourd'hui un TOTAL, pas un unitaire :
+    #   - frontend/src/App.js:4436  -> amount: totalPrice
+    #   - frontend/src/App.js:4486  -> amount: pendingReservation.totalPrice
+    # Ces deux parcours (reservation classique) n'envoient PAS de quantity et
+    # restent donc corrects a quantity=1. Seul le parcours d'achat direct
+    # envoie un prix unitaire et peut porter une quantite > 1.
+    #
+    # Avant de brancher `quantity` sur un nouvel appelant : verifier que cet
+    # appelant envoie bien un prix UNITAIRE dans `amount`.
+    #
+    # Optional : Pydantic v2 rejette None sur un int, donc un client postant
+    # "quantity": null se bloquerait lui-meme le paiement (422). Le bornage
+    # ci-dessous neutralise le None via `or 1`.
+    quantity: Optional[int] = 1
 
 @api_router.post("/create-checkout-session")
 async def create_checkout_session(request: CreateCheckoutRequest):
@@ -3453,6 +3471,12 @@ async def create_checkout_session(request: CreateCheckoutRequest):
         "pack_sessions": server_pack_sessions,
         "tier": server_tier,
         "offer_id": request.offerId or "",
+        # V225: quantite bornee cote serveur (1..5), jamais la valeur brute du
+        # client. Elle transite par metadata et non par les line items : le
+        # webhook lit une cle Stripe globale, alors que ce checkout peut avoir
+        # ete cree avec la cle du dashboard (partner_payment_config). Toute
+        # relecture via l'API Stripe echouerait alors silencieusement.
+        "quantity": str(safe_quantity),
     }
     if request.reservationData:
         metadata["reservation_id"] = request.reservationData.get("id", "")
@@ -3493,6 +3517,10 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             "product_name": request.productName,
             "customer_email": request.customerEmail,
             "metadata": metadata,
+            # V225: `amount` reste le prix UNITAIRE alors que le client paie
+            # amount x quantity. Sans cette ligne, l'ecart entre la transaction
+            # et le versement Stripe n'est pas reconciliable a la main.
+            "quantity": safe_quantity,
             "payment_status": "pending",
             "payment_methods": payment_methods,
             "created_at": datetime.now(timezone.utc).isoformat()
@@ -3546,6 +3574,9 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                 "product_name": request.productName,
                 "customer_email": request.customerEmail,
                 "metadata": metadata,
+                # V225: idem chemin nominal — `amount` est unitaire, le client
+                # paie amount x quantity.
+                "quantity": safe_quantity,
                 "payment_status": "pending",
                 "payment_methods": ['card'],
                 "warning": "TWINT not available",
@@ -3885,17 +3916,28 @@ async def stripe_webhook(request: Request):
                         )
                         sessions_count = V223_MAX_SESSIONS_REGEX
 
-                # V225: la quantite est relue sur la session Stripe, jamais
-                # acceptee du client au moment du webhook — meme regle que V223
-                # pour les credits. Sans ce multiplicateur, un client achetant
-                # 3 packs de 10 paierait 3 fois et recevrait 10 credits.
+                # V225: la quantite est relue dans metadata, ou le checkout l'a
+                # posee apres bornage serveur — jamais acceptee du client au
+                # moment du webhook, meme regle que V223 pour les credits.
+                # Sans ce multiplicateur, un client achetant 3 packs de 10
+                # paierait 3 fois et recevrait 10 credits.
+                #
+                # Volontairement PAS de lecture via l'API Stripe : le webhook
+                # utilise la cle globale STRIPE_SECRET_KEY, alors que le
+                # checkout privilegie celle de partner_payment_config. Des
+                # qu'un admin renseigne une cle differente au dashboard, tout
+                # appel Stripe depuis ici echouerait et chaque acheteur de N
+                # unites ne recevrait que les credits d'une seule.
+                #
+                # str() car le webhook n'authentifie pas ses appels : un POST
+                # forge avec une quantite numerique (non-chaine) ferait sinon
+                # planter .isdigit() en AttributeError.
                 purchased_qty = 1
-                try:
-                    _li = stripe.checkout.Session.list_line_items(session.id, limit=1)
-                    if _li and _li.data:
-                        purchased_qty = max(1, min(5, int(_li.data[0].quantity or 1)))
-                except Exception as _qty_err:
-                    logger.warning(f"[V225] Quantite illisible sur {session.id}: {_qty_err} — repli sur 1")
+                _qty = str(metadata.get("quantity") or "")
+                if _qty.isdigit() and int(_qty) > 0:
+                    # Re-bornage a la lecture : on ne fait jamais confiance a
+                    # une valeur relue, meme posee par nous.
+                    purchased_qty = max(1, min(5, int(_qty)))
                 if purchased_qty > 1:
                     sessions_count = sessions_count * purchased_qty
                     logger.info(f"[V225] {purchased_qty} unites achetees -> {sessions_count} credits")
