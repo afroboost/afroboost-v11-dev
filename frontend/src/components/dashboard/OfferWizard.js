@@ -143,6 +143,18 @@ export default function OfferWizard({
   // avec CoursesManager, dont la section « Cours archives » ne montrait elle
   // aussi que les archivages de la session en cours.
   const [sessionArchivedCourses, setSessionArchivedCourses] = useState([]);
+  // V226 TACHE 8: report des trois fonctions que portait la section « Cours »,
+  // desormais masquee (CoursesManager.js reste intact dans le code).
+  // Etats repris a l'identique de CoursesManager.js l.24-28 : un envoi en cours
+  // et un resultat, indexes par id de cours, plus le drapeau d'avis automatique.
+  const [reviewRequestSending, setReviewRequestSending] = useState({});
+  const [reviewRequestResult, setReviewRequestResult] = useState({});
+  // V226 TACHE 8: MEME cle de stockage que CoursesManager.js l.27 et l.53
+  // (`afroboost_auto_review_<coachEmail>`), pour que le reglage deja pose par le
+  // coach depuis l'ancienne section soit repris tel quel — et non reinitialise.
+  const [autoReviewEnabled, setAutoReviewEnabled] = useState(
+    () => localStorage.getItem(`afroboost_auto_review_${coachEmail || ''}`) !== 'false'
+  );
 
   useEffect(() => {
     if (open) {
@@ -170,6 +182,18 @@ export default function OfferWizard({
       setSessionArchivedCourses([]);
       setCourseBusyId(null);
       setCoursesError('');
+      // V226 TACHE 8: une nouvelle ouverture repart sans retour visuel d'envoi.
+      setReviewRequestSending({});
+      setReviewRequestResult({});
+      // V226 TACHE 8: resynchronisation depuis le stockage. L'initialiseur de
+      // useState ne s'execute qu'au MONTAGE du wizard, or celui-ci reste monte
+      // en permanence (OffersManager.js l.521 le rend toujours, `open` pilotant
+      // seulement le `return null`). Sans cette relecture, une valeur ecrite
+      // apres le montage — ou un `coachEmail` arrive plus tard — ne serait
+      // jamais reflectee.
+      setAutoReviewEnabled(
+        localStorage.getItem(`afroboost_auto_review_${coachEmail || ''}`) !== 'false'
+      );
       // V224: pre-remplissage des chaines brutes depuis les tableaux existants.
       const raw = {};
       VARIANT_FIELDS.forEach(({ key }) => {
@@ -420,6 +444,51 @@ export default function OfferWizard({
     }
   };
 
+  // V226 TACHE 8: DEMANDE D'AVIS MANUELLE. Report de `sendReviewRequest`
+  // (CoursesManager.js l.31-47), seul appelant de `POST /api/reviews/request`
+  // dans toute l'interface — masquer la section « Cours » rendait l'endpoint
+  // (server.py l.14208) injoignable. Payload recopie a l'identique :
+  // `{ coach_email, course_id, course_name }`, retour lu sur `res.data.sent_count`.
+  // Le serveur exige `coach_email` (400 sinon, server.py l.14216) : le bouton
+  // n'est donc rendu que si la prop `coachEmail` est fournie.
+  // Garde de propriete identique a `deleteCourse` / `setCourseVisibility` :
+  // l'action n'est proposee QUE sur un horaire editable, et la condition est
+  // revalidee ici pour qu'un appel ne puisse pas contourner le rendu.
+  const sendReviewRequest = async (id) => {
+    if (!canEditCourses || !coachEmail || !isCourseEditable(id)) return;
+    if (reviewRequestSending[id]) return;
+    const course = linkedCourses.find(c => c.id === id);
+    if (!course) return;
+    setReviewRequestSending(prev => ({ ...prev, [id]: true }));
+    try {
+      const res = await axios.post(`${API}/reviews/request`, {
+        coach_email: coachEmail,
+        course_id: id,
+        course_name: course.name
+      });
+      setReviewRequestResult(prev => ({ ...prev, [id]: res.data.sent_count }));
+      setTimeout(() => setReviewRequestResult(prev => ({ ...prev, [id]: null })), 4000);
+    } catch (err) {
+      console.error('[V226] Envoi de la demande d\'avis echoue:', err);
+      setReviewRequestResult(prev => ({ ...prev, [id]: -1 }));
+      setTimeout(() => setReviewRequestResult(prev => ({ ...prev, [id]: null })), 3000);
+    }
+    setReviewRequestSending(prev => ({ ...prev, [id]: false }));
+  };
+
+  // V226 TACHE 8: AVIS AUTOMATIQUE. Report de `toggleAutoReview`
+  // (CoursesManager.js l.50-54). A NOTER, verifie et non suppose : ce reglage
+  // n'emet AUCUNE requete — il n'ecrit que `localStorage`. Le piege des valeurs
+  // `None` de `PUT /courses/{id}` (server.py l.1045) ne s'applique donc pas
+  // ici : il n'y a pas de payload. Inventer un PUT `auto_review` aurait cree un
+  // champ que rien ne lit cote serveur. On reprend le comportement exact, cle
+  // de stockage comprise, pour que le reglage existant du coach soit conserve.
+  const toggleAutoReview = () => {
+    const newVal = !autoReviewEnabled;
+    setAutoReviewEnabled(newVal);
+    localStorage.setItem(`afroboost_auto_review_${coachEmail || ''}`, newVal.toString());
+  };
+
   // V225: lie un cours DEJA existant (remplace l'usage « cocher une case »).
   const linkExistingCourse = (id) => {
     if (!id) return;
@@ -473,6 +542,60 @@ export default function OfferWizard({
       setCoursesError('Impossible de créer l\'horaire. Vérifiez votre connexion et réessayez.');
     } finally {
       setAddingCourse(false);
+    }
+  };
+
+  // V226 TACHE 8: DUPLICATION d'un horaire. Report de `duplicateCourse`
+  // (CoursesManager.js l.72-88) : meme endpoint `POST /courses`, memes champs
+  // recopies depuis la source (`name` suffixe « (copie) », `weekday`, `time`,
+  // `locationName`, `mapsUrl`, `archived: false`).
+  // UNE SEULE difference, imposee par le correctif V225 : le cours nait
+  // `visible: false` et NON `visible: true` comme dans CoursesManager. Un
+  // horaire cree depuis le wizard puis abandonne — « Annuler », onglet ferme,
+  // crash — ne doit jamais atteindre la vitrine publique. La publication est
+  // deleguee a `buildCoursePayload`, qui pose `visible: true` au moment de
+  // l'enregistrement effectif, pour les seuls ids de `sessionCreatedCourseIds`.
+  // C'est exactement le chemin de `addCourse` ci-dessus, dont ce handler ne
+  // differe que par la provenance des valeurs (la carte source, pas des
+  // valeurs par defaut).
+  // Garde de propriete : on ne duplique que depuis un horaire editable, comme
+  // pour l'edition et la suppression, condition revalidee en tete du handler.
+  // La liste `courses` du parent n'est PAS notifiee, et c'est deliberé :
+  // `onCoursesChanged` est cable en PURGE (`filter(c => c.id !== courseId)`,
+  // OffersManager.js l.540-542) et ne sait pas ajouter. Le cours duplique est
+  // rendu editable immediatement par `sessionOwnedCourseIds`, sans dependre de
+  // la prop parent — meme mecanique que pour `addCourse`, qui ne notifie pas
+  // davantage.
+  const duplicateCourse = async (id) => {
+    if (!canEditCourses || addingCourse || courseBusyId || !isCourseEditable(id)) return;
+    const source = linkedCourses.find(c => c.id === id);
+    if (!source) return;
+    setCourseBusyId(id);
+    setCoursesError('');
+    try {
+      const res = await axios.post(`${API}/courses`, {
+        name: `${(source.name || 'Cours')} (copie)`,
+        weekday: Number.isInteger(source.weekday) ? source.weekday : parseInt(source.weekday, 10) || 0,
+        time: source.time || '',
+        locationName: source.locationName || source.location || '',
+        mapsUrl: source.mapsUrl || '',
+        visible: false,
+        archived: false
+      });
+      const created = res.data;
+      if (!created || !created.id) throw new Error('Reponse invalide');
+      setSessionCreatedCourseIds(prev => (prev.includes(created.id) ? prev : [...prev, created.id]));
+      setSessionOwnedCourseIds(prev => (prev.includes(created.id) ? prev : [...prev, created.id]));
+      setLinkedCourses(prev => [...prev, { ...created }]);
+      setForm(prev => ({
+        ...prev,
+        linked_course_ids: [...(prev.linked_course_ids || []), created.id]
+      }));
+    } catch (err) {
+      console.error('[V226] Duplication de l\'horaire echouee:', err);
+      setCoursesError('Impossible de dupliquer l\'horaire. Vérifiez votre connexion et réessayez.');
+    } finally {
+      setCourseBusyId(null);
     }
   };
 
@@ -894,6 +1017,32 @@ export default function OfferWizard({
             Laissez vide pour afficher tous vos cours.
           </p>
 
+          {/* V226 TACHE 8: « Demande d'avis automatique ». Report du toggle de
+              CoursesManager.js l.122-135. Il est propre au COACH, pas a un
+              horaire : il reste donc UNE seule fois en tete de section, et non
+              repete sur chaque carte. Rendu avec la case a cocher du wizard
+              plutot qu'avec la classe `switch` du dashboard, par coherence avec
+              les autres bascules de cette etape (« Prolonger automatiquement »). */}
+          <label
+            className="flex items-center gap-3 mb-3 p-2 rounded-lg cursor-pointer"
+            style={{ background: '#0a0a0f', border: '1px solid #333', borderRadius: '12px' }}
+          >
+            <input
+              type="checkbox"
+              checked={autoReviewEnabled}
+              onChange={toggleAutoReview}
+              className="w-4 h-4 v224-input"
+              style={{ accentColor: PINK }}
+              data-testid="auto-review-toggle"
+            />
+            <span className="flex-1">
+              <span className="block text-xs text-white font-semibold">⭐ Demande d'avis automatique</span>
+              <span className="block text-xs" style={HINT_STYLE}>
+                Après chaque cours, inviter les participants à laisser un avis.
+              </span>
+            </span>
+          </label>
+
           {coursesError && (
             <p className="text-xs mb-3 p-2 rounded" style={{ background: 'rgba(249,115,22,0.12)', color: '#f97316' }}>
               ⚠️ {coursesError}
@@ -1072,6 +1221,65 @@ export default function OfferWizard({
                   )}
                 </div>
 
+                {/* V226 TACHE 8: actions NON destructives de l'horaire —
+                    duplication et demande d'avis. Regroupees dans leur propre
+                    rangee, entre la publication (au-dessus) et les actions
+                    destructives (en dessous), pour que l'etape 2 reste lisible
+                    malgre le nombre de boutons par carte. */}
+                <div className="flex items-center gap-2 flex-wrap mt-3">
+                  <button
+                    type="button"
+                    onClick={() => duplicateCourse(course.id)}
+                    disabled={courseBusyId === course.id || addingCourse}
+                    title="Créer une copie de cet horaire et la rattacher à cette offre"
+                    className="text-xs px-3 py-1.5 rounded-lg"
+                    style={{
+                      background: 'none',
+                      border: '1px solid rgba(139,92,246,0.4)',
+                      color: 'rgba(139,92,246,0.9)',
+                      cursor: (courseBusyId === course.id || addingCourse) ? 'wait' : 'pointer',
+                      opacity: (courseBusyId === course.id || addingCourse) ? 0.5 : 1
+                    }}
+                    data-testid={`course-duplicate-${course.id}`}
+                  >
+                    ⧉ Dupliquer
+                  </button>
+                  {/* V226 TACHE 8: sans `coachEmail`, le serveur repondrait 400
+                      (« coach_email requis », server.py l.14216) : on n'affiche
+                      pas un bouton qui ne peut qu'echouer. */}
+                  {coachEmail && (
+                    <button
+                      type="button"
+                      onClick={() => sendReviewRequest(course.id)}
+                      disabled={!!reviewRequestSending[course.id]}
+                      title="Inviter vos abonnés actifs à laisser un avis sur ce cours"
+                      className="text-xs px-3 py-1.5 rounded-lg"
+                      style={{
+                        background: 'rgba(217,28,210,0.1)',
+                        border: '1px solid rgba(217,28,210,0.3)',
+                        color: PINK,
+                        cursor: reviewRequestSending[course.id] ? 'wait' : 'pointer',
+                        opacity: reviewRequestSending[course.id] ? 0.6 : 1
+                      }}
+                      data-testid={`review-request-${course.id}`}
+                    >
+                      {reviewRequestSending[course.id] ? '⏳' : '⭐'} Demander un avis
+                    </button>
+                  )}
+                  {/* V226 TACHE 8: retour visuel repris de CoursesManager.js
+                      l.290-296 — nombre d'envois en vert, `-1` en erreur rouge. */}
+                  {reviewRequestResult[course.id] !== null && reviewRequestResult[course.id] !== undefined && (
+                    <span
+                      className="text-xs"
+                      style={{ color: reviewRequestResult[course.id] >= 0 ? '#22c55e' : '#ef4444' }}
+                    >
+                      {reviewRequestResult[course.id] >= 0
+                        ? `✅ Envoyé à ${reviewRequestResult[course.id]} abonné${reviewRequestResult[course.id] > 1 ? 's' : ''}`
+                        : '❌ Erreur'}
+                    </span>
+                  )}
+                </div>
+
                 {/* V226: actions destructives, separees visuellement du reste de
                     la carte. Le ✕ ci-dessus RETIRE de l'offre (aucun effet en
                     base) ; ces deux boutons-ci touchent la base. */}
@@ -1108,9 +1316,13 @@ export default function OfferWizard({
                         facon pleinement REVERSIBLE (l'horaire reste dans la
                         liste, avec son badge et son bouton « Republier »).
                         Le handler `archiveCourse` et le bloc de restauration
-                        sont CONSERVES : le premier reste appelable, le second
-                        reste utile a une session ou un archivage aurait eu
-                        lieu avant ce correctif. */}
+                        sont CONSERVES tels quels, en vue d'une reactivation
+                        eventuelle de ce bouton — et non parce qu'ils serviraient
+                        encore. Ils sont aujourd'hui inatteignables :
+                        `sessionArchivedCourses` est remis a `[]` a CHAQUE
+                        ouverture du wizard, et son unique alimentateur est
+                        `archiveCourse`, que plus rien n'appelle. Rendre ce
+                        bouton a nouveau suffit a les remettre en service. */}
                     {false && (
                     <button
                       type="button"
