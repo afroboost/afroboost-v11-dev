@@ -2377,10 +2377,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   };
 
   // Ajouter ou mettre à jour une offre
-  const addOffer = async (e) => {
-    e.preventDefault();
-    if (!newOffer.name) return;
-    console.log("[V61] addOffer called, raw newOffer:", JSON.stringify({duration_value: newOffer.duration_value, duration_unit: newOffer.duration_unit, is_auto_prolong: newOffer.is_auto_prolong}));
+  // V224: `overrideValues` est OPTIONNEL. Sans lui, le comportement est
+  // strictement identique a avant (l'ancien formulaire l'appelle en onSubmit et
+  // ne passe qu'un evenement). Avec lui, on lit les valeurs remontees par le
+  // wizard au lieu du state `newOffer`, dont la mise a jour est asynchrone.
+  const addOffer = async (e, overrideValues) => {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    const src = overrideValues || newOffer;
+    if (!src.name) return;
+    console.log("[V61] addOffer called, raw newOffer:", JSON.stringify({duration_value: src.duration_value, duration_unit: src.duration_unit, is_auto_prolong: src.is_auto_prolong}));
     try {
       // Filtrer les images non vides
       // V223: helpers de normalisation. Une saisie vidée doit produire null,
@@ -2395,59 +2400,59 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         const n = parseInt(val, 10);
         return isNaN(n) ? fallback : n;
       };
-      const filteredImages = (newOffer.images || []).filter(url => url && url.trim());
+      const filteredImages = (src.images || []).filter(url => url && url.trim());
       // v61: Blindage total — conversion explicite, jamais de string vide
-      const dv = newOffer.duration_value;
+      const dv = src.duration_value;
       const cleanDurationValue = (dv !== null && dv !== undefined && dv !== '' && !isNaN(parseInt(dv, 10))) ? parseInt(dv, 10) : null;
-      const cleanDurationUnit = (newOffer.duration_unit && newOffer.duration_unit !== '') ? newOffer.duration_unit : null;
+      const cleanDurationUnit = (src.duration_unit && src.duration_unit !== '') ? src.duration_unit : null;
       const offerData = {
-        name: newOffer.name,
-        price: parseFloat(newOffer.price) || 0,
-        visible: newOffer.visible !== false,
-        description: newOffer.description || "",
-        keywords: newOffer.keywords || "",
+        name: src.name,
+        price: parseFloat(src.price) || 0,
+        visible: src.visible !== false,
+        description: src.description || "",
+        keywords: src.keywords || "",
         images: filteredImages,
         thumbnail: filteredImages[0] || "",
-        category: newOffer.category || "service",
-        isProduct: newOffer.isProduct || false,
-        variants: newOffer.variants || null,
-        tva: parseFloat(newOffer.tva) || 0,
-        shippingCost: parseFloat(newOffer.shippingCost) || 0,
-        stock: parseInt(newOffer.stock) || -1,
+        category: src.category || "service",
+        isProduct: src.isProduct || false,
+        variants: src.variants || null,
+        tva: parseFloat(src.tva) || 0,
+        shippingCost: parseFloat(src.shippingCost) || 0,
+        stock: parseInt(src.stock) || -1,
         duration_value: cleanDurationValue,
         duration_unit: cleanDurationUnit,
-        is_auto_prolong: newOffer.is_auto_prolong !== false,
+        is_auto_prolong: src.is_auto_prolong !== false,
         // V159: Countdown
-        countdown_enabled: newOffer.countdown_enabled || false,
-        countdown_text: newOffer.countdown_text || '',
-        countdown_date: newOffer.countdown_date || '',
-        countdown_time: newOffer.countdown_time || '23:59',
+        countdown_enabled: src.countdown_enabled || false,
+        countdown_text: src.countdown_text || '',
+        countdown_date: src.countdown_date || '',
+        countdown_time: src.countdown_time || '23:59',
         // V223: prix progressif + pack. Cet objet est une liste blanche : sans
         // ces lignes, les champs saisis dans le formulaire ne sont pas envoyés,
         // et une simple modification d'offre les remettrait à zéro en base.
         // null (et non 0) quand le champ est vide : le backend les typant
         // Optional[float], null signifie « palier non défini » et fait
         // retomber le calcul sur le prix de base.
-        progressive_pricing: newOffer.progressive_pricing || false,
-        price_early_bird: v223Num(newOffer.price_early_bird),
-        price_standard: v223Num(newOffer.price_standard),
-        price_last_minute: v223Num(newOffer.price_last_minute),
-        early_bird_days_before: v223Int(newOffer.early_bird_days_before, 7),
-        standard_hours_before: v223Int(newOffer.standard_hours_before, 24),
-        pack_sessions: v223Int(newOffer.pack_sessions, null),
+        progressive_pricing: src.progressive_pricing || false,
+        price_early_bird: v223Num(src.price_early_bird),
+        price_standard: v223Num(src.price_standard),
+        price_last_minute: v223Num(src.price_last_minute),
+        early_bird_days_before: v223Int(src.early_bird_days_before, 7),
+        standard_hours_before: v223Int(src.standard_hours_before, 24),
+        pack_sessions: v223Int(src.pack_sessions, null),
         // V224: medias. videoUrl existait deja dans les modeles backend mais
         // n'etait jamais rempli par l'UI.
-        videoUrl: newOffer.videoUrl || "",
+        videoUrl: src.videoUrl || "",
         // V224: correction d'un bug preexistant — linked_course_ids etait coche
         // dans le formulaire mais absent de cette liste blanche, donc les cours
         // associes a la CREATION d'une offre etaient perdus.
-        linked_course_ids: Array.isArray(newOffer.linked_course_ids) ? newOffer.linked_course_ids : [],
+        linked_course_ids: Array.isArray(src.linked_course_ids) ? src.linked_course_ids : [],
         // V224: metadonnees d'activite. null (et non 0) quand vide : le backend
         // les type Optional[int], et 0 minute / 0 participant sont des valeurs
         // legitimes qu'il ne faut pas confondre avec « non renseigne ».
-        duration_minutes: v223Int(newOffer.duration_minutes, null),
-        location: newOffer.location || "",
-        max_participants: v223Int(newOffer.max_participants, null)
+        duration_minutes: v223Int(src.duration_minutes, null),
+        location: src.location || "",
+        max_participants: v223Int(src.max_participants, null)
       };
       console.log("[V61] Sending offerData:", JSON.stringify(offerData));
 

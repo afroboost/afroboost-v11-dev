@@ -3,6 +3,8 @@
  * Gestion des offres/produits - Extrait de CoachDashboard.js
  */
 import React from 'react';
+import OfferWizard from './OfferWizard';   // V224
+import OfferCard from './OfferCard';       // V224
 
 const OffersManager = ({
   offers,
@@ -191,22 +193,33 @@ const OffersManager = ({
     return (offer.coach_id || '').toLowerCase() === (coachEmail || '').toLowerCase();
   };
 
+  // V224: appel IA extrait de handleAIEnhance pour etre reutilisable. Il RETOURNE
+  // le texte ameliore au lieu d'ecrire dans le state : le wizard tient son propre
+  // formulaire, et un setNewOffer ici changerait la reference de `initialOffer`,
+  // ce qui reinitialiserait le wizard en pleine saisie.
+  const fetchEnhancedText = async (text) => {
+    const res = await fetch(`${API}/ai/enhance-text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, context: 'offer' })
+    });
+    const data = await res.json();
+    if (data.enhanced_text && !data.fallback) return data.enhanced_text;
+    return null;
+  };
+
   const handleAIEnhance = async (field) => {
     const text = field === 'name' ? newOffer.name : newOffer.description;
     if (!text || text.trim().length < 3) return;
     setAiLoading(true);
     try {
-      const res = await fetch(`${API}/ai/enhance-text`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, context: 'offer' })
-      });
-      const data = await res.json();
-      if (data.enhanced_text && !data.fallback) {
+      // V224: meme requete qu'avant, deleguee a fetchEnhancedText.
+      const enhanced = await fetchEnhancedText(text);
+      if (enhanced) {
         if (field === 'name') {
-          setNewOffer({ ...newOffer, name: data.enhanced_text });
+          setNewOffer({ ...newOffer, name: enhanced });
         } else {
-          setNewOffer({ ...newOffer, description: data.enhanced_text.slice(0, 150) });
+          setNewOffer({ ...newOffer, description: enhanced.slice(0, 150) });
         }
       }
     } catch (err) {
@@ -215,6 +228,74 @@ const OffersManager = ({
       setAiLoading(false);
     }
   };
+
+  // V224: branchement du bouton « Aide IA » du wizard. Meme garde de longueur
+  // minimale que handleAIEnhance ; la troncature a 150 caracteres n'est PAS
+  // reprise ici, le champ du wizard acceptant jusqu'a 3000 caracteres.
+  const handleWizardEnhanceDescription = async (text) => {
+    if (!text || text.trim().length < 3) return null;
+    return await fetchEnhancedText(text);
+  };
+
+  // V224: filtre de recherche extrait une seule fois — il etait duplique dans
+  // les rendus mobile et desktop.
+  const filteredOffers = offersSearch
+    ? offers.filter(o =>
+        o.name?.toLowerCase().includes(offersSearch.toLowerCase()) ||
+        o.description?.toLowerCase().includes(offersSearch.toLowerCase())
+      )
+    : offers;
+
+  // V224: etat d'ouverture du wizard.
+  const [wizardOpen, setWizardOpen] = React.useState(false);
+
+  // V224: ouverture en creation
+  const openCreate = () => {
+    cancelEditOffer();      // remet newOffer a vide via le parent
+    setWizardOpen(true);
+  };
+
+  // V224: ouverture en edition — startEditOffer pre-remplit newOffer
+  const openEdit = (offer) => {
+    startEditOffer(offer);
+    setWizardOpen(true);
+  };
+
+  // V224: duplication — startEditOffer sans id laisse editingOfferId a undefined,
+  // donc addOffer partira sur un POST (creation) et non un PUT.
+  const openDuplicate = (offer) => {
+    startEditOffer({ ...offer, id: undefined, name: (offer.name || '') + ' (copie)' });
+    setWizardOpen(true);
+  };
+
+  // V224: le wizard remonte tout d'un coup ; on aligne newOffer (pour que le
+  // formulaire reste coherent) puis on delegue a addOffer EN LUI PASSANT les
+  // valeurs, ce qui evite de dependre de l'application asynchrone du state.
+  const handleWizardSave = (formValues) => {
+    setNewOffer(formValues);
+    setWizardOpen(false);
+    addOffer(null, formValues);
+  };
+
+  // V224: bascule visible/masquee depuis une carte. On met a jour le state local
+  // pour un retour immediat, comme le faisait l'ancien rendu en liste.
+  const handleToggleVisible = (offer) => {
+    const updated = { ...offer, visible: offer.visible === false };
+    setOffers(prev => prev.map(o => (o.id === offer.id ? updated : o)));
+    updateOffer(updated);
+  };
+
+  // V224: on conserve la protection « offre d'un autre coach » que portaient les
+  // boutons Supprimer de l'ancien rendu en liste.
+  const handleDelete = (offerId) => {
+    const offer = offers.find(o => o.id === offerId);
+    if (offer && !isOwnOffer(offer)) {
+      alert('🔒 Vous ne pouvez supprimer que vos propres offres');
+      return;
+    }
+    deleteOffer(offerId);
+  };
+
   return (
     <div className="card-gradient rounded-xl p-4 sm:p-6">
       {/* v93: Onboarding tooltips for new partners */}
@@ -279,7 +360,42 @@ const OffersManager = ({
         </div>
       </div>
       
+      {/* V224: grille de cartes */}
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-white font-semibold">Mes offres</h3>
+        <button type="button" onClick={openCreate} className="text-xs px-4 py-2 rounded-lg" style={{ background: '#D91CD2', color: '#fff' }}>
+          + NOUVELLE OFFRE
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {filteredOffers.map(offer => (
+          <OfferCard
+            key={offer.id}
+            offer={offer}
+            onEdit={openEdit}
+            onDuplicate={openDuplicate}
+            onDelete={handleDelete}
+            onToggleVisible={handleToggleVisible}
+          />
+        ))}
+      </div>
+
+      <OfferWizard
+        open={wizardOpen}
+        initialOffer={newOffer}
+        courses={courses}
+        isEditing={!!editingOfferId}
+        onSave={handleWizardSave}
+        onCancel={() => { setWizardOpen(false); cancelEditOffer(); }}
+        isSuperAdmin={isSuperAdmin}
+        coachEmail={coachEmail}
+        onEnhanceDescription={handleWizardEnhanceDescription}
+      />
+
       {/* Conteneur scrollable pour les offres */}
+      {/* V224: l'ancien rendu en liste est conserve mais n'est plus rendu. */}
+      {false && (
       <div style={{ maxHeight: '500px', overflowY: 'auto', overflowX: 'hidden' }}>
         {/* === MOBILE VIEW: Cartes verticales === */}
         <div className="block md:hidden space-y-4">
@@ -497,8 +613,11 @@ const OffersManager = ({
           ))}
         </div>
       </div>
+      )}
 
       {/* Formulaire Ajout/Modification - RESPONSIVE */}
+      {/* V224: ancien formulaire plat conserve, remplace par OfferWizard. */}
+      {false && (
       <form id="offer-form" onSubmit={addOffer} className="glass rounded-lg p-4 mt-4 border-2 border-purple-500/50">
         <h3 className="text-white mb-4 font-semibold text-sm flex items-center gap-2">
           {editingOfferId ? '✏️ Modifier l\'offre' : '➕ Ajouter une offre'}
@@ -924,6 +1043,7 @@ const OffersManager = ({
           {editingOfferId ? '💾 Enregistrer les modifications' : '➕ Ajouter l\'offre'}
         </button>
       </form>
+      )}
     </div>
   );
 };
