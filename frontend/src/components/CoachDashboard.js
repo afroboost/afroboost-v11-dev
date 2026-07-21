@@ -1069,7 +1069,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     duration_value: '', duration_unit: '', is_auto_prolong: true,
     // V224: medias + metadonnees d'activite
     videoUrl: '', linked_course_ids: [],
-    duration_minutes: '', location: '', max_participants: ''
+    duration_minutes: '', location: '', max_participants: '',
+    // V225: libelles des paliers de prix progressif (personnalisables).
+    label_early_bird: '', label_standard: '', label_last_minute: ''
   });
   const [editingOfferId, setEditingOfferId] = useState(null); // Pour mode édition
   const fileInputRef = useRef(null);
@@ -2343,6 +2345,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       early_bird_days_before: offer.early_bird_days_before ?? 7,
       standard_hours_before: offer.standard_hours_before ?? 24,
       pack_sessions: offer.pack_sessions ?? null,
+      // V225: recharger les libelles des paliers, sinon le formulaire s'ouvre
+      // avec les placeholders et l'enregistrement écrase en base les libelles
+      // deja configures.
+      label_early_bird: offer.label_early_bird || '',
+      label_standard: offer.label_standard || '',
+      label_last_minute: offer.label_last_minute || '',
       // V224
       videoUrl: offer.videoUrl || '',
       linked_course_ids: Array.isArray(offer.linked_course_ids) ? offer.linked_course_ids : [],
@@ -2376,6 +2384,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       progressive_pricing: false, price_early_bird: null, price_standard: null,
       price_last_minute: null, early_bird_days_before: 7, standard_hours_before: 24,
       pack_sessions: null,
+      // V225: sans ce reset, les libelles de l'offre precedente resteraient
+      // pré-remplis dans le formulaire suivant.
+      label_early_bird: '', label_standard: '', label_last_minute: '',
       // V224
       videoUrl: '', linked_course_ids: [],
       duration_minutes: '', location: '', max_participants: ''
@@ -2450,6 +2461,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         early_bird_days_before: v223Int(src.early_bird_days_before, 7),
         standard_hours_before: v223Int(src.standard_hours_before, 24),
         pack_sessions: v223Int(src.pack_sessions, null),
+        // V225: libelles des paliers. Sans ces lignes, les champs saisis dans le
+        // wizard ne sont pas envoyes et le PUT les remettrait a zero en base.
+        label_early_bird: src.label_early_bird || null,
+        label_standard: src.label_standard || null,
+        label_last_minute: src.label_last_minute || null,
         // V224: medias. videoUrl existait deja dans les modeles backend mais
         // n'etait jamais rempli par l'UI.
         videoUrl: src.videoUrl || "",
@@ -2501,6 +2517,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       progressive_pricing: false, price_early_bird: null, price_standard: null,
       price_last_minute: null, early_bird_days_before: 7, standard_hours_before: 24,
       pack_sessions: null,
+      // V225: sans ce reset, les libelles de l'offre precedente resteraient
+      // pré-remplis dans le formulaire suivant.
+      label_early_bird: '', label_standard: '', label_last_minute: '',
       // V224
       videoUrl: '', linked_course_ids: [],
       duration_minutes: '', location: '', max_participants: ''

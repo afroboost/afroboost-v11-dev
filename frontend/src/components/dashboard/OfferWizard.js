@@ -64,10 +64,13 @@ const toEmbedUrl = (url) => {
 };
 
 // V224: paliers de prix progressif — repris a l'identique de OffersManager.js (V223).
+// V225: chaque palier porte aussi une cle de libelle (`labelKey`) et un
+// placeholder, pour rendre le nom du palier editable sans dupliquer le bloc
+// de rendu en trois copies quasi identiques.
 const PROGRESSIVE_TIERS = [
-  { key: 'price_early_bird', label: '✨ Early Bird (plus de 7 jours avant)' },
-  { key: 'price_standard', label: '⏱ Standard (plus de 24h avant)' },
-  { key: 'price_last_minute', label: '⚡ Last Minute (moins de 24h)' }
+  { key: 'price_early_bird', label: '✨ Early Bird (plus de 7 jours avant)', labelKey: 'label_early_bird', placeholder: 'Prévente' },
+  { key: 'price_standard', label: '⏱ Standard (plus de 24h avant)', labelKey: 'label_standard', placeholder: 'Standard' },
+  { key: 'price_last_minute', label: '⚡ Last Minute (moins de 24h)', labelKey: 'label_last_minute', placeholder: 'Dernière min.' }
 ];
 
 export default function OfferWizard({
@@ -221,6 +224,17 @@ export default function OfferWizard({
                   placeholder="CHF"
                   style={INPUT_STYLE}
                   className="text-sm v224-input"
+                />
+                {/* V225: libelle du palier, editable — affiche sur la carte publique
+                    a la place du nom fige (Early Bird / Standard / Last Minute). */}
+                <input
+                  type="text"
+                  value={form[f.labelKey] || ''}
+                  onChange={(e) => set(f.labelKey, e.target.value)}
+                  placeholder={f.placeholder}
+                  maxLength={40}
+                  style={INPUT_STYLE}
+                  className="text-sm v224-input mt-1"
                 />
               </div>
             ))}
