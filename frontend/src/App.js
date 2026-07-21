@@ -4072,7 +4072,10 @@ function App() {
 
   // V224 — Parcours progressif : le client paie d'abord, reserve ensuite depuis
   // /espace/<code>. Aucune reservation n'est creee ici.
-  const startProgressiveCheckout = async (offer) => {
+  // V225: second parametre `quantity` (defaut 1) — la carte d'offre (tache 5)
+  // l'appelle avec la quantite choisie. Un appelant qui l'omet obtient
+  // exactement le comportement V224.
+  const startProgressiveCheckout = async (offer, quantity = 1) => {
     // V224: garde de ré-entrance — sans elle, un double-clic pendant l'appel
     // réseau (démarrage à froid Vercel possible) crée plusieurs sessions
     // Stripe et plusieurs lignes payment_transactions pour le même achat.
@@ -4103,6 +4106,12 @@ function App() {
         amount: v223UnitPrice(offer),
         originUrl: window.location.origin,
         offerId: offer.id,
+        // V225: `amount` reste le prix UNITAIRE (v223UnitPrice). Stripe multiplie
+        // unit_amount x quantity : envoyer un total ici ferait payer total x N.
+        // Seul CE point d'appel porte la quantite ; les deux autres appelants de
+        // create-checkout-session (~l.4441 et ~l.4491) envoient deja un TOTAL
+        // calcule et ne doivent surtout pas recevoir de `quantity`.
+        quantity: Math.max(1, Math.min(5, parseInt(quantity, 10) || 1)), // V225
         // V224: ce parcours n'a pas de formulaire, donc aucun endroit ou saisir
         // un code promo. On delegue la saisie a Stripe Checkout. Le parcours
         // classique ne l'active PAS : il a deja son propre champ promo, et
@@ -4139,10 +4148,18 @@ function App() {
 
   // Sélection d'offre avec smooth scroll vers le formulaire "Vos informations"
   const handleSelectOffer = (offer) => {
-    // V224: une offre progressive court-circuite le choix d'horaire et le
-    // formulaire client — elle part directement en checkout.
-    if (offer && offer.progressive_pricing) {
-      startProgressiveCheckout(offer);
+    // V225: toutes les offres de service payantes partent en achat direct.
+    // (Elargit la garde V224 qui ne visait que `progressive_pricing`.)
+    // Deux exclusions, imposees par la plateforme et non par le design :
+    //  - produit physique : l'adresse de livraison se saisit dans le formulaire
+    //    (App.js ~l.6203) et serait perdue ;
+    //  - offre a 0 CHF : Stripe refuse un montant nul.
+    // Ces deux cas gardent le parcours actuel, formulaire compris.
+    const v225IsProduct = offer && (offer.isProduct || offer.isPhysicalProduct
+      || offer.type === 'product' || offer.type === 'audio' || offer.type === 'video');
+    const v225UnitPrice = offer ? v223UnitPrice(offer) : 0;
+    if (offer && !v225IsProduct && v225UnitPrice > 0) {
+      startProgressiveCheckout(offer, 1);
       return;
     }
     // v56: Toggle — si la même offre est déjà sélectionnée, on la désélectionne (ferme le formulaire)
@@ -5551,11 +5568,19 @@ function App() {
           const activeOffer = selectedOffer || pendingOffer;
           const isOffersFirst = true; // v159: force offers-first (UX plus simple)
           // Afficher sessions UNIQUEMENT si: une offre est active OU si l'utilisateur filtre par "sessions" OU s'il n'y a pas d'offres
-          const showSessions = activeFilter !== 'shop' && visibleCourses.length > 0 && (
+          // V225: calcul d'origine conserve volontairement (lisibilite +
+          // reactivation possible), mais renomme et NON consomme.
+          // eslint-disable-next-line no-unused-vars
+          const showSessionsLegacy = activeFilter !== 'shop' && visibleCourses.length > 0 && (
             activeFilter === 'sessions' || !!activeOffer || filteredServices.length === 0
           )
           // V224: pas de grille d'horaires pour une offre progressive
           && !activeOffer?.progressive_pricing;
+
+          // V225: les horaires sont desormais affiches sur chaque carte, et toutes les
+          // offres de service partent en achat direct. La grille de dates n'a plus de
+          // role. Le calcul d'origine est conserve juste au-dessus, non consomme.
+          const showSessions = false;
 
           // --- BLOC SESSIONS ---
           const sessionsBlock = showSessions && (
