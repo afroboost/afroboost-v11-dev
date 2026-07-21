@@ -28,6 +28,8 @@ const OffersManager = ({
   // V226 CORRECTIF 1: prop OPTIONNELLE, le `setCourses` de CoachDashboard.
   // Fournie, la suppression d'un horaire depuis le wizard purge la liste
   // `courses` du dashboard. Absente, repli silencieux (voir onCoursesChanged).
+  // V226 REVUE FINALE: ne sert plus qu'a purger — elle repercute aussi les
+  // AJOUTS et les MISES A JOUR d'horaires faits depuis le wizard.
   setCourses,
   t
 }) => {
@@ -537,8 +539,29 @@ const OffersManager = ({
         // cours existant » : le rattacher puis enregistrer produit un 404 sur
         // `PUT /courses/{id}`, ce qui fait echouer les horaires ET empeche
         // l'ecriture de l'offre. Repli silencieux si `setCourses` est absent.
+        //
+        // V226 REVUE FINALE: le cablage n'etait qu'une PURGE, si bien qu'un
+        // horaire cree, duplique, renomme, republie ou restaure depuis le wizard
+        // ne remontait jamais ici. Le wizard envoie desormais un descripteur
+        // ({ type: 'remove' | 'upsert' }) et ce reducteur sait aussi ajouter et
+        // fusionner. La fusion est PARTIELLE (`{ ...c, ...course }`) : le
+        // changement de visibilite n'envoie que `{ id, visible }` et ne doit pas
+        // effacer le nom, l'heure ni le lieu deja connus du parent.
         onCoursesChanged={setCourses
-          ? (courseId) => setCourses(prev => (prev || []).filter(c => c.id !== courseId))
+          ? (change) => setCourses(prev => {
+              const list = prev || [];
+              if (!change || !change.type) return list;
+              if (change.type === 'remove') {
+                return list.filter(c => c.id !== change.id);
+              }
+              if (change.type === 'upsert' && change.course && change.course.id) {
+                const next = change.course;
+                return list.some(c => c.id === next.id)
+                  ? list.map(c => (c.id === next.id ? { ...c, ...next } : c))
+                  : [...list, { ...next }];
+              }
+              return list;
+            })
           : undefined}
       />
 

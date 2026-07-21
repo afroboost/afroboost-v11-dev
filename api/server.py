@@ -3393,6 +3393,13 @@ class CreateCheckoutRequest(BaseModel):
     # V226: variantes choisies sur la carte (taille, couleur…). Recopiees dans
     # les metadata Stripe pour que le coach sache quoi expedier.
     variants: Optional[dict] = None
+    # V226 REVUE FINALE: marqueur POSITIF d'achat audio/video. Meme raison d'etre
+    # que `v226_physical` (voir metadata plus bas) : un achat audio n'a ni adresse
+    # ni variante, le webhook n'a donc AUCUN moyen de le reconnaitre a la forme du
+    # payload. Sans ce drapeau, la vente n'apparait plus dans l'onglet
+    # Reservations, alors qu'avant la V226 `handleSubmit` y creait une ligne
+    # « Achat Audio ».
+    isAudioPurchase: bool = False
 
 @api_router.post("/create-checkout-session")
 async def create_checkout_session(request: CreateCheckoutRequest):
@@ -3494,6 +3501,26 @@ async def create_checkout_session(request: CreateCheckoutRequest):
     if request.variants:
         for _k, _v in list(request.variants.items())[:10]:
             metadata[f"variant_{str(_k)[:20]}"] = str(_v)[:100]
+
+    # V226 REVUE FINALE: marqueurs POSITIFS de la nature de l'achat.
+    #
+    # Le webhook DEDUISAIT jusqu'ici la nature de l'achat de la forme du payload
+    # Stripe (presence d'une adresse ou d'une variante). Pour un produit physique
+    # SANS variantes (complement alimentaire, accessoire taille unique), tout
+    # reposait alors sur le fait que Stripe livre `shipping_details` dans l'objet
+    # `session` de l'evenement. Si la version d'API du endpoint est anterieure au
+    # renommage `shipping` -> `shipping_details`, ou si le champ atterrit
+    # ailleurs, le bloc ne s'executait tout simplement PAS : pas de document
+    # `reservations`, pas de ligne dans l'onglet, et aucun log — l'`except` ne
+    # voyait rien, le coach perdait la commande en silence.
+    #
+    # Ces deux cles sont posees par le SERVEUR d'apres la requete de checkout,
+    # jamais deduites : elles survivent a tout changement de version d'API Stripe.
+    # L'adresse, elle, reste au mieux-effort — mais la commande existe.
+    if request.collectShipping:
+        metadata["v226_physical"] = "1"
+    if request.isAudioPurchase:
+        metadata["v226_audio"] = "1"
 
     # V226: passe en kwargs aux deux Session.create, nominal et fallback.
     v226_shipping = {
@@ -4065,10 +4092,31 @@ async def stripe_webhook(request: Request):
                         if str(_mk).startswith("variant_"):
                             _variants[str(_mk)[len("variant_"):]] = str(_mv)
 
-                    # Un achat de COURS n'a ni adresse ni variante: il ne cree
-                    # aucune reservation ici, volontairement — le client reserve
-                    # sa date depuis /espace/<code>.
-                    if _ship or _variants:
+                    # --- V226 REVUE FINALE: marqueurs POSITIFS poses au checkout ---
+                    # `_ship` et `_variants` restent des signaux VALABLES (ils
+                    # couvrent les sessions creees avant ce correctif, encore en
+                    # vol au moment du deploiement), mais ils ne sont plus le seul
+                    # signal: un produit physique SANS variantes dont Stripe ne
+                    # livre pas `shipping_details` etait perdu en silence.
+                    _is_physical = (metadata or {}).get("v226_physical") == "1"
+                    _is_audio = (metadata or {}).get("v226_audio") == "1"
+
+                    # Le cas a diagnostiquer: le marqueur est la, l'adresse non.
+                    # La commande sera bien creee (avec une adresse vide), mais le
+                    # coach doit pouvoir comprendre POURQUOI elle est incomplete.
+                    if _is_physical and not _ship:
+                        logger.warning(
+                            f"[V226] Produit physique marque (v226_physical=1) mais AUCUNE "
+                            f"adresse de livraison dans l'evenement Stripe — session="
+                            f"{session.id}. La commande est creee sans adresse: verifier la "
+                            f"version d'API du endpoint webhook (shipping_details vs "
+                            f"collected_information.shipping_details)."
+                        )
+
+                    # Un achat de COURS n'a ni marqueur, ni adresse, ni variante:
+                    # il ne cree aucune reservation ici, volontairement — le
+                    # client reserve sa date depuis /espace/<code>.
+                    if _is_physical or _is_audio or _ship or _variants:
                         _addr = (_ship or {}).get("address") or {}
                         _addr_parts = [
                             (_ship or {}).get("name") or "",
@@ -4081,9 +4129,21 @@ async def stripe_webhook(request: Request):
                         _shipping_address = ", ".join(p for p in _addr_parts if p)
                         _variants_text = ", ".join(f"{k}: {v}" for k, v in _variants.items())
 
+                        # V226 REVUE FINALE: achat audio/video PUR — ni adresse, ni
+                        # variante, ni marqueur physique. Avant la V226 il passait
+                        # par le formulaire et `handleSubmit` (App.js ~l.4897/4910)
+                        # creait une reservation « Achat Audio » avec isAudio=True.
+                        # L'elargissement de l'achat direct l'avait fait disparaitre.
+                        # On reprend EXACTEMENT ces deux champs pour que l'onglet
+                        # Reservations et les exports restent alignes sur
+                        # l'historique. Le test de priorite est volontairement
+                        # « physique d'abord » : une offre marquee des deux cotes
+                        # est traitee comme une commande a expedier.
+                        _audio_only = _is_audio and not (_is_physical or _ship or _variants)
+
                         # coach_id: l'onglet Reservations filtre dessus. Sans lui
                         # la commande serait invisible pour son proprietaire.
-                        _coach_id = "bassi_default"
+                        _coach_id = DEFAULT_COACH_ID  # V226 REVUE FINALE: constante, plus de litteral
                         if metadata.get("offer_id"):
                             _offer_doc = await db.offers.find_one(
                                 {"id": metadata.get("offer_id")}, {"_id": 0, "coach_id": 1}
@@ -4105,7 +4165,11 @@ async def stripe_webhook(request: Request):
                             "userWhatsapp": (session.get("customer_details") or {}).get("phone") or "",
                             # courseName est la seule ligne « quoi » que la carte
                             # de l'onglet affiche: on y met le nom du produit.
-                            "courseName": product_name,
+                            # V226 REVUE FINALE: pour un achat audio/video, on
+                            # reprend le libelle historique « Achat Audio » —
+                            # c'est celui que produisait handleSubmit et celui
+                            # que les exports existants contiennent deja.
+                            "courseName": "Achat Audio" if _audio_only else product_name,
                             "courseTime": "",
                             "datetime": _now_iso,
                             "offerName": product_name,
@@ -4120,10 +4184,20 @@ async def stripe_webhook(request: Request):
                             # physique: c'est la valeur sur laquelle
                             # ReservationTab teste `isProduct` cote client, et
                             # None y serait falsy.
-                            "selectedVariants": _variants,
-                            "variantsText": _variants_text,
-                            "shippingAddress": _shipping_address,
-                            "isProduct": True,
+                            # V226 REVUE FINALE: None pour un achat audio. La ligne
+                            # 127 de ReservationTab calcule `isProduct` a partir de
+                            # `r.selectedVariants || r.trackingNumber ||
+                            # r.shippingStatus !== 'pending'` : un dict vide y est
+                            # truthy et afficherait un bloc d'expedition sur une
+                            # vente audio, qui n'a rien a expedier.
+                            "selectedVariants": None if _audio_only else _variants,
+                            "variantsText": None if _audio_only else _variants_text,
+                            "shippingAddress": None if _audio_only else _shipping_address,
+                            "isProduct": not _audio_only,
+                            # V226 REVUE FINALE: champ historique de handleSubmit.
+                            # Aucun code de `api/` ne le lit aujourd'hui — il est
+                            # pose pour la coherence des documents et des exports.
+                            "isAudio": _audio_only,
                             # Etat de depart du workflow d'expedition du coach.
                             "shippingStatus": "pending",
                             "trackingNumber": None,
@@ -4139,10 +4213,18 @@ async def stripe_webhook(request: Request):
                             {"$setOnInsert": _reservation_doc},
                             upsert=True,
                         )
+                        # V226 REVUE FINALE: le libelle du log suit la nature reelle
+                        # de l'achat, et journalise le signal qui a declenche la
+                        # creation — c'est l'information de diagnostic dont le
+                        # proprietaire aura besoin si une commande semble manquer.
                         logger.info(
-                            f"[V226] Commande physique -> reservations: "
-                            f"{_reservation_doc['reservationCode']} ({product_name}) "
-                            f"coach={_coach_id} variantes={_variants_text or 'aucune'}"
+                            f"[V226] {'Achat audio' if _audio_only else 'Commande physique'} "
+                            f"-> reservations: {_reservation_doc['reservationCode']} "
+                            f"({product_name}) coach={_coach_id} "
+                            f"variantes={_variants_text or 'aucune'} "
+                            f"adresse={'oui' if _shipping_address else 'non'} "
+                            f"signal=physical:{int(_is_physical)}/audio:{int(_is_audio)}/"
+                            f"ship:{int(bool(_ship))}/variants:{int(bool(_variants))}"
                         )
                 except Exception as _v226_err:
                     # Jamais bloquant: le code AFR et les credits sont deja crees.

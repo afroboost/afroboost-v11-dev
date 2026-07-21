@@ -102,6 +102,18 @@ export default function OfferWizard({
   // un champ, enregistre : le `PUT /courses/{id}` renvoie 404, les horaires
   // echouent et l'offre n'est PAS ecrite — blocage jusqu'au rechargement.
   // Absente, repli silencieux : aucun montage existant n'est casse.
+  //
+  // V226 REVUE FINALE — LE CONTRAT S'ELARGIT. La prop ne recevait qu'un id a
+  // PURGER, si bien qu'un horaire CREE ou MODIFIE depuis le wizard n'etait
+  // jamais remonte au parent : rouvrir l'offre affichait une etape 2 vide (la
+  // reconstruction l.166-172 lit la prop `courses`, chargee une seule fois par
+  // CoachDashboard et jamais rafraichie) et le badge de visibilite montrait
+  // l'etat d'AVANT. Aucune perte reelle — `form.linked_course_ids` est conserve
+  // et reenregistre intact — mais cela se lit comme une perte de donnees.
+  // La prop recoit desormais un descripteur de changement :
+  //   { type: 'remove', id }        -> retirer de la liste parent
+  //   { type: 'upsert', course }    -> ajouter, ou fusionner si deja present
+  // Repli silencieux inchange si la prop n'est pas fournie.
   onCoursesChanged
 }) {
   const [step, setStep] = useState(1);
@@ -315,6 +327,21 @@ export default function OfferWizard({
   // la propriete. On n'expose donc le bouton que sur un horaire editable —
   // exactement la condition qui autorise deja l'edition (`isCourseEditable`) —
   // et on la revalide ici, pour qu'un appel ne puisse pas contourner le rendu.
+  // V226 REVUE FINALE: point de sortie UNIQUE vers la liste `courses` du parent.
+  // Toutes les ecritures d'horaire du wizard passent par ici, pour qu'aucune
+  // n'oublie de notifier — c'est exactement l'oubli qui a produit le defaut
+  // (seule la suppression notifiait). Le repli silencieux quand la prop est
+  // absente est conserve, et l'appel est enveloppe : une erreur dans l'etat du
+  // parent ne doit pas faire echouer une ecriture DEJA reussie en base.
+  const notifyCoursesChanged = (change) => {
+    if (typeof onCoursesChanged !== 'function' || !change) return;
+    try {
+      onCoursesChanged(change);
+    } catch (err) {
+      console.error('[V226] Notification des horaires au parent echouee:', err);
+    }
+  };
+
   const deleteCourse = async (id) => {
     if (!canEditCourses || courseBusyId || !isCourseEditable(id)) return;
     const course = linkedCourses.find(c => c.id === id);
@@ -342,7 +369,8 @@ export default function OfferWizard({
       forgetCourse(id);
       // V226 CORRECTIF 1: on previent le parent pour qu'il purge sa liste
       // `courses`. Repli silencieux si la prop n'est pas fournie.
-      if (typeof onCoursesChanged === 'function') onCoursesChanged(id);
+      // V226 REVUE FINALE: descripteur explicite au lieu d'un id nu.
+      notifyCoursesChanged({ type: 'remove', id });
     } catch (err) {
       console.error('[V226] Suppression de l\'horaire echouee:', err);
       setCoursesError('Impossible de supprimer l\'horaire. Vérifiez votre connexion et réessayez.');
@@ -369,6 +397,10 @@ export default function OfferWizard({
       await axios.put(`${API}/courses/${id}/archive`);
       if (course) setSessionArchivedCourses(prev => [...prev, { ...course, archived: true }]);
       forgetCourse(id);
+      // V226 REVUE FINALE: `GET /courses` filtre `archived: {$ne: true}`, donc un
+      // horaire archive ne reviendra plus jamais du serveur. Le laisser dans la
+      // liste parent le ferait reproposer par « Ou rattacher un cours existant ».
+      notifyCoursesChanged({ type: 'remove', id });
     } catch (err) {
       console.error('[V226] Archivage de l\'horaire echoue:', err);
       setCoursesError('Impossible d\'archiver l\'horaire. Vérifiez votre connexion et réessayez.');
@@ -408,6 +440,9 @@ export default function OfferWizard({
       setLinkedCourses(prev => (prev.some(c => c.id === course.id)
         ? prev
         : [...prev, { ...course, archived: false }]));
+      // V226 REVUE FINALE: symetrique de l'archivage — l'horaire redevient
+      // visible pour `GET /courses`, il doit donc reintegrer la liste parent.
+      notifyCoursesChanged({ type: 'upsert', course: { ...course, archived: false } });
       setForm(prev => {
         const ids = prev.linked_course_ids || [];
         return ids.includes(course.id) ? prev : { ...prev, linked_course_ids: [...ids, course.id] };
@@ -436,6 +471,11 @@ export default function OfferWizard({
     try {
       await axios.put(`${API}/courses/${id}`, { visible: nextVisible });
       setLinkedCourses(prev => prev.map(c => (c.id === id ? { ...c, visible: nextVisible } : c)));
+      // V226 REVUE FINALE (defaut MOYEN 2): l'ecriture est immediate en base, mais
+      // seule `linkedCourses` la reflechissait. A la reouverture, l'etape 2 est
+      // reconstruite depuis la prop `courses` du parent et le badge
+      // « 🚫 Masqué / 👁️ Visible » affichait donc l'etat d'AVANT le clic.
+      notifyCoursesChanged({ type: 'upsert', course: { id, visible: nextVisible } });
     } catch (err) {
       console.error('[V226] Changement de visibilite echoue:', err);
       setCoursesError('Impossible de changer la visibilité de l\'horaire. Réessayez.');
@@ -533,6 +573,14 @@ export default function OfferWizard({
       // `courses` du parent (qui n'a jamais lieu).
       setSessionOwnedCourseIds(prev => (prev.includes(created.id) ? prev : [...prev, created.id]));
       setLinkedCourses(prev => [...prev, { ...created }]);
+      // V226 REVUE FINALE (defaut MOYEN 1): l'horaire cree entre dans la liste du
+      // parent. Sans cela, refermer puis rouvrir l'offre affichait une etape 2
+      // VIDE — `linkedCourses` est reconstruit depuis la prop `courses`, jamais
+      // rafraichie — et l'horaire n'apparaissait pas davantage dans « Ou
+      // rattacher un cours existant ». Aggravant : avant la V226, la creation
+      // passait par CoursesManager, qui synchronisait bien l'etat parent
+      // (CoachDashboard.js l.2277-2278) ; cette voie est desormais masquee.
+      notifyCoursesChanged({ type: 'upsert', course: { ...created } });
       setForm(prev => ({
         ...prev,
         linked_course_ids: [...(prev.linked_course_ids || []), created.id]
@@ -560,12 +608,12 @@ export default function OfferWizard({
   // valeurs par defaut).
   // Garde de propriete : on ne duplique que depuis un horaire editable, comme
   // pour l'edition et la suppression, condition revalidee en tete du handler.
-  // La liste `courses` du parent n'est PAS notifiee, et c'est deliberé :
-  // `onCoursesChanged` est cable en PURGE (`filter(c => c.id !== courseId)`,
-  // OffersManager.js l.540-542) et ne sait pas ajouter. Le cours duplique est
-  // rendu editable immediatement par `sessionOwnedCourseIds`, sans dependre de
-  // la prop parent — meme mecanique que pour `addCourse`, qui ne notifie pas
-  // davantage.
+  // V226 REVUE FINALE — CE COMMENTAIRE DECRIVAIT LE DEFAUT, il est corrige :
+  // la liste `courses` du parent EST desormais notifiee. `onCoursesChanged`
+  // n'est plus cable en simple purge, il accepte aussi un `upsert`
+  // (OffersManager.js). Le cours duplique reste par ailleurs editable
+  // immediatement via `sessionOwnedCourseIds`, sans dependre de la prop
+  // parent — meme mecanique que pour `addCourse`.
   const duplicateCourse = async (id) => {
     if (!canEditCourses || addingCourse || courseBusyId || !isCourseEditable(id)) return;
     const source = linkedCourses.find(c => c.id === id);
@@ -587,6 +635,9 @@ export default function OfferWizard({
       setSessionCreatedCourseIds(prev => (prev.includes(created.id) ? prev : [...prev, created.id]));
       setSessionOwnedCourseIds(prev => (prev.includes(created.id) ? prev : [...prev, created.id]));
       setLinkedCourses(prev => [...prev, { ...created }]);
+      // V226 REVUE FINALE: meme remontee que `addCourse` — voir le commentaire
+      // du contrat de `onCoursesChanged` en tete de composant.
+      notifyCoursesChanged({ type: 'upsert', course: { ...created } });
       setForm(prev => ({
         ...prev,
         linked_course_ids: [...(prev.linked_course_ids || []), created.id]
@@ -677,6 +728,16 @@ export default function OfferWizard({
             ? { ...c, visible: true }
             : c
         )));
+        // V226 REVUE FINALE (defaut MOYEN 1): les horaires qui viennent d'etre
+        // ecrits (nom, jour, heure, lieu — et `visible: true` pour ceux crees
+        // dans cette session) sont remontes au parent. Sans cela, un horaire
+        // renomme ici gardait son nom d'avant a la reouverture de l'offre.
+        toPersist.forEach(c => notifyCoursesChanged({
+          type: 'upsert',
+          course: sessionCreatedCourseIds.includes(c.id)
+            ? { ...c, visible: true }
+            : { ...c }
+        }));
         setDirtyCourseIds([]);
         // V225 CORRECTIF 1: le basculement a eu lieu, ces cours sont desormais
         // des cours ordinaires. Les oublier evite de re-emettre `visible: true`

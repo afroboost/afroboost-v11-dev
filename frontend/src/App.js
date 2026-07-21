@@ -4610,7 +4610,14 @@ function App() {
         collectShipping: !!(offer.isProduct || offer.isPhysicalProduct || offer.type === 'product'),
         // V226: recopiees par le backend dans les metadata Stripe sous le
         // prefixe `variant_`. `null` quand l'offre ne propose aucune variante.
-        variants: variants || null
+        variants: variants || null,
+        // V226 REVUE FINALE: marqueur POSITIF d'achat audio/video. Un tel achat
+        // n'a ni adresse ni variante : sans ce drapeau, le webhook n'a aucun
+        // moyen de le distinguer d'un achat de COURS (qui, lui, ne doit creer
+        // aucune reservation) et la vente disparaissait de l'onglet Reservations,
+        // alors qu'avant la V226 handleSubmit y creait une ligne « Achat Audio ».
+        // Le serveur le retranscrit en metadata `v226_audio`.
+        isAudioPurchase: !!(offer && (offer.type === 'audio' || offer.type === 'video'))
       };
       // V224: `customerEmail` est volontairement ABSENT du payload.
       // Ne jamais l'envoyer a "" : Stripe rejette la chaine vide comme adresse
@@ -4663,8 +4670,15 @@ function App() {
     const v225UnitPrice = offer ? v223UnitPrice(offer) : 0;
     // V225 correctif: l'aiguillage est delegue au point de verite unique
     // v225IsDirectCheckout (App.js ~l.1248), partage avec le bouton de la carte
-    // (tache 5). Les deux constantes ci-dessus restent calculees : elles sont
-    // reutilisees plus bas pour lever la contrainte de date.
+    // (tache 5).
+    //
+    // V226 REVUE FINALE — correction d'un commentaire trompeur : les deux
+    // constantes ci-dessus ne sont PLUS relues nulle part. La levee de la
+    // contrainte de date, quelques lignes plus bas, redérive `isProduct`
+    // directement depuis `v225IsDirectCheckout(offer)`. Elles sont conservees
+    // telles quelles (aucune suppression de code) mais ne servent que de trace
+    // lisible du predicat historique ; ne pas les reintroduire dans une decision
+    // sans reverifier qu'elles disent la meme chose que v225IsDirectCheckout.
     if (v225IsDirectCheckout(offer)) {
       startProgressiveCheckout(offer, 1);
       return;
