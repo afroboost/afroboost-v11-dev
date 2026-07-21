@@ -3998,6 +3998,14 @@ async def stripe_webhook(request: Request):
                 if RESEND_AVAILABLE and RESEND_API_KEY and customer_email:
                     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=https://afroboost.com/?qr={new_code}&format=png"
                     chat_url = f"https://afroboost.com/?qr={new_code}"
+                    # V225: sans ce lien, le client vient de payer et n'a aucun
+                    # chemin evident vers la reservation de sa seance — l'email
+                    # ne pointait que vers le chat (?qr=).
+                    # f-string sur new_code, deja une chaine construite plus haut :
+                    # aucune valeur externe, donc aucun chemin qui puisse lever
+                    # dans le webhook (ou une exception priverait l'acheteur de
+                    # son code AFR et de ses credits).
+                    espace_url = f"https://afroboost.com/espace/{new_code}"  # V225
                     html = f"""<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;background:#0a0a0a;color:#fff;">
                         <div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:28px 24px;text-align:center;">
                             <h1 style="color:white;margin:0;font-size:24px;">Bienvenue chez Afroboost !</h1>
@@ -4020,9 +4028,15 @@ async def stripe_webhook(request: Request):
                                 </p>
                             </div>
 
+                            <!-- V225: BOUTON PRINCIPAL — RESERVER SA SEANCE -->
+                            <div style="text-align:center;margin:0 0 24px;">
+                                <a href="{espace_url}" style="display:inline-block;background:#d91cd2;color:white;padding:16px 36px;text-decoration:none;border-radius:12px;font-weight:bold;font-size:16px;">&#128197; Reserver ma seance</a>
+                                <p style="color:#a855f7;font-size:12px;margin:10px 0 0;line-height:1.5;">Ton espace personnel : choisis ta date et confirme en un clic.</p>
+                            </div>
+
                             <!-- BOUTON ACCES DIRECT CHAT -->
                             <div style="text-align:center;margin:0 0 28px;">
-                                <a href="{chat_url}" style="display:inline-block;background:#d91cd2;color:white;padding:14px 32px;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">Acceder a mon espace chat</a>
+                                <a href="{chat_url}" style="display:inline-block;background:transparent;color:#d91cd2;border:1px solid #d91cd2;padding:14px 32px;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">Acceder a mon espace chat</a>
                                 <p style="color:#666;font-size:11px;margin:10px 0 0;">Ce lien te connecte automatiquement avec ton code</p>
                             </div>
 
