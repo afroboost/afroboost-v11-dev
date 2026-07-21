@@ -3365,6 +3365,10 @@ class CreateCheckoutRequest(BaseModel):
     # la collection `discount_codes` du dashboard coach. Les deux systèmes sont
     # distincts et ne se connaissent pas.
     allowPromotionCodes: bool = False
+    # V225: nombre d'unites achetees (ex: 2 places pour un couple).
+    # Borne cote serveur : cet endpoint est public, la limite de l'interface
+    # ne protege rien.
+    quantity: int = 1
 
 @api_router.post("/create-checkout-session")
 async def create_checkout_session(request: CreateCheckoutRequest):
@@ -3437,6 +3441,9 @@ async def create_checkout_session(request: CreateCheckoutRequest):
     # round() et non int() : int(0.29 * 100) vaut 28 en virgule flottante.
     amount_cents = round(request.amount * 100)
 
+    # V225: 1..5. Un client peut poster ce qu'il veut ; le plafond est ici.
+    safe_quantity = max(1, min(5, int(request.quantity or 1)))
+
     # Préparer les metadata
     metadata = {
         "product_name": request.productName,
@@ -3466,7 +3473,7 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                     },
                     'unit_amount': amount_cents,
                 },
-                'quantity': 1,
+                'quantity': safe_quantity,  # V225
             }],
             mode='payment',
             success_url=success_url,
@@ -3516,7 +3523,7 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                         },
                         'unit_amount': amount_cents,
                     },
-                    'quantity': 1,
+                    'quantity': safe_quantity,  # V225: identique au chemin nominal
                 }],
                 mode='payment',
                 success_url=success_url,
@@ -3877,6 +3884,22 @@ async def stripe_webhook(request: Request):
                             f"« {product_name} » — plafonné à {V223_MAX_SESSIONS_REGEX}"
                         )
                         sessions_count = V223_MAX_SESSIONS_REGEX
+
+                # V225: la quantite est relue sur la session Stripe, jamais
+                # acceptee du client au moment du webhook — meme regle que V223
+                # pour les credits. Sans ce multiplicateur, un client achetant
+                # 3 packs de 10 paierait 3 fois et recevrait 10 credits.
+                purchased_qty = 1
+                try:
+                    _li = stripe.checkout.Session.list_line_items(session.id, limit=1)
+                    if _li and _li.data:
+                        purchased_qty = max(1, min(5, int(_li.data[0].quantity or 1)))
+                except Exception as _qty_err:
+                    logger.warning(f"[V225] Quantite illisible sur {session.id}: {_qty_err} — repli sur 1")
+                if purchased_qty > 1:
+                    sessions_count = sessions_count * purchased_qty
+                    logger.info(f"[V225] {purchased_qty} unites achetees -> {sessions_count} credits")
+
                 new_code = f"AFR-{str(uuid.uuid4())[:6].upper()}"
                 discount_doc = {"id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100, "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0, "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(), "source": "stripe_payment", "session_id": session.id}
                 await db.discount_codes.insert_one(discount_doc)
