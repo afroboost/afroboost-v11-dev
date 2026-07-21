@@ -27,6 +27,42 @@ const HINT_STYLE = { color: 'rgba(255,255,255,0.4)' };
 
 const WEEKDAYS = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
 
+// V224: cles des variantes produit, dans l'ordre d'affichage.
+const VARIANT_FIELDS = [
+  { key: 'sizes', placeholder: 'S, M, L, XL' },
+  { key: 'colors', placeholder: 'Noir, Blanc' },
+  { key: 'weights', placeholder: '0.5kg, 1kg' }
+];
+
+// V224: normalisation d'URL video pour la previsualisation.
+// Logique alignee sur MediaViewer.js (extractYouTubeId / getVideoType) sans
+// importer le module : YouTube (watch?v=, youtu.be, embed/), Vimeo, sinon brut.
+const extractYouTubeId = (url) => {
+  const watchMatch = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+  if (watchMatch) return watchMatch[1];
+  const shortMatch = url.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+  if (shortMatch) return shortMatch[1];
+  const embedMatch = url.match(/embed\/([a-zA-Z0-9_-]{11})/);
+  if (embedMatch) return embedMatch[1];
+  return null;
+};
+
+const toEmbedUrl = (url) => {
+  if (!url) return '';
+  const lower = url.toLowerCase();
+  if (lower.includes('youtube.com') || lower.includes('youtu.be')) {
+    const id = extractYouTubeId(url);
+    return id ? `https://www.youtube.com/embed/${id}?modestbranding=1&rel=0` : url;
+  }
+  if (lower.includes('vimeo.com')) {
+    // player.vimeo.com/video/ID est deja une URL d'embed valide.
+    if (lower.includes('player.vimeo.com')) return url;
+    const vimeoMatch = url.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+    return vimeoMatch ? `https://player.vimeo.com/video/${vimeoMatch[1]}` : url;
+  }
+  return url;
+};
+
 // V224: paliers de prix progressif — repris a l'identique de OffersManager.js (V223).
 const PROGRESSIVE_TIERS = [
   { key: 'price_early_bird', label: '✨ Early Bird (plus de 7 jours avant)' },
@@ -45,14 +81,30 @@ export default function OfferWizard({
   // tous les cours fournis par le parent restent affiches (le parent ne
   // transmet deja que les cours pertinents).
   isSuperAdmin,
-  coachEmail
+  coachEmail,
+  // V224: prop OPTIONNELLE. Si fournie, un bouton « Aide IA » apparait a cote
+  // du champ description (parite avec OffersManager.js). Absente, pas de bouton.
+  onEnhanceDescription
 }) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState(initialOffer || {});
+  // V224: chaine BRUTE saisie dans les champs variantes. Indispensable : sans
+  // elle, la valeur affichee est derivee du tableau normalise, ce qui efface la
+  // virgule a l'instant ou elle est tapee (« S, M » devenait « SM »).
+  const [variantsRaw, setVariantsRaw] = useState({});
+  const [aiLoading, setAiLoading] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setForm(initialOffer || {});
+      const offer = initialOffer || {};
+      setForm(offer);
+      // V224: pre-remplissage des chaines brutes depuis les tableaux existants.
+      const raw = {};
+      VARIANT_FIELDS.forEach(({ key }) => {
+        const arr = offer.variants?.[key];
+        if (Array.isArray(arr) && arr.length) raw[key] = arr.join(', ');
+      });
+      setVariantsRaw(raw);
       setStep(1);
     }
   }, [open, initialOffer]);
@@ -61,10 +113,31 @@ export default function OfferWizard({
 
   const set = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
 
-  const setVariant = (key, raw) => set('variants', {
-    ...(form.variants || {}),
-    [key]: raw.split(',').map(s => s.trim()).filter(Boolean)
-  });
+  // V224: on ecrit la chaine brute (pour l'affichage) ET le tableau splitte
+  // (pour la sauvegarde) en une seule frappe.
+  const setVariant = (key, raw) => {
+    setVariantsRaw(prev => ({ ...prev, [key]: raw }));
+    set('variants', {
+      ...(form.variants || {}),
+      [key]: raw.split(',').map(s => s.trim()).filter(Boolean)
+    });
+  };
+
+  // V224: amelioration IA de la description, deleguee au parent.
+  const handleEnhanceDescription = async () => {
+    if (!onEnhanceDescription || aiLoading) return;
+    const current = (form.description || '').trim();
+    if (!current) return;
+    setAiLoading(true);
+    try {
+      const improved = await onEnhanceDescription(current);
+      if (improved && typeof improved === 'string') set('description', improved);
+    } catch (err) {
+      console.error('[V224] Aide IA description echouee:', err);
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   const handleSave = () => {
     // Seule contrainte bloquante : le nom. Le backend le type `name: str`
@@ -190,7 +263,28 @@ export default function OfferWizard({
 
       {/* Description */}
       <div>
-        <label className="block text-xs mb-1" style={LABEL_STYLE}>Description</label>
+        <div className="flex items-center justify-between mb-1">
+          <label className="text-xs" style={LABEL_STYLE}>Description</label>
+          {/* V224: parite avec le bouton « Aide IA » de OffersManager.js */}
+          {onEnhanceDescription && (
+            <button
+              type="button"
+              onClick={handleEnhanceDescription}
+              disabled={aiLoading || !(form.description || '').trim()}
+              className="text-xs px-2 py-1 rounded-lg"
+              style={{
+                background: aiLoading ? 'rgba(139,92,246,0.2)' : 'rgba(217,28,210,0.2)',
+                border: '1px solid rgba(217,28,210,0.4)',
+                color: PINK,
+                cursor: aiLoading ? 'wait' : 'pointer',
+                opacity: !(form.description || '').trim() ? 0.4 : 1
+              }}
+              data-testid="ai-enhance-description"
+            >
+              {aiLoading ? '⏳ IA...' : '✨ Aide IA'}
+            </button>
+          )}
+        </div>
         <textarea
           value={form.description || ''}
           onChange={(e) => set('description', e.target.value)}
@@ -522,30 +616,19 @@ export default function OfferWizard({
               Variantes (séparées par virgule)
             </label>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <input
-                type="text"
-                value={(form.variants?.sizes || []).join(', ')}
-                onChange={(e) => setVariant('sizes', e.target.value)}
-                placeholder="S, M, L, XL"
-                style={INPUT_STYLE}
-                className="text-sm"
-              />
-              <input
-                type="text"
-                value={(form.variants?.colors || []).join(', ')}
-                onChange={(e) => setVariant('colors', e.target.value)}
-                placeholder="Noir, Blanc"
-                style={INPUT_STYLE}
-                className="text-sm"
-              />
-              <input
-                type="text"
-                value={(form.variants?.weights || []).join(', ')}
-                onChange={(e) => setVariant('weights', e.target.value)}
-                placeholder="0.5kg, 1kg"
-                style={INPUT_STYLE}
-                className="text-sm"
-              />
+              {VARIANT_FIELDS.map(({ key, placeholder }) => (
+                <input
+                  key={key}
+                  type="text"
+                  // V224: la chaine brute prime; le tableau ne sert que de
+                  // repli quand rien n'a encore ete saisi ni pre-rempli.
+                  value={variantsRaw[key] ?? (form.variants?.[key] || []).join(', ')}
+                  onChange={(e) => setVariant(key, e.target.value)}
+                  placeholder={placeholder}
+                  style={INPUT_STYLE}
+                  className="text-sm"
+                />
+              ))}
             </div>
           </div>
         </div>
@@ -590,7 +673,7 @@ export default function OfferWizard({
           <div className="mt-3" style={{ borderRadius: '8px', overflow: 'hidden' }}>
             {/YouTube|youtu\.be|vimeo/i.test(form.videoUrl) ? (
               <iframe
-                src={form.videoUrl.replace('watch?v=', 'embed/')}
+                src={toEmbedUrl(form.videoUrl)}
                 title="Apercu video"
                 style={{ width: '100%', aspectRatio: '16 / 9', border: 0 }}
                 allowFullScreen
@@ -611,7 +694,11 @@ export default function OfferWizard({
 
   return (
     <div
-      onClick={onCancel}
+      // V224: on ferme sur mousedown SUR l'overlay uniquement. Un `click` se
+      // declenche aussi quand le mousedown a eu lieu dans le panneau et le
+      // mouseup sur l'overlay (selection de texte relachee hors du panneau),
+      // ce qui detruisait toute la saisie.
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}
       style={{
         position: 'fixed', inset: 0, zIndex: 1000,
         background: 'rgba(0,0,0,0.75)',
