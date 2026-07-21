@@ -1237,6 +1237,10 @@ const V223_TIERS = {
 // V224: `courses`, `lang`, `startProgressiveCheckout` et `loading` sont fournis par
 // App via OffersSliderAutoPlay. Tous ont une valeur par defaut : un appelant qui ne
 // les passe pas obtient exactement le rendu d'avant la V224.
+// NOTE V224: `startProgressiveCheckout` est relaye jusqu'ici mais volontairement
+// NON consomme. L'aiguillage progressif se fait en un seul endroit, dans
+// handleSelectOffer ; le bouton se contente d'appeler onClick(offer). Dupliquer
+// le test ici court-circuitait le nettoyage d'etat du slider produits.
 const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang = 'fr', startProgressiveCheckout, loading = false }) => {
   const [showDescription, setShowDescription] = useState(false);
   const [showZoom, setShowZoom] = useState(false);
