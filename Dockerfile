@@ -4,7 +4,7 @@ COPY frontend/package.json frontend/package-lock.json* ./
 COPY frontend/craco.config.js ./
 RUN npm install --legacy-peer-deps
 COPY frontend/ ./
-RUN rm -rf node_modules/.cache && NODE_OPTIONS=--max-old-space-size=1024 CI=false npx craco build
+RUN rm -rf node_modules/.cache && NODE_OPTIONS=--max-old-space-size=768 GENERATE_SOURCEMAP=false CI=false npx craco build
 
 FROM python:3.11-slim AS production
 WORKDIR /app
