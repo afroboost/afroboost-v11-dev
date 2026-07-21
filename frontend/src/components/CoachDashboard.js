@@ -1066,7 +1066,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     name: "", price: 0, visible: true, description: "", keywords: "",
     images: ["", "", "", "", ""], // 5 champs d'images
     category: "service", isProduct: false, variants: null, tva: 0, shippingCost: 0, stock: -1,
-    duration_value: '', duration_unit: '', is_auto_prolong: true
+    duration_value: '', duration_unit: '', is_auto_prolong: true,
+    // V224: medias + metadonnees d'activite
+    videoUrl: '', linked_course_ids: [],
+    duration_minutes: '', location: '', max_participants: ''
   });
   const [editingOfferId, setEditingOfferId] = useState(null); // Pour mode édition
   const fileInputRef = useRef(null);
@@ -2339,7 +2342,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       price_last_minute: offer.price_last_minute ?? null,
       early_bird_days_before: offer.early_bird_days_before ?? 7,
       standard_hours_before: offer.standard_hours_before ?? 24,
-      pack_sessions: offer.pack_sessions ?? null
+      pack_sessions: offer.pack_sessions ?? null,
+      // V224
+      videoUrl: offer.videoUrl || '',
+      linked_course_ids: Array.isArray(offer.linked_course_ids) ? offer.linked_course_ids : [],
+      duration_minutes: offer.duration_minutes ?? '',
+      location: offer.location || '',
+      max_participants: offer.max_participants ?? '',
     });
     setEditingOfferId(offer.id);
     // Scroll vers le formulaire
@@ -2359,7 +2368,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // pré-remplie pour l'offre suivante.
       progressive_pricing: false, price_early_bird: null, price_standard: null,
       price_last_minute: null, early_bird_days_before: 7, standard_hours_before: 24,
-      pack_sessions: null
+      pack_sessions: null,
+      // V224
+      videoUrl: '', linked_course_ids: [],
+      duration_minutes: '', location: '', max_participants: ''
     });
     setEditingOfferId(null);
   };
@@ -2422,7 +2434,20 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         price_last_minute: v223Num(newOffer.price_last_minute),
         early_bird_days_before: v223Int(newOffer.early_bird_days_before, 7),
         standard_hours_before: v223Int(newOffer.standard_hours_before, 24),
-        pack_sessions: v223Int(newOffer.pack_sessions, null)
+        pack_sessions: v223Int(newOffer.pack_sessions, null),
+        // V224: medias. videoUrl existait deja dans les modeles backend mais
+        // n'etait jamais rempli par l'UI.
+        videoUrl: newOffer.videoUrl || "",
+        // V224: correction d'un bug preexistant — linked_course_ids etait coche
+        // dans le formulaire mais absent de cette liste blanche, donc les cours
+        // associes a la CREATION d'une offre etaient perdus.
+        linked_course_ids: Array.isArray(newOffer.linked_course_ids) ? newOffer.linked_course_ids : [],
+        // V224: metadonnees d'activite. null (et non 0) quand vide : le backend
+        // les type Optional[int], et 0 minute / 0 participant sont des valeurs
+        // legitimes qu'il ne faut pas confondre avec « non renseigne ».
+        duration_minutes: v223Int(newOffer.duration_minutes, null),
+        location: newOffer.location || "",
+        max_participants: v223Int(newOffer.max_participants, null)
       };
       console.log("[V61] Sending offerData:", JSON.stringify(offerData));
 
@@ -2456,7 +2481,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // pré-remplie pour l'offre suivante.
       progressive_pricing: false, price_early_bird: null, price_standard: null,
       price_last_minute: null, early_bird_days_before: 7, standard_hours_before: 24,
-      pack_sessions: null
+      pack_sessions: null,
+      // V224
+      videoUrl: '', linked_course_ids: [],
+      duration_minutes: '', location: '', max_participants: ''
       });
     } catch (err) {
       console.error("[V61] Erreur offre:", err);
