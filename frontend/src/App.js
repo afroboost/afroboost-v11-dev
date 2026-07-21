@@ -1235,6 +1235,23 @@ const v223UnitPrice = (offer) => {
     : offer.price;
 };
 
+// V225: point de verite unique de l'aiguillage achat direct.
+// Consomme par handleSelectOffer et par le bouton de la carte (tache 5) : les
+// deux DOIVENT decider a l'identique, sinon la carte propose un paiement que
+// handleSelectOffer refuse.
+//
+// Le test porte sur `isProduct`/`isPhysicalProduct` ET sur `type` : le modele
+// Offer (api/server.py:366) ne declare PAS de champ `type` et OfferCreate est
+// en extra="ignore", donc `type` est toujours absent d'une offre venant de la
+// base. Il n'est conserve ici que pour les pseudo-offres construites cote
+// client (achats audio/video, App.js ~5967 et ~6043), qui le posent en dur.
+const v225IsDirectCheckout = (offer) => {
+  if (!offer) return false;
+  const isProduct = offer.isProduct || offer.isPhysicalProduct
+    || offer.type === 'product' || offer.type === 'audio' || offer.type === 'video';
+  return !isProduct && v223UnitPrice(offer) > 0;
+};
+
 const V223_TIERS = {
   early_bird:  { label: '🎯 Early Bird', color: '#22c55e' },
   standard:    { label: 'Standard',      color: '#eab308' },
@@ -4158,7 +4175,11 @@ function App() {
     const v225IsProduct = offer && (offer.isProduct || offer.isPhysicalProduct
       || offer.type === 'product' || offer.type === 'audio' || offer.type === 'video');
     const v225UnitPrice = offer ? v223UnitPrice(offer) : 0;
-    if (offer && !v225IsProduct && v225UnitPrice > 0) {
+    // V225 correctif: l'aiguillage est delegue au point de verite unique
+    // v225IsDirectCheckout (App.js ~l.1248), partage avec le bouton de la carte
+    // (tache 5). Les deux constantes ci-dessus restent calculees : elles sont
+    // reutilisees plus bas pour lever la contrainte de date.
+    if (v225IsDirectCheckout(offer)) {
       startProgressiveCheckout(offer, 1);
       return;
     }
@@ -4179,7 +4200,14 @@ function App() {
 
     // v158/v159: FORCER la sélection d'une session AVANT de pouvoir choisir une offre
     // Sauf pour produits/audio/video qui ne nécessitent pas de session
-    const isProduct = offer && (offer.type === 'product' || offer.type === 'audio' || offer.type === 'video');
+    // V225: le test historique ne connait que `type`, champ qui n'existe pas
+    // dans le modele Offer (api/server.py:366) : il valait donc toujours faux
+    // pour une offre de la base, et tous les produits exigeaient une date que
+    // plus aucune interface ne permet de choisir depuis showSessions = false.
+    // `!(v225UnitPrice > 0)` est la negation EXACTE de la garde d'achat direct
+    // ci-dessus : il couvre 0 CHF mais aussi price undefined/null (NaN), qui
+    // tomberaient sinon dans la meme impasse.
+    const isProduct = v225IsProduct || !(v225UnitPrice > 0);
     if (!isProduct && (!selectedCourse || !selectedDates || selectedDates.length === 0)) {
       // v159: Mémoriser l'offre cliquée pour l'appliquer automatiquement dès qu'une session est choisie
       setPendingOffer(offer);
@@ -4298,7 +4326,13 @@ function App() {
     // Pour les produits physiques et audios, pas besoin de cours/dates
     const isPhysicalProduct = selectedOffer?.isProduct || selectedOffer?.isPhysicalProduct;
     const isAudioPurchase = selectedOffer?.type === 'audio'; // v54: achat audio autonome
-    if (!isPhysicalProduct && !isAudioPurchase && (!selectedCourse || selectedDates.length === 0)) return;
+    // V225: symetrique de la levee faite dans handleSelectOffer (~l.4210).
+    // Une offre gratuite (ou a price undefined/null) n'a plus aucune interface
+    // pour choisir une date depuis showSessions = false : exiger un cours ici
+    // ouvrirait le formulaire pour refuser la soumission en silence, le client
+    // remplissant tout sans jamais comprendre pourquoi rien ne se passe.
+    const v225IsFreeOffer = !(v223UnitPrice(selectedOffer) > 0);
+    if (!isPhysicalProduct && !isAudioPurchase && !v225IsFreeOffer && (!selectedCourse || selectedDates.length === 0)) return;
     if (!selectedOffer || !hasAcceptedTerms) return;
 
     // Direct validation - private fields only
