@@ -6345,6 +6345,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     API={API}
                     t={t}
                     courses={courses}
+                    // V226 CORRECTIF 1: permet au wizard d'offre de purger un
+                    // horaire supprime de la liste du dashboard, sinon
+                    // reproposee au rattachement et fatale a l'enregistrement
+                    // suivant (PUT /courses/{id} en 404).
+                    setCourses={setCourses}
                     isSuperAdmin={isSuperAdmin}
                     coachEmail={safeCoachUser?.email}
                     consumeCredit={consumeCredit}

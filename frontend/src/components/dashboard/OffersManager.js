@@ -25,6 +25,10 @@ const OffersManager = ({
   coachEmail,
   consumeCredit,
   courses = [],
+  // V226 CORRECTIF 1: prop OPTIONNELLE, le `setCourses` de CoachDashboard.
+  // Fournie, la suppression d'un horaire depuis le wizard purge la liste
+  // `courses` du dashboard. Absente, repli silencieux (voir onCoursesChanged).
+  setCourses,
   t
 }) => {
   const [aiLoading, setAiLoading] = React.useState(false);
@@ -527,6 +531,15 @@ const OffersManager = ({
         // V225: active l'edition des horaires dans l'etape 2 du wizard
         // (POST /courses a l'ajout, PUT /courses/{id} a l'enregistrement).
         API={API}
+        // V226 CORRECTIF 1: purge du cours supprime dans l'etat du dashboard.
+        // Sans cela, la prop `courses` — chargee une seule fois et jamais
+        // rafraichie — reproposerait l'horaire supprime dans « Ou rattacher un
+        // cours existant » : le rattacher puis enregistrer produit un 404 sur
+        // `PUT /courses/{id}`, ce qui fait echouer les horaires ET empeche
+        // l'ecriture de l'offre. Repli silencieux si `setCourses` est absent.
+        onCoursesChanged={setCourses
+          ? (courseId) => setCourses(prev => (prev || []).filter(c => c.id !== courseId))
+          : undefined}
       />
 
       {/* Conteneur scrollable pour les offres */}
