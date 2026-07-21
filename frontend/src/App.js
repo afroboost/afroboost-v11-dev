@@ -63,6 +63,14 @@ import { useDataCache, invalidateCache } from "./hooks/useDataCache";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
 
+// V224: cle localStorage marquant un aller-retour Stripe du parcours progressif.
+// Le parcours progressif ne pose PAS `pendingReservation` (il n'y a pas encore
+// de reservation), or l'heuristique historique du fallback partenaire deduit
+// « paiement coach » de l'absence de cette cle. Ce marqueur retablit la
+// distinction : sa presence signifie « achat CLIENT, ne pas propulser vers
+// l'espace Partenaire ».
+const V224_PROGRESSIVE_KEY = 'v224_progressive_checkout';
+
 // Configuration Admin - Vercel Compatible
 // v9.5.6: Liste des Super Admins autorisés
 const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
@@ -1234,14 +1242,17 @@ const V223_TIERS = {
 };
 
 // Offer Card for Horizontal Slider - With LED effect, Loupe, Info icon + Discrete dots
-// V224: `courses`, `lang`, `startProgressiveCheckout` et `loading` sont fournis par
-// App via OffersSliderAutoPlay. Tous ont une valeur par defaut : un appelant qui ne
-// les passe pas obtient exactement le rendu d'avant la V224.
+// V224: `courses`, `lang`, `startProgressiveCheckout`, `loading` et `checkoutBusy`
+// sont fournis par App via OffersSliderAutoPlay. Tous ont une valeur par defaut :
+// un appelant qui ne les passe pas obtient exactement le rendu d'avant la V224.
 // NOTE V224: `startProgressiveCheckout` est relaye jusqu'ici mais volontairement
 // NON consomme. L'aiguillage progressif se fait en un seul endroit, dans
 // handleSelectOffer ; le bouton se contente d'appeler onClick(offer). Dupliquer
 // le test ici court-circuitait le nettoyage d'etat du slider produits.
-const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang = 'fr', startProgressiveCheckout, loading = false }) => {
+// NOTE V224: le bouton se desactive sur `checkoutBusy`, PAS sur `loading` — voir
+// la declaration de checkoutBusy dans App. `loading` reste relaye tel quel pour
+// ne rien retirer a l'API du composant.
+const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang = 'fr', startProgressiveCheckout, loading = false, checkoutBusy = false }) => {
   const [showDescription, setShowDescription] = useState(false);
   const [showZoom, setShowZoom] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -1603,11 +1614,19 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
             {offer.location ? (
               <p className="text-xs mt-1" style={{ color: '#aaa' }}>📍 {offer.location}</p>
             ) : null}
-            {/* V224: `!= null` et non la veracite — `0 ?` masquerait une jauge
-                legitimement a zero (aucun inscrit pour l'instant). */}
+            {/* V224: `!= null` et non la veracite — une capacite de 0 (complet,
+                ou activite fermee aux inscriptions) est une valeur legitime que
+                `0 ?` masquerait.
+                V224 (revue finale): on affiche la CAPACITE, pas un compteur.
+                L'ancien rendu lisait `offer.participants_count`, champ qui
+                n'existe ni dans le modele Offer (api/server.py:365-421) ni dans
+                _enrich_offers_with_active_price — il valait donc toujours 0, et
+                une activite complete s'annoncait publiquement « 0/50 ». Compter
+                les inscrits demanderait une agregation cote serveur : chantier
+                separe, hors perimetre. */}
             {offer.max_participants != null ? (
               <p className="text-xs mt-1" style={{ color: '#aaa' }}>
-                👥 {offer.participants_count != null ? offer.participants_count : 0}/{offer.max_participants} participants
+                👥 {offer.max_participants} places
               </p>
             ) : null}
             {/* V224: prochaine seance, derivee des cours lies */}
@@ -1629,7 +1648,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
             <div className="mt-3 flex items-center justify-end">
               <button
                 type="button"
-                disabled={loading}
+                disabled={checkoutBusy}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (typeof onClick === 'function') {
@@ -1638,16 +1657,16 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 }}
                 className="text-xs px-3 py-2 rounded-lg font-semibold transition-all"
                 style={{
-                  background: loading ? '#5a2a58' : '#D91CD2',
+                  background: checkoutBusy ? '#5a2a58' : '#D91CD2',
                   color: '#fff',
-                  opacity: loading ? 0.7 : 1,
-                  cursor: loading ? 'wait' : 'pointer'
+                  opacity: checkoutBusy ? 0.7 : 1,
+                  cursor: checkoutBusy ? 'wait' : 'pointer'
                 }}
                 data-testid={`offer-reserve-${offer.id}`}
               >
                 {/* V224: retour visuel pendant l'appel reseau — un demarrage a
                     froid Vercel peut durer plusieurs secondes sur mobile. */}
-                {loading ? 'Un instant…' : `Réserver — ${v223UnitPrice(offer)} CHF`}
+                {checkoutBusy ? 'Un instant…' : `Réserver — ${v223UnitPrice(offer)} CHF`}
               </button>
             </div>
           </div>
@@ -1659,9 +1678,9 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
 
 // === OFFERS SLIDER WITH AUTO-PLAY ===
 // Carrousel horizontal avec défilement automatique pour montrer qu'il y a plusieurs offres
-// V224: `courses`, `lang`, `startProgressiveCheckout` et `loading` ne sont que
-// relayes vers OfferCardSlider — ce composant ne s'en sert pas lui-meme.
-const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOffer, courses = [], lang = 'fr', startProgressiveCheckout, loading = false }) => {
+// V224: `courses`, `lang`, `startProgressiveCheckout`, `loading` et `checkoutBusy`
+// ne sont que relayes vers OfferCardSlider — ce composant ne s'en sert pas lui-meme.
+const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOffer, courses = [], lang = 'fr', startProgressiveCheckout, loading = false, checkoutBusy = false }) => {
   const sliderRef = useRef(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -1778,6 +1797,7 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
             lang={lang}
             startProgressiveCheckout={startProgressiveCheckout}
             loading={loading}
+            checkoutBusy={checkoutBusy} /* V224 */
           />
         ))}
       </div>
@@ -2815,6 +2835,17 @@ function App() {
   const [pendingReservation, setPendingReservation] = useState(null);
   const [lastReservation, setLastReservation] = useState(null);
   const [loading, setLoading] = useState(false);
+  // V224: etat dedie au checkout progressif. Volontairement SEPARE de `loading`,
+  // qui est l'etat partage du parcours classique (formulaire, choix Carte/TWINT,
+  // reservation gratuite). Trois des sites qui font setLoading(true) partent
+  // ensuite en window.location.href sans jamais remettre false : au retour
+  // navigateur restaure depuis le bfcache, `loading` vaut encore true. Faire
+  // porter le bouton des cartes publiques sur `loading` figeait alors TOUTE la
+  // boutique, offres classiques comprises.
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
+  // V224: confirmation du parcours progressif (pas de reservation, donc pas de
+  // ticket SuccessOverlay a afficher — le client recoit son code par email).
+  const [progressiveConfirm, setProgressiveConfirm] = useState(null);
   const [appliedDiscount, setAppliedDiscount] = useState(null);
   const [hasSavedTicket, setHasSavedTicket] = useState(false); // Bouton flottant "Voir mon ticket"
 
@@ -3079,8 +3110,18 @@ function App() {
                       hash.includes('success=true') ||
                       hash.includes('welcome=true');
     
-    const isPartnerPayment = isSuccess && !localStorage.getItem('pendingReservation');
-    
+    // V224: le marqueur progressif exclut explicitement ce retour du fallback
+    // partenaire. Cet effet est declare AVANT celui qui affiche le ticket
+    // (~l.3470) et s'execute donc en premier ; s'il concluait « partenaire », il
+    // reecrivait l'URL en supprimant status et session_id, et le second effet ne
+    // trouvait plus rien a afficher. Le client voyait l'ecran de connexion
+    // Partenaire — ou pire, atterrissait dans le dashboard d'un coach deja
+    // connecte sur l'appareil.
+    const isProgressiveReturn = !!localStorage.getItem(V224_PROGRESSIVE_KEY);
+    const isPartnerPayment = isSuccess
+      && !localStorage.getItem('pendingReservation')
+      && !isProgressiveReturn;
+
     if (isPartnerPayment && !redirectIntent) {
       console.log('[APP] 🚀 v9.2.3 PROPULSION FALLBACK: Détection dans useEffect');
       
@@ -3112,6 +3153,22 @@ function App() {
       setLoginWelcomeMessage("🎉 Paiement validé ! Bienvenue Partenaire. Connectez-vous pour accéder à votre espace.");
       setShowCoachLogin(true);
     }
+  }, []);
+
+  // V224: restauration bfcache — un retour navigateur depuis Stripe ne rejoue
+  // aucun effet de montage, la page revient telle qu'elle a ete gelee. Sans ce
+  // reset, `loading` (parcours classique) et `checkoutBusy` (parcours
+  // progressif) restent bloques a true et toutes les cartes de la boutique
+  // deviennent inertes jusqu'a un rechargement manuel.
+  useEffect(() => {
+    const handlePageShow = (event) => {
+      if (event.persisted) {
+        setLoading(false);
+        setCheckoutBusy(false);
+      }
+    };
+    window.addEventListener('pageshow', handlePageShow);
+    return () => window.removeEventListener('pageshow', handlePageShow);
   }, []);
 
   // PWA Install Prompt State
@@ -3431,10 +3488,31 @@ function App() {
       window.history.replaceState({}, document.title, url.pathname);
     };
     
-    if (isPaymentSuccess && sessionId) {
+    // V224: marqueur du parcours progressif, lu UNE fois puis efface. Teste
+    // avant `pendingReservation` : startProgressiveCheckout efface cette
+    // derniere cle, les deux ne coexistent donc jamais pour un meme achat.
+    const progressiveRaw = localStorage.getItem(V224_PROGRESSIVE_KEY);
+
+    if (isPaymentSuccess && sessionId && progressiveRaw) {
+      // V224: parcours progressif — aucune reservation n'a ete creee, il n'y a
+      // donc aucun ticket a afficher. Le client recoit son code d'acces AFR par
+      // email (envoye par le webhook Stripe) et reserve ensuite depuis son
+      // espace. On lui montre une confirmation dediee plutot que le ticket
+      // minimal generique de la branche `else` plus bas.
+      localStorage.removeItem(V224_PROGRESSIVE_KEY);
+      let progressiveInfo = {};
+      try { progressiveInfo = JSON.parse(progressiveRaw) || {}; } catch (e) { /* marqueur illisible: confirmation generique */ }
+      setProgressiveConfirm({
+        offerName: progressiveInfo.offerName || null,
+        amount: progressiveInfo.amount != null ? progressiveInfo.amount : null,
+        sessionId
+      });
+      setTimeout(cleanUrl, 100);
+
+    } else if (isPaymentSuccess && sessionId) {
       // Paiement réussi - Afficher le ticket IMMÉDIATEMENT
       const pendingReservationData = localStorage.getItem('pendingReservation');
-      
+
       if (pendingReservationData) {
         const reservation = JSON.parse(pendingReservationData);
         
@@ -3524,6 +3602,9 @@ function App() {
     } else if (isPaymentCanceled) {
       // Paiement annulé - afficher un message
       localStorage.removeItem('pendingReservation');
+      // V224: sans cet effacement, un abandon laisserait le marqueur en place et
+      // le retour d'un achat CLASSIQUE ulterieur serait pris pour un progressif.
+      localStorage.removeItem(V224_PROGRESSIVE_KEY);
       setValidationMessage("Paiement annulé. Vous pouvez réessayer.");
       setTimeout(() => setValidationMessage(""), 4000);
       cleanUrl();
@@ -3982,9 +4063,11 @@ function App() {
     // V224: garde de ré-entrance — sans elle, un double-clic pendant l'appel
     // réseau (démarrage à froid Vercel possible) crée plusieurs sessions
     // Stripe et plusieurs lignes payment_transactions pour le même achat.
-    if (loading) return;
+    // V224: la garde porte sur `checkoutBusy` et NON sur `loading` — voir la
+    // declaration de checkoutBusy : un `loading` remanent s'auto-bloquait ici.
+    if (checkoutBusy) return;
     try {
-      setLoading(true);
+      setCheckoutBusy(true);
       // V224: efface toute réservation en attente laissée par un parcours
       // classique abandonné (retour navigateur après un checkout non finalisé).
       // Sans ce nettoyage, le handler de retour Stripe (~l.3229) réutiliserait
@@ -3992,6 +4075,16 @@ function App() {
       // réservation fantôme sur l'ancien cours, avec ticket et notification
       // au coach erronés.
       localStorage.removeItem('pendingReservation');
+      // V224: marqueur du parcours progressif. Il remplace `pendingReservation`
+      // comme preuve « ce retour Stripe est un achat CLIENT », que l'heuristique
+      // du fallback partenaire (V224_PROGRESSIVE_KEY plus bas) consulte pour ne
+      // pas propulser le client vers l'ecran de connexion Partenaire.
+      // Pose AVANT l'appel reseau : si la redirection part, la cle est la.
+      localStorage.setItem(V224_PROGRESSIVE_KEY, JSON.stringify({
+        offerName: offer.name,
+        amount: v223UnitPrice(offer),
+        ts: Date.now()
+      }));
       const payload = {
         productName: offer.name,
         amount: v223UnitPrice(offer),
@@ -4012,11 +4105,15 @@ function App() {
       if (res.data && res.data.url) {
         window.location.href = res.data.url;
       } else {
-        setLoading(false);
+        // V224: aucune redirection n'a eu lieu — on retire le marqueur, sinon il
+        // survivrait et fausserait le retour d'un achat ulterieur.
+        localStorage.removeItem(V224_PROGRESSIVE_KEY);
+        setCheckoutBusy(false);
         alert('Le paiement est momentanement indisponible. Merci de reessayer.');
       }
     } catch (err) {
-      setLoading(false);
+      localStorage.removeItem(V224_PROGRESSIVE_KEY); // V224
+      setCheckoutBusy(false);
       console.error('[V224] checkout progressif echoue', err);
       alert('Le paiement est momentanement indisponible. Merci de reessayer.');
     }
@@ -5210,6 +5307,57 @@ function App() {
           onClearTicket={clearSavedTicket}
         />
       )}
+      {/* V224: confirmation du parcours progressif. Distincte de SuccessOverlay,
+          qui rend un ticket de reservation (date, cours, QR) — donnees qui
+          n'existent pas encore ici : le client vient seulement d'acheter ses
+          credits et reservera depuis son espace. */}
+      {progressiveConfirm && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 100000,
+            background: 'rgba(10,4,14,0.92)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }}
+          className="p-4"
+          data-testid="v224-progressive-confirm"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6 text-center"
+            style={{
+              background: '#1a0a1f',
+              border: '1px solid rgba(217,28,210,0.35)',
+              boxShadow: '0 10px 50px rgba(217,28,210,0.35)'
+            }}
+          >
+            <div className="text-4xl mb-3">✅</div>
+            <h3 className="text-xl font-bold text-white mb-2">Paiement confirmé</h3>
+            {progressiveConfirm.offerName ? (
+              <p className="text-sm mb-1" style={{ color: 'rgba(255,255,255,0.75)' }}>
+                {progressiveConfirm.offerName}
+              </p>
+            ) : null}
+            {progressiveConfirm.amount != null ? (
+              <p className="text-2xl font-bold mb-4" style={{ color: '#D91CD2' }}>
+                CHF {progressiveConfirm.amount}.-
+              </p>
+            ) : null}
+            <p className="text-sm mb-2" style={{ color: 'rgba(255,255,255,0.85)' }}>
+              📧 Votre <strong>code d'accès</strong> vous est envoyé par email dans quelques instants.
+            </p>
+            <p className="text-sm mb-5" style={{ color: 'rgba(255,255,255,0.6)' }}>
+              Ouvrez ensuite votre espace avec ce code pour choisir la date de votre séance.
+            </p>
+            <button
+              type="button"
+              onClick={() => setProgressiveConfirm(null)}
+              className="w-full py-3 rounded-xl font-bold"
+              style={{ background: 'linear-gradient(135deg, #D91CD2, #FF2DAA)', color: '#fff', border: 'none' }}
+            >
+              J'ai compris
+            </button>
+          </div>
+        </div>
+      )}
       {false && showPaymentSuccessPage && lastReservation && (
         <PaymentSuccessPage
           reservation={lastReservation}
@@ -5458,6 +5606,7 @@ function App() {
                 lang={lang}
                 startProgressiveCheckout={startProgressiveCheckout}
                 loading={loading}
+                checkoutBusy={checkoutBusy} /* V224 */
               />
             </div>
           );
@@ -5711,6 +5860,7 @@ function App() {
               lang={lang}
               startProgressiveCheckout={startProgressiveCheckout}
               loading={loading}
+              checkoutBusy={checkoutBusy} /* V224 */
             />
           </div>
         )}
