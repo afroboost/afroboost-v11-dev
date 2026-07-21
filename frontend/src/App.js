@@ -4204,10 +4204,17 @@ function App() {
     // dans le modele Offer (api/server.py:366) : il valait donc toujours faux
     // pour une offre de la base, et tous les produits exigeaient une date que
     // plus aucune interface ne permet de choisir depuis showSessions = false.
-    // `!(v225UnitPrice > 0)` est la negation EXACTE de la garde d'achat direct
-    // ci-dessus : il couvre 0 CHF mais aussi price undefined/null (NaN), qui
-    // tomberaient sinon dans la meme impasse.
-    const isProduct = v225IsProduct || !(v225UnitPrice > 0);
+    // On appelle v225IsDirectCheckout plutot que de redériver le predicat a la
+    // main : redérivé, il faudrait le maintenir en phase avec l'original a
+    // chaque evolution — exactement la divergence que l'extraction du helper
+    // visait a supprimer. La negation couvre produits, 0 CHF, et price
+    // undefined/null (NaN), qui tomberaient sinon dans la meme impasse.
+    //
+    // V225 TODO: cette levee est INCONDITIONNELLE parce que showSessions vaut
+    // false. Si la grille de dates redevient un jour rendue, reconditionner :
+    // sinon une offre gratuite ayant des linked_course_ids sauterait le choix
+    // de date et creerait une reservation a courseId 'N/A'.
+    const isProduct = !v225IsDirectCheckout(offer);
     if (!isProduct && (!selectedCourse || !selectedDates || selectedDates.length === 0)) {
       // v159: Mémoriser l'offre cliquée pour l'appliquer automatiquement dès qu'une session est choisie
       setPendingOffer(offer);
