@@ -3769,8 +3769,49 @@ function App() {
     // Keep userName, userEmail, userWhatsapp for convenience
   };
 
+  // V224 — Parcours progressif : le client paie d'abord, reserve ensuite depuis
+  // /espace/<code>. Aucune reservation n'est creee ici.
+  const startProgressiveCheckout = async (offer) => {
+    try {
+      setLoading(true);
+      const payload = {
+        productName: offer.name,
+        amount: v223UnitPrice(offer),
+        originUrl: window.location.origin,
+        offerId: offer.id
+      };
+      // V224: `customerEmail` est volontairement ABSENT du payload.
+      // Ne jamais l'envoyer a "" : Stripe rejette la chaine vide comme adresse
+      // invalide, et le fallback carte-seule (api/server.py:3498) la relaie
+      // telle quelle — les deux tentatives echouent et le client ne peut plus
+      // payer. Omise, elle vaut None cote backend et Stripe Checkout collecte
+      // lui-meme l'email, que le webhook relit dans customer_details
+      // (api/server.py:3767).
+      //
+      // `reservationData` est absent pour la meme raison de conception : il n'y
+      // a pas de date choisie a ce stade.
+      const res = await axios.post(`${API}/create-checkout-session`, payload);
+      if (res.data && res.data.url) {
+        window.location.href = res.data.url;
+      } else {
+        setLoading(false);
+        alert('Le paiement est momentanement indisponible. Merci de reessayer.');
+      }
+    } catch (err) {
+      setLoading(false);
+      console.error('[V224] checkout progressif echoue', err);
+      alert('Le paiement est momentanement indisponible. Merci de reessayer.');
+    }
+  };
+
   // Sélection d'offre avec smooth scroll vers le formulaire "Vos informations"
   const handleSelectOffer = (offer) => {
+    // V224: une offre progressive court-circuite le choix d'horaire et le
+    // formulaire client — elle part directement en checkout.
+    if (offer && offer.progressive_pricing) {
+      startProgressiveCheckout(offer);
+      return;
+    }
     // v56: Toggle — si la même offre est déjà sélectionnée, on la désélectionne (ferme le formulaire)
     if (selectedOffer && offer && selectedOffer.id === offer.id && selectedOffer.name === offer.name) {
       setSelectedOffer(null);
@@ -5128,7 +5169,9 @@ function App() {
           // Afficher sessions UNIQUEMENT si: une offre est active OU si l'utilisateur filtre par "sessions" OU s'il n'y a pas d'offres
           const showSessions = activeFilter !== 'shop' && visibleCourses.length > 0 && (
             activeFilter === 'sessions' || !!activeOffer || filteredServices.length === 0
-          );
+          )
+          // V224: pas de grille d'horaires pour une offre progressive
+          && !activeOffer?.progressive_pricing;
 
           // --- BLOC SESSIONS ---
           const sessionsBlock = showSessions && (
