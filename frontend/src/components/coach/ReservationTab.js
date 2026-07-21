@@ -32,6 +32,7 @@ const ReservationTab = ({
     onValidateReservation,
     onDeleteReservation,
     onCycleHeadphone, // V185 F4: cycle 🎧 gris → rouge → vert → gris
+    onUpdateTracking, // V226: (reservationId, trackingNumber, shippingStatus) — suivi colis
     formatDateTime
   } = handlers;
 
@@ -132,6 +133,7 @@ const ReservationTab = ({
               onValidate={() => onValidateReservation(r.id)}
               onDelete={() => onDeleteReservation(r.id)}
               onCycleHeadphone={onCycleHeadphone || null} /* V191: brut, prend (reservation, guestIndex) */
+              onUpdateTracking={onUpdateTracking || null} /* V226 */
               formatDateTime={formatDateTime}
             />
           );
@@ -166,6 +168,7 @@ const ReservationTab = ({
                   onValidate={() => onValidateReservation(r.id)}
                   onDelete={() => onDeleteReservation(r.id)}
                   onCycleHeadphone={onCycleHeadphone || null} /* V191: brut, prend (reservation, guestIndex) */
+                  onUpdateTracking={onUpdateTracking || null} /* V226 */
                   formatDateTime={formatDateTime}
                 />
               );
@@ -181,6 +184,111 @@ const ReservationTab = ({
 };
 
 // === SOUS-COMPOSANTS MÉMOÏSÉS ===
+
+// V226: `shippingAddress` existe sous DEUX formes en base, selon l'époque du document.
+//  1. Chaîne libre — l'ancien formulaire vitrine (App.js:4886) envoie le contenu brut
+//     d'un <input type="text"> ; le modèle backend la déclare `Optional[str]`
+//     (server.py:521). C'est aussi la forme écrite par le webhook V226
+//     (server.py:4081), qui pré-joint les composants Stripe avec ", ".
+//  2. Objet — jamais écrit par le code actuel, mais une adresse Stripe brute
+//     (`{name, address: {line1, postal_code, city, country}}`) est la forme naturelle
+//     si un import ou un correctif futur en dépose une. On la met à plat plutôt que
+//     de laisser React lever « Objects are not valid as a React child », qui
+//     casserait tout l'onglet — donc aussi les réservations de cours de la page.
+// Une réservation ancienne sans le champ retourne '' et n'affiche rien de cassé.
+const formatShippingAddress = (raw) => {
+  if (!raw) return '';
+  if (typeof raw === 'string') return raw.trim();
+  if (typeof raw === 'object') {
+    const a = (raw.address && typeof raw.address === 'object') ? raw.address : raw;
+    return [
+      raw.name, a.line1, a.line2,
+      [a.postal_code, a.city].filter(Boolean).join(' '),
+      a.state, a.country
+    ].filter(v => typeof v === 'string' && v.trim()).join(', ');
+  }
+  return String(raw);
+};
+
+// V226: `variantsText` est déjà calculé côté serveur (webhook) et côté vitrine, mais
+// `selectedVariants` diverge : dict `{taille: "M"}` (modèle legacy server.py:519 et
+// webhook V226) ou liste de dicts (modèle actif reservation_routes.py:502). Les deux
+// sont mises à plat ici, `variantsText` restant prioritaire quand il est présent.
+const formatVariants = (r) => {
+  if (r.variantsText && typeof r.variantsText === 'string' && r.variantsText.trim()) return r.variantsText.trim();
+  const v = r.selectedVariants;
+  if (!v || typeof v !== 'object') return '';
+  const pairs = (obj) => Object.entries(obj).map(([k, val]) => `${k}: ${val}`).join(', ');
+  if (Array.isArray(v)) return v.filter(o => o && typeof o === 'object').map(pairs).filter(Boolean).join(' — ');
+  return pairs(v);
+};
+
+// V226: signal FIABLE de commande physique, distinct du booléen `isProduct` calculé
+// plus haut. `isProduct` vaut vrai dès que `shippingStatus !== 'pending'`, donc aussi
+// pour un document ancien où le champ est simplement absent (undefined !== 'pending').
+// Monter le bloc d'expédition sur ce booléen ferait apparaître une adresse vide et un
+// formulaire de colis sur des réservations de COURS anciennes — la régression exacte à
+// éviter. On exige donc une preuve positive d'achat physique. Le badge 🛒 existant
+// n'est pas touché : sa condition reste celle d'avant.
+const hasShippingData = (r) => !!(
+  r.isProduct === true ||
+  (typeof r.shippingAddress === 'string' ? r.shippingAddress.trim() : r.shippingAddress) ||
+  (r.variantsText && String(r.variantsText).trim()) ||
+  r.trackingNumber ||
+  (r.selectedVariants && typeof r.selectedVariants === 'object' && Object.keys(r.selectedVariants).length > 0)
+);
+
+// V226: bloc expédition — taille/variantes, adresse, et saisie du suivi de colis.
+// Rendu UNIQUEMENT quand hasShippingData est vrai : aucun de ces nœuds n'est monté
+// pour une réservation de cours, dont l'affichage reste strictement identique.
+const ShippingBlock = memo(({ reservation: r, onUpdateTracking }) => {
+  const address = formatShippingAddress(r.shippingAddress);
+  const variants = formatVariants(r);
+  const inputStyle = {
+    background: '#0a0a0f', border: '1px solid #333',
+    borderRadius: '12px', color: '#FFFFFF'
+  };
+  return (
+    <div className="mt-2 pt-2 border-t border-white/10 space-y-1.5" data-testid="shipping-block">
+      {variants && (
+        <p className="text-xs" style={{ color: '#F0A8EE' }}>📏 {variants}</p>
+      )}
+      <p className="text-xs whitespace-pre-line" style={{ color: '#AAAAAA' }}>
+        📮 {address || <span className="italic opacity-60">Adresse non renseignée</span>}
+      </p>
+      {onUpdateTracking && (
+        <div className="flex gap-2 items-center pt-1">
+          <input
+            type="text"
+            placeholder="N° de suivi"
+            defaultValue={r.trackingNumber || ''}
+            onBlur={(e) => {
+              const next = e.target.value.trim();
+              if (next !== (r.trackingNumber || '')) {
+                onUpdateTracking(r.id, next, r.shippingStatus || 'pending');
+              }
+            }}
+            className="v224-input flex-1 min-w-0 px-2 py-1 text-xs"
+            style={inputStyle}
+            data-testid="tracking-input"
+          />
+          <select
+            value={r.shippingStatus || 'pending'}
+            onChange={(e) => onUpdateTracking(r.id, r.trackingNumber || '', e.target.value)}
+            className="v224-input px-2 py-1 text-xs"
+            style={inputStyle}
+            data-testid="shipping-status-select"
+          >
+            <option value="pending">📦 À expédier</option>
+            <option value="shipped">🚚 Expédié</option>
+            <option value="delivered">✅ Livré</option>
+          </select>
+        </div>
+      )}
+    </div>
+  );
+});
+ShippingBlock.displayName = 'ShippingBlock';
 
 // V185 F4: Bouton 🎧 Casque cyclique (gris → rouge → vert → gris)
 const HeadphoneToggle = memo(({ status, onClick, compact, label }) => {
@@ -238,7 +346,7 @@ const HeadphoneRow = memo(({ reservation, onCycle, compact }) => {
 });
 HeadphoneRow.displayName = 'HeadphoneRow';
 
-const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete, onCycleHeadphone, formatDateTime }) => (
+const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete, onCycleHeadphone, onUpdateTracking, formatDateTime }) => (
   <div className={`p-4 rounded-lg glass ${r.validated ? 'border border-green-500/30' : 'border border-purple-500/20'}`}>
     <div className="flex justify-between items-start mb-3">
       <div className="min-w-0 flex-1">
@@ -302,8 +410,12 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
       ) : r.source && (
         <p>📍 Source: {r.source}</p>
       )}
+      {/* V226: où expédier et dans quelle taille — commandes physiques uniquement */}
+      {hasShippingData(r) && (
+        <ShippingBlock reservation={r} onUpdateTracking={onUpdateTracking} />
+      )}
     </div>
-    
+
     {/* V191: Rangée casques — 1 toggle par personne (abonné + guests) */}
     {onCycleHeadphone && (
       <div className="mb-3">
@@ -330,7 +442,8 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
   </div>
 ));
 
-const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, onCycleHeadphone, formatDateTime }) => (
+const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, onCycleHeadphone, onUpdateTracking, formatDateTime }) => (
+  <>
   <tr className="hover:bg-white/5">
     <td className="py-3 text-pink-400 font-medium">
       <div>{r.reservationCode || '-'}</div>
@@ -425,6 +538,17 @@ const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, 
       </div>
     </td>
   </tr>
+  {/* V226: seconde ligne d'expédition, montée uniquement pour une commande
+      physique. Une réservation de cours ne rend que le <tr> ci-dessus, à
+      l'identique de l'existant — aucune cellule ni ligne vide n'est ajoutée. */}
+  {hasShippingData(r) && (
+    <tr className="hover:bg-white/5">
+      <td colSpan={7} className="pb-3 pt-0">
+        <ShippingBlock reservation={r} onUpdateTracking={onUpdateTracking} />
+      </td>
+    </tr>
+  )}
+  </>
 ));
 
 export default memo(ReservationTab);
