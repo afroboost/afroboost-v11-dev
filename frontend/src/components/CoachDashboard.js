@@ -2349,6 +2349,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       duration_minutes: offer.duration_minutes ?? '',
       location: offer.location || '',
       max_participants: offer.max_participants ?? '',
+      // V224 (revue finale): sans ce report, `position` est absent de l'etat du
+      // formulaire, donc absent de offerData, donc ecrase a None par le
+      // $set: offer.model_dump() de PUT /offers/{id}. L'offre modifiee sautait
+      // en fin de grille ET en fin de vitrine publique, la V224 triant sur ce
+      // champ. `??` et non `||` : la position 0 est la premiere place, legitime,
+      // et `0 || null` vaudrait null.
+      position: offer.position ?? null,
     });
     setEditingOfferId(offer.id);
     // Scroll vers le formulaire
@@ -2455,7 +2462,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // legitimes qu'il ne faut pas confondre avec « non renseigne ».
         duration_minutes: v223Int(src.duration_minutes, null),
         location: src.location || "",
-        max_participants: v223Int(src.max_participants, null)
+        max_participants: v223Int(src.max_participants, null),
+        // V224 (revue finale): `position` doit traverser la liste blanche, sinon
+        // l'ordre range a la main via les fleches ▲▼ est perdu des la premiere
+        // modification de l'offre. `??` et non `||` : la position 0 est valide.
+        position: src.position ?? null
       };
       console.log("[V61] Sending offerData:", JSON.stringify(offerData));
 
