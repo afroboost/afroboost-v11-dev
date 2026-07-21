@@ -3976,6 +3976,10 @@ async def stripe_webhook(request: Request):
                 stripe_customer_id = None
                 stripe_payment_method = None
                 amount_chf = 0.0
+                # V226: initialise AVANT le try — le bloc commande physique plus
+                # bas la relit, et un echec du retrieve laisserait sinon un nom
+                # non defini (NameError dans le webhook).
+                full_session = None  # V226
                 try:
                     full_session = stripe.checkout.Session.retrieve(
                         session.id,
@@ -4019,6 +4023,131 @@ async def stripe_webhook(request: Request):
                 }
                 await db.subscriptions.insert_one(subscription_data)
                 logger.info(f"[PAYMENT] Subscription auto-creee: {customer_email} - {product_name} ({sessions_count} seances) auto_renew={subscription_data['auto_renew']}")
+
+                # V226: la commande physique revient dans l'onglet Reservations.
+                #
+                # Depuis le passage des produits en achat direct, un t-shirt paye
+                # ne creait plus aucun document `reservations` : le coach perdait
+                # la ligne, l'adresse, la taille et tout le suivi d'expedition.
+                #
+                # PLACEMENT: ce bloc est volontairement APRES la creation du code
+                # AFR (discount_codes) et de l'abonnement (subscriptions). Tout ce
+                # que le client a paye lui est deja acquis quand on entre ici.
+                # ENVELOPPE: tout est dans un try/except Exception qui se contente
+                # de journaliser, sur le modele du bloc email. Un webhook qui leve
+                # est un client qui a paye et ne recoit ni code ni credits.
+                try:
+                    # --- Adresse de livraison, SANS nouvel appel Stripe ---
+                    # Le piege de la cle: create_checkout_session lit d'abord
+                    # partner_payment_config et ne retombe sur STRIPE_SECRET_KEY
+                    # qu'ensuite. Un retrieve fait ici avec la cle globale echoue
+                    # des qu'un partenaire a renseigne la sienne — c'est le defaut
+                    # rattrape en V225 sur la quantite. On n'ajoute donc AUCUN
+                    # appel: l'adresse est lue dans l'objet `session` de
+                    # l'evenement, qui la porte deja (comme customer_details plus
+                    # haut). Selon la version d'API du endpoint Stripe elle est
+                    # sous `shipping_details` (historique) ou sous
+                    # `collected_information.shipping_details` (2025-03-31+) : on
+                    # tente les deux. `full_session` n'est qu'un dernier repli, et
+                    # seulement s'il a ete obtenu — jamais un appel de plus.
+                    _ship = None
+                    for _src in (session, full_session):
+                        if not _src:
+                            continue
+                        _ship = (_src.get("collected_information") or {}).get("shipping_details") \
+                            or _src.get("shipping_details")
+                        if _ship:
+                            break
+
+                    # --- Variantes: posees en metadata par le checkout (tache 3) ---
+                    _variants = {}
+                    for _mk, _mv in (metadata or {}).items():
+                        if str(_mk).startswith("variant_"):
+                            _variants[str(_mk)[len("variant_"):]] = str(_mv)
+
+                    # Un achat de COURS n'a ni adresse ni variante: il ne cree
+                    # aucune reservation ici, volontairement — le client reserve
+                    # sa date depuis /espace/<code>.
+                    if _ship or _variants:
+                        _addr = (_ship or {}).get("address") or {}
+                        _addr_parts = [
+                            (_ship or {}).get("name") or "",
+                            _addr.get("line1") or "",
+                            _addr.get("line2") or "",
+                            " ".join(x for x in [(_addr.get("postal_code") or ""), (_addr.get("city") or "")] if x),
+                            _addr.get("state") or "",
+                            _addr.get("country") or "",
+                        ]
+                        _shipping_address = ", ".join(p for p in _addr_parts if p)
+                        _variants_text = ", ".join(f"{k}: {v}" for k, v in _variants.items())
+
+                        # coach_id: l'onglet Reservations filtre dessus. Sans lui
+                        # la commande serait invisible pour son proprietaire.
+                        _coach_id = "bassi_default"
+                        if metadata.get("offer_id"):
+                            _offer_doc = await db.offers.find_one(
+                                {"id": metadata.get("offer_id")}, {"_id": 0, "coach_id": 1}
+                            )
+                            if _offer_doc and _offer_doc.get("coach_id"):
+                                _coach_id = _offer_doc["coach_id"]
+
+                        _amount_total = amount_chf or (float(session.get("amount_total") or 0) / 100.0)
+                        _now_iso = datetime.now(timezone.utc).isoformat()
+                        _buyer_name = (session.get("customer_details") or {}).get("name") \
+                            or metadata.get("customer_name") \
+                            or (customer_email.split("@")[0] if customer_email else "Client")
+
+                        _reservation_doc = {
+                            "id": str(uuid.uuid4()),
+                            "reservationCode": f"AF{uuid.uuid4().hex[:8].upper()}",
+                            "userName": _buyer_name,
+                            "userEmail": customer_email,
+                            "userWhatsapp": (session.get("customer_details") or {}).get("phone") or "",
+                            # courseName est la seule ligne « quoi » que la carte
+                            # de l'onglet affiche: on y met le nom du produit.
+                            "courseName": product_name,
+                            "courseTime": "",
+                            "datetime": _now_iso,
+                            "offerName": product_name,
+                            "totalPrice": _amount_total,
+                            "quantity": purchased_qty,
+                            "validated": False,
+                            "validatedAt": None,
+                            "createdAt": _now_iso,
+                            "selectedDates": [],
+                            "selectedDatesText": None,
+                            # Toujours un dict (meme vide) pour une commande
+                            # physique: c'est la valeur sur laquelle
+                            # ReservationTab teste `isProduct` cote client, et
+                            # None y serait falsy.
+                            "selectedVariants": _variants,
+                            "variantsText": _variants_text,
+                            "shippingAddress": _shipping_address,
+                            "isProduct": True,
+                            # Etat de depart du workflow d'expedition du coach.
+                            "shippingStatus": "pending",
+                            "trackingNumber": None,
+                            "source": "stripe_webhook",
+                            "type": "achat_direct",
+                            "coach_id": _coach_id,
+                            "stripe_session_id": session.id,
+                        }
+                        # Upsert sur la session Stripe: Stripe rejoue ses webhooks,
+                        # et un insert sec creerait une commande en double.
+                        await db.reservations.update_one(
+                            {"stripe_session_id": session.id},
+                            {"$setOnInsert": _reservation_doc},
+                            upsert=True,
+                        )
+                        logger.info(
+                            f"[V226] Commande physique -> reservations: "
+                            f"{_reservation_doc['reservationCode']} ({product_name}) "
+                            f"coach={_coach_id} variantes={_variants_text or 'aucune'}"
+                        )
+                except Exception as _v226_err:
+                    # Jamais bloquant: le code AFR et les credits sont deja crees.
+                    logger.warning(f"[V226] Report de la commande dans reservations echoue: {_v226_err}")
+
                 # v163: EMAIL CONFIRMATION — QR code (double usage) + Guide de connexion au chat
                 if RESEND_AVAILABLE and RESEND_API_KEY and customer_email:
                     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=https://afroboost.com/?qr={new_code}&format=png"
