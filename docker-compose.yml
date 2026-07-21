@@ -11,6 +11,12 @@ services:
       - DB_NAME=${DB_NAME:-afroboost_db}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      # V223: secret de signature propre à l'endpoint /api/webhook/stripe.
+      # Distinct de STRIPE_WEBHOOK_SECRET ci-dessus, qui appartient à
+      # /api/stripe/webhook : Stripe émet un secret par endpoint.
+      # Tant qu'il est vide, le webhook reste non authentifié (comportement
+      # actuel) et un avertissement est journalisé à chaque appel.
+      - STRIPE_WEBHOOK_SECRET_CHECKOUT=${STRIPE_WEBHOOK_SECRET_CHECKOUT:-}
       - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
       - VAPID_CLAIMS_EMAIL=${VAPID_CLAIMS_EMAIL:-contact@afroboost.ch}

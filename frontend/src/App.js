@@ -63,6 +63,14 @@ import { useDataCache, invalidateCache } from "./hooks/useDataCache";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
 
+// V224: cle localStorage marquant un aller-retour Stripe du parcours progressif.
+// Le parcours progressif ne pose PAS `pendingReservation` (il n'y a pas encore
+// de reservation), or l'heuristique historique du fallback partenaire deduit
+// « paiement coach » de l'absence de cette cle. Ce marqueur retablit la
+// distinction : sa presence signifie « achat CLIENT, ne pas propulser vers
+// l'espace Partenaire ».
+const V224_PROGRESSIVE_KEY = 'v224_progressive_checkout';
+
 // Configuration Admin - Vercel Compatible
 // v9.5.6: Liste des Super Admins autorisés
 const SUPER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
@@ -660,7 +668,14 @@ function parseMediaUrl(url) {
   // Video files - MP4, WebM, MOV, AVI
   const videoExtensions = ['.mp4', '.webm', '.mov', '.avi', '.m4v', '.ogv'];
   const lowerUrl = trimmedUrl.toLowerCase();
-  if (videoExtensions.some(ext => lowerUrl.includes(ext))) {
+  // V224: l'extension n'est reconnue qu'en FIN de chemin, avant une eventuelle
+  // chaine de requete (?) ou une ancre (#). L'ancien `includes()` cherchait une
+  // sous-chaine n'importe ou : une image hebergee sur un domaine `cdn.movie...`
+  // ou dans un dossier `/x.movies/` etait rendue en <video> noir, sans repli.
+  // Les URL d'upload de la plateforme sont de la forme /api/files/{id}/{nom.ext},
+  // l'extension y est bien en fin de chemin : aucun cas d'usage n'est perdu.
+  const lowerPath = lowerUrl.split('#')[0].split('?')[0];
+  if (videoExtensions.some(ext => lowerPath.endsWith(ext))) {
     return { type: 'video', url: trimmedUrl };
   }
   
@@ -1207,11 +1222,42 @@ const OfferCard = ({ offer, selected, onClick }) => {
   );
 };
 
+// V223: libellé et couleur du palier tarifaire actif
+// V223: prix unitaire effectif d'une offre. Point de vérité unique, utilisé
+// pour l'affichage ET pour le calcul du total, afin que le prix montré au
+// client soit toujours celui qui lui sera débité. Le serveur recalcule ce
+// même prix au moment du paiement (compute_active_price) : cette fonction ne
+// fait donc jamais autorité, elle reflète.
+const v223UnitPrice = (offer) => {
+  if (!offer) return 0;
+  return (offer.progressive_pricing && offer.active_price != null)
+    ? offer.active_price
+    : offer.price;
+};
+
+const V223_TIERS = {
+  early_bird:  { label: '🎯 Early Bird', color: '#22c55e' },
+  standard:    { label: 'Standard',      color: '#eab308' },
+  last_minute: { label: '🔥 Last Minute', color: '#ef4444' },
+};
+
 // Offer Card for Horizontal Slider - With LED effect, Loupe, Info icon + Discrete dots
-const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
+// V224: `courses`, `lang`, `startProgressiveCheckout`, `loading` et `checkoutBusy`
+// sont fournis par App via OffersSliderAutoPlay. Tous ont une valeur par defaut :
+// un appelant qui ne les passe pas obtient exactement le rendu d'avant la V224.
+// NOTE V224: `startProgressiveCheckout` est relaye jusqu'ici mais volontairement
+// NON consomme. L'aiguillage progressif se fait en un seul endroit, dans
+// handleSelectOffer ; le bouton se contente d'appeler onClick(offer). Dupliquer
+// le test ici court-circuitait le nettoyage d'etat du slider produits.
+// NOTE V224: le bouton se desactive sur `checkoutBusy`, PAS sur `loading` — voir
+// la declaration de checkoutBusy dans App. `loading` reste relaye tel quel pour
+// ne rien retirer a l'API du composant.
+const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang = 'fr', startProgressiveCheckout, loading = false, checkoutBusy = false }) => {
   const [showDescription, setShowDescription] = useState(false);
   const [showZoom, setShowZoom] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  // V224: repli si le fichier video est illisible (404, codec non supporte).
+  const [videoError, setVideoError] = useState(false);
   const defaultImage = "https://picsum.photos/seed/default/400/300";
   
   // PRIORITÉ: offer.images[0] > offer.thumbnail > defaultImage
@@ -1241,7 +1287,111 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
     e.stopPropagation();
     setCurrentImageIndex(prev => prev < images.length - 1 ? prev + 1 : 0);
   };
-  
+
+  // V224: type du media courant. Seuls les fichiers video lisibles nativement
+  // (.mp4/.webm/.mov/...) changent de rendu ; YouTube, Vimeo et les images
+  // conservent strictement le rendu <img> d'origine.
+  const currentMedia = parseMediaUrl(currentImage);
+  // V224: une video qui echoue au chargement retombe sur la branche <img>, qui
+  // elle-meme retombe sur defaultImage via son onError — plus de cadre noir.
+  const isVideo = currentMedia && currentMedia.type === 'video' && !videoError;
+
+  // V224: on repart d'une video "saine" des que le media affiche change.
+  useEffect(() => {
+    setVideoError(false);
+  }, [currentImage]);
+
+  // V224: ratio MESURE sur les metadonnees reelles (videoWidth/videoHeight),
+  // jamais deduit de l'URL — une video 9:16 doit rester en portrait.
+  // On se contente de MEMORISER ce ratio : `loadedmetadata` se declenche des le
+  // chargement de la page (preload="metadata"), donc hors plein ecran, la ou
+  // screen.orientation.lock() rejette systematiquement. Le verrouillage est
+  // reporte au passage effectif en plein ecran (handlePlay).
+  const isLandscapeRef = useRef(false);
+  const videoRef = useRef(null);
+
+  const handleMeta = (e) => {
+    const v = e.currentTarget;
+    if (!v.videoWidth || !v.videoHeight) return;
+    isLandscapeRef.current = v.videoWidth > v.videoHeight;
+  };
+
+  // V224: deverrouillage de l'orientation. Sans lui, le visiteur ressortirait de
+  // la video avec l'orientation de son telephone figee en paysage.
+  const unlockOrientation = () => {
+    try {
+      if (window.screen && window.screen.orientation && window.screen.orientation.unlock) {
+        window.screen.orientation.unlock();
+      }
+    } catch (_) { /* ignore */ }
+  };
+
+  // V224: passage en plein ecran a la lecture. Chaque prefixe navigateur est
+  // tente ; un echec est avale pour ne jamais interrompre la lecture.
+  const handlePlay = (e) => {
+    const el = e.currentTarget;
+    const req = el.requestFullscreen || el.webkitEnterFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+    if (!req) return;
+    try {
+      Promise.resolve(req.call(el))
+        .then(() => {
+          // V224: la rotation est un confort, jamais un prerequis. Elle n'est
+          // tentee qu'UNE FOIS le plein ecran obtenu, et seulement pour une
+          // video paysage. iOS Safari n'expose pas l'API ou rejette : c'est un
+          // cas normal, avale silencieusement.
+          if (!isLandscapeRef.current) return;
+          if (!(window.screen && window.screen.orientation && window.screen.orientation.lock)) return;
+          Promise.resolve(window.screen.orientation.lock('landscape')).catch(() => {});
+        })
+        .catch(() => {});
+    } catch (_) { /* ignore */ }
+  };
+
+  // V224: sortie du plein ecran → deverrouillage. `fullscreenchange` couvre
+  // Android/desktop, `webkitendfullscreen` couvre le lecteur natif iOS.
+  useEffect(() => {
+    if (!isVideo) return undefined;
+    const el = videoRef.current;
+    const onFullscreenChange = () => {
+      const fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
+      if (!fsEl) unlockOrientation();
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+    if (el) el.addEventListener('webkitendfullscreen', unlockOrientation);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', onFullscreenChange);
+      if (el) el.removeEventListener('webkitendfullscreen', unlockOrientation);
+      // V224: filet de securite — un demontage pendant le plein ecran ne doit
+      // pas laisser l'orientation verrouillee.
+      unlockOrientation();
+    };
+  }, [isVideo]);
+
+  // V224: prochaine seance, derivee du premier cours lie a l'offre.
+  // getNextOccurrences retourne des objets Date (pas des objets { label }) :
+  // le formatage passe par formatDate(date, course.time, lang), comme
+  // renderDates le fait deja pour la liste d'horaires.
+  const nextSessionLabel = (() => {
+    const linkedIds = Array.isArray(offer.linked_course_ids) ? offer.linked_course_ids : [];
+    if (!linkedIds.length || !Array.isArray(courses) || !courses.length) return null;
+    const linked = linkedIds.map(id => courses.find(c => c && c.id === id)).filter(Boolean);
+    if (!linked.length) return null;
+    const course = linked[0];
+    if (course.weekday == null) return null;
+    const next = getNextOccurrences(course.weekday, 1)[0];
+    if (!next) return null;
+    // V224: formatDate concatene " • <heure>" ; sans heure renseignee on evite
+    // le separateur orphelin en formatant la date seule.
+    if (!course.time) {
+      return next.toLocaleDateString(lang === 'de' ? 'de-CH' : lang === 'en' ? 'en-GB' : 'fr-CH', {
+        weekday: 'short', day: '2-digit', month: '2-digit'
+      });
+    }
+    return formatDate(next, course.time, lang);
+  })();
+
   return (
     <>
       {/* Zoom Modal - flèches uniquement dans le zoom */}
@@ -1317,6 +1467,25 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
           <div style={{ position: 'relative', height: '220px', overflow: 'hidden' }}>
             {!showDescription ? (
               <>
+                {/* V224: media video lisible nativement — vignette + controles,
+                    plein ecran a la lecture. Tout autre media garde le <img>. */}
+                {isVideo ? (
+                  <video
+                    ref={videoRef}
+                    src={currentMedia.url}
+                    className="w-full h-full"
+                    style={{ objectFit: 'cover', objectPosition: 'center', height: '220px', background: '#000' }}
+                    playsInline
+                    controls
+                    preload="metadata"
+                    onClick={(e) => e.stopPropagation()}
+                    onPlay={handlePlay}
+                    onLoadedMetadata={handleMeta}
+                    /* V224: repli — on bascule sur la branche <img>, qui retombe
+                       elle-meme sur defaultImage via son propre onError. */
+                    onError={() => setVideoError(true)}
+                  />
+                ) : (
                 <img
                   src={currentImage}
                   alt={offer.name}
@@ -1324,6 +1493,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
                   style={{ objectFit: 'cover', objectPosition: 'center', height: '220px' }}
                   onError={(e) => { e.target.src = defaultImage; }}
                 />
+                )}
 
                 {/* Points discrets cliquables - PAS de flèches */}
                 {hasMultipleImages && (
@@ -1339,6 +1509,9 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
                 )}
 
                 {/* Photo Icon - Top Left */}
+                {/* V224: masque sur une video — la modale d'agrandissement rend un
+                    <img> et afficherait une image cassee pour un fichier video. */}
+                {!isVideo && (
                 <div
                   className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-all hover:scale-110"
                   style={{
@@ -1355,6 +1528,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
                     <polyline points="21 15 16 10 5 21"/>
                   </svg>
                 </div>
+                )}
 
                 {/* Selected indicator */}
                 {selected && (
@@ -1408,8 +1582,21 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
                   textShadow: selected ? '0 0 15px rgba(217, 28, 210, 0.6)' : 'none'
                 }}
               >
-                CHF {offer.price}.-
+                {/* V223: prix du palier actif, sinon rendu d'origine */}
+                {/* V224: passe par v223UnitPrice, point de verite unique du prix
+                    cote client — la logique n'est plus reimplementee ici. */}
+                CHF {v223UnitPrice(offer)}.-
               </span>
+              {/* V223: badge du palier tarifaire */}
+              {offer.progressive_pricing && V223_TIERS[offer.active_tier] && (
+                <span style={{
+                  fontSize: 11, padding: '2px 8px', borderRadius: 999,
+                  background: `${V223_TIERS[offer.active_tier].color}22`,
+                  color: V223_TIERS[offer.active_tier].color,
+                }}>
+                  {V223_TIERS[offer.active_tier].label}
+                </span>
+              )}
               {offer.tva > 0 && (
                 <span className="text-xs text-white opacity-50">TVA {offer.tva}%</span>
               )}
@@ -1417,7 +1604,71 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
             {offer.isProduct && offer.shippingCost > 0 && (
               <p className="text-xs text-white opacity-50 mt-1">+ CHF {offer.shippingCost} frais de port</p>
             )}
+
+            {/* V224: metadonnees d'activite — chaque ligne est masquee si sa donnee
+                est absente, pour que les offres existantes (qui n'ont aucun de ces
+                champs) restent visuellement inchangees. */}
+            {offer.duration_minutes ? (
+              <p className="text-xs mt-1" style={{ color: '#aaa' }}>⏱ {offer.duration_minutes} min</p>
+            ) : null}
+            {offer.location ? (
+              <p className="text-xs mt-1" style={{ color: '#aaa' }}>📍 {offer.location}</p>
+            ) : null}
+            {/* V224: `!= null` et non la veracite — une capacite de 0 (complet,
+                ou activite fermee aux inscriptions) est une valeur legitime que
+                `0 ?` masquerait.
+                V224 (revue finale): on affiche la CAPACITE, pas un compteur.
+                L'ancien rendu lisait `offer.participants_count`, champ qui
+                n'existe ni dans le modele Offer (api/server.py:365-421) ni dans
+                _enrich_offers_with_active_price — il valait donc toujours 0, et
+                une activite complete s'annoncait publiquement « 0/50 ». Compter
+                les inscrits demanderait une agregation cote serveur : chantier
+                separe, hors perimetre. */}
+            {offer.max_participants != null ? (
+              <p className="text-xs mt-1" style={{ color: '#aaa' }}>
+                👥 {offer.max_participants} places
+              </p>
+            ) : null}
+            {/* V224: prochaine seance, derivee des cours lies */}
+            {nextSessionLabel ? (
+              <p className="text-xs mt-2" style={{ color: '#ccc' }}>
+                Prochaine séance :<br />
+                <span style={{ color: '#fff' }}>{nextSessionLabel}</span>
+              </p>
+            ) : null}
+
             <OfferCountdown offer={offer} />
+
+            {/* V224: bouton Reserver. Il delegue au seul point de verite du
+                parcours : onClick → handleSelectOffer, qui aiguille lui-meme les
+                offres progressives vers startProgressiveCheckout. Ne pas
+                reproduire cet aiguillage ici : sur le slider produits, l'onClick
+                enveloppant remet a zero le cours et les dates avant de deleguer,
+                nettoyage qu'un court-circuit ferait sauter. */}
+            <div className="mt-3 flex items-center justify-end">
+              <button
+                type="button"
+                disabled={checkoutBusy}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (typeof onClick === 'function') {
+                    onClick(offer);
+                  }
+                }}
+                className="text-xs px-3 py-2 rounded-lg font-semibold transition-all"
+                style={{
+                  background: checkoutBusy ? '#5a2a58' : '#D91CD2',
+                  color: '#fff',
+                  opacity: checkoutBusy ? 0.7 : 1,
+                  cursor: checkoutBusy ? 'wait' : 'pointer'
+                }}
+                data-testid={`offer-reserve-${offer.id}`}
+              >
+                {/* V224: retour visuel pendant l'appel reseau — un demarrage a
+                    froid Vercel peut durer plusieurs secondes sur mobile. */}
+                {checkoutBusy ? 'Un instant…' : `Réserver — ${v223UnitPrice(offer)} CHF`}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1427,7 +1678,9 @@ const OfferCardSlider = ({ offer, selected, onClick, pending }) => {
 
 // === OFFERS SLIDER WITH AUTO-PLAY ===
 // Carrousel horizontal avec défilement automatique pour montrer qu'il y a plusieurs offres
-const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOffer }) => {
+// V224: `courses`, `lang`, `startProgressiveCheckout`, `loading` et `checkoutBusy`
+// ne sont que relayes vers OfferCardSlider — ce composant ne s'en sert pas lui-meme.
+const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOffer, courses = [], lang = 'fr', startProgressiveCheckout, loading = false, checkoutBusy = false }) => {
   const sliderRef = useRef(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -1539,6 +1792,12 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
             selected={selectedOffer?.id === offer.id}
             pending={pendingOffer?.id === offer.id && !selectedOffer}
             onClick={() => onSelectOffer(offer)}
+            /* V224 */
+            courses={courses}
+            lang={lang}
+            startProgressiveCheckout={startProgressiveCheckout}
+            loading={loading}
+            checkoutBusy={checkoutBusy} /* V224 */
           />
         ))}
       </div>
@@ -2576,6 +2835,17 @@ function App() {
   const [pendingReservation, setPendingReservation] = useState(null);
   const [lastReservation, setLastReservation] = useState(null);
   const [loading, setLoading] = useState(false);
+  // V224: etat dedie au checkout progressif. Volontairement SEPARE de `loading`,
+  // qui est l'etat partage du parcours classique (formulaire, choix Carte/TWINT,
+  // reservation gratuite). Trois des sites qui font setLoading(true) partent
+  // ensuite en window.location.href sans jamais remettre false : au retour
+  // navigateur restaure depuis le bfcache, `loading` vaut encore true. Faire
+  // porter le bouton des cartes publiques sur `loading` figeait alors TOUTE la
+  // boutique, offres classiques comprises.
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
+  // V224: confirmation du parcours progressif (pas de reservation, donc pas de
+  // ticket SuccessOverlay a afficher — le client recoit son code par email).
+  const [progressiveConfirm, setProgressiveConfirm] = useState(null);
   const [appliedDiscount, setAppliedDiscount] = useState(null);
   const [hasSavedTicket, setHasSavedTicket] = useState(false); // Bouton flottant "Voir mon ticket"
 
@@ -2840,8 +3110,18 @@ function App() {
                       hash.includes('success=true') ||
                       hash.includes('welcome=true');
     
-    const isPartnerPayment = isSuccess && !localStorage.getItem('pendingReservation');
-    
+    // V224: le marqueur progressif exclut explicitement ce retour du fallback
+    // partenaire. Cet effet est declare AVANT celui qui affiche le ticket
+    // (~l.3470) et s'execute donc en premier ; s'il concluait « partenaire », il
+    // reecrivait l'URL en supprimant status et session_id, et le second effet ne
+    // trouvait plus rien a afficher. Le client voyait l'ecran de connexion
+    // Partenaire — ou pire, atterrissait dans le dashboard d'un coach deja
+    // connecte sur l'appareil.
+    const isProgressiveReturn = !!localStorage.getItem(V224_PROGRESSIVE_KEY);
+    const isPartnerPayment = isSuccess
+      && !localStorage.getItem('pendingReservation')
+      && !isProgressiveReturn;
+
     if (isPartnerPayment && !redirectIntent) {
       console.log('[APP] 🚀 v9.2.3 PROPULSION FALLBACK: Détection dans useEffect');
       
@@ -2873,6 +3153,22 @@ function App() {
       setLoginWelcomeMessage("🎉 Paiement validé ! Bienvenue Partenaire. Connectez-vous pour accéder à votre espace.");
       setShowCoachLogin(true);
     }
+  }, []);
+
+  // V224: restauration bfcache — un retour navigateur depuis Stripe ne rejoue
+  // aucun effet de montage, la page revient telle qu'elle a ete gelee. Sans ce
+  // reset, `loading` (parcours classique) et `checkoutBusy` (parcours
+  // progressif) restent bloques a true et toutes les cartes de la boutique
+  // deviennent inertes jusqu'a un rechargement manuel.
+  useEffect(() => {
+    const handlePageShow = (event) => {
+      if (event.persisted) {
+        setLoading(false);
+        setCheckoutBusy(false);
+      }
+    };
+    window.addEventListener('pageshow', handlePageShow);
+    return () => window.removeEventListener('pageshow', handlePageShow);
   }, []);
 
   // PWA Install Prompt State
@@ -3192,10 +3488,39 @@ function App() {
       window.history.replaceState({}, document.title, url.pathname);
     };
     
-    if (isPaymentSuccess && sessionId) {
+    // V224: marqueur du parcours progressif, lu UNE fois puis efface.
+    //
+    // Le test exige EN PLUS l'absence de `pendingReservation`. Les deux cles ne
+    // coexistent jamais pour un meme achat, mais elles le peuvent d'un achat a
+    // l'autre : un abandon sur la page Stripe (onglet ferme, retour navigateur)
+    // ne passe par aucun de nos chemins d'effacement, et laisse le marqueur en
+    // place. Sans cette garde, l'achat CLASSIQUE suivant serait pris pour un
+    // progressif : finalizeReservation ne serait jamais appele, le client
+    // paierait sans qu'aucune reservation ne soit creee, sans ticket, et sans
+    // que le coach soit notifie. La reservation en attente prime donc toujours.
+    const progressiveRaw = localStorage.getItem(V224_PROGRESSIVE_KEY);
+    const pendingRaw = localStorage.getItem('pendingReservation');
+
+    if (isPaymentSuccess && sessionId && progressiveRaw && !pendingRaw) {
+      // V224: parcours progressif — aucune reservation n'a ete creee, il n'y a
+      // donc aucun ticket a afficher. Le client recoit son code d'acces AFR par
+      // email (envoye par le webhook Stripe) et reserve ensuite depuis son
+      // espace. On lui montre une confirmation dediee plutot que le ticket
+      // minimal generique de la branche `else` plus bas.
+      localStorage.removeItem(V224_PROGRESSIVE_KEY);
+      let progressiveInfo = {};
+      try { progressiveInfo = JSON.parse(progressiveRaw) || {}; } catch (e) { /* marqueur illisible: confirmation generique */ }
+      setProgressiveConfirm({
+        offerName: progressiveInfo.offerName || null,
+        amount: progressiveInfo.amount != null ? progressiveInfo.amount : null,
+        sessionId
+      });
+      setTimeout(cleanUrl, 100);
+
+    } else if (isPaymentSuccess && sessionId) {
       // Paiement réussi - Afficher le ticket IMMÉDIATEMENT
       const pendingReservationData = localStorage.getItem('pendingReservation');
-      
+
       if (pendingReservationData) {
         const reservation = JSON.parse(pendingReservationData);
         
@@ -3279,12 +3604,20 @@ function App() {
         saveTicketToStorage(minimalTicket);
       }
       
+      // V224: purge d'un eventuel marqueur progressif abandonne. On sort d'un
+      // retour CLASSIQUE : si un marqueur trainait, il vient d'un checkout
+      // progressif abandonne et n'a plus aucune raison de survivre.
+      localStorage.removeItem(V224_PROGRESSIVE_KEY);
+
       // Nettoyer l'URL APRÈS affichage du ticket
       setTimeout(cleanUrl, 100);
-      
+
     } else if (isPaymentCanceled) {
       // Paiement annulé - afficher un message
       localStorage.removeItem('pendingReservation');
+      // V224: sans cet effacement, un abandon laisserait le marqueur en place et
+      // le retour d'un achat CLASSIQUE ulterieur serait pris pour un progressif.
+      localStorage.removeItem(V224_PROGRESSIVE_KEY);
       setValidationMessage("Paiement annulé. Vous pouvez réessayer.");
       setTimeout(() => setValidationMessage(""), 4000);
       cleanUrl();
@@ -3663,10 +3996,10 @@ function App() {
           let discountText = '';
           
           if (code.type === '100%' || (code.type === '%' && parseFloat(code.value) >= 100)) {
-            discountAmount = selectedOffer ? selectedOffer.price : 0;
+            discountAmount = selectedOffer ? v223UnitPrice(selectedOffer) : 0;
             discountText = `Code validé : -${discountAmount.toFixed(2)} CHF (GRATUIT)`;
           } else if (code.type === '%') {
-            discountAmount = selectedOffer ? (selectedOffer.price * parseFloat(code.value) / 100) : 0;
+            discountAmount = selectedOffer ? (v223UnitPrice(selectedOffer) * parseFloat(code.value) / 100) : 0;
             discountText = `Code validé : -${discountAmount.toFixed(2)} CHF (-${code.value}%)`;
           } else if (code.type === 'CHF') {
             discountAmount = parseFloat(code.value);
@@ -3711,7 +4044,7 @@ function App() {
     // Pour les services/cours: utiliser le nombre de dates sélectionnées
     const isPhysicalProduct = selectedOffer?.isProduct || selectedOffer?.isPhysicalProduct;
     const multiplier = isPhysicalProduct ? quantity : Math.max(1, selectedDates.length);
-    let total = selectedOffer.price * multiplier;
+    let total = v223UnitPrice(selectedOffer) * multiplier;
     if (appliedDiscount) {
       if (appliedDiscount.type === "100%" || (appliedDiscount.type === "%" && parseFloat(appliedDiscount.value) >= 100)) total = 0;
       else if (appliedDiscount.type === "%") total = total * (1 - parseFloat(appliedDiscount.value) / 100);
@@ -3737,8 +4070,81 @@ function App() {
     // Keep userName, userEmail, userWhatsapp for convenience
   };
 
+  // V224 — Parcours progressif : le client paie d'abord, reserve ensuite depuis
+  // /espace/<code>. Aucune reservation n'est creee ici.
+  const startProgressiveCheckout = async (offer) => {
+    // V224: garde de ré-entrance — sans elle, un double-clic pendant l'appel
+    // réseau (démarrage à froid Vercel possible) crée plusieurs sessions
+    // Stripe et plusieurs lignes payment_transactions pour le même achat.
+    // V224: la garde porte sur `checkoutBusy` et NON sur `loading` — voir la
+    // declaration de checkoutBusy : un `loading` remanent s'auto-bloquait ici.
+    if (checkoutBusy) return;
+    try {
+      setCheckoutBusy(true);
+      // V224: efface toute réservation en attente laissée par un parcours
+      // classique abandonné (retour navigateur après un checkout non finalisé).
+      // Sans ce nettoyage, le handler de retour Stripe (~l.3229) réutiliserait
+      // cette clé au retour de CE paiement progressif et créerait une
+      // réservation fantôme sur l'ancien cours, avec ticket et notification
+      // au coach erronés.
+      localStorage.removeItem('pendingReservation');
+      // V224: marqueur du parcours progressif. Il remplace `pendingReservation`
+      // comme preuve « ce retour Stripe est un achat CLIENT », que l'heuristique
+      // du fallback partenaire (V224_PROGRESSIVE_KEY plus bas) consulte pour ne
+      // pas propulser le client vers l'ecran de connexion Partenaire.
+      // Pose AVANT l'appel reseau : si la redirection part, la cle est la.
+      localStorage.setItem(V224_PROGRESSIVE_KEY, JSON.stringify({
+        offerName: offer.name,
+        amount: v223UnitPrice(offer),
+        ts: Date.now()
+      }));
+      const payload = {
+        productName: offer.name,
+        amount: v223UnitPrice(offer),
+        originUrl: window.location.origin,
+        offerId: offer.id,
+        // V224: ce parcours n'a pas de formulaire, donc aucun endroit ou saisir
+        // un code promo. On delegue la saisie a Stripe Checkout. Le parcours
+        // classique ne l'active PAS : il a deja son propre champ promo, et
+        // cumuler les deux systemes permettrait deux remises sur un meme achat.
+        allowPromotionCodes: true
+      };
+      // V224: `customerEmail` est volontairement ABSENT du payload.
+      // Ne jamais l'envoyer a "" : Stripe rejette la chaine vide comme adresse
+      // invalide, et le fallback carte-seule (api/server.py:3498) la relaie
+      // telle quelle — les deux tentatives echouent et le client ne peut plus
+      // payer. Omise, elle vaut None cote backend et Stripe Checkout collecte
+      // lui-meme l'email, que le webhook relit dans customer_details
+      // (api/server.py:3767).
+      //
+      // `reservationData` est absent pour la meme raison de conception : il n'y
+      // a pas de date choisie a ce stade.
+      const res = await axios.post(`${API}/create-checkout-session`, payload);
+      if (res.data && res.data.url) {
+        window.location.href = res.data.url;
+      } else {
+        // V224: aucune redirection n'a eu lieu — on retire le marqueur, sinon il
+        // survivrait et fausserait le retour d'un achat ulterieur.
+        localStorage.removeItem(V224_PROGRESSIVE_KEY);
+        setCheckoutBusy(false);
+        alert('Le paiement est momentanement indisponible. Merci de reessayer.');
+      }
+    } catch (err) {
+      localStorage.removeItem(V224_PROGRESSIVE_KEY); // V224
+      setCheckoutBusy(false);
+      console.error('[V224] checkout progressif echoue', err);
+      alert('Le paiement est momentanement indisponible. Merci de reessayer.');
+    }
+  };
+
   // Sélection d'offre avec smooth scroll vers le formulaire "Vos informations"
   const handleSelectOffer = (offer) => {
+    // V224: une offre progressive court-circuite le choix d'horaire et le
+    // formulaire client — elle part directement en checkout.
+    if (offer && offer.progressive_pricing) {
+      startProgressiveCheckout(offer);
+      return;
+    }
     // v56: Toggle — si la même offre est déjà sélectionnée, on la désélectionne (ferme le formulaire)
     if (selectedOffer && offer && selectedOffer.id === offer.id && selectedOffer.name === offer.name) {
       setSelectedOffer(null);
@@ -3944,7 +4350,7 @@ function App() {
       datetime: dt.toISOString(),
       offerId: selectedOffer.id, 
       offerName: selectedOffer.name,
-      price: selectedOffer.price, 
+      price: v223UnitPrice(selectedOffer), 
       quantity: dateCount, // Nombre de dates sélectionnées comme quantité
       totalPrice,
       discountCode: appliedDiscount?.code || null,
@@ -4032,6 +4438,9 @@ function App() {
           amount: totalPrice,
           customerEmail: userEmail,
           originUrl: window.location.origin,
+          // V223: le serveur relit pack_sessions et le palier depuis cette
+          // offre en base. On n'envoie jamais le nombre de crédits nous-mêmes.
+          offerId: selectedOffer?.id || null,
           reservationData: {
             id: reservation.userId,
             courseName: reservation.courseName,
@@ -4916,6 +5325,57 @@ function App() {
           onClearTicket={clearSavedTicket}
         />
       )}
+      {/* V224: confirmation du parcours progressif. Distincte de SuccessOverlay,
+          qui rend un ticket de reservation (date, cours, QR) — donnees qui
+          n'existent pas encore ici : le client vient seulement d'acheter ses
+          credits et reservera depuis son espace. */}
+      {progressiveConfirm && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 100000,
+            background: 'rgba(10,4,14,0.92)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }}
+          className="p-4"
+          data-testid="v224-progressive-confirm"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6 text-center"
+            style={{
+              background: '#1a0a1f',
+              border: '1px solid rgba(217,28,210,0.35)',
+              boxShadow: '0 10px 50px rgba(217,28,210,0.35)'
+            }}
+          >
+            <div className="text-4xl mb-3">✅</div>
+            <h3 className="text-xl font-bold text-white mb-2">Paiement confirmé</h3>
+            {progressiveConfirm.offerName ? (
+              <p className="text-sm mb-1" style={{ color: 'rgba(255,255,255,0.75)' }}>
+                {progressiveConfirm.offerName}
+              </p>
+            ) : null}
+            {progressiveConfirm.amount != null ? (
+              <p className="text-2xl font-bold mb-4" style={{ color: '#D91CD2' }}>
+                CHF {progressiveConfirm.amount}.-
+              </p>
+            ) : null}
+            <p className="text-sm mb-2" style={{ color: 'rgba(255,255,255,0.85)' }}>
+              📧 Votre <strong>code d'accès</strong> vous est envoyé par email dans quelques instants.
+            </p>
+            <p className="text-sm mb-5" style={{ color: 'rgba(255,255,255,0.6)' }}>
+              Ouvrez ensuite votre espace avec ce code pour choisir la date de votre séance.
+            </p>
+            <button
+              type="button"
+              onClick={() => setProgressiveConfirm(null)}
+              className="w-full py-3 rounded-xl font-bold"
+              style={{ background: 'linear-gradient(135deg, #D91CD2, #FF2DAA)', color: '#fff', border: 'none' }}
+            >
+              J'ai compris
+            </button>
+          </div>
+        </div>
+      )}
       {false && showPaymentSuccessPage && lastReservation && (
         <PaymentSuccessPage
           reservation={lastReservation}
@@ -5093,7 +5553,9 @@ function App() {
           // Afficher sessions UNIQUEMENT si: une offre est active OU si l'utilisateur filtre par "sessions" OU s'il n'y a pas d'offres
           const showSessions = activeFilter !== 'shop' && visibleCourses.length > 0 && (
             activeFilter === 'sessions' || !!activeOffer || filteredServices.length === 0
-          );
+          )
+          // V224: pas de grille d'horaires pour une offre progressive
+          && !activeOffer?.progressive_pricing;
 
           // --- BLOC SESSIONS ---
           const sessionsBlock = showSessions && (
@@ -5157,6 +5619,12 @@ function App() {
                 selectedOffer={selectedOffer}
                 pendingOffer={pendingOffer}
                 onSelectOffer={handleSelectOffer}
+                /* V224 */
+                courses={courses}
+                lang={lang}
+                startProgressiveCheckout={startProgressiveCheckout}
+                loading={loading}
+                checkoutBusy={checkoutBusy} /* V224 */
               />
             </div>
           );
@@ -5405,6 +5873,12 @@ function App() {
                 setSelectedDates([]);
                 handleSelectOffer(product);
               }}
+              /* V224 */
+              courses={courses}
+              lang={lang}
+              startProgressiveCheckout={startProgressiveCheckout}
+              loading={loading}
+              checkoutBusy={checkoutBusy} /* V224 */
             />
           </div>
         )}
@@ -5832,7 +6306,7 @@ function App() {
                     <>
                       <div className="flex justify-between items-center text-white text-sm mb-2">
                         <span>{selectedOffer.name}</span>
-                        <span>CHF {selectedOffer.price.toFixed(2)}</span>
+                        <span>CHF {v223UnitPrice(selectedOffer).toFixed(2)}</span>
                       </div>
                       
                       {/* Pour les services/cours: Afficher les dates sélectionnées */}
@@ -5889,16 +6363,16 @@ function App() {
                       {/* Sous-total pour produits physiques */}
                       {(selectedOffer?.isProduct || selectedOffer?.isPhysicalProduct) && quantity > 1 && (
                         <div className="flex justify-between text-white text-xs opacity-60 mb-1">
-                          <span>Sous-total ({quantity} x CHF {selectedOffer.price.toFixed(2)})</span>
-                          <span>CHF {(selectedOffer.price * quantity).toFixed(2)}</span>
+                          <span>Sous-total ({quantity} x CHF {v223UnitPrice(selectedOffer).toFixed(2)})</span>
+                          <span>CHF {(v223UnitPrice(selectedOffer) * quantity).toFixed(2)}</span>
                         </div>
                       )}
                       
                       {/* Sous-total pour services/cours avec multi-dates */}
                       {!selectedOffer?.isProduct && !selectedOffer?.isPhysicalProduct && selectedDates.length > 1 && (
                         <div className="flex justify-between text-white text-xs opacity-60 mb-1">
-                          <span>Sous-total ({selectedDates.length} dates x CHF {selectedOffer.price.toFixed(2)})</span>
-                          <span>CHF {(selectedOffer.price * selectedDates.length).toFixed(2)}</span>
+                          <span>Sous-total ({selectedDates.length} dates x CHF {v223UnitPrice(selectedOffer).toFixed(2)})</span>
+                          <span>CHF {(v223UnitPrice(selectedOffer) * selectedDates.length).toFixed(2)}</span>
                         </div>
                       )}
                       

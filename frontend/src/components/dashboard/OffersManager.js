@@ -3,6 +3,8 @@
  * Gestion des offres/produits - Extrait de CoachDashboard.js
  */
 import React from 'react';
+import OfferWizard from './OfferWizard';   // V224
+import OfferCard from './OfferCard';       // V224
 
 const OffersManager = ({
   offers,
@@ -60,6 +62,25 @@ const OffersManager = ({
     setDragOverId(offerId);
   };
   const handleDragEnd = () => { setDraggingId(null); setDragOverId(null); };
+
+  // V224: persistance de l'ordre extraite de handleDrop pour etre partagee avec
+  // les boutons monter/descendre des cartes. La regle reste celle de v159 :
+  // `position` = index dans la liste reordonnee. Seule addition : on ne PUT que
+  // les offres dont la position change reellement, pour ne pas emettre N
+  // requetes a chaque petit deplacement (au premier reordonnancement, aucune
+  // offre n'a encore de `position`, donc toutes sont bien ecrites).
+  const persistOfferOrder = async (reordered) => {
+    const withPositions = reordered.map((o, i) => ({ ...o, position: i }));
+    setOffers(withPositions);
+    try {
+      const changed = withPositions.filter(o => {
+        const prev = offers.find(p => p.id === o.id);
+        return !prev || prev.position !== o.position;
+      });
+      await Promise.all(changed.map(o => updateOffer(o)));
+    } catch (err) { console.error('[V159] reorder error:', err); }
+  };
+
   const handleDrop = async (e, targetOfferId) => {
     e.preventDefault();
     const draggedId = draggingId;
@@ -72,11 +93,9 @@ const OffersManager = ({
     const reordered = [...offers];
     const [moved] = reordered.splice(fromIdx, 1);
     reordered.splice(toIdx, 0, moved);
-    setOffers(reordered);
     // Sauvegarder l'ordre via PUT sur chaque offre (champ position)
-    try {
-      await Promise.all(reordered.map((o, i) => updateOffer({ ...o, position: i })));
-    } catch (err) { console.error('[V159] reorder error:', err); }
+    // V224: setOffers + PUT delegues a persistOfferOrder (meme logique).
+    await persistOfferOrder(reordered);
   };
   // Touch handlers pour mobile (swipe vertical pour réordonner)
   const handleTouchStart = (e, offerId) => {
@@ -191,22 +210,33 @@ const OffersManager = ({
     return (offer.coach_id || '').toLowerCase() === (coachEmail || '').toLowerCase();
   };
 
+  // V224: appel IA extrait de handleAIEnhance pour etre reutilisable. Il RETOURNE
+  // le texte ameliore au lieu d'ecrire dans le state : le wizard tient son propre
+  // formulaire, et un setNewOffer ici changerait la reference de `initialOffer`,
+  // ce qui reinitialiserait le wizard en pleine saisie.
+  const fetchEnhancedText = async (text) => {
+    const res = await fetch(`${API}/ai/enhance-text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, context: 'offer' })
+    });
+    const data = await res.json();
+    if (data.enhanced_text && !data.fallback) return data.enhanced_text;
+    return null;
+  };
+
   const handleAIEnhance = async (field) => {
     const text = field === 'name' ? newOffer.name : newOffer.description;
     if (!text || text.trim().length < 3) return;
     setAiLoading(true);
     try {
-      const res = await fetch(`${API}/ai/enhance-text`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, context: 'offer' })
-      });
-      const data = await res.json();
-      if (data.enhanced_text && !data.fallback) {
+      // V224: meme requete qu'avant, deleguee a fetchEnhancedText.
+      const enhanced = await fetchEnhancedText(text);
+      if (enhanced) {
         if (field === 'name') {
-          setNewOffer({ ...newOffer, name: data.enhanced_text });
+          setNewOffer({ ...newOffer, name: enhanced });
         } else {
-          setNewOffer({ ...newOffer, description: data.enhanced_text.slice(0, 150) });
+          setNewOffer({ ...newOffer, description: enhanced.slice(0, 150) });
         }
       }
     } catch (err) {
@@ -215,6 +245,106 @@ const OffersManager = ({
       setAiLoading(false);
     }
   };
+
+  // V224: branchement du bouton « Aide IA » du wizard. Meme garde de longueur
+  // minimale que handleAIEnhance ; la troncature a 150 caracteres n'est PAS
+  // reprise ici, le champ du wizard acceptant jusqu'a 3000 caracteres.
+  const handleWizardEnhanceDescription = async (text) => {
+    if (!text || text.trim().length < 3) return null;
+    return await fetchEnhancedText(text);
+  };
+
+  // V224: la grille suit l'ordre du champ `position`, exactement comme la
+  // vitrine publique (App.js l.4506) : ce que le coach reorganise ici est donc
+  // bien ce que verront ses clients. Le tri est stable, les offres sans
+  // `position` restent en fin de liste dans leur ordre d'origine.
+  const orderedOffers = React.useMemo(() => {
+    return [...offers].sort((a, b) => {
+      const pa = typeof a.position === 'number' ? a.position : 999999;
+      const pb = typeof b.position === 'number' ? b.position : 999999;
+      return pa - pb;
+    });
+  }, [offers]);
+
+  // V224: reorganisation depuis la grille de cartes. On travaille sur
+  // orderedOffers (l'ordre affiche) et on reutilise persistOfferOrder.
+  const moveOffer = (offer, direction) => {
+    const from = orderedOffers.findIndex(o => o.id === offer.id);
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= orderedOffers.length) return;
+    const reordered = [...orderedOffers];
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(to, 0, moved);
+    persistOfferOrder(reordered);
+  };
+
+  // V224: filtre de recherche extrait une seule fois — il etait duplique dans
+  // les rendus mobile et desktop.
+  const filteredOffers = offersSearch
+    ? orderedOffers.filter(o =>
+        o.name?.toLowerCase().includes(offersSearch.toLowerCase()) ||
+        o.description?.toLowerCase().includes(offersSearch.toLowerCase())
+      )
+    : orderedOffers;
+
+  // V224: etat d'ouverture du wizard.
+  const [wizardOpen, setWizardOpen] = React.useState(false);
+
+  // V224: ouverture en creation
+  const openCreate = () => {
+    cancelEditOffer();      // remet newOffer a vide via le parent
+    setWizardOpen(true);
+  };
+
+  // V224: ouverture en edition — startEditOffer pre-remplit newOffer
+  const openEdit = (offer) => {
+    startEditOffer(offer);
+    setWizardOpen(true);
+  };
+
+  // V224: duplication — startEditOffer sans id laisse editingOfferId a undefined,
+  // donc addOffer partira sur un POST (creation) et non un PUT.
+  const openDuplicate = (offer) => {
+    startEditOffer({ ...offer, id: undefined, name: (offer.name || '') + ' (copie)' });
+    setWizardOpen(true);
+  };
+
+  // V224: le wizard remonte tout d'un coup ; on aligne newOffer (pour que le
+  // formulaire reste coherent) puis on delegue a addOffer EN LUI PASSANT les
+  // valeurs, ce qui evite de dependre de l'application asynchrone du state.
+  // V224: on n'attend PAS setNewOffer pour enregistrer (les valeurs sont
+  // passees a addOffer), et surtout on ne ferme le wizard QUE si
+  // l'enregistrement a reussi : sinon les 3 etapes de saisie seraient perdues,
+  // openCreate() appelant cancelEditOffer() qui remet le formulaire a vide.
+  // V224: surtout PAS de setNewOffer(formValues) ici. Il changerait la reference
+  // de initialOffer pendant que le modal est ouvert, ce qui declenche l'effet
+  // [open, initialOffer] du wizard et le renvoie a l'etape 1 le temps de la
+  // requete — puis l'y laisse en cas d'echec. addOffer recoit deja les valeurs
+  // en argument et reinitialise newOffer lui-meme en cas de succes.
+  const handleWizardSave = async (formValues) => {
+    const saved = await addOffer(null, formValues);
+    if (saved) setWizardOpen(false);
+  };
+
+  // V224: bascule visible/masquee depuis une carte. On met a jour le state local
+  // pour un retour immediat, comme le faisait l'ancien rendu en liste.
+  const handleToggleVisible = (offer) => {
+    const updated = { ...offer, visible: offer.visible === false };
+    setOffers(prev => prev.map(o => (o.id === offer.id ? updated : o)));
+    updateOffer(updated);
+  };
+
+  // V224: on conserve la protection « offre d'un autre coach » que portaient les
+  // boutons Supprimer de l'ancien rendu en liste.
+  const handleDelete = (offerId) => {
+    const offer = offers.find(o => o.id === offerId);
+    if (offer && !isOwnOffer(offer)) {
+      alert('🔒 Vous ne pouvez supprimer que vos propres offres');
+      return;
+    }
+    deleteOffer(offerId);
+  };
+
   return (
     <div className="card-gradient rounded-xl p-4 sm:p-6">
       {/* v93: Onboarding tooltips for new partners */}
@@ -279,7 +409,63 @@ const OffersManager = ({
         </div>
       </div>
       
+      {/* V224: grille de cartes */}
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-white font-semibold">Mes offres</h3>
+        <button type="button" onClick={openCreate} className="text-xs px-4 py-2 rounded-lg" style={{ background: '#D91CD2', color: '#fff' }}>
+          + NOUVELLE OFFRE
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {filteredOffers.map(offer => {
+          // V224: index dans l'ordre reel (et non dans la liste filtree), pour
+          // que les fleches deplacent l'offre par rapport a ses vrais voisins.
+          const orderIdx = orderedOffers.findIndex(o => o.id === offer.id);
+          return (
+            <OfferCard
+              key={offer.id}
+              offer={offer}
+              onEdit={openEdit}
+              onDuplicate={openDuplicate}
+              onDelete={handleDelete}
+              onToggleVisible={handleToggleVisible}
+              // V224: affordance « offre protegee »
+              canDelete={isOwnOffer(offer)}
+              // V224: reorganisation. Masquee pendant une recherche : la liste
+              // affichee n'etant pas complete, les fleches designeraient des
+              // voisins invisibles.
+              onMoveUp={offersSearch ? undefined : (o) => moveOffer(o, -1)}
+              onMoveDown={offersSearch ? undefined : (o) => moveOffer(o, 1)}
+              // V224 (revue finale): garde de propriete. La grille n'est pas
+              // filtree par coach_id (comportement historique), or moveOffer →
+              // persistOfferOrder emet un PUT sur CHAQUE offre dont la position
+              // change, et PUT /offers/{id} n'a aucun controle de proprietaire
+              // cote serveur. Sans cette garde, un coach non-admin reordonne la
+              // vitrine d'un autre coach en un tap. Le controle serveur reste a
+              // faire (ticket backend separe) — ceci en limite l'exposition.
+              canMoveUp={!offersSearch && isOwnOffer(offer) && orderIdx > 0}
+              canMoveDown={!offersSearch && isOwnOffer(offer) && orderIdx >= 0 && orderIdx < orderedOffers.length - 1}
+            />
+          );
+        })}
+      </div>
+
+      <OfferWizard
+        open={wizardOpen}
+        initialOffer={newOffer}
+        courses={courses}
+        isEditing={!!editingOfferId}
+        onSave={handleWizardSave}
+        onCancel={() => { setWizardOpen(false); cancelEditOffer(); }}
+        isSuperAdmin={isSuperAdmin}
+        coachEmail={coachEmail}
+        onEnhanceDescription={handleWizardEnhanceDescription}
+      />
+
       {/* Conteneur scrollable pour les offres */}
+      {/* V224: l'ancien rendu en liste est conserve mais n'est plus rendu. */}
+      {false && (
       <div style={{ maxHeight: '500px', overflowY: 'auto', overflowX: 'hidden' }}>
         {/* === MOBILE VIEW: Cartes verticales === */}
         <div className="block md:hidden space-y-4">
@@ -497,8 +683,11 @@ const OffersManager = ({
           ))}
         </div>
       </div>
+      )}
 
       {/* Formulaire Ajout/Modification - RESPONSIVE */}
+      {/* V224: ancien formulaire plat conserve, remplace par OfferWizard. */}
+      {false && (
       <form id="offer-form" onSubmit={addOffer} className="glass rounded-lg p-4 mt-4 border-2 border-purple-500/50">
         <h3 className="text-white mb-4 font-semibold text-sm flex items-center gap-2">
           {editingOfferId ? '✏️ Modifier l\'offre' : '➕ Ajouter une offre'}
@@ -518,6 +707,81 @@ const OffersManager = ({
           <div>
             <label className="text-xs text-white opacity-60 mb-1 block">Prix (CHF)</label>
             <input type="number" placeholder="30" value={newOffer.price} onChange={e => setNewOffer({ ...newOffer, price: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-3 rounded-lg neon-input text-sm" />
+          </div>
+        </div>
+
+        {/* V223: Prix progressif 3 paliers */}
+        <div className="mt-4 p-4 rounded-lg" style={{ background: '#000', border: '1px solid rgba(217,28,210,0.2)' }}>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!newOffer.progressive_pricing}
+              onChange={e => setNewOffer({ ...newOffer, progressive_pricing: e.target.checked })}
+              className="accent-[#D91CD2] w-4 h-4"
+            />
+            <span className="text-white text-sm font-medium">📊 Activer les 3 paliers de prix</span>
+          </label>
+          <p className="text-xs mt-1 ml-7" style={{ color: 'rgba(255,255,255,0.5)' }}>
+            Récompense les réservations en avance et capture les réservations de dernière minute.
+          </p>
+
+          {newOffer.progressive_pricing && (
+            <div className="mt-4 space-y-3">
+              {!newOffer.countdown_date && (
+                <p className="text-xs p-2 rounded" style={{ background: 'rgba(217,28,210,0.1)', color: '#D91CD2' }}>
+                  ⚠️ Activez le compte à rebours ci-dessous : sans date de référence, les
+                  paliers ne s'appliquent pas et le prix normal reste affiché.
+                </p>
+              )}
+              {[
+                { key: 'price_early_bird', label: '✨ Early Bird (plus de 7 jours avant)' },
+                { key: 'price_standard', label: '⏱ Standard (plus de 24h avant)' },
+                { key: 'price_last_minute', label: '⚡ Last Minute (moins de 24h)' },
+              ].map(f => (
+                <div key={f.key}>
+                  <label className="block text-xs mb-1" style={{ color: 'rgba(255,255,255,0.7)' }}>{f.label}</label>
+                  <input
+                    type="number"
+                    value={newOffer[f.key] ?? ''}
+                    onChange={e => setNewOffer({ ...newOffer, [f.key]: e.target.value === '' ? null : parseFloat(e.target.value) })}
+                    className="w-full px-3 py-2 rounded-lg neon-input text-sm"
+                    placeholder="CHF"
+                  />
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => {
+                  const base = parseFloat(newOffer.price) || 0;
+                  setNewOffer({
+                    ...newOffer,
+                    price_early_bird: base,
+                    price_standard: Math.round(base * 1.33),
+                    price_last_minute: base * 2,
+                  });
+                }}
+                className="text-xs underline"
+                style={{ color: '#D91CD2' }}
+              >
+                Réinitialiser aux valeurs suggérées
+              </button>
+            </div>
+          )}
+
+          <div className="mt-4">
+            <label className="block text-xs mb-1" style={{ color: 'rgba(255,255,255,0.7)' }}>
+              Nombre de séances incluses (pack)
+            </label>
+            <input
+              type="number"
+              value={newOffer.pack_sessions ?? ''}
+              onChange={e => setNewOffer({ ...newOffer, pack_sessions: e.target.value === '' ? null : parseInt(e.target.value, 10) })}
+              className="w-full px-3 py-2 rounded-lg neon-input text-sm"
+              placeholder="ex: 10"
+            />
+            <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.5)' }}>
+              Si rempli, l'acheteur reçoit un espace personnel avec ce nombre de crédits.
+            </p>
           </div>
         </div>
 
@@ -849,6 +1113,7 @@ const OffersManager = ({
           {editingOfferId ? '💾 Enregistrer les modifications' : '➕ Ajouter l\'offre'}
         </button>
       </form>
+      )}
     </div>
   );
 };

@@ -47,6 +47,8 @@ from api.routes.payment_config_routes import router as payment_config_router, in
 from api.routes.checkout_routes import router as checkout_router, init_db as init_checkout_db
 # V205: Import routes catégories contacts
 from api.routes.contact_categories_routes import category_router, init_category_db
+# V223: Calcul prix progressif (module pur, sans accès DB)
+from api.pricing import compute_active_price  # V223
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -385,6 +387,11 @@ class Offer(BaseModel):
     tva: float = 0.0  # TVA percentage
     shippingCost: float = 0.0  # Frais de port
     stock: int = -1  # -1 = unlimited
+    # V224: metadonnees d'activite affichees sur les cartes publiques.
+    # Chaque ligne se masque cote client quand sa valeur est absente.
+    duration_minutes: Optional[int] = None
+    location: Optional[str] = ""
+    max_participants: Optional[int] = None
     coach_id: Optional[str] = None  # v19: Ownership — email du coach propriétaire
     # v59: Durée de validité & prolongation automatique
     duration_value: Optional[int] = None  # ex: 2 (nombre)
@@ -399,6 +406,19 @@ class Offer(BaseModel):
     countdown_date: Optional[str] = None
     countdown_time: Optional[str] = None
     countdown_text: Optional[str] = None
+    # V223: Prix progressif 3 paliers — référence temporelle = countdown_date
+    progressive_pricing: bool = False
+    price_early_bird: Optional[float] = None
+    price_standard: Optional[float] = None
+    price_last_minute: Optional[float] = None
+    early_bird_days_before: int = 7
+    standard_hours_before: int = 24
+    # V223: Pack de crédits (remplace la déduction par regex sur le nom produit)
+    pack_sessions: Optional[int] = None
+    # V223: Calculés à la lecture. DOIVENT être déclarés ici, sinon le
+    # response_model=List[Offer] de GET /offers les filtrerait silencieusement.
+    active_price: Optional[float] = None
+    active_tier: Optional[str] = None
 
 class OfferCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -420,6 +440,20 @@ class OfferCreate(BaseModel):
     tva: float = 0.0
     shippingCost: float = 0.0
     stock: int = -1
+    # V224: obligatoirement symetrique avec Offer. PUT /offers fait
+    # `$set: offer.model_dump()` sur ce modele en extra="ignore" : un champ
+    # absent ici est efface en base a chaque sauvegarde d'offre.
+    duration_minutes: Optional[int] = None
+    location: Optional[str] = ""
+    max_participants: Optional[int] = None
+    # V223: Prix progressif 3 paliers
+    progressive_pricing: bool = False
+    price_early_bird: Optional[float] = None
+    price_standard: Optional[float] = None
+    price_last_minute: Optional[float] = None
+    early_bird_days_before: int = 7
+    standard_hours_before: int = 24
+    pack_sessions: Optional[int] = None
     coach_id: Optional[str] = None  # v19: Ownership
     # v61: Durée de validité — accepte int ou string pour tolérance frontend
     duration_value: Optional[Union[int, str]] = None
@@ -1099,6 +1133,15 @@ def calculate_expiration_date(from_date_str: str, duration_value: int, duration_
     return (from_date + delta).isoformat()
 
 # --- Offers ---
+# V223: enrichit une liste d'offres avec le prix actif calculé à la lecture
+# (évite une requête /active-price supplémentaire par carte côté frontend).
+def _enrich_offers_with_active_price(offers_list):
+    for _o in offers_list:
+        _p = compute_active_price(_o)
+        _o["active_price"] = _p["price"]
+        _o["active_tier"] = _p["tier"]
+    return offers_list
+
 @api_router.get("/offers", response_model=List[Offer])
 async def get_offers():
     offers = await db.offers.find({}, {"_id": 0}).to_list(100)
@@ -1109,8 +1152,16 @@ async def get_offers():
             {"id": str(uuid.uuid4()), "name": "Abonnement 1 mois", "price": 109, "thumbnail": "", "videoUrl": "", "description": "", "visible": True}
         ]
         await db.offers.insert_many(default_offers)
-        return default_offers
-    return offers
+        return _enrich_offers_with_active_price(default_offers)  # V223
+    return _enrich_offers_with_active_price(offers)  # V223
+
+# V223: Prix actif d'une offre — utilisé par la page activité
+@api_router.get("/offers/{offer_id}/active-price")
+async def get_offer_active_price(offer_id: str):
+    offer = await db.offers.find_one({"id": offer_id}, {"_id": 0})
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offre introuvable")
+    return compute_active_price(offer)
 
 @api_router.post("/offers", response_model=Offer)
 async def create_offer(offer: OfferCreate, request: Request):
@@ -3269,6 +3320,13 @@ async def get_coach_payment_links(coach_email: str):
 
 # --- Stripe Checkout avec TWINT ---
 
+# V223: plafond des crédits déduits du nom de produit (regex V204). Ce nom est
+# fourni par le client sur un endpoint public : sans borne, il suffit d'acheter
+# un « Abo x999 » à 1 CHF pour obtenir 999 crédits. Ne s'applique jamais aux
+# crédits relus en base via offer_id, qui font autorité.
+V223_MAX_SESSIONS_REGEX = 40
+
+
 class CreateCheckoutRequest(BaseModel):
     """Requête pour créer une session de paiement Stripe"""
     productName: str
@@ -3276,6 +3334,23 @@ class CreateCheckoutRequest(BaseModel):
     customerEmail: Optional[str] = None
     originUrl: str  # URL d'origine du frontend pour construire success/cancel URLs
     reservationData: Optional[dict] = None  # Données de réservation pour metadata
+    # V223: identifiant de l'offre. Quand il est fourni, le serveur fait
+    # AUTORITÉ : il relit le prix et le nombre de crédits depuis la base.
+    # Le nombre de crédits n'est délibérément PAS un champ d'entrée : cet
+    # endpoint est public, et l'accepter du client permettrait de payer 1 CHF
+    # en demandant 1000 crédits.
+    offerId: Optional[str] = None
+    # V224: affiche le champ « Code promo » de Stripe Checkout.
+    #
+    # Réservé au parcours progressif, qui n'a pas de formulaire et donc aucun
+    # endroit où saisir un code. Le parcours classique garde son propre champ
+    # promo (collection `discount_codes`) : activer les deux sur un même achat
+    # permettrait de cumuler deux remises issues de systèmes qui s'ignorent.
+    #
+    # ATTENTION : ce champ accepte les codes du Dashboard STRIPE, pas ceux de
+    # la collection `discount_codes` du dashboard coach. Les deux systèmes sont
+    # distincts et ne se connaissent pas.
+    allowPromotionCodes: bool = False
 
 @api_router.post("/create-checkout-session")
 async def create_checkout_session(request: CreateCheckoutRequest):
@@ -3310,15 +3385,53 @@ async def create_checkout_session(request: CreateCheckoutRequest):
     # {CHECKOUT_SESSION_ID} est remplacé automatiquement par Stripe
     success_url = f"{request.originUrl}?status=success&session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{request.originUrl}?status=canceled"
+    
+    # V223: le nombre de crédits et le palier sont relus EN BASE à partir de
+    # offerId. Ils ne sont jamais acceptés du client : cet endpoint est public,
+    # et les recevoir permettrait de payer 1 CHF en demandant 1000 crédits.
+    #
+    # Le MONTANT, lui, reste celui calculé par le client. Ce n'est pas un oubli :
+    # le total légitime dépend du nombre de dates sélectionnées et des codes
+    # promo, que le serveur ne connaît pas ici. Le rendre autoritatif ferait
+    # payer une seule date à qui en réserve trois. C'est une faiblesse
+    # préexistante (le montant était déjà libre avant V223, tout comme le nom
+    # de produit qui pilotait la regex de crédits) et elle n'est pas aggravée.
+    server_pack_sessions = ""
+    server_tier = ""
+    if request.offerId:
+        try:
+            _offer = await db.offers.find_one({"id": request.offerId}, {"_id": 0})
+        except Exception as _off_err:
+            _offer = None
+            logger.warning(f"[V223] Lecture de l'offre {request.offerId} échouée: {_off_err}")
+        if _offer:
+            server_tier = compute_active_price(_offer)["tier"]
+            _ps = _offer.get("pack_sessions")
+            if isinstance(_ps, int) and _ps > 0:
+                server_pack_sessions = str(_ps)
+        else:
+            # V223: offre introuvable (archivée entre l'affichage et le paiement,
+            # cache navigateur, autre canal). On NE bloque PAS le paiement : on
+            # retombe sur le comportement d'avant V223, sans crédits de pack.
+            # Un 404 ici empêcherait un client de payer pour une donnée annexe.
+            logger.warning(
+                f"[V223] Offre {request.offerId} introuvable — paiement poursuivi "
+                f"sans crédits de pack"
+            )
 
-    # Montant en centimes (Stripe utilise les plus petites unités)
-    amount_cents = int(request.amount * 100)
+    # Montant en centimes (Stripe utilise les plus petites unités).
+    # round() et non int() : int(0.29 * 100) vaut 28 en virgule flottante.
+    amount_cents = round(request.amount * 100)
 
     # Préparer les metadata
     metadata = {
         "product_name": request.productName,
         "customer_email": request.customerEmail or "",
-        "source": "afroboost_checkout"
+        "source": "afroboost_checkout",
+        # V223: valeurs calculées côté serveur uniquement, jamais reçues du client
+        "pack_sessions": server_pack_sessions,
+        "tier": server_tier,
+        "offer_id": request.offerId or "",
     }
     if request.reservationData:
         metadata["reservation_id"] = request.reservationData.get("id", "")
@@ -3345,6 +3458,7 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             success_url=success_url,
             cancel_url=cancel_url,
             customer_email=request.customerEmail,
+            allow_promotion_codes=request.allowPromotionCodes,  # V224
             metadata=metadata,
             api_key=active_stripe_key,
         )
@@ -3394,6 +3508,10 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                 success_url=success_url,
                 cancel_url=cancel_url,
                 customer_email=request.customerEmail,
+                # V224: le fallback carte-seule doit rester identique au chemin
+                # nominal, sinon le champ promo disparaitrait pour tout compte
+                # sans TWINT active.
+                allow_promotion_codes=request.allowPromotionCodes,
                 metadata=metadata,
                 api_key=active_stripe_key,
             )
@@ -3469,7 +3587,32 @@ async def stripe_webhook(request: Request):
     """Webhook Stripe - Gère les paiements coach, crédits et clients."""
     try:
         body = await request.body()
-        event = stripe.Event.construct_from(stripe.util.json.loads(body), stripe.api_key)
+        # V223: vérification de signature OPPORTUNISTE. Sans STRIPE_WEBHOOK_SECRET,
+        # cet endpoint accepte n'importe quel POST anonyme — donc n'importe qui
+        # peut se faire créditer un pack sans payer. On l'active dès que le
+        # secret est configuré, sans rien casser s'il ne l'est pas encore :
+        # activer inconditionnellement ferait échouer TOUS les paiements tant
+        # que la variable d'environnement n'est pas renseignée.
+        # Variable DÉDIÉE, surtout pas STRIPE_WEBHOOK_SECRET : celle-ci est déjà
+        # utilisée par /api/stripe/webhook (stripe_routes.py), et Stripe génère
+        # un secret DIFFÉRENT par endpoint. Réutiliser la même ferait échouer la
+        # signature ici, donc rejeter TOUS les paiements clients en 400.
+        _wh_secret = os.environ.get('STRIPE_WEBHOOK_SECRET_CHECKOUT')
+        if _wh_secret:
+            _sig = request.headers.get('stripe-signature', '')
+            try:
+                event = stripe.Webhook.construct_event(body, _sig, _wh_secret)
+            except Exception as _sig_err:
+                logger.warning(f"[WEBHOOK] Signature Stripe invalide, rejet: {_sig_err}")
+                raise HTTPException(status_code=400, detail="Signature invalide")
+        else:
+            logger.warning(
+                "[WEBHOOK] STRIPE_WEBHOOK_SECRET_CHECKOUT absent — webhook NON "
+                "authentifié. Renseignez-la avec le secret de signature de "
+                "l'endpoint /api/webhook/stripe (Stripe Dashboard > Webhooks) "
+                "pour empêcher la création de packs sans paiement."
+            )
+            event = stripe.Event.construct_from(stripe.util.json.loads(body), stripe.api_key)
         if event.type == 'checkout.session.completed':
             session = event.data.object
             metadata = session.metadata or {}
@@ -3633,7 +3776,43 @@ async def stripe_webhook(request: Request):
                     return {"status": "ok", "type": "subscriber_space_payment"}
 
                 # v8.1 / V204: CREATION AUTOMATIQUE CODE D'ACCES
-                customer_email = session.get("customer_email") or metadata.get("customer_email", "")
+                # V223: quand Stripe collecte lui-même l'email (parcours sans
+                # formulaire), il le place dans customer_details.email et NON
+                # dans customer_email. Sans ce repli, l'acheteur paie et ne
+                # reçoit ni code ni accès à son espace.
+                customer_email = (session.get("customer_details") or {}).get("email") \
+                    or session.get("customer_email") \
+                    or metadata.get("customer_email", "")
+
+                # V224: reporter dans payment_transactions l'email et le montant
+                # reellement encaisses. Le parcours progressif n'envoie pas
+                # customerEmail au checkout (Stripe le collecte lui-meme) et ne
+                # cree aucune reservation : la vente n'apparait donc au coach
+                # qu'en ligne "payment", que la lecture du dashboard
+                # (~l.14336-14339) alimente depuis metadata.customer_email et
+                # amount_total — tous deux absents du document. Le coach voyait
+                # « Client — — 0 CHF ». On reutilise ici les valeurs deja
+                # resolues, sans aucun appel Stripe supplementaire.
+                try:
+                    _v224_set = {}
+                    if customer_email:
+                        _v224_set["metadata.customer_email"] = customer_email
+                    _v224_name = (session.get("customer_details") or {}).get("name") or ""
+                    # Le nom n'est ecrit que s'il est VIDE en base : ne jamais
+                    # ecraser un customer_name fourni par le parcours classique.
+                    if _v224_name and not metadata.get("customer_name"):
+                        _v224_set["metadata.customer_name"] = _v224_name
+                    _v224_amount = session.get("amount_total")
+                    if _v224_amount:
+                        _v224_set["amount_total"] = _v224_amount
+                    if _v224_set:
+                        await db.payment_transactions.update_one(
+                            {"session_id": session.id}, {"$set": _v224_set}
+                        )
+                except Exception as _v224_err:
+                    # Jamais bloquant : l'enrichissement d'affichage ne doit pas
+                    # empecher la creation du code d'acces plus bas.
+                    logger.warning(f"[V224] Enrichissement payment_transactions echoue: {_v224_err}")
 
                 # V204: Extraire le nom du produit depuis metadata OU depuis line_items Stripe
                 product_name = metadata.get("product_name", "")
@@ -3648,17 +3827,42 @@ async def stripe_webhook(request: Request):
                 if not product_name:
                     product_name = "Abonnement Afroboost"
 
-                # V204: Calcul intelligent du nombre de séances depuis le nom du produit
+                # V223: si l'offre déclare ses crédits, on les utilise.
+                # La regex V204 devient le repli des offres historiques : elle
+                # accorde 10 crédits à un produit nommé « Cours du 10 mai ».
                 import re as _re_webhook
                 sessions_count = 1  # défaut
-                # Chercher "x10", "x5", "x20", "x40" etc. dans le nom
-                x_match = _re_webhook.search(r'x\s*(\d+)', product_name, _re_webhook.IGNORECASE)
-                if x_match:
-                    sessions_count = int(x_match.group(1))
-                elif "10" in product_name:
-                    sessions_count = 10
-                elif "5" in product_name:
-                    sessions_count = 5
+                # V223: str() car le webhook n'authentifie pas ses appels — un POST
+                # forgé avec un pack_sessions numérique (non-chaîne) ferait sinon
+                # planter .isdigit() en AttributeError.
+                _pack = str(metadata.get("pack_sessions") or "")
+                if _pack.isdigit() and int(_pack) > 0:
+                    sessions_count = int(_pack)
+                elif metadata.get("offer_id"):
+                    # V223: l'offre a été résolue en base au moment du checkout et
+                    # ne déclare aucun pack — c'est donc une prestation à l'unité.
+                    # Surtout PAS de repli sur la regex ici : elle accorderait 10
+                    # crédits à une offre nommée « Cours du 10 mai ».
+                    sessions_count = 1
+                else:
+                    # V204 — logique d'origine, strictement inchangée
+                    # Chercher "x10", "x5", "x20", "x40" etc. dans le nom
+                    x_match = _re_webhook.search(r'x\s*(\d+)', product_name, _re_webhook.IGNORECASE)
+                    if x_match:
+                        sessions_count = int(x_match.group(1))
+                    elif "10" in product_name:
+                        sessions_count = 10
+                    elif "5" in product_name:
+                        sessions_count = 5
+                    # V223: le nom du produit vient du client sur un endpoint
+                    # public. Sans plafond, « Abo x999 » payé 1 CHF donnerait
+                    # 999 crédits. 40 couvre le plus gros pack réellement vendu.
+                    if sessions_count > V223_MAX_SESSIONS_REGEX:
+                        logger.warning(
+                            f"[V223] sessions_count={sessions_count} déduit du nom "
+                            f"« {product_name} » — plafonné à {V223_MAX_SESSIONS_REGEX}"
+                        )
+                        sessions_count = V223_MAX_SESSIONS_REGEX
                 new_code = f"AFR-{str(uuid.uuid4())[:6].upper()}"
                 discount_doc = {"id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100, "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0, "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(), "source": "stripe_payment", "session_id": session.id}
                 await db.discount_codes.insert_one(discount_doc)
@@ -4561,6 +4765,12 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
             "name": display_name,
             "email": user_email,
             "code": code_upper,
+            # V223: sans ce champ, subscriber.whatsapp est toujours undefined
+            # côté front et l'écran d'onboarding se rouvre à chaque chargement,
+            # pour tous les abonnés, même après l'avoir rempli.
+            # Branché par membre, symétriquement à display_name ci-dessus : sinon
+            # un membre secondaire recevrait le WhatsApp du titulaire du groupe.
+            "whatsapp": (member.get("whatsapp") if member else (subscription or {}).get("whatsapp")) or "",
         },
         "subscription": {
             "id": (subscription or {}).get("id"),
@@ -5169,6 +5379,43 @@ async def toggle_subscription_auto_renew(subscription_id: str, request: Request)
     )
     logger.info(f"[V195 TOGGLE] subscription {subscription_id} auto_renew → {desired}")
     return {"success": True, "subscription_id": subscription_id, "auto_renew": desired}
+
+
+# V223: Complément de profil depuis l'espace abonné
+class SubscriberProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    whatsapp: Optional[str] = None
+
+
+@api_router.put("/subscriptions/{code}/profile")
+async def update_subscriber_profile(code: str, payload: SubscriberProfileUpdate):
+    code_upper = (code or "").strip().upper()
+    subscription = await db.subscriptions.find_one({"code": code_upper}, {"_id": 0})
+    if not subscription:
+        raise HTTPException(status_code=404, detail="Code introuvable")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    updates = {"updated_at": now_iso}
+    if payload.name:
+        updates["name"] = payload.name.strip()
+    if payload.whatsapp:
+        updates["whatsapp"] = payload.whatsapp.strip()
+
+    await db.subscriptions.update_one({"code": code_upper}, {"$set": updates})
+
+    # V223: le CRM lit chat_participants — la collection « contacts » n'existe
+    # pas ; y écrire rendrait ces données invisibles au dashboard.
+    email = subscription.get("email") or ""
+    if email:
+        await db.chat_participants.update_one(
+            {"email": email},
+            {"$set": {**updates, "email": email, "source": "espace_onboarding",
+                      "code": code_upper},
+             "$setOnInsert": {"id": str(uuid.uuid4()), "created_at": now_iso}},
+            upsert=True,
+        )
+
+    return {"success": True}
 
 
 async def _v195_send_renewal_notification(sub: dict, message: str, subject: str = None):
