@@ -6,6 +6,7 @@ import React from 'react';
 import OfferWizard from './OfferWizard';   // V224
 import OfferCard from './OfferCard';       // V224
 import SvgIcon from '../SvgIcon';          // V228
+import CloudinaryUploadButton from '../CloudinaryUploadButton'; // V229
 
 const OffersManager = ({
   offers,
@@ -1034,18 +1035,46 @@ const OffersManager = ({
           <label className="text-xs text-white opacity-60 mb-2 block"><SvgIcon name="image" size={14} /> Images (max 5 URLs)</label>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2">
             {[0, 1, 2, 3, 4].map(i => (
-              <input 
-                key={i}
-                type="url" 
-                placeholder={`Image ${i + 1}`}
-                value={newOffer.images?.[i] || ''} 
-                onChange={e => {
-                  const newImages = [...(newOffer.images || ["", "", "", "", ""])];
-                  newImages[i] = e.target.value;
-                  setNewOffer({ ...newOffer, images: newImages });
-                }}
-                className="w-full px-3 py-3 rounded-lg neon-input text-xs"
-              />
+              <div key={i} className="flex flex-col gap-1">
+                <input
+                  type="url"
+                  placeholder={`Image ${i + 1}`}
+                  value={newOffer.images?.[i] || ''}
+                  onChange={e => {
+                    const newImages = [...(newOffer.images || ["", "", "", "", ""])];
+                    newImages[i] = e.target.value;
+                    setNewOffer({ ...newOffer, images: newImages });
+                  }}
+                  className="w-full px-3 py-3 rounded-lg neon-input text-xs"
+                />
+                {/* V229: second chemin vers la meme valeur — le champ URL reste
+                    utilisable pour coller un lien. Mise a jour fonctionnelle
+                    obligatoire : l'upload dure plusieurs secondes et un spread
+                    sur `newOffer` capture au rendu ecraserait toute saisie
+                    faite pendant l'envoi. */}
+                <CloudinaryUploadButton
+                  folder="offers"
+                  label="Uploader"
+                  data-testid={`offer-image-upload-${i}`}
+                  onUpload={(url) => setNewOffer(prev => {
+                    const imgs = [...(prev.images || ['', '', '', '', ''])];
+                    imgs[i] = url;
+                    return { ...prev, images: imgs };
+                  })}
+                />
+                {newOffer.images?.[i] && (
+                  // V229: `key` sur l'URL — `onError` pose display:none sur le
+                  // noeud, qui persisterait apres correction de l'URL sans un
+                  // remontage force.
+                  <img
+                    key={newOffer.images[i]}
+                    src={newOffer.images[i]}
+                    alt=""
+                    style={{ width: '80px', height: '80px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #333', marginTop: '4px' }}
+                    onError={(e) => { e.target.style.display = 'none'; }}
+                  />
+                )}
+              </div>
             ))}
           </div>
         </div>

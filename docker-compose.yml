@@ -4,6 +4,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # V229: ces deux variables sont consommees PENDANT `craco build` (Create
+      # React App les inline dans le bundle), pas a l'execution — elles doivent
+      # donc etre des build args et non des entrees de `environment:`.
+      # Ni un secret ni l'autre : un upload preset « unsigned » est fait pour
+      # etre expose au navigateur, et le cloud name apparait dans chaque URL
+      # d'image livree. Les defauts rendent le build reproductible hors Coolify.
+      args:
+        REACT_APP_CLOUDINARY_CLOUD_NAME: ${REACT_APP_CLOUDINARY_CLOUD_NAME:-dtm0r7hwq}
+        REACT_APP_CLOUDINARY_UPLOAD_PRESET: ${REACT_APP_CLOUDINARY_UPLOAD_PRESET:-afroboost}
     ports:
       - "8080:8080"
     environment:

@@ -12,6 +12,10 @@
 import React, { useState, useEffect } from 'react';
 import { LandingSectionSelector } from '../SearchBar';
 import SvgIcon from '../SvgIcon';
+// V229 — upload direct vers Cloudinary. `uploadToCloudinary` est la fonction
+// nue, utilisee ici parce que cet ecran a DEJA ses propres boutons d'upload :
+// on change ou va le fichier, pas l'interface.
+import CloudinaryUploadButton, { uploadToCloudinary, isCloudinaryConfigured } from '../CloudinaryUploadButton';
 
 const ConceptEditor = ({
   concept,
@@ -85,6 +89,21 @@ const ConceptEditor = ({
     setConcept({ ...concept, heroVideos: videos, heroImageUrl: videos[0]?.url || '' });
   };
 
+  // V229: l'upload passe par Cloudinary au lieu de `POST /coach/upload-asset`.
+  //
+  // Ce que ca change concretement : le fichier ne transite plus par le backend,
+  // donc la limite de 4 Mo imposee par la requete serverless disparait — elle
+  // etait si contraignante que le message d'erreur conseillait lui-meme « pour
+  // les videos, utilisez un lien YouTube ». Elle passe a 100 Mo, et le media est
+  // servi par un CDN au lieu d'etre stocke en base.
+  //
+  // Ce qui NE change PAS : la detection image/video, le champ `type` du slot
+  // ('image' ou 'upload' — il pilote le rendu cote vitrine et une valeur fausse
+  // ferait tenter un embed YouTube sur un fichier Cloudinary), le titre derive
+  // du nom de fichier, et la synchronisation de `heroImageUrl` sur le slot 0.
+  //
+  // Repli : si Cloudinary n'est pas configure dans ce build, on retombe sur
+  // l'upload backend historique plutot que de laisser le bouton inerte.
   const handleMediaUpload = async (file, slotIndex) => {
     if (!file) return;
     // Détecter le type automatiquement
@@ -94,31 +113,46 @@ const ConceptEditor = ({
       alert('Format non supporté. Utilisez MP4, MOV, WEBM, JPG, PNG ou WEBP.');
       return;
     }
-    // Vérifier la taille (Vercel limite à 4.5MB par requête)
-    const maxMB = 4;
+
+    const useCloudinary = isCloudinaryConfigured();
+    // 4 Mo reste la limite du chemin backend (requete serverless) ; Cloudinary
+    // recoit le fichier en direct et accepte bien davantage.
+    const maxMB = useCloudinary ? 100 : 4;
     if (file.size > maxMB * 1024 * 1024) {
       alert(`Fichier trop volumineux (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum: ${maxMB}MB.\n\nPour les vidéos, utilisez un lien YouTube ou Vimeo.\nPour les images, réduisez la taille avant d'uploader.`);
       return;
     }
+
     setUploadingVideo(slotIndex);
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('asset_type', isImage ? 'image' : 'video');
-      const res = await fetch(`${API}/coach/upload-asset`, {
-        method: 'POST',
-        headers: { 'X-User-Email': coachEmail },
-        body: formData
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || `Erreur serveur (${res.status})`);
+      let url;
+      if (useCloudinary) {
+        const uploaded = await uploadToCloudinary(file, {
+          folder: isImage ? 'vitrine/hero' : 'vitrine/hero/videos',
+          maxSizeMB: maxMB
+        });
+        url = uploaded.url;
+      } else {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('asset_type', isImage ? 'image' : 'video');
+        const res = await fetch(`${API}/coach/upload-asset`, {
+          method: 'POST',
+          headers: { 'X-User-Email': coachEmail },
+          body: formData
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `Erreur serveur (${res.status})`);
+        }
+        const data = await res.json();
+        url = data.url;
       }
-      const data = await res.json();
-      if (data.url) {
+
+      if (url) {
         const videos = [...getHeroVideos()];
         const mediaType = isImage ? 'image' : 'upload';
-        videos[slotIndex] = { url: data.url, type: mediaType, title: file.name.replace(/\.[^.]+$/, '') };
+        videos[slotIndex] = { url, type: mediaType, title: file.name.replace(/\.[^.]+$/, '') };
         setConcept({ ...concept, heroVideos: videos, heroImageUrl: videos[0]?.url || '' });
       }
     } catch (err) {
@@ -538,6 +572,26 @@ const ConceptEditor = ({
                       className="w-full px-2 py-1.5 rounded-lg neon-input text-sm"
                       placeholder="https://... (optionnel)"
                     />
+                    {/* V229: l'upload alimente le MEME champ que la saisie manuelle.
+                        `updateHeroVideo` est reutilise tel quel — il merge la cle
+                        `thumbnail` dans le slot et resynchronise `heroImageUrl`. */}
+                    <div style={{ marginTop: '4px' }}>
+                      <CloudinaryUploadButton
+                        folder="vitrine/thumbnails"
+                        label="Miniature"
+                        data-testid={`hero-thumbnail-upload-${idx}`}
+                        onUpload={(url) => updateHeroVideo(idx, { thumbnail: url })}
+                      />
+                    </div>
+                    {video.thumbnail && (
+                      <img
+                        key={video.thumbnail}
+                        src={video.thumbnail}
+                        alt=""
+                        style={{ width: '80px', height: '80px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #333', marginTop: '4px' }}
+                        onError={(e) => { e.target.style.display = 'none'; }}
+                      />
+                    )}
                   </div>
                   {/* v34: Toggle visibilité */}
                   <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -621,6 +675,26 @@ const ConceptEditor = ({
               className="w-full px-3 py-2 rounded-lg neon-input text-sm"
               placeholder="https://..."
             />
+            {/* V229: updater fonctionnel — l'upload dure plusieurs secondes, un
+                spread sur le `concept` capture au rendu ecraserait toute autre
+                modification faite entre-temps par le coach. */}
+            <div style={{ marginTop: '6px' }}>
+              <CloudinaryUploadButton
+                folder="branding"
+                label="Uploader logo"
+                data-testid="concept-logo-upload"
+                onUpload={(url) => setConcept(prev => ({ ...prev, logoUrl: url }))}
+              />
+            </div>
+            {concept.logoUrl && (
+              <img
+                key={concept.logoUrl}
+                src={concept.logoUrl}
+                alt=""
+                style={{ width: '80px', height: '80px', objectFit: 'contain', borderRadius: '8px', border: '1px solid #333', marginTop: '6px', background: 'rgba(0,0,0,0.2)' }}
+                onError={(e) => { e.target.style.display = 'none'; }}
+              />
+            )}
           </div>
           {/* Favicon URL */}
           <div className="mb-4">
@@ -632,6 +706,23 @@ const ConceptEditor = ({
               className="w-full px-3 py-2 rounded-lg neon-input text-sm"
               placeholder="https://..."
             />
+            <div style={{ marginTop: '6px' }}>
+              <CloudinaryUploadButton
+                folder="branding"
+                label="Uploader favicon"
+                data-testid="concept-favicon-upload"
+                onUpload={(url) => setConcept(prev => ({ ...prev, faviconUrl: url }))}
+              />
+            </div>
+            {concept.faviconUrl && (
+              <img
+                key={concept.faviconUrl}
+                src={concept.faviconUrl}
+                alt=""
+                style={{ width: '32px', height: '32px', objectFit: 'contain', borderRadius: '6px', border: '1px solid #333', marginTop: '6px', background: 'rgba(0,0,0,0.2)' }}
+                onError={(e) => { e.target.style.display = 'none'; }}
+              />
+            )}
           </div>
         </div>)}
 
@@ -896,6 +987,18 @@ const ConceptEditor = ({
                   placeholder="https://... (image ou vidéo YouTube/Vimeo)"
                   data-testid="event-poster-url"
                 />
+                {/* V229: aucun apercu ajoute ici — le bloc ci-dessous en a deja un,
+                    qui gere en plus les embeds YouTube et Vimeo. */}
+                <div style={{ marginTop: '6px' }}>
+                  <CloudinaryUploadButton
+                    accept="image/*,video/*"
+                    folder="events"
+                    label="Uploader affiche"
+                    maxSizeMB={50}
+                    data-testid="event-poster-upload"
+                    onUpload={(url) => setConcept(prev => ({ ...prev, eventPosterMediaUrl: url }))}
+                  />
+                </div>
               </div>
               
               {concept.eventPosterMediaUrl && (

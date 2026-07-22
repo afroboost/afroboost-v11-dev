@@ -4,6 +4,7 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import SvgIcon from '../SvgIcon';
+import CloudinaryUploadButton from '../CloudinaryUploadButton';
 
 const BrandingManager = ({ API, coachEmail, t }) => {
   const [accentColor, setAccentColor] = useState('#D91CD2');
@@ -141,6 +142,16 @@ const BrandingManager = ({ API, coachEmail, t }) => {
             }}
             data-testid="branding-logo"
           />
+          {/* V229: second chemin vers logoUrl — le champ URL ci-dessus reste
+              pleinement utilisable pour coller un lien. */}
+          <div style={{ marginTop: '8px' }}>
+            <CloudinaryUploadButton
+              folder="branding"
+              label="Uploader logo"
+              data-testid="branding-logo-upload"
+              onUpload={(url) => setLogoUrl(url)}
+            />
+          </div>
           {logoUrl && (
             <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <img

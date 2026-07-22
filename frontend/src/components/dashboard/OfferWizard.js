@@ -4,6 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios'; // V225: creation/modification des horaires depuis le wizard
 import SvgIcon from '../SvgIcon'; // V228: pictogrammes vectoriels a la place des emoji
+import CloudinaryUploadButton from '../CloudinaryUploadButton'; // V229
 
 const STEPS = [
   { n: 1, label: 'Bases' },
@@ -1807,19 +1808,44 @@ export default function OfferWizard({
         </label>
         <div className="space-y-2">
           {[0, 1, 2, 3, 4].map(i => (
-            <input
-              key={i}
-              type="url"
-              value={form.images?.[i] || ''}
-              onChange={(e) => {
-                const next = [...(form.images || ['', '', '', '', ''])];
-                next[i] = e.target.value;
-                set('images', next);
-              }}
-              placeholder={`Image ${i + 1}`}
-              style={INPUT_STYLE}
-              className="text-sm v224-input"
-            />
+            <div key={i} className="flex flex-col gap-1">
+              <input
+                type="url"
+                value={form.images?.[i] || ''}
+                onChange={(e) => {
+                  const next = [...(form.images || ['', '', '', '', ''])];
+                  next[i] = e.target.value;
+                  set('images', next);
+                }}
+                placeholder={`Image ${i + 1}`}
+                style={INPUT_STYLE}
+                className="text-sm v224-input"
+              />
+              {/* V229: l'upload ne remplace pas le champ URL, il ajoute un
+                  second chemin vers la meme valeur. Mise a jour fonctionnelle
+                  obligatoire (upload asynchrone de plusieurs secondes). */}
+              <CloudinaryUploadButton
+                folder="offers"
+                label="Uploader"
+                data-testid={`wizard-image-upload-${i}`}
+                onUpload={(url) => setForm(prev => {
+                  const imgs = [...(prev.images || ['', '', '', '', ''])];
+                  imgs[i] = url;
+                  return { ...prev, images: imgs };
+                })}
+              />
+              {form.images?.[i] && (
+                // V229: `key` sur l'URL — sans remontage, le display:none pose
+                // par `onError` survivrait a une correction de l'URL.
+                <img
+                  key={form.images[i]}
+                  src={form.images[i]}
+                  alt=""
+                  style={{ width: '80px', height: '80px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #333', marginTop: '4px' }}
+                  onError={(e) => { e.target.style.display = 'none'; }}
+                />
+              )}
+            </div>
           ))}
         </div>
       </div>
@@ -1836,6 +1862,18 @@ export default function OfferWizard({
           style={INPUT_STYLE}
           className="text-sm v224-input"
         />
+        {/* V229: accepte aussi une image (visuel de couverture anime ou fixe).
+            100 Mo : une video pesant bien plus qu'une photo. */}
+        <div className="mt-2">
+          <CloudinaryUploadButton
+            accept="video/*,image/*"
+            folder="offers/videos"
+            label="Uploader"
+            maxSizeMB={100}
+            data-testid="wizard-video-upload"
+            onUpload={(url) => setForm(prev => ({ ...prev, videoUrl: url }))}
+          />
+        </div>
         {form.videoUrl && (
           <div className="mt-3" style={{ borderRadius: '8px', overflow: 'hidden' }}>
             {/YouTube|youtu\.be|vimeo/i.test(form.videoUrl) ? (

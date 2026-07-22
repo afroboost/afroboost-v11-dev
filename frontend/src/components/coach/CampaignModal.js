@@ -11,6 +11,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { parseContacts } from '../../utils/contactParser';
 import SvgIcon from '../SvgIcon';
+import CloudinaryUploadButton from '../CloudinaryUploadButton';
 
 const STEPS = [
   { id: 1, label: 'Médias & Objectif', icon: 'target' },
@@ -474,6 +475,20 @@ export default function CampaignModal({
                   placeholder="YouTube, Google Drive ou URL image directe"
                   style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(139,92,246,0.3)', color: '#fff', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
                 />
+                {/* V229: second chemin vers newCampaign.mediaUrl — coller un lien
+                    reste possible. Updater fonctionnel obligatoire : l'upload dure
+                    plusieurs secondes et un spread sur `newCampaign` capture au
+                    rendu ecraserait le message redige pendant l'envoi. */}
+                <div style={{ marginTop: '8px' }}>
+                  <CloudinaryUploadButton
+                    accept="image/*,video/*"
+                    folder="campaigns"
+                    label="Uploader média"
+                    maxSizeMB={50}
+                    data-testid="campaign-media-upload"
+                    onUpload={(url) => setNewCampaign(prev => ({ ...prev, mediaUrl: url }))}
+                  />
+                </div>
                 {/* V159: Google Drive hint */}
                 {isGoogleDrive && (
                   <div style={{ marginTop: '6px', padding: '6px 10px', borderRadius: '6px', background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', fontSize: '11px', color: '#60a5fa' }}>
