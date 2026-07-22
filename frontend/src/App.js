@@ -1642,10 +1642,30 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                     className="w-full h-full"
                     style={{ objectFit: 'cover', objectPosition: 'center', height: '220px', background: '#000' }}
                     playsInline
-                    controls
-                    preload="metadata"
-                    onClick={(e) => e.stopPropagation()}
-                    onPlay={handlePlay}
+                    /* V227: la vignette se joue seule, muette et en boucle
+                       (autoplay muet = seul autoplay autorise par les navigateurs).
+                       `controls` est retire de la vignette : la barre de lecture
+                       n'apparait qu'au clic, en meme temps que le son. */
+                    autoPlay
+                    muted
+                    loop
+                    /* V227: metadata -> auto, sinon l'autoplay demarre par un a-coup. */
+                    preload="auto"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // V227: clic = son + controles + plein ecran. Le plein ecran
+                      // reste delegue a handlePlay, qui porte la chaine d'orientation
+                      // de la V225 (verrou paysage APRES resolution de la promesse,
+                      // uniquement si isLandscapeRef, echec avale). handlePlay lit
+                      // e.currentTarget : on l'appelle donc bien depuis le handler
+                      // pose sur le <video>, ou currentTarget EST l'element video.
+                      const v = e.currentTarget;
+                      v.muted = false;
+                      v.controls = true;
+                      handlePlay(e);
+                    }}
+                    /* V227: onPlay={handlePlay} retire — avec autoPlay il aurait
+                       declenche le plein ecran des le chargement de la page. */
                     onLoadedMetadata={handleMeta}
                     /* V224: repli — on bascule sur la branche <img>, qui retombe
                        elle-meme sur defaultImage via son propre onError. */
