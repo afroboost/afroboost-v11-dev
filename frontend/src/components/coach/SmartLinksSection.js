@@ -20,26 +20,23 @@ const GLOW = {
 
 const STEPS = [
   { id: 1, label: 'Infos & Prompt', icon: <SvgIcon name="target" size={14} /> },
-  // V228: 🧩 conserve — aucun trace « puzzle » dans SvgIcon.
-  { id: 2, label: 'Tunnel', icon: '🧩' },
+  { id: 2, label: 'Tunnel', icon: <SvgIcon name="layers" size={14} /> },
   { id: 3, label: 'Actions', icon: <SvgIcon name="zap" size={14} /> },
 ];
 
 const QUESTION_TYPES = [
   { value: 'text', label: 'Texte libre', icon: <SvgIcon name="edit" size={14} /> },
-  // V228: 🔘 et 🔢 conserves — pas de trace « bouton radio » ni « chiffres » dans SvgIcon.
-  { value: 'buttons', label: 'Boutons choix', icon: '🔘' },
+  { value: 'buttons', label: 'Boutons choix', icon: <SvgIcon name="circleDot" size={14} /> },
   { value: 'email', label: 'Email', icon: <SvgIcon name="mail" size={14} /> },
   { value: 'phone', label: 'Téléphone', icon: <SvgIcon name="phone" size={14} /> },
   { value: 'city', label: 'Ville', icon: <SvgIcon name="mapPin" size={14} /> },
-  { value: 'number', label: 'Nombre', icon: '🔢' },
+  { value: 'number', label: 'Nombre', icon: <SvgIcon name="hash" size={14} /> },
   { value: 'date', label: 'Date', icon: <SvgIcon name="calendar" size={14} /> },
 ];
 
 const LEAD_TYPES = [
-  // V228: 🏃 et 🤝 conserves — pas de trace « coureur » ni « poignee de main » dans SvgIcon.
-  { value: 'participant', label: 'Participant', color: '#22c55e', icon: '🏃' },
-  { value: 'partner', label: 'Partenaire', color: '#f59e0b', icon: '🤝' },
+  { value: 'participant', label: 'Participant', color: '#22c55e', icon: <SvgIcon name="user" size={14} /> },
+  { value: 'partner', label: 'Partenaire', color: '#f59e0b', icon: <SvgIcon name="link" size={14} /> },
   { value: 'collaboration', label: 'Collaboration', color: '#3b82f6', icon: <SvgIcon name="target" size={14} /> },
   { value: 'group', label: 'Groupe', color: '#ec4899', icon: <SvgIcon name="users" size={14} /> },
   { value: 'question', label: 'Question', color: '#a78bfa', icon: <SvgIcon name="helpCircle" size={14} /> },
@@ -357,7 +354,7 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                 borderRadius: '12px', padding: '16px',
               }}>
                 <label style={{ display: 'block', fontSize: '12px', color: '#a78bfa', fontWeight: '600', marginBottom: '8px' }}>
-                  🧠 Prompt Système (optionnel)
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="cpu" size={14} />Prompt Système (optionnel)</span>
                 </label>
                 <textarea
                   value={linkData.custom_prompt}
@@ -482,7 +479,7 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                   borderRadius: '12px',
                 }}>
                   <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '13px', margin: 0 }}>
-                    🧩 Aucune question ajoutée
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="layers" size={14} />Aucune question ajoutée</span>
                   </p>
                   <p style={{ color: 'rgba(255,255,255,0.2)', fontSize: '11px', margin: '6px 0 0' }}>
                     Utilisez le bouton "Stratégie IA" ou ajoutez manuellement

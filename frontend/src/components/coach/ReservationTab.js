@@ -398,7 +398,7 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
         <p><SvgIcon name="calendar" size={14} className="mr-1.5" /><span className="text-blue-300">Réservé le :</span> {new Date(r.createdAt).toLocaleString('fr-CH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
       )}
       <p><SvgIcon name="calendar" size={14} className="mr-1.5" /><span className="text-purple-300">Session :</span> {formatDateTime(r.datetime)}</p>
-      {r.courseName && <p>📚 {r.courseName}</p>}
+      {r.courseName && <p><SvgIcon name="book" size={14} className="mr-1.5" />{r.courseName}</p>}
       {r.promoCode && (
         <p><SvgIcon name="ticket" size={14} className="mr-1.5" />Code: <span className="text-yellow-400 font-medium">{r.promoCode}</span>
           {r.subscriptionId && <span className="text-purple-400 ml-1">(abo lié)</span>}
@@ -499,7 +499,7 @@ const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, 
     <td className="py-3">
       <div className="flex flex-col gap-0.5">
         <div className="flex gap-1">
-          {r.courseName && <span className="text-xs text-purple-400">📚</span>}
+          {r.courseName && <span className="text-xs text-purple-400" title="Cours"><SvgIcon name="book" size={14} /></span>}
           {isProduct && <span className="text-xs text-blue-400" title="Commande produit"><SvgIcon name="shoppingCart" size={14} /></span>}
           {r.promoCode && <span className="text-xs text-yellow-400" title={`Code: ${r.promoCode}`}><SvgIcon name="ticket" size={14} /></span>}
         </div>

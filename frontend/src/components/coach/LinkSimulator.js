@@ -362,7 +362,7 @@ const LinkSimulator = memo(({ link, isOpen, onClose }) => {
           <span>|</span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><SvgIcon name="check" size={12} />{answers.length} réponses</span>
           <span>|</span>
-          <span>{tunnelQuestions.length > 0 ? `🧩 ${tunnelQuestions.length} questions custom` : <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><SvgIcon name="clipboard" size={12} />Questions par défaut</span>}</span>
+          <span>{tunnelQuestions.length > 0 ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><SvgIcon name="layers" size={12} />{tunnelQuestions.length} questions custom</span> : <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><SvgIcon name="clipboard" size={12} />Questions par défaut</span>}</span>
         </div>
       </div>
     </div>

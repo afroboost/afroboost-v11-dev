@@ -380,7 +380,7 @@ export default function CampaignModal({
 
               {/* Prompt Système */}
               <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '10px', background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.2)' }}>
-                <label style={{ display: 'block', color: '#c4b5fd', fontSize: '12px', fontWeight: 500, marginBottom: '6px' }}>🧠 Prompt Système <span style={{ color: 'rgba(255,255,255,0.4)' }}>(optionnel)</span></label>
+                <label style={{ display: 'block', color: '#c4b5fd', fontSize: '12px', fontWeight: 500, marginBottom: '6px' }}><SvgIcon name="cpu" size={14} /> Prompt Système <span style={{ color: 'rgba(255,255,255,0.4)' }}>(optionnel)</span></label>
                 <textarea
                   value={newCampaign.systemPrompt || ''}
                   onChange={e => setNewCampaign(prev => ({ ...prev, systemPrompt: e.target.value }))}
@@ -449,7 +449,7 @@ export default function CampaignModal({
 
               {/* Média URL */}
               <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', color: '#fff', fontSize: '13px', fontWeight: 500, marginBottom: '6px' }}>📎 Média <span style={{ color: 'rgba(255,255,255,0.4)' }}>(optionnel)</span></label>
+                <label style={{ display: 'block', color: '#fff', fontSize: '13px', fontWeight: 500, marginBottom: '6px' }}><SvgIcon name="paperclip" size={14} /> Média <span style={{ color: 'rgba(255,255,255,0.4)' }}>(optionnel)</span></label>
                 {/* Quick select from saved media */}
                 {mediaLinks?.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
@@ -768,7 +768,7 @@ export default function CampaignModal({
 
               {/* Canaux */}
               <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', color: '#fff', fontSize: '13px', fontWeight: 500, marginBottom: '8px' }}>📡 Canaux d'envoi</label>
+                <label style={{ display: 'block', color: '#fff', fontSize: '13px', fontWeight: 500, marginBottom: '8px' }}><SvgIcon name="radio" size={14} /> Canaux d'envoi</label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                   {[
                     { key: 'internal', icon: 'messageCircle', label: 'Chat Interne', color: '#22c55e' },
@@ -838,7 +838,7 @@ export default function CampaignModal({
 
               {/* CTA — v16.3 */}
               <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '10px', background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
-                <label style={{ display: 'block', color: '#c4b5fd', fontSize: '12px', fontWeight: 500, marginBottom: '8px' }}>🔘 Bouton d'action (CTA)</label>
+                <label style={{ display: 'block', color: '#c4b5fd', fontSize: '12px', fontWeight: 500, marginBottom: '8px' }}><SvgIcon name="circleDot" size={14} /> Bouton d'action (CTA)</label>
                 <select
                   value={newCampaign.ctaType || 'none'}
                   onChange={e => {

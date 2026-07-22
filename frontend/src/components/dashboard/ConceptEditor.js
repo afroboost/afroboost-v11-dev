@@ -292,7 +292,7 @@ const ConceptEditor = ({
             
             {/* Couleur de fond */}
             <div>
-              <label className="block mb-2 text-white text-sm">🌑 Couleur de fond (Background)</label>
+              <label className="flex items-center gap-1.5 mb-2 text-white text-sm"><SvgIcon name="moon" size={14} />Couleur de fond (Background)</label>
               <div className="flex items-center gap-3">
                 <input 
                   type="color" 

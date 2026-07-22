@@ -513,7 +513,7 @@ const CampaignManager = ({
                           {campaign.channels?.whatsapp && <SvgIcon name="phone" size={14} />}
                           {campaign.channels?.email && <SvgIcon name="mail" size={14} />}
                           {campaign.channels?.group && <SvgIcon name="messageCircle" size={14} />}
-                          {campaign.channels?.internal && '💌'}
+                          {campaign.channels?.internal && <SvgIcon name="messageSquare" size={14} />}
                         </span>
                       </td>
                       <td style={{ padding: '10px 8px' }}>
@@ -586,7 +586,7 @@ const CampaignManager = ({
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, minWidth: 0 }}>
                         <span style={{ color: '#fff', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{result.contactName}</span>
-                        <span style={{ fontSize: '11px', opacity: 0.4 }}>{result.channel === 'whatsapp' ? <SvgIcon name="phone" size={14} /> : result.channel === 'email' ? <SvgIcon name="mail" size={14} /> : '💌'}</span>
+                        <span style={{ fontSize: '11px', opacity: 0.4 }}>{result.channel === 'whatsapp' ? <SvgIcon name="phone" size={14} /> : result.channel === 'email' ? <SvgIcon name="mail" size={14} /> : <SvgIcon name="messageSquare" size={14} />}</span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                         {result.status === 'pending' && !hasError && (
@@ -598,7 +598,7 @@ const CampaignManager = ({
                         {result.status === 'sent' && (
                           <>
                             <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', background: 'rgba(34,197,94,0.2)', color: '#4ade80' }}><SvgIcon name="check" size={14} /></span>
-                            {result.deliveredAt && <span style={{ fontSize: '10px', color: '#60a5fa' }} title={`Reçu: ${new Date(result.deliveredAt).toLocaleString('fr-FR')}`}>📬</span>}
+                            {result.deliveredAt && <span style={{ fontSize: '10px', color: '#60a5fa' }} title={`Reçu: ${new Date(result.deliveredAt).toLocaleString('fr-FR')}`}><SvgIcon name="inbox" size={14} /></span>}
                             {result.readAt && <span style={{ fontSize: '10px', color: '#c084fc' }} title={`Lu: ${new Date(result.readAt).toLocaleString('fr-FR')}`}><SvgIcon name="eye" size={14} /></span>}
                           </>
                         )}

@@ -664,7 +664,7 @@ const V228_PATHS = {
   //   flask         <- 🧪  mode « Sandbox » (PaymentConfigTab)
   // NB : 🔘 (bouton radio) ne demande aucun trace nouveau — `circleDot`, pose au
   // lot 1, est exactement ce pictogramme.
-  // Restent volontairement en emoji : 🅿️ (marque PawaPay) et 🇨🇭 (drapeau) — une
+  // Restent volontairement en emoji : 🅿️ (marque PayPal) et 🇨🇭 (drapeau) — une
   // marque et un drapeau n'ont pas vocation a devenir des traces monochromes.
   layers: (
     <>

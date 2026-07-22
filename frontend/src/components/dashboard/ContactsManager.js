@@ -495,7 +495,7 @@ export default function ContactsManager({ API, coachEmail }) {
           { key: 'user', label: React.createElement('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px' } }, React.createElement(SvgIcon, { name: 'user', size: 12 }), 'Contacts') },
           // V228: \uD83D\uDD35 n'est pas un pictogramme mais une pastille de couleur -> rendu CSS.
           { key: 'google', label: React.createElement('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px' } }, React.createElement('span', { className: 'inline-block w-2 h-2 rounded-full bg-blue-500' }), 'Google') },
-          { key: 'birthday', label: '\uD83C\uDF82 Anniversaires' }
+          { key: 'birthday', label: React.createElement('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px' } }, React.createElement(SvgIcon, { name: 'cake', size: 12 }), 'Anniversaires') }
         ].map(function(f) {
           return React.createElement('button', {
             key: f.key,
@@ -526,10 +526,10 @@ export default function ContactsManager({ API, coachEmail }) {
       ),
       React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '15px' } },
         ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'].map(function(d) { return React.createElement('div', { key: d, style: { textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: '10px', padding: '5px' } }, d); }),
-        getBirthdayCalendar().map(function(week, wi) { return week.map(function(cell, ci) { if (!cell) return React.createElement('div', { key: 'e'+wi+ci, style: { padding: '5px', minHeight: '35px' } }); var hasBday = cell.matches && cell.matches.length > 0; return React.createElement('div', { key: 'c'+wi+ci, style: { padding: '3px', minHeight: '35px', textAlign: 'center', borderRadius: '6px', background: hasBday ? 'rgba(217,28,210,0.25)' : 'rgba(255,255,255,0.03)', border: hasBday ? '1px solid rgba(217,28,210,0.5)' : '1px solid transparent' } }, React.createElement('div', { style: { color: '#fff', fontSize: '11px' } }, cell.day), hasBday ? cell.matches.map(function(m) { return React.createElement('div', { key: m.id, style: { fontSize: '8px', color: '#D91CD2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, '\uD83C\uDF82 ' + (m.name || '').split(' ')[0]); }) : null); }); })
+        getBirthdayCalendar().map(function(week, wi) { return week.map(function(cell, ci) { if (!cell) return React.createElement('div', { key: 'e'+wi+ci, style: { padding: '5px', minHeight: '35px' } }); var hasBday = cell.matches && cell.matches.length > 0; return React.createElement('div', { key: 'c'+wi+ci, style: { padding: '3px', minHeight: '35px', textAlign: 'center', borderRadius: '6px', background: hasBday ? 'rgba(217,28,210,0.25)' : 'rgba(255,255,255,0.03)', border: hasBday ? '1px solid rgba(217,28,210,0.5)' : '1px solid transparent' } }, React.createElement('div', { style: { color: '#fff', fontSize: '11px' } }, cell.day), hasBday ? cell.matches.map(function(m) { return React.createElement('div', { key: m.id, style: { fontSize: '8px', color: '#D91CD2', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '2px', overflow: 'hidden' } }, React.createElement(SvgIcon, { name: 'cake', size: 10 }), React.createElement('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, (m.name || '').split(' ')[0])); }) : null); }); })
       ),
       React.createElement('div', { style: { color: '#c4b5fd', fontSize: '12px', fontWeight: 'bold', marginBottom: '8px' } }, 'Anniversaires en ' + monthNames[birthdayMonth]),
-      birthdayData.filter(function(p) { var mm = String(birthdayMonth + 1).padStart(2, '0'); return p.birthday && p.birthday.substring(0, 2) === mm; }).sort(function(a, b) { return a.birthday.localeCompare(b.birthday); }).map(function(p) { return React.createElement('div', { key: p.id, style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', marginBottom: '4px' } }, React.createElement('span', { style: { fontSize: '16px' } }, '\uD83C\uDF82'), React.createElement('span', { style: { color: '#fff', fontSize: '12px', flex: 1 } }, p.name || 'Membre'), React.createElement('span', { style: { color: '#D91CD2', fontSize: '11px' } }, p.birthday)); }),
+      birthdayData.filter(function(p) { var mm = String(birthdayMonth + 1).padStart(2, '0'); return p.birthday && p.birthday.substring(0, 2) === mm; }).sort(function(a, b) { return a.birthday.localeCompare(b.birthday); }).map(function(p) { return React.createElement('div', { key: p.id, style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', marginBottom: '4px' } }, React.createElement(SvgIcon, { name: 'cake', size: 16 }), React.createElement('span', { style: { color: '#fff', fontSize: '12px', flex: 1 } }, p.name || 'Membre'), React.createElement('span', { style: { color: '#D91CD2', fontSize: '11px' } }, p.birthday)); }),
       birthdayLoading ? React.createElement('div', { style: { color: '#D91CD2', textAlign: 'center', padding: '20px' } }, 'Chargement...') : null
     );
   }
@@ -777,7 +777,7 @@ export default function ContactsManager({ API, coachEmail }) {
             { key: 'group', label: <><SvgIcon name="users" size={12} /> Groupes</> },
             { key: 'user', label: <><SvgIcon name="user" size={12} /> Contacts</> },
             { key: 'google', label: <><span className="inline-block w-2 h-2 rounded-full bg-blue-500" /> Google</> }
-            ,{ key: 'birthday', label: '\uD83C\uDF82 Anniversaires' }
+            ,{ key: 'birthday', label: <><SvgIcon name="cake" size={12} /> Anniversaires</> }
           ].map(f => (
             <button key={f.key} onClick={() => setFilterType(f.key)} style={{
               padding: '5px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: 500, cursor: 'pointer',

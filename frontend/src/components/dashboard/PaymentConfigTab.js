@@ -317,7 +317,11 @@ const PaymentConfigTab = ({ paymentConfig, setPaymentConfig, coachEmail }) => {
                       textTransform: 'capitalize'
                     }}
                   >
-                    {mode === 'sandbox' ? '🧪 Sandbox (Test)' : (
+                    {mode === 'sandbox' ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <SvgIcon name="flask" size={14} /> Sandbox (Test)
+                      </span>
+                    ) : (
                       <span className="inline-flex items-center gap-1.5">
                         <span className="inline-block w-2 h-2 rounded-full bg-green-500" /> Live (Production)
                       </span>
