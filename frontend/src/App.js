@@ -680,11 +680,18 @@ function parseMediaUrl(url) {
   if (videoExtensions.some(ext => lowerPath.endsWith(ext))) {
     return { type: 'video', url: trimmedUrl };
   }
-  
+
+  // V233: Cloudinary video — les URL Cloudinary video contiennent /video/upload/
+  // dans le chemin, mais ne se terminent pas par une extension video connue.
+  // Il faut les detecter AVANT le check CDN image qui attrape cloudinary.com.
+  if (lowerUrl.includes('cloudinary.com') && lowerUrl.includes('/video/upload/')) {
+    return { type: 'video', url: trimmedUrl };
+  }
+
   // Image - Accept all common formats and CDN URLs
   const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.ico'];
   const imageCDNs = ['imgbb.com', 'cloudinary.com', 'imgur.com', 'unsplash.com', 'pexels.com', 'i.ibb.co'];
-  
+
   if (imageExtensions.some(ext => lowerUrl.includes(ext)) || imageCDNs.some(cdn => lowerUrl.includes(cdn))) {
     return { type: 'image', url: trimmedUrl };
   }
@@ -1130,11 +1137,22 @@ const OfferCard = ({ offer, selected, onClick }) => {
   const [showDescription, setShowDescription] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const defaultImage = "https://picsum.photos/seed/default/400/200";
-  
-  // PRIORITÉ: offer.images[0] > offer.thumbnail > defaultImage
-  const images = (offer.images && Array.isArray(offer.images) && offer.images.length > 0) 
-    ? offer.images.filter(img => img && typeof img === 'string' && img.trim()) 
-    : (offer.thumbnail && typeof offer.thumbnail === 'string' ? [offer.thumbnail] : [defaultImage]);
+
+  // PRIORITÉ: offer.videoUrl > offer.images[0] > offer.thumbnail > defaultImage
+  // V233: inclure videoUrl dans la liste des medias pour afficher les videos
+  // uploadees via Cloudinary (ou toute autre source) sur les cartes.
+  const images = (() => {
+    const list = [];
+    if (offer.videoUrl && typeof offer.videoUrl === 'string' && offer.videoUrl.trim()) {
+      list.push(offer.videoUrl.trim());
+    }
+    if (offer.images && Array.isArray(offer.images)) {
+      offer.images.forEach(img => { if (img && typeof img === 'string' && img.trim()) list.push(img.trim()); });
+    }
+    if (list.length > 0) return list;
+    if (offer.thumbnail && typeof offer.thumbnail === 'string') return [offer.thumbnail];
+    return [defaultImage];
+  })();
   
   const currentImage = images[currentImageIndex] || images[0] || defaultImage;
   const hasMultipleImages = images.length > 1;
@@ -1396,20 +1414,31 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
     };
   }, []);
   const defaultImage = "https://picsum.photos/seed/default/400/300";
-  
-  // PRIORITÉ: offer.images[0] > offer.thumbnail > defaultImage
-  const images = (offer.images && Array.isArray(offer.images) && offer.images.length > 0) 
-    ? offer.images.filter(img => img && typeof img === 'string' && img.trim()) 
-    : (offer.thumbnail && typeof offer.thumbnail === 'string' ? [offer.thumbnail] : [defaultImage]);
-  
+
+  // PRIORITÉ: offer.videoUrl > offer.images[0] > offer.thumbnail > defaultImage
+  // V233: inclure videoUrl dans la liste des medias pour afficher les videos
+  // uploadees via Cloudinary (ou toute autre source) sur les cartes.
+  const images = (() => {
+    const list = [];
+    if (offer.videoUrl && typeof offer.videoUrl === 'string' && offer.videoUrl.trim()) {
+      list.push(offer.videoUrl.trim());
+    }
+    if (offer.images && Array.isArray(offer.images)) {
+      offer.images.forEach(img => { if (img && typeof img === 'string' && img.trim()) list.push(img.trim()); });
+    }
+    if (list.length > 0) return list;
+    if (offer.thumbnail && typeof offer.thumbnail === 'string') return [offer.thumbnail];
+    return [defaultImage];
+  })();
+
   const currentImage = images[currentImageIndex] || images[0] || defaultImage;
   const hasMultipleImages = images.length > 1;
-  
+
   const toggleDescription = (e) => {
     e.stopPropagation();
     setShowDescription(!showDescription);
   };
-  
+
   const toggleZoom = (e) => {
     e.stopPropagation();
     setShowZoom(!showZoom);

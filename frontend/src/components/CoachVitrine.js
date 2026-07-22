@@ -18,6 +18,18 @@ import SvgIcon from "./SvgIcon";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
 
+// V233: detecter si une URL est une video (Cloudinary ou extension connue).
+// Utilisee pour rendre <video> au lieu de <img> sur les cartes d'offres.
+function isVideoUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  const lower = url.toLowerCase();
+  const path = lower.split('#')[0].split('?')[0];
+  const videoExts = ['.mp4', '.webm', '.mov', '.avi', '.m4v', '.ogv'];
+  if (videoExts.some(ext => path.endsWith(ext))) return true;
+  if (lower.includes('cloudinary.com') && lower.includes('/video/upload/')) return true;
+  return false;
+}
+
 // === V159: COUNTDOWN TIMER pour vitrine ===
 const VitrineCountdown = ({ offer }) => {
   const calcRemaining = () => {
@@ -1298,7 +1310,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               style={{ scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
               {uniqueOffers.map((offer) => {
                 const defaultImage = "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=400&h=300&fit=crop";
-                const imageUrl = offer.imageUrl || offer.thumbnail || offer.images?.[0] || defaultImage;
+                // V233: inclure videoUrl comme media principal de la carte
+                const imageUrl = offer.videoUrl || offer.imageUrl || offer.thumbnail || offer.images?.[0] || defaultImage;
+                const v233IsVideo = isVideoUrl(imageUrl);
                 const isOfferSelected = selectedOffer?.id === offer.id;
                 return (
                   <div key={offer.id} className="flex-shrink-0 snap-start" style={{ width: '280px', minWidth: '280px', padding: '4px' }}>
@@ -1334,10 +1348,18 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                         }, 100);
                       }}>
                       <div style={{ position: 'relative', height: '180px', overflow: 'hidden' }}>
-                        <img src={imageUrl} alt={offer.name} className="w-full h-full object-cover"
-                          loading="lazy"
-                          onError={(e) => { e.target.src = defaultImage; }} />
-                        {/* Photo Icon - Top Left */}
+                        {/* V233: video ou image selon le type de media */}
+                        {v233IsVideo ? (
+                          <video src={imageUrl} className="w-full h-full"
+                            style={{ objectFit: 'cover', objectPosition: 'center', height: '180px', background: '#000' }}
+                            playsInline autoPlay muted loop preload="auto"
+                            onError={(e) => { e.target.style.display = 'none'; }} />
+                        ) : (
+                          <img src={imageUrl} alt={offer.name} className="w-full h-full object-cover"
+                            loading="lazy"
+                            onError={(e) => { e.target.src = defaultImage; }} />
+                        )}
+                        {/* Photo/Video Icon - Top Left */}
                         <div className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center"
                           style={{
                             background: 'rgba(217, 28, 210, 0.85)',
@@ -1345,9 +1367,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                             border: '2px solid rgba(255, 255, 255, 0.3)'
                           }}>
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                            <circle cx="8.5" cy="8.5" r="1.5"/>
-                            <polyline points="21 15 16 10 5 21"/>
+                            {v233IsVideo ? (
+                              <polygon points="5 3 19 12 5 21 5 3" />
+                            ) : (
+                              <><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></>
+                            )}
                           </svg>
                         </div>
                         {offer.price === 0 && (
@@ -1421,7 +1445,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   style={{ scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
                   {filtered.map((offer) => {
                     const defaultImage = "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=400&h=300&fit=crop";
-                    const imageUrl = offer.imageUrl || offer.thumbnail || offer.images?.[0] || defaultImage;
+                    // V233: inclure videoUrl comme media principal
+                    const imageUrl = offer.videoUrl || offer.imageUrl || offer.thumbnail || offer.images?.[0] || defaultImage;
+                    const v233IsVid = isVideoUrl(imageUrl);
                     return (
                       <div key={offer.id} className="flex-shrink-0 snap-start" style={{ width: '280px', minWidth: '280px', padding: '4px' }}>
                         <div className="rounded-xl overflow-hidden transition-all duration-300 hover:scale-[1.02] cursor-pointer"
@@ -1452,10 +1478,18 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                             border: '1px solid rgba(217, 28, 210, 0.3)'
                           }}>
                           <div style={{ position: 'relative', height: '180px', overflow: 'hidden' }}>
-                            <img src={imageUrl} alt={offer.name} className="w-full h-full object-cover"
-                              loading="lazy"
-                              onError={(e) => { e.target.src = defaultImage; }} />
-                            {/* Photo Icon - Top Left */}
+                            {/* V233: video ou image */}
+                            {v233IsVid ? (
+                              <video src={imageUrl} className="w-full h-full"
+                                style={{ objectFit: 'cover', objectPosition: 'center', height: '180px', background: '#000' }}
+                                playsInline autoPlay muted loop preload="auto"
+                                onError={(e) => { e.target.style.display = 'none'; }} />
+                            ) : (
+                              <img src={imageUrl} alt={offer.name} className="w-full h-full object-cover"
+                                loading="lazy"
+                                onError={(e) => { e.target.src = defaultImage; }} />
+                            )}
+                            {/* Photo/Video Icon - Top Left */}
                             <div className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center"
                               style={{
                                 background: 'rgba(217, 28, 210, 0.85)',
@@ -1463,9 +1497,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                                 border: '2px solid rgba(255, 255, 255, 0.3)'
                               }}>
                               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                                <circle cx="8.5" cy="8.5" r="1.5"/>
-                                <polyline points="21 15 16 10 5 21"/>
+                                {v233IsVid ? (
+                                  <polygon points="5 3 19 12 5 21 5 3" />
+                                ) : (
+                                  <><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></>
+                                )}
                               </svg>
                             </div>
                             {offer.price === 0 && (
