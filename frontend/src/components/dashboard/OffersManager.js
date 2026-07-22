@@ -18,12 +18,54 @@ function isVideoUrl(url) {
   return false;
 }
 
+// V234.2: generer un poster (image) depuis une URL video Cloudinary
+// Ex: .../video/upload/v123/file.mp4 → .../video/upload/so_0,w_200,h_200,c_fill,f_jpg/v123/file.jpg
+function getVideoThumbnail(url) {
+  if (!url || typeof url !== 'string') return null;
+  if (url.includes('cloudinary.com') && url.includes('/video/upload/')) {
+    return url
+      .replace('/video/upload/', '/video/upload/so_0,w_200,h_200,c_fill,f_jpg/')
+      .replace(/\.[^.]+$/, '.jpg');
+  }
+  return null;
+}
+
 // V234: helper — premier media disponible (videoUrl > images[0] > thumbnail)
 function getOfferMedia(offer) {
   if (offer.videoUrl && typeof offer.videoUrl === 'string' && offer.videoUrl.trim()) return offer.videoUrl.trim();
   if (offer.images?.[0]) return offer.images[0];
   if (offer.thumbnail) return offer.thumbnail;
   return null;
+}
+
+// V234.2: composant miniature pour carte — image poster + icone play si video
+function OfferThumb({ offer, size = 16 }) {
+  const media = getOfferMedia(offer);
+  if (!media) {
+    return (
+      <div className={`w-${size} h-${size} rounded-lg bg-purple-900/30 flex items-center justify-center flex-shrink-0`}>
+        <SvgIcon name="headphones" size={size === 16 ? 24 : 20} />
+      </div>
+    );
+  }
+  const isVideo = isVideoUrl(media);
+  // Pour une video Cloudinary, on affiche un poster image (fiable) au lieu d'un <video> autoplay (peu fiable)
+  const thumb = isVideo ? (offer.thumbnail || getVideoThumbnail(media)) : null;
+  const imgSrc = thumb || media;
+  const px = size === 16 ? '64px' : size === 12 ? '48px' : `${size * 4}px`;
+  return (
+    <div style={{ position: 'relative', width: px, height: px, flexShrink: 0 }}>
+      <img src={imgSrc} alt="" style={{ width: px, height: px, objectFit: 'cover', borderRadius: '8px', background: '#000' }} loading="lazy" />
+      {isVideo && (
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.3)', borderRadius: '8px'
+        }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><polygon points="8,5 19,12 8,19" /></svg>
+        </div>
+      )}
+    </div>
+  );
 }
 
 const OffersManager = ({
@@ -627,17 +669,9 @@ const OffersManager = ({
                 <span style={{ letterSpacing: '1px' }}>⋮⋮</span>
                 <span style={{ fontSize: '10px' }}>Glisser pour déplacer</span>
               </div>
-              {/* Image/Video et nom — V234: inclure videoUrl */}
+              {/* Image/Video et nom — V234.2: poster fiable au lieu de <video> autoplay */}
               <div className="flex items-center gap-3 mb-3">
-                {(() => {
-                  const media = getOfferMedia(offer);
-                  if (!media) return <div className="w-16 h-16 rounded-lg bg-purple-900/30 flex items-center justify-center text-2xl flex-shrink-0"><SvgIcon name="headphones" size={24} /></div>;
-                  if (isVideoUrl(media)) return (
-                    <video src={media} className="w-16 h-16 rounded-lg object-cover flex-shrink-0" style={{ background: '#000' }}
-                      playsInline autoPlay muted loop preload="metadata" />
-                  );
-                  return <img src={media} alt="" className="w-16 h-16 rounded-lg object-cover flex-shrink-0" loading="lazy" />;
-                })()}
+                <OfferThumb offer={offer} size={16} />
                 <div className="flex-1 min-w-0">
                   <h4 className="text-white font-semibold text-sm truncate">{offer.name}</h4>
                   <p className="text-purple-400 text-xs">{offer.price} CHF</p>
@@ -747,16 +781,8 @@ const OffersManager = ({
               </div>
               <div className="flex justify-between items-start mb-3">
                 <div className="flex items-center gap-3">
-                  {/* V234: inclure videoUrl dans l'apercu */}
-                  {(() => {
-                    const media = getOfferMedia(offer);
-                    if (!media) return <div className="w-12 h-12 rounded-lg bg-purple-900/30 flex items-center justify-center text-2xl"><SvgIcon name="headphones" size={24} /></div>;
-                    if (isVideoUrl(media)) return (
-                      <video src={media} className="w-12 h-12 rounded-lg object-cover" style={{ background: '#000' }}
-                        playsInline autoPlay muted loop preload="metadata" />
-                    );
-                    return <img src={media} alt="" className="w-12 h-12 rounded-lg object-cover" loading="lazy" />;
-                  })()}
+                  {/* V234.2: poster fiable */}
+                  <OfferThumb offer={offer} size={12} />
                   <div>
                     <h4 className="text-white font-semibold">{offer.name}</h4>
                     <p className="text-purple-400 text-sm">{offer.price} CHF • {offer.images?.filter(i => i).length || 0} images</p>
