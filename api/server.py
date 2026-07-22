@@ -1024,9 +1024,12 @@ async def get_courses(request: Request, scope: str = ""):
 
     courses_raw = await db.courses.find(base_filter, {"_id": 0}).to_list(100)
     if not courses_raw:
+        # V241: meme correctif que pour les offres par defaut — sans `coach_id`
+        # ces cours amorces seraient invisibles a tout coach.
+        _seed_owner_c = SUPER_ADMIN_EMAILS[0]
         default_courses = [
-            {"id": str(uuid.uuid4()), "name": "Afroboost Silent – Session Cardio", "weekday": 3, "time": "18:30", "locationName": "Rue des Vallangines 97, Neuchâtel", "mapsUrl": ""},
-            {"id": str(uuid.uuid4()), "name": "Afroboost Silent – Sunday Vibes", "weekday": 0, "time": "18:30", "locationName": "Rue des Vallangines 97, Neuchâtel", "mapsUrl": ""}
+            {"id": str(uuid.uuid4()), "name": "Afroboost Silent – Session Cardio", "weekday": 3, "time": "18:30", "locationName": "Rue des Vallangines 97, Neuchâtel", "mapsUrl": "", "coach_id": _seed_owner_c},
+            {"id": str(uuid.uuid4()), "name": "Afroboost Silent – Sunday Vibes", "weekday": 0, "time": "18:30", "locationName": "Rue des Vallangines 97, Neuchâtel", "mapsUrl": "", "coach_id": _seed_owner_c}
         ]
         await db.courses.insert_many(default_courses)
         courses_raw = default_courses
@@ -1210,10 +1213,19 @@ async def get_offers(request: Request, scope: str = ""):
 
     offers = await db.offers.find({}, {"_id": 0}).to_list(100)
     if not offers:
+        # V241: `coach_id` pose des la creation. Ce bloc d'amorcage s'execute sur
+        # un GET (potentiellement anonyme, sans header) quand la collection est
+        # vide : il ne peut donc pas deduire de proprietaire. Sans cette ligne il
+        # produisait des offres a `coach_id: null`, invisibles a tout coach une
+        # fois l'isolation V237 active — exactement le defaut que V238 avait du
+        # rattraper a la main.
+        # SUPER_ADMIN_EMAILS[0] plutot que DEFAULT_COACH_ID : ce dernier
+        # (`bassi_default`) n'est l'email d'aucun compte, donc invisible partout.
+        _seed_owner = SUPER_ADMIN_EMAILS[0]
         default_offers = [
-            {"id": str(uuid.uuid4()), "name": "Cours à l'unité", "price": 30, "thumbnail": "", "videoUrl": "", "description": "", "visible": True},
-            {"id": str(uuid.uuid4()), "name": "Carte 10 cours", "price": 150, "thumbnail": "", "videoUrl": "", "description": "", "visible": True},
-            {"id": str(uuid.uuid4()), "name": "Abonnement 1 mois", "price": 109, "thumbnail": "", "videoUrl": "", "description": "", "visible": True}
+            {"id": str(uuid.uuid4()), "name": "Cours à l'unité", "price": 30, "thumbnail": "", "videoUrl": "", "description": "", "visible": True, "coach_id": _seed_owner},
+            {"id": str(uuid.uuid4()), "name": "Carte 10 cours", "price": 150, "thumbnail": "", "videoUrl": "", "description": "", "visible": True, "coach_id": _seed_owner},
+            {"id": str(uuid.uuid4()), "name": "Abonnement 1 mois", "price": 109, "thumbnail": "", "videoUrl": "", "description": "", "visible": True, "coach_id": _seed_owner}
         ]
         await db.offers.insert_many(default_offers)
         return _enrich_offers_with_active_price(default_offers)  # V223
@@ -4824,6 +4836,139 @@ async def debug_discount_code(access_code: str, fix: Optional[float] = None):
         "multi_member": discount.get("multi_member"),
         "fixed": fixed,
         "all_keys": [k for k in discount.keys() if k != "_id"],
+    }
+
+
+@api_router.get("/admin/audit-coach-id")
+async def audit_coach_id(request: Request):
+    """V241 — audit de rattachement : par collection, combien de documents
+    n'ont pas de `coach_id`.
+
+    Lecture seule, aucune ecriture. Sert a verifier qu'aucune donnee n'echappe
+    a l'isolation V237 — un document sans `coach_id` est visible par TOUS les
+    coachs via la clause de compatibilite, un document portant un `coach_id`
+    qui ne correspond a aucun compte n'est visible par AUCUN.
+    """
+    caller_email = require_auth(request)
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Reserve aux super admins")
+
+    # `chat_participants` figure ici pour information : il porte deja son propre
+    # filtrage (endpoints /chat/participants et /contacts/all), il n'a pas ete
+    # touche par V237.
+    collections = [
+        ("offers", db.offers),
+        ("courses", db.courses),
+        ("subscriptions", db.subscriptions),
+        ("reservations", db.reservations),
+        ("campaigns", db.campaigns),
+        ("payment_transactions", db.payment_transactions),
+        ("chat_participants", db.chat_participants),
+    ]
+    missing_filter = {"$or": [
+        {"coach_id": {"$exists": False}},
+        {"coach_id": None},
+        {"coach_id": ""},
+    ]}
+
+    rows = []
+    total_missing = 0
+    for name, coll in collections:
+        try:
+            total = await coll.count_documents({})
+            missing = await coll.count_documents(missing_filter)
+        except Exception as audit_err:
+            rows.append({"collection": name, "erreur": str(audit_err)})
+            continue
+        # Repartition des proprietaires, pour reperer un `coach_id` qui ne
+        # correspondrait a aucun compte reel (ex. le sentinelle bassi_default).
+        owners = {}
+        try:
+            async for doc in coll.find({"coach_id": {"$nin": [None, ""]}}, {"_id": 0, "coach_id": 1}).limit(2000):
+                key = str(doc.get("coach_id"))
+                owners[key] = owners.get(key, 0) + 1
+        except Exception:
+            owners = {}
+        total_missing += missing
+        rows.append({
+            "collection": name,
+            "total": total,
+            "avec_coach_id": total - missing,
+            "sans_coach_id": missing,
+            "proprietaires": owners,
+        })
+
+    return {
+        "success": True,
+        "total_documents_sans_coach_id": total_missing,
+        "conforme": total_missing == 0,
+        "collections": rows,
+        "note": ("Un coach_id qui n'est l'email d'aucun compte (ex. 'bassi_default') "
+                 "rend le document invisible a tout coach — verifier la colonne "
+                 "'proprietaires'."),
+    }
+
+
+@api_router.post("/admin/fix-null-coach-id")
+async def fix_null_coach_id(request: Request, collection: str = "", target: str = "", dry_run: bool = True):
+    """V241 — rattache les documents sans `coach_id` d'une collection donnee.
+
+    `collection` : offers | courses | subscriptions | reservations | campaigns |
+                   payment_transactions
+    `target`     : email a attribuer (defaut : l'admin appelant)
+    `dry_run`    : true PAR DEFAUT, rien n'est ecrit sans ?dry_run=false
+    """
+    caller_email = require_auth(request)
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Reserve aux super admins")
+
+    allowed = {
+        "offers": db.offers,
+        "courses": db.courses,
+        "subscriptions": db.subscriptions,
+        "reservations": db.reservations,
+        "campaigns": db.campaigns,
+        "payment_transactions": db.payment_transactions,
+    }
+    if collection not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail="collection doit valoir l'une de : " + ", ".join(sorted(allowed.keys()))
+        )
+
+    owner = (target or "").strip().lower() or caller_email
+    if "@" not in owner:
+        # Meme garde-fou qu'en V238 : un sentinelle sans compte rendrait les
+        # documents invisibles a tout coach.
+        raise HTTPException(
+            status_code=400,
+            detail="target doit etre une adresse email de coach"
+        )
+
+    coll = allowed[collection]
+    missing_filter = {"$or": [
+        {"coach_id": {"$exists": False}},
+        {"coach_id": None},
+        {"coach_id": ""},
+    ]}
+    count = await coll.count_documents(missing_filter)
+
+    if not dry_run and count:
+        await coll.update_many(missing_filter, {"$set": {"coach_id": owner}})
+
+    logger.info(
+        f"[V241 FIX] dry_run={dry_run} par {caller_email}: "
+        f"{collection} — {count} documents -> {owner}"
+    )
+
+    return {
+        "success": True,
+        "dry_run": dry_run,
+        "message": ("SIMULATION — aucune ecriture. Relancer avec ?dry_run=false pour appliquer."
+                    if dry_run else "Rattachement applique."),
+        "collection": collection,
+        "documents_sans_coach_id": count,
+        "proprietaire_attribue": owner,
     }
 
 
