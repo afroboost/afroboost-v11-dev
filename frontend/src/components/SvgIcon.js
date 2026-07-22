@@ -609,6 +609,42 @@ const V228_PATHS = {
       <circle cx="12" cy="12" r="10" />
       <circle cx="12" cy="12" r="1" />
     </>
+  ),
+
+  // --- Ajouts du lot 2 ---------------------------------------------------
+  // Ces quatre traces manquaient pour des emoji frequents du dashboard, sans
+  // substitut honnete dans le jeu existant :
+  //   clipboard  <- 📋  (`copy` designe l'action de copier, pas un presse-papier)
+  //   lightbulb  <- 💡  (`info` dirait « information », pas « astuce/conseil »)
+  //   helpCircle <- ❓  (idem : `info` et « aide » ne sont pas le meme sens)
+  //   store      <- 🏪  (aucune forme de commerce dans le jeu)
+  clipboard: (
+    <>
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+    </>
+  ),
+  lightbulb: (
+    <>
+      <path d="M15 14c.2-1 .7-1.7 1.5-2.5A5.6 5.6 0 0 0 18 8a6 6 0 0 0-12 0c0 1 .2 2.2 1.5 3.5.8.8 1.3 1.5 1.5 2.5" />
+      <path d="M9 18h6" />
+      <path d="M10 22h4" />
+    </>
+  ),
+  helpCircle: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <path d="M12 17h.01" />
+    </>
+  ),
+  store: (
+    <>
+      <path d="M2 7l4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7" />
+      <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+      <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4" />
+      <path d="M2 7h20" />
+    </>
   )
 };
 
