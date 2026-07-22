@@ -55,12 +55,13 @@ function OfferThumb({ offer, size }) {
       </div>
     );
   }
-  // Video locale (non-Cloudinary) : utiliser <video> pour capturer la premiere frame
+  // V234.5: utiliser <video> avec #t=0.1 pour forcer l'affichage de la premiere frame
   if (preview.useVideoTag) {
+    const videoSrc = preview.src + (preview.src.includes('#') ? '' : '#t=0.1');
     return (
       <div style={{ position: 'relative', width: px, height: px, flexShrink: 0 }}>
-        <video src={preview.src} style={{ width: px, height: px, objectFit: 'cover', borderRadius: '8px', background: '#000' }}
-          playsInline muted preload="metadata" />
+        <video src={videoSrc} style={{ width: px, height: px, objectFit: 'cover', borderRadius: '8px', background: '#1a1a2e' }}
+          playsInline muted preload="auto" crossOrigin="anonymous" />
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: 'rgba(0,0,0,0.3)', borderRadius: '8px' }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><polygon points="8,5 19,12 8,19" /></svg>
