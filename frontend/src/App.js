@@ -2102,19 +2102,42 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 annoncerait un total que le checkout ne facturerait pas.
                 stopPropagation sur onClick ET onChange : la carte entiere est
                 cliquable, ouvrir le menu deroulant partirait sinon en checkout. */}
+            {/* V228: le <select> natif est remplace par une rangee de chips.
+                Sur mobile, un <select> ouvre une roulette systeme qui masque la
+                carte et demande deux gestes (ouvrir, choisir) ; cinq valeurs
+                tiennent en une rangee de boutons touchables d'un seul geste.
+                Le style vient de `.variant-chip` / `.variant-label` (App.css),
+                deja definis pour cet usage — aucun style n'est invente ici.
+                RIEN d'autre ne change : meme etat `v225Qty`, memes valeurs
+                1..5, meme condition de rendu, meme data-testid sur le
+                conteneur pour ne casser aucun selecteur existant.
+                stopPropagation reste sur le conteneur ET sur chaque bouton :
+                la carte entiere est cliquable, un clic qui remonterait
+                partirait en checkout. C'est le piege deja rencontre deux fois
+                ici, il ne disparait pas en changeant de balise. */}
             {v225IsDirectCheckout(offer) && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '8px 0' }}>
-                <span style={{ fontSize: '12px', color: '#aaa' }}>Quantité</span>
-                <select
-                  value={v225Qty}
-                  onClick={e => e.stopPropagation()}
-                  onChange={e => { e.stopPropagation(); setV225Qty(parseInt(e.target.value, 10) || 1); }}
-                  className="v224-input text-xs"
-                  style={{ background: '#0a0a0f', border: '1px solid #333', borderRadius: '8px', color: '#fff', padding: '4px 8px' }}
-                  data-testid={`offer-qty-${offer.id}`}
-                >
-                  {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
+              <div
+                style={{ margin: '8px 0' }}
+                onClick={e => e.stopPropagation()}
+                data-testid={`offer-qty-${offer.id}`}
+              >
+                <div className="variant-label">Quantité</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {[1, 2, 3, 4, 5].map(n => (
+                    <button
+                      key={n}
+                      type="button"
+                      /* V228: type="button" explicite — un <button> sans type
+                         vaut "submit" et validerait un formulaire englobant. */
+                      className={`variant-chip${v225Qty === n ? ' selected' : ''}`}
+                      aria-pressed={v225Qty === n}
+                      onClick={e => { e.stopPropagation(); setV225Qty(n); }}
+                      data-testid={`offer-qty-${offer.id}-${n}`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -2127,38 +2150,80 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 cliquable, ouvrir le menu deroulant partirait sinon en paiement.
                 C'est exactement le piege deja rencontre sur le selecteur de
                 quantite ci-dessus. */}
+            {/* V228: idem quantite — une rangee de chips par dimension a la
+                place du <select>. Le gain est plus net encore ici : les valeurs
+                (S/M/L, couleurs, poids) sont toutes visibles sans ouvrir quoi
+                que ce soit, et le visiteur voit d'un coup d'oeil s'il lui reste
+                une dimension a renseigner — ce que la spec V226 essayait deja
+                d'obtenir a coups de scrollIntoView et de flash.
+                TROIS COMPORTEMENTS V226 SONT CONSERVES A L'IDENTIQUE :
+                  1. `v226SelectRefs` — la ref passe du <select> au CONTENEUR de
+                     la dimension. `v226BuyDirect` ne fait qu'appeler
+                     `scrollIntoView` dessus : n'importe quel element du DOM
+                     convient, et viser le conteneur amene meme le libelle dans
+                     le champ de vision, pas seulement le controle.
+                  2. `v226FlashDim` — le liseré rose de signalement porte
+                     desormais sur le conteneur des chips (au lieu du <select>).
+                     Il s'eteint toujours des qu'une valeur est choisie.
+                  3. la garde d'achat est INCHANGEE : `v226MissingDims` derive de
+                     `v226Variants`, que ces chips alimentent exactement comme le
+                     <select> le faisait (memes cles, memes valeurs `String(v)`).
+                stopPropagation sur le conteneur ET sur chaque chip : la carte
+                entiere est cliquable.
+                L'option vide « — » du <select> disparait : elle n'etait qu'un
+                etat « rien de choisi », que l'absence de chip `selected`
+                exprime directement. Aucune valeur reelle n'est perdue. */}
             {v225IsDirectCheckout(offer) && v226VariantDims.map(dim => (
-              <div key={dim.key} style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '8px 0' }}>
-                <span style={{ fontSize: '12px', color: '#aaa' }}>{dim.label}</span>
-                <select
-                  /* V226: reference consommee par v226BuyDirect pour amener ce
-                     selecteur dans le champ de vision quand il manque. */
-                  ref={el => { v226SelectRefs.current[dim.key] = el; }}
-                  value={v226Variants[dim.key] || ''}
-                  onClick={e => e.stopPropagation()}
-                  onChange={e => {
-                    e.stopPropagation();
-                    const val = e.target.value;
-                    setV226Variants(prev => ({ ...prev, [dim.key]: val }));
-                    // V226: le visiteur a repondu au signal, on l'eteint.
-                    if (v226FlashDim === dim.key) setV226FlashDim(null);
-                  }}
-                  className="v224-input text-xs"
-                  /* V226: bordure de signalement. Elle ne fait que remplacer la
-                     couleur du liseré existant pendant 1,2s — aucune mise en page
-                     ne bouge, la largeur de bordure reste 1px. */
-                  style={{
-                    background: '#0a0a0f',
-                    border: v226FlashDim === dim.key ? '1px solid #FF2DAA' : '1px solid #333',
-                    boxShadow: v226FlashDim === dim.key ? '0 0 10px rgba(255, 45, 170, 0.7)' : 'none',
-                    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
-                    borderRadius: '8px', color: '#fff', padding: '4px 8px'
-                  }}
-                  data-testid={`offer-variant-${dim.key}-${offer.id}`}
-                >
-                  <option value="">—</option>
-                  {dim.list.map(v => <option key={String(v)} value={String(v)}>{String(v)}</option>)}
-                </select>
+              <div
+                key={dim.key}
+                /* V226/V228: reference consommee par v226BuyDirect pour amener
+                   cette dimension dans le champ de vision quand elle manque. */
+                ref={el => { v226SelectRefs.current[dim.key] = el; }}
+                onClick={e => e.stopPropagation()}
+                /* V226/V228: bordure de signalement, 1,2s. Elle reste a 1px et
+                   n'est visible que pendant le flash : au repos la bordure est
+                   transparente, donc AUCUNE mise en page ne bouge entre les
+                   deux etats — meme garantie qu'en V226. */
+                style={{
+                  margin: '8px 0',
+                  padding: '4px',
+                  borderRadius: '10px',
+                  border: v226FlashDim === dim.key ? '1px solid #FF2DAA' : '1px solid transparent',
+                  boxShadow: v226FlashDim === dim.key ? '0 0 10px rgba(255, 45, 170, 0.7)' : 'none',
+                  transition: 'border-color 0.2s ease, box-shadow 0.2s ease'
+                }}
+                data-testid={`offer-variant-${dim.key}-${offer.id}`}
+              >
+                <div className="variant-label">{dim.label}</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {dim.list.map(v => {
+                    // V228: `String(v)` est applique une seule fois et sert a la
+                    // fois de cle, de valeur stockee et de comparaison. Le
+                    // <select> faisait deja exactement cette conversion (les
+                    // valeurs d'un <option> sont toujours des chaines) : la
+                    // forme de `v226Variants` envoyee au checkout est donc
+                    // strictement identique a celle d'avant.
+                    const val = String(v);
+                    const isSelected = v226Variants[dim.key] === val;
+                    return (
+                      <button
+                        key={val}
+                        type="button"
+                        className={`variant-chip${isSelected ? ' selected' : ''}`}
+                        aria-pressed={isSelected}
+                        onClick={e => {
+                          e.stopPropagation();
+                          setV226Variants(prev => ({ ...prev, [dim.key]: val }));
+                          // V226: le visiteur a repondu au signal, on l'eteint.
+                          if (v226FlashDim === dim.key) setV226FlashDim(null);
+                        }}
+                        data-testid={`offer-variant-${dim.key}-${offer.id}-${val}`}
+                      >
+                        {val}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             ))}
 
