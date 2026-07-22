@@ -5710,6 +5710,129 @@ async def toggle_subscription_auto_renew(subscription_id: str, request: Request)
     return {"success": True, "subscription_id": subscription_id, "auto_renew": desired}
 
 
+# V236: Ajustement manuel des seances d'un pack par le coach.
+#
+# Cas d'usage : un client arrive en retard, le coach lui offre une seance ; ou
+# une seance a ete decomptee a tort. Le coach corrige depuis l'onglet
+# Transactions sans passer par la base.
+#
+# `subscription_id` = UUID stocke dans subscriptions.id (PAS un ObjectId Mongo),
+# meme convention que /auto-renew ci-dessus.
+@api_router.put("/subscriptions/{subscription_id}/sessions")
+async def adjust_subscription_sessions(subscription_id: str, request: Request):
+    # require_auth : tout coach connecte, conformement a la demande. Il ne
+    # s'agit pas d'une route super-admin.
+    coach_email = require_auth(request)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    action = str(body.get("action", "")).strip().lower()
+    if action not in ("add", "subtract"):
+        raise HTTPException(status_code=400, detail="action doit valoir 'add' ou 'subtract'")
+
+    # `amount` est borne a 1..10 : le bouton n'envoie que 1, mais l'endpoint est
+    # public pour tout coach authentifie — une valeur aberrante (ou negative,
+    # qui inverserait le sens de l'operation) ne doit pas passer.
+    try:
+        amount = int(body.get("amount", 1))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="amount doit etre un entier")
+    if amount < 1 or amount > 10:
+        raise HTTPException(status_code=400, detail="amount doit etre compris entre 1 et 10")
+
+    sub = await db.subscriptions.find_one({"id": subscription_id}, {"_id": 0})
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subscription introuvable")
+
+    # Les documents crees avant l'ajout des packs peuvent ne pas porter ces
+    # champs : on lit avec un defaut plutot que de supposer leur presence.
+    try:
+        current = int(sub.get("remaining_sessions") or 0)
+    except (TypeError, ValueError):
+        current = 0
+    try:
+        total = int(sub.get("total_sessions") or 0)
+    except (TypeError, ValueError):
+        total = 0
+
+    delta = amount if action == "add" else -amount
+    new_remaining = current + delta
+
+    # Plancher a 0 et plafond a total + 5 (marge de geste commercial), comme
+    # demande. On BORNE au lieu de refuser : le coach voit le compteur s'arreter,
+    # ce qui est plus lisible qu'une erreur silencieuse cote interface.
+    ceiling = total + 5
+    if new_remaining < 0:
+        new_remaining = 0
+    if new_remaining > ceiling:
+        new_remaining = ceiling
+
+    if new_remaining == current:
+        # Rien a ecrire : on renvoie l'etat courant sans journaliser un
+        # ajustement qui n'a pas eu lieu.
+        return {
+            "success": True,
+            "subscription_id": subscription_id,
+            "remaining_sessions": current,
+            "total_sessions": total,
+            "used_sessions": sub.get("used_sessions", 0),
+            "unchanged": True,
+        }
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # `used_sessions` est recalcule pour rester coherent avec le restant : sans
+    # cela, un pack ajuste afficherait 7 restantes ET 3 utilisees sur 10, ce qui
+    # ne s'additionne plus. Jamais negatif.
+    new_used = total - new_remaining
+    if new_used < 0:
+        new_used = 0
+
+    await db.subscriptions.update_one(
+        {"id": subscription_id},
+        {"$set": {
+            "remaining_sessions": new_remaining,
+            "used_sessions": new_used,
+            "updated_at": now_iso,
+        }}
+    )
+
+    # Journal d'audit : c'est la seule trace de qui a modifie le solde d'un
+    # client. Une ecriture qui echoue ne doit pas faire echouer l'ajustement
+    # lui-meme (deja applique), d'ou le try/except.
+    try:
+        await db.session_adjustments.insert_one({
+            "id": str(uuid.uuid4()),
+            "subscription_id": subscription_id,
+            "coach_email": coach_email,
+            "action": action,
+            "amount": amount,
+            "remaining_before": current,
+            "remaining_after": new_remaining,
+            "timestamp": now_iso,
+        })
+    except Exception as log_err:
+        logger.error(f"[V236] Journalisation de l'ajustement echouee: {log_err}")
+
+    logger.info(
+        f"[V236 ADJUST] sub={subscription_id} par {coach_email}: "
+        f"{action} {amount} → restant {current} -> {new_remaining}"
+    )
+
+    return {
+        "success": True,
+        "subscription_id": subscription_id,
+        "remaining_sessions": new_remaining,
+        "total_sessions": total,
+        "used_sessions": new_used,
+    }
+
+
 # V223: Complément de profil depuis l'espace abonné
 class SubscriberProfileUpdate(BaseModel):
     name: Optional[str] = None
@@ -14694,6 +14817,19 @@ async def get_all_transactions(request: Request, page: int = 1, limit: int = 50)
         s["_tx_status"] = s.get("status", "active")
         s["_tx_sessions"] = f"{s.get('remaining_sessions', 0)}/{s.get('total_sessions', 0)}"
         s["_tx_code"] = s.get("code", "")
+        # V236: champs NUMERIQUES pour la barre de progression et les boutons
+        # +/-. `_tx_sessions` reste une chaine ("7/10") et n'est pas touche —
+        # l'affichage existant s'en sert tel quel. Une comparaison numerique sur
+        # cette chaine serait toujours fausse, d'ou ces trois champs distincts.
+        try:
+            s["_tx_remaining"] = int(s.get("remaining_sessions") or 0)
+        except (TypeError, ValueError):
+            s["_tx_remaining"] = 0
+        try:
+            s["_tx_total"] = int(s.get("total_sessions") or 0)
+        except (TypeError, ValueError):
+            s["_tx_total"] = 0
+        s["_tx_sub_id"] = sub_id
         if not already_in_reservations:
             all_items.append(s)
 

@@ -1579,6 +1579,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
   var _cSec2 = useState(true); var showVisitors = _cSec2[0]; var setShowVisitors = _cSec2[1];
   var _cSec3 = useState(false); var showSmartLinks = _cSec3[0]; var setShowSmartLinks = _cSec3[1];
   var _cres = useState([]); var coachReservations = _cres[0]; var setCoachReservations = _cres[1];
+  // V236: ajustements de seances en cours ({ subId: true }). Sert a desactiver
+  // les boutons +/- pendant l'appel reseau — sans cela un double clic envoie
+  // deux ajustements et retire deux seances au lieu d'une.
+  var _cAdj = useState({}); var v236Adjusting = _cAdj[0]; var setV236Adjusting = _cAdj[1];
   var _cqr = useState(''); var qrScanCode = _cqr[0]; var setQrScanCode = _cqr[1];
   var _cqrR = useState(null); var qrScanResult = _cqrR[0]; var setQrScanResult = _cqrR[1];
   // v162e: QR camera scanner
@@ -4099,6 +4103,121 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
         setCoachReservations(Array.isArray(d2) ? d2 : (d2 && Array.isArray(d2.data) ? d2.data : []));
       }).catch(function() {});
     });
+  };
+
+  // V236: ajoute ou retire une seance sur un pack, depuis l'onglet Transactions.
+  //
+  // La liste est mise a jour a partir de la REPONSE du serveur, pas de facon
+  // optimiste : c'est le serveur qui borne a [0, total + 5], donc lui seul
+  // connait la valeur retenue. Un increment local afficherait un solde qui
+  // n'existe pas en base.
+  var v236AdjustSessions = function(subId, action) {
+    if (!subId) return;
+    if (v236Adjusting[subId]) return; // appel deja en vol
+
+    setV236Adjusting(function(prev) {
+      var next = Object.assign({}, prev);
+      next[subId] = true;
+      return next;
+    });
+
+    var headers = {};
+    var ce = getCoachEmail();
+    if (ce) headers['X-User-Email'] = ce;
+
+    axios.put(API + '/subscriptions/' + subId + '/sessions',
+      { action: action, amount: 1 },
+      { headers: headers }
+    ).then(function(res) {
+      var d = res.data || {};
+      setCoachReservations(function(prev) {
+        return (prev || []).map(function(item) {
+          var itemId = item._tx_sub_id || item.id;
+          if (itemId !== subId) return item;
+          var updated = Object.assign({}, item);
+          updated._tx_remaining = d.remaining_sessions;
+          updated._tx_total = d.total_sessions;
+          updated.remaining_sessions = d.remaining_sessions;
+          updated.used_sessions = d.used_sessions;
+          // La chaine affichee ailleurs dans la carte doit suivre, sinon le
+          // badge et le texte « 7/10 seances » divergent.
+          updated._tx_sessions = String(d.remaining_sessions) + '/' + String(d.total_sessions);
+          return updated;
+        });
+      });
+    }).catch(function(err) {
+      console.error('[V236] Ajustement de seances echoue:', err);
+      var msg = 'Ajustement impossible.';
+      if (err && err.response && err.response.data && err.response.data.detail) {
+        msg = String(err.response.data.detail);
+      }
+      alert(msg);
+    }).then(function() {
+      setV236Adjusting(function(prev) {
+        var next = Object.assign({}, prev);
+        delete next[subId];
+        return next;
+      });
+    });
+  };
+
+  // V236: regroupe les transactions par type et rend un intitule par groupe.
+  //
+  // `renderItem` est la fonction de rendu d'une ligne, inchangee : ce
+  // regroupement ne modifie pas l'apparence d'une transaction, seulement leur
+  // ordre et leur encadrement.
+  //
+  // Un groupe « Autres » recueille tout type inattendu. Sans lui, une valeur de
+  // `_tx_type` non prevue ferait DISPARAITRE des transactions de l'ecran sans
+  // aucun signe — c'est le repli de secours `/reservations` qui rend ce cas
+  // possible (il renvoie des documents sans `_tx_type`).
+  var v236RenderGroups = function(items, renderItem) {
+    var list = items || [];
+    var GROUPS = [
+      { type: 'reservation', label: 'Réservations' },
+      { type: 'subscription', label: 'Souscriptions / Abonnements' },
+      { type: 'payment', label: 'Paiements' }
+    ];
+    var known = ['reservation', 'subscription', 'payment'];
+    var out = [];
+
+    var buildGroup = function(key, label, rows) {
+      return React.createElement('div', { key: 'v236grp-' + key, style: { marginBottom: '18px' } },
+        React.createElement('div', {
+          style: {
+            display: 'flex', alignItems: 'center', gap: '8px',
+            color: '#fff', fontSize: '13px', fontWeight: 700,
+            marginBottom: '10px', paddingBottom: '6px',
+            borderBottom: '1px solid rgba(255,255,255,0.12)'
+          }
+        },
+          React.createElement('span', null, label),
+          React.createElement('span', {
+            style: {
+              color: '#D91CD2', fontSize: '11px', fontWeight: 700,
+              background: 'rgba(217,28,210,0.12)',
+              padding: '1px 8px', borderRadius: '10px'
+            }
+          }, String(rows.length))
+        ),
+        rows.map(renderItem)
+      );
+    };
+
+    GROUPS.forEach(function(g) {
+      var rows = list.filter(function(it) {
+        return (it._tx_type || 'reservation') === g.type;
+      });
+      if (rows.length === 0) return; // un groupe vide ne s'affiche pas
+      out.push(buildGroup(g.type, g.label, rows));
+    });
+
+    var others = list.filter(function(it) {
+      return known.indexOf(it._tx_type || 'reservation') === -1;
+    });
+    if (others.length > 0) out.push(buildGroup('autres', 'Autres', others));
+
+    return out;
   };
 
   // V178: Valider un code QR (resa OU abonnement) avec sélecteur de cours si pas auto-détecté
@@ -7254,7 +7373,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           Aucune transaction
                         </div>
                       ) : (
-                        coachReservations.slice(0, 50).map(function(r, idx) {
+                        /* V236: regroupement par type. Le `.slice(0, 50)` est
+                           retire : la requete plafonne deja a limit=100, donc
+                           l'ecran affiche au plus 100 lignes au lieu de 50 —
+                           mais surtout, un plafond global aurait tronque des
+                           groupes SANS le dire, et le compteur affiche a cote
+                           du titre aurait alors menti. */
+                        v236RenderGroups(coachReservations, function(r, idx) {
                           var txType = r._tx_type || 'reservation';
                           var txIcon = txType === 'subscription' ? '⭐' : (txType === 'payment' ? '💳' : (r.isProduct ? '🛒' : '📅'));
                           var txLabel = txType === 'subscription' ? 'Souscription' : (txType === 'payment' ? 'Paiement' : (r.isProduct ? 'Achat' : 'Réservation'));
@@ -7266,6 +7391,15 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           var txDate = r._tx_date || r.createdAt || '';
                           var txSessions = r._tx_sessions || '';
                           var txCode = r._tx_code || r.reservationCode || '';
+                          // V236: donnees NUMERIQUES du pack. `_tx_sessions` est
+                          // la chaine "7/10" — inexploitable pour une barre de
+                          // progression ou une comparaison.
+                          var txSubId = r._tx_sub_id || r.id || '';
+                          var txRemaining = Number(r._tx_remaining || 0);
+                          var txTotal = Number(r._tx_total || 0);
+                          var txIsPack = txType === 'subscription' && txTotal > 0 && txSubId;
+                          var txBusy = !!v236Adjusting[txSubId];
+                          var txPct = txTotal > 0 ? Math.max(0, Math.min(100, (txRemaining / txTotal) * 100)) : 0;
                           var isValidated = txStatus === 'validé' || txStatus === 'payé' || txStatus === 'active' || txStatus === 'completed' || r.validated;
                           var dateStr = '';
                           try { dateStr = txDate ? new Date(txDate).toLocaleDateString('fr-FR') : ''; } catch(e) {}
@@ -7307,6 +7441,80 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                             }, '× ' + qty + ' places'),
                             React.createElement('div', { style: { color: '#aaa', fontSize: '11px', marginTop: '4px' } },
                               txOffer + (txPrice > 0 ? ' • ' + txPrice + ' CHF' : '') + (txSessions ? ' • ' + txSessions + ' séances' : '')
+                            ),
+                            // V236: pack multi-seances — solde, barre de progression et
+                            // ajustement manuel. Rendu uniquement si le pack a un total
+                            // connu ET un identifiant : sans identifiant les boutons
+                            // n'auraient aucune cible.
+                            txIsPack && React.createElement('div', {
+                              style: { marginTop: '8px' }
+                            },
+                              React.createElement('div', {
+                                style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px' }
+                              },
+                                React.createElement('span', {
+                                  style: {
+                                    color: '#D91CD2', fontSize: '11px', fontWeight: 700,
+                                    background: 'rgba(217,28,210,0.12)',
+                                    padding: '2px 8px', borderRadius: '10px', whiteSpace: 'nowrap'
+                                  }
+                                }, String(txRemaining) + '/' + String(txTotal) + ' séances'),
+                                React.createElement('span', {
+                                  style: { color: '#888', fontSize: '10px', flex: 1 }
+                                }, 'restantes'),
+                                React.createElement('button', {
+                                  type: 'button',
+                                  'aria-label': 'Retirer une séance',
+                                  title: 'Retirer une séance',
+                                  disabled: txBusy || txRemaining <= 0,
+                                  onClick: function(e) {
+                                    e.stopPropagation();
+                                    v236AdjustSessions(txSubId, 'subtract');
+                                  },
+                                  style: {
+                                    width: '24px', height: '24px', borderRadius: '50%',
+                                    border: '1px solid rgba(255,255,255,0.2)',
+                                    background: 'rgba(255,255,255,0.06)',
+                                    color: (txBusy || txRemaining <= 0) ? '#555' : '#fff',
+                                    fontSize: '14px', lineHeight: '1',
+                                    cursor: (txBusy || txRemaining <= 0) ? 'not-allowed' : 'pointer',
+                                    padding: 0, flexShrink: 0
+                                  }
+                                }, '−'),
+                                React.createElement('button', {
+                                  type: 'button',
+                                  'aria-label': 'Ajouter une séance',
+                                  title: 'Ajouter une séance',
+                                  disabled: txBusy,
+                                  onClick: function(e) {
+                                    e.stopPropagation();
+                                    v236AdjustSessions(txSubId, 'add');
+                                  },
+                                  style: {
+                                    width: '24px', height: '24px', borderRadius: '50%',
+                                    border: '1px solid rgba(217,28,210,0.4)',
+                                    background: 'rgba(217,28,210,0.12)',
+                                    color: txBusy ? '#555' : '#fff',
+                                    fontSize: '14px', lineHeight: '1',
+                                    cursor: txBusy ? 'not-allowed' : 'pointer',
+                                    padding: 0, flexShrink: 0
+                                  }
+                                }, '+')
+                              ),
+                              React.createElement('div', {
+                                style: {
+                                  height: '4px', borderRadius: '2px',
+                                  background: 'rgba(255,255,255,0.1)', overflow: 'hidden'
+                                }
+                              },
+                                React.createElement('div', {
+                                  style: {
+                                    width: String(txPct) + '%', height: '100%',
+                                    background: '#D91CD2', borderRadius: '2px',
+                                    transition: 'width 0.25s ease'
+                                  }
+                                })
+                              )
                             ),
                             React.createElement('div', { style: { color: '#666', fontSize: '10px', marginTop: '2px' } },
                               (txCode ? 'Code: ' + txCode + ' • ' : '') + dateStr
