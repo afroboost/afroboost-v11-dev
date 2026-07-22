@@ -284,8 +284,12 @@ export default function OfferCard({
         </div>
 
         {/* V224: reorganisation de l'ordre d'affichage (champ `position`) */}
+        {/* V227: les fleches sont MASQUEES a partir de 768px (md:hidden), pas
+            supprimees — le bloc reste rendu. Sur desktop, le glisser-deposer
+            cable en V226 prend le relais ; sur mobile les fleches restent le
+            seul chemin, le drag & drop HTML5 ne repondant pas au doigt. */}
         {(onMoveUp || onMoveDown) && (
-          <div className="flex items-center gap-2 mt-2">
+          <div className="flex md:hidden items-center gap-2 mt-2">
             <span className="text-xs" style={{ color: '#777' }}>Ordre</span>
             <button
               type="button"
