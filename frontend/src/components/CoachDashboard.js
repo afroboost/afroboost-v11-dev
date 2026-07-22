@@ -1533,7 +1533,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         const headers = getCoachHeaders();
         const resPromise = axios.get(`${API}/reservations?page=1&limit=20`, headers);
         const [res, crs, off, usr, lnk, cpt, cds] = await Promise.all([
-          resPromise, axios.get(`${API}/courses`, headers), axios.get(`${API}/offers`, headers),
+          // V237: `?scope=mine` demande explicitement les donnees DU coach
+          // connecte (l'admin continue de tout recevoir). Sans ce parametre les
+          // endpoints gardent leur comportement public, ce qui protege la
+          // vitrine : elle appelle les MEMES routes, et l'intercepteur axios
+          // global y ajoute deja X-User-Email des qu'un coach est connecte.
+          resPromise, axios.get(`${API}/courses?scope=mine`, headers), axios.get(`${API}/offers?scope=mine`, headers),
           axios.get(`${API}/users`, headers), axios.get(`${API}/payment-links`, headers),
           axios.get(`${API}/concept`, headers), axios.get(`${API}/discount-codes`, headers)
         ]);

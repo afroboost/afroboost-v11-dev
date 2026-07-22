@@ -997,8 +997,32 @@ async def root():
     return {"message": "Afroboost API"}
 
 @api_router.get("/courses", response_model=List[Course])
-async def get_courses():
-    courses_raw = await db.courses.find({"archived": {"$ne": True}}, {"_id": 0}).to_list(100)
+async def get_courses(request: Request, scope: str = ""):
+    # V237 — meme opt-in `?scope=mine` que /offers, et pour la meme raison :
+    # cet endpoint sert aussi bien la vitrine publique que le dashboard.
+    base_filter = {"archived": {"$ne": True}}
+    if scope == "mine":
+        caller_email = request.headers.get("x-user-email", "").strip().lower()
+        if is_super_admin(caller_email):
+            scoped_filter = dict(base_filter)
+        elif caller_email:
+            scoped_filter = dict(base_filter)
+            scoped_filter["coach_id"] = caller_email
+        else:
+            return []
+        courses_scoped = await db.courses.find(scoped_filter, {"_id": 0}).to_list(100)
+        # Meme normalisation `location` que le chemin public ci-dessous, a
+        # l'identique : le frontend lit ce champ, et une regle differente ici
+        # ferait diverger l'affichage du dashboard de celui de la vitrine.
+        out = []
+        for course in courses_scoped:
+            course_copy = dict(course)
+            if "locationName" in course_copy:
+                course_copy["location"] = course_copy["locationName"]
+            out.append(course_copy)
+        return out
+
+    courses_raw = await db.courses.find(base_filter, {"_id": 0}).to_list(100)
     if not courses_raw:
         default_courses = [
             {"id": str(uuid.uuid4()), "name": "Afroboost Silent – Session Cardio", "weekday": 3, "time": "18:30", "locationName": "Rue des Vallangines 97, Neuchâtel", "mapsUrl": ""},
@@ -1157,7 +1181,33 @@ def _enrich_offers_with_active_price(offers_list):
     return offers_list
 
 @api_router.get("/offers", response_model=List[Offer])
-async def get_offers():
+async def get_offers(request: Request, scope: str = ""):
+    # V237 — isolation par coach, en OPT-IN explicite (`?scope=mine`).
+    #
+    # POURQUOI PAS LA SEULE PRESENCE DU HEADER
+    # Cet endpoint sert la vitrine publique (App.js ~l.4515) ET le dashboard
+    # coach (CoachDashboard.js ~l.1536). Or l'intercepteur axios global
+    # (App.js l.5-24) ajoute `X-User-Email` a TOUTE requete des qu'un coach est
+    # connecte, et la vitrine ne refiltre rien cote client. Filtrer sur la
+    # presence du header ferait donc disparaitre de la vitrine les offres de
+    # tous les autres coachs — pour le coach connecte seulement, ce qui est
+    # exactement le genre de bug qu'on ne reproduit pas en navigation privee.
+    #
+    # Sans `scope=mine`, le comportement est donc STRICTEMENT celui d'avant.
+    if scope == "mine":
+        caller_email = request.headers.get("x-user-email", "").strip().lower()
+        # Admin : voit tout. Coach : ses offres. Pas d'email : rien plutot que
+        # tout — demander explicitement « les miennes » sans etre identifie ne
+        # doit pas retourner le catalogue entier.
+        if is_super_admin(caller_email):
+            query = {}
+        elif caller_email:
+            query = {"coach_id": caller_email}
+        else:
+            return []
+        scoped = await db.offers.find(query, {"_id": 0}).to_list(100)
+        return _enrich_offers_with_active_price(scoped)
+
     offers = await db.offers.find({}, {"_id": 0}).to_list(100)
     if not offers:
         default_offers = [
@@ -3556,6 +3606,20 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             **v226_shipping,  # V226: vide si collectShipping est False
         )
 
+        # V237: rattachement du paiement a son coach, via l'offre achetee.
+        # Sans lui, l'onglet Transactions ne pourrait pas isoler les paiements
+        # et chaque coach verrait ceux de tous les autres.
+        _pay_coach_id = DEFAULT_COACH_ID
+        if metadata.get("offer_id"):
+            try:
+                _pay_offer = await db.offers.find_one(
+                    {"id": metadata.get("offer_id")}, {"_id": 0, "coach_id": 1}
+                )
+                if _pay_offer and _pay_offer.get("coach_id"):
+                    _pay_coach_id = _pay_offer["coach_id"]
+            except Exception as _pay_err:
+                logger.warning(f"[V237] Resolution coach_id paiement echouee: {_pay_err}")
+
         # Créer l'entrée dans payment_transactions
         transaction = {
             "id": str(uuid.uuid4()),
@@ -3564,6 +3628,7 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             "currency": "chf",
             "product_name": request.productName,
             "customer_email": request.customerEmail,
+            "coach_id": _pay_coach_id,  # V237
             "metadata": metadata,
             # V225: `amount` reste le prix UNITAIRE alors que le client paie
             # amount x quantity. Sans cette ligne, l'ecart entre la transaction
@@ -4025,12 +4090,31 @@ async def stripe_webhook(request: Request):
                             stripe_payment_method = pm
                 except Exception as v195_err:
                     logger.warning(f"[V195] Capture payment method échouée: {v195_err}")
+
+                # V237: rattachement de la souscription a son coach. Le lien
+                # passe par l'OFFRE achetee — c'est elle qui porte `coach_id`.
+                # Meme resolution que pour les reservations produit plus bas
+                # (~l.4197), avec le meme repli `DEFAULT_COACH_ID` : sans
+                # coach_id la souscription serait invisible dans l'onglet
+                # Transactions de son proprietaire une fois le filtrage actif.
+                _sub_coach_id = DEFAULT_COACH_ID
+                if metadata.get("offer_id"):
+                    try:
+                        _sub_offer_doc = await db.offers.find_one(
+                            {"id": metadata.get("offer_id")}, {"_id": 0, "coach_id": 1}
+                        )
+                        if _sub_offer_doc and _sub_offer_doc.get("coach_id"):
+                            _sub_coach_id = _sub_offer_doc["coach_id"]
+                    except Exception as _sub_coach_err:
+                        logger.warning(f"[V237] Resolution coach_id souscription echouee: {_sub_coach_err}")
+
                 subscription_data = {
                     "id": str(uuid.uuid4()),
                     "email": customer_email.lower().strip(),
                     "name": metadata.get("customer_name", customer_email.split("@")[0]),
                     "code": new_code,
                     "offer_name": product_name,
+                    "coach_id": _sub_coach_id,  # V237
                     "total_sessions": sessions_count,
                     "used_sessions": 0,
                     "remaining_sessions": sessions_count,
@@ -4438,9 +4522,28 @@ async def admin_create_code(request: Request):
         }
         await db.discount_codes.insert_one(discount_doc)
 
+        # V237: rattachement au coach. L'admin cree une souscription POUR un
+        # coach, pas pour lui-meme : le `coach_id` retenu est donc, dans l'ordre,
+        # celui passe explicitement dans le corps de la requete, puis celui de
+        # l'offre nommee, et enfin le repli par defaut. Ecrire ici l'email de
+        # l'admin rendrait la souscription invisible au coach concerne.
+        _manual_coach_id = (body.get("coach_id") or "").strip().lower()
+        if not _manual_coach_id and product_name:
+            try:
+                _manual_offer = await db.offers.find_one(
+                    {"name": product_name}, {"_id": 0, "coach_id": 1}
+                )
+                if _manual_offer and _manual_offer.get("coach_id"):
+                    _manual_coach_id = _manual_offer["coach_id"]
+            except Exception as _manual_err:
+                logger.warning(f"[V237] Resolution coach_id (creation manuelle) echouee: {_manual_err}")
+        if not _manual_coach_id:
+            _manual_coach_id = DEFAULT_COACH_ID
+
         subscription_data = {
             "id": str(uuid.uuid4()), "email": customer_email, "name": customer_name,
             "code": new_code, "offer_name": product_name,
+            "coach_id": _manual_coach_id,  # V237
             "total_sessions": sessions_count, "used_sessions": 0,
             "remaining_sessions": sessions_count, "expires_at": None, "status": "active",
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -4721,6 +4824,115 @@ async def debug_discount_code(access_code: str, fix: Optional[float] = None):
         "multi_member": discount.get("multi_member"),
         "fixed": fixed,
         "all_keys": [k for k in discount.keys() if k != "_id"],
+    }
+
+
+@api_router.post("/admin/migrate-subscriptions-coach-id")
+async def migrate_subscriptions_coach_id(request: Request, dry_run: bool = True):
+    """V237 — rattache les souscriptions existantes a leur coach.
+
+    Les souscriptions creees avant V237 ne portent pas de `coach_id` : sans
+    migration, le filtrage de /dashboard/all-transactions les rendrait
+    invisibles a TOUS les coachs d'un coup. Cet endpoint doit donc etre execute
+    avant que l'isolation ne prenne effet sur des donnees reelles.
+
+    Le rattachement se fait via l'offre achetee (`offer_id` puis `offer_name`),
+    seule porteuse de `coach_id`. Les souscriptions dont l'offre est introuvable
+    tombent sur DEFAULT_COACH_ID et sont listees nommement dans la reponse,
+    pour pouvoir etre corrigees a la main.
+
+    `dry_run=true` PAR DEFAUT : l'appel n'ecrit rien et decrit ce qu'il ferait.
+    Passer `?dry_run=false` pour appliquer. Ce defaut est volontaire — sur des
+    donnees de production, une migration ne doit pas partir sur un appel
+    accidentel.
+    """
+    caller_email = require_auth(request)
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Reserve aux super admins")
+
+    # Seules les souscriptions SANS coach_id sont concernees : une migration
+    # relancee ne doit jamais reecrire un rattachement deja etabli (ou corrige
+    # a la main).
+    pending = await db.subscriptions.find(
+        {"$or": [{"coach_id": {"$exists": False}}, {"coach_id": None}, {"coach_id": ""}]},
+        {"_id": 0, "id": 1, "offer_name": 1, "offer_id": 1, "email": 1, "code": 1}
+    ).to_list(2000)
+
+    migrated = 0
+    fallback = 0
+    unresolved = []
+    plan = []
+
+    for sub in pending:
+        sub_id = sub.get("id")
+        if not sub_id:
+            continue
+
+        resolved = None
+        offer_doc = None
+        # 1) par identifiant d'offre — le lien le plus fiable
+        if sub.get("offer_id"):
+            offer_doc = await db.offers.find_one(
+                {"id": sub["offer_id"]}, {"_id": 0, "coach_id": 1}
+            )
+        # 2) a defaut, par nom d'offre. Un nom peut etre porte par plusieurs
+        #    coachs : on ne rattache que si la correspondance est UNIQUE, sinon
+        #    on prefere le repli explicite a une attribution au hasard.
+        if not (offer_doc and offer_doc.get("coach_id")) and sub.get("offer_name"):
+            matches = await db.offers.find(
+                {"name": sub["offer_name"]}, {"_id": 0, "coach_id": 1}
+            ).to_list(5)
+            distinct = list({m.get("coach_id") for m in matches if m.get("coach_id")})
+            if len(distinct) == 1:
+                resolved = distinct[0]
+            elif len(distinct) > 1:
+                unresolved.append({
+                    "id": sub_id, "code": sub.get("code", ""),
+                    "email": sub.get("email", ""),
+                    "offer_name": sub.get("offer_name", ""),
+                    "raison": f"nom d'offre porte par {len(distinct)} coachs",
+                })
+        elif offer_doc and offer_doc.get("coach_id"):
+            resolved = offer_doc["coach_id"]
+
+        if not resolved:
+            resolved = DEFAULT_COACH_ID
+            fallback += 1
+            if not any(u["id"] == sub_id for u in unresolved):
+                unresolved.append({
+                    "id": sub_id, "code": sub.get("code", ""),
+                    "email": sub.get("email", ""),
+                    "offer_name": sub.get("offer_name", ""),
+                    "raison": "offre introuvable",
+                })
+        else:
+            migrated += 1
+
+        plan.append({"id": sub_id, "coach_id": resolved})
+
+        if not dry_run:
+            await db.subscriptions.update_one(
+                {"id": sub_id},
+                {"$set": {"coach_id": resolved,
+                          "updated_at": datetime.now(timezone.utc).isoformat()}}
+            )
+
+    logger.info(
+        f"[V237 MIGRATION] dry_run={dry_run} par {caller_email}: "
+        f"{len(pending)} a traiter, {migrated} rattachees, {fallback} en repli"
+    )
+
+    return {
+        "success": True,
+        "dry_run": dry_run,
+        "message": ("SIMULATION — aucune ecriture. Relancer avec ?dry_run=false pour appliquer."
+                    if dry_run else "Migration appliquee."),
+        "total_sans_coach_id": len(pending),
+        "rattachees_via_offre": migrated,
+        "repli_default_coach_id": fallback,
+        "default_coach_id": DEFAULT_COACH_ID,
+        "non_resolues": unresolved,
+        "plan": plan if dry_run else [],
     }
 
 
@@ -5748,6 +5960,20 @@ async def adjust_subscription_sessions(subscription_id: str, request: Request):
     sub = await db.subscriptions.find_one({"id": subscription_id}, {"_id": 0})
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription introuvable")
+
+    # V237: controle de propriete. Sans lui, tout coach authentifie pouvait
+    # modifier le solde de seances du client de n'importe quel autre coach.
+    #
+    # Une souscription sans `coach_id` (anterieure a V237, pas encore migree)
+    # reste modifiable : la refuser bloquerait le coach sur son propre
+    # historique tant que la migration n'a pas tourne.
+    _sub_owner = (sub.get("coach_id") or "").strip().lower()
+    if not is_super_admin(coach_email) and _sub_owner and _sub_owner != coach_email:
+        logger.warning(
+            f"[V237] Ajustement refuse: {coach_email} a tente de modifier "
+            f"la souscription {subscription_id} appartenant a {_sub_owner}"
+        )
+        raise HTTPException(status_code=403, detail="Cette souscription appartient a un autre coach")
 
     # Les documents crees avant l'ajout des packs peuvent ne pas porter ces
     # champs : on lit avec un defaut plutot que de supposer leur presence.
@@ -13677,10 +13903,24 @@ async def get_campaign_debug(campaign_id: str):
         return {"error": str(ex)}
 
 @api_router.get("/campaigns-list")
-async def get_campaigns_list():
-    """V165: Liste les campagnes récentes avec leur ID et message"""
+async def get_campaigns_list(request: Request):
+    """V165: Liste les campagnes récentes avec leur ID et message
+    V237: isolation par coach — une campagne appartient a son auteur. Cet
+    endpoint n'a aucun usage public (il n'est appele que depuis le dashboard),
+    le filtrage sur la presence du header est donc sans risque ici, a la
+    difference de /offers et /courses."""
     try:
-        campaigns = await db.campaigns.find({}, {"_id": 0, "id": 1, "name": 1, "status": 1, "targetType": 1, "channels": 1, "createdAt": 1, "launchedAt": 1, "updatedAt": 1}).sort("createdAt", -1).limit(20).to_list(20)
+        caller_email = request.headers.get("x-user-email", "").strip().lower()
+        if is_super_admin(caller_email):
+            query = {}
+        elif caller_email:
+            query = {"coach_id": caller_email}
+        else:
+            # Non authentifie : liste vide plutot que 401, pour ne pas faire
+            # apparaitre une erreur dans un dashboard dont le header n'aurait
+            # pas encore ete injecte au premier rendu.
+            return []
+        campaigns = await db.campaigns.find(query, {"_id": 0, "id": 1, "name": 1, "status": 1, "targetType": 1, "channels": 1, "createdAt": 1, "launchedAt": 1, "updatedAt": 1}).sort("createdAt", -1).limit(20).to_list(20)
         return campaigns
     except Exception as ex:
         return {"error": str(ex)}
@@ -14801,7 +15041,27 @@ async def get_all_transactions(request: Request, page: int = 1, limit: int = 50)
         all_items.append(r)
 
     # 2. Subscriptions (from subscriptions collection — Stripe auto-created)
-    subscriptions = await db.subscriptions.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    # V237: isolation. Les souscriptions et les paiements etaient jusqu'ici
+    # renvoyes SANS filtre, alors que les reservations juste au-dessus etaient
+    # deja isolees — chaque coach voyait donc les abonnes et les paiements de
+    # tous les autres.
+    #
+    # `coach_id: {$exists: False}` est inclus dans le filtre coach : les
+    # documents anterieurs a V237 n'ont pas encore ete migres, et les exclure
+    # ferait DISPARAITRE d'un coup l'historique de chaque coach. Une fois
+    # /admin/migrate-subscriptions-coach-id passe, ce cas ne se presente plus.
+    if is_super_admin(caller_email):
+        sub_query = {}
+        pay_query = {"payment_status": "paid"}
+    elif caller_email:
+        _legacy_or = [{"coach_id": caller_email}, {"coach_id": {"$exists": False}}]
+        sub_query = {"$or": _legacy_or}
+        pay_query = {"payment_status": "paid", "$or": _legacy_or}
+    else:
+        sub_query = {"id": "__no_access__"}
+        pay_query = {"id": "__no_access__"}
+
+    subscriptions = await db.subscriptions.find(sub_query, {"_id": 0}).sort("created_at", -1).to_list(200)
     for s in subscriptions:
         # Avoid duplicates: skip if a reservation already exists with this subscription ID
         sub_id = s.get("id", "")
@@ -14835,7 +15095,7 @@ async def get_all_transactions(request: Request, page: int = 1, limit: int = 50)
 
     # 3. Payment transactions (completed Stripe payments)
     payments = await db.payment_transactions.find(
-        {"payment_status": "paid"},
+        pay_query,  # V237: isole par coach_id (voir le commentaire ci-dessus)
         {"_id": 0}
     ).sort("created_at", -1).to_list(200)
     for p in payments:
