@@ -1362,6 +1362,39 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
     setVideoError(false);
   }, [currentImage]);
 
+  // V227 CORRECTIF 4: l'effet ci-dessus se declenche sur l'URL. Deux vignettes
+  // d'une meme offre peuvent porter la MEME URL (doublon en base) : l'index
+  // change, l'URL non, et `videoError` restait alors vrai — la video suivante
+  // etait rendue en <img> cassee. On reinitialise donc aussi sur l'INDEX, en
+  // plus des reinitialisations existantes (URL ci-dessus, offre plus bas).
+  //
+  // V227 CORRECTIF 2: le meme effet remet la vignette en MUET et sans controles.
+  // Le rapport d'implementation affirmait qu'un changement de vignette remontait
+  // l'element : c'est faux. `isVideo` derive de `currentMedia`, le <video> n'a
+  // pas de `key`, React reconcilie donc le MEME noeud DOM et ne met a jour que
+  // `src` — les ecritures imperatives `v.muted = false` / `v.controls = true`
+  // du onClick survivaient. Consequence : apres avoir clique la video A (son
+  // active), la video B demarrait avec le son sans action du visiteur, ou plus
+  // probablement voyait son autoplay non-muet refuse par le navigateur et
+  // restait figee sur une frame noire.
+  //
+  // CHOIX: reinitialisation imperative ici, PAS de `key` sur le <video>.
+  // Une `key` remonterait le noeud DOM, alors que l'effet d'orientation V224
+  // (~l.1545) capture `videoRef.current` au moment ou IL s'execute et ne depend
+  // que de `isVideo` : le noeud remplace ne serait plus celui portant le
+  // listener `webkitendfullscreen`, et la sortie de plein ecran iOS cesserait
+  // de deverrouiller l'orientation. Or cet effet ne doit pas etre modifie.
+  // `onLoadedMetadata` a ete ecarte pour la meme raison que le CORRECTIF 4
+  // ci-dessus : il ne se declenche pas si l'URL est identique, et il depend du
+  // reseau. Un effet sur l'index est synchrone apres commit et couvre les deux.
+  useEffect(() => {
+    setVideoError(false);
+    const v = videoRef.current;
+    if (!v) return;
+    v.muted = true;
+    v.controls = false;
+  }, [currentImageIndex, offer.id]);
+
   // V225: la quantite repart a 1 des que la carte change d'offre. Sans cela, un
   // slider qui recycle la meme instance de composant ferait heriter la nouvelle
   // offre de la quantite choisie sur la precedente.
@@ -1428,6 +1461,82 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // reporte au passage effectif en plein ecran (handlePlay).
   const isLandscapeRef = useRef(false);
   const videoRef = useRef(null);
+
+  // V227 CORRECTIF 1: chargement paresseux des vignettes video.
+  // OffersSliderAutoPlay monte TOUTES les offres d'un coup dans un scroller
+  // horizontal (~l.2250) alors qu'une ou deux sont visibles. Avec `autoPlay`,
+  // `preload="none"` est ignore par la spec (l'algorithme de selection de
+  // ressource est declenche quoi qu'il arrive) : chaque carte hors champ
+  // telechargeait donc son fichier entier. Dix offres a 5-10 Mo = 50-100 Mo de
+  // forfait mobile consommes sans un seul clic. On ne monte l'attribut `src`
+  // qu'une fois la carte entree dans le viewport, et on met en PAUSE a la
+  // sortie (Safari iOS / Chrome Android suspendent parfois l'autoplay hors
+  // ecran, mais ce n'est ni specifie ni garanti, et desktop ne suspend rien —
+  // sur Android d'entree de gamme la saturation des decodeurs figeait une
+  // frame noire, soit pire qu'avant le lot).
+  const v227CardRef = useRef(null);
+  // `v227Seen` est un VERROU one-way : une fois la video chargee, on ne retire
+  // plus le `src`. Le retirer a chaque sortie d'ecran ferait re-telecharger le
+  // fichier a chaque aller-retour de defilement, exactement le gaspillage que
+  // ce correctif supprime. Seule la LECTURE fait l'aller-retour.
+  const [v227Seen, setV227Seen] = useState(false);
+
+  useEffect(() => {
+    const el = v227CardRef.current;
+    if (!el) return undefined;
+    // Repli sans observateur (navigateurs anciens, JSDOM) : comportement
+    // strictement identique a la V227 d'origine, on charge tout de suite.
+    if (typeof IntersectionObserver !== 'function') {
+      setV227Seen(true);
+      return undefined;
+    }
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          setV227Seen(true);
+          const v = videoRef.current;
+          // Au TOUT premier passage la video n'est pas encore montee (le `src`
+          // arrive au rendu suivant) : `autoPlay` prend alors le relais.
+          if (v && v.paused) {
+            const p = v.play();
+            if (p && typeof p.catch === 'function') p.catch(() => {});
+          }
+        } else {
+          const v = videoRef.current;
+          if (v && !v.paused) {
+            try { v.pause(); } catch (_) { /* ignore */ }
+          }
+        }
+      });
+    }, { root: null, rootMargin: '150px', threshold: 0.01 });
+    obs.observe(el);
+    // Nettoyage au demontage : le slider RECYCLE ses instances de carte, un
+    // observateur survivant retiendrait le noeud DOM et rappellerait setState
+    // sur un composant demonte. `disconnect()` cesse d'observer toutes les
+    // cibles et libere l'observateur d'un coup.
+    return () => {
+      obs.disconnect();
+    };
+  }, []);
+
+  // V227 CORRECTIF 1 (suite): poster affiche tant que la video n'est pas
+  // chargee — une image plutot qu'un cadre noir sur les cartes hors champ.
+  // On cherche d'abord une image REELLE deja portee par l'offre (images[] hors
+  // fichiers video, puis thumbnail). Si l'offre n'a que des videos, on ne pose
+  // AUCUN poster : mieux vaut le fond noir existant qu'une image de remplissage
+  // sans rapport (defaultImage est un picsum aleatoire).
+  const v227Poster = (() => {
+    const still = images.find((img) => {
+      const m = parseMediaUrl(img);
+      return m && m.type === 'image';
+    });
+    if (still) return still;
+    if (offer.thumbnail && typeof offer.thumbnail === 'string' && offer.thumbnail.trim()) {
+      const m = parseMediaUrl(offer.thumbnail);
+      if (m && m.type === 'image') return offer.thumbnail;
+    }
+    return null;
+  })();
 
   const handleMeta = (e) => {
     const v = e.currentTarget;
@@ -1583,6 +1692,10 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
       
       {/* V119.1: Cartes agrandies, responsive, glow fin et élégant */}
       <div
+        /* V227 CORRECTIF 1: cible de l'IntersectionObserver. Pose sur
+           l'enveloppe de carte (et non sur le <video>, qui n'existe pas encore
+           au premier rendu d'une carte hors champ). */
+        ref={v227CardRef}
         className="flex-shrink-0 snap-start"
         /* V225: plancher de largeur. `min(340px, 80vw)` seul tombait a 256px sur
            un telephone de 320px, trop etroit pour les nouvelles lignes (lieu,
@@ -1638,7 +1751,14 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 {isVideo ? (
                   <video
                     ref={videoRef}
-                    src={currentMedia.url}
+                    /* V227 CORRECTIF 1: le `src` n'est monte qu'une fois la
+                       carte entree dans le viewport. Sans attribut src, le
+                       navigateur ne telecharge RIEN, meme avec autoPlay. */
+                    src={v227Seen ? currentMedia.url : undefined}
+                    /* V227 CORRECTIF 1: image reelle de l'offre plutot qu'un
+                       cadre noir sur les cartes hors champ (null si l'offre
+                       n'a aucune image fixe — voir v227Poster). */
+                    poster={v227Poster || undefined}
                     className="w-full h-full"
                     style={{ objectFit: 'cover', objectPosition: 'center', height: '220px', background: '#000' }}
                     playsInline
@@ -1660,6 +1780,19 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                       // e.currentTarget : on l'appelle donc bien depuis le handler
                       // pose sur le <video>, ou currentTarget EST l'element video.
                       const v = e.currentTarget;
+                      // V227 CORRECTIF 3: garde AVANT handlePlay. `controls`
+                      // etant actif des le premier clic, tout clic suivant sur
+                      // la barre native (pause, avance, volume) retraversait ce
+                      // meme onClick et redemandait le plein ecran : hors plein
+                      // ecran, cliquer pour mettre en pause y re-basculait.
+                      // On sort si le plein ecran est deja actif OU si les
+                      // controles sont deja affiches (= le clic d'activation a
+                      // deja eu lieu ; l'entree en plein ecran reste alors
+                      // possible via le bouton natif de la barre de lecture).
+                      // stopPropagation reste la PREMIERE instruction : la
+                      // carte entiere est cliquable et declenche l'achat.
+                      const v227Fs = document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
+                      if (v227Fs || v.controls) return;
                       v.muted = false;
                       v.controls = true;
                       handlePlay(e);
