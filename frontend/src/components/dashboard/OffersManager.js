@@ -36,14 +36,7 @@ function getOfferPreview(offer) {
     : (offer.images || []).find(u => u && isVideoUrl(u))
       || (offer.thumbnail && isVideoUrl(offer.thumbnail) ? offer.thumbnail : null);
   if (videoSrc) {
-    // Pour Cloudinary: generer un poster image depuis la video
-    if (videoSrc.includes('cloudinary.com') && videoSrc.includes('/video/upload/')) {
-      const poster = videoSrc
-        .replace('/video/upload/', '/video/upload/so_0,w_200,h_200,c_fill,f_jpg/')
-        .replace(/\.[^.]+$/, '.jpg');
-      return { src: poster, isVideo: true };
-    }
-    // Pour videos locales (/api/files/...): utiliser <video> avec preload
+    // V234.4: utiliser <video> pour TOUTES les videos (Cloudinary poster URLs ne fonctionnent pas)
     return { src: videoSrc, isVideo: true, useVideoTag: true };
   }
   return null;
