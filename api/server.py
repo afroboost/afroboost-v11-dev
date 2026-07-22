@@ -4888,7 +4888,7 @@ async def migrate_offers_coach_id(request: Request, dry_run: bool = True, target
 
 
 @api_router.post("/admin/migrate-subscriptions-coach-id")
-async def migrate_subscriptions_coach_id(request: Request, dry_run: bool = True):
+async def migrate_subscriptions_coach_id(request: Request, dry_run: bool = True, fallback: str = ""):
     """V237 — rattache les souscriptions existantes a leur coach.
 
     Les souscriptions creees avant V237 ne portent pas de `coach_id` : sans
@@ -4910,6 +4910,16 @@ async def migrate_subscriptions_coach_id(request: Request, dry_run: bool = True)
     if not is_super_admin(caller_email):
         raise HTTPException(status_code=403, detail="Reserve aux super admins")
 
+    # V239: repli configurable. Par defaut DEFAULT_COACH_ID, conformement a la
+    # convention du projet — mais ce sentinelle n'est l'email d'AUCUN compte :
+    # les documents qui le portent ne sont visibles que par l'admin (qui voit
+    # tout), et par aucun coach. Quand les enregistrements orphelins
+    # appartiennent en realite a un coach identifie, passer son email est
+    # preferable. Constate en production : 26 souscriptions creees a la main
+    # portent un code d'acces en guise de nom d'offre et ne peuvent etre
+    # resolues autrement.
+    fallback_coach = (fallback or "").strip().lower() or DEFAULT_COACH_ID
+
     # Seules les souscriptions SANS coach_id sont concernees : une migration
     # relancee ne doit jamais reecrire un rattachement deja etabli (ou corrige
     # a la main).
@@ -4919,7 +4929,7 @@ async def migrate_subscriptions_coach_id(request: Request, dry_run: bool = True)
     ).to_list(2000)
 
     migrated = 0
-    fallback = 0
+    fallback_count = 0  # V239: renomme, `fallback` est desormais le parametre
     unresolved = []
     plan = []
 
@@ -4956,8 +4966,8 @@ async def migrate_subscriptions_coach_id(request: Request, dry_run: bool = True)
             resolved = offer_doc["coach_id"]
 
         if not resolved:
-            resolved = DEFAULT_COACH_ID
-            fallback += 1
+            resolved = fallback_coach
+            fallback_count += 1
             if not any(u["id"] == sub_id for u in unresolved):
                 unresolved.append({
                     "id": sub_id, "code": sub.get("code", ""),
@@ -4979,7 +4989,7 @@ async def migrate_subscriptions_coach_id(request: Request, dry_run: bool = True)
 
     logger.info(
         f"[V237 MIGRATION] dry_run={dry_run} par {caller_email}: "
-        f"{len(pending)} a traiter, {migrated} rattachees, {fallback} en repli"
+        f"{len(pending)} a traiter, {migrated} rattachees, {fallback_count} en repli vers {fallback_coach}"
     )
 
     return {
@@ -4989,8 +4999,8 @@ async def migrate_subscriptions_coach_id(request: Request, dry_run: bool = True)
                     if dry_run else "Migration appliquee."),
         "total_sans_coach_id": len(pending),
         "rattachees_via_offre": migrated,
-        "repli_default_coach_id": fallback,
-        "default_coach_id": DEFAULT_COACH_ID,
+        "repli_applique": fallback_count,
+        "coach_id_de_repli": fallback_coach,
         "non_resolues": unresolved,
         "plan": plan if dry_run else [],
     }
