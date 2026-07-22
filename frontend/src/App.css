@@ -51,7 +51,7 @@
 /* Custom scrollbar for admin panels and sessions list - utilise la variable */
 .custom-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: var(--primary-color) rgba(0, 0, 0, 0.2);
+  scrollbar-color: rgba(217, 28, 210, 0.35) rgba(0, 0, 0, 0.2);
 }
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;
@@ -61,7 +61,7 @@
   border-radius: 2px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: var(--primary-color);
+  background: rgba(217, 28, 210, 0.35);
   border-radius: 2px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
@@ -71,7 +71,7 @@
 /* Pink scrollbar for sessions/courses list on client side */
 .sessions-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: var(--primary-color) rgba(0, 0, 0, 0.15);
+  scrollbar-color: rgba(217, 28, 210, 0.35) rgba(0, 0, 0, 0.15);
 }
 .sessions-scrollbar::-webkit-scrollbar {
   width: 4px;
@@ -81,7 +81,7 @@
   border-radius: 2px;
 }
 .sessions-scrollbar::-webkit-scrollbar-thumb {
-  background: var(--primary-color);
+  background: rgba(217, 28, 210, 0.35);
   border-radius: 2px;
 }
 .sessions-scrollbar::-webkit-scrollbar-thumb:hover {
@@ -106,8 +106,10 @@
      ecrase ce repli (meme propriete, regle en cascade). */
   /* V231: 30% au lieu de 50% — la bordure violette au repos etait trop
      affirmee pour un controle secondaire. */
-  border: 1px solid rgba(217, 28, 210, .3);
-  border: 1px solid color-mix(in srgb, var(--primary-color) 30%, transparent);
+  /* V232: bordure neutre au repos. Le violet n'apparait plus que sur l'etat
+     selectionne — un chip non choisi n'a aucune raison de porter la couleur
+     d'accent de la marque. */
+  border: 1px solid #333;
   background: transparent;
   color: rgba(255, 255, 255, 0.8);
   font-size: 13px;
@@ -119,25 +121,24 @@
 }
 
 .variant-chip:hover {
-  /* V231: 60% au lieu de la couleur pleine — le survol annonce le choix sans
-     se confondre avec l'etat selectionne, qui seul porte la couleur pleine.
-     Repli rgba() avant color-mix, meme raison qu'au-dessus. */
-  border-color: rgba(217, 28, 210, .6);
-  border-color: color-mix(in srgb, var(--primary-color) 60%, transparent);
+  /* V232: survol entierement neutre. Un chip non choisi ne porte aucun violet,
+     ni en bordure ni en fond — l'accent est reserve a l'etat selectionne, qui
+     devient ainsi le seul repere colore de la rangee. */
+  border-color: #555;
   color: #fff;
-  background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .variant-chip.selected {
-  /* V228: meme repli que ci-dessus, pour le fond de l'etat selectionne. */
-  background: rgba(217, 28, 210, .25);
-  background: color-mix(in srgb, var(--primary-color) 25%, transparent);
-  border-color: var(--primary-color);
+  /* V232: seul etat porteur de violet. Les valeurs sont volontairement basses
+     (fond 10%, bordure 40%, halo 15%) : le contraste avec un repos et un
+     survol entierement neutres suffit a le distinguer, sans halo appuye.
+     Plus de `color-mix` ici — ces rgba() sont valides partout, y compris sur
+     les navigateurs anciens que le repli V228 protegeait. */
+  background: rgba(217, 28, 210, .1);
+  border-color: rgba(217, 28, 210, .4);
   color: #fff;
-  /* V231: halo adouci — 6px a 30% au lieu de 8px a la pleine `--glow-color`.
-     L'etat selectionne reste le seul a porter la bordure pleine ET un halo,
-     donc il se distingue toujours nettement du survol. */
-  box-shadow: 0 0 6px rgba(217, 28, 210, .3);
+  box-shadow: 0 0 4px rgba(217, 28, 210, .15);
 }
 
 .variant-chip:disabled {
@@ -179,15 +180,16 @@ html, body {
 .glass {
   background: linear-gradient(135deg, rgba(15, 15, 20, 0.95) 0%, rgba(30, 10, 25, 0.85) 100%);
   backdrop-filter: blur(20px);
-  border: 1px solid color-mix(in srgb, var(--primary-color) 25%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--primary-color) 10%, transparent), 0 0 20px rgba(0, 0, 0, 0.5);
+  /* V232: le contour d'un conteneur est structurel, pas identitaire. */
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 0 20px rgba(0, 0, 0, 0.5);
 }
 
 /* Card with Gradient Background */
 .card-gradient {
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.9) 0%, rgba(40, 10, 35, 0.6) 100%);
-  border: 1px solid color-mix(in srgb, var(--primary-color) 20%, transparent);
-  box-shadow: 0 0 15px var(--glow-color), inset 0 0 30px rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.3);
   box-sizing: border-box;
   max-width: 100%;
 }
@@ -213,19 +215,15 @@ html, body {
 
 /* Neon Border Effect - Fine reflections */
 .neon-border {
-  border: 1px solid color-mix(in srgb, var(--primary-color) 60%, transparent) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
   box-shadow: 
-    0 0 10px var(--glow-color),
-    0 0 20px color-mix(in srgb, var(--primary-color) 15%, transparent),
-    inset 0 0 10px color-mix(in srgb, var(--primary-color) 5%, transparent);
+    inset 0 0 10px rgba(255, 255, 255, 0.02);
 }
 
 .neon-border-selected {
-  border: 2px solid var(--primary-color) !important;
+  border: 2px solid rgba(217, 28, 210, 0.45) !important;
   box-shadow: 
-    0 0 15px var(--glow-color-strong),
-    0 0 30px var(--glow-color),
-    inset 0 0 15px color-mix(in srgb, var(--primary-color) 10%, transparent);
+    0 0 6px rgba(217, 28, 210, 0.18);
 }
 
 /* Primary Button with Pulsation */
@@ -300,23 +298,25 @@ html, body {
 
 /* Session/Date Buttons */
 .session-btn {
-  border: 1px solid rgba(217, 28, 210, 0.35);
-  box-shadow: 0 0 8px rgba(217, 28, 210, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: none;
   transition: all 0.3s ease;
   background: linear-gradient(135deg, rgba(10, 10, 15, 0.95) 0%, rgba(25, 8, 22, 0.8) 100%);
 }
 
 .session-btn:hover {
-  border-color: rgba(217, 28, 210, 0.6);
-  box-shadow: 0 0 15px rgba(217, 28, 210, 0.4);
+  border-color: rgba(255, 255, 255, 0.20);
+  box-shadow: none;
   transform: translateY(-2px);
 }
 
 .session-btn.selected {
-  border: 2px solid #d91cd2 !important;
+  /* V232: la selection reste identifiable au violet, mais attenuee. Le 2px
+     est conserve : passer a 1px decalerait la mise en page de tout element
+     selectionne. */
+  border: 2px solid rgba(217, 28, 210, 0.45) !important;
   box-shadow: 
-    0 0 8px rgba(217, 28, 210, 0.35),
-    0 0 15px rgba(217, 28, 210, 0.15);
+    0 0 4px rgba(217, 28, 210, 0.15);
   background: linear-gradient(135deg, rgba(217, 28, 210, 0.1) 0%, rgba(139, 92, 246, 0.08) 100%);
 }
 
@@ -332,13 +332,13 @@ html, body {
 .course-card:hover {
   transform: translateY(-1px);
   box-shadow: none;
-  background: rgba(217, 28, 210, 0.05);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .course-card.selected {
   border: none !important;
-  border-left: 2px solid #d91cd2 !important;
-  background: rgba(217, 28, 210, 0.08);
+  border-left: 2px solid rgba(217, 28, 210, 0.5) !important;
+  background: rgba(217, 28, 210, 0.05);
   box-shadow: none;
 }
 
@@ -401,14 +401,14 @@ html, body {
 .offer-card:hover {
   transform: translateY(-1px);
   border-color: transparent;
-  background: rgba(217, 28, 210, 0.05);
+  background: rgba(255, 255, 255, 0.03);
   box-shadow: none;
 }
 
 .offer-card.selected {
   border: none !important;
-  border-left: 2px solid #d91cd2 !important;
-  background: rgba(217, 28, 210, 0.06);
+  border-left: 2px solid rgba(217, 28, 210, 0.5) !important;
+  background: rgba(217, 28, 210, 0.05);
   box-shadow: none;
   height: auto !important;
   max-height: none !important;
@@ -451,9 +451,11 @@ html, body {
 }
 
 .offer-info-btn:hover {
-  background: rgba(217, 28, 210, 0.6);
+  /* V232: survol attenue — c'est un bouton d'information, pas une action
+     d'achat ; il n'a pas a porter la couleur de marque a pleine intensite. */
+  background: rgba(217, 28, 210, 0.3);
   transform: scale(1.1);
-  box-shadow: 0 0 10px rgba(217, 28, 210, 0.5);
+  box-shadow: 0 0 6px rgba(217, 28, 210, 0.18);
 }
 
 /* Offer Description Panel - replaces image */
@@ -610,7 +612,7 @@ html, body {
   scroll-snap-type: x mandatory !important;
   scroll-behavior: smooth !important;
   scrollbar-width: thin !important;
-  scrollbar-color: #d91cd2 rgba(0, 0, 0, 0.3) !important;
+  scrollbar-color: rgba(217, 28, 210, 0.35) rgba(0, 0, 0, 0.3) !important;
   gap: 16px !important;
   padding: 30px 20px 10px 20px !important; /* padding-top 30px pour le glow */
   touch-action: pan-x !important;
@@ -627,7 +629,7 @@ html, body {
 }
 
 .offers-slider::-webkit-scrollbar-thumb {
-  background: linear-gradient(90deg, #d91cd2, #8b5cf6);
+  background: linear-gradient(90deg, rgba(217, 28, 210, 0.4), rgba(139, 92, 246, 0.4));
   border-radius: 3px;
 }
 
@@ -642,10 +644,10 @@ html, body {
 
 @keyframes neonPulseSoft {
   0%, 100% { 
-    box-shadow: 0 0 8px rgba(217, 28, 210, 0.35);
+    box-shadow: 0 0 4px rgba(217, 28, 210, 0.15);
   }
   50% { 
-    box-shadow: 0 0 12px rgba(217, 28, 210, 0.45);
+    box-shadow: 0 0 6px rgba(217, 28, 210, 0.2);
   }
 }
 
@@ -687,7 +689,7 @@ html, body {
   color: white;
   font-size: 48px;
   font-weight: bold;
-  text-shadow: 0 0 20px rgba(217, 28, 210, 0.8), 0 0 40px rgba(139, 92, 246, 0.5);
+  text-shadow: 0 0 12px rgba(217, 28, 210, 0.35), 0 0 24px rgba(139, 92, 246, 0.2);
 }
 
 /* Overlays */
@@ -742,14 +744,16 @@ html, body {
 input, select, textarea {
   background: linear-gradient(135deg, rgba(10, 10, 15, 0.95) 0%, rgba(20, 8, 18, 0.9) 100%) !important;
   color: white !important;
-  border: 1px solid rgba(217, 28, 210, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   transition: all 0.3s ease;
 }
 
 input:focus, select:focus, textarea:focus {
   outline: none;
-  border-color: rgba(217, 28, 210, 0.7);
-  box-shadow: 0 0 15px rgba(217, 28, 210, 0.3);
+  /* V232: attenue mais toujours nettement visible — un focus efface est un
+     probleme d'accessibilite, pas un gain de sobriete. */
+  border-color: rgba(217, 28, 210, 0.5);
+  box-shadow: 0 0 6px rgba(217, 28, 210, 0.18);
 }
 
 input::placeholder, textarea::placeholder {
@@ -763,13 +767,13 @@ select option {
 
 /* Neon Input */
 .neon-input {
-  border: 1px solid rgba(217, 28, 210, 0.3) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
   transition: all 0.3s ease;
 }
 
 .neon-input:focus {
-  border-color: rgba(217, 28, 210, 0.7) !important;
-  box-shadow: 0 0 15px rgba(217, 28, 210, 0.3), 0 0 25px rgba(217, 28, 210, 0.15);
+  border-color: rgba(217, 28, 210, 0.5) !important;
+  box-shadow: 0 0 6px rgba(217, 28, 210, 0.18);
 }
 
 /* V224: focus-only state for OfferWizard.js inputs. Ne definit QUE :focus —
@@ -778,8 +782,10 @@ select option {
    prioritaire meme au focus, car un style inline bat une regle de classe
    sans !important. */
 .v224-input:focus {
-  border: 1px solid #D91CD2 !important;
-  box-shadow: 0 0 15px rgba(217, 28, 210, 0.3), 0 0 25px rgba(217, 28, 210, 0.15);
+  /* V232: attenue mais toujours nettement visible — un focus efface est un
+     probleme d'accessibilite, pas un gain de sobriete. */
+  border: 1px solid rgba(217, 28, 210, 0.5) !important;
+  box-shadow: 0 0 6px rgba(217, 28, 210, 0.18);
   outline: none;
 }
 
@@ -806,7 +812,8 @@ select option {
 }
 
 .coach-tab.active {
-  background: linear-gradient(135deg, rgba(139, 92, 246, 0.25) 0%, rgba(217, 28, 210, 0.2) 100%);
+  /* V232: onglet actif — fond violet subtil, pas flashy. */
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.12) 0%, rgba(217, 28, 210, 0.10) 100%);
   border: 1px solid rgba(139, 92, 246, 0.6);
   box-shadow: 0 0 15px rgba(139, 92, 246, 0.3);
 }
@@ -823,7 +830,7 @@ select option {
 
 /* Panneau envoi direct */
 .direct-send-panel {
-  border: 2px solid rgba(217, 28, 210, 0.5);
+  border: 2px solid rgba(217, 28, 210, 0.25);
   background: rgba(139, 92, 246, 0.05);
 }
 
@@ -889,9 +896,11 @@ select option {
 }
 
 .switch.active {
-  background: linear-gradient(90deg, #8b5cf6, #d91cd2);
-  border-color: #d91cd2;
-  box-shadow: 0 0 10px rgba(217, 28, 210, 0.4);
+  /* V232: attenue, mais l'etat ON doit rester immediatement lisible — ce
+     n'est pas de la decoration, c'est de l'information. */
+  background: linear-gradient(90deg, rgba(139, 92, 246, 0.6), rgba(217, 28, 210, 0.6));
+  border-color: rgba(217, 28, 210, 0.5);
+  box-shadow: 0 0 6px rgba(217, 28, 210, 0.2);
 }
 
 .switch::after {
@@ -921,7 +930,7 @@ select option {
 .coach-table th {
   text-align: left;
   padding: 14px 16px;
-  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(217, 28, 210, 0.1) 100%);
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(217, 28, 210, 0.05) 100%);
   border-bottom: 1px solid rgba(139, 92, 246, 0.3);
   color: #fff;
   font-weight: 600;
@@ -987,7 +996,7 @@ select option {
 /* Form Section with Gradient */
 .form-section {
   background: linear-gradient(180deg, rgba(5, 5, 10, 0.95) 0%, rgba(30, 12, 28, 0.8) 100%);
-  border: 1px solid rgba(217, 28, 210, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 0 20px rgba(0, 0, 0, 0.5), inset 0 0 30px rgba(217, 28, 210, 0.03);
 }
 

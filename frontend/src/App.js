@@ -858,7 +858,7 @@ const MediaDisplay = ({ url, className }) => {
     fontSize: '14px',
     opacity: 1,
     transition: 'all 0.2s ease',
-    boxShadow: isMuted ? '0 0 15px rgba(217, 28, 210, 0.5)' : '0 2px 8px rgba(0,0,0,0.3)',
+    boxShadow: isMuted ? '0 0 15px rgba(217, 28, 210, 0.2)' : '0 2px 8px rgba(0,0,0,0.3)',
     animation: isMuted ? 'pulse 2s infinite' : 'none'
   };
 
@@ -1082,7 +1082,7 @@ function StickyCountdownBar(props) {
       flexWrap: 'wrap', gap: '2px 6px',
       padding: '6px 12px', textAlign: 'center',
       fontFamily: 'system-ui, sans-serif',
-      boxShadow: '0 4px 25px rgba(217, 28, 210, 0.5)'
+      boxShadow: '0 4px 25px rgba(217, 28, 210, 0.2)'
     }}>
       <span style={{ color: '#FFFFFF', fontSize: 'clamp(13px, 3.5vw, 18px)', fontWeight: 700, whiteSpace: 'nowrap' }}>{'\uD83D\uDD25'} {text} :</span>
       <span style={{ color: '#D91CD2', fontSize: 'clamp(16px, 4.5vw, 22px)', fontWeight: 900, fontFamily: "'Courier New', monospace", letterSpacing: '2px', textShadow: '0 0 10px #D91CD2, 0 0 20px #D91CD2, 0 0 40px rgba(217,28,210,0.4)', whiteSpace: 'nowrap' }}>{timerStr}</span>
@@ -1118,7 +1118,7 @@ function OfferCountdown(props) {
   var text = offer.countdown_text || "L'OFFRE FINIT DANS :";
   var timerStr = countdownPad(p.d) + 'j ' + countdownPad(p.h) + 'h ' + countdownPad(p.m) + 'm ' + countdownPad(p.s) + 's';
   return (
-    <div data-countdown="active" style={{ marginTop: '10px', padding: '14px 10px', borderRadius: '12px', background: 'linear-gradient(135deg, #D91CD2 0%, #a716a1 100%)', textAlign: 'center', boxShadow: '0 0 20px rgba(217, 28, 210, 0.6), 0 0 40px rgba(217, 28, 210, 0.3), inset 0 1px 0 rgba(255,255,255,0.2)', width: '100%', boxSizing: 'border-box' }}>
+    <div data-countdown="active" style={{ marginTop: '10px', padding: '14px 10px', borderRadius: '12px', background: 'linear-gradient(135deg, #D91CD2 0%, #a716a1 100%)', textAlign: 'center', boxShadow: '0 0 20px rgba(217, 28, 210, 0.24), 0 0 40px rgba(217, 28, 210, 0.12), inset 0 1px 0 rgba(255,255,255,0.2)', width: '100%', boxSizing: 'border-box' }}>
       <div style={{ fontSize: '13px', color: '#FFFFFF', fontWeight: 800, letterSpacing: '1px', marginBottom: '6px', textTransform: 'uppercase', animation: 'v147blink 0.8s ease-in-out infinite' }}>{text}</div>
       <div style={{ fontSize: '22px', color: '#FFFFFF', fontWeight: 900, fontFamily: "'Courier New', monospace", letterSpacing: '2.5px', textShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>{timerStr}</div>
     </div>
@@ -1176,7 +1176,7 @@ const OfferCard = ({ offer, selected, onClick }) => {
                 left: '8px',
                 right: 'auto',
                 background: 'rgba(217, 28, 210, 0.85)',
-                boxShadow: '0 0 8px rgba(217, 28, 210, 0.5)',
+                boxShadow: '0 0 8px rgba(217, 28, 210, 0.2)',
                 border: 'none'
               }}
               title="Photo"
@@ -1344,8 +1344,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
       <button
         type="button"
         onClick={e => { e.stopPropagation(); v230Toggle(key); }}
-        onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255, 255, 255, 0.85)'; }}
-        onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255, 255, 255, 0.5)'; }}
+        onMouseEnter={e => { e.currentTarget.style.color = '#ddd'; }}
+        onMouseLeave={e => { e.currentTarget.style.color = '#999'; }}
         aria-expanded={open}
         aria-controls={`v230-chips-${key}-${offer.id}`}
         data-testid={testId}
@@ -1357,7 +1357,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
           padding: 0,
           border: 'none',
           background: 'none',
-          color: 'rgba(255, 255, 255, 0.5)',
+          /* V232: gris neutre, aucun violet. */
+          color: '#999',
           fontSize: '11px',
           fontWeight: 400,
           lineHeight: 1.2,
@@ -1745,7 +1746,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
               src={currentImage} 
               alt={offer.name} 
               className="max-w-full max-h-[80vh] object-contain rounded-xl"
-              style={{ boxShadow: '0 0 40px rgba(217, 28, 210, 0.5)' }}
+              style={{ boxShadow: '0 0 40px rgba(217, 28, 210, 0.2)' }}
             />
             
             {/* Flèches UNIQUEMENT dans le zoom */}
@@ -1926,7 +1927,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                   className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-all hover:scale-110"
                   style={{
                     background: 'rgba(217, 28, 210, 0.85)',
-                    boxShadow: '0 0 12px rgba(217, 28, 210, 0.5)',
+                    boxShadow: '0 0 12px rgba(217, 28, 210, 0.2)',
                     border: '2px solid rgba(255, 255, 255, 0.3)'
                   }}
                   onClick={toggleZoom}
@@ -1946,7 +1947,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                     className="absolute bottom-3 left-3 px-3 py-1 rounded-full text-xs font-bold text-white flex items-center gap-1"
                     style={{
                       background: 'linear-gradient(135deg, #d91cd2 0%, #8b5cf6 100%)',
-                      boxShadow: '0 0 15px rgba(217, 28, 210, 0.7)'
+                      boxShadow: '0 0 15px rgba(217, 28, 210, 0.28)'
                     }}
                   >
                     <span>✓</span> Sélectionné
@@ -2035,7 +2036,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 className="text-2xl font-bold"
                 style={{
                   color: '#d91cd2',
-                  textShadow: selected ? '0 0 15px rgba(217, 28, 210, 0.6)' : 'none'
+                  textShadow: selected ? '0 0 15px rgba(217, 28, 210, 0.24)' : 'none'
                 }}
               >
                 {/* V223: prix du palier actif, sinon rendu d'origine */}
@@ -2299,6 +2300,11 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                   padding: '2px 4px',
                   borderRadius: '10px',
                   border: v226FlashDim === dim.key ? '1px solid #FF2DAA' : '1px solid transparent',
+                  /* V232: ce halo est VOLONTAIREMENT laisse a 0.7, seule
+                     exception a l'attenuation generale. Ce n'est pas de la
+                     decoration : c'est le signal V226 qui designe la variante
+                     manquante quand un visiteur tente d'acheter sans l'avoir
+                     choisie. L'attenuer affaiblirait une alerte, pas un ornement. */
                   boxShadow: v226FlashDim === dim.key ? '0 0 10px rgba(255, 45, 170, 0.7)' : 'none',
                   transition: 'border-color 0.2s ease, box-shadow 0.2s ease'
                 }}
@@ -2613,7 +2619,7 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
               width: '32px',
               height: '32px',
               background: '#D91CD2',
-              boxShadow: '0 2px 10px rgba(217, 28, 210, 0.6)',
+              boxShadow: '0 2px 10px rgba(217, 28, 210, 0.24)',
               border: '1.5px solid rgba(255,255,255,0.3)',
               opacity: currentIndex === 0 ? 0.3 : 0.9,
               cursor: currentIndex === 0 ? 'default' : 'pointer',
@@ -2644,7 +2650,7 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
               width: '32px',
               height: '32px',
               background: '#D91CD2',
-              boxShadow: '0 2px 10px rgba(217, 28, 210, 0.6)',
+              boxShadow: '0 2px 10px rgba(217, 28, 210, 0.24)',
               border: '1.5px solid rgba(255,255,255,0.3)',
               opacity: currentIndex >= offers.length - 1 ? 0.3 : 0.9,
               cursor: currentIndex >= offers.length - 1 ? 'default' : 'pointer',
@@ -3122,7 +3128,7 @@ const EventPosterModal = ({ mediaUrl, onClose }) => {
         style={{ 
           background: 'linear-gradient(180deg, #0a0a0f 0%, #1a0a1f 100%)',
           border: '2px solid rgba(217, 28, 210, 0.5)',
-          boxShadow: '0 0 30px rgba(217, 28, 210, 0.3)'
+          boxShadow: '0 0 30px rgba(217, 28, 210, 0.12)'
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -3358,7 +3364,7 @@ const SuccessOverlay = ({ t, data, onClose, onClearTicket }) => {
               className="flex-1 p-3 rounded-lg font-semibold text-white transition-all"
               style={{ 
                 background: 'linear-gradient(135deg, #d91cd2 0%, #8b5cf6 100%)',
-                boxShadow: '0 0 15px rgba(217, 28, 210, 0.4)'
+                boxShadow: '0 0 15px rgba(217, 28, 210, 0.16)'
               }}
               data-testid="save-ticket-btn"
             >
@@ -5070,7 +5076,7 @@ function App() {
       const sessionsEl = document.getElementById('sessions-section');
       if (sessionsEl) {
         sessionsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        sessionsEl.style.boxShadow = '0 0 0 3px #d91cd2, 0 0 40px rgba(217,28,210,0.6)';
+        sessionsEl.style.boxShadow = '0 0 0 3px #d91cd2, 0 0 40px rgba(217,28,210, 0.24)';
         sessionsEl.style.borderRadius = '12px';
         sessionsEl.style.transition = 'box-shadow 0.3s';
         setTimeout(() => { sessionsEl.style.boxShadow = ''; }, 6000);
@@ -5957,11 +5963,11 @@ function App() {
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
-              boxShadow: '0 4px 20px rgba(217,28,210,0.4)',
+              boxShadow: '0 4px 20px rgba(217,28,210, 0.16)',
               transition: 'transform 0.2s, box-shadow 0.2s'
             }}
-            onMouseEnter={e => { e.target.style.transform = 'scale(1.05)'; e.target.style.boxShadow = '0 6px 25px rgba(217,28,210,0.6)'; }}
-            onMouseLeave={e => { e.target.style.transform = 'scale(1)'; e.target.style.boxShadow = '0 4px 20px rgba(217,28,210,0.4)'; }}
+            onMouseEnter={e => { e.target.style.transform = 'scale(1.05)'; e.target.style.boxShadow = '0 6px 25px rgba(217,28,210, 0.24)'; }}
+            onMouseLeave={e => { e.target.style.transform = 'scale(1)'; e.target.style.boxShadow = '0 4px 20px rgba(217,28,210, 0.16)'; }}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M19 12H5"></path>
@@ -6201,7 +6207,7 @@ function App() {
               width: '100%', padding: '16px', borderRadius: '14px', border: 'none',
               background: 'linear-gradient(135deg, #D91CD2, #9B59B6)', color: '#fff',
               fontSize: '16px', fontWeight: 700, cursor: 'pointer', marginBottom: '12px',
-              boxShadow: '0 4px 20px rgba(217,28,210,0.4)',
+              boxShadow: '0 4px 20px rgba(217,28,210, 0.16)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px'
             }}>
               <span>💳</span> Payer par carte
@@ -6255,7 +6261,7 @@ function App() {
             style={{
               background: '#1a0a1f',
               border: '1px solid rgba(217,28,210,0.35)',
-              boxShadow: '0 10px 50px rgba(217,28,210,0.35)'
+              boxShadow: '0 10px 50px rgba(217,28,210, 0.14)'
             }}
           >
             <div className="text-4xl mb-3">✅</div>
@@ -6408,7 +6414,7 @@ function App() {
                 transition: 'all 0.3s ease'
               }}
               onFocus={(e) => { e.target.style.borderColor = '#D91CD2'; e.target.style.boxShadow = '0 0 8px rgba(217,28,210,0.2)'; }}
-              onBlur={(e) => { e.target.style.borderColor = 'rgba(217,28,210,0.3)'; e.target.style.boxShadow = 'none'; }}
+              onBlur={(e) => { e.target.style.borderColor = 'rgba(217,28,210, 0.12)'; e.target.style.boxShadow = 'none'; }}
             />
             {searchQuery && (
               <button onClick={() => setSearchQuery('')}
@@ -6645,7 +6651,7 @@ function App() {
                   className="w-12 h-12 rounded-full flex items-center justify-center transition-all hover:scale-110"
                   style={{
                     background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)',
-                    boxShadow: isPlaying ? '0 0 20px rgba(217, 28, 210, 0.5)' : 'none'
+                    boxShadow: isPlaying ? '0 0 20px rgba(217, 28, 210, 0.2)' : 'none'
                   }}
                   data-testid="audio-play-pause"
                 >
@@ -6983,7 +6989,7 @@ function App() {
                       background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
                       color: '#fff', fontWeight: 700, fontSize: '14px',
                       border: 'none', cursor: 'pointer',
-                      boxShadow: '0 0 20px rgba(217,28,210,0.3)',
+                      boxShadow: '0 0 20px rgba(217,28,210, 0.12)',
                       transition: 'transform 0.2s'
                     }}
                     onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.02)'; }}
@@ -7018,7 +7024,7 @@ function App() {
                 background: 'rgba(217, 28, 210, 0.9)', border: '2px solid rgba(255,255,255,0.3)',
                 color: '#fff', fontSize: '20px', fontWeight: 700, cursor: 'pointer',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 0 20px rgba(217, 28, 210, 0.5), 0 4px 12px rgba(0,0,0,0.5)'
+                boxShadow: '0 0 20px rgba(217, 28, 210, 0.2), 0 4px 12px rgba(0,0,0,0.5)'
               }}
             >✕</button>
             <div
@@ -7039,7 +7045,7 @@ function App() {
                   alt={audioLightbox.title}
                   style={{
                     width: '100%', borderRadius: '14px', marginBottom: '16px',
-                    boxShadow: '0 0 30px rgba(217,28,210,0.3)'
+                    boxShadow: '0 0 30px rgba(217,28,210, 0.12)'
                   }}
                 />
               ) : (
@@ -7087,7 +7093,7 @@ function App() {
               style={{
                 background: 'transparent',
                 border: '2px solid rgba(217, 28, 210, 0.7)',
-                boxShadow: '0 0 15px rgba(217, 28, 210, 0.4), inset 0 0 10px rgba(139, 92, 246, 0.1)',
+                boxShadow: '0 0 15px rgba(217, 28, 210, 0.16), inset 0 0 10px rgba(139, 92, 246, 0.1)',
                 color: '#fff'
               }}
               data-testid="google-reviews-btn"
@@ -7742,7 +7748,7 @@ function App() {
             style={{
               width: 'min(70vw, 280px)', height: 'min(70vw, 280px)', borderRadius: '50%',
               overflow: 'hidden', border: '5px solid #D91CD2',
-              boxShadow: '0 0 40px rgba(217,28,210,0.6), 0 0 80px rgba(217,28,210,0.3), 0 0 120px rgba(217,28,210,0.1)',
+              boxShadow: '0 0 40px rgba(217,28,210, 0.24), 0 0 80px rgba(217,28,210, 0.12), 0 0 120px rgba(217,28,210,0.1)',
               animation: 'v76ZoomIn 0.25s ease-out'
             }}
           >
