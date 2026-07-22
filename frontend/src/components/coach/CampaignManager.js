@@ -10,6 +10,7 @@ import React, { memo, useState, useEffect } from 'react';
 import axios from 'axios';
 import CampaignCalendar from './CampaignCalendar';
 import CampaignModal from './CampaignModal';
+import SvgIcon from '../SvgIcon';
 
 const CampaignManager = ({
   // === ÉTATS PRINCIPAUX ===
@@ -179,7 +180,7 @@ const CampaignManager = ({
   // Credit block message
   const creditBlockMessage = hasInsufficientCredits ? (
     <div style={{ padding: '16px', borderRadius: '10px', marginBottom: '16px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
-      <p style={{ color: '#f87171', fontWeight: 500, margin: '0 0 4px' }}>⚠️ Crédits insuffisants</p>
+      <p style={{ color: '#f87171', fontWeight: 500, margin: '0 0 4px' }}><SvgIcon name="warning" size={14} /> Crédits insuffisants</p>
       <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px', margin: '0 0 8px' }}>Achetez un pack de crédits pour envoyer des campagnes.</p>
       <a href="/#devenir-coach" style={{ display: 'inline-block', padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)', color: 'white', textDecoration: 'none' }}>
         Acheter des crédits
@@ -267,7 +268,7 @@ const CampaignManager = ({
 
       {/* V146: Header simplifié — responsive */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-        <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, margin: 0 }}>📢 Campagnes</h2>
+        <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, margin: 0 }}><SvgIcon name="megaphone" size={16} /> Campagnes</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           {/* Scheduler health badge */}
           {(() => {
@@ -344,7 +345,7 @@ const CampaignManager = ({
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '16px' }}>{waMode.mode === 'meta' ? '🟢' : waMode.mode === 'sandbox' ? '🟠' : '✅'}</span>
+              <span style={{ fontSize: '16px', display: 'inline-flex', alignItems: 'center' }}>{waMode.mode === 'meta' ? <span className="inline-block w-2 h-2 rounded-full bg-green-500" /> : waMode.mode === 'sandbox' ? <span className="inline-block w-2 h-2 rounded-full bg-orange-500" /> : <SvgIcon name="check" size={16} />}</span>
               <p style={{ color: waMode.mode === 'sandbox' ? '#fb923c' : '#4ade80', fontWeight: 500, fontSize: '12px', margin: 0 }}>
                 {waMode.mode === 'meta' && <>WhatsApp Meta Cloud API — <strong>{waMode.senderNumber}</strong></>}
                 {waMode.mode === 'production' && <>WhatsApp Twilio Production — <strong>{waMode.senderNumber}</strong></>}
@@ -354,7 +355,9 @@ const CampaignManager = ({
             <button type="button" onClick={() => setShowMetaConfig(p => !p)} style={{
               padding: '4px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
               background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff'
-            }}>{showMetaConfig ? '▲ Fermer' : '⚙️ Config'}</button>
+            }}>{showMetaConfig
+              ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="arrowUp" size={14} /> Fermer</span>
+              : <span className="inline-flex items-center gap-1.5"><SvgIcon name="settings" size={14} /> Config</span>}</button>
           </div>
 
           {/* Panneau de configuration Meta Cloud API */}
@@ -364,7 +367,7 @@ const CampaignManager = ({
               background: 'rgba(30,30,50,0.6)', border: '1px solid rgba(255,255,255,0.1)', borderTop: 'none'
             }}>
               <h4 style={{ color: '#25D366', fontSize: '13px', fontWeight: 600, margin: '0 0 12px' }}>
-                📲 Configuration WhatsApp Meta Cloud API
+                <SvgIcon name="phone" size={14} /> Configuration WhatsApp Meta Cloud API
               </h4>
               <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', margin: '0 0 12px', lineHeight: 1.5 }}>
                 Collez vos clés depuis <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa' }}>Facebook Developers</a> pour envoyer des messages WhatsApp depuis votre numéro.
@@ -395,7 +398,11 @@ const CampaignManager = ({
                 }} style={{
                   padding: '8px 16px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', border: 'none',
                   background: 'linear-gradient(135deg, #25D366, #128C7E)', color: '#fff'
-                }}>{metaTestStatus === 'saving' ? '⏳...' : metaTestStatus === 'saved' ? '✅ Sauvé !' : '💾 Sauvegarder'}</button>
+                }}>{metaTestStatus === 'saving'
+                  ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="loader" size={14} className="animate-spin" />...</span>
+                  : metaTestStatus === 'saved'
+                    ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Sauvé !</span>
+                    : <span className="inline-flex items-center gap-1.5"><SvgIcon name="save" size={14} /> Sauvegarder</span>}</button>
 
                 <button type="button" onClick={async () => {
                   try {
@@ -412,7 +419,13 @@ const CampaignManager = ({
                 }} style={{
                   padding: '8px 16px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', border: 'none',
                   background: 'rgba(99,102,241,0.2)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)'
-                }}>{metaTestStatus === 'testing' ? '⏳ Envoi...' : metaTestStatus === 'test_ok' ? '✅ Reçu !' : metaTestStatus === 'test_fail' ? '❌ Échoué' : '📤 Tester la connexion'}</button>
+                }}>{metaTestStatus === 'testing'
+                  ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="loader" size={14} className="animate-spin" /> Envoi...</span>
+                  : metaTestStatus === 'test_ok'
+                    ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Reçu !</span>
+                    : metaTestStatus === 'test_fail'
+                      ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="close" size={14} /> Échoué</span>
+                      : <span className="inline-flex items-center gap-1.5"><SvgIcon name="upload" size={14} /> Tester la connexion</span>}</button>
               </div>
               {metaTestStatus === 'error' && <p style={{ color: '#f87171', fontSize: '11px', marginTop: '8px' }}>Erreur lors de la sauvegarde.</p>}
             </div>
@@ -423,12 +436,12 @@ const CampaignManager = ({
       {/* === HISTORIQUE DES CAMPAGNES === */}
       <div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-          <h3 style={{ color: '#fff', fontWeight: 600, fontSize: '14px', margin: 0 }}>📊 Historique</h3>
+          <h3 style={{ color: '#fff', fontWeight: 600, fontSize: '14px', margin: 0 }}><SvgIcon name="barChart" size={14} /> Historique</h3>
           <div style={{ display: 'flex', gap: '4px' }}>
             {[
               { key: 'all', label: `Tout (${campaigns.length})` },
-              { key: 'groups', label: '👥 Groupes' },
-              { key: 'individuals', label: '👤 Individuels' }
+              { key: 'groups', label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="users" size={14} /> Groupes</span> },
+              { key: 'individuals', label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="user" size={14} /> Individuels</span> }
             ].map(f => (
               <button key={f.key} type="button" onClick={() => setCampaignHistoryFilter(f.key)}
                 style={{
@@ -492,23 +505,25 @@ const CampaignManager = ({
                       </td>
                       <td style={{ padding: '10px 8px', fontSize: '12px' }}>
                         {campaign.channels?.internal ? (
-                          <span>{convType === 'group' ? '👥' : '👤'} {(campaign.targetConversationName || 'Chat').slice(0, 20)}</span>
+                          <span className="inline-flex items-center gap-1.5">{convType === 'group' ? <SvgIcon name="users" size={14} /> : <SvgIcon name="user" size={14} />}{(campaign.targetConversationName || 'Chat').slice(0, 20)}</span>
                         ) : campaign.targetType === 'all' ? `Tous (${campaign.results?.length || 0})` : (campaign.selectedContacts?.length || 0)}
                       </td>
                       <td style={{ padding: '10px 8px', fontSize: '12px' }}>
-                        {campaign.channels?.whatsapp && '📱'}
-                        {campaign.channels?.email && '📧'}
-                        {campaign.channels?.group && '💬'}
-                        {campaign.channels?.internal && '💌'}
+                        <span className="inline-flex items-center gap-1.5">
+                          {campaign.channels?.whatsapp && <SvgIcon name="phone" size={14} />}
+                          {campaign.channels?.email && <SvgIcon name="mail" size={14} />}
+                          {campaign.channels?.group && <SvgIcon name="messageCircle" size={14} />}
+                          {campaign.channels?.internal && '💌'}
+                        </span>
                       </td>
                       <td style={{ padding: '10px 8px' }}>
-                        {campaign.status === 'draft' && <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(107,114,128,0.3)', color: '#9ca3af' }}>📝 Brouillon</span>}
-                        {campaign.status === 'scheduled' && <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(234,179,8,0.2)', color: '#fbbf24' }}>📅 Programmé</span>}
-                        {campaign.status === 'sending' && <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(59,130,246,0.3)', color: '#60a5fa' }}>🔄 En cours</span>}
-                        {(campaign.status === 'completed' || campaign.status === 'sent') && !hasErrors && <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(34,197,94,0.2)', color: '#4ade80' }}>✅ Envoyé</span>}
-                        {(campaign.status === 'completed' || campaign.status === 'sent') && hasErrors && <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(249,115,22,0.2)', color: '#fb923c' }}>⚠️ Partiel ({failedCount})</span>}
-                        {campaign.status === 'partial' && <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(249,115,22,0.2)', color: '#fb923c' }} title={campaign.results?.filter(r => r.status === 'failed').map(r => r.error).join(', ')}>⚠️ Partiel ({failedCount})</span>}
-                        {campaign.status === 'failed' && <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(239,68,68,0.2)', color: '#f87171' }} title={campaign.results?.filter(r => r.status === 'failed').map(r => r.error).join(', ')}>❌ Échoué ({failedCount})</span>}
+                        {campaign.status === 'draft' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(107,114,128,0.3)', color: '#9ca3af' }}><SvgIcon name="edit" size={14} /> Brouillon</span>}
+                        {campaign.status === 'scheduled' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(234,179,8,0.2)', color: '#fbbf24' }}><SvgIcon name="calendar" size={14} /> Programmé</span>}
+                        {campaign.status === 'sending' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(59,130,246,0.3)', color: '#60a5fa' }}><SvgIcon name="refresh" size={14} /> En cours</span>}
+                        {(campaign.status === 'completed' || campaign.status === 'sent') && !hasErrors && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(34,197,94,0.2)', color: '#4ade80' }}><SvgIcon name="check" size={14} /> Envoyé</span>}
+                        {(campaign.status === 'completed' || campaign.status === 'sent') && hasErrors && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(249,115,22,0.2)', color: '#fb923c' }}><SvgIcon name="warning" size={14} /> Partiel ({failedCount})</span>}
+                        {campaign.status === 'partial' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(249,115,22,0.2)', color: '#fb923c' }} title={campaign.results?.filter(r => r.status === 'failed').map(r => r.error).join(', ')}><SvgIcon name="warning" size={14} /> Partiel ({failedCount})</span>}
+                        {campaign.status === 'failed' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(239,68,68,0.2)', color: '#f87171' }} title={campaign.results?.filter(r => r.status === 'failed').map(r => r.error).join(', ')}><SvgIcon name="close" size={14} /> Échoué ({failedCount})</span>}
                       </td>
                       <td style={{ padding: '10px 8px', fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>
                         {campaign.scheduledAt ? new Date(campaign.scheduledAt).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'Immédiat'}
@@ -516,21 +531,21 @@ const CampaignManager = ({
                       <td style={{ padding: '10px 8px' }}>
                         <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                           <button type="button" onClick={() => openEditCampaign(campaign)}
-                            style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(234,179,8,0.2)', border: 'none', color: '#fbbf24', cursor: 'pointer' }} title="Modifier">✏️</button>
+                            style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(234,179,8,0.2)', border: 'none', color: '#fbbf24', cursor: 'pointer' }} title="Modifier" aria-label="Modifier"><SvgIcon name="edit" size={14} /></button>
                           {campaign.status === 'draft' && (
                             <button type="button" onClick={(e) => launchCampaignWithSend(e, campaign.id)}
-                              style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', cursor: 'pointer' }}>🚀</button>
+                              style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', cursor: 'pointer' }} aria-label="Lancer maintenant"><SvgIcon name="rocket" size={14} /></button>
                           )}
                           {campaign.status === 'scheduled' && (
                             <button type="button" onClick={(e) => launchCampaignWithSend(e, campaign.id)}
-                              style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', cursor: 'pointer' }} title="Lancer maintenant">🚀</button>
+                              style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', cursor: 'pointer' }} title="Lancer maintenant" aria-label="Lancer maintenant"><SvgIcon name="rocket" size={14} /></button>
                           )}
                           {(campaign.status === 'sent' || campaign.status === 'completed' || campaign.status === 'failed' || campaign.status === 'partial') && (
                             <button type="button" onClick={(e) => launchCampaignWithSend(e, campaign.id)}
-                              style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(34,197,94,0.2)', border: 'none', color: '#4ade80', cursor: 'pointer' }} title="Relancer">🔄</button>
+                              style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(34,197,94,0.2)', border: 'none', color: '#4ade80', cursor: 'pointer' }} title="Relancer" aria-label="Relancer"><SvgIcon name="refresh" size={14} /></button>
                           )}
                           <button type="button" onClick={() => deleteCampaign(campaign.id)}
-                            style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(239,68,68,0.15)', border: 'none', color: '#f87171', cursor: 'pointer' }}>🗑️</button>
+                            style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(239,68,68,0.15)', border: 'none', color: '#f87171', cursor: 'pointer' }} aria-label="Supprimer"><SvgIcon name="trash" size={14} /></button>
                         </div>
                       </td>
                     </tr>
@@ -557,7 +572,7 @@ const CampaignManager = ({
 
           return (
             <div key={`detail-${campaign.id}`} style={{ marginTop: '16px', padding: '14px', borderRadius: '10px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(139,92,246,0.2)' }}>
-              <h4 style={{ color: '#fff', fontWeight: 600, fontSize: '14px', marginTop: 0, marginBottom: '10px' }}>🔄 {campaign.name} — En cours</h4>
+              <h4 style={{ color: '#fff', fontWeight: 600, fontSize: '14px', marginTop: 0, marginBottom: '10px' }}><SvgIcon name="refresh" size={14} /> {campaign.name} — En cours</h4>
               <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
                 {campaign.results?.map((result, idx) => {
                   const waResult = result.channel === 'whatsapp' ? getWhatsAppLinkOrError(result) : { link: null, error: false };
@@ -571,7 +586,7 @@ const CampaignManager = ({
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, minWidth: 0 }}>
                         <span style={{ color: '#fff', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{result.contactName}</span>
-                        <span style={{ fontSize: '11px', opacity: 0.4 }}>{result.channel === 'whatsapp' ? '📱' : result.channel === 'email' ? '📧' : '💌'}</span>
+                        <span style={{ fontSize: '11px', opacity: 0.4 }}>{result.channel === 'whatsapp' ? <SvgIcon name="phone" size={14} /> : result.channel === 'email' ? <SvgIcon name="mail" size={14} /> : '💌'}</span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                         {result.status === 'pending' && !hasError && (
@@ -582,13 +597,13 @@ const CampaignManager = ({
                         )}
                         {result.status === 'sent' && (
                           <>
-                            <span style={{ padding: '3px 6px', borderRadius: '4px', fontSize: '10px', background: 'rgba(34,197,94,0.2)', color: '#4ade80' }}>✅</span>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', background: 'rgba(34,197,94,0.2)', color: '#4ade80' }}><SvgIcon name="check" size={14} /></span>
                             {result.deliveredAt && <span style={{ fontSize: '10px', color: '#60a5fa' }} title={`Reçu: ${new Date(result.deliveredAt).toLocaleString('fr-FR')}`}>📬</span>}
-                            {result.readAt && <span style={{ fontSize: '10px', color: '#c084fc' }} title={`Lu: ${new Date(result.readAt).toLocaleString('fr-FR')}`}>👁️</span>}
+                            {result.readAt && <span style={{ fontSize: '10px', color: '#c084fc' }} title={`Lu: ${new Date(result.readAt).toLocaleString('fr-FR')}`}><SvgIcon name="eye" size={14} /></span>}
                           </>
                         )}
-                        {result.status === 'failed' && <span style={{ fontSize: '10px', color: '#f87171' }} title={result.error}>❌</span>}
-                        {result.status === 'pending' && hasError && <span style={{ fontSize: '10px', color: '#f87171' }}>❌ Invalide</span>}
+                        {result.status === 'failed' && <span style={{ fontSize: '10px', color: '#f87171' }} title={result.error}><SvgIcon name="close" size={14} /></span>}
+                        {result.status === 'pending' && hasError && <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: '#f87171' }}><SvgIcon name="close" size={14} /> Invalide</span>}
                       </div>
                     </div>
                   );

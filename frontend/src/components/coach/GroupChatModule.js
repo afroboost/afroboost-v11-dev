@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useRef, memo, useCallback } from 'react';
 import { Users, Plus, X, Search, Check, Bot, UserCircle, Trash2, ChevronDown, ChevronUp, Copy, MessageSquare, Send, RefreshCw, Edit2, Save, UserPlus, Eye, EyeOff } from 'lucide-react';
 import { renderTextWithLinks } from '../chat/ChatBubbles';
+import SvgIcon from '../SvgIcon';
 
 // === AI / Human Toggle Switch ===
 const AiHumanSwitch = memo(({ isAi, onToggle, size = 'normal' }) => {
@@ -283,7 +284,11 @@ const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, onOpenChat, onE
       <div style={{ flex: 1, minWidth: 0 }}>
         <p style={{ color: '#fff', fontSize: '13px', fontWeight: '600', margin: 0 }}>{group.name || 'Groupe sans nom'}</p>
         <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '10px', margin: '2px 0 0' }}>
-          {memberCount} membre{memberCount > 1 ? 's' : ''} {group.is_ai_active ? '🤖 IA' : '👤 Humain'}
+          {memberCount} membre{memberCount > 1 ? 's' : ''} {group.is_ai_active
+            /* V228: taille 11 (et non 14) — le texte porteur est a 10px, une icone
+               de 14 y paraitrait massive. Cale sur la police voisine. */
+            ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}><SvgIcon name="robot" size={11} />IA</span>
+            : <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}><SvgIcon name="user" size={11} />Humain</span>}
         </p>
         {membersSummary && (
           <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: '9px', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -488,7 +493,9 @@ const GroupForm = memo(({
           onMouseEnter={e => { if (groupName.trim() && !generatingPrompt) { e.currentTarget.style.boxShadow = '0 0 30px rgba(217, 28, 210, 0.6), 0 0 60px rgba(217, 28, 210, 0.25), inset 0 1px 0 rgba(255,255,255,0.2)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}}
           onMouseLeave={e => { if (groupName.trim() && !generatingPrompt) { e.currentTarget.style.boxShadow = '0 0 20px rgba(217, 28, 210, 0.4), 0 0 40px rgba(217, 28, 210, 0.15), inset 0 1px 0 rgba(255,255,255,0.15)'; e.currentTarget.style.transform = 'translateY(0)'; }}}
         >
-          {generatingPrompt ? '⏳ Génération en cours...' : '✨ Générer Prompt Maître'}
+          {generatingPrompt
+            ? <><SvgIcon name="loader" size={14} className="animate-spin" />Génération en cours...</>
+            : <><SvgIcon name="sparkles" size={14} />Générer Prompt Maître</>}
         </button>
       </div>
 

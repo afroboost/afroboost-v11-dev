@@ -7,6 +7,7 @@
  * - Bouton "+" flottant pour créer
  */
 import React, { useState, useMemo, useCallback } from 'react';
+import SvgIcon from '../SvgIcon';
 
 const STATUS_COLORS = {
   draft: { bg: 'rgba(107,114,128,0.3)', border: '#6b7280', label: 'Brouillon' },
@@ -122,10 +123,10 @@ export default function CampaignCalendar({
       {/* V146: Header responsive — wrap sur mobile */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: '1 1 auto', minWidth: 0, justifyContent: 'center' }}>
-          <button type="button" onClick={() => setCurrentDate(new Date(year, month - 1, 1))}
-            style={{ background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.3)', color: '#fff', borderRadius: '8px', padding: '6px 10px', fontSize: '14px', cursor: 'pointer', flexShrink: 0 }}>◀</button>
+          <button type="button" aria-label="Mois précédent" onClick={() => setCurrentDate(new Date(year, month - 1, 1))}
+            style={{ background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.3)', color: '#fff', borderRadius: '8px', padding: '6px 10px', fontSize: '14px', cursor: 'pointer', flexShrink: 0 }}><SvgIcon name="arrowLeft" size={14} /></button>
           <div style={{ textAlign: 'center', minWidth: 0 }}>
-            <div style={{ color: '#fff', fontWeight: 600, fontSize: '14px', whiteSpace: 'nowrap' }}>📅 {MONTHS_FR[month]} {year}</div>
+            <div style={{ color: '#fff', fontWeight: 600, fontSize: '14px', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}><SvgIcon name="calendar" size={14} />{MONTHS_FR[month]} {year}</div>
             {monthStats.total > 0 && (
               <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)', marginTop: '2px' }}>
                 {monthStats.total} campagne{monthStats.total > 1 ? 's' : ''}
@@ -137,8 +138,8 @@ export default function CampaignCalendar({
             style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', color: '#c4b5fd', borderRadius: '8px', padding: '5px 8px', fontSize: '11px', cursor: 'pointer', flexShrink: 0 }}>Auj.</button>
           <button type="button" onClick={() => onDayClick?.(makeDateStr(today.getDate()))}
             style={{ background: 'linear-gradient(135deg, #9333ea, #6366f1)', border: 'none', color: '#fff', borderRadius: '8px', padding: '5px 10px', fontSize: '11px', cursor: 'pointer', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap' }}>+ Créer</button>
-          <button type="button" onClick={() => setCurrentDate(new Date(year, month + 1, 1))}
-            style={{ background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.3)', color: '#fff', borderRadius: '8px', padding: '6px 10px', fontSize: '14px', cursor: 'pointer', flexShrink: 0 }}>▶</button>
+          <button type="button" aria-label="Mois suivant" onClick={() => setCurrentDate(new Date(year, month + 1, 1))}
+            style={{ background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.3)', color: '#fff', borderRadius: '8px', padding: '6px 10px', fontSize: '14px', cursor: 'pointer', flexShrink: 0 }}><SvgIcon name="arrowRight" size={14} /></button>
         </div>
       </div>
 
@@ -226,14 +227,14 @@ export default function CampaignCalendar({
             style={{ display: 'block', width: '100%', padding: '10px 14px', background: 'none', border: 'none', color: '#fff', fontSize: '13px', cursor: 'pointer', textAlign: 'left' }}
             onMouseEnter={e => e.currentTarget.style.background = 'rgba(139,92,246,0.15)'}
             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-            ✏️ Modifier
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="edit" size={14} /> Modifier</span>
           </button>
           <button type="button"
             onClick={(e) => { e.stopPropagation(); onDuplicateCampaign?.(contextMenu.campaign); setContextMenu(null); }}
             style={{ display: 'block', width: '100%', padding: '10px 14px', background: 'none', border: 'none', color: '#fff', fontSize: '13px', cursor: 'pointer', textAlign: 'left' }}
             onMouseEnter={e => e.currentTarget.style.background = 'rgba(139,92,246,0.15)'}
             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-            📋 Dupliquer
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="clipboard" size={14} /> Dupliquer</span>
           </button>
         </div>
       )}

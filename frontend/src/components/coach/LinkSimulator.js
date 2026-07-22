@@ -4,6 +4,7 @@
 
 import React, { useState, useRef, memo, useEffect } from 'react';
 import { Eye, Play, RotateCcw, Smartphone, Monitor, X } from 'lucide-react';
+import SvgIcon from '../SvgIcon';
 
 const GLOW = {
   violet: '0 0 12px rgba(217, 28, 210, 0.5), 0 0 24px rgba(217, 28, 210, 0.2)',
@@ -326,7 +327,7 @@ const LinkSimulator = memo(({ link, isOpen, onClose }) => {
                 border: '1px solid rgba(34,197,94,0.2)',
                 borderRadius: '12px',
               }}>
-                <div style={{ fontSize: '32px', marginBottom: '8px' }}>✅</div>
+                <div style={{ fontSize: '32px', marginBottom: '8px', color: '#22c55e' }}><SvgIcon name="check" size={32} /></div>
                 <p style={{ color: '#22c55e', fontSize: '14px', fontWeight: '700', margin: 0 }}>
                   Tunnel terminé !
                 </p>
@@ -357,11 +358,11 @@ const LinkSimulator = memo(({ link, isOpen, onClose }) => {
           display: 'flex', justifyContent: 'center', gap: '16px',
           padding: '4px', fontSize: '11px', color: 'rgba(255,255,255,0.3)',
         }}>
-          <span>📊 {allSteps.length} étapes</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><SvgIcon name="barChart" size={12} />{allSteps.length} étapes</span>
           <span>|</span>
-          <span>✅ {answers.length} réponses</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><SvgIcon name="check" size={12} />{answers.length} réponses</span>
           <span>|</span>
-          <span>{tunnelQuestions.length > 0 ? `🧩 ${tunnelQuestions.length} questions custom` : '📋 Questions par défaut'}</span>
+          <span>{tunnelQuestions.length > 0 ? `🧩 ${tunnelQuestions.length} questions custom` : <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><SvgIcon name="clipboard" size={12} />Questions par défaut</span>}</span>
         </div>
       </div>
     </div>

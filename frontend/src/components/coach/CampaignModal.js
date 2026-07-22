@@ -10,11 +10,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { parseContacts } from '../../utils/contactParser';
+import SvgIcon from '../SvgIcon';
 
 const STEPS = [
-  { id: 1, label: 'Médias & Objectif', icon: '🎯' },
-  { id: 2, label: 'Contacts & Canaux', icon: '👥' },
-  { id: 3, label: 'Confirmation', icon: '✅' }
+  { id: 1, label: 'Médias & Objectif', icon: 'target' },
+  { id: 2, label: 'Contacts & Canaux', icon: 'users' },
+  { id: 3, label: 'Confirmation', icon: 'check' }
 ];
 
 export default function CampaignModal({
@@ -302,6 +303,15 @@ export default function CampaignModal({
     }
     return url;
   };
+  // V228: icones du recapitulatif des canaux — remplace la liste d'emoji jointe par un espace.
+  const selectedChannelIcons = [
+    newCampaign.channels?.internal && 'messageCircle',
+    newCampaign.channels?.whatsapp && 'phone',
+    newCampaign.channels?.email && 'mail',
+    newCampaign.channels?.group && 'users'
+  ].filter(Boolean);
+  const recapChannelIcons = selectedChannelIcons.length > 0 ? selectedChannelIcons : ['messageCircle'];
+
   const isGoogleDrive = /drive\.google\.com/.test(newCampaign.mediaUrl || '');
   const resolvedMediaUrl = convertGoogleDriveUrl(newCampaign.mediaUrl || '');
 
@@ -325,12 +335,14 @@ export default function CampaignModal({
           display: 'flex', alignItems: 'center', justifyContent: 'space-between'
         }}>
           <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, margin: 0 }}>
-            {editingCampaignId ? '✏️ Modifier la campagne' : '📢 Nouvelle campagne'}
+            {editingCampaignId
+              ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="edit" size={16} />Modifier la campagne</span>
+              : <span className="inline-flex items-center gap-1.5"><SvgIcon name="megaphone" size={16} />Nouvelle campagne</span>}
           </h3>
-          <button onClick={onClose} style={{
+          <button onClick={onClose} aria-label="Fermer" style={{
             background: 'rgba(255,255,255,0.1)', border: 'none', color: '#fff',
             width: '32px', height: '32px', borderRadius: '8px', cursor: 'pointer', fontSize: '16px'
-          }}>✕</button>
+          }}><SvgIcon name="close" size={16} /></button>
         </div>
 
         {/* Step Indicator */}
@@ -343,7 +355,7 @@ export default function CampaignModal({
                 border: step === s.id ? '1px solid rgba(139, 92, 246, 0.5)' : '1px solid transparent',
                 transition: 'all 0.2s'
               }}>
-              <div style={{ fontSize: '14px' }}>{s.icon}</div>
+              <div style={{ fontSize: '14px' }}><SvgIcon name={s.icon} size={14} /></div>
               <div style={{ fontSize: '10px', color: step >= s.id ? '#c4b5fd' : 'rgba(255,255,255,0.3)', marginTop: '2px' }}>{s.label}</div>
             </div>
           ))}
@@ -380,7 +392,7 @@ export default function CampaignModal({
 
               {/* Objectif IA */}
               <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '10px', background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)' }}>
-                <label style={{ display: 'block', color: '#fbbf24', fontSize: '12px', fontWeight: 500, marginBottom: '6px' }}>🎯 Objectif <span style={{ color: 'rgba(255,255,255,0.4)' }}>(pour l'IA)</span></label>
+                <label style={{ display: 'block', color: '#fbbf24', fontSize: '12px', fontWeight: 500, marginBottom: '6px' }}><SvgIcon name="target" size={14} /> Objectif <span style={{ color: 'rgba(255,255,255,0.4)' }}>(pour l'IA)</span></label>
                 <textarea
                   value={newCampaign.descriptionPrompt || ''}
                   onChange={e => setNewCampaign(prev => ({ ...prev, descriptionPrompt: e.target.value }))}
@@ -393,13 +405,15 @@ export default function CampaignModal({
               {/* Message final + IA */}
               <div style={{ marginBottom: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <label style={{ color: '#fff', fontSize: '13px', fontWeight: 500 }}>📝 Message final *</label>
+                  <label style={{ color: '#fff', fontSize: '13px', fontWeight: 500 }}><span className="inline-flex items-center gap-1.5"><SvgIcon name="edit" size={14} />Message final *</span></label>
                   <button type="button" onClick={generateAiSuggestions} disabled={aiSuggestionsLoading}
                     style={{
                       padding: '5px 12px', borderRadius: '6px', border: 'none', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
                       background: aiSuggestionsLoading ? 'rgba(139,92,246,0.2)' : 'linear-gradient(135deg, #9333ea, #6366f1)', color: '#fff'
                     }}>
-                    {aiSuggestionsLoading ? '⏳ ...' : '🤖 Suggérer IA'}
+                    {aiSuggestionsLoading
+                      ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="loader" size={14} className="animate-spin" />...</span>
+                      : <span className="inline-flex items-center gap-1.5"><SvgIcon name="robot" size={14} />Suggérer IA</span>}
                   </button>
                 </div>
                 <textarea
@@ -416,7 +430,7 @@ export default function CampaignModal({
               {/* AI Suggestions */}
               {aiSuggestions.length > 0 && (
                 <div style={{ marginBottom: '16px' }}>
-                  <p style={{ fontSize: '12px', color: '#c4b5fd', marginBottom: '8px' }}>💡 Suggestions IA — cliquez pour utiliser :</p>
+                  <p style={{ fontSize: '12px', color: '#c4b5fd', marginBottom: '8px' }}><span className="inline-flex items-center gap-1.5"><SvgIcon name="lightbulb" size={14} />Suggestions IA — cliquez pour utiliser :</span></p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     {aiSuggestions.map((s, i) => (
                       <button key={i} type="button"
@@ -463,7 +477,7 @@ export default function CampaignModal({
                 {/* V159: Google Drive hint */}
                 {isGoogleDrive && (
                   <div style={{ marginTop: '6px', padding: '6px 10px', borderRadius: '6px', background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', fontSize: '11px', color: '#60a5fa' }}>
-                    📁 Lien Google Drive détecté — conversion automatique en lien direct
+                    <span className="inline-flex items-center gap-1.5"><SvgIcon name="file" size={14} />Lien Google Drive détecté — conversion automatique en lien direct</span>
                     <div style={{ marginTop: '2px', fontSize: '10px', color: 'rgba(96,165,250,0.7)' }}>
                       Assurez-vous que le fichier est partagé en mode "Tout le monde avec le lien"
                     </div>
@@ -471,7 +485,7 @@ export default function CampaignModal({
                 )}
                 {isInstagram && (
                   <div style={{ marginTop: '6px', padding: '6px 10px', borderRadius: '6px', background: 'rgba(225, 48, 108, 0.1)', border: '1px solid rgba(225, 48, 108, 0.3)', fontSize: '11px', color: '#e1306c' }}>
-                    📸 Lien Instagram détecté — sera partagé dans la campagne
+                    <span className="inline-flex items-center gap-1.5"><SvgIcon name="camera" size={14} />Lien Instagram détecté — sera partagé dans la campagne</span>
                   </div>
                 )}
                 {/* Preview */}
@@ -492,7 +506,7 @@ export default function CampaignModal({
                       ) : igMatch ? (
                         <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888)' }}>
                           <div style={{ textAlign: 'center', color: '#fff' }}>
-                            <div style={{ fontSize: '28px', marginBottom: '4px' }}>📸</div>
+                            <div style={{ fontSize: '28px', marginBottom: '4px' }}><SvgIcon name="camera" size={28} /></div>
                             <div style={{ fontSize: '10px', fontWeight: 600, opacity: 0.9 }}>Post Instagram</div>
                           </div>
                         </div>
@@ -522,7 +536,7 @@ export default function CampaignModal({
               <div style={{ marginBottom: '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <label style={{ color: '#fff', fontSize: '13px', fontWeight: 500 }}>
-                    🎯 Destinataires ({selectedRecipients?.length || 0} sélectionnés)
+                    <span className="inline-flex items-center gap-1.5"><SvgIcon name="target" size={14} />Destinataires ({selectedRecipients?.length || 0} sélectionnés)</span>
                   </label>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     {selectedRecipients?.length > 0 && (
@@ -552,9 +566,9 @@ export default function CampaignModal({
                         background: r.type === 'group' ? 'rgba(139,92,246,0.25)' : 'rgba(59,130,246,0.25)',
                         color: '#fff', border: '1px solid rgba(255,255,255,0.1)'
                       }}>
-                        {r.type === 'group' ? '👥' : '👤'} {(r.name || '').slice(0, 20)}
-                        <button type="button" onClick={() => setSelectedRecipients(prev => prev.filter(x => x.id !== r.id))}
-                          style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: '10px', padding: '0 1px', lineHeight: 1 }}>✕</button>
+                        {r.type === 'group' ? <SvgIcon name="users" size={14} /> : <SvgIcon name="user" size={14} />} {(r.name || '').slice(0, 20)}
+                        <button type="button" aria-label="Retirer ce destinataire" onClick={() => setSelectedRecipients(prev => prev.filter(x => x.id !== r.id))}
+                          style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: '10px', padding: '0 1px', lineHeight: 1 }}><SvgIcon name="close" size={14} /></button>
                       </span>
                     ))}
                   </div>
@@ -576,8 +590,8 @@ export default function CampaignModal({
                 <div style={{ display: 'flex', gap: '6px' }}>
                   {[
                     { key: 'all', label: 'Tous', count: allContacts.length },
-                    { key: 'group', label: '👥 Groupes', count: allContacts.filter(c => c.type === 'group').length },
-                    { key: 'user', label: '👤 Contacts', count: allContacts.filter(c => c.type === 'user').length }
+                    { key: 'group', icon: 'users', label: 'Groupes', count: allContacts.filter(c => c.type === 'group').length },
+                    { key: 'user', icon: 'user', label: 'Contacts', count: allContacts.filter(c => c.type === 'user').length }
                   ].map(f => (
                     <button key={f.key} type="button" onClick={() => setContactFilter(f.key)} style={{
                       padding: '4px 10px', borderRadius: '14px', fontSize: '11px', fontWeight: 500, cursor: 'pointer',
@@ -585,7 +599,7 @@ export default function CampaignModal({
                       border: contactFilter === f.key ? '1px solid rgba(139,92,246,0.5)' : '1px solid rgba(255,255,255,0.08)',
                       color: contactFilter === f.key ? '#c4b5fd' : 'rgba(255,255,255,0.5)'
                     }}>
-                      {f.label} ({f.count})
+                      <span className="inline-flex items-center gap-1.5">{f.icon ? <SvgIcon name={f.icon} size={14} /> : null}{f.label} ({f.count})</span>
                     </button>
                   ))}
                 </div>
@@ -618,7 +632,7 @@ export default function CampaignModal({
                       background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
                       color: '#ef4444'
                     }}>
-                      ✕ Reset
+                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="close" size={14} />Reset</span>
                     </button>
                   )}
                 </div>
@@ -631,7 +645,7 @@ export default function CampaignModal({
                 marginBottom: '12px'
               }}>
                 {contactsLoading ? (
-                  <div style={{ padding: '20px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>⏳ Chargement des contacts...</div>
+                  <div style={{ padding: '20px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}><span className="inline-flex items-center gap-1.5"><SvgIcon name="loader" size={14} className="animate-spin" />Chargement des contacts...</span></div>
                 ) : filteredContacts.length === 0 ? (
                   <div style={{ padding: '20px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>
                     {contactSearch ? 'Aucun résultat' : 'Aucun contact disponible'}
@@ -660,11 +674,15 @@ export default function CampaignModal({
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                           transition: 'all 0.15s'
                         }}>
-                          {isChecked && <span style={{ color: '#22c55e', fontSize: '12px', fontWeight: 700 }}>✓</span>}
+                          {isChecked && <span style={{ color: '#22c55e', fontSize: '12px', fontWeight: 700 }}><SvgIcon name="check" size={12} /></span>}
                         </div>
                         {/* Icon */}
                         <span style={{ fontSize: '14px', width: '20px', textAlign: 'center', flexShrink: 0 }}>
-                          {c.type === 'group' ? '👥' : c.source === 'google' ? '🔵' : '👤'}
+                          {c.type === 'group'
+                            ? <SvgIcon name="users" size={14} />
+                            : c.source === 'google'
+                              ? <span className="inline-block w-2 h-2 rounded-full bg-blue-500" />
+                              : <SvgIcon name="user" size={14} />}
                         </span>
                         {/* Name + details */}
                         <div style={{ flex: 1, minWidth: 0 }}>
@@ -712,7 +730,7 @@ export default function CampaignModal({
                     color: '#D91CD2', cursor: 'pointer', fontWeight: 500
                   }}
                 >
-                  📤 Importer CSV / vCard (.vcf)
+                  <span className="inline-flex items-center gap-1.5"><SvgIcon name="upload" size={14} />Importer CSV / vCard (.vcf)</span>
                 </button>
 
                 {/* Import Preview */}
@@ -722,7 +740,7 @@ export default function CampaignModal({
                     background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)'
                   }}>
                     <p style={{ color: '#22c55e', fontSize: '12px', fontWeight: 600, margin: '0 0 6px 0' }}>
-                      ✓ {importedContacts.length} contacts trouvés
+                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} />{importedContacts.length} contacts trouvés</span>
                     </p>
                     <div style={{ maxHeight: '100px', overflowY: 'auto' }}>
                       {importedContacts.slice(0, 10).map((c, i) => (
@@ -737,11 +755,11 @@ export default function CampaignModal({
                     <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                       <button type="button" onClick={addImportedToRecipients}
                         style={{ flex: 1, padding: '8px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, background: 'rgba(34,197,94,0.3)', border: '1px solid rgba(34,197,94,0.5)', color: '#22c55e', cursor: 'pointer' }}>
-                        ✓ Ajouter tous
+                        <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} />Ajouter tous</span>
                       </button>
-                      <button type="button" onClick={() => { setShowImportPreview(false); setImportedContacts([]); }}
+                      <button type="button" aria-label="Annuler l'import" onClick={() => { setShowImportPreview(false); setImportedContacts([]); }}
                         style={{ padding: '8px 12px', borderRadius: '6px', fontSize: '12px', background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', cursor: 'pointer' }}>
-                        ✕
+                        <SvgIcon name="close" size={14} />
                       </button>
                     </div>
                   </div>
@@ -753,10 +771,10 @@ export default function CampaignModal({
                 <label style={{ display: 'block', color: '#fff', fontSize: '13px', fontWeight: 500, marginBottom: '8px' }}>📡 Canaux d'envoi</label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                   {[
-                    { key: 'internal', label: '💌 Chat Interne', color: '#22c55e' },
-                    { key: 'whatsapp', label: '📱 WhatsApp', color: '#25d366' },
-                    { key: 'email', label: '📧 Email', color: '#3b82f6' },
-                    { key: 'group', label: '👥 Groupe', color: '#a855f7' }
+                    { key: 'internal', icon: 'messageCircle', label: 'Chat Interne', color: '#22c55e' },
+                    { key: 'whatsapp', icon: 'phone', label: 'WhatsApp', color: '#25d366' },
+                    { key: 'email', icon: 'mail', label: 'Email', color: '#3b82f6' },
+                    { key: 'group', icon: 'users', label: 'Groupe', color: '#a855f7' }
                   ].map(ch => (
                     <button key={ch.key} type="button"
                       onClick={() => setNewCampaign(prev => ({ ...prev, channels: { ...prev.channels, [ch.key]: !prev.channels?.[ch.key] } }))}
@@ -766,7 +784,7 @@ export default function CampaignModal({
                         border: newCampaign.channels?.[ch.key] ? `1px solid ${ch.color}80` : '1px solid rgba(255,255,255,0.1)',
                         color: newCampaign.channels?.[ch.key] ? ch.color : 'rgba(255,255,255,0.5)'
                       }}>
-                      {ch.label}
+                      <span className="inline-flex items-center gap-1.5"><SvgIcon name={ch.icon} size={14} />{ch.label}</span>
                     </button>
                   ))}
                 </div>
@@ -865,7 +883,7 @@ export default function CampaignModal({
                     {newCampaign.ctaLink && (
                       <div style={{ padding: '8px 12px', borderRadius: '8px', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)' }}>
                         <p style={{ color: '#22c55e', fontSize: '12px', margin: 0, fontWeight: 500 }}>
-                          ✅ Bouton configuré : « {newCampaign.ctaText || 'Voir ▶️'} »
+                          <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} />Bouton configuré : « {newCampaign.ctaText || 'Voir ▶️'} »</span>
                         </p>
                         <p style={{ color: 'rgba(34,197,94,0.7)', fontSize: '11px', margin: '4px 0 0', wordBreak: 'break-all' }}>
                           → {newCampaign.ctaLink}
@@ -904,17 +922,17 @@ export default function CampaignModal({
                     </select>
                     {chatLinksLoading && (
                       <p style={{ color: '#a78bfa', fontSize: '11px', margin: 0 }}>
-                        ⏳ Chargement des liens...
+                        <span className="inline-flex items-center gap-1.5"><SvgIcon name="loader" size={14} className="animate-spin" />Chargement des liens...</span>
                       </p>
                     )}
                     {!chatLinksLoading && chatLinks.length === 0 && (
                       <p style={{ color: '#f59e0b', fontSize: '11px', margin: 0 }}>
-                        ⚠️ Aucun lien trouvé. Créez d'abord un lien dans l'onglet Conversations.
+                        <span className="inline-flex items-center gap-1.5"><SvgIcon name="warning" size={14} />Aucun lien trouvé. Créez d'abord un lien dans l'onglet Conversations.</span>
                       </p>
                     )}
                     {!chatLinksLoading && chatLinks.length > 0 && (
                       <p style={{ color: '#22c55e', fontSize: '11px', margin: 0 }}>
-                        ✅ {chatLinks.length} lien(s) disponible(s)
+                        <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} />{chatLinks.length} lien(s) disponible(s)</span>
                       </p>
                     )}
                     <input
@@ -926,7 +944,7 @@ export default function CampaignModal({
                     {newCampaign.ctaLink && (
                       <div style={{ padding: '8px 12px', borderRadius: '8px', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)' }}>
                         <p style={{ color: '#22c55e', fontSize: '12px', margin: 0, fontWeight: 500 }}>
-                          ✅ Lien configuré : « {newCampaign.ctaText || 'Discuter'} »
+                          <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} />Lien configuré : « {newCampaign.ctaText || 'Discuter'} »</span>
                         </p>
                       </div>
                     )}
@@ -961,7 +979,7 @@ export default function CampaignModal({
             <div>
               {/* Recap */}
               <div style={{ marginBottom: '16px', padding: '16px', borderRadius: '10px', background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.2)' }}>
-                <h4 style={{ color: '#c4b5fd', fontSize: '13px', fontWeight: 600, marginBottom: '12px', marginTop: 0 }}>📋 Récapitulatif</h4>
+                <h4 style={{ color: '#c4b5fd', fontSize: '13px', fontWeight: 600, marginBottom: '12px', marginTop: 0 }}><span className="inline-flex items-center gap-1.5"><SvgIcon name="clipboard" size={14} />Récapitulatif</span></h4>
                 <div style={{ display: 'grid', gap: '8px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
                     <span style={{ color: 'rgba(255,255,255,0.5)' }}>Campagne</span>
@@ -973,20 +991,20 @@ export default function CampaignModal({
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
                     <span style={{ color: 'rgba(255,255,255,0.5)' }}>Canaux</span>
-                    <span style={{ color: '#fff' }}>
-                      {[newCampaign.channels?.internal && '💌', newCampaign.channels?.whatsapp && '📱', newCampaign.channels?.email && '📧', newCampaign.channels?.group && '👥'].filter(Boolean).join(' ') || '💌'}
+                    <span style={{ color: '#fff', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      {recapChannelIcons.map(n => <SvgIcon key={n} name={n} size={14} />)}
                     </span>
                   </div>
                   {newCampaign.mediaUrl && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
                       <span style={{ color: 'rgba(255,255,255,0.5)' }}>Média</span>
-                      <span style={{ color: '#22c55e' }}>✓ Attaché</span>
+                      <span style={{ color: '#22c55e' }} className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} />Attaché</span>
                     </div>
                   )}
                   {newCampaign.systemPrompt && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
                       <span style={{ color: 'rgba(255,255,255,0.5)' }}>Prompt IA</span>
-                      <span style={{ color: '#a78bfa' }}>✓ Personnalisé</span>
+                      <span style={{ color: '#a78bfa' }} className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} />Personnalisé</span>
                     </div>
                   )}
                 </div>
@@ -1001,14 +1019,14 @@ export default function CampaignModal({
               {/* Programmation */}
               <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <label style={{ color: '#fff', fontSize: '13px', fontWeight: 500 }}>⏰ Programmation</label>
+                  <label style={{ color: '#fff', fontSize: '13px', fontWeight: 500 }}><span className="inline-flex items-center gap-1.5"><SvgIcon name="clock" size={14} />Programmation</span></label>
                   <button type="button" onClick={() => addScheduleSlot?.()}
                     style={{ padding: '4px 10px', borderRadius: '6px', background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.3)', color: '#c4b5fd', fontSize: '11px', cursor: 'pointer' }}>
                     + Date
                   </button>
                 </div>
                 {(newCampaign.scheduleSlots || []).length === 0 && (
-                  <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: 0 }}>📤 Envoi immédiat à la création</p>
+                  <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: 0 }}><span className="inline-flex items-center gap-1.5"><SvgIcon name="upload" size={14} />Envoi immédiat à la création</span></p>
                 )}
                 {(newCampaign.scheduleSlots || []).map((slot, i) => (
                   <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '6px' }}>
@@ -1016,8 +1034,8 @@ export default function CampaignModal({
                       style={{ flex: 1, padding: '6px 10px', borderRadius: '6px', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', fontSize: '12px' }} />
                     <input type="time" value={slot.time || ''} onChange={e => updateScheduleSlot?.(i, 'time', e.target.value)}
                       style={{ width: '90px', padding: '6px 10px', borderRadius: '6px', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', fontSize: '12px' }} />
-                    <button type="button" onClick={() => removeScheduleSlot?.(i)}
-                      style={{ padding: '4px 8px', borderRadius: '4px', background: 'rgba(239,68,68,0.2)', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px' }}>✕</button>
+                    <button type="button" aria-label="Supprimer cette date" onClick={() => removeScheduleSlot?.(i)}
+                      style={{ padding: '4px 8px', borderRadius: '4px', background: 'rgba(239,68,68,0.2)', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px' }}><SvgIcon name="close" size={14} /></button>
                   </div>
                 ))}
               </div>
@@ -1030,7 +1048,7 @@ export default function CampaignModal({
               }}>
                 {isSuperAdmin ? (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px' }}>👑 Mode Super Admin</span>
+                    <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px' }} className="inline-flex items-center gap-1.5"><SvgIcon name="crown" size={14} />Mode Super Admin</span>
                     <span style={{ color: '#D91CD2', fontWeight: 700, fontSize: '16px' }}>∞ Illimité</span>
                   </div>
                 ) : (
@@ -1059,7 +1077,9 @@ export default function CampaignModal({
                     }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ fontSize: '12px', color: insufficientCredits ? '#ef4444' : 'rgba(255,255,255,0.6)' }}>
-                          {insufficientCredits ? '🚫 Solde insuffisant' : '💰 Votre solde'}
+                          {insufficientCredits
+                            ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="lock" size={14} />Solde insuffisant</span>
+                            : <span className="inline-flex items-center gap-1.5"><SvgIcon name="dollarSign" size={14} />Votre solde</span>}
                         </span>
                         <span style={{ fontSize: '13px', fontWeight: 700, color: insufficientCredits ? '#ef4444' : '#22c55e' }}>
                           {coachCredits ?? 0} crédit{(coachCredits ?? 0) !== 1 ? 's' : ''}
@@ -1122,7 +1142,13 @@ export default function CampaignModal({
                   background: isSubmitting ? 'rgba(107,114,128,0.5)' : canCreate ? 'linear-gradient(135deg, #22c55e, #16a34a)' : 'rgba(107,114,128,0.3)',
                   color: '#fff', opacity: (canCreate && !isSubmitting) ? 1 : 0.5
                 }}>
-                {isSubmitting ? '⏳ Envoi en cours...' : editingCampaignId ? '💾 Enregistrer' : canCreate ? `🚀 Créer (${selectedRecipients?.length || 0} dest.)` : '🔒 Crédits insuffisants'}
+                {isSubmitting
+                  ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="loader" size={14} className="animate-spin" />Envoi en cours...</span>
+                  : editingCampaignId
+                    ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="save" size={14} />Enregistrer</span>
+                    : canCreate
+                      ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="rocket" size={14} />Créer ({selectedRecipients?.length || 0} dest.)</span>
+                      : <span className="inline-flex items-center gap-1.5"><SvgIcon name="lock" size={14} />Crédits insuffisants</span>}
               </button>
               {!canCreate && (
                 <span style={{ fontSize: '10px', color: '#ef4444' }}>Rechargez votre pack</span>

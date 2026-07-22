@@ -6,6 +6,7 @@ import React, { useState, useRef, memo, useCallback, useEffect } from 'react';
 import { Link2, Copy, Check, ExternalLink, Trash2, Edit2, Save, X, Plus, ChevronDown, ChevronUp, Users, MessageCircle, Calendar, CreditCard, Phone, Target, Zap, BarChart3, Eye, Play, ArrowRight, GripVertical, Sparkles, CheckSquare, Square } from 'lucide-react';
 import SmartLinkCard from './SmartLinkCard';
 import LinkSimulator from './LinkSimulator';
+import SvgIcon from '../SvgIcon';
 
 // ====== STYLES ======
 const GLOW = {
@@ -18,27 +19,30 @@ const GLOW = {
 };
 
 const STEPS = [
-  { id: 1, label: 'Infos & Prompt', icon: '🎯' },
+  { id: 1, label: 'Infos & Prompt', icon: <SvgIcon name="target" size={14} /> },
+  // V228: 🧩 conserve — aucun trace « puzzle » dans SvgIcon.
   { id: 2, label: 'Tunnel', icon: '🧩' },
-  { id: 3, label: 'Actions', icon: '⚡' },
+  { id: 3, label: 'Actions', icon: <SvgIcon name="zap" size={14} /> },
 ];
 
 const QUESTION_TYPES = [
-  { value: 'text', label: 'Texte libre', icon: '✏️' },
+  { value: 'text', label: 'Texte libre', icon: <SvgIcon name="edit" size={14} /> },
+  // V228: 🔘 et 🔢 conserves — pas de trace « bouton radio » ni « chiffres » dans SvgIcon.
   { value: 'buttons', label: 'Boutons choix', icon: '🔘' },
-  { value: 'email', label: 'Email', icon: '📧' },
-  { value: 'phone', label: 'Téléphone', icon: '📱' },
-  { value: 'city', label: 'Ville', icon: '📍' },
+  { value: 'email', label: 'Email', icon: <SvgIcon name="mail" size={14} /> },
+  { value: 'phone', label: 'Téléphone', icon: <SvgIcon name="phone" size={14} /> },
+  { value: 'city', label: 'Ville', icon: <SvgIcon name="mapPin" size={14} /> },
   { value: 'number', label: 'Nombre', icon: '🔢' },
-  { value: 'date', label: 'Date', icon: '📅' },
+  { value: 'date', label: 'Date', icon: <SvgIcon name="calendar" size={14} /> },
 ];
 
 const LEAD_TYPES = [
+  // V228: 🏃 et 🤝 conserves — pas de trace « coureur » ni « poignee de main » dans SvgIcon.
   { value: 'participant', label: 'Participant', color: '#22c55e', icon: '🏃' },
   { value: 'partner', label: 'Partenaire', color: '#f59e0b', icon: '🤝' },
-  { value: 'collaboration', label: 'Collaboration', color: '#3b82f6', icon: '🎯' },
-  { value: 'group', label: 'Groupe', color: '#ec4899', icon: '👥' },
-  { value: 'question', label: 'Question', color: '#a78bfa', icon: '❓' },
+  { value: 'collaboration', label: 'Collaboration', color: '#3b82f6', icon: <SvgIcon name="target" size={14} /> },
+  { value: 'group', label: 'Groupe', color: '#ec4899', icon: <SvgIcon name="users" size={14} /> },
+  { value: 'question', label: 'Question', color: '#a78bfa', icon: <SvgIcon name="helpCircle" size={14} /> },
 ];
 
 const ACTION_TYPES = [
@@ -220,8 +224,12 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
             }}>
               <Link2 size={16} color="#fff" />
             </div>
-            <span style={{ color: '#fff', fontSize: '16px', fontWeight: '700' }}>
-              {editingLink ? '✏️ Modifier le lien' : '🔗 Nouveau Lien Intelligent'}
+            <span className="inline-flex items-center gap-1.5" style={{ color: '#fff', fontSize: '16px', fontWeight: '700' }}>
+              {editingLink ? (
+                <><SvgIcon name="edit" size={16} />Modifier le lien</>
+              ) : (
+                <><SvgIcon name="link" size={16} />Nouveau Lien Intelligent</>
+              )}
             </span>
           </div>
           <button onClick={onClose} style={{
@@ -322,7 +330,9 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
               {/* Message d'accueil */}
               <div>
                 <label style={{ display: 'block', fontSize: '12px', color: 'rgba(255,255,255,0.5)', fontWeight: '600', marginBottom: '8px' }}>
-                  💬 Message d'accueil (optionnel)
+                  <span className="inline-flex items-center gap-1.5">
+                    <SvgIcon name="messageCircle" size={14} /> Message d'accueil (optionnel)
+                  </span>
                 </label>
                 <textarea
                   value={linkData.welcome_message}
@@ -409,7 +419,11 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                 onMouseEnter={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139,92,246,0.2), rgba(217,28,210,0.15))'; e.currentTarget.style.boxShadow = '0 0 16px rgba(139,92,246,0.2)'; }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139,92,246,0.12), rgba(217,28,210,0.08))'; e.currentTarget.style.boxShadow = 'none'; }}
               >
-                <Sparkles size={16} /> ✨ Générer une Stratégie IA
+                {/* V228: ce bouton portait deja une icone lucide <Sparkles> SUIVIE de
+                    l'emoji ✨ — un doublon anterieur a ce lot. Convertir l'emoji aurait
+                    donne deux etincelles cote a cote ; on garde la seule icone lucide. */}
+                <Sparkles size={16} />
+                Générer une Stratégie IA
               </button>
 
               {/* Panel IA */}
@@ -420,7 +434,9 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                   borderRadius: '12px', padding: '16px',
                 }}>
                   <label style={{ display: 'block', fontSize: '12px', color: '#a78bfa', fontWeight: '600', marginBottom: '8px' }}>
-                    🎯 Quel est votre objectif avec ce lien ?
+                    <span className="inline-flex items-center gap-1.5">
+                      <SvgIcon name="target" size={14} /> Quel est votre objectif avec ce lien ?
+                    </span>
                   </label>
                   <textarea
                     value={aiObjective}
@@ -447,7 +463,11 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                       display: 'flex', alignItems: 'center', gap: '6px',
                     }}
                   >
-                    {aiLoading ? '⏳ Génération en cours...' : '🚀 Générer le tunnel'}
+                    {aiLoading ? (
+                      <><SvgIcon name="loader" size={14} className="animate-spin" />Génération en cours...</>
+                    ) : (
+                      <><SvgIcon name="rocket" size={14} />Générer le tunnel</>
+                    )}
                   </button>
                   <p style={{ color: 'rgba(139,92,246,0.5)', fontSize: '10px', marginTop: '8px', margin: '8px 0 0' }}>
                     L'IA va créer des questions personnalisées, un message d'accueil et un prompt système adaptés à votre objectif.
@@ -641,7 +661,9 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                   display: 'flex', flexDirection: 'column', gap: '12px',
                 }}>
                   <p style={{ color: '#f59e0b', fontSize: '13px', fontWeight: '700', margin: 0 }}>
-                    💰 Configuration du paiement
+                    <span className="inline-flex items-center gap-1.5">
+                      <SvgIcon name="dollarSign" size={14} /> Configuration du paiement
+                    </span>
                   </p>
                   <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
                     <div style={{ flex: 1 }}>
@@ -714,7 +736,9 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                 borderRadius: '12px', padding: '16px',
               }}>
                 <p style={{ color: '#D91CD2', fontSize: '12px', fontWeight: '700', margin: '0 0 10px' }}>
-                  📋 Résumé du lien
+                  <span className="inline-flex items-center gap-1.5">
+                    <SvgIcon name="clipboard" size={14} /> Résumé du lien
+                  </span>
                 </p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -745,7 +769,9 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                     const amt = pa && pa.config && pa.config.amount;
                     return amt ? (
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>💰 Prix</span>
+                        <span className="inline-flex items-center gap-1.5" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>
+                          <SvgIcon name="dollarSign" size={14} />Prix
+                        </span>
                         <span style={{ color: '#f59e0b', fontSize: '11px', fontWeight: '600' }}>
                           {amt} CHF
                         </span>
@@ -816,7 +842,13 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                 display: 'flex', alignItems: 'center', gap: '8px',
               }}
             >
-              {saving ? '⏳ Création…' : editingLink ? '💾 Enregistrer' : '🚀 Créer le lien'}
+              {saving ? (
+                <><SvgIcon name="loader" size={14} className="animate-spin" />Création…</>
+              ) : editingLink ? (
+                <><SvgIcon name="save" size={14} />Enregistrer</>
+              ) : (
+                <><SvgIcon name="rocket" size={14} />Créer le lien</>
+              )}
             </button>
           )}
         </div>
@@ -1096,7 +1128,9 @@ const SmartLinksSection = ({
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               margin: '0 auto 16px', fontSize: '24px',
             }}>
-              🔗
+              {/* V228: couleur explicite — ce conteneur n'en definit aucune, l'icone
+                  heriterait d'une couleur inconnue. On s'aligne sur le titre voisin. */}
+              <SvgIcon name="link" size={24} color="rgba(255,255,255,0.5)" />
             </div>
             <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '14px', margin: '0 0 4px', fontWeight: '600' }}>
               {filter !== 'all' ? 'Aucun lien de ce type' : 'Aucun lien créé'}

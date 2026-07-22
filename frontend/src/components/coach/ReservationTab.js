@@ -14,6 +14,7 @@
  */
 
 import React, { memo } from 'react';
+import SvgIcon from '../SvgIcon';
 
 const ReservationTab = ({
   reservations,
@@ -54,7 +55,7 @@ const ReservationTab = ({
             className="btn-primary px-3 py-2 rounded-lg flex items-center gap-2 text-xs sm:text-sm" 
             data-testid="scan-ticket-btn"
           >
-            📷 Scanner
+            <SvgIcon name="camera" size={14} /> Scanner
           </button>
           <button 
             onClick={onExportCSV} 
@@ -78,12 +79,13 @@ const ReservationTab = ({
             style={{ background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.3)', color: '#fff' }}
             data-testid="reservations-search-input"
           />
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50">🔍</span>
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50"><SvgIcon name="search" size={14} /></span>
           {search && (
             <button
               onClick={onClearSearch}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 hover:text-white"
-            >✕</button>
+              aria-label="Effacer la recherche"
+            ><SvgIcon name="close" size={14} /></button>
           )}
         </div>
         {search && (
@@ -101,7 +103,7 @@ const ReservationTab = ({
             disabled={pagination.page <= 1 || loading}
             className="px-3 py-1 rounded bg-purple-600/50 text-white text-sm disabled:opacity-30 hover:bg-purple-600"
           >
-            ← Précédent
+            <span className="inline-flex items-center gap-1.5"><SvgIcon name="arrowLeft" size={14} />Précédent</span>
           </button>
           <span className="text-white text-sm px-3">
             Page {pagination.page} / {pagination.pages}
@@ -111,14 +113,14 @@ const ReservationTab = ({
             disabled={pagination.page >= pagination.pages || loading}
             className="px-3 py-1 rounded bg-purple-600/50 text-white text-sm disabled:opacity-30 hover:bg-purple-600"
           >
-            Suivant →
+            <span className="inline-flex items-center gap-1.5">Suivant<SvgIcon name="arrowRight" size={14} /></span>
           </button>
         </div>
       )}
       
       {/* Loading state */}
       {loading && (
-        <div className="text-center py-4 text-purple-400">⏳ Chargement...</div>
+        <div className="text-center py-4 text-purple-400"><span className="inline-flex items-center gap-1.5"><SvgIcon name="loader" size={14} className="animate-spin" />Chargement...</span></div>
       )}
       
       {/* === MOBILE VIEW: Cards === */}
@@ -251,10 +253,10 @@ const ShippingBlock = memo(({ reservation: r, onUpdateTracking }) => {
   return (
     <div className="mt-2 pt-2 border-t border-white/10 space-y-1.5" data-testid="shipping-block">
       {variants && (
-        <p className="text-xs" style={{ color: '#F0A8EE' }}>📏 {variants}</p>
+        <p className="text-xs" style={{ color: '#F0A8EE' }}><SvgIcon name="ruler" size={14} className="mr-1.5" />{variants}</p>
       )}
       <p className="text-xs whitespace-pre-line" style={{ color: '#AAAAAA' }}>
-        📮 {address || <span className="italic opacity-60">Adresse non renseignée</span>}
+        <SvgIcon name="mail" size={14} className="mr-1.5" />{address || <span className="italic opacity-60">Adresse non renseignée</span>}
       </p>
       {onUpdateTracking && (
         <div className="flex gap-2 items-center pt-1">
@@ -310,7 +312,7 @@ const HeadphoneToggle = memo(({ status, onClick, compact, label }) => {
         fontSize: compact ? '12px' : '14px', lineHeight: 1, whiteSpace: 'nowrap'
       }}
     >
-      <span>🎧</span>
+      <SvgIcon name="headphones" size={14} />
       {label && <span style={{ fontSize: compact ? '10px' : '11px', fontWeight: 500 }}>{label}</span>}
     </button>
   );
@@ -364,7 +366,7 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
         {/* V191: Liste des accompagnants */}
         {Array.isArray(r.guests) && r.guests.length > 0 && (
           <p className="text-white/70 text-xs mt-1">
-            👥 {[((r.userName || '').split(' ')[0] || 'Abonné'), ...r.guests].join(', ')}
+            <SvgIcon name="users" size={14} className="mr-1.5" />{[((r.userName || '').split(' ')[0] || 'Abonné'), ...r.guests].join(', ')}
           </p>
         )}
         {r.userWhatsapp && (
@@ -374,18 +376,18 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
             rel="noopener noreferrer"
             className="text-green-400 text-xs hover:underline"
           >
-            📱 {r.userWhatsapp}
+            <SvgIcon name="phone" size={14} className="mr-1.5" />{r.userWhatsapp}
           </a>
         )}
       </div>
       <div className="flex items-center gap-2">
         {r.validated ? (
-          <span className="px-2 py-1 rounded text-xs bg-green-600 text-white">✅</span>
+          <span className="px-2 py-1 rounded text-xs bg-green-600 text-white" title="Validé"><SvgIcon name="check" size={14} /></span>
         ) : (
-          <span className="px-2 py-1 rounded text-xs bg-yellow-600 text-white">⏳</span>
+          <span className="px-2 py-1 rounded text-xs bg-yellow-600 text-white" title="En attente"><SvgIcon name="hourglass" size={14} /></span>
         )}
         {isProduct && (
-          <span className="px-2 py-1 rounded text-xs bg-blue-600 text-white">🛒</span>
+          <span className="px-2 py-1 rounded text-xs bg-blue-600 text-white" title="Commande produit"><SvgIcon name="shoppingCart" size={14} /></span>
         )}
       </div>
     </div>
@@ -393,22 +395,22 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
     <div className="text-white/60 text-xs space-y-1 mb-3">
       {/* v158.7: Afficher la date de reservation (createdAt) en plus de la date de session */}
       {r.createdAt && (
-        <p>🗓️ <span className="text-blue-300">Réservé le :</span> {new Date(r.createdAt).toLocaleString('fr-CH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+        <p><SvgIcon name="calendar" size={14} className="mr-1.5" /><span className="text-blue-300">Réservé le :</span> {new Date(r.createdAt).toLocaleString('fr-CH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
       )}
-      <p>📅 <span className="text-purple-300">Session :</span> {formatDateTime(r.datetime)}</p>
+      <p><SvgIcon name="calendar" size={14} className="mr-1.5" /><span className="text-purple-300">Session :</span> {formatDateTime(r.datetime)}</p>
       {r.courseName && <p>📚 {r.courseName}</p>}
       {r.promoCode && (
-        <p>🎫 Code: <span className="text-yellow-400 font-medium">{r.promoCode}</span>
+        <p><SvgIcon name="ticket" size={14} className="mr-1.5" />Code: <span className="text-yellow-400 font-medium">{r.promoCode}</span>
           {r.subscriptionId && <span className="text-purple-400 ml-1">(abo lié)</span>}
         </p>
       )}
       {r.subscriptionInfo && (
-        <p>🎟️ Séances: <span className="text-green-400 font-medium">{r.subscriptionInfo.remaining}/{r.subscriptionInfo.total}</span> restantes</p>
+        <p><SvgIcon name="ticket" size={14} className="mr-1.5" />Séances: <span className="text-green-400 font-medium">{r.subscriptionInfo.remaining}/{r.subscriptionInfo.total}</span> restantes</p>
       )}
       {r.source === 'qr_scan' ? (
-        <p>📍 <span className="text-green-400">Check-in QR</span></p>
+        <p><SvgIcon name="mapPin" size={14} className="mr-1.5" /><span className="text-green-400">Check-in QR</span></p>
       ) : r.source && (
-        <p>📍 Source: {r.source}</p>
+        <p><SvgIcon name="mapPin" size={14} className="mr-1.5" />Source: {r.source}</p>
       )}
       {/* V226: où expédier et dans quelle taille — commandes physiques uniquement */}
       {hasShippingData(r) && (
@@ -429,14 +431,15 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
           onClick={onValidate}
           className="flex-1 px-3 py-1.5 rounded text-xs bg-green-600/20 text-green-400 hover:bg-green-600/40"
         >
-          ✅ Valider
+          <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} />Valider</span>
         </button>
       )}
       <button
         onClick={onDelete}
         className="px-3 py-1.5 rounded text-xs bg-red-600/20 text-red-400 hover:bg-red-600/40"
+        aria-label="Supprimer la réservation"
       >
-        🗑️
+        <SvgIcon name="trash" size={14} />
       </button>
     </div>
   </div>
@@ -460,7 +463,7 @@ const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, 
       {/* V191: Liste des accompagnants */}
       {Array.isArray(r.guests) && r.guests.length > 0 && (
         <div className="text-white/60 text-[11px] mt-1">
-          👥 {[((r.userName || '').split(' ')[0] || 'Abonné'), ...r.guests].join(', ')}
+          <SvgIcon name="users" size={14} className="mr-1.5" />{[((r.userName || '').split(' ')[0] || 'Abonné'), ...r.guests].join(', ')}
         </div>
       )}
       {/* V191: Casques individuels (un toggle par personne) */}
@@ -478,7 +481,7 @@ const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, 
           rel="noopener noreferrer"
           className="text-green-400 text-xs hover:underline"
         >
-          📱 {r.userWhatsapp}
+          <SvgIcon name="phone" size={14} className="mr-1.5" />{r.userWhatsapp}
         </a>
       ) : (
         <span className="text-white/30">-</span>
@@ -488,17 +491,17 @@ const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, 
       {/* v158.7: Afficher d'abord la date de reservation, puis la date de session */}
       {r.createdAt && (
         <div className="text-blue-300 text-[10px]">
-          🗓️ Réservé: {new Date(r.createdAt).toLocaleDateString('fr-CH', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+          <SvgIcon name="calendar" size={14} className="mr-1.5" />Réservé: {new Date(r.createdAt).toLocaleDateString('fr-CH', { day: '2-digit', month: '2-digit', year: '2-digit' })}
         </div>
       )}
-      <div className="text-purple-300">📅 {formatDateTime(r.datetime)}</div>
+      <div className="text-purple-300"><SvgIcon name="calendar" size={14} className="mr-1.5" />{formatDateTime(r.datetime)}</div>
     </td>
     <td className="py-3">
       <div className="flex flex-col gap-0.5">
         <div className="flex gap-1">
           {r.courseName && <span className="text-xs text-purple-400">📚</span>}
-          {isProduct && <span className="text-xs text-blue-400">🛒</span>}
-          {r.promoCode && <span className="text-xs text-yellow-400" title={`Code: ${r.promoCode}`}>🎫</span>}
+          {isProduct && <span className="text-xs text-blue-400" title="Commande produit"><SvgIcon name="shoppingCart" size={14} /></span>}
+          {r.promoCode && <span className="text-xs text-yellow-400" title={`Code: ${r.promoCode}`}><SvgIcon name="ticket" size={14} /></span>}
         </div>
         {r.promoCode && (
           <span className="text-[10px] text-yellow-400/70">{r.promoCode}</span>
@@ -525,15 +528,17 @@ const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, 
           <button
             onClick={onValidate}
             className="px-2 py-1 rounded text-xs bg-green-600/20 text-green-400 hover:bg-green-600/40"
+            aria-label="Valider la réservation"
           >
-            ✅
+            <SvgIcon name="check" size={14} />
           </button>
         )}
         <button
           onClick={onDelete}
           className="px-2 py-1 rounded text-xs bg-red-600/20 text-red-400 hover:bg-red-600/40"
+          aria-label="Supprimer la réservation"
         >
-          🗑️
+          <SvgIcon name="trash" size={14} />
         </button>
       </div>
     </td>

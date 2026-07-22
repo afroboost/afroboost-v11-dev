@@ -10,6 +10,7 @@ import SmartLinksSection from './SmartLinksSection'; // v98: Liens Intelligents
 import GroupChatModule from './GroupChatModule'; // v100: Groupes de chat
 import { renderTextWithLinks } from '../chat/ChatBubbles'; // V156.3: Liens cliquables
 import AfricanEmojiPicker from '../chat/AfricanEmojiPicker'; // V143: Emoji picker for coach
+import SvgIcon from '../SvgIcon'; // V228: icones vectorielles en remplacement des emoji d'interface
 
 // ====== STYLES PREMIUM PARTAGÉS ======
 const GLOW = {
@@ -106,8 +107,8 @@ const NotificationBlockedBanner = memo(({ notificationPermission }) => {
         borderBottom: '1px solid rgba(239, 68, 68, 0.15)',
       }}
     >
-      <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', margin: 0 }}>
-        ⚠️ Notifications bloquées — Les alertes apparaîtront ici.
+      <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+        <SvgIcon name="warning" size={14} />Notifications bloquées — Les alertes apparaîtront ici.
       </p>
       <button
         onClick={() => {
@@ -155,9 +156,10 @@ const ToastNotifications = memo(({ toastNotifications, handleToastClick, dismiss
             </div>
             <button
               onClick={(e) => { e.stopPropagation(); dismissToast(toast.id); }}
+              aria-label="Fermer la notification"
               style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', padding: '2px', fontSize: '14px' }}
             >
-              ✕
+              <SvgIcon name="close" size={14} />
             </button>
           </div>
         </div>
@@ -183,10 +185,10 @@ const NotificationTestPanel = memo(({
   }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
       <Bell size={16} style={{ color: 'rgba(255,255,255,0.3)' }} />
-      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px' }}>
-        {notificationPermission === 'granted' ? '✅ Notifications actives' :
-         notificationPermission === 'denied' ? '⚠️ Bloquées' :
-         '🔔 En attente'}
+      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+        {notificationPermission === 'granted' ? <><SvgIcon name="check" size={14} />Notifications actives</> :
+         notificationPermission === 'denied' ? <><SvgIcon name="warning" size={14} />Bloquées</> :
+         <><SvgIcon name="bell" size={14} />En attente</>}
       </span>
     </div>
     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -317,7 +319,7 @@ const GenerateLinkCard = memo(({
                 title="Améliorer avec l'IA"
                 data-testid="enhance-prompt-btn"
               >
-                {isEnhancing ? '⏳' : '✨ Améliorer'}
+                {isEnhancing ? <SvgIcon name="loader" size={14} className="animate-spin" /> : <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="sparkles" size={14} />Améliorer</span>}
               </button>
             </div>
             <textarea
@@ -370,7 +372,7 @@ const GenerateLinkCard = memo(({
           onMouseLeave={(e) => e.target.style.boxShadow = 'none'}
           data-testid="generate-link-btn"
         >
-          {loadingConversations ? '⏳' : '+ Créer'}
+          {loadingConversations ? <SvgIcon name="loader" size={14} className="animate-spin" /> : '+ Créer'}
         </button>
       </div>
     </div>
@@ -817,9 +819,11 @@ const GroupedConversationList = memo(({
 
   // V198b: Méta des 3 catégories — ordre, label, couleurs
   const CATEGORY_META = useMemo(() => ([
-    { key: 'subscriber', label: 'Abonnés', icon: '⭐', color: '#D91CD2', bg: 'rgba(217, 28, 210, 0.08)', border: 'rgba(217, 28, 210, 0.18)' },
-    { key: 'visitor', label: 'Visiteurs du site', icon: '💬', color: '#8B5CF6', bg: 'rgba(139, 92, 246, 0.08)', border: 'rgba(139, 92, 246, 0.18)' },
-    { key: 'smart_link', label: 'Liens Intelligents', icon: '🔗', color: '#FF2DAA', bg: 'rgba(255, 45, 170, 0.08)', border: 'rgba(255, 45, 170, 0.2)' },
+    // V228: `iconName` remplace l'ancien champ `icon` (emoji). Ces metas sont
+    // 100% locales à ce composant — rien n'est lu ni écrit en base ici.
+    { key: 'subscriber', label: 'Abonnés', iconName: 'star', color: '#D91CD2', bg: 'rgba(217, 28, 210, 0.08)', border: 'rgba(217, 28, 210, 0.18)' },
+    { key: 'visitor', label: 'Visiteurs du site', iconName: 'messageCircle', color: '#8B5CF6', bg: 'rgba(139, 92, 246, 0.08)', border: 'rgba(139, 92, 246, 0.18)' },
+    { key: 'smart_link', label: 'Liens Intelligents', iconName: 'link', color: '#FF2DAA', bg: 'rgba(255, 45, 170, 0.08)', border: 'rgba(255, 45, 170, 0.2)' },
   ]), []);
 
   // V198b: Grouper par category (fallback "visitor" si champ manquant — anciennes sessions)
@@ -884,8 +888,8 @@ const GroupedConversationList = memo(({
                       transition: 'transform 0.2s ease',
                     }}
                   />
-                  <span style={{ color: meta.color, fontSize: '12px', fontWeight: '600', textShadow: `0 0 8px ${meta.color}33` }}>
-                    {meta.icon} {meta.label}
+                  <span style={{ color: meta.color, fontSize: '12px', fontWeight: '600', textShadow: `0 0 8px ${meta.color}33`, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                    <SvgIcon name={meta.iconName} size={14} />{meta.label}
                   </span>
                   <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '11px' }}>
                     {sessions.length}
@@ -935,7 +939,7 @@ const GroupedConversationList = memo(({
       )}
       {conversationsHasMore && (
         <div style={{ textAlign: 'center', padding: '12px', color: 'rgba(255,255,255,0.2)', fontSize: '12px' }}>
-          {conversationsLoading ? '⏳' : '↓ Scroll pour plus'}
+          {conversationsLoading ? <SvgIcon name="loader" size={14} className="animate-spin" /> : '↓ Scroll pour plus'}
         </div>
       )}
     </div>
@@ -1558,7 +1562,7 @@ const CRMSection = ({
                   onMouseEnter={(e) => { e.currentTarget.style.color = '#D91CD2'; e.currentTarget.style.boxShadow = GLOW.violetSoft; }}
                   onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.3)'; e.currentTarget.style.boxShadow = 'none'; }}
                 >
-                  {conversationsLoading ? <span style={{ fontSize: '12px' }}>⏳</span> : <RefreshCw size={14} />}
+                  {conversationsLoading ? <SvgIcon name="loader" size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 </button>
               </div>
             </div>
@@ -1778,7 +1782,7 @@ const CRMSection = ({
                     background: 'rgba(217,28,210,0.06)',
                     border: '1px solid rgba(217,28,210,0.15)',
                   }}>
-                    <p style={{ color: '#D91CD2', fontSize: '11px', fontWeight: 600, margin: '0 0 8px 0' }}>📋 Réponses du tunnel</p>
+                    <p style={{ color: '#D91CD2', fontSize: '11px', fontWeight: 600, margin: '0 0 8px 0', display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="clipboard" size={14} />Réponses du tunnel</p>
                     {Object.values(selectedSession.tunnel_answers).map((qa, i) => (
                       <div key={i} style={{ marginBottom: i < Object.keys(selectedSession.tunnel_answers).length - 1 ? '8px' : 0 }}>
                         <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', margin: '0 0 2px 0' }}>{qa.question || `Question ${i+1}`}</p>
@@ -1977,7 +1981,7 @@ const CRMSection = ({
                     onMouseEnter={(e) => { if (coachMessage.trim() && !rewritingAI) { e.currentTarget.style.boxShadow = '0 0 24px rgba(217, 28, 210, 0.6), 0 0 48px rgba(217, 28, 210, 0.25)'; e.currentTarget.style.transform = 'scale(1.08)'; }}}
                     onMouseLeave={(e) => { e.currentTarget.style.boxShadow = coachMessage.trim() ? '0 0 16px rgba(217, 28, 210, 0.45), 0 0 32px rgba(217, 28, 210, 0.15)' : 'none'; e.currentTarget.style.transform = 'scale(1)'; }}
                   >
-                    {rewritingAI ? <span style={{ fontSize: '14px' }}>⏳</span> : <span style={{ fontSize: '14px' }}>✨</span>}
+                    {rewritingAI ? <SvgIcon name="loader" size={14} className="animate-spin" /> : <SvgIcon name="sparkles" size={14} />}
                   </button>
                   <button
                     onClick={handleSendMessage}
