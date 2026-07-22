@@ -104,8 +104,10 @@
      CE repli reste actif — sans lui la bordure resterait a 0 et le chip
      perdrait tout contour. Sur un navigateur recent, color-mix est valide et
      ecrase ce repli (meme propriete, regle en cascade). */
-  border: 1px solid rgba(217, 28, 210, .5);
-  border: 1px solid color-mix(in srgb, var(--primary-color) 50%, transparent);
+  /* V231: 30% au lieu de 50% — la bordure violette au repos etait trop
+     affirmee pour un controle secondaire. */
+  border: 1px solid rgba(217, 28, 210, .3);
+  border: 1px solid color-mix(in srgb, var(--primary-color) 30%, transparent);
   background: transparent;
   color: rgba(255, 255, 255, 0.8);
   font-size: 13px;
@@ -117,7 +119,11 @@
 }
 
 .variant-chip:hover {
-  border-color: var(--primary-color);
+  /* V231: 60% au lieu de la couleur pleine — le survol annonce le choix sans
+     se confondre avec l'etat selectionne, qui seul porte la couleur pleine.
+     Repli rgba() avant color-mix, meme raison qu'au-dessus. */
+  border-color: rgba(217, 28, 210, .6);
+  border-color: color-mix(in srgb, var(--primary-color) 60%, transparent);
   color: #fff;
   background: color-mix(in srgb, var(--primary-color) 10%, transparent);
 }
@@ -128,7 +134,10 @@
   background: color-mix(in srgb, var(--primary-color) 25%, transparent);
   border-color: var(--primary-color);
   color: #fff;
-  box-shadow: 0 0 8px var(--glow-color);
+  /* V231: halo adouci — 6px a 30% au lieu de 8px a la pleine `--glow-color`.
+     L'etat selectionne reste le seul a porter la bordure pleine ET un halo,
+     donc il se distingue toujours nettement du survol. */
+  box-shadow: 0 0 6px rgba(217, 28, 210, .3);
 }
 
 .variant-chip:disabled {

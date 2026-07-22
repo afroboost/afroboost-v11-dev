@@ -1319,13 +1319,21 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // quantite, avec un rendu quasi identique a recopier pour chaque dimension —
   // trois copies a maintenir pour un seul comportement.
   //
-  // APPARENCE : c'est le defaut du premier jet. La bascule reprenait la classe
-  // `.variant-label` telle quelle — 12px, gris a 50% d'opacite, majuscules,
-  // graisse 300. Rien n'y ressemblait a un controle, et un visiteur ne pouvait
-  // pas deviner qu'il fallait cliquer pour voir les chips : elles ne
-  // paraissaient pas repliees, elles paraissaient absentes. D'ou la bordure, le
-  // fond leger et la couleur remontee — sans toucher a `.variant-chip`, dont le
-  // style reste celui d'origine.
+  // APPARENCE (V231) : lien texte discret, sans bordure ni fond. 11px, gris a
+  // 50%, casse normale — la carte doit rester sobre, ces selecteurs sont
+  // secondaires par rapport au visuel et au bouton d'achat.
+  //
+  // La V230.1 leur avait donne une bordure et un fond parce que le tout premier
+  // jet (libelle nu, sans chevron ni valeur) etait indecouvrable : les chips
+  // paraissaient supprimees plutot que repliees. Le chevron et la valeur rappelee
+  // sont ce qui porte reellement l'affordance ici, pas le cadre — ils sont donc
+  // conserves, et un etat `:hover` eclaircit le texte pour confirmer que c'est
+  // cliquable. La zone tactile reste a 24px de haut malgre les 11px de texte :
+  // un lien de 11px sans hauteur minimale serait difficile a viser au doigt.
+  //
+  // `.variant-label` n'est PAS reutilise ici : il force `text-transform:
+  // uppercase`, alors que le rendu demande est « Quantite : 1 › » en casse
+  // normale.
   //
   // VALEUR REPLIEE : le libelle rappelle la valeur choisie (« Taille : M »).
   // Replier un controle ne doit pas masquer sa valeur, sinon un client ayant
@@ -1335,27 +1343,32 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
     return (
       <button
         type="button"
-        className="variant-label"
         onClick={e => { e.stopPropagation(); v230Toggle(key); }}
+        onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255, 255, 255, 0.85)'; }}
+        onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255, 255, 255, 0.5)'; }}
         aria-expanded={open}
         aria-controls={`v230-chips-${key}-${offer.id}`}
         data-testid={testId}
         style={{
           display: 'inline-flex',
           alignItems: 'center',
-          gap: '6px',
-          padding: '3px 10px',
-          borderRadius: '8px',
-          border: '1px solid rgba(255, 255, 255, 0.18)',
-          background: 'rgba(255, 255, 255, 0.04)',
-          color: value ? 'rgba(255, 255, 255, 0.85)' : 'rgba(255, 255, 255, 0.6)',
-          font: 'inherit',
+          gap: '3px',
+          minHeight: '24px',
+          padding: 0,
+          border: 'none',
+          background: 'none',
+          color: 'rgba(255, 255, 255, 0.5)',
+          fontSize: '11px',
+          fontWeight: 400,
+          lineHeight: 1.2,
+          letterSpacing: '0.2px',
           cursor: 'pointer',
-          userSelect: 'none'
+          userSelect: 'none',
+          transition: 'color 0.2s ease'
         }}
       >
         {label}{!open && value ? ` : ${value}` : ''}
-        <SvgIcon name={open ? 'arrowDown' : 'arrowRight'} size={12} />
+        <SvgIcon name={open ? 'arrowDown' : 'arrowRight'} size={11} />
       </button>
     );
   };
@@ -2186,9 +2199,17 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 la carte entiere est cliquable, un clic qui remonterait
                 partirait en checkout. C'est le piege deja rencontre deux fois
                 ici, il ne disparait pas en changeant de balise. */}
+            {/* V231: quantite et variantes sur UNE SEULE RANGEE.
+                Chaque bloc est `flex: 0 0 auto` tant qu'il est replie — les
+                liens « Quantite / Taille / Couleur » se suivent donc cote a
+                cote. Le bloc qui s'ouvre passe a `1 1 100%` : il prend la
+                largeur entiere et ses chips s'affichent DESSOUS, sans comprimer
+                les autres liens ni les pousser hors de la carte. Sur une carte
+                etroite, `flexWrap` les repartit naturellement sur deux lignes. */}
             {v225IsDirectCheckout(offer) && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '2px 14px', margin: '8px 0' }}>
               <div
-                style={{ margin: '8px 0' }}
+                style={{ flex: v230IsOpen('qty') ? '1 1 100%' : '0 0 auto' }}
                 onClick={e => e.stopPropagation()}
                 data-testid={`offer-qty-${offer.id}`}
                 /* V228: un <select> natif annoncait "Taille, liste, M" a un
@@ -2223,7 +2244,6 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                   ))}
                 </div>
               </div>
-            )}
 
             {/* V226: selecteurs de variantes, rendus AVANT le bouton.
                 Meme condition de rendu que la quantite (v225IsDirectCheckout) :
@@ -2257,7 +2277,10 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 L'option vide « — » du <select> disparait : elle n'etait qu'un
                 etat « rien de choisi », que l'absence de chip `selected`
                 exprime directement. Aucune valeur reelle n'est perdue. */}
-            {v225IsDirectCheckout(offer) && v226VariantDims.map(dim => (
+            {/* V231: la garde `v225IsDirectCheckout` est desormais portee par la
+                rangee englobante ouverte plus haut — elle n'est plus repetee
+                ici, la condition reste strictement la meme. */}
+            {v226VariantDims.map(dim => (
               <div
                 key={dim.key}
                 /* V226/V228: reference consommee par v226BuyDirect pour amener
@@ -2269,8 +2292,11 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                    transparente, donc AUCUNE mise en page ne bouge entre les
                    deux etats — meme garantie qu'en V226. */
                 style={{
-                  margin: '8px 0',
-                  padding: '4px',
+                  /* V231: participe a la rangee. Replie il ne prend que sa
+                     largeur ; ouvert il passe en pleine largeur pour poser ses
+                     chips dessous. */
+                  flex: v230IsOpen(dim.key) ? '1 1 100%' : '0 0 auto',
+                  padding: '2px 4px',
                   borderRadius: '10px',
                   border: v226FlashDim === dim.key ? '1px solid #FF2DAA' : '1px solid transparent',
                   boxShadow: v226FlashDim === dim.key ? '0 0 10px rgba(255, 45, 170, 0.7)' : 'none',
@@ -2321,6 +2347,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 </div>
               </div>
             ))}
+            </div>
+            )}
 
             <div className="mt-3 flex items-center justify-end">
               <button
