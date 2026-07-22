@@ -25,6 +25,35 @@ function isVideoUrl(url) {
   return V227_VIDEO_EXTENSIONS.some((ext) => lowerPath.endsWith(ext));
 }
 
+// V234 — image d'apercu (« poster ») pour une video hebergee par Cloudinary.
+//
+// POURQUOI UNE IMAGE PLUTOT QUE LA VIDEO
+// La couverture n'a besoin que d'une vignette fixe. Charger la video pour cela
+// coute 427 Ko par carte (mesure sur l'offre « Laff Festival ») contre 14 Ko
+// pour le poster, sur un ecran qui liste toutes les offres du coach. Cloudinary
+// extrait la premiere image cote serveur, ce qui evite aussi de dependre du
+// format que le navigateur recoit : `f_auto` sert du WebM a Chrome, dont un
+// <video preload="metadata"> n'affiche pas toujours la premiere frame.
+//
+// TRANSFORMATION
+//   so_0    -> image prise a la seconde 0
+//   w_400,h_225,c_fill -> 16/9, la geometrie exacte du cadre de rendu
+//                         ci-dessous (aspectRatio 16/9 + objectFit cover),
+//                         donc aucun recadrage subi
+//   f_jpg   -> format fixe, independant du navigateur
+// `q_auto,f_auto` est retire au prealable : ces deux directives s'appliquent a
+// la LIVRAISON de la video et entrent en conflit avec `f_jpg`.
+//
+// Renvoie `null` si l'URL n'est pas une video Cloudinary — l'appelant retombe
+// alors sur le <video> d'origine (V227), inchange pour les fichiers locaux.
+function v234CloudinaryPoster(url) {
+  if (!url || typeof url !== 'string') return null;
+  if (!url.includes('cloudinary.com') || !url.includes('/video/upload/')) return null;
+  return url
+    .replace(/\/video\/upload\/(?:q_auto,f_auto\/)?/, '/video/upload/so_0,w_400,h_225,c_fill,f_jpg/')
+    .replace(/\.[^.]+$/, '.jpg');
+}
+
 // V226: icones SVG extraites en petits composants locaux (a la place des
 // emoji ⏱/📍/👥) — memes traces que la carte publique (App.js), reutilisees
 // a plusieurs endroits de cette carte plutot que recopiees inline. `color`
@@ -151,7 +180,15 @@ export default function OfferCard({
   isDragging = false,
   isDragOver = false
 }) {
-  const cover = (offer.images || []).find(Boolean) || offer.thumbnail || '';
+  // V234: `offer.videoUrl` entre dans la chaine de reprise. C'est la CAUSE
+  // RACINE de l'absence d'apercu signalee : une offre dont la seule illustration
+  // est une video (images vides, thumbnail vide) donnait `cover = ''` et
+  // tombait sur le placeholder casque — le <video> de V227 n'etait jamais
+  // atteint. L'ordre de priorite existant est inchange : une image explicite
+  // passe toujours avant la video.
+  const cover = (offer.images || []).find(Boolean) || offer.thumbnail || offer.videoUrl || '';
+  const v234CoverIsVideo = Boolean(cover) && isVideoUrl(cover);
+  const v234Poster = v234CoverIsVideo ? v234CloudinaryPoster(cover) : null;
   const isVisible = offer.visible !== false;
   // V224: garde coherente avec les autres lignes meta (on n'affiche rien plutot
   // que « undefined CHF » quand le champ est absent).
@@ -186,7 +223,19 @@ export default function OfferCard({
       {/* V227: une couverture video est rendue en <video> autoplay muet et non
           plus en <img> (qui n'affichait qu'un cadre vide). Le cas image est
           strictement inchange. */}
-      {cover && isVideoUrl(cover) ? (
+      {v234Poster ? (
+        /* V234: video Cloudinary — vignette servie par le CDN (14 Ko) au lieu
+           de la video entiere (427 Ko) autoplayee. `onError` retombe sur le
+           fond neutre plutot que d'afficher une icone d'image cassee, au cas ou
+           Cloudinary ne saurait pas extraire de frame. */
+        <img
+          src={v234Poster}
+          alt={offer.name}
+          style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', background: '#0a0a0f' }}
+          loading="lazy"
+          onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
+        />
+      ) : v234CoverIsVideo ? (
         <video
           src={cover}
           style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', background: '#0a0a0f' }}
