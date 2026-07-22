@@ -36,7 +36,15 @@ function getOfferPreview(offer) {
     : (offer.images || []).find(u => u && isVideoUrl(u))
       || (offer.thumbnail && isVideoUrl(offer.thumbnail) ? offer.thumbnail : null);
   if (videoSrc) {
-    // V234.4: utiliser <video> pour TOUTES les videos (Cloudinary poster URLs ne fonctionnent pas)
+    // V234.6: Pour Cloudinary — generer poster image (retirer q_auto,f_auto qui convertit en WebM)
+    if (videoSrc.includes('cloudinary.com') && videoSrc.includes('/video/upload/')) {
+      const clean = videoSrc.replace(/\/video\/upload\/(?:q_auto,f_auto\/)?/, '/video/upload/');
+      const poster = clean
+        .replace('/video/upload/', '/video/upload/so_0,w_200,h_200,c_fill,f_jpg/')
+        .replace(/\.[^.]+$/, '.jpg');
+      return { src: poster, isVideo: true };
+    }
+    // Pour videos locales: utiliser <video> tag
     return { src: videoSrc, isVideo: true, useVideoTag: true };
   }
   return null;
