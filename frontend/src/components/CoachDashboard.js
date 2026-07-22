@@ -2443,7 +2443,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         description: src.description || "",
         keywords: src.keywords || "",
         images: filteredImages,
-        thumbnail: filteredImages[0] || "",
+        // V234: si le coach a choisi un thumbnail (via le selecteur de miniature video),
+        // on le conserve. Sinon on prend la premiere image.
+        thumbnail: src.thumbnail || filteredImages[0] || "",
         category: src.category || "service",
         isProduct: src.isProduct || false,
         variants: src.variants || null,
