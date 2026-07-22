@@ -3,6 +3,23 @@ import React from 'react';
 
 const PINK = '#D91CD2';
 
+// V227: detection « ce media est-il une video ? » pour la miniature du dashboard.
+// Jusqu'ici la couverture etait TOUJOURS rendue en <img> : un fichier .mp4/.mov
+// donnait un cadre vide. La logique de reconnaissance est celle, DURCIE, de
+// parseMediaUrl (frontend/src/App.js) : l'extension doit se trouver en FIN DE
+// CHEMIN, apres retrait d'une eventuelle chaine de requete (?) ou ancre (#).
+// Un `includes('.mov')` naif prendrait une image hebergee sur un domaine
+// `cdn.movie...` (ou dans un dossier `/x.movies/`) pour une video et afficherait
+// un lecteur noir. parseMediaUrl n'est pas exportee : sa logique est reprise ici
+// volontairement, sans import ni modification de App.js.
+const V227_VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.avi', '.m4v', '.ogv'];
+
+function isVideoUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  const lowerPath = url.trim().toLowerCase().split('#')[0].split('?')[0];
+  return V227_VIDEO_EXTENSIONS.some((ext) => lowerPath.endsWith(ext));
+}
+
 // V226: icones SVG extraites en petits composants locaux (a la place des
 // emoji ⏱/📍/👥) — memes traces que la carte publique (App.js), reutilisees
 // a plusieurs endroits de cette carte plutot que recopiees inline. `color`
@@ -10,9 +27,14 @@ const PINK = '#D91CD2';
 // usage cliquable ailleurs) ; `ClockIcon` n'est pas encore consommee dans
 // cette carte (la duree n'y est pour l'instant qu'affichee en texte) mais
 // fait partie du meme jeu d'icones que le pin et les personnes.
+// V227: la couleur par defaut passe de #aaa a #ccc. Une revue V226 avait releve
+// que l'icone etait tracee en #aaa alors que le texte qu'elle accompagne est en
+// #ccc : invisible tant que les pictogrammes etaient des emoji colores, visible
+// des qu'ils deviennent des traces monochromes. Les deux sont desormais alignes.
+// Le pin garde une couleur de marque explicite (voir son usage plus bas).
 const ICON_PROPS = { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' };
 
-function ClockIcon({ color = '#aaa' }) {
+function ClockIcon({ color = '#ccc' }) {
   return (
     <svg {...ICON_PROPS} stroke={color}>
       <circle cx="12" cy="12" r="10" />
@@ -21,7 +43,7 @@ function ClockIcon({ color = '#aaa' }) {
   );
 }
 
-function PinIcon({ color = '#aaa' }) {
+function PinIcon({ color = '#ccc' }) {
   return (
     <svg {...ICON_PROPS} stroke={color}>
       <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
@@ -30,13 +52,66 @@ function PinIcon({ color = '#aaa' }) {
   );
 }
 
-function PeopleIcon({ color = '#aaa' }) {
+function PeopleIcon({ color = '#ccc' }) {
   return (
     <svg {...ICON_PROPS} stroke={color}>
       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
       <circle cx="9" cy="7" r="4" />
       <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
       <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+}
+
+// V227: la serie d'icones extraite en V226 (ClockIcon/PinIcon/PeopleIcon) est
+// completee ici plutot que de recopier du balisage SVG dans le rendu. `size`
+// permet de reutiliser le meme trace pour une ligne meta (14px) et pour le
+// placeholder de couverture (32px), sans dupliquer le composant.
+function PencilIcon({ color = '#fff', size = 14 }) {
+  return (
+    <svg {...ICON_PROPS} width={size} height={size} stroke={color}>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+    </svg>
+  );
+}
+
+function CopyIcon({ color = '#fff', size = 14 }) {
+  return (
+    <svg {...ICON_PROPS} width={size} height={size} stroke={color}>
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function TrashIcon({ color = '#ef4444', size = 14 }) {
+  return (
+    <svg {...ICON_PROPS} width={size} height={size} stroke={color}>
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
+
+function LockIcon({ color = '#888', size = 14 }) {
+  return (
+    <svg {...ICON_PROPS} width={size} height={size} stroke={color}>
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  );
+}
+
+function HeadphonesIcon({ color = '#aaa', size = 32 }) {
+  return (
+    <svg {...ICON_PROPS} width={size} height={size} stroke={color}>
+      <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
+      <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z" />
+      <path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
     </svg>
   );
 }
@@ -99,10 +174,24 @@ export default function OfferCard({
         opacity: isDragging ? 0.5 : 1
       }}
     >
-      {cover ? (
+      {/* V227: une couverture video est rendue en <video> autoplay muet et non
+          plus en <img> (qui n'affichait qu'un cadre vide). Le cas image est
+          strictement inchange. */}
+      {cover && isVideoUrl(cover) ? (
+        <video
+          src={cover}
+          style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', background: '#0a0a0f' }}
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="metadata"
+        />
+      ) : cover ? (
         <img src={cover} alt={offer.name} style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover' }} />
       ) : (
-        <div style={{ width: '100%', aspectRatio: '16 / 9', background: '#0a0a0f', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '32px' }}>🎧</div>
+        /* V227: 🎧 remplace par HeadphonesIcon — meme encombrement (32px). */
+        <div style={{ width: '100%', aspectRatio: '16 / 9', background: '#0a0a0f', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><HeadphonesIcon /></div>
       )}
 
       <div style={{ padding: '14px' }}>
@@ -124,11 +213,13 @@ export default function OfferCard({
           {/* V224: affordance « offre protegee » reprise de l'ancien rendu en liste */}
           {!canDelete && (
             <span
-              className="text-xs px-2 py-0.5 rounded-full"
+              className="text-xs px-2 py-0.5 rounded-full inline-flex items-center gap-1"
               style={{ background: 'rgba(120,120,120,0.15)', color: '#888' }}
               title="Vous ne pouvez supprimer que vos propres offres"
             >
-              🔒 Protégée
+              {/* V227: 🔒 remplace par LockIcon, teinte sur la couleur du texte porteur */}
+              <LockIcon color="#888" />
+              Protégée
             </span>
           )}
         </div>
@@ -146,9 +237,11 @@ export default function OfferCard({
             .filter(Boolean).join(' · ')}
         </p>
         {/* V226: 📍 remplace par PinIcon — meme condition de masquage inchangee. */}
+        {/* V227: le pin est trace en couleur de marque (#D91CD2), seul accent
+            colore des lignes meta — les autres icones suivent le texte (#ccc). */}
         {offer.location && (
           <p className="text-xs mt-1 flex items-center gap-1" style={{ color: '#ccc' }}>
-            <PinIcon />
+            <PinIcon color={PINK} />
             {offer.location}
           </p>
         )}
@@ -166,15 +259,16 @@ export default function OfferCard({
         )}
 
         <div className="flex gap-2 mt-3">
-          <button type="button" onClick={() => onEdit(offer)} className="flex-1 text-xs py-2 rounded-lg" style={{ background: PINK, color: '#fff' }}>✏️ Modifier</button>
-          <button type="button" onClick={() => onDuplicate(offer)} className="text-xs py-2 px-3 rounded-lg" style={{ background: '#0a0a0f', border: '1px solid #333', color: '#fff' }}>📋</button>
+          {/* V227: ✏️ et 📋 remplaces par PencilIcon / CopyIcon */}
+          <button type="button" onClick={() => onEdit(offer)} className="flex-1 text-xs py-2 rounded-lg inline-flex items-center justify-center gap-1.5" style={{ background: PINK, color: '#fff' }}><PencilIcon />Modifier</button>
+          <button type="button" onClick={() => onDuplicate(offer)} title="Dupliquer" className="text-xs py-2 px-3 rounded-lg inline-flex items-center justify-center" style={{ background: '#0a0a0f', border: '1px solid #333', color: '#fff' }}><CopyIcon /></button>
           {/* V224: bouton Supprimer estompe et desactive pour une offre d'un autre coach */}
           <button
             type="button"
             onClick={() => onDelete(offer.id)}
             disabled={!canDelete}
             title={canDelete ? 'Supprimer' : 'Vous ne pouvez supprimer que vos propres offres'}
-            className="text-xs py-2 px-3 rounded-lg"
+            className="text-xs py-2 px-3 rounded-lg inline-flex items-center justify-center"
             style={{
               background: '#0a0a0f',
               border: '1px solid #333',
@@ -183,13 +277,19 @@ export default function OfferCard({
               cursor: canDelete ? 'pointer' : 'not-allowed'
             }}
           >
-            {canDelete ? '🗑️' : '🔒'}
+            {/* V227: 🗑️ / 🔒 remplaces par TrashIcon / LockIcon — chaque trace
+                reprend la couleur deja calculee pour le texte du bouton. */}
+            {canDelete ? <TrashIcon color="#ef4444" /> : <LockIcon color="#666" />}
           </button>
         </div>
 
         {/* V224: reorganisation de l'ordre d'affichage (champ `position`) */}
+        {/* V227: les fleches sont MASQUEES a partir de 768px (md:hidden), pas
+            supprimees — le bloc reste rendu. Sur desktop, le glisser-deposer
+            cable en V226 prend le relais ; sur mobile les fleches restent le
+            seul chemin, le drag & drop HTML5 ne repondant pas au doigt. */}
         {(onMoveUp || onMoveDown) && (
-          <div className="flex items-center gap-2 mt-2">
+          <div className="flex md:hidden items-center gap-2 mt-2">
             <span className="text-xs" style={{ color: '#777' }}>Ordre</span>
             <button
               type="button"
