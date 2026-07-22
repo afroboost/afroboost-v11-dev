@@ -1299,11 +1299,66 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   const [videoError, setVideoError] = useState(false);
   // V225: quantite choisie sur la carte, relayee a startProgressiveCheckout.
   const [v225Qty, setV225Qty] = useState(1);
-  // V230: les chips de quantite sont repliees par defaut — elles occupaient une
-  // rangee entiere sur chaque carte alors que la grande majorite des achats se
-  // font a l'unite. L'etat est LOCAL a la carte (comme `v225Qty` ci-dessus, meme
-  // portee) : deplier la quantite sur une carte ne touche pas les autres.
-  const [v230ShowQty, setV230ShowQty] = useState(false);
+  // V230.1: TOUS les selecteurs de la carte (quantite + chaque dimension de
+  // variante) sont replies par defaut et s'ouvrent independamment.
+  //
+  // Un objet indexe par cle plutot qu'un booleen unique : avec un seul etat,
+  // ouvrir « Taille » ouvrait aussi « Couleur » et « Quantite ». La cle 'qty'
+  // est reservee a la quantite, les autres sont les `dim.key` des variantes.
+  // Absent de l'objet = replie, donc l'etat initial vide suffit.
+  //
+  // Portee LOCALE a la carte (comme `v225Qty` ci-dessus) : deplier un selecteur
+  // sur une carte ne touche aucune autre carte du slider.
+  const [v230Open, setV230Open] = useState({});
+  const v230IsOpen = (key) => Boolean(v230Open[key]);
+  const v230Toggle = (key) => setV230Open(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // V230.1: bascule commune a la quantite et a chaque dimension de variante.
+  //
+  // Elle est factorisee parce que le premier jet ne la posait que sur la
+  // quantite, avec un rendu quasi identique a recopier pour chaque dimension —
+  // trois copies a maintenir pour un seul comportement.
+  //
+  // APPARENCE : c'est le defaut du premier jet. La bascule reprenait la classe
+  // `.variant-label` telle quelle — 12px, gris a 50% d'opacite, majuscules,
+  // graisse 300. Rien n'y ressemblait a un controle, et un visiteur ne pouvait
+  // pas deviner qu'il fallait cliquer pour voir les chips : elles ne
+  // paraissaient pas repliees, elles paraissaient absentes. D'ou la bordure, le
+  // fond leger et la couleur remontee — sans toucher a `.variant-chip`, dont le
+  // style reste celui d'origine.
+  //
+  // VALEUR REPLIEE : le libelle rappelle la valeur choisie (« Taille : M »).
+  // Replier un controle ne doit pas masquer sa valeur, sinon un client ayant
+  // choisi M puis replie croit n'avoir rien choisi.
+  const v230RenderToggle = (key, label, value, testId) => {
+    const open = v230IsOpen(key);
+    return (
+      <button
+        type="button"
+        className="variant-label"
+        onClick={e => { e.stopPropagation(); v230Toggle(key); }}
+        aria-expanded={open}
+        aria-controls={`v230-chips-${key}-${offer.id}`}
+        data-testid={testId}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '3px 10px',
+          borderRadius: '8px',
+          border: '1px solid rgba(255, 255, 255, 0.18)',
+          background: 'rgba(255, 255, 255, 0.04)',
+          color: value ? 'rgba(255, 255, 255, 0.85)' : 'rgba(255, 255, 255, 0.6)',
+          font: 'inherit',
+          cursor: 'pointer',
+          userSelect: 'none'
+        }}
+      >
+        {label}{!open && value ? ` : ${value}` : ''}
+        <SvgIcon name={open ? 'arrowDown' : 'arrowRight'} size={12} />
+      </button>
+    );
+  };
   // V226: variantes choisies sur la carte ({ size, color, weight }). Depuis que
   // les produits physiques payants partent en checkout direct, le formulaire —
   // qui portait jusqu'ici les selecteurs de variantes (~l.4632) — n'est plus
@@ -1407,10 +1462,10 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // offre de la quantite choisie sur la precedente.
   useEffect(() => {
     setV225Qty(1);
-    // V230: on replie aussi le bloc quantite. Une instance de carte recyclee
-    // par le slider afficherait sinon la nouvelle offre deja depliee, sans que
-    // l'utilisateur l'ait demande.
-    setV230ShowQty(false);
+    // V230.1: on replie TOUS les selecteurs (quantite et variantes). Une
+    // instance de carte recyclee par le slider afficherait sinon la nouvelle
+    // offre deja depliee, sans que l'utilisateur l'ait demande.
+    setV230Open({});
   }, [offer.id]);
 
   // V226: meme raison que la quantite ci-dessus — une instance de carte recyclee
@@ -1449,6 +1504,11 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
       // dans le champ de vision et on le fait clignoter. La garde elle-meme est
       // inchangee : l'achat reste refuse tant qu'il manque une variante.
       const first = v226MissingDims[0].key;
+      // V230.1: on DEPLIE la dimension avant de la signaler. Depuis que les
+      // selecteurs sont replies par defaut, faire clignoter un libelle ferme
+      // montrerait au visiteur qu'il manque quelque chose sans lui montrer quoi
+      // choisir — la garde deviendrait moins utile qu'avant le repliage.
+      setV230Open(prev => ({ ...prev, [first]: true }));
       const el = v226SelectRefs.current[first];
       if (el && typeof el.scrollIntoView === 'function') {
         try {
@@ -2138,39 +2198,14 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 role="group"
                 aria-label="Quantité"
               >
-                {/* V230: le bloc est replie par defaut. La bascule est un vrai
-                    <button> et non un <p> cliquable : un paragraphe avec onClick
-                    n'est ni focusable au clavier ni annonce comme interactif.
-                    `aria-expanded` + `aria-controls` disent l'etat et la cible.
-                    La quantite choisie est rappelee DANS le libelle : replier un
-                    controle ne doit pas masquer sa valeur, sinon un client ayant
-                    choisi 3 puis replie croit commander 1. */}
-                <button
-                  type="button"
-                  className="variant-label"
-                  onClick={e => { e.stopPropagation(); setV230ShowQty(prev => !prev); }}
-                  aria-expanded={v230ShowQty}
-                  aria-controls={`offer-qty-chips-${offer.id}`}
-                  data-testid={`offer-qty-toggle-${offer.id}`}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    background: 'none',
-                    border: 'none',
-                    padding: 0,
-                    font: 'inherit',
-                    color: 'inherit',
-                    cursor: 'pointer',
-                    userSelect: 'none'
-                  }}
-                >
-                  Quantité{v230ShowQty ? '' : ` : ${v225Qty}`}
-                  <SvgIcon name={v230ShowQty ? 'arrowDown' : 'arrowRight'} size={12} />
-                </button>
+                {/* V230.1: bascule commune (voir `v230RenderToggle`). La
+                    quantite vaut toujours au moins 1, donc la valeur repliee est
+                    toujours affichee — contrairement aux variantes, qui peuvent
+                    n'avoir aucun choix. */}
+                {v230RenderToggle('qty', 'Quantité', String(v225Qty), `offer-qty-toggle-${offer.id}`)}
                 <div
-                  id={`offer-qty-chips-${offer.id}`}
-                  style={{ display: v230ShowQty ? 'flex' : 'none', flexWrap: 'wrap', gap: '6px' }}
+                  id={`v230-chips-qty-${offer.id}`}
+                  style={{ display: v230IsOpen('qty') ? 'flex' : 'none', flexWrap: 'wrap', gap: '6px' }}
                 >
                   {[1, 2, 3, 4, 5].map(n => (
                     <button
@@ -2248,8 +2283,14 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 role="group"
                 aria-label={dim.label}
               >
-                <div className="variant-label">{dim.label}</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {/* V230.1: meme bascule que la quantite. `v226Variants[dim.key]`
+                    vaut `undefined` tant que rien n'est choisi — le libelle
+                    n'affiche alors que « Taille », sans separateur vide. */}
+                {v230RenderToggle(dim.key, dim.label, v226Variants[dim.key], `offer-variant-toggle-${dim.key}-${offer.id}`)}
+                <div
+                  id={`v230-chips-${dim.key}-${offer.id}`}
+                  style={{ display: v230IsOpen(dim.key) ? 'flex' : 'none', flexWrap: 'wrap', gap: '6px' }}
+                >
                   {dim.list.map(v => {
                     // V228: `String(v)` est applique une seule fois et sert a la
                     // fois de cle, de valeur stockee et de comparaison. Le

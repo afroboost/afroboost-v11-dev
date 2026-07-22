@@ -6092,7 +6092,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     position: 'relative'
                   }}
                 >
-                  <span style={{ display: 'inline-flex' }}><SvgIcon name={sub.icon} size={24} /></span>
+                  {/* V230.1: 28px et blanc franc. En `currentColor` l'icone
+                      heritait de la couleur du conteneur et sortait grisee ;
+                      `color="#fff"` la rend lisible dans les deux etats
+                      (selectionne ou non), la selection restant signalee par le
+                      libelle rose et le fond du bouton. */}
+                  <span style={{ display: 'inline-flex' }}><SvgIcon name={sub.icon} size={28} color="#fff" /></span>
                   <span style={{
                     color: offersSubTab === sub.id ? '#D91CD2' : 'rgba(255,255,255,0.7)',
                     fontSize: '10px',
