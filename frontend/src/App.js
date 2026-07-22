@@ -1495,8 +1495,11 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
         if (entry.isIntersecting) {
           setV227Seen(true);
           const v = videoRef.current;
-          // Au TOUT premier passage la video n'est pas encore montee (le `src`
-          // arrive au rendu suivant) : `autoPlay` prend alors le relais.
+          // V227: au TOUT premier passage l'element <video> EST monte, mais sans
+          // `src` (il arrive au rendu suivant, une fois v227Seen a true). Ce
+          // play() echoue donc, silencieusement — et c'est sans consequence :
+          // poser `src` invoque l'algorithme de chargement du media, qui remet
+          // le drapeau « can autoplay » a true, et `autoPlay` prend le relais.
           if (v && v.paused) {
             const p = v.play();
             if (p && typeof p.catch === 'function') p.catch(() => {});
@@ -1508,7 +1511,11 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
           }
         }
       });
-    }, { root: null, rootMargin: '150px', threshold: 0.01 });
+      // V227: marge horizontale plus large que la verticale. Les cartes font
+      // 280-340px : 150px ne prechargeait meme pas une demi-carte d'avance, et
+      // un balayage rapide du carrousel montrait le poster avant la video.
+      // 400px donne une carte pleine d'avance sans elargir la fenetre verticale.
+    }, { root: null, rootMargin: '150px 400px', threshold: 0.01 });
     obs.observe(el);
     // Nettoyage au demontage : le slider RECYCLE ses instances de carte, un
     // observateur survivant retiendrait le noeud DOM et rappellerait setState
