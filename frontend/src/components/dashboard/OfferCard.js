@@ -1,5 +1,10 @@
 // V224 — Carte d'offre pour le dashboard coach.
 import React from 'react';
+// V228: seules les fleches d'ordre (▲/▼) restaient en caracteres typographiques.
+// Elles n'ont pas d'equivalent parmi les composants locaux definis plus bas
+// (ClockIcon/PinIcon/... ), d'ou le recours au jeu partage SvgIcon pour ces
+// deux traces uniquement. Les composants locaux restent la reference du fichier.
+import SvgIcon from '../SvgIcon';
 
 const PINK = '#D91CD2';
 
@@ -300,7 +305,8 @@ export default function OfferCard({
               onClick={() => onMoveUp && onMoveUp(offer)}
               disabled={!canMoveUp}
               title="Monter cette offre"
-              className="text-xs py-1 px-2 rounded-lg"
+              aria-label="Monter cette offre"
+              className="text-xs py-1 px-2 rounded-lg inline-flex items-center justify-center"
               style={{
                 background: '#0a0a0f',
                 border: '1px solid rgba(217,28,210,0.2)',
@@ -308,13 +314,14 @@ export default function OfferCard({
                 opacity: canMoveUp ? 1 : 0.3,
                 cursor: canMoveUp ? 'pointer' : 'not-allowed'
               }}
-            >▲</button>
+            ><SvgIcon name="arrowUp" size={14} /></button>
             <button
               type="button"
               onClick={() => onMoveDown && onMoveDown(offer)}
               disabled={!canMoveDown}
               title="Descendre cette offre"
-              className="text-xs py-1 px-2 rounded-lg"
+              aria-label="Descendre cette offre"
+              className="text-xs py-1 px-2 rounded-lg inline-flex items-center justify-center"
               style={{
                 background: '#0a0a0f',
                 border: '1px solid rgba(217,28,210,0.2)',
@@ -322,7 +329,7 @@ export default function OfferCard({
                 opacity: canMoveDown ? 1 : 0.3,
                 cursor: canMoveDown ? 'pointer' : 'not-allowed'
               }}
-            >▼</button>
+            ><SvgIcon name="arrowDown" size={14} /></button>
           </div>
         )}
       </div>

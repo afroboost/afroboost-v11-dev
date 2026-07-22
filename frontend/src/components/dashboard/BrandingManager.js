@@ -3,6 +3,7 @@
  * Gestion couleur accent + logo du coach
  */
 import React, { useState, useEffect, useCallback } from 'react';
+import SvgIcon from '../SvgIcon';
 
 const BrandingManager = ({ API, coachEmail, t }) => {
   const [accentColor, setAccentColor] = useState('#D91CD2');
@@ -62,8 +63,8 @@ const BrandingManager = ({ API, coachEmail, t }) => {
       marginTop: '16px'
     }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-        <h3 style={{ color: '#fff', fontWeight: 600, fontSize: '16px', margin: 0 }}>
-          🎨 Branding
+        <h3 style={{ color: '#fff', fontWeight: 600, fontSize: '16px', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <SvgIcon name="palette" size={16} /> Branding
         </h3>
         {saveStatus && (
           <span style={{
@@ -74,7 +75,9 @@ const BrandingManager = ({ API, coachEmail, t }) => {
             color: saveStatus === 'saved' ? '#22c55e' : '#ef4444',
             border: `1px solid ${saveStatus === 'saved' ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`
           }}>
-            {saveStatus === 'saved' ? '✓ Sauvegardé' : '✕ Erreur'}
+            {saveStatus === 'saved'
+              ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="check" size={14} /> Sauvegardé</span>
+              : <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="close" size={14} /> Erreur</span>}
           </span>
         )}
       </div>
@@ -208,7 +211,9 @@ const BrandingManager = ({ API, coachEmail, t }) => {
         }}
         data-testid="save-branding"
       >
-        {saving ? '⏳ Sauvegarde...' : '💾 Sauvegarder le branding'}
+        {saving
+          ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}><SvgIcon name="loader" size={16} className="animate-spin" /> Sauvegarde...</span>
+          : <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}><SvgIcon name="save" size={16} /> Sauvegarder le branding</span>}
       </button>
     </div>
   );

@@ -7,6 +7,7 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { CreditsGate } from './index';
+import SvgIcon from '../SvgIcon';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -337,7 +338,8 @@ const PromoCodesTab = ({
             <button
               onClick={() => setCodesSearch('')}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-white/50 hover:text-white"
-            >✕</button>
+              aria-label="Effacer la recherche"
+            ><SvgIcon name="close" size={14} /></button>
           )}
         </div>
       </div>
@@ -354,7 +356,9 @@ const PromoCodesTab = ({
           }}
           data-testid="add-manual-contact-btn"
         >
-          {showManualContactForm ? '✕ Fermer' : t('addManualContact')}
+          {showManualContactForm ? (
+            <><SvgIcon name="close" size={14} /> Fermer</>
+          ) : t('addManualContact')}
         </button>
         <input type="file" accept=".csv" ref={fileInputRef} onChange={handleImportCSV} style={{ display: 'none' }} />
         <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-3 py-2 rounded-lg glass text-white text-xs sm:text-sm" data-testid="import-csv-btn">
@@ -366,7 +370,7 @@ const PromoCodesTab = ({
           style={{ background: 'rgba(139, 92, 246, 0.3)', border: '1px solid rgba(139, 92, 246, 0.5)' }}
           data-testid="export-csv-btn"
         >
-          📥 {t('exportCSV')}
+          <SvgIcon name="download" size={14} /> {t('exportCSV')}
         </button>
       </div>
       
@@ -374,7 +378,7 @@ const PromoCodesTab = ({
       {/* Manual Contact Form */}
       {showManualContactForm && (
         <form onSubmit={addManualContact} className="mb-6 p-4 rounded-lg border border-green-500/30" style={{ background: 'rgba(34, 197, 94, 0.1)' }}>
-          <h3 className="text-white font-semibold mb-3 text-sm">👤 Ajouter un nouveau contact</h3>
+          <h3 className="text-white font-semibold mb-3 text-sm"><span className="inline-flex items-center gap-1.5"><SvgIcon name="user" size={14} /> Ajouter un nouveau contact</span></h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
             <input 
               type="text" 
@@ -404,7 +408,7 @@ const PromoCodesTab = ({
             />
           </div>
           <button type="submit" className="px-4 py-2 rounded-lg text-sm font-medium text-white" style={{ background: 'rgba(34, 197, 94, 0.6)' }} data-testid="submit-manual-contact">
-            ✓ Ajouter le contact
+            <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Ajouter le contact</span>
           </button>
         </form>
       )}
@@ -421,11 +425,11 @@ const PromoCodesTab = ({
         {/* v104: Bandeau mode édition avec email bénéficiaire */}
         {editingCode && (
           <div className="mb-4 p-3 rounded-lg flex items-center gap-3 flex-wrap" style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
-            <span className="text-blue-400 text-sm font-bold">✏️ Mode Édition</span>
+            <span className="text-blue-400 text-sm font-bold inline-flex items-center gap-1.5"><SvgIcon name="edit" size={14} /> Mode Édition</span>
             <span className="text-white/60 text-xs">Code: <span className="text-white font-mono">{newCode.code}</span></span>
             {(newCode.assignedEmails?.length > 0 || selectedBeneficiaries?.length > 0) && (
               <span className="text-xs px-2 py-1 rounded-full" style={{ background: 'rgba(217, 28, 210, 0.15)', color: '#D91CD2', border: '1px solid rgba(217, 28, 210, 0.3)' }}>
-                📧 Bénéficiaire: {(selectedBeneficiaries?.length > 0 ? selectedBeneficiaries : newCode.assignedEmails)?.join(', ')}
+                <SvgIcon name="mail" size={14} /> Bénéficiaire: {(selectedBeneficiaries?.length > 0 ? selectedBeneficiaries : newCode.assignedEmails)?.join(', ')}
               </span>
             )}
           </div>
@@ -454,7 +458,7 @@ const PromoCodesTab = ({
               title="Nettoyer les données fantômes"
               data-testid="sanitize-btn"
             >
-              🧹 Nettoyer
+              <span className="inline-flex items-center gap-1.5"><SvgIcon name="clean" size={14} /> Nettoyer</span>
             </button>
           </div>
         </div>
@@ -523,7 +527,7 @@ const PromoCodesTab = ({
         {/* ============ SÉLECTION MULTIPLE DES BÉNÉFICIAIRES ============ */}
         <div className="mb-4">
           <label className="block text-white text-xs mb-2 opacity-70">
-            👥 Sélectionner les bénéficiaires ({selectedBeneficiaries?.length || 0} sélectionné{(selectedBeneficiaries?.length || 0) > 1 ? 's' : ''})
+            <SvgIcon name="users" size={14} /> Sélectionner les bénéficiaires ({selectedBeneficiaries?.length || 0} sélectionné{(selectedBeneficiaries?.length || 0) > 1 ? 's' : ''})
           </label>
           {/* V193: Filtre dédié pour les chips bénéficiaires */}
           <div className="relative mb-2">
@@ -542,7 +546,7 @@ const PromoCodesTab = ({
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-white/40 hover:text-white text-xs"
                 aria-label="Effacer le filtre"
               >
-                ✕
+                <SvgIcon name="close" size={14} />
               </button>
             )}
           </div>
@@ -561,7 +565,7 @@ const PromoCodesTab = ({
                   data-testid={`beneficiary-${i}`}
                   title={c.email + (c.whatsapp ? ' · ' + c.whatsapp : '')}
                 >
-                  {selectedBeneficiaries?.includes(c.email) && <span>✓</span>}
+                  {selectedBeneficiaries?.includes(c.email) && <SvgIcon name="check" size={14} />}
                   {c.name ? c.name.split(' ')[0] : 'Contact'}
                 </button>
               )) : (
@@ -614,7 +618,7 @@ const PromoCodesTab = ({
             {/* V206: Compteur d'utilisations modifiable en mode édition */}
             {editingCode && (
               <div className="flex items-center gap-2 mt-2">
-                <span className="text-xs text-yellow-400">⚠️ Utilisé :</span>
+                <span className="text-xs text-yellow-400 inline-flex items-center gap-1.5"><SvgIcon name="warning" size={14} /> Utilisé :</span>
                 <input
                   type="number"
                   min="0"
@@ -625,7 +629,7 @@ const PromoCodesTab = ({
                 />
                 <span className="text-xs text-white/50">/ {newCode.maxUses || '∞'}</span>
                 {(newCode.customUsed !== undefined && newCode.customUsed !== newCode.currentUsed) && (
-                  <span className="text-xs text-green-400">✅ Sera mis à jour</span>
+                  <span className="text-xs text-green-400 inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Sera mis à jour</span>
                 )}
               </div>
             )}
@@ -633,7 +637,7 @@ const PromoCodesTab = ({
 
           {/* Date d'expiration */}
           <div>
-            <label className="block text-white text-xs mb-1 opacity-70">📅 Date d'expiration</label>
+            <label className="block text-white text-xs mb-1 opacity-70"><span className="inline-flex items-center gap-1.5"><SvgIcon name="calendar" size={14} /> Date d'expiration</span></label>
             <input
               type="date"
               value={newCode.expiresAt || ''}
@@ -645,7 +649,7 @@ const PromoCodesTab = ({
 
           {/* V202: Montant Stripe (CHF) */}
           <div>
-            <label className="block text-white text-xs mb-1 opacity-70">💳 Prix Stripe (CHF)</label>
+            <label className="block text-white text-xs mb-1 opacity-70"><span className="inline-flex items-center gap-1.5"><SvgIcon name="creditCard" size={14} /> Prix Stripe (CHF)</span></label>
             <input
               type="number" step="0.01" min="0"
               placeholder="Laisser vide si gratuit"
@@ -663,7 +667,7 @@ const PromoCodesTab = ({
             <input type="checkbox" checked={!!newCode.multi_member}
               onChange={e => setNewCode({ ...newCode, multi_member: e.target.checked })}
               className="w-4 h-4 rounded" data-testid="multi-member-toggle" />
-            <span className="text-white text-xs">👥 Code partagé (multi-membres)</span>
+            <span className="text-white text-xs inline-flex items-center gap-1.5"><SvgIcon name="users" size={14} /> Code partagé (multi-membres)</span>
           </label>
 
           {newCode.multi_member && (
@@ -671,7 +675,7 @@ const PromoCodesTab = ({
               <input type="checkbox" checked={newCode.shared_sessions !== false}
                 onChange={e => setNewCode({ ...newCode, shared_sessions: e.target.checked })}
                 className="w-4 h-4 rounded" data-testid="shared-sessions-toggle" />
-              <span className="text-white text-xs">🔄 Séances partagées entre membres</span>
+              <span className="text-white text-xs inline-flex items-center gap-1.5"><SvgIcon name="refresh" size={14} /> Séances partagées entre membres</span>
             </label>
           )}
 
@@ -685,12 +689,12 @@ const PromoCodesTab = ({
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
           {/* Articles autorisés */}
           <div>
-            <label className="block text-white text-xs mb-1 opacity-70">📦 Articles autorisés</label>
+            <label className="block text-white text-xs mb-1 opacity-70"><span className="inline-flex items-center gap-1.5"><SvgIcon name="package" size={14} /> Articles autorisés</span></label>
             <div className="courses-scroll-container" style={{ maxHeight: '120px', overflowY: 'auto', padding: '4px' }} data-testid="articles-scroll-container">
               {/* Section Cours */}
               {courses && courses.length > 0 && (
                 <div className="mb-2">
-                  <p className="text-white text-xs opacity-40 mb-1">📅 Cours</p>
+                  <p className="text-white text-xs opacity-40 mb-1"><span className="inline-flex items-center gap-1.5"><SvgIcon name="calendar" size={14} /> Cours</span></p>
                   <div className="flex flex-wrap gap-1">
                     {courses.map(c => (
                       <button key={c.id} type="button" onClick={() => toggleCourseSelection && toggleCourseSelection(c.id)}
@@ -703,7 +707,7 @@ const PromoCodesTab = ({
               {/* Section Offres */}
               {offers && offers.length > 0 && (
                 <div className="mt-2">
-                  <p className="text-white text-xs opacity-40 mb-1">🎫 Offres</p>
+                  <p className="text-white text-xs opacity-40 mb-1"><span className="inline-flex items-center gap-1.5"><SvgIcon name="ticket" size={14} /> Offres</span></p>
                   <div className="flex flex-wrap gap-1">
                     {offers.map(o => (
                       <button key={o.id} type="button" onClick={() => toggleCourseSelection && toggleCourseSelection(o.id)}
@@ -740,7 +744,7 @@ const PromoCodesTab = ({
         {promoCategories.length > 0 && (
           <div style={{ marginTop: '12px', marginBottom: '12px' }}>
             <label style={{ color: 'rgba(255,255,255,0.6)', fontSize: '11px', fontWeight: 500, display: 'block', marginBottom: '6px' }}>
-              🎯 Ciblage par catégorie (optionnel)
+              <span className="inline-flex items-center gap-1.5"><SvgIcon name="target" size={14} /> Ciblage par catégorie (optionnel)</span>
             </label>
             <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
               {promoCategories.map(function(cat) {
@@ -777,9 +781,9 @@ const PromoCodesTab = ({
           style={editingCode ? { background: 'linear-gradient(135deg, #3b82f6, #2563eb)' } : {}}
         >
           {batchLoading ? (
-            <><span className="animate-spin">⏳</span> Création en cours...</>
+            <><SvgIcon name="loader" size={14} className="animate-spin" /> Création en cours...</>
           ) : editingCode ? (
-            '✏️ Mettre à jour le code'
+            <><SvgIcon name="edit" size={14} /> Mettre à jour le code</>
           ) : isBatchMode ? (
             <>{t('generateBatch')} ({newCode.batchCount || 1} codes)</>
           ) : (
@@ -809,14 +813,14 @@ const PromoCodesTab = ({
                   <span className="text-white font-bold text-lg">{code.code}</span>
                   {/* V202: Badge multi-membre */}
                   {code.multi_member && (
-                    <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(139,92,246,0.3)', color: '#c4b5fd' }}>
-                      👥 Multi
+                    <span className="px-2 py-0.5 rounded text-xs inline-flex items-center gap-1.5" style={{ background: 'rgba(139,92,246,0.3)', color: '#c4b5fd' }}>
+                      <SvgIcon name="users" size={14} /> Multi
                     </span>
                   )}
                   {/* V202: Badge prix Stripe */}
                   {code.stripe_amount && parseFloat(code.stripe_amount) > 0 && (
                     <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(34,197,94,0.2)', color: '#86efac' }}>
-                      💳 {parseFloat(code.stripe_amount).toFixed(0)} CHF
+                      <SvgIcon name="creditCard" size={14} /> {parseFloat(code.stripe_amount).toFixed(0)} CHF
                     </span>
                   )}
                   {/* v14.0: Bouton Copier le code */}
@@ -837,20 +841,20 @@ const PromoCodesTab = ({
                   </span>
                   {code.linkedOfferName && (
                     <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(139, 92, 246, 0.3)', color: '#a78bfa' }}>
-                      🎁 {code.linkedOfferName}
+                      <SvgIcon name="gift" size={14} /> {code.linkedOfferName}
                     </span>
                   )}
                   {/* V200: Badge EXPIRÉ — séparé de la désactivation manuelle */}
                   {codeExpired && (
-                    <span className="px-2 py-0.5 rounded text-xs font-semibold" style={{ background: 'rgba(239, 68, 68, 0.25)', color: '#ef4444' }}>
-                      ⚠️ EXPIRÉ
+                    <span className="px-2 py-0.5 rounded text-xs font-semibold inline-flex items-center gap-1.5" style={{ background: 'rgba(239, 68, 68, 0.25)', color: '#ef4444' }}>
+                      <SvgIcon name="warning" size={14} /> EXPIRÉ
                     </span>
                   )}
                 </div>
                 {/* Bénéficiaires — v106.1: support assignedEmail (string) + assignedEmails (array) */}
                 {(code.assignedEmails?.length > 0 || code.assignedEmail) && (
                   <p className="text-white/50 text-xs mt-1">
-                    📧 {(() => {
+                    <SvgIcon name="mail" size={14} /> {(() => {
                       const emails = code.assignedEmails?.length > 0
                         ? code.assignedEmails
                         : code.assignedEmail ? [code.assignedEmail] : [];
@@ -864,7 +868,11 @@ const PromoCodesTab = ({
                   {/* V200: Indicateur explicite « Expiré le » (rouge) vs « Expire le » (vert) */}
                   {code.expiresAt && (
                     <span style={{ color: codeExpired ? '#ef4444' : '#22c55e', marginLeft: '4px' }}>
-                      {' • '}{codeExpired ? '⚠️ Expiré le ' : '✅ Expire le '}{formatDate(code.expiresAt)}
+                      {' • '}{codeExpired ? (
+                        <><SvgIcon name="warning" size={14} /> Expiré le </>
+                      ) : (
+                        <><SvgIcon name="check" size={14} /> Expire le </>
+                      )}{formatDate(code.expiresAt)}
                     </span>
                   )}
                 </p>
@@ -890,7 +898,7 @@ const PromoCodesTab = ({
                         const showInfinite = sub.remaining_sessions === -1;
                         return (
                           <div key={sub.id || sub.email} className="flex items-center gap-2 text-xs">
-                            <span className="text-purple-400">👤</span>
+                            <span className="text-purple-400"><SvgIcon name="user" size={14} /></span>
                             <span className="text-white/60">{sub.name || sub.email}</span>
                             <span className="px-1.5 py-0.5 rounded text-[10px]" style={{
                               background: remaining <= 0
@@ -919,11 +927,11 @@ const PromoCodesTab = ({
                 {/* V200: 3 états — Expiré (date passée), Actif, Inactif. Le toggle reste cliquable même si expiré */}
                 {codeExpired ? (
                   <span
-                    className="px-3 py-1.5 rounded text-xs font-medium bg-red-500/20 text-red-400"
+                    className="px-3 py-1.5 rounded text-xs font-medium bg-red-500/20 text-red-400 inline-flex items-center gap-1.5"
                     title="Date d'expiration dépassée"
                     data-testid={`toggle-code-${code.id}`}
                   >
-                    ⏰ Expiré
+                    <SvgIcon name="clock" size={14} /> Expiré
                   </span>
                 ) : (
                   <button
@@ -931,7 +939,11 @@ const PromoCodesTab = ({
                     className={`px-3 py-1.5 rounded text-xs font-medium ${code.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}
                     data-testid={`toggle-code-${code.id}`}
                   >
-                    {code.active ? '✓ Actif' : '✗ Inactif'}
+                    {code.active ? (
+                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Actif</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="close" size={14} /> Inactif</span>
+                    )}
                   </button>
                 )}
                 
@@ -942,7 +954,7 @@ const PromoCodesTab = ({
                     className="px-3 py-1.5 rounded text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/40"
                     data-testid={`edit-code-${code.id}`}
                   >
-                    ✏️ Éditer
+                    <span className="inline-flex items-center gap-1.5"><SvgIcon name="edit" size={14} /> Éditer</span>
                   </button>
                 )}
                 
@@ -954,7 +966,11 @@ const PromoCodesTab = ({
                     title={copiedSpaceLinkId === code.id ? 'Lien copié !' : `Copier ${window.location.origin}/espace/${code.code}`}
                     data-testid={`share-space-link-${code.id}`}
                   >
-                    {copiedSpaceLinkId === code.id ? '✓ Copié' : '🔗 Lien'}
+                    {copiedSpaceLinkId === code.id ? (
+                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Copié</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="link" size={14} /> Lien</span>
+                    )}
                   </button>
                 )}
 
@@ -965,7 +981,7 @@ const PromoCodesTab = ({
                     className="px-3 py-1.5 rounded text-xs bg-purple-500/20 text-purple-400 hover:bg-purple-500/40"
                     data-testid={`duplicate-code-${code.id}`}
                   >
-                    📋 Dupliquer
+                    <span className="inline-flex items-center gap-1.5"><SvgIcon name="clipboard" size={14} /> Dupliquer</span>
                   </button>
                 )}
                 
@@ -974,8 +990,9 @@ const PromoCodesTab = ({
                   onClick={() => deleteCode && deleteCode(code.id)}
                   className="px-3 py-1.5 rounded text-xs bg-red-500/20 text-red-400 hover:bg-red-500/40"
                   data-testid={`delete-code-${code.id}`}
+                  aria-label="Supprimer le code"
                 >
-                  🗑️
+                  <SvgIcon name="trash" size={14} />
                 </button>
               </div>
             </div>

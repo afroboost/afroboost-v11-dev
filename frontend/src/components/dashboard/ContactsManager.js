@@ -11,6 +11,8 @@ import axios from 'axios';
 import { parseContacts } from '../../utils/contactParser';
 // V184: Espace abonné — partage du lien d'accès rapide
 import { copyToClipboard } from '../../utils/clipboard';
+// V228: pictogrammes vectoriels en remplacement des emoji
+import SvgIcon from '../SvgIcon';
 
 export default function ContactsManager({ API, coachEmail }) {
   const [contacts, setContacts] = useState([]);
@@ -487,9 +489,12 @@ export default function ContactsManager({ API, coachEmail }) {
       React.createElement('div', { style: { display: 'flex', gap: '8px', marginBottom: '15px', flexWrap: 'wrap' } },
         [
           { key: 'all', label: 'Tous' },
-          { key: 'group', label: '\uD83D\uDC65 Groupes' },
-          { key: 'user', label: '\uD83D\uDC64 Contacts' },
-          { key: 'google', label: '\uD83D\uDD35 Google' },
+          // V228: l'emoji du libelle devient un pictogramme ; le libelle reste un
+          // enfant unique de createElement, donc aucune `key` React n'est requise.
+          { key: 'group', label: React.createElement('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px' } }, React.createElement(SvgIcon, { name: 'users', size: 12 }), 'Groupes') },
+          { key: 'user', label: React.createElement('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px' } }, React.createElement(SvgIcon, { name: 'user', size: 12 }), 'Contacts') },
+          // V228: \uD83D\uDD35 n'est pas un pictogramme mais une pastille de couleur -> rendu CSS.
+          { key: 'google', label: React.createElement('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px' } }, React.createElement('span', { className: 'inline-block w-2 h-2 rounded-full bg-blue-500' }), 'Google') },
           { key: 'birthday', label: '\uD83C\uDF82 Anniversaires' }
         ].map(function(f) {
           return React.createElement('button', {
@@ -505,9 +510,9 @@ export default function ContactsManager({ API, coachEmail }) {
         })
       ),
       React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '15px' } },
-        React.createElement('button', { onClick: function() { var m = birthdayMonth - 1; if (m < 0) { setBirthdayMonth(11); setBirthdayYear(birthdayYear - 1); } else { setBirthdayMonth(m); } }, style: { background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontSize: '16px' } }, '\u25C0'),
+        React.createElement('button', { onClick: function() { var m = birthdayMonth - 1; if (m < 0) { setBirthdayMonth(11); setBirthdayYear(birthdayYear - 1); } else { setBirthdayMonth(m); } }, style: { background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontSize: '16px' }, 'aria-label': 'Mois pr\u00E9c\u00E9dent' }, React.createElement(SvgIcon, { name: 'arrowLeft', size: 16 })),
         React.createElement('span', { style: { color: '#fff', fontSize: '16px', fontWeight: 'bold' } }, monthNames[birthdayMonth] + ' ' + birthdayYear),
-        React.createElement('button', { onClick: function() { var m = birthdayMonth + 1; if (m > 11) { setBirthdayMonth(0); setBirthdayYear(birthdayYear + 1); } else { setBirthdayMonth(m); } }, style: { background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontSize: '16px' } }, '\u25B6')
+        React.createElement('button', { onClick: function() { var m = birthdayMonth + 1; if (m > 11) { setBirthdayMonth(0); setBirthdayYear(birthdayYear + 1); } else { setBirthdayMonth(m); } }, style: { background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontSize: '16px' }, 'aria-label': 'Mois suivant' }, React.createElement(SvgIcon, { name: 'arrowRight', size: 16 }))
       ),
       React.createElement('div', { style: { display: 'flex', gap: '10px', marginBottom: '15px' } },
         React.createElement('div', { style: { flex: 1, background: 'rgba(139,92,246,0.15)', borderRadius: '10px', padding: '10px', textAlign: 'center' } },
@@ -557,8 +562,10 @@ export default function ContactsManager({ API, coachEmail }) {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: syncing ? '10px' : '0', flexWrap: 'wrap', gap: '8px' }}>
           <div>
-            <span style={{ fontSize: '13px', fontWeight: 600, color: '#fff' }}>
-              {googleStatus.connected ? '✅ Google Contacts connecté' : '🔗 Connecter Google Contacts'}
+            <span style={{ fontSize: '13px', fontWeight: 600, color: '#fff', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              {googleStatus.connected
+                ? <><SvgIcon name="check" size={14} /> Google Contacts connecté</>
+                : <><SvgIcon name="link" size={14} /> Connecter Google Contacts</>}
             </span>
             {googleStatus.last_sync && (
               <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginLeft: '8px' }}>
@@ -572,25 +579,28 @@ export default function ContactsManager({ API, coachEmail }) {
                 padding: '8px 16px', borderRadius: '8px', border: 'none', fontSize: '12px', fontWeight: 600,
                 cursor: googleStatus.configured ? 'pointer' : 'not-allowed',
                 background: googleStatus.configured ? 'linear-gradient(135deg, #4285f4, #34a853)' : 'rgba(255,255,255,0.1)',
-                color: '#fff', opacity: googleStatus.configured ? 1 : 0.5
+                color: '#fff', opacity: googleStatus.configured ? 1 : 0.5,
+                display: 'inline-flex', alignItems: 'center', gap: '6px'
               }}>
-                🔗 Connecter
+                <SvgIcon name="link" size={14} /> Connecter
               </button>
             ) : (
               <button onClick={syncGoogleContacts} disabled={syncing} style={{
                 padding: '8px 16px', borderRadius: '8px', border: 'none', fontSize: '12px', fontWeight: 600,
                 cursor: syncing ? 'not-allowed' : 'pointer',
                 background: syncing ? 'rgba(34,197,94,0.2)' : 'linear-gradient(135deg, #22c55e, #16a34a)',
-                color: '#fff'
+                color: '#fff', display: 'inline-flex', alignItems: 'center', gap: '6px'
               }}>
-                {syncing ? '⏳ Sync en cours...' : '🔄 Synchroniser'}
+                {syncing
+                  ? <><SvgIcon name="loader" size={14} className="animate-spin" /> Sync en cours...</>
+                  : <><SvgIcon name="refresh" size={14} /> Synchroniser</>}
               </button>
             )}
           </div>
         </div>
         {!googleStatus.configured && (
           <p style={{ fontSize: '11px', color: '#f59e0b', margin: '8px 0 0 0' }}>
-            ⚠️ Google OAuth non configuré. Ajoutez GOOGLE_CONTACTS_CLIENT_ID dans les variables Vercel.
+            <SvgIcon name="warning" size={14} /> Google OAuth non configuré. Ajoutez GOOGLE_CONTACTS_CLIENT_ID dans les variables Vercel.
           </p>
         )}
         {syncing && (
@@ -609,30 +619,34 @@ export default function ContactsManager({ API, coachEmail }) {
         <button onClick={() => importRef.current?.click()} style={{
           flex: '1 1 auto', padding: '10px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,
           background: 'rgba(217,28,210,0.08)', border: '1px dashed rgba(217,28,210,0.4)',
-          color: '#D91CD2', cursor: 'pointer', minWidth: '120px'
+          color: '#D91CD2', cursor: 'pointer', minWidth: '120px',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
         }}>
-          📤 Importer CSV / vCard
+          <SvgIcon name="upload" size={14} /> Importer CSV / vCard
         </button>
         <button onClick={exportCSV} title="Exporter en CSV" style={{
           padding: '10px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,
           background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)',
-          color: '#60a5fa', cursor: 'pointer'
+          color: '#60a5fa', cursor: 'pointer',
+          display: 'inline-flex', alignItems: 'center', gap: '6px'
         }}>
-          📥 Export
+          <SvgIcon name="download" size={14} /> Export
         </button>
         <button onClick={deduplicateContacts} disabled={deduping} title="Fusionner les doublons" style={{
           padding: '10px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,
           background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)',
           color: '#f59e0b', cursor: deduping ? 'not-allowed' : 'pointer'
         }}>
-          {deduping ? '⏳' : '🧹'}
+          {deduping
+            ? <SvgIcon name="loader" size={14} className="animate-spin" />
+            : <SvgIcon name="clean" size={14} />}
         </button>
-        <button onClick={loadContacts} disabled={loading} style={{
+        <button onClick={loadContacts} disabled={loading} title="Rafraîchir la liste" aria-label="Rafraîchir la liste" style={{
           padding: '10px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,
           background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)',
           color: '#c4b5fd', cursor: 'pointer'
         }}>
-          🔄
+          <SvgIcon name="refresh" size={14} />
         </button>
         {/* V185 F1: Bouton "Ajouter un contact" manuel */}
         <button
@@ -641,10 +655,11 @@ export default function ContactsManager({ API, coachEmail }) {
           style={{
             padding: '10px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
             background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', border: 'none',
-            color: 'white', cursor: 'pointer', whiteSpace: 'nowrap'
+            color: 'white', cursor: 'pointer', whiteSpace: 'nowrap',
+            display: 'inline-flex', alignItems: 'center', gap: '6px'
           }}
         >
-          ✨ Ajouter un contact
+          <SvgIcon name="sparkles" size={14} /> Ajouter un contact
         </button>
       </div>
 
@@ -662,16 +677,20 @@ export default function ContactsManager({ API, coachEmail }) {
           <button onClick={deleteSelected} disabled={deleting} style={{
             padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
             background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.5)',
-            color: '#f87171', cursor: deleting ? 'not-allowed' : 'pointer'
+            color: '#f87171', cursor: deleting ? 'not-allowed' : 'pointer',
+            display: 'inline-flex', alignItems: 'center', gap: '6px'
           }}>
-            {deleting ? '⏳ Suppression...' : '🗑️ Supprimer'}
+            {deleting
+              ? <><SvgIcon name="loader" size={14} className="animate-spin" /> Suppression...</>
+              : <><SvgIcon name="trash" size={14} /> Supprimer</>}
           </button>
           <button onClick={exportCSV} style={{
             padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
             background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.4)',
-            color: '#60a5fa', cursor: 'pointer'
+            color: '#60a5fa', cursor: 'pointer',
+            display: 'inline-flex', alignItems: 'center', gap: '6px'
           }}>
-            📥 Exporter la sélection
+            <SvgIcon name="download" size={14} /> Exporter la sélection
           </button>
           {/* V154: Category assignment for selected */}
           {categories.length > 0 && (
@@ -717,9 +736,10 @@ export default function ContactsManager({ API, coachEmail }) {
           <button onClick={() => setSelectedIds(new Set())} style={{
             padding: '6px 10px', borderRadius: '8px', fontSize: '11px',
             background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)',
-            color: 'rgba(255,255,255,0.6)', cursor: 'pointer', marginLeft: 'auto'
+            color: 'rgba(255,255,255,0.6)', cursor: 'pointer', marginLeft: 'auto',
+            display: 'inline-flex', alignItems: 'center', gap: '6px'
           }}>
-            ✕ Annuler
+            <SvgIcon name="close" size={12} /> Annuler
           </button>
         </div>
       )}
@@ -752,16 +772,19 @@ export default function ContactsManager({ API, coachEmail }) {
         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
           {[
             { key: 'all', label: 'Tous' },
-            { key: 'group', label: '👥 Groupes' },
-            { key: 'user', label: '👤 Contacts' },
-            { key: 'google', label: '🔵 Google' }
+            // V228: libelles avec pictogramme ; 🔵 devient une pastille CSS car
+            // c'est un indicateur de couleur, pas un symbole.
+            { key: 'group', label: <><SvgIcon name="users" size={12} /> Groupes</> },
+            { key: 'user', label: <><SvgIcon name="user" size={12} /> Contacts</> },
+            { key: 'google', label: <><span className="inline-block w-2 h-2 rounded-full bg-blue-500" /> Google</> }
             ,{ key: 'birthday', label: '\uD83C\uDF82 Anniversaires' }
           ].map(f => (
             <button key={f.key} onClick={() => setFilterType(f.key)} style={{
               padding: '5px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: 500, cursor: 'pointer',
               background: filterType === f.key ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.05)',
               border: filterType === f.key ? '1px solid rgba(139,92,246,0.5)' : '1px solid rgba(255,255,255,0.1)',
-              color: filterType === f.key ? '#c4b5fd' : 'rgba(255,255,255,0.5)'
+              color: filterType === f.key ? '#c4b5fd' : 'rgba(255,255,255,0.5)',
+              display: 'inline-flex', alignItems: 'center', gap: '5px'
             }}>
               {f.label}
             </button>
@@ -794,16 +817,18 @@ export default function ContactsManager({ API, coachEmail }) {
             padding: '4px 10px', borderRadius: '14px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
             background: filterCategory === '__uncategorized__' ? 'rgba(156,163,175,0.25)' : 'rgba(255,255,255,0.04)',
             border: filterCategory === '__uncategorized__' ? '1px solid rgba(156,163,175,0.5)' : '1px solid rgba(255,255,255,0.08)',
-            color: filterCategory === '__uncategorized__' ? '#9CA3AF' : 'rgba(255,255,255,0.45)'
+            color: filterCategory === '__uncategorized__' ? '#9CA3AF' : 'rgba(255,255,255,0.45)',
+            display: 'inline-flex', alignItems: 'center', gap: '5px'
           }}>
-            ❓ Sans catégorie
+            <SvgIcon name="helpCircle" size={12} /> Sans catégorie
           </button>
           <button onClick={function() { setShowCategoryManager(!showCategoryManager); }} style={{
             padding: '4px 10px', borderRadius: '14px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
             background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)',
-            color: '#c4b5fd'
+            color: '#c4b5fd',
+            display: 'inline-flex', alignItems: 'center', gap: '5px'
           }}>
-            ⚙️ Gérer
+            <SvgIcon name="settings" size={12} /> Gérer
           </button>
         </div>
       )}
@@ -814,8 +839,8 @@ export default function ContactsManager({ API, coachEmail }) {
           padding: '14px', borderRadius: '12px', marginBottom: '12px',
           background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.25)'
         }}>
-          <div style={{ fontSize: '13px', fontWeight: 600, color: '#c4b5fd', marginBottom: '10px' }}>
-            ⚙️ Gérer les catégories
+          <div style={{ fontSize: '13px', fontWeight: 600, color: '#c4b5fd', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <SvgIcon name="settings" size={16} /> Gérer les catégories
           </div>
           {/* Existing categories */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
@@ -833,10 +858,13 @@ export default function ContactsManager({ API, coachEmail }) {
                     background: cat.color, flexShrink: 0
                   }} />
                   {!cat.is_default && (
-                    <button onClick={function() { deleteCategory(cat.id); }} style={{
-                      background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
-                      color: '#f87171', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
-                    }}>✕</button>
+                    <button onClick={function() { deleteCategory(cat.id); }}
+                      title={'Supprimer « ' + cat.name + ' »'}
+                      aria-label={'Supprimer « ' + cat.name + ' »'}
+                      style={{
+                        background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
+                        color: '#f87171', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
+                      }}><SvgIcon name="close" size={12} /></button>
                   )}
                 </div>
               );
@@ -911,8 +939,8 @@ export default function ContactsManager({ API, coachEmail }) {
         borderTop: filtered.some(c => c.type !== 'group') ? 'none' : undefined
       }}>
         {loading ? (
-          <div style={{ padding: '30px', textAlign: 'center', color: 'rgba(255,255,255,0.4)' }}>
-            ⏳ Chargement...
+          <div style={{ padding: '30px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+            <SvgIcon name="loader" size={16} className="animate-spin" /> Chargement...
           </div>
         ) : filtered.length === 0 ? (
           <div style={{ padding: '30px', textAlign: 'center', color: 'rgba(255,255,255,0.4)' }}>
@@ -944,8 +972,14 @@ export default function ContactsManager({ API, coachEmail }) {
                 ) : (
                   <span style={{ width: '16px', flexShrink: 0 }} />
                 )}
-                <span style={{ fontSize: '16px', width: '24px', textAlign: 'center', flexShrink: 0 }}>
-                  {isGroup ? '👥' : c.source === 'google' ? '🔵' : '👤'}
+                {/* V228: 👥/👤 deviennent des pictogrammes ; 🔵 (source Google) reste
+                    un indicateur de couleur et devient une pastille CSS bleue. */}
+                <span style={{ fontSize: '16px', width: '24px', flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {isGroup
+                    ? <SvgIcon name="users" size={16} />
+                    : c.source === 'google'
+                      ? <span className="inline-block w-2.5 h-2.5 rounded-full bg-blue-500" />
+                      : <SvgIcon name="user" size={16} />}
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '13px', color: '#fff', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -998,11 +1032,13 @@ export default function ContactsManager({ API, coachEmail }) {
                 {!isGroup && c.email && (() => {
                   const status = shareLinkStatus[c.email];
                   const isBusy = shareLinkBusy === c.email;
-                  let label = '🔗 Lien'; let bg = 'rgba(217,28,210,0.18)'; let col = '#F0A8EE';
+                  // V228: `label` passe de chaine a element JSX pour porter un
+                  // pictogramme. Les textes et les couleurs sont inchanges.
+                  let label = <><SvgIcon name="link" size={11} /> Lien</>; let bg = 'rgba(217,28,210,0.18)'; let col = '#F0A8EE';
                   if (isBusy) { label = '…'; }
-                  else if (status === 'copied') { label = '✓ Copié'; bg = 'rgba(34,197,94,0.18)'; col = '#86efac'; }
-                  else if (status === 'none') { label = '✗ Pas abonné'; bg = 'rgba(255,255,255,0.06)'; col = 'rgba(255,255,255,0.5)'; }
-                  else if (status === 'error') { label = '⚠️ Erreur'; bg = 'rgba(239,68,68,0.18)'; col = '#fca5a5'; }
+                  else if (status === 'copied') { label = <><SvgIcon name="check" size={11} /> Copié</>; bg = 'rgba(34,197,94,0.18)'; col = '#86efac'; }
+                  else if (status === 'none') { label = <><SvgIcon name="close" size={11} /> Pas abonné</>; bg = 'rgba(255,255,255,0.06)'; col = 'rgba(255,255,255,0.5)'; }
+                  else if (status === 'error') { label = <><SvgIcon name="warning" size={11} /> Erreur</>; bg = 'rgba(239,68,68,0.18)'; col = '#fca5a5'; }
                   return (
                     <button
                       type="button"
@@ -1013,7 +1049,8 @@ export default function ContactsManager({ API, coachEmail }) {
                       style={{
                         padding: '3px 8px', borderRadius: '10px', fontSize: '10px',
                         background: bg, color: col, border: 'none', cursor: isBusy ? 'wait' : 'pointer',
-                        whiteSpace: 'nowrap', flexShrink: 0, fontWeight: 500
+                        whiteSpace: 'nowrap', flexShrink: 0, fontWeight: 500,
+                        display: 'inline-flex', alignItems: 'center', gap: '4px'
                       }}
                     >
                       {label}
@@ -1049,8 +1086,8 @@ export default function ContactsManager({ API, coachEmail }) {
               color: 'white'
             }}
           >
-            <h2 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '4px' }}>
-              ✨ Ajouter un contact
+            <h2 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <SvgIcon name="sparkles" size={18} /> Ajouter un contact
             </h2>
             <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)', marginBottom: '18px' }}>
               Saisis les coordonnées du contact à ajouter au CRM.

@@ -4,6 +4,7 @@
  * Extrait de CoachDashboard.js
  */
 import React from 'react';
+import SvgIcon from '../SvgIcon';
 
 // Icônes
 const ShareIcon = () => (
@@ -157,7 +158,7 @@ const DashboardHeader = ({
               }}
               data-testid="stripe-connect-btn"
             >
-              <span className="text-lg">{stripeConnectStatus?.connected ? '✅' : '💳'}</span>
+              <span className="text-lg">{stripeConnectStatus?.connected ? <SvgIcon name="check" size={18} /> : <SvgIcon name="creditCard" size={18} />}</span>
               <span className="text-white/80 text-xs">{stripeConnectLoading ? '...' : 'Stripe'}</span>
             </button>
           )}

@@ -3,6 +3,7 @@
 // ce qui preserve le comportement actuel d'une seule requete POST/PUT.
 import React, { useState, useEffect } from 'react';
 import axios from 'axios'; // V225: creation/modification des horaires depuis le wizard
+import SvgIcon from '../SvgIcon'; // V228: pictogrammes vectoriels a la place des emoji
 
 const STEPS = [
   { n: 1, label: 'Bases' },
@@ -68,10 +69,14 @@ const toEmbedUrl = (url) => {
 // V225: chaque palier porte aussi une cle de libelle (`labelKey`) et un
 // placeholder, pour rendre le nom du palier editable sans dupliquer le bloc
 // de rendu en trois copies quasi identiques.
+// V228: l'emoji de tete est sorti du libelle et porte par une cle `icon`, rendue
+// en SvgIcon a l'affichage (l'ancienne chaine ne pouvait pas contenir de JSX).
+// Ces libelles ne sont QUE d'affichage : ils ne sont ni persistes ni envoyes au
+// backend (seules les cles `key` / `labelKey` le sont).
 const PROGRESSIVE_TIERS = [
-  { key: 'price_early_bird', label: '✨ Early Bird (plus de 7 jours avant)', labelKey: 'label_early_bird', placeholder: 'Prévente' },
-  { key: 'price_standard', label: '⏱ Standard (plus de 24h avant)', labelKey: 'label_standard', placeholder: 'Standard' },
-  { key: 'price_last_minute', label: '⚡ Last Minute (moins de 24h)', labelKey: 'label_last_minute', placeholder: 'Dernière min.' }
+  { key: 'price_early_bird', icon: 'sparkles', label: 'Early Bird (plus de 7 jours avant)', labelKey: 'label_early_bird', placeholder: 'Prévente' },
+  { key: 'price_standard', icon: 'clock', label: 'Standard (plus de 24h avant)', labelKey: 'label_standard', placeholder: 'Standard' },
+  { key: 'price_last_minute', icon: 'zap', label: 'Last Minute (moins de 24h)', labelKey: 'label_last_minute', placeholder: 'Dernière min.' }
 ];
 
 export default function OfferWizard({
@@ -806,7 +811,9 @@ export default function OfferWizard({
             onChange={(e) => set('progressive_pricing', e.target.checked)}
             className="accent-[#D91CD2] w-4 h-4 v224-input"
           />
-          <span className="text-white text-sm font-medium">📊 Activer les 3 paliers de prix</span>
+          <span className="text-white text-sm font-medium inline-flex items-center gap-1.5">
+            <SvgIcon name="barChart" size={14} /> Activer les 3 paliers de prix
+          </span>
         </label>
         <p className="text-xs mt-1 ml-7" style={{ color: 'rgba(255,255,255,0.5)' }}>
           Récompense les réservations en avance et capture les réservations de dernière minute.
@@ -816,13 +823,15 @@ export default function OfferWizard({
           <div className="mt-4 space-y-3">
             {!form.countdown_date && (
               <p className="text-xs p-2 rounded" style={{ background: 'rgba(217,28,210,0.1)', color: PINK }}>
-                ⚠️ Activez le compte à rebours (étape 2 « Logistique ») : sans date de
+                <SvgIcon name="warning" size={14} />{' '}Activez le compte à rebours (étape 2 « Logistique ») : sans date de
                 référence, les paliers ne s'appliquent pas et le prix normal reste affiché.
               </p>
             )}
             {PROGRESSIVE_TIERS.map(f => (
               <div key={f.key}>
-                <label className="block text-xs mb-1" style={LABEL_STYLE}>{f.label}</label>
+                <label className="block text-xs mb-1" style={LABEL_STYLE}>
+                  <SvgIcon name={f.icon} size={14} />{' '}{f.label}
+                </label>
                 <input
                   type="number"
                   value={form[f.key] ?? ''}
@@ -901,7 +910,15 @@ export default function OfferWizard({
               }}
               data-testid="ai-enhance-description"
             >
-              {aiLoading ? '⏳ IA...' : '✨ Aide IA'}
+              {aiLoading ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <SvgIcon name="loader" size={14} className="animate-spin" /> IA...
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5">
+                  <SvgIcon name="sparkles" size={14} /> Aide IA
+                </span>
+              )}
             </button>
           )}
         </div>
@@ -919,7 +936,9 @@ export default function OfferWizard({
 
       {/* Mots-clés */}
       <div>
-        <label className="block text-xs mb-1" style={LABEL_STYLE}>🔍 Mots-clés (pour la recherche)</label>
+        <label className="block text-xs mb-1" style={LABEL_STYLE}>
+          <SvgIcon name="search" size={14} />{' '}Mots-clés (pour la recherche)
+        </label>
         <input
           type="text"
           value={form.keywords || ''}
@@ -928,7 +947,9 @@ export default function OfferWizard({
           style={INPUT_STYLE}
           className="text-sm v224-input"
         />
-        <p className="text-xs mt-1" style={HINT_STYLE}>💡 Aide les clients à trouver cette offre</p>
+        <p className="text-xs mt-1" style={HINT_STYLE}>
+          <SvgIcon name="lightbulb" size={14} />{' '}Aide les clients à trouver cette offre
+        </p>
       </div>
     </div>
   );
@@ -946,7 +967,11 @@ export default function OfferWizard({
             style={{ accentColor: '#f59e0b' }}
             data-testid="countdown-toggle"
           />
-          <span className="text-sm font-bold" style={{ color: '#f59e0b' }}>⏳ COMPTE À REBOURS</span>
+          {/* V228: ⏳ designe ici un COMPTE A REBOURS, pas un chargement — d'ou
+              `hourglass` et non `loader` (qui serait un spinner). */}
+          <span className="text-sm font-bold inline-flex items-center gap-1.5" style={{ color: '#f59e0b' }}>
+            <SvgIcon name="hourglass" size={14} /> COMPTE À REBOURS
+          </span>
         </label>
 
         {form.countdown_enabled ? (
@@ -986,7 +1011,7 @@ export default function OfferWizard({
             </div>
             {form.countdown_date ? (
               <p className="text-xs" style={{ color: '#f59e0b', opacity: 0.9 }}>
-                ⏳ Compte à rebours jusqu'au{' '}
+                <SvgIcon name="hourglass" size={14} />{' '}Compte à rebours jusqu'au{' '}
                 {new Date(form.countdown_date + 'T' + (form.countdown_time || '23:59'))
                   .toLocaleDateString('fr-CH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                 {' '}à {form.countdown_time || '23:59'}
@@ -1006,7 +1031,9 @@ export default function OfferWizard({
 
       {/* Duree de validite */}
       <div className="p-4 rounded-lg" style={{ border: `2px solid ${PINK}`, background: 'rgba(217,28,210,0.08)' }}>
-        <p className="text-sm font-bold mb-3" style={{ color: PINK }}>⏱ DURÉE DE VALIDITÉ</p>
+        <p className="text-sm font-bold mb-3 flex items-center gap-1.5" style={{ color: PINK }}>
+          <SvgIcon name="clock" size={14} /> DURÉE DE VALIDITÉ
+        </p>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs mb-1" style={LABEL_STYLE}>Durée</label>
@@ -1048,7 +1075,7 @@ export default function OfferWizard({
               Prolonger automatiquement à l'expiration
             </label>
             <p className="text-xs mt-2" style={{ color: PINK, opacity: 0.8 }}>
-              📅 Valide pendant {form.duration_value}{' '}
+              <SvgIcon name="calendar" size={14} />{' '}Valide pendant {form.duration_value}{' '}
               {form.duration_unit === 'days' ? 'jour(s)' : form.duration_unit === 'weeks' ? 'semaine(s)' : 'mois'}
               {form.is_auto_prolong !== false ? ' • Auto-prolongation activée' : ' • Expire sans renouvellement'}
             </p>
@@ -1061,7 +1088,7 @@ export default function OfferWizard({
         )}
         {((!form.duration_value && form.duration_unit) || (form.duration_value && !form.duration_unit)) && (
           <p className="text-xs mt-2" style={{ color: '#f97316' }}>
-            ⚠️ Veuillez remplir les deux champs (durée + unité) pour activer la validité
+            <SvgIcon name="warning" size={14} />{' '}Veuillez remplir les deux champs (durée + unité) pour activer la validité
           </p>
         )}
       </div>
@@ -1071,7 +1098,7 @@ export default function OfferWizard({
       {!form.isProduct && canEditCourses && (
         <div className="p-3 rounded-lg" style={{ border: '1px solid rgba(217,28,210,0.3)', background: 'rgba(217,28,210,0.05)' }}>
           <label className="text-xs text-white font-semibold mb-2 block">
-            📅 Horaires de cette offre
+            <SvgIcon name="calendar" size={14} />{' '}Horaires de cette offre
           </label>
           <p className="text-xs mb-3" style={{ color: 'rgba(255,255,255,0.5)' }}>
             Quand un client cliquera sur cette offre, il verra uniquement ces horaires.
@@ -1097,7 +1124,9 @@ export default function OfferWizard({
               data-testid="auto-review-toggle"
             />
             <span className="flex-1">
-              <span className="block text-xs text-white font-semibold">⭐ Demande d'avis automatique</span>
+              <span className="block text-xs text-white font-semibold">
+                <SvgIcon name="star" size={14} />{' '}Demande d'avis automatique
+              </span>
               <span className="block text-xs" style={HINT_STYLE}>
                 Après chaque cours, inviter les participants à laisser un avis.
               </span>
@@ -1106,7 +1135,7 @@ export default function OfferWizard({
 
           {coursesError && (
             <p className="text-xs mb-3 p-2 rounded" style={{ background: 'rgba(249,115,22,0.12)', color: '#f97316' }}>
-              ⚠️ {coursesError}
+              <SvgIcon name="warning" size={14} /> {coursesError}
             </p>
           )}
 
@@ -1141,12 +1170,12 @@ export default function OfferWizard({
                     className="text-sm leading-none px-2 py-2 rounded-lg"
                     style={{ color: 'rgba(255,255,255,0.5)', background: 'none', border: '1px solid #333', cursor: 'pointer' }}
                   >
-                    ✕
+                    <SvgIcon name="close" size={14} />
                   </button>
                 </div>
                 {(course.locationName || course.location) && (
                   <p className="text-xs mt-1" style={HINT_STYLE}>
-                    📍 {course.locationName || course.location}
+                    <SvgIcon name="mapPin" size={14} /> {course.locationName || course.location}
                   </p>
                 )}
                 {/* V226: le badge « masqué » s'affiche sur TOUTE carte dont
@@ -1156,15 +1185,18 @@ export default function OfferWizard({
                 {course.visible === false && (
                   <p className="text-xs mt-2">
                     <span
-                      className="px-2 py-1 rounded-lg"
+                      className="px-2 py-1 rounded-lg inline-flex items-center gap-1.5"
                       style={{ background: 'rgba(249,115,22,0.15)', color: '#f97316' }}
                     >
-                      🚫 Masqué
+                      {/* V228: le 🚫 formait ici la paire « Masqué / 👁️ Visible » —
+                          `eyeOff`/`eye` la rendent, la ou `lock`/`close` de la table
+                          diraient « protégé » ou « annuler ». */}
+                      <SvgIcon name="eyeOff" size={14} />Masqué
                     </span>
                   </p>
                 )}
                 <p className="text-xs mt-2" style={HINT_STYLE}>
-                  🔒 Horaire géré par un autre compte — lecture seule.
+                  <SvgIcon name="lock" size={14} />{' '}Horaire géré par un autre compte — lecture seule.
                 </p>
               </div>
             ) : (
@@ -1195,7 +1227,7 @@ export default function OfferWizard({
                     className="text-sm leading-none px-2 py-2 rounded-lg"
                     style={{ color: 'rgba(255,255,255,0.5)', background: 'none', border: '1px solid #333', cursor: 'pointer' }}
                   >
-                    ✕
+                    <SvgIcon name="close" size={14} />
                   </button>
                 </div>
 
@@ -1246,18 +1278,20 @@ export default function OfferWizard({
                     abandonnee, une fois la section « Cours » retiree. */}
                 <div className="flex items-center justify-between gap-2 mt-3">
                   {sessionCreatedCourseIds.includes(course.id) ? (
-                    <span className="text-xs" style={HINT_STYLE}>
-                      🕓 Sera publié à l'enregistrement de l'offre
+                    <span className="text-xs inline-flex items-center gap-1.5" style={HINT_STYLE}>
+                      <SvgIcon name="clock" size={14} /> Sera publié à l'enregistrement de l'offre
                     </span>
                   ) : (
                     <>
                       <span
-                        className="text-xs px-2 py-1 rounded-lg"
+                        className="text-xs px-2 py-1 rounded-lg inline-flex items-center gap-1.5"
                         style={course.visible === false
                           ? { background: 'rgba(249,115,22,0.15)', color: '#f97316' }
                           : { background: 'rgba(34,197,94,0.12)', color: '#22c55e' }}
                       >
-                        {course.visible === false ? '🚫 Masqué' : '👁️ Visible'}
+                        {course.visible === false
+                          ? <><SvgIcon name="eyeOff" size={14} />Masqué</>
+                          : <><SvgIcon name="eye" size={14} />Visible</>}
                       </span>
                       <button
                         type="button"
@@ -1276,7 +1310,13 @@ export default function OfferWizard({
                         }}
                         data-testid={`course-visibility-${course.id}`}
                       >
-                        {course.visible === false ? '👁️ Republier' : 'Masquer'}
+                        {course.visible === false
+                          ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              <SvgIcon name="eye" size={14} /> Republier
+                            </span>
+                          )
+                          : 'Masquer'}
                       </button>
                     </>
                   )}
@@ -1303,7 +1343,9 @@ export default function OfferWizard({
                     }}
                     data-testid={`course-duplicate-${course.id}`}
                   >
-                    ⧉ Dupliquer
+                    <span className="inline-flex items-center gap-1.5">
+                      <SvgIcon name="copy" size={14} /> Dupliquer
+                    </span>
                   </button>
                   {/* V226 TACHE 8: sans `coachEmail`, le serveur repondrait 400
                       (« coach_email requis », server.py l.14216) : on n'affiche
@@ -1324,7 +1366,9 @@ export default function OfferWizard({
                       }}
                       data-testid={`review-request-${course.id}`}
                     >
-                      {reviewRequestSending[course.id] ? '⏳' : '⭐'} Demander un avis
+                      {reviewRequestSending[course.id]
+                        ? <SvgIcon name="loader" size={14} className="animate-spin" />
+                        : <SvgIcon name="star" size={14} />} Demander un avis
                     </button>
                   )}
                   {/* V226 TACHE 8: retour visuel repris de CoursesManager.js
@@ -1335,8 +1379,17 @@ export default function OfferWizard({
                       style={{ color: reviewRequestResult[course.id] >= 0 ? '#22c55e' : '#ef4444' }}
                     >
                       {reviewRequestResult[course.id] >= 0
-                        ? `✅ Envoyé à ${reviewRequestResult[course.id]} abonné${reviewRequestResult[course.id] > 1 ? 's' : ''}`
-                        : '❌ Erreur'}
+                        ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <SvgIcon name="check" size={14} />
+                            {`Envoyé à ${reviewRequestResult[course.id]} abonné${reviewRequestResult[course.id] > 1 ? 's' : ''}`}
+                          </span>
+                        )
+                        : (
+                          <span className="inline-flex items-center gap-1.5">
+                            <SvgIcon name="close" size={14} />Erreur
+                          </span>
+                        )}
                     </span>
                   )}
                 </div>
@@ -1346,7 +1399,7 @@ export default function OfferWizard({
                     base) ; ces deux boutons-ci touchent la base. */}
                 <div className="mt-3 pt-2" style={{ borderTop: '1px solid #333' }}>
                   <p className="text-xs mb-2" style={HINT_STYLE}>
-                    ✕ retire l'horaire de cette offre — le cours reste en base.
+                    <SvgIcon name="close" size={14} />{' '}retire l'horaire de cette offre — le cours reste en base.
                   </p>
                   <div className="flex items-center gap-2">
                     <button
@@ -1366,7 +1419,9 @@ export default function OfferWizard({
                       }}
                       data-testid={`course-unlink-${course.id}`}
                     >
-                      ✕ Retirer de l'offre
+                      <span className="inline-flex items-center gap-1.5">
+                        <SvgIcon name="close" size={14} /> Retirer de l'offre
+                      </span>
                     </button>
                     {/* V226 CORRECTIF 4: bouton « Archiver » NON RENDU.
                         `GET /courses` (server.py l.1001) filtre
@@ -1400,7 +1455,9 @@ export default function OfferWizard({
                       }}
                       data-testid={`course-archive-${course.id}`}
                     >
-                      📁 Archiver
+                      <span className="inline-flex items-center gap-1.5">
+                        <SvgIcon name="file" size={14} /> Archiver
+                      </span>
                     </button>
                     )}
                     <button
@@ -1418,7 +1475,9 @@ export default function OfferWizard({
                       }}
                       data-testid={`course-delete-${course.id}`}
                     >
-                      🗑 Supprimer l'horaire
+                      <span className="inline-flex items-center gap-1.5">
+                        <SvgIcon name="trash" size={14} /> Supprimer l'horaire
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -1433,7 +1492,7 @@ export default function OfferWizard({
           {sessionArchivedCourses.length > 0 && (
             <div className="mt-3 pt-3" style={{ borderTop: '1px solid #333' }}>
               <p className="text-xs mb-2" style={{ color: '#f97316' }}>
-                📁 Archivés dans cette session ({sessionArchivedCourses.length})
+                <SvgIcon name="file" size={14} />{' '}Archivés dans cette session ({sessionArchivedCourses.length})
               </p>
               <div className="space-y-2">
                 {sessionArchivedCourses.map(course => (
@@ -1463,7 +1522,9 @@ export default function OfferWizard({
                       }}
                       data-testid={`course-restore-${course.id}`}
                     >
-                      ↩️ Restaurer
+                      <span className="inline-flex items-center gap-1.5">
+                        <SvgIcon name="undo" size={14} /> Restaurer
+                      </span>
                     </button>
                   </div>
                 ))}
@@ -1485,7 +1546,11 @@ export default function OfferWizard({
             }}
             data-testid="add-course-schedule"
           >
-            {addingCourse ? '⏳ Création...' : '+ Ajouter un horaire'}
+            {addingCourse ? (
+              <span className="inline-flex items-center gap-1.5">
+                <SvgIcon name="loader" size={14} className="animate-spin" /> Création...
+              </span>
+            ) : '+ Ajouter un horaire'}
           </button>
 
           {/* V225: on conserve la possibilite de rattacher un cours DEJA existant,
@@ -1524,7 +1589,9 @@ export default function OfferWizard({
           )}
 
           {linkedCourses.length > 0 && (
-            <p className="text-xs mt-3 text-pink-400">✓ {linkedCourses.length} horaire(s) lié(s)</p>
+            <p className="text-xs mt-3 text-pink-400 flex items-center gap-1.5">
+              <SvgIcon name="check" size={14} /> {linkedCourses.length} horaire(s) lié(s)
+            </p>
           )}
         </div>
       )}
@@ -1534,7 +1601,7 @@ export default function OfferWizard({
       {!form.isProduct && !canEditCourses && visibleCourses.length > 0 && (
         <div className="p-3 rounded-lg" style={{ border: '1px solid rgba(217,28,210,0.3)', background: 'rgba(217,28,210,0.05)' }}>
           <label className="text-xs text-white font-semibold mb-2 block">
-            📅 Cours associés à cette offre
+            <SvgIcon name="calendar" size={14} />{' '}Cours associés à cette offre
           </label>
           <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.5)' }}>
             Quand un client cliquera sur cette offre, il verra uniquement ces cours.
@@ -1570,7 +1637,9 @@ export default function OfferWizard({
             })}
           </div>
           {linkedIds.length > 0 && (
-            <p className="text-xs mt-2 text-pink-400">✓ {linkedIds.length} cours lié(s)</p>
+            <p className="text-xs mt-2 text-pink-400 flex items-center gap-1.5">
+              <SvgIcon name="check" size={14} /> {linkedIds.length} cours lié(s)
+            </p>
           )}
         </div>
       )}
@@ -1578,7 +1647,9 @@ export default function OfferWizard({
       {/* V224: metadonnees d'activite */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
-          <label className="block text-xs mb-1" style={LABEL_STYLE}>⏲ Durée de la séance (min)</label>
+          <label className="block text-xs mb-1" style={LABEL_STYLE}>
+            <SvgIcon name="clock" size={14} />{' '}Durée de la séance (min)
+          </label>
           <input
             type="number"
             min="0"
@@ -1590,7 +1661,9 @@ export default function OfferWizard({
           />
         </div>
         <div>
-          <label className="block text-xs mb-1" style={LABEL_STYLE}>📍 Lieu</label>
+          <label className="block text-xs mb-1" style={LABEL_STYLE}>
+            <SvgIcon name="mapPin" size={14} />{' '}Lieu
+          </label>
           <input
             type="text"
             value={form.location || ''}
@@ -1601,7 +1674,9 @@ export default function OfferWizard({
           />
         </div>
         <div>
-          <label className="block text-xs mb-1" style={LABEL_STYLE}>👥 Participants max</label>
+          <label className="block text-xs mb-1" style={LABEL_STYLE}>
+            <SvgIcon name="users" size={14} />{' '}Participants max
+          </label>
           <input
             type="number"
             min="0"
@@ -1654,7 +1729,9 @@ export default function OfferWizard({
       {/* Bloc produit */}
       {form.isProduct && (
         <div className="p-3 rounded-lg" style={{ border: '1px solid rgba(139,92,246,0.3)' }}>
-          <p className="text-xs text-purple-400 mb-3">📦 Paramètres produit</p>
+          <p className="text-xs text-purple-400 mb-3 flex items-center gap-1.5">
+            <SvgIcon name="package" size={14} /> Paramètres produit
+          </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs mb-1" style={LABEL_STYLE}>TVA (%)</label>
@@ -1723,7 +1800,11 @@ export default function OfferWizard({
   const renderStep3 = () => (
     <div className="space-y-4">
       <div>
-        <label className="block text-xs mb-2" style={LABEL_STYLE}>📷 Images (max 5 URLs)</label>
+        <label className="block text-xs mb-2" style={LABEL_STYLE}>
+          {/* V228: le champ liste des VISUELS (URLs d'images), d'ou `image`
+              plutot que `camera`, qui designerait une prise de vue. */}
+          <SvgIcon name="image" size={14} />{' '}Images (max 5 URLs)
+        </label>
         <div className="space-y-2">
           {[0, 1, 2, 3, 4].map(i => (
             <input
@@ -1744,7 +1825,9 @@ export default function OfferWizard({
       </div>
 
       <div>
-        <label className="block text-xs mb-1" style={LABEL_STYLE}>🎬 Vidéo (URL)</label>
+        <label className="block text-xs mb-1" style={LABEL_STYLE}>
+          <SvgIcon name="video" size={14} />{' '}Vidéo (URL)
+        </label>
         <input
           type="url"
           value={form.videoUrl || ''}
@@ -1803,7 +1886,15 @@ export default function OfferWizard({
         {/* En-tete */}
         <div className="flex items-center justify-between px-5 pt-5 pb-3">
           <h3 className="text-white font-semibold text-base">
-            {isEditing ? '✏️ Modifier l\'offre' : '➕ Nouvelle offre'}
+            {isEditing ? (
+              <span className="inline-flex items-center gap-1.5">
+                <SvgIcon name="edit" size={16} /> Modifier l'offre
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5">
+                <SvgIcon name="plusCircle" size={16} /> Nouvelle offre
+              </span>
+            )}
           </h3>
           <button
             type="button"
@@ -1812,7 +1903,7 @@ export default function OfferWizard({
             style={{ color: 'rgba(255,255,255,0.5)', background: 'none', border: 'none', cursor: 'pointer' }}
             aria-label="Fermer"
           >
-            ✕
+            <SvgIcon name="close" size={18} />
           </button>
         </div>
 
@@ -1894,7 +1985,11 @@ export default function OfferWizard({
                 className="text-sm font-medium px-5 py-2 rounded-lg"
                 style={{ background: PINK, color: '#fff', border: 'none', cursor: (coursesSaving || addingCourse || courseBusyId) ? 'wait' : 'pointer', opacity: (coursesSaving || addingCourse || courseBusyId) ? 0.6 : 1 }}
               >
-                {coursesSaving ? '⏳ Enregistrement...' : (isEditing ? 'Enregistrer' : 'Créer l\'offre')}
+                {coursesSaving ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <SvgIcon name="loader" size={14} className="animate-spin" /> Enregistrement...
+                  </span>
+                ) : (isEditing ? 'Enregistrer' : 'Créer l\'offre')}
               </button>
             )}
           </div>

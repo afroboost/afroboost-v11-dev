@@ -5,6 +5,7 @@
 import React from 'react';
 import OfferWizard from './OfferWizard';   // V224
 import OfferCard from './OfferCard';       // V224
+import SvgIcon from '../SvgIcon';          // V228
 
 const OffersManager = ({
   offers,
@@ -138,7 +139,9 @@ const OffersManager = ({
     if (isOfferWithoutSchedule(offer)) {
       return (
         <div className="mt-3 p-3 rounded-lg text-xs" style={{ background: 'rgba(139,92,246,0.08)', color: 'rgba(255,255,255,0.6)' }}>
-          {offer.category === 'audio' ? '🎵' : offer.category === 'video' ? '🎬' : '📦'} Produit sans horaire
+          <span className="inline-flex items-center gap-1.5">
+            <SvgIcon name={offer.category === 'audio' ? 'music' : offer.category === 'video' ? 'video' : 'package'} size={14} /> Produit sans horaire
+          </span>
         </div>
       );
     }
@@ -147,8 +150,8 @@ const OffersManager = ({
     return (
       <div className="mt-3 p-3 rounded-lg" style={{ background: 'rgba(217,28,210,0.06)', border: '1px solid rgba(217,28,210,0.2)' }}>
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-semibold" style={{ color: '#d91cd2' }}>
-            📅 Horaires proposés ({linkedCourses.length})
+          <span className="text-xs font-semibold inline-flex items-center gap-1.5" style={{ color: '#d91cd2' }}>
+            <SvgIcon name="calendar" size={14} /> <span>Horaires proposés ({linkedCourses.length})</span>
           </span>
           <span className="text-xs text-white/40">
             {linkedCourses.length === 0 ? 'Aucun — tous les cours seront proposés' : ''}
@@ -167,7 +170,8 @@ const OffersManager = ({
                   onClick={() => toggleCourseLink(offer, c.id)}
                   className="ml-1 text-white/70 hover:text-red-300"
                   title="Retirer ce créneau"
-                >✕</button>
+                  aria-label="Retirer ce créneau"
+                ><SvgIcon name="close" size={12} /></button>
               </div>
             ))}
           </div>
@@ -461,7 +465,8 @@ const OffersManager = ({
             <button
               onClick={() => setOffersSearch('')}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-white/50 hover:text-white"
-            >✕</button>
+              aria-label="Effacer la recherche"
+            ><SvgIcon name="close" size={14} /></button>
           )}
         </div>
       </div>
@@ -608,7 +613,7 @@ const OffersManager = ({
                 {offer.images?.[0] || offer.thumbnail ? (
                   <img src={offer.images?.[0] || offer.thumbnail} alt="" className="w-16 h-16 rounded-lg object-cover flex-shrink-0" loading="lazy" />
                 ) : (
-                  <div className="w-16 h-16 rounded-lg bg-purple-900/30 flex items-center justify-center text-2xl flex-shrink-0">🎧</div>
+                  <div className="w-16 h-16 rounded-lg bg-purple-900/30 flex items-center justify-center text-2xl flex-shrink-0"><SvgIcon name="headphones" size={24} /></div>
                 )}
                 <div className="flex-1 min-w-0">
                   <h4 className="text-white font-semibold text-sm truncate">{offer.name}</h4>
@@ -642,12 +647,18 @@ const OffersManager = ({
                 className="w-full mb-2 py-2 rounded-lg text-xs font-medium flex items-center justify-between px-3"
                 style={{ background: 'rgba(139,92,246,0.15)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)' }}
               >
-                <span>
+                <span className="inline-flex items-center gap-1.5">
                   {isOfferWithoutSchedule(offer)
-                    ? (offer.isProduct ? '📦 Produit' : offer.category === 'audio' ? '🎵 Audio' : offer.category === 'video' ? '🎬 Vidéo' : '📦 Produit')
-                    : `📅 ${getLinkedCoursesForOffer(offer).length} horaire(s) associé(s)`}
+                    ? (offer.isProduct
+                        ? <><SvgIcon name="package" size={14} /> Produit</>
+                        : offer.category === 'audio'
+                          ? <><SvgIcon name="music" size={14} /> Audio</>
+                          : offer.category === 'video'
+                            ? <><SvgIcon name="video" size={14} /> Vidéo</>
+                            : <><SvgIcon name="package" size={14} /> Produit</>)
+                    : <><SvgIcon name="calendar" size={14} /> <span>{getLinkedCoursesForOffer(offer).length} horaire(s) associé(s)</span></>}
                 </span>
-                <span>{expandedOfferId === offer.id ? '▲' : '▼'}</span>
+                <span><SvgIcon name={expandedOfferId === offer.id ? 'arrowUp' : 'arrowDown'} size={14} /></span>
               </button>
 
               {/* Section horaires liés (accordéon) */}
@@ -660,7 +671,7 @@ const OffersManager = ({
                   className="flex-1 py-3 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm font-medium"
                   data-testid={`edit-offer-${offer.id}`}
                 >
-                  ✏️ Modifier
+                  <span className="inline-flex items-center justify-center gap-1.5"><SvgIcon name="edit" size={14} /> Modifier</span>
                 </button>
                 {isOwnOffer(offer) ? (
                   <button
@@ -668,7 +679,7 @@ const OffersManager = ({
                     className="flex-1 py-3 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-medium"
                     data-testid={`delete-offer-${offer.id}`}
                   >
-                    🗑️ Supprimer
+                    <span className="inline-flex items-center justify-center gap-1.5"><SvgIcon name="trash" size={14} /> Supprimer</span>
                   </button>
                 ) : (
                   <button
@@ -676,7 +687,7 @@ const OffersManager = ({
                     className="flex-1 py-3 rounded-lg bg-gray-600 text-white/30 text-sm font-medium cursor-not-allowed"
                     title="Vous ne pouvez supprimer que vos propres offres"
                   >
-                    🔒 Protégée
+                    <span className="inline-flex items-center justify-center gap-1.5"><SvgIcon name="lock" size={14} /> Protégée</span>
                   </button>
                 )}
               </div>
@@ -716,7 +727,7 @@ const OffersManager = ({
                   {offer.images?.[0] || offer.thumbnail ? (
                     <img src={offer.images?.[0] || offer.thumbnail} alt="" className="w-12 h-12 rounded-lg object-cover" loading="lazy" />
                   ) : (
-                    <div className="w-12 h-12 rounded-lg bg-purple-900/30 flex items-center justify-center text-2xl">🎧</div>
+                    <div className="w-12 h-12 rounded-lg bg-purple-900/30 flex items-center justify-center text-2xl"><SvgIcon name="headphones" size={24} /></div>
                   )}
                   <div>
                     <h4 className="text-white font-semibold">{offer.name}</h4>
@@ -729,7 +740,7 @@ const OffersManager = ({
                     className="px-3 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs"
                     data-testid={`edit-offer-${offer.id}`}
                   >
-                    ✏️ Modifier
+                    <span className="inline-flex items-center justify-center gap-1.5"><SvgIcon name="edit" size={14} /> Modifier</span>
                   </button>
                   {isOwnOffer(offer) ? (
                     <button 
@@ -737,7 +748,7 @@ const OffersManager = ({
                       className="px-3 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs"
                       data-testid={`delete-offer-${offer.id}`}
                     >
-                      🗑️ Supprimer
+                      <span className="inline-flex items-center justify-center gap-1.5"><SvgIcon name="trash" size={14} /> Supprimer</span>
                     </button>
                   ) : (
                     <button 
@@ -745,7 +756,7 @@ const OffersManager = ({
                       className="px-3 py-2 rounded-lg bg-gray-600 text-white/30 text-xs cursor-not-allowed"
                       title="Vous ne pouvez supprimer que vos propres offres"
                     >
-                      🔒 Protégée
+                      <span className="inline-flex items-center justify-center gap-1.5"><SvgIcon name="lock" size={14} /> Protégée</span>
                     </button>
                   )}
                   <div className="flex items-center gap-2 ml-2">
@@ -773,12 +784,18 @@ const OffersManager = ({
                 className="w-full mt-3 py-2 rounded-lg text-xs font-medium flex items-center justify-between px-3"
                 style={{ background: 'rgba(139,92,246,0.15)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)' }}
               >
-                <span>
+                <span className="inline-flex items-center gap-1.5">
                   {isOfferWithoutSchedule(offer)
-                    ? (offer.isProduct ? '📦 Produit' : offer.category === 'audio' ? '🎵 Audio' : offer.category === 'video' ? '🎬 Vidéo' : '📦 Produit')
-                    : `📅 ${getLinkedCoursesForOffer(offer).length} horaire(s) associé(s)`}
+                    ? (offer.isProduct
+                        ? <><SvgIcon name="package" size={14} /> Produit</>
+                        : offer.category === 'audio'
+                          ? <><SvgIcon name="music" size={14} /> Audio</>
+                          : offer.category === 'video'
+                            ? <><SvgIcon name="video" size={14} /> Vidéo</>
+                            : <><SvgIcon name="package" size={14} /> Produit</>)
+                    : <><SvgIcon name="calendar" size={14} /> <span>{getLinkedCoursesForOffer(offer).length} horaire(s) associé(s)</span></>}
                 </span>
-                <span>{expandedOfferId === offer.id ? '▲' : '▼'}</span>
+                <span><SvgIcon name={expandedOfferId === offer.id ? 'arrowUp' : 'arrowDown'} size={14} /></span>
               </button>
               {expandedOfferId === offer.id && renderScheduleSection(offer)}
             </div>
@@ -792,10 +809,12 @@ const OffersManager = ({
       {false && (
       <form id="offer-form" onSubmit={addOffer} className="glass rounded-lg p-4 mt-4 border-2 border-purple-500/50">
         <h3 className="text-white mb-4 font-semibold text-sm flex items-center gap-2">
-          {editingOfferId ? '✏️ Modifier l\'offre' : '➕ Ajouter une offre'}
+          {editingOfferId
+            ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="edit" size={14} /> Modifier l'offre</span>
+            : <span className="inline-flex items-center gap-1.5"><SvgIcon name="plusCircle" size={14} /> Ajouter une offre</span>}
           {editingOfferId && (
             <button type="button" onClick={cancelEditOffer} className="ml-auto text-xs text-red-400 hover:text-red-300">
-              ✕ Annuler
+              <span className="inline-flex items-center gap-1.5"><SvgIcon name="close" size={14} /> Annuler</span>
             </button>
           )}
         </h3>
@@ -821,7 +840,7 @@ const OffersManager = ({
               onChange={e => setNewOffer({ ...newOffer, progressive_pricing: e.target.checked })}
               className="accent-[#D91CD2] w-4 h-4"
             />
-            <span className="text-white text-sm font-medium">📊 Activer les 3 paliers de prix</span>
+            <span className="text-white text-sm font-medium inline-flex items-center gap-1.5"><SvgIcon name="barChart" size={14} /> Activer les 3 paliers de prix</span>
           </label>
           <p className="text-xs mt-1 ml-7" style={{ color: 'rgba(255,255,255,0.5)' }}>
             Récompense les réservations en avance et capture les réservations de dernière minute.
@@ -831,14 +850,16 @@ const OffersManager = ({
             <div className="mt-4 space-y-3">
               {!newOffer.countdown_date && (
                 <p className="text-xs p-2 rounded" style={{ background: 'rgba(217,28,210,0.1)', color: '#D91CD2' }}>
-                  ⚠️ Activez le compte à rebours ci-dessous : sans date de référence, les
+                  <SvgIcon name="warning" size={14} /> Activez le compte à rebours ci-dessous : sans date de référence, les
                   paliers ne s'appliquent pas et le prix normal reste affiché.
                 </p>
               )}
               {[
-                { key: 'price_early_bird', label: '✨ Early Bird (plus de 7 jours avant)' },
-                { key: 'price_standard', label: '⏱ Standard (plus de 24h avant)' },
-                { key: 'price_last_minute', label: '⚡ Last Minute (moins de 24h)' },
+                // V228: `label` porte desormais un ELEMENT (icone + texte) et non
+                // plus une chaine — il n'est consomme que par le <label> ci-dessous.
+                { key: 'price_early_bird', label: <><SvgIcon name="sparkles" size={14} /> Early Bird (plus de 7 jours avant)</> },
+                { key: 'price_standard', label: <><SvgIcon name="clock" size={14} /> Standard (plus de 24h avant)</> },
+                { key: 'price_last_minute', label: <><SvgIcon name="zap" size={14} /> Last Minute (moins de 24h)</> },
               ].map(f => (
                 <div key={f.key}>
                   <label className="block text-xs mb-1" style={{ color: 'rgba(255,255,255,0.7)' }}>{f.label}</label>
@@ -889,7 +910,7 @@ const OffersManager = ({
 
         {/* === DURÉE DE VALIDITÉ (NOUVEAU) === */}
         <div style={{ marginTop: '14px', padding: '14px', borderRadius: '10px', border: '2px solid #D91CD2', background: 'rgba(217, 28, 210, 0.08)', boxShadow: '0 0 12px rgba(217, 28, 210, 0.25)' }}>
-          <p style={{ fontSize: '14px', color: '#D91CD2', marginBottom: '12px', fontWeight: 'bold' }}>⏱ DURÉE DE VALIDITÉ (NOUVEAU)</p>
+          <p style={{ fontSize: '14px', color: '#D91CD2', marginBottom: '12px', fontWeight: 'bold' }}><SvgIcon name="clock" size={14} /> DURÉE DE VALIDITÉ (NOUVEAU)</p>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
             <div>
               <label style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', display: 'block', marginBottom: '4px' }}>Durée</label>
@@ -928,7 +949,7 @@ const OffersManager = ({
                 Prolonger automatiquement à l'expiration
               </label>
               <p style={{ fontSize: '11px', color: '#D91CD2', marginTop: '6px', opacity: 0.8 }}>
-                📅 Valide pendant {newOffer.duration_value} {newOffer.duration_unit === 'days' ? 'jour(s)' : newOffer.duration_unit === 'weeks' ? 'semaine(s)' : 'mois'}
+                <SvgIcon name="calendar" size={12} /> Valide pendant {newOffer.duration_value} {newOffer.duration_unit === 'days' ? 'jour(s)' : newOffer.duration_unit === 'weeks' ? 'semaine(s)' : 'mois'}
                 {newOffer.is_auto_prolong !== false ? ' • Auto-prolongation activée' : ' • Expire sans renouvellement'}
               </p>
             </div>
@@ -941,7 +962,7 @@ const OffersManager = ({
           )}
           {((!newOffer.duration_value && newOffer.duration_unit) || (newOffer.duration_value && !newOffer.duration_unit)) && (
             <p style={{ fontSize: '11px', color: '#f97316', marginTop: '6px' }}>
-              ⚠️ Veuillez remplir les deux champs (durée + unité) pour activer la validité
+              <SvgIcon name="warning" size={12} /> Veuillez remplir les deux champs (durée + unité) pour activer la validité
             </p>
           )}
         </div>
@@ -949,7 +970,7 @@ const OffersManager = ({
         {/* === V159: COMPTE À REBOURS === */}
         <div style={{ marginTop: '14px', padding: '14px', borderRadius: '10px', border: '2px solid #f59e0b', background: 'rgba(245, 158, 11, 0.08)', boxShadow: '0 0 12px rgba(245, 158, 11, 0.2)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-            <p style={{ fontSize: '14px', color: '#f59e0b', fontWeight: 'bold', margin: 0 }}>⏳ COMPTE À REBOURS</p>
+            <p style={{ fontSize: '14px', color: '#f59e0b', fontWeight: 'bold', margin: 0 }}><SvgIcon name="hourglass" size={14} /> COMPTE À REBOURS</p>
             <div
               className={`switch ${newOffer.countdown_enabled ? 'active' : ''}`}
               onClick={function() { setNewOffer(Object.assign({}, newOffer, { countdown_enabled: !newOffer.countdown_enabled })); }}
@@ -991,7 +1012,7 @@ const OffersManager = ({
               </div>
               {newOffer.countdown_date && (
                 <p style={{ fontSize: '11px', color: '#f59e0b', marginTop: '8px', opacity: 0.9 }}>
-                  ⏳ Compte à rebours jusqu'au {new Date(newOffer.countdown_date + 'T' + (newOffer.countdown_time || '23:59')).toLocaleDateString('fr-CH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} à {newOffer.countdown_time || '23:59'}
+                  <SvgIcon name="hourglass" size={12} /> Compte à rebours jusqu'au {new Date(newOffer.countdown_date + 'T' + (newOffer.countdown_time || '23:59')).toLocaleDateString('fr-CH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} à {newOffer.countdown_time || '23:59'}
                 </p>
               )}
               {!newOffer.countdown_date && (
@@ -1010,7 +1031,7 @@ const OffersManager = ({
 
         {/* 5 Champs d'images */}
         <div className="mt-4">
-          <label className="text-xs text-white opacity-60 mb-2 block">📷 Images (max 5 URLs)</label>
+          <label className="text-xs text-white opacity-60 mb-2 block"><SvgIcon name="image" size={14} /> Images (max 5 URLs)</label>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2">
             {[0, 1, 2, 3, 4].map(i => (
               <input 
@@ -1047,7 +1068,9 @@ const OffersManager = ({
               }}
               data-testid="ai-enhance-description"
             >
-              {aiLoading ? '⏳ IA...' : '✨ Aide IA'}
+              {aiLoading
+                ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="loader" size={14} className="animate-spin" /> IA...</span>
+                : <span className="inline-flex items-center gap-1.5"><SvgIcon name="sparkles" size={14} /> Aide IA</span>}
             </button>
           </div>
           <textarea
@@ -1063,7 +1086,7 @@ const OffersManager = ({
         
         {/* Mots-clés */}
         <div className="mt-3">
-          <label className="text-xs text-white opacity-60 mb-1 block">🔍 Mots-clés (pour la recherche)</label>
+          <label className="text-xs text-white opacity-60 mb-1 block"><SvgIcon name="search" size={14} /> Mots-clés (pour la recherche)</label>
           <input
             type="text"
             value={newOffer.keywords || ''}
@@ -1072,14 +1095,14 @@ const OffersManager = ({
             placeholder="session, séance, cardio, danse, afro... (séparés par virgules)"
             data-testid="offer-keywords"
           />
-          <p className="text-xs mt-1" style={{ color: 'rgba(139, 92, 246, 0.6)' }}>💡 Aide les clients à trouver cette offre</p>
+          <p className="text-xs mt-1" style={{ color: 'rgba(139, 92, 246, 0.6)' }}><SvgIcon name="lightbulb" size={14} /> Aide les clients à trouver cette offre</p>
         </div>
 
         {/* v159: Cours liés à cette offre (many-to-many) */}
         {!newOffer.isProduct && courses && courses.length > 0 && (
           <div className="mt-3 p-3 rounded-lg" style={{ border: '1px solid rgba(217, 28, 210, 0.3)', background: 'rgba(217, 28, 210, 0.05)' }}>
             <label className="text-xs text-white font-semibold mb-2 block">
-              📅 Cours associés à cette offre
+              <SvgIcon name="calendar" size={14} /> Cours associés à cette offre
             </label>
             <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.5)' }}>
               Quand un client cliquera sur cette offre, il verra uniquement ces cours.
@@ -1117,7 +1140,7 @@ const OffersManager = ({
             </div>
             {(newOffer.linked_course_ids || []).length > 0 && (
               <p className="text-xs mt-2 text-pink-400">
-                ✓ {(newOffer.linked_course_ids || []).length} cours lié(s)
+                <SvgIcon name="check" size={14} /> {(newOffer.linked_course_ids || []).length} cours lié(s)
               </p>
             )}
           </div>
@@ -1159,7 +1182,7 @@ const OffersManager = ({
         {/* E-Commerce Fields */}
         {newOffer.isProduct && (
           <div className="mt-3 p-3 rounded-lg border border-purple-500/30">
-            <p className="text-xs text-purple-400 mb-3">📦 Paramètres produit</p>
+            <p className="text-xs text-purple-400 mb-3"><SvgIcon name="package" size={14} /> Paramètres produit</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div>
                 <label className="text-xs text-white opacity-60">TVA (%)</label>
@@ -1212,7 +1235,9 @@ const OffersManager = ({
         )}
         
         <button type="submit" className="btn-primary px-6 py-3 rounded-lg mt-4 text-sm w-full">
-          {editingOfferId ? '💾 Enregistrer les modifications' : '➕ Ajouter l\'offre'}
+          {editingOfferId
+            ? <span className="inline-flex items-center justify-center gap-1.5"><SvgIcon name="save" size={14} /> Enregistrer les modifications</span>
+            : <span className="inline-flex items-center justify-center gap-1.5"><SvgIcon name="plusCircle" size={14} /> Ajouter l'offre</span>}
         </button>
       </form>
       )}

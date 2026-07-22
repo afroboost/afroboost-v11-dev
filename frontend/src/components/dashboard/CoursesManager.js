@@ -4,6 +4,7 @@
  */
 import React, { useState } from 'react';
 import axios from 'axios';
+import SvgIcon from '../SvgIcon';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -121,7 +122,7 @@ const CoursesManager = ({
       {/* v88: Toggle demande d'avis automatique */}
       <div className="glass rounded-lg p-3 mb-4" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '16px' }}>⭐</span>
+          <SvgIcon name="star" size={16} />
           <div>
             <div className="text-white text-xs font-semibold">Demande d'avis automatique</div>
             <div className="text-white text-[10px] opacity-50">Après chaque cours, inviter les participants à laisser un avis</div>
@@ -259,7 +260,15 @@ const CoursesManager = ({
                   data-testid={`course-visible-${course.id}`}
                 />
                 <span className="text-white text-xs opacity-50">
-                  {course.visible !== false ? '👁️ Visible' : '🚫 Masqué'}
+                  {course.visible !== false ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <SvgIcon name="eye" size={14} /> Visible
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5">
+                      <SvgIcon name="eyeOff" size={14} /> Masqué
+                    </span>
+                  )}
                 </span>
               </div>
             </div>
@@ -285,13 +294,23 @@ const CoursesManager = ({
                 }}
                 data-testid={`review-request-${course.id}`}
               >
-                {reviewRequestSending[course.id] ? '⏳' : '⭐'} Demander un avis
+                {reviewRequestSending[course.id]
+                  ? <SvgIcon name="loader" size={14} className="animate-spin" />
+                  : <SvgIcon name="star" size={14} />} Demander un avis
               </button>
               {reviewRequestSuccess[course.id] !== null && reviewRequestSuccess[course.id] !== undefined && (
                 <span style={{ fontSize: '11px', color: reviewRequestSuccess[course.id] >= 0 ? '#22c55e' : '#ef4444' }}>
                   {reviewRequestSuccess[course.id] >= 0
-                    ? `✅ Envoyé à ${reviewRequestSuccess[course.id]} abonné${reviewRequestSuccess[course.id] > 1 ? 's' : ''}`
-                    : '❌ Erreur'}
+                    ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <SvgIcon name="check" size={12} /> {`Envoyé à ${reviewRequestSuccess[course.id]} abonné${reviewRequestSuccess[course.id] > 1 ? 's' : ''}`}
+                      </span>
+                    )
+                    : (
+                      <span className="inline-flex items-center gap-1.5">
+                        <SvgIcon name="close" size={12} /> Erreur
+                      </span>
+                    )}
                 </span>
               )}
             </div>
@@ -344,7 +363,7 @@ const CoursesManager = ({
                   filter: 'blur(20px)',
                   pointerEvents: 'none'
                 }} />
-                <span style={{ fontSize: '22px', position: 'relative', zIndex: 1 }}>🎵</span>
+                <SvgIcon name="music" size={22} style={{ position: 'relative', zIndex: 1 }} />
                 <span style={{ position: 'relative', zIndex: 1 }}>Gérer mon Studio Audio</span>
                 {getTrackCount(course) > 0 && (
                   <span style={{
@@ -369,7 +388,7 @@ const CoursesManager = ({
       {courses.filter(c => c.archived).length > 0 && (
         <div className="mt-6 pt-6 border-t border-purple-500/30">
           <h3 className="text-white text-sm font-semibold mb-3 flex items-center gap-2">
-            <span>📁</span> Cours archivés ({courses.filter(c => c.archived).length})
+            <SvgIcon name="file" size={16} /> Cours archivés ({courses.filter(c => c.archived).length})
           </h3>
           <div className="space-y-2">
             {courses.filter(c => c.archived).map(course => (
@@ -381,7 +400,9 @@ const CoursesManager = ({
                   style={{ background: 'rgba(34, 197, 94, 0.3)', color: '#22c55e' }}
                   data-testid={`restore-course-${course.id}`}
                 >
-                  ↩️ Restaurer
+                  <span className="inline-flex items-center gap-1.5">
+                    <SvgIcon name="undo" size={14} /> Restaurer
+                  </span>
                 </button>
               </div>
             ))}

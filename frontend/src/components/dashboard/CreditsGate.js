@@ -4,6 +4,7 @@
  * quand les crédits sont insuffisants
  */
 import React from 'react';
+import SvgIcon from '../SvgIcon';
 
 const CreditsGate = ({
   serviceName,
@@ -14,7 +15,7 @@ const CreditsGate = ({
 }) => {
   return (
     <div className="text-center py-16" data-testid={testId || 'credits-lock'}>
-      <div className="text-6xl mb-6">🔒</div>
+      <div className="text-6xl mb-6"><SvgIcon name="lock" size={60} /></div>
       <h2 className="text-2xl font-bold text-white mb-4">Crédits insuffisants</h2>
       <p className="text-white/50 mb-2">
         Ce service premium nécessite{' '}
@@ -35,7 +36,9 @@ const CreditsGate = ({
         }}
         data-testid={`go-to-boutique-${serviceName}`}
       >
-        💎 Recharger mes crédits
+        <span className="inline-flex items-center gap-1.5">
+          <SvgIcon name="diamond" size={16} /> Recharger mes crédits
+        </span>
       </button>
     </div>
   );

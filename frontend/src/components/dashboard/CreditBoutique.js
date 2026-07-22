@@ -4,6 +4,7 @@
  * Extrait de CoachDashboard.js pour alléger le code
  */
 import React from 'react';
+import SvgIcon from '../SvgIcon';
 
 const CreditBoutique = ({
   coachCredits,
@@ -23,8 +24,8 @@ const CreditBoutique = ({
           {coachCredits === -1 ? '∞' : coachCredits} crédits
         </div>
         {coachCredits !== -1 && coachCredits < 10 && (
-          <div className="text-yellow-400 text-sm mt-2">
-            ⚠️ Solde faible - Rechargez pour continuer à utiliser les services
+          <div className="text-yellow-400 text-sm mt-2 inline-flex items-center gap-1.5">
+            <SvgIcon name="warning" size={16} /> Solde faible - Rechargez pour continuer à utiliser les services
           </div>
         )}
       </div>
@@ -39,18 +40,22 @@ const CreditBoutique = ({
           marginBottom: '16px'
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-            <h3 style={{ color: '#D91CD2', fontSize: '14px', fontWeight: 'bold', margin: 0 }}>
-              {isSuperAdmin ? '\u2699\ufe0f Tarifs des services (modifiable)' : '\ud83d\udcb0 Co\u00fbt des services'}
+            <h3 style={{ color: '#D91CD2', fontSize: '14px', fontWeight: 'bold', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {isSuperAdmin
+                ? <><SvgIcon name="settings" size={14} /> Tarifs des services (modifiable)</>
+                : <><SvgIcon name="dollarSign" size={14} /> Coût des services</>}
             </h3>
             {!isSuperAdmin && (
-              <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px' }}>\ud83d\udd12 D\u00e9fini par l'admin</span>
+              <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}><SvgIcon name="lock" size={12} /> Défini par l'admin</span>
             )}
           </div>
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             {[
-              { key: 'campaign', label: 'Campagne Email', icon: '\ud83d\udce7' },
-              { key: 'ai_conversation', label: 'Conversation IA', icon: '\ud83e\udd16' },
-              { key: 'promo_code', label: 'Code Promo', icon: '\ud83c\udfab' }
+              // V228: `icon` porte desormais un nom d'icone SvgIcon (et non plus un emoji).
+              // Ces trois entrees sont purement locales a l'affichage : rien n'est persiste.
+              { key: 'campaign', label: 'Campagne Email', icon: 'mail' },
+              { key: 'ai_conversation', label: 'Conversation IA', icon: 'robot' },
+              { key: 'promo_code', label: 'Code Promo', icon: 'ticket' }
             ].map(s => (
               <div key={s.key} style={{
                 flex: '1 1 100px',
@@ -59,7 +64,7 @@ const CreditBoutique = ({
                 padding: '10px',
                 textAlign: 'center'
               }}>
-                <div style={{ fontSize: '20px', marginBottom: '4px' }}>{s.icon}</div>
+                <div style={{ fontSize: '20px', marginBottom: '4px' }}><SvgIcon name={s.icon} size={20} /></div>
                 <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '10px', marginBottom: '4px' }}>{s.label}</div>
                 <div style={{ color: '#D91CD2', fontWeight: 'bold', fontSize: '16px' }}>
                   {servicePrices[s.key] || 1} cr.
@@ -94,10 +99,10 @@ const CreditBoutique = ({
                 {/* Badge populaire pour le 2ème pack */}
                 {index === 1 && (
                   <div 
-                    className="absolute -top-3 left-0 text-xs px-3 py-1 text-white"
+                    className="absolute -top-3 left-0 text-xs px-3 py-1 text-white inline-flex items-center gap-1.5"
                     style={{ background: '#D91CD2', borderRadius: '4px' }}
                   >
-                    ⭐ Populaire
+                    <SvgIcon name="star" size={12} /> Populaire
                   </div>
                 )}
                 
@@ -139,11 +144,11 @@ const CreditBoutique = ({
       {/* Info paiement */}
       <div className="text-center py-6" style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }}>
         <div className="flex items-center justify-center gap-4 text-white/40 text-xs">
-          <span>💳 Paiement sécurisé</span>
+          <span className="inline-flex items-center gap-1.5"><SvgIcon name="creditCard" size={14} /> Paiement sécurisé</span>
           <span>•</span>
-          <span>⚡ Crédits instantanés</span>
+          <span className="inline-flex items-center gap-1.5"><SvgIcon name="zap" size={14} /> Crédits instantanés</span>
           <span>•</span>
-          <span>🔒 Stripe</span>
+          <span className="inline-flex items-center gap-1.5"><SvgIcon name="lock" size={14} /> Stripe</span>
         </div>
       </div>
     </div>

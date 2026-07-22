@@ -5,6 +5,7 @@
  */
 import React from 'react';
 import axios from 'axios';
+import SvgIcon from '../SvgIcon';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -30,7 +31,7 @@ const StripeConnectTab = ({
   return (
     <div className="space-y-6" data-testid="stripe-tab">
       <div className="glass rounded-xl p-6" style={{ border: '1px solid rgba(217, 28, 210, 0.3)' }}>
-        <h2 className="text-xl font-bold text-white mb-4">💳 Stripe Connect</h2>
+        <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><SvgIcon name="creditCard" size={20} /> Stripe Connect</h2>
         <p className="text-white/70 mb-6">
           Connectez votre compte Stripe pour recevoir directement les paiements de vos clients.
         </p>
@@ -56,8 +57,10 @@ const StripeConnectTab = ({
                 : 'bg-red-500/20 text-red-400'
             }`}>
               {stripeConnectStatus?.connected 
-                ? stripeConnectStatus?.charges_enabled ? '✓ Actif' : '⏳ En attente'
-                : '✗ Déconnecté'}
+                ? stripeConnectStatus?.charges_enabled
+                  ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Actif</span>
+                  : <span className="inline-flex items-center gap-1.5"><SvgIcon name="loader" size={14} className="animate-spin" /> En attente</span>
+                : <span className="inline-flex items-center gap-1.5"><SvgIcon name="close" size={14} /> Déconnecté</span>}
             </span>
           </div>
         </div>
@@ -79,7 +82,7 @@ const StripeConnectTab = ({
         
         {/* Info */}
         <div className="mt-6 p-4 rounded-lg" style={{ background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
-          <h4 className="text-white font-medium mb-2">💡 Comment ça marche ?</h4>
+          <h4 className="text-white font-medium mb-2 flex items-center gap-2"><SvgIcon name="lightbulb" size={16} /> Comment ça marche ?</h4>
           <ul className="text-white/70 text-sm space-y-1 list-disc pl-5">
             <li>Les paiements de vos clients seront versés sur votre compte</li>
             <li>Une commission plateforme s'applique sur chaque transaction</li>
@@ -90,7 +93,7 @@ const StripeConnectTab = ({
       
       {/* === Personnalisation Marque Blanche === */}
       <div className="glass rounded-xl p-6" style={{ border: '1px solid rgba(217, 28, 210, 0.3)' }}>
-        <h2 className="text-xl font-bold text-white mb-4">🎨 Personnalisation</h2>
+        <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><SvgIcon name="palette" size={20} /> Personnalisation</h2>
         <p className="text-white/70 mb-4">
           Personnalisez votre espace avec votre propre marque.
         </p>

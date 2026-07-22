@@ -3,6 +3,7 @@
  * CRUD FAQ + Génération IA de réponses
  */
 import React, { useState, useEffect, useCallback } from 'react';
+import SvgIcon from '../SvgIcon';
 
 const FAQManager = ({ API, coachEmail, t }) => {
   const [faqs, setFaqs] = useState([]);
@@ -107,8 +108,9 @@ const FAQManager = ({ API, coachEmail, t }) => {
       padding: '20px',
       marginTop: '16px'
     }}>
-      <h3 style={{ color: '#fff', fontWeight: 600, fontSize: '16px', margin: '0 0 16px 0' }}>
-        ❓ FAQ ({faqs.length})
+      <h3 style={{ color: '#fff', fontWeight: 600, fontSize: '16px', margin: '0 0 16px 0' }} className="flex items-center gap-2">
+        <SvgIcon name="helpCircle" size={16} />
+        <span>FAQ ({faqs.length})</span>
       </h3>
 
       {/* Liste des FAQs existantes */}
@@ -136,23 +138,25 @@ const FAQManager = ({ API, coachEmail, t }) => {
                 <div style={{ display: 'flex', gap: '6px', marginLeft: '8px', flexShrink: 0 }}>
                   <button
                     onClick={() => startEdit(faq)}
+                    aria-label="Modifier cette FAQ"
                     style={{
                       padding: '4px 8px', borderRadius: '6px', fontSize: '11px',
                       background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.3)',
                       color: '#a78bfa', cursor: 'pointer'
                     }}
                   >
-                    ✏️
+                    <SvgIcon name="edit" size={14} />
                   </button>
                   <button
                     onClick={() => handleDelete(faq.id)}
+                    aria-label="Supprimer cette FAQ"
                     style={{
                       padding: '4px 8px', borderRadius: '6px', fontSize: '11px',
                       background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.3)',
                       color: '#ef4444', cursor: 'pointer'
                     }}
                   >
-                    🗑️
+                    <SvgIcon name="trash" size={14} />
                   </button>
                 </div>
               </div>
@@ -169,14 +173,16 @@ const FAQManager = ({ API, coachEmail, t }) => {
         border: '1px solid rgba(139,92,246,0.25)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-          <span style={{ color: '#fff', fontSize: '13px', fontWeight: 600 }}>
-            {editingId ? '✏️ Modifier' : '➕ Nouvelle FAQ'}
+          <span style={{ color: '#fff', fontSize: '13px', fontWeight: 600 }} className="inline-flex items-center gap-1.5">
+            {editingId
+              ? <><SvgIcon name="edit" size={14} /><span>Modifier</span></>
+              : <><SvgIcon name="plusCircle" size={14} /><span>Nouvelle FAQ</span></>}
           </span>
           {editingId && (
-            <button type="button" onClick={cancelEdit} style={{
+            <button type="button" onClick={cancelEdit} className="inline-flex items-center gap-1.5" style={{
               color: '#ef4444', fontSize: '12px', background: 'none', border: 'none', cursor: 'pointer'
             }}>
-              ✕ Annuler
+              <SvgIcon name="close" size={14} /><span>Annuler</span>
             </button>
           )}
         </div>
@@ -212,6 +218,7 @@ const FAQManager = ({ API, coachEmail, t }) => {
             type="button"
             onClick={handleAIAnswer}
             disabled={aiLoading || !newQuestion.trim()}
+            className="inline-flex items-center justify-center gap-1.5"
             style={{
               padding: '8px 12px', borderRadius: '8px', whiteSpace: 'nowrap',
               background: aiLoading ? 'rgba(139,92,246,0.2)' : 'rgba(217,28,210,0.2)',
@@ -221,14 +228,18 @@ const FAQManager = ({ API, coachEmail, t }) => {
               opacity: !newQuestion.trim() ? 0.4 : 1
             }}
             data-testid="ai-faq-answer"
+            aria-label="Générer la réponse par IA"
           >
-            {aiLoading ? '⏳' : '✨ IA'}
+            {aiLoading
+              ? <SvgIcon name="loader" size={14} className="animate-spin" />
+              : <><SvgIcon name="sparkles" size={14} /><span>IA</span></>}
           </button>
         </div>
 
         <button
           type="submit"
           disabled={saving || !newQuestion.trim()}
+          className="flex items-center justify-center gap-1.5"
           style={{
             width: '100%', padding: '10px', borderRadius: '8px',
             background: saving ? 'rgba(139,92,246,0.3)' : 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
@@ -238,7 +249,11 @@ const FAQManager = ({ API, coachEmail, t }) => {
           }}
           data-testid="save-faq"
         >
-          {saving ? '⏳...' : editingId ? '💾 Enregistrer' : '➕ Ajouter FAQ'}
+          {saving
+            ? <><SvgIcon name="loader" size={14} className="animate-spin" /><span>...</span></>
+            : editingId
+              ? <><SvgIcon name="save" size={14} /><span>Enregistrer</span></>
+              : <><SvgIcon name="plusCircle" size={14} /><span>Ajouter FAQ</span></>}
         </button>
       </form>
     </div>

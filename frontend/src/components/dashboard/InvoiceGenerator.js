@@ -1,6 +1,7 @@
 // V199: Générateur de factures PDF — utilise POST /api/invoices/generate
 import React, { useState } from 'react';
 import axios from 'axios';
+import SvgIcon from '../SvgIcon';
 
 const API = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
 
@@ -149,7 +150,8 @@ const InvoiceGenerator = ({ coachEmail }) => {
             disabled={items.length === 1}
             style={{ background: items.length === 1 ? '#333' : '#ff4444', border: 'none', borderRadius: '8px', color: '#fff', cursor: items.length === 1 ? 'not-allowed' : 'pointer', padding: '6px 8px' }}
             title="Supprimer la ligne"
-          >✕</button>
+            aria-label="Supprimer la ligne"
+          ><SvgIcon name="close" size={14} /></button>
         </div>
       ))}
       <button
@@ -170,7 +172,9 @@ const InvoiceGenerator = ({ coachEmail }) => {
           style={{ padding: '4px 10px', background: aiLoading ? 'rgba(139,92,246,0.3)' : 'linear-gradient(135deg, #D91CD2, #8B5CF6)', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '11px', cursor: aiLoading ? 'wait' : 'pointer', fontWeight: 600 }}
           title="Améliorer les modalités avec l'IA"
         >
-          {aiLoading ? '⏳ IA…' : '✨ Auto IA'}
+          {aiLoading
+            ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="loader" size={14} className="animate-spin" /> IA…</span>
+            : <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="sparkles" size={14} /> Auto IA</span>}
         </button>
       </div>
       <textarea
@@ -196,7 +200,9 @@ const InvoiceGenerator = ({ coachEmail }) => {
         }}
         data-testid="invoice-generate-btn"
       >
-        {loading ? '⏳ Génération en cours…' : '📄 Générer la facture PDF'}
+        {loading
+          ? <><SvgIcon name="loader" size={16} className="animate-spin" />Génération en cours…</>
+          : <><SvgIcon name="file" size={16} />Générer la facture PDF</>}
       </button>
     </div>
   );

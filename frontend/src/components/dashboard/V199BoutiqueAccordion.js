@@ -1,5 +1,6 @@
 // V199: Accordéon Paiements — 5 sections pliables
 import React, { useState } from 'react';
+import SvgIcon from '../SvgIcon';
 import ConceptEditor from './ConceptEditor';
 import PaymentConfigTab from './PaymentConfigTab';
 import InvoiceGenerator from './InvoiceGenerator';
@@ -51,7 +52,7 @@ const AccordionSection = ({ id, icon, label, openMap, setOpenMap, children }) =>
             transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
             display: 'inline-block',
           }}
-        >▼</span>
+        ><SvgIcon name="arrowDown" size={16} /></span>
       </div>
       {open && <div style={bodyStyle}>{children}</div>}
     </div>
@@ -98,7 +99,7 @@ const V199BoutiqueAccordion = ({
   return (
     <div style={{ maxWidth: '900px', margin: '0 auto' }}>
       {/* 1. Configuration des Paiements (ouvert par défaut) */}
-      <AccordionSection id="payments" icon="💳" label="Configuration des Paiements" openMap={openMap} setOpenMap={setOpenMap}>
+      <AccordionSection id="payments" icon={<SvgIcon name="creditCard" size={16} />} label="Configuration des Paiements" openMap={openMap} setOpenMap={setOpenMap}>
         <PaymentConfigTab
           paymentConfig={vendorPaymentConfig}
           setPaymentConfig={setVendorPaymentConfig}
@@ -107,22 +108,22 @@ const V199BoutiqueAccordion = ({
       </AccordionSection>
 
       {/* 2. Conditions & Avis */}
-      <AccordionSection id="conditions" icon="📝" label="Conditions & Avis" openMap={openMap} setOpenMap={setOpenMap}>
+      <AccordionSection id="conditions" icon={<SvgIcon name="edit" size={16} />} label="Conditions & Avis" openMap={openMap} setOpenMap={setOpenMap}>
         <ConceptEditor {...conceptProps} section="conditions" />
       </AccordionSection>
 
       {/* 3. Logos de paiement */}
-      <AccordionSection id="logos" icon="🎨" label="Logos de paiement" openMap={openMap} setOpenMap={setOpenMap}>
+      <AccordionSection id="logos" icon={<SvgIcon name="palette" size={16} />} label="Logos de paiement" openMap={openMap} setOpenMap={setOpenMap}>
         <ConceptEditor {...conceptProps} section="logos" />
       </AccordionSection>
 
       {/* 4. Générateur de Factures (NOUVEAU) */}
-      <AccordionSection id="invoices" icon="📄" label="Générateur de Factures" openMap={openMap} setOpenMap={setOpenMap}>
+      <AccordionSection id="invoices" icon={<SvgIcon name="file" size={16} />} label="Générateur de Factures" openMap={openMap} setOpenMap={setOpenMap}>
         <InvoiceGenerator coachEmail={coachUser?.email} />
       </AccordionSection>
 
       {/* 5. Section d'atterrissage */}
-      <AccordionSection id="landing" icon="🏠" label="Section d'atterrissage" openMap={openMap} setOpenMap={setOpenMap}>
+      <AccordionSection id="landing" icon={<SvgIcon name="home" size={16} />} label="Section d'atterrissage" openMap={openMap} setOpenMap={setOpenMap}>
         <ConceptEditor {...conceptProps} section="landing" />
       </AccordionSection>
     </div>

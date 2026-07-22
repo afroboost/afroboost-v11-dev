@@ -3,6 +3,7 @@
  * Gestion SEO: meta title, description, keywords + IA + preview Google
  */
 import React, { useState, useEffect, useCallback } from 'react';
+import SvgIcon from '../SvgIcon';
 
 const SEOManager = ({ API, coachEmail, coachUsername, t }) => {
   const [metaTitle, setMetaTitle] = useState('');
@@ -97,8 +98,8 @@ const SEOManager = ({ API, coachEmail, coachUsername, t }) => {
       marginTop: '16px'
     }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-        <h3 style={{ color: '#fff', fontWeight: 600, fontSize: '16px', margin: 0 }}>
-          🔍 SEO & Référencement
+        <h3 style={{ color: '#fff', fontWeight: 600, fontSize: '16px', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <SvgIcon name="search" size={16} /> SEO & Référencement
         </h3>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <button
@@ -116,7 +117,9 @@ const SEOManager = ({ API, coachEmail, coachUsername, t }) => {
             }}
             data-testid="ai-enhance-seo"
           >
-            {aiLoading ? '⏳ IA...' : '✨ Optimiser SEO avec IA'}
+            {aiLoading
+              ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="loader" size={14} className="animate-spin" /> IA...</span>
+              : <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="sparkles" size={14} /> Optimiser SEO avec IA</span>}
           </button>
           {saveStatus && (
             <span style={{
@@ -126,7 +129,9 @@ const SEOManager = ({ API, coachEmail, coachUsername, t }) => {
               background: saveStatus === 'saved' ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)',
               color: saveStatus === 'saved' ? '#22c55e' : '#ef4444'
             }}>
-              {saveStatus === 'saved' ? '✓ Sauvé' : '✕ Erreur'}
+              {saveStatus === 'saved'
+                ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="check" size={14} /> Sauvé</span>
+                : <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="close" size={14} /> Erreur</span>}
             </span>
           )}
         </div>
@@ -226,7 +231,9 @@ const SEOManager = ({ API, coachEmail, coachUsername, t }) => {
         }}
         data-testid="save-seo"
       >
-        {saving ? '⏳ Sauvegarde...' : '💾 Sauvegarder SEO'}
+        {saving
+          ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}><SvgIcon name="loader" size={16} className="animate-spin" /> Sauvegarde...</span>
+          : <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}><SvgIcon name="save" size={16} /> Sauvegarder SEO</span>}
       </button>
     </div>
   );

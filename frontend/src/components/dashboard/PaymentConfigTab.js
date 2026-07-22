@@ -1,6 +1,7 @@
 // v15.0: Payment Configuration Tab - Multi-Vendor Payment System
 import React, { useState } from 'react';
 import axios from 'axios';
+import SvgIcon from '../SvgIcon';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -152,7 +153,7 @@ const PaymentConfigTab = ({ paymentConfig, setPaymentConfig, coachEmail }) => {
           alignItems: 'flex-start',
           gap: '12px'
         }}>
-          <span style={{ fontSize: '20px' }}>⚠️</span>
+          <SvgIcon name="warning" size={20} color="#F59E0B" />
           <div>
             <p style={{ color: '#F59E0B', fontSize: '14px', fontWeight: '600', margin: '0 0 4px' }}>
               Paiements non configurés
@@ -168,7 +169,7 @@ const PaymentConfigTab = ({ paymentConfig, setPaymentConfig, coachEmail }) => {
       <div style={sectionStyle}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <span style={{ fontSize: '24px' }}>💳</span>
+            <SvgIcon name="creditCard" size={24} />
             <div>
               <h3 style={{ color: 'white', fontSize: '16px', fontWeight: '600', margin: 0 }}>Carte Bancaire & TWINT</h3>
               <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: '2px 0 0' }}>
@@ -227,7 +228,7 @@ const PaymentConfigTab = ({ paymentConfig, setPaymentConfig, coachEmail }) => {
       <div style={sectionStyle}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <span style={{ fontSize: '24px' }}>📱</span>
+            <SvgIcon name="phone" size={24} />
             <div>
               <h3 style={{ color: 'white', fontSize: '16px', fontWeight: '600', margin: 0 }}>TWINT (lien direct)</h3>
               <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: '2px 0 0' }}>
@@ -316,7 +317,11 @@ const PaymentConfigTab = ({ paymentConfig, setPaymentConfig, coachEmail }) => {
                       textTransform: 'capitalize'
                     }}
                   >
-                    {mode === 'sandbox' ? '🧪 Sandbox (Test)' : '🟢 Live (Production)'}
+                    {mode === 'sandbox' ? '🧪 Sandbox (Test)' : (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="inline-block w-2 h-2 rounded-full bg-green-500" /> Live (Production)
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -339,7 +344,7 @@ const PaymentConfigTab = ({ paymentConfig, setPaymentConfig, coachEmail }) => {
       <div style={sectionStyle}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <span style={{ fontSize: '24px' }}>📱</span>
+            <SvgIcon name="phone" size={24} />
             <div>
               <h3 style={{ color: 'white', fontSize: '16px', fontWeight: '600', margin: 0 }}>Mobile Money</h3>
               <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: '2px 0 0' }}>
@@ -415,7 +420,7 @@ const PaymentConfigTab = ({ paymentConfig, setPaymentConfig, coachEmail }) => {
         alignItems: 'flex-start',
         gap: '10px'
       }}>
-        <span style={{ fontSize: '16px' }}>💡</span>
+        <SvgIcon name="lightbulb" size={16} />
         <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', margin: 0, lineHeight: '1.5' }}>
           Vos clés API sont stockées de manière sécurisée. Les paiements de vos clients seront versés directement sur votre compte.
           Pour obtenir vos clés : Stripe → dashboard.stripe.com | PayPal → developer.paypal.com | CinetPay → cinetpay.com

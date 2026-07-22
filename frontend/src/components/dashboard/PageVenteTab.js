@@ -5,6 +5,7 @@
  */
 import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import SvgIcon from '../SvgIcon';
 
 const PageVenteTab = ({
   coachVitrineUrl,
@@ -19,7 +20,7 @@ const PageVenteTab = ({
     <div className="space-y-6" data-testid="page-vente-tab">
       {/* Bloc principal - Ma Page de Vente */}
       <div className="card-gradient rounded-xl p-6">
-        <h2 className="font-semibold text-white mb-2" style={{ fontSize: '20px' }}>🏪 Ma Page de Vente</h2>
+        <h2 className="font-semibold text-white mb-2 flex items-center gap-2" style={{ fontSize: '20px' }}><SvgIcon name="store" size={20} /><span>Ma Page de Vente</span></h2>
         <p className="text-white/60 text-sm mb-6">
           Partagez votre page personnalisée avec vos clients pour qu'ils puissent réserver et payer.
         </p>
@@ -31,7 +32,7 @@ const PageVenteTab = ({
         >
           <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
             <div className="flex-1">
-              <h4 className="text-white font-medium mb-1">🔗 Votre lien unique</h4>
+              <h4 className="text-white font-medium mb-1 flex items-center gap-2"><SvgIcon name="link" size={16} /><span>Votre lien unique</span></h4>
               <p className="text-purple-400 text-sm break-all" data-testid="page-vente-url">
                 {coachVitrineUrl || 'Chargement...'}
               </p>
@@ -39,19 +40,21 @@ const PageVenteTab = ({
             <div className="flex gap-2">
               <button
                 onClick={onCopyLink}
-                className="px-4 py-2 rounded-lg text-white text-sm font-semibold transition-all hover:scale-105"
+                className="px-4 py-2 rounded-lg text-white text-sm font-semibold transition-all hover:scale-105 inline-flex items-center gap-1.5"
                 style={{ background: linkCopied ? 'rgba(34, 197, 94, 0.3)' : 'linear-gradient(135deg, #d91cd2, #8b5cf6)' }}
                 data-testid="copy-page-vente-link"
               >
-                {linkCopied ? '✓ Copié' : '📋 Copier'}
+                {linkCopied
+                  ? <><SvgIcon name="check" size={14} /><span>Copié</span></>
+                  : <><SvgIcon name="clipboard" size={14} /><span>Copier</span></>}
               </button>
               <button
                 onClick={() => coachVitrineUrl && window.open(coachVitrineUrl, '_blank')}
-                className="px-4 py-2 rounded-lg text-white text-sm font-semibold"
+                className="px-4 py-2 rounded-lg text-white text-sm font-semibold inline-flex items-center gap-1.5"
                 style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)' }}
                 data-testid="preview-page-vente"
               >
-                👁️ Voir
+                <SvgIcon name="eye" size={14} /><span>Voir</span>
               </button>
             </div>
           </div>
@@ -74,7 +77,10 @@ const PageVenteTab = ({
         )}
         
         <p className="text-white/40 text-xs text-center">
-          💡 Imprimez le QR Code pour vos flyers ou affichez-le dans votre salle !
+          {/* V228: icone rendue en flux inline (et non dans un conteneur flex) pour
+              que la phrase continue de se replier sur plusieurs lignes en mobile. */}
+          <SvgIcon name="lightbulb" size={14} className="mr-1" />
+          Imprimez le QR Code pour vos flyers ou affichez-le dans votre salle !
         </p>
       </div>
       
@@ -85,7 +91,7 @@ const PageVenteTab = ({
           style={{ background: 'rgba(255,255,255,0.03)' }}
         >
           <div className="flex items-center gap-3">
-            <span>⚙️ Configuration des liens de paiement (optionnel)</span>
+            <span className="inline-flex items-center gap-2"><SvgIcon name="settings" size={16} /><span>Configuration des liens de paiement (optionnel)</span></span>
             {paymentSaveStatus && (
               <span 
                 className="px-2 py-0.5 rounded-full text-xs"
@@ -97,13 +103,13 @@ const PageVenteTab = ({
                 }}
                 data-testid="payment-save-status"
               >
-                {paymentSaveStatus === 'saving' && '⏳'}
-                {paymentSaveStatus === 'saved' && '✓'}
-                {paymentSaveStatus === 'error' && '⚠️'}
+                {paymentSaveStatus === 'saving' && <SvgIcon name="loader" size={14} className="animate-spin" />}
+                {paymentSaveStatus === 'saved' && <SvgIcon name="check" size={14} />}
+                {paymentSaveStatus === 'error' && <SvgIcon name="warning" size={14} />}
               </span>
             )}
           </div>
-          <span className="text-white/40">▼</span>
+          <span className="text-white/40"><SvgIcon name="arrowDown" size={16} /></span>
         </summary>
         <div className="p-6 space-y-4">
           <div>
@@ -153,13 +159,13 @@ const PageVenteTab = ({
           
           {/* Section Notifications automatiques */}
           <div className="mt-6 pt-6 border-t border-purple-500/30">
-            <h3 className="text-white text-sm font-semibold mb-4">🔔 Notifications automatiques</h3>
+            <h3 className="text-white text-sm font-semibold mb-4 flex items-center gap-2"><SvgIcon name="bell" size={14} /><span>Notifications automatiques</span></h3>
             <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,0.5)' }}>
               Recevez une notification par email et/ou WhatsApp à chaque nouvelle réservation.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block mb-2 text-white text-xs opacity-70">📧 Email pour les alertes</label>
+                <label className="flex items-center gap-1.5 mb-2 text-white text-xs opacity-70"><SvgIcon name="mail" size={14} /><span>Email pour les alertes</span></label>
                 <input 
                   type="email" 
                   value={paymentLinks.coachNotificationEmail || ''} 
@@ -170,7 +176,7 @@ const PageVenteTab = ({
                 />
               </div>
               <div>
-                <label className="block mb-2 text-white text-xs opacity-70">📱 WhatsApp pour les alertes</label>
+                <label className="flex items-center gap-1.5 mb-2 text-white text-xs opacity-70"><SvgIcon name="phone" size={14} /><span>WhatsApp pour les alertes</span></label>
                 <input 
                   type="tel" 
                   value={paymentLinks.coachNotificationPhone || ''} 
@@ -186,7 +192,7 @@ const PageVenteTab = ({
           {/* Indication auto-save */}
           <div className="mt-4 p-3 rounded-lg" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.2)' }}>
             <p className="text-green-400 text-xs flex items-center gap-2">
-              <span>✓</span> Sauvegarde automatique - Vos liens sont enregistrés à chaque modification
+              <SvgIcon name="check" size={14} /> Sauvegarde automatique - Vos liens sont enregistrés à chaque modification
             </p>
           </div>
         </div>

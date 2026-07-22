@@ -11,6 +11,7 @@
  */
 import React, { useState, useEffect } from 'react';
 import { LandingSectionSelector } from '../SearchBar';
+import SvgIcon from '../SvgIcon';
 
 const ConceptEditor = ({
   concept,
@@ -160,11 +161,11 @@ const ConceptEditor = ({
   const showLogos = showBoutique || section === 'logos';
 
   // v37.2: Titres dynamiques par section
-  const sectionTitle = section === 'video-hero' ? '🎬 Vidéo Hero'
-    : section === 'audio' ? '🎧 Audio'
-    : section === 'settings' ? '⚙️ Paramètres'
-    : section === 'vitrine' ? '🖼️ Ma Vitrine'
-    : section === 'boutique' ? '💳 Boutique & Paiements'
+  const sectionTitle = section === 'video-hero' ? <span className="inline-flex items-center gap-2"><SvgIcon name="video" size={20} />Vidéo Hero</span>
+    : section === 'audio' ? <span className="inline-flex items-center gap-2"><SvgIcon name="headphones" size={20} />Audio</span>
+    : section === 'settings' ? <span className="inline-flex items-center gap-2"><SvgIcon name="settings" size={20} />Paramètres</span>
+    : section === 'vitrine' ? <span className="inline-flex items-center gap-2"><SvgIcon name="image" size={20} />Ma Vitrine</span>
+    : section === 'boutique' ? <span className="inline-flex items-center gap-2"><SvgIcon name="creditCard" size={20} />Boutique &amp; Paiements</span>
     : t('conceptVisual');
 
   return (
@@ -185,9 +186,9 @@ const ConceptEditor = ({
             }}
             data-testid="concept-save-status"
           >
-            {conceptSaveStatus === 'saving' && <><span className="animate-spin">⏳</span> Sauvegarde...</>}
-            {conceptSaveStatus === 'saved' && <>✓ Sauvegardé</>}
-            {conceptSaveStatus === 'error' && <>⚠️ Erreur</>}
+            {conceptSaveStatus === 'saving' && <><SvgIcon name="loader" size={14} className="animate-spin" /> Sauvegarde...</>}
+            {conceptSaveStatus === 'saved' && <><SvgIcon name="check" size={14} /> Sauvegardé</>}
+            {conceptSaveStatus === 'error' && <><SvgIcon name="warning" size={14} /> Erreur</>}
           </span>
         )}
       </div>
@@ -196,17 +197,17 @@ const ConceptEditor = ({
         {/* PERSONNALISATION DES COULEURS — v37.2: section vitrine */}
         {showVitrine && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-purple-400 font-semibold">🎨 Personnalisation des couleurs</h3>
+            <h3 className="text-purple-400 font-semibold flex items-center gap-2"><SvgIcon name="palette" size={18} />Personnalisation des couleurs</h3>
             <button
               onClick={saveConcept}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover:scale-105"
+              className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover:scale-105 inline-flex items-center gap-1.5"
               style={{
                 background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), var(--secondary-color, #8b5cf6))',
                 color: 'white'
               }}
               data-testid="save-colors-btn"
             >
-              💾 Sauvegarder
+              <SvgIcon name="save" size={14} />Sauvegarder
             </button>
           </div>
           <p className="text-white/60 text-xs mb-4">Les modifications s'appliquent en temps réel et sont auto-sauvegardées après 1 seconde.</p>
@@ -214,7 +215,7 @@ const ConceptEditor = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {/* Couleur principale */}
             <div>
-              <label className="block mb-2 text-white text-sm">✨ Couleur principale (Boutons/Titres)</label>
+              <label className="flex items-center gap-1.5 mb-2 text-white text-sm"><SvgIcon name="sparkles" size={16} />Couleur principale (Boutons/Titres)</label>
               <div className="flex items-center gap-3">
                 <input 
                   type="color" 
@@ -256,7 +257,7 @@ const ConceptEditor = ({
             
             {/* Couleur secondaire */}
             <div>
-              <label className="block mb-2 text-white text-sm">💜 Couleur secondaire (Accents)</label>
+              <label className="flex items-center gap-1.5 mb-2 text-white text-sm"><SvgIcon name="heart" size={16} />Couleur secondaire (Accents)</label>
               <div className="flex items-center gap-3">
                 <input 
                   type="color" 
@@ -330,7 +331,7 @@ const ConceptEditor = ({
 
         {/* v37.2: PARAMÈTRES GÉNÉRAUX (sans Hero vidéos) — section vitrine */}
         {showVitrine && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
-          <h3 className="text-purple-400 font-semibold mb-4">⚙️ Paramètres généraux</h3>
+          <h3 className="text-purple-400 font-semibold mb-4 flex items-center gap-2"><SvgIcon name="settings" size={18} />Paramètres généraux</h3>
 
           {/* Nom de l'application */}
           <div className="mb-4">
@@ -357,11 +358,11 @@ const ConceptEditor = ({
 
         {/* v36: VIDÉOS HÉRO (3 max) — section video-hero — extrait du bloc Paramètres */}
         {showVideoHero && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
-          <h3 className="text-purple-400 font-semibold mb-4">🎬 Médias Héro — vidéos ou images (max 3)</h3>
+          <h3 className="text-purple-400 font-semibold mb-4 flex items-center gap-2"><SvgIcon name="video" size={18} />Médias Héro — vidéos ou images (max 3)</h3>
           {/* v18: Multi-Vidéos Héro (3 max) */}
           <div className="mb-4">
             <div className="flex items-center justify-between mb-2">
-              <label className="text-white text-xs opacity-70">🎬 Médias Héro — vidéos ou images (max 3)</label>
+              <label className="text-white text-xs opacity-70 inline-flex items-center gap-1.5"><SvgIcon name="video" size={14} />Médias Héro — vidéos ou images (max 3)</label>
               {getHeroVideos().length < 3 && (
                 <button
                   type="button"
@@ -410,7 +411,8 @@ const ConceptEditor = ({
                             transition: 'all 0.2s ease'
                           }}
                           title="Déplacer vers la gauche"
-                        >◀</button>
+                          aria-label="Déplacer vers la gauche"
+                        ><SvgIcon name="arrowLeft" size={14} /></button>
                         <button
                           type="button"
                           onClick={() => moveHeroVideo(idx, 1)}
@@ -424,7 +426,8 @@ const ConceptEditor = ({
                             transition: 'all 0.2s ease'
                           }}
                           title="Déplacer vers la droite"
-                        >▶</button>
+                          aria-label="Déplacer vers la droite"
+                        ><SvgIcon name="arrowRight" size={14} /></button>
                       </div>
                     )}
                   </div>
@@ -458,7 +461,9 @@ const ConceptEditor = ({
                       opacity: uploadingVideo !== null ? 0.5 : 1
                     }}
                   >
-                    {uploadingVideo === idx ? '⏳ Upload...' : '🖼️ Upload image (JPG/PNG)'}
+                    {uploadingVideo === idx
+                      ? <><SvgIcon name="loader" size={12} className="animate-spin" /> Upload...</>
+                      : <><SvgIcon name="image" size={12} /> Upload image (JPG/PNG)</>}
                     <input
                       type="file"
                       accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
@@ -477,7 +482,9 @@ const ConceptEditor = ({
                         opacity: uploadingVideo !== null ? 0.5 : 1
                       }}
                     >
-                      {uploadingVideo === idx ? '⏳ Upload...' : '📁 Upload vidéo (MP4/MOV)'}
+                      {uploadingVideo === idx
+                        ? <><SvgIcon name="loader" size={12} className="animate-spin" /> Upload...</>
+                        : <><SvgIcon name="file" size={12} /> Upload vidéo (MP4/MOV)</>}
                       <input
                         type="file"
                         accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
@@ -496,7 +503,7 @@ const ConceptEditor = ({
                   marginTop: '8px', padding: '10px', borderRadius: '8px',
                   background: 'rgba(217,28,210,0.05)', border: '1px solid rgba(217,28,210,0.15)'
                 }}>
-                  <p style={{ color: '#D91CD2', fontSize: '11px', fontWeight: 600, marginBottom: '6px' }}>💎 Options Vidéo Premium</p>
+                  <p style={{ color: '#D91CD2', fontSize: '11px', fontWeight: 600, marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="diamond" size={12} />Options Vidéo Premium</p>
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
                     <div style={{ flex: '0 0 100px' }}>
                       <label style={{ display: 'block', color: 'rgba(255,255,255,0.5)', fontSize: '10px', marginBottom: '2px' }}>Prix (CHF)</label>
@@ -541,13 +548,15 @@ const ConceptEditor = ({
                         onChange={(e) => updateHeroVideo(idx, { is_visible: e.target.checked })}
                         style={{ accentColor: '#D91CD2' }}
                       />
-                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px' }}>
-                        {video.is_visible !== false ? '👁️ Visible' : '🚫 Masquée'}
+                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        {video.is_visible !== false
+                          ? <><SvgIcon name="eye" size={12} /> Visible</>
+                          : <><SvgIcon name="eyeOff" size={12} /> Masquée</>}
                       </span>
                     </label>
                     {(video.price || 0) > 0 && (
-                      <span style={{ fontSize: '10px', color: '#D91CD2', fontWeight: 600 }}>
-                        ⏱️ Preview 30s activée
+                      <span style={{ fontSize: '10px', color: '#D91CD2', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        <SvgIcon name="clock" size={12} />Preview 30s activée
                       </span>
                     )}
                   </div>
@@ -601,7 +610,7 @@ const ConceptEditor = ({
 
         {/* v37.2: BRANDING & IDENTITÉ (Logo, Favicon) — section vitrine */}
         {showVitrine && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
-          <h3 className="text-purple-400 font-semibold mb-4">🏷️ Branding & Identité</h3>
+          <h3 className="text-purple-400 font-semibold mb-4 flex items-center gap-2"><SvgIcon name="tag" size={18} />Branding &amp; Identité</h3>
           {/* Logo URL */}
           <div className="mb-4">
             <label className="block mb-1 text-white text-xs opacity-70">{t('logoUrl')}</label>
@@ -629,7 +638,7 @@ const ConceptEditor = ({
         {/* v37.2: CGV & GOOGLE REVIEWS — section boutique */}
         {/* V199: conditionné par showConditions pour pouvoir l'afficher seul depuis l'accordion */}
         {showConditions && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
-          <h3 className="text-purple-400 font-semibold mb-4">📋 Conditions & Avis</h3>
+          <h3 className="text-purple-400 font-semibold mb-4 flex items-center gap-2"><SvgIcon name="clipboard" size={18} />Conditions &amp; Avis</h3>
           {/* Conditions générales */}
           <div className="mb-4">
             <div className="flex items-center justify-between mb-1">
@@ -638,7 +647,7 @@ const ConceptEditor = ({
                 type="button"
                 onClick={handleAILegal}
                 disabled={aiLegalLoading || !(concept.termsText?.trim()?.length >= 10)}
-                className="text-xs px-2 py-1 rounded-lg"
+                className="text-xs px-2 py-1 rounded-lg inline-flex items-center gap-1.5"
                 style={{
                   background: aiLegalLoading ? 'rgba(139,92,246,0.2)' : 'rgba(217,28,210,0.2)',
                   border: '1px solid rgba(217,28,210,0.4)',
@@ -648,7 +657,9 @@ const ConceptEditor = ({
                 }}
                 data-testid="ai-enhance-legal"
               >
-                {aiLegalLoading ? '⏳ IA...' : '✨ Aide IA'}
+                {aiLegalLoading
+                  ? <><SvgIcon name="loader" size={14} className="animate-spin" />IA...</>
+                  : <><SvgIcon name="sparkles" size={14} />Aide IA</>}
               </button>
             </div>
             <textarea
@@ -699,12 +710,12 @@ const ConceptEditor = ({
 
         {/* V119: Ordre des sections vitrine — sessions-first ou offers-first */}
         {showVitrine && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
-          <h3 className="text-white text-sm font-semibold mb-3">📐 Ordre des sections vitrine</h3>
+          <h3 className="text-white text-sm font-semibold mb-3 flex items-center gap-2"><SvgIcon name="ruler" size={16} />Ordre des sections vitrine</h3>
           <p className="text-white/50 text-xs mb-3">Choisissez quel bloc apparaît en premier sur la page publique</p>
           <div className="flex gap-3">
             <button
               onClick={() => setConcept({ ...concept, vitrineSectionOrder: 'sessions-first' })}
-              className="flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all"
+              className="flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all inline-flex items-center justify-center gap-1.5"
               style={{
                 background: (concept.vitrineSectionOrder || 'sessions-first') === 'sessions-first'
                   ? 'linear-gradient(135deg, rgba(217, 28, 210, 0.3), rgba(139, 92, 246, 0.3))'
@@ -715,11 +726,11 @@ const ConceptEditor = ({
                 color: (concept.vitrineSectionOrder || 'sessions-first') === 'sessions-first' ? '#fff' : 'rgba(255, 255, 255, 0.6)'
               }}
             >
-              📅 Sessions d'abord
+              <SvgIcon name="calendar" size={16} />Sessions d'abord
             </button>
             <button
               onClick={() => setConcept({ ...concept, vitrineSectionOrder: 'offers-first' })}
-              className="flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all"
+              className="flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all inline-flex items-center justify-center gap-1.5"
               style={{
                 background: concept.vitrineSectionOrder === 'offers-first'
                   ? 'linear-gradient(135deg, rgba(217, 28, 210, 0.3), rgba(139, 92, 246, 0.3))'
@@ -730,14 +741,14 @@ const ConceptEditor = ({
                 color: concept.vitrineSectionOrder === 'offers-first' ? '#fff' : 'rgba(255, 255, 255, 0.6)'
               }}
             >
-              🎁 Offres d'abord
+              <SvgIcon name="gift" size={16} />Offres d'abord
             </button>
           </div>
         </div>)}
 
         {/* Liens Externes — v37.2: section vitrine */}
         {showVitrine && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
-          <h3 className="text-white text-sm font-semibold mb-4">🔗 Liens Externes (affichés en bas de page)</h3>
+          <h3 className="text-white text-sm font-semibold mb-4 flex items-center gap-2"><SvgIcon name="link" size={16} />Liens Externes (affichés en bas de page)</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div>
               <label className="block mb-1 text-white text-xs opacity-70">Titre du lien 1</label>
@@ -791,7 +802,7 @@ const ConceptEditor = ({
         {/* Logos de paiement — v37.2: section boutique */}
         {/* V199: conditionné par showLogos */}
         {showLogos && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
-          <h3 className="text-white text-sm font-semibold mb-4">💳 Logos de paiement</h3>
+          <h3 className="text-white text-sm font-semibold mb-4 flex items-center gap-2"><SvgIcon name="creditCard" size={16} />Logos de paiement</h3>
           <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,0.4)' }}>
             Activez les logos qui s'afficheront dans le pied de page.
           </p>
@@ -853,14 +864,14 @@ const ConceptEditor = ({
 
         {/* Affiche Événement — v37.2: section vitrine */}
         {showVitrine && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
-          <h3 className="text-white text-sm font-semibold mb-4">🎉 Affiche Événement (Popup d'accueil)</h3>
+          <h3 className="text-white text-sm font-semibold mb-4 flex items-center gap-2"><SvgIcon name="sparkles" size={16} />Affiche Événement (Popup d'accueil)</h3>
           <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,0.4)' }}>
             Affichez une image ou vidéo en popup dès l'arrivée des visiteurs.
           </p>
           
           <div className="flex items-center justify-between p-3 rounded-lg mb-4" style={{ background: 'rgba(139, 92, 246, 0.1)' }}>
             <div className="flex items-center gap-3">
-              <span className="text-2xl">📢</span>
+              <SvgIcon name="megaphone" size={24} />
               <span className="text-white text-sm">Activer l'affiche événement</span>
             </div>
             <button
@@ -933,7 +944,7 @@ const ConceptEditor = ({
         {/* v34: MASTER CONTROL SUPER ADMIN — Gestion centralisée des vidéos — v36: section video-hero */}
         {showVideoHero && isSuperAdmin && getHeroVideos().length > 0 && (
           <div className="border border-red-500/30 rounded-lg p-4 bg-red-900/10">
-            <h3 className="text-red-400 font-semibold mb-4">🛡️ Master Control — Gestion Vidéos</h3>
+            <h3 className="text-red-400 font-semibold mb-4 flex items-center gap-2"><SvgIcon name="shield" size={18} />Master Control — Gestion Vidéos</h3>
             <p className="text-white/40 text-xs mb-3">Actions admin sur toutes les vidéos héro configurées.</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {getHeroVideos().map((video, idx) => (
@@ -952,7 +963,7 @@ const ConceptEditor = ({
                         <span style={{ color: '#22c55e', fontSize: '11px', fontWeight: 600 }}>{video.price} CHF</span>
                       )}
                       {video.is_visible === false && (
-                        <span style={{ color: '#ef4444', fontSize: '10px' }}>🚫 MASQUÉE</span>
+                        <span style={{ color: '#ef4444', fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}><SvgIcon name="eyeOff" size={12} /> MASQUÉE</span>
                       )}
                     </div>
                     <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px', wordBreak: 'break-all', display: 'block', marginTop: '4px' }}>
@@ -974,7 +985,9 @@ const ConceptEditor = ({
                       }}
                       title={video.is_visible === false ? 'Rendre visible' : 'Masquer'}
                     >
-                      {video.is_visible === false ? '👁️ Afficher' : '🚫 Masquer'}
+                      {video.is_visible === false
+                        ? <><SvgIcon name="eye" size={12} /> Afficher</>
+                        : <><SvgIcon name="eyeOff" size={12} /> Masquer</>}
                     </button>
                     {/* Copier le lien */}
                     <button
@@ -991,7 +1004,7 @@ const ConceptEditor = ({
                       }}
                       title="Copier le lien direct"
                     >
-                      🔗 Copier
+                      <SvgIcon name="link" size={12} /> Copier
                     </button>
                     {/* Supprimer */}
                     <button
@@ -1008,7 +1021,7 @@ const ConceptEditor = ({
                       }}
                       title="Supprimer"
                     >
-                      🗑️ Suppr.
+                      <SvgIcon name="trash" size={12} /> Suppr.
                     </button>
                   </div>
                 </div>
@@ -1047,7 +1060,7 @@ const ConceptEditor = ({
 
           return (
             <div className="border border-orange-500/30 rounded-lg p-4 bg-orange-900/10" style={{ marginBottom: '16px' }}>
-              <h3 className="text-orange-400 font-semibold mb-4">🎧 Master Control — Gestion Audios</h3>
+              <h3 className="text-orange-400 font-semibold mb-4 flex items-center gap-2"><SvgIcon name="headphones" size={18} />Master Control — Gestion Audios</h3>
               <p className="text-white/40 text-xs mb-3">Actions admin sur tous les audios autonomes. ({masterAudioTracks.length} piste{masterAudioTracks.length > 1 ? 's' : ''})</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {masterAudioTracks.map((track, idx) => (
@@ -1059,15 +1072,15 @@ const ConceptEditor = ({
                   }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontSize: '16px' }}>{track.cover_url ? '🖼️' : '🎵'}</span>
+                        {track.cover_url ? <SvgIcon name="image" size={16} /> : <SvgIcon name="music" size={16} />}
                         <span style={{ color: '#fff', fontSize: '12px', fontWeight: 600 }}>{track.title || 'Sans titre'}</span>
                         {(track.price || 0) > 0 ? (
-                          <span style={{ color: '#22c55e', fontSize: '11px', fontWeight: 600 }}>💎 {track.price} CHF</span>
+                          <span style={{ color: '#22c55e', fontSize: '11px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}><SvgIcon name="diamond" size={12} /> {track.price} CHF</span>
                         ) : (
                           <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px' }}>Gratuit</span>
                         )}
                         {track.visible === false && (
-                          <span style={{ color: '#ef4444', fontSize: '10px' }}>🚫 MASQUÉ</span>
+                          <span style={{ color: '#ef4444', fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}><SvgIcon name="eyeOff" size={12} /> MASQUÉ</span>
                         )}
                       </div>
                       <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px' }}>
@@ -1086,8 +1099,9 @@ const ConceptEditor = ({
                           fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
                         }}
                         title={track.visible === false ? 'Rendre visible' : 'Masquer'}
+                        aria-label={track.visible === false ? 'Rendre visible' : 'Masquer'}
                       >
-                        {track.visible === false ? '👁️' : '🚫'}
+                        {track.visible === false ? <SvgIcon name="eye" size={12} /> : <SvgIcon name="eyeOff" size={12} />}
                       </button>
                       {/* Copier le lien */}
                       <button
@@ -1103,7 +1117,8 @@ const ConceptEditor = ({
                           color: '#a78bfa', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
                         }}
                         title="Copier le lien"
-                      >🔗</button>
+                        aria-label="Copier le lien"
+                      ><SvgIcon name="link" size={12} /></button>
                       {/* Supprimer */}
                       <button
                         type="button"
@@ -1113,7 +1128,8 @@ const ConceptEditor = ({
                           color: '#ef4444', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer'
                         }}
                         title="Supprimer"
-                      >🗑️</button>
+                        aria-label="Supprimer"
+                      ><SvgIcon name="trash" size={12} /></button>
                     </div>
                   </div>
                 ))}
@@ -1125,7 +1141,7 @@ const ConceptEditor = ({
         {/* Indicateur auto-save */}
         <div className="p-3 rounded-lg" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.2)' }}>
           <p className="text-green-400 text-sm flex items-center gap-2">
-            <span>✓</span> Sauvegarde automatique activée - Vos modifications sont enregistrées instantanément
+            <SvgIcon name="check" size={16} /> Sauvegarde automatique activée - Vos modifications sont enregistrées instantanément
           </p>
         </div>
       </div>
