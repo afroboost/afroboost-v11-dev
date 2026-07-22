@@ -56,6 +56,8 @@ import { CoachSearchModal } from "./components/CoachSearch";
 // import CoachVitrine from "./components/CoachVitrine";
 import PartnersCarousel from "./components/PartnersCarousel";
 import AudioPlayer from "./components/AudioPlayer";
+// V230 — chevron du repliage de la quantite (coherent avec la migration V228)
+import SvgIcon from "./components/SvgIcon";
 // V184: Espace abonné accès rapide (lien public /espace/AFR-XXXXXX)
 import SubscriberSpace from "./components/SubscriberSpace";
 import { useDataCache, invalidateCache } from "./hooks/useDataCache";
@@ -1297,6 +1299,11 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   const [videoError, setVideoError] = useState(false);
   // V225: quantite choisie sur la carte, relayee a startProgressiveCheckout.
   const [v225Qty, setV225Qty] = useState(1);
+  // V230: les chips de quantite sont repliees par defaut — elles occupaient une
+  // rangee entiere sur chaque carte alors que la grande majorite des achats se
+  // font a l'unite. L'etat est LOCAL a la carte (comme `v225Qty` ci-dessus, meme
+  // portee) : deplier la quantite sur une carte ne touche pas les autres.
+  const [v230ShowQty, setV230ShowQty] = useState(false);
   // V226: variantes choisies sur la carte ({ size, color, weight }). Depuis que
   // les produits physiques payants partent en checkout direct, le formulaire —
   // qui portait jusqu'ici les selecteurs de variantes (~l.4632) — n'est plus
@@ -1400,6 +1407,10 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // offre de la quantite choisie sur la precedente.
   useEffect(() => {
     setV225Qty(1);
+    // V230: on replie aussi le bloc quantite. Une instance de carte recyclee
+    // par le slider afficherait sinon la nouvelle offre deja depliee, sans que
+    // l'utilisateur l'ait demande.
+    setV230ShowQty(false);
   }, [offer.id]);
 
   // V226: meme raison que la quantite ci-dessus — une instance de carte recyclee
@@ -2127,8 +2138,40 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 role="group"
                 aria-label="Quantité"
               >
-                <div className="variant-label">Quantité</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {/* V230: le bloc est replie par defaut. La bascule est un vrai
+                    <button> et non un <p> cliquable : un paragraphe avec onClick
+                    n'est ni focusable au clavier ni annonce comme interactif.
+                    `aria-expanded` + `aria-controls` disent l'etat et la cible.
+                    La quantite choisie est rappelee DANS le libelle : replier un
+                    controle ne doit pas masquer sa valeur, sinon un client ayant
+                    choisi 3 puis replie croit commander 1. */}
+                <button
+                  type="button"
+                  className="variant-label"
+                  onClick={e => { e.stopPropagation(); setV230ShowQty(prev => !prev); }}
+                  aria-expanded={v230ShowQty}
+                  aria-controls={`offer-qty-chips-${offer.id}`}
+                  data-testid={`offer-qty-toggle-${offer.id}`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    font: 'inherit',
+                    color: 'inherit',
+                    cursor: 'pointer',
+                    userSelect: 'none'
+                  }}
+                >
+                  Quantité{v230ShowQty ? '' : ` : ${v225Qty}`}
+                  <SvgIcon name={v230ShowQty ? 'arrowDown' : 'arrowRight'} size={12} />
+                </button>
+                <div
+                  id={`offer-qty-chips-${offer.id}`}
+                  style={{ display: v230ShowQty ? 'flex' : 'none', flexWrap: 'wrap', gap: '6px' }}
+                >
                   {[1, 2, 3, 4, 5].map(n => (
                     <button
                       key={n}

@@ -8,6 +8,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { copyToClipboard } from "../utils/clipboard";
 import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
+import SvgIcon from "./SvgIcon";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
@@ -347,7 +348,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           className="max-w-md w-full rounded-2xl p-6 text-center"
           style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
         >
-          <div className="text-4xl mb-3">🔒</div>
+          <div className="text-4xl mb-3"><SvgIcon name="lock" size={36} /></div>
           <h1 className="text-xl font-semibold mb-2">Accès indisponible</h1>
           <p className="text-white/70 text-sm">{error}</p>
           <p className="text-white/40 text-xs mt-4">Vérifie le lien avec ton coach.</p>
@@ -460,8 +461,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                         }}
                         className="flex-1 flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-transform active:scale-[0.98]"
                         style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                        <span>👤 {mem.name}</span>
-                        <span className="text-white/30">→</span>
+                        <span className="inline-flex items-center gap-1.5"><SvgIcon name="user" size={14} /> {mem.name}</span>
+                        <span className="text-white/30"><SvgIcon name="arrowRight" size={14} /></span>
                       </button>
                       <button type="button" title="Copier le lien personnel"
                         onClick={async (e) => {
@@ -592,7 +593,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             }}
             className="text-xs text-white/50 hover:text-white transition-colors"
           >
-            ← Retour à la page du groupe
+            <span className="inline-flex items-center gap-1.5"><SvgIcon name="arrowLeft" size={14} /> Retour à la page du groupe</span>
           </button>
         )}
 
@@ -649,7 +650,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             <button type="button" onClick={scrollToReservation}
               className="mt-3 w-full py-2 rounded-xl text-sm font-semibold transition-transform active:scale-95"
               style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`, color: "white" }}>
-              📅 Réserver une séance
+              <span className="inline-flex items-center justify-center gap-1.5"><SvgIcon name="calendar" size={14} /> Réserver une séance</span>
             </button>
           )}
         </section>
@@ -743,7 +744,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               {headphoneSummary.map((p, idx) => (
                 <span key={idx} className="inline-flex items-center gap-1">
                   <span style={{ color: p.hp === "taken" ? "#ef4444" : "#22c55e" }}>
-                    {p.hp === "taken" ? "🔴" : "🟢"}
+                    <span className={`inline-block w-2 h-2 rounded-full ${p.hp === "taken" ? "bg-red-500" : "bg-green-500"}`} />
                   </span>
                   <span style={{ color: p.hp === "taken" ? "#fca5a5" : "#86efac" }}>
                     {p.name}
@@ -772,7 +773,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             style={{ background: COLORS.primary, color: "white" }}
             data-testid="qr-fullscreen-btn"
           >
-            🔍 Agrandir
+            <span className="inline-flex items-center gap-1.5"><SvgIcon name="search" size={14} /> Agrandir</span>
           </button>
         </section>
 
@@ -838,7 +839,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                                   data-testid={`subscriber-headphone-${r.id}-${p.guestIndex ?? "main"}`}
                                   style={{ color: HP_STYLE[p.hp] || "rgba(255,255,255,0.3)", lineHeight: 1 }}
                                 >
-                                  🎧
+                                  <SvgIcon name="headphones" size={12} />
                                 </span>
                                 <span>{p.name || `Invité ${idx + 1}`}</span>
                               </span>
@@ -951,7 +952,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                       >
                         <span className="font-semibold" style={{ fontSize: "11px" }}>{d.date}</span>
                         <span style={{ fontSize: "10px", opacity: 0.7 }}>{d.time}</span>
-                        {isConfirmed && <span style={{ fontSize: "10px" }}>✓</span>}
+                        {isConfirmed && <span style={{ fontSize: "10px" }}><SvgIcon name="check" size={14} /></span>}
                       </button>
                     );
                   })}
@@ -981,10 +982,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                     return (
                       <div className="flex items-center justify-between gap-2">
                         <span
-                          className="text-xs px-3 py-1 rounded-full inline-block"
+                          className="text-xs px-3 py-1 rounded-full inline-flex items-center gap-1.5"
                           style={{ background: "rgba(34,197,94,0.15)", color: "#86efac" }}
                         >
-                          ✓ Réservé
+                          <SvgIcon name="check" size={14} /> Réservé
                         </span>
                         {matchingRes && (
                           <button type="button"
@@ -1105,7 +1106,9 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               className="mt-4 text-xs text-white/40 underline"
               data-testid="copy-own-link"
             >
-              {shareCopied ? "✓ Lien copié" : "Copier mon lien personnel"}
+              {shareCopied ? (
+                <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Lien copié</span>
+              ) : "Copier mon lien personnel"}
             </button>
           )}
         </section>
@@ -1224,7 +1227,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             style={{ color: "rgba(255,255,255,0.5)" }}
             data-testid="subscriber-space-terms-link"
           >
-            📋 Conditions d'utilisation
+            <span className="inline-flex items-center gap-1.5"><SvgIcon name="clipboard" size={14} /> Conditions d'utilisation</span>
           </a>
         </div>
       </div>

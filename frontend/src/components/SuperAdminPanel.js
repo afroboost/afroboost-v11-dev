@@ -4,6 +4,7 @@
  */
 import { useState, useEffect } from "react";
 import axios from "axios";
+import SvgIcon from "./SvgIcon";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -242,8 +243,9 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
               onClick={onClose}
               className="text-white/40 hover:text-white text-2xl transition-colors"
               data-testid="close-admin-panel"
+              aria-label="Fermer le panneau"
             >
-              ✕
+              <SvgIcon name="close" size={20} />
             </button>
           </div>
 
@@ -283,15 +285,15 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
               style={activeTab === 'pricing' ? { color: '#D91CD2' } : {}}
               data-testid="tab-pricing"
             >
-              💎 Tarifs Services
+              <span className="inline-flex items-center gap-1.5"><SvgIcon name="diamond" size={14} /> Tarifs Services</span>
             </button>
           </div>
 
           {/* Erreur - v12.1: Design Sans Cadre */}
           {error && (
             <div className="mb-4 py-3 text-red-400 text-sm flex items-center gap-2">
-              <span>⚠️</span> {error}
-              <button onClick={() => setError(null)} className="ml-2 text-red-400/60 hover:text-red-400">✕</button>
+              <span><SvgIcon name="warning" size={14} /></span> {error}
+              <button onClick={() => setError(null)} className="ml-2 text-red-400/60 hover:text-red-400" aria-label="Masquer l'erreur"><SvgIcon name="close" size={14} /></button>
             </div>
           )}
 
@@ -370,7 +372,11 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                           }}
                           data-testid="ai-enhance-pack"
                         >
-                          {aiPackLoading ? '⏳ IA...' : '✨ Aide IA'}
+                          {aiPackLoading ? (
+                            <span className="inline-flex items-center gap-1.5"><SvgIcon name="loader" size={14} className="animate-spin" /> IA...</span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5"><SvgIcon name="sparkles" size={14} /> Aide IA</span>
+                          )}
                         </button>
                       </div>
                       <input
@@ -450,7 +456,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                     {pack.description && <p className="text-white/30 text-xs mb-2">{pack.description}</p>}
                     <div className="flex items-center gap-2 text-xs text-white/30">
                       {pack.stripe_price_id ? (
-                        <span className="text-green-400">✓ Stripe</span>
+                        <span className="text-green-400 inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Stripe</span>
                       ) : (
                         <span className="text-yellow-400">Sans Stripe</span>
                       )}
@@ -506,7 +512,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                             <span className={`text-xs ${
                               coach.stripe_connect_id ? 'text-green-400' : 'text-white/30'
                             }`}>
-                              {coach.stripe_connect_id ? '✓' : '—'}
+                              {coach.stripe_connect_id ? <SvgIcon name="check" size={14} /> : '—'}
                             </span>
                           </td>
                           <td className="px-4 py-3 text-center">
@@ -541,8 +547,9 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                                 onClick={() => handleDeleteCoach(coach.id, coach.name)}
                                 className="text-xs text-red-400 hover:text-red-300"
                                 data-testid={`delete-coach-${coach.id}`}
+                                aria-label={`Supprimer ${coach.name}`}
                               >
-                                🗑
+                                <SvgIcon name="trash" size={14} />
                               </button>
                             </div>
                           </td>
@@ -565,7 +572,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
               {/* Service: Campagne */}
               <div className="flex items-center justify-between py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
                 <div className="flex items-center gap-4">
-                  <span className="text-2xl">📧</span>
+                  <span className="text-2xl"><SvgIcon name="mail" size={20} /></span>
                   <div>
                     <div className="text-white font-medium">Campagne Email/WhatsApp</div>
                     <div className="text-white/40 text-sm">Envoi de messages en masse</div>
@@ -588,7 +595,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
               {/* Service: Conversation IA */}
               <div className="flex items-center justify-between py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
                 <div className="flex items-center gap-4">
-                  <span className="text-2xl">🤖</span>
+                  <span className="text-2xl"><SvgIcon name="robot" size={20} /></span>
                   <div>
                     <div className="text-white font-medium">Conversation IA</div>
                     <div className="text-white/40 text-sm">Session de chat avec l'assistant</div>
@@ -611,7 +618,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
               {/* Service: Code Promo */}
               <div className="flex items-center justify-between py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
                 <div className="flex items-center gap-4">
-                  <span className="text-2xl">🎫</span>
+                  <span className="text-2xl"><SvgIcon name="ticket" size={20} /></span>
                   <div>
                     <div className="text-white font-medium">Génération Code Promo</div>
                     <div className="text-white/40 text-sm">Création d'un code de réduction</div>
@@ -643,13 +650,15 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                   }}
                   data-testid="save-prices-btn"
                 >
-                  {savingPrices ? 'Sauvegarde...' : '💾 Sauvegarder les tarifs'}
+                  {savingPrices ? 'Sauvegarde...' : (
+                    <span className="inline-flex items-center gap-1.5"><SvgIcon name="save" size={14} /> Sauvegarder les tarifs</span>
+                  )}
                 </button>
               </div>
 
               {/* Note */}
               <div className="text-white/30 text-xs pt-4">
-                💡 Le Super Admin ne consomme jamais de crédits. Ces tarifs s'appliquent uniquement aux coachs partenaires.
+                <SvgIcon name="lightbulb" size={14} />{' '}Le Super Admin ne consomme jamais de crédits. Ces tarifs s'appliquent uniquement aux coachs partenaires.
               </div>
             </div>
           )}

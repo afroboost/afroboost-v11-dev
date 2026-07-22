@@ -13,6 +13,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { copyToClipboard } from "../utils/clipboard";
 import VitrineCheckout from "./VitrineCheckout"; // v15.0
 import AudioPlayer from "./AudioPlayer"; // v17.4
+import SvgIcon from "./SvgIcon";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -572,7 +573,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         <button onClick={onBack || onClose}
           className="px-6 py-3 rounded-xl text-white font-medium"
           style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #d91cd2 100%)' }}>
-          ← Retour
+          <span className="inline-flex items-center gap-1.5"><SvgIcon name="arrowLeft" size={14} /> Retour</span>
         </button>
       </div>
     );
@@ -915,7 +916,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 style={{ background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.5) 0%, rgba(217, 28, 210, 0.4) 100%)' }}>
                 <div className="absolute inset-0 flex items-center justify-center"
                   style={{ background: 'radial-gradient(circle at 50% 50%, rgba(217, 28, 210, 0.3) 0%, transparent 70%)' }}>
-                  <span className="text-5xl opacity-70">🎬</span>
+                  <span className="text-5xl opacity-70"><SvgIcon name="video" size={48} /></span>
                 </div>
               </div>
             );
@@ -950,7 +951,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             boxShadow: '0 0 15px rgba(217,28,210,0.4)',
             fontSize: '12px', fontWeight: 700, color: '#fff'
           }}>
-            💎 {currentVideoPrice} CHF
+            <SvgIcon name="diamond" size={14} />{' '}{currentVideoPrice} CHF
           </div>
         )}
 
@@ -1202,7 +1203,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   border: '2px solid #d91cd2',
                   boxShadow: '0 0 20px rgba(217,28,210,0.4)'
                 }}>
-                <span style={{ fontSize: '22px' }}>⚠️</span>
+                <span style={{ fontSize: '22px' }}><SvgIcon name="warning" size={22} /></span>
                 <div>
                   <p className="text-white font-semibold text-sm">Choisissez d'abord l'horaire de votre première séance</p>
                   <p className="text-white/70 text-xs mt-1">Pour réserver votre offre, sélectionnez une date ci-dessous.</p>
@@ -1403,7 +1404,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               </h2>
               {uniqueOffers.length > 1 && (
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50 text-sm">🔍</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50 text-sm"><SvgIcon name="search" size={14} /></span>
                   <input type="text" value={offerSearch} onChange={(e) => setOfferSearch(e.target.value)}
                     placeholder="Rechercher..."
                     className="pl-9 pr-4 py-2 rounded-full bg-black/40 text-white text-sm border border-white/20 focus:outline-none focus:ring-2 focus:ring-violet-500 w-40" />
@@ -1513,7 +1514,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         {audioTracks.length > 0 && (
           <div className="mb-8 vitrine-fade-in" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
             <h2 className="font-semibold text-white text-center mb-4" style={{ fontSize: '16px' }}>
-              🎵 Contenus Audio
+              <span className="inline-flex items-center justify-center gap-1.5"><SvgIcon name="music" size={16} /> Contenus Audio</span>
             </h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {audioTracks.map(track => (
@@ -1553,7 +1554,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
 
             {bookingSuccess ? (
               <div className="text-center py-8">
-                <div className="text-5xl mb-4">✅</div>
+                <div className="text-5xl mb-4"><SvgIcon name="check" size={48} /></div>
                 <h4 className="text-xl font-bold text-white mb-2">Réservation confirmée !</h4>
                 <p className="text-white/60 mb-4">Vous recevrez une confirmation par email.</p>
                 <button onClick={() => {
@@ -1586,7 +1587,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           </p>
                         </div>
                         <button type="button" onClick={() => setSelectedBookings(prev => prev.filter((_, i) => i !== idx))}
-                          className="text-white/40 hover:text-red-400 text-xs ml-2 transition-colors">✕</button>
+                          aria-label="Retirer cette séance"
+                          className="text-white/40 hover:text-red-400 text-xs ml-2 transition-colors"><SvgIcon name="close" size={14} /></button>
                       </div>
                     </div>
                   ))}
@@ -1812,8 +1814,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                               fontWeight: 700,
                               padding: '2px 6px',
                               borderRadius: '8px',
-                              letterSpacing: '0.3px'
-                            }}>✓ Vérifié</span>
+                              letterSpacing: '0.3px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}><SvgIcon name="check" size={10} /> Vérifié</span>
                           )}
                           <div style={{ display: 'flex', gap: '1px' }}>
                             {[1,2,3,4,5].map(i => (

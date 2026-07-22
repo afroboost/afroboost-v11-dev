@@ -10,6 +10,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
+import SvgIcon from "./SvgIcon";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -757,7 +758,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                       boxShadow: '0 0 15px rgba(217,28,210,0.4)',
                       fontSize: '12px', fontWeight: 700, color: '#fff'
                     }}>
-                      💎 {currentHeroPrice} CHF
+                      <SvgIcon name="diamond" size={14} />{' '}{currentHeroPrice} CHF
                     </div>
                   )}
 
@@ -1591,9 +1592,10 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
                 {searchQuery && (
                   <button
                     onClick={() => setSearchQuery('')}
+                    aria-label="Effacer la recherche"
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-white/50 hover:text-white text-xs"
                   >
-                    ✕
+                    <SvgIcon name="close" size={14} />
                   </button>
                 )}
               </div>
@@ -1831,7 +1833,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
             }}
           >
             <p style={{ color: '#fff', fontSize: '16px', fontWeight: 700, marginBottom: '6px' }}>
-              📱 Scanne pour accéder
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="phone" size={16} /> Scanne pour accéder</span>
             </p>
             <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '12px', marginBottom: '18px' }}>
               Lien direct vers cette vitrine
@@ -1860,7 +1862,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
                   background: 'rgba(255,255,255,0.08)', color: '#fff', fontSize: '13px', cursor: 'pointer'
                 }}
               >
-                📋 Copier
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="clipboard" size={14} /> Copier</span>
               </button>
               <button
                 onClick={() => setShowQRModal(false)}

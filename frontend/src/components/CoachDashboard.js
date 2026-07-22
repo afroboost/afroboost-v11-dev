@@ -32,6 +32,7 @@ import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersMa
 // V199: Accordéon paiements (5 sections pliables)
 import V199BoutiqueAccordion from "./dashboard/V199BoutiqueAccordion";
 import { copyToClipboard } from "../utils/clipboard"; // Utilitaire copier avec fallback mobile
+import SvgIcon from "./SvgIcon"; // V230: jeu d'icones vectorielles inline
 
 // v9.2.1: ErrorBoundary pour isoler les erreurs de composants
 class SectionErrorBoundary extends Component {
@@ -49,13 +50,13 @@ class SectionErrorBoundary extends Component {
     if (this.state.hasError) {
       return (
         <div className="p-6 rounded-xl bg-red-500/20 border border-red-500/50 text-white">
-          <h3 className="text-lg font-bold mb-2">⚠️ Erreur dans la section {this.props.sectionName}</h3>
+          <h3 className="text-lg font-bold mb-2 inline-flex items-center gap-1.5"><SvgIcon name="warning" size={18} /> Erreur dans la section {this.props.sectionName}</h3>
           <p className="text-white/70 text-sm mb-3">{this.state.error?.message || 'Une erreur est survenue'}</p>
           <button 
             onClick={() => this.setState({ hasError: false, error: null })}
-            className="px-4 py-2 bg-violet-500 rounded-lg text-white text-sm"
+            className="px-4 py-2 bg-violet-500 rounded-lg text-white text-sm inline-flex items-center gap-1.5"
           >
-            🔄 Réessayer
+            <SvgIcon name="refresh" size={14} /> Réessayer
           </button>
         </div>
       );
@@ -407,8 +408,8 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
   };
 
   if (loading && comments.length === 0) return (
-    <div id="social-boost-comments-list" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', marginTop: '12px' }}>
-      ⏳ Chargement des commentaires...
+    <div id="social-boost-comments-list" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', marginTop: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+      <SvgIcon name="loader" size={14} className="animate-spin" /> Chargement des commentaires...
     </div>
   );
 
@@ -461,9 +462,9 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
             background: showAddForm ? 'rgba(217,28,210,0.3)' : 'rgba(217,28,210,0.1)',
             border: '1px solid rgba(217,28,210,0.4)', borderRadius: '6px',
             color: '#D91CD2', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
-            padding: '4px 10px'
+            padding: '4px 10px', display: 'inline-flex', alignItems: 'center', gap: '6px'
           }}>
-          {showAddForm ? '✕ Fermer' : '＋ Ajouter'}
+          {showAddForm ? <><SvgIcon name="close" size={14} /> Fermer</> : <>＋ Ajouter</>}
         </button>
       </div>
 
@@ -513,7 +514,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
                 <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTop: '2px solid #fff', borderRadius: '50%', animation: 'v79Spin 0.8s linear infinite' }}></span>
                 Ajout en cours...
               </>
-            ) : '✅ Ajouter ce commentaire'}
+            ) : <><SvgIcon name="check" size={14} /> Ajouter ce commentaire</>}
           </button>
         </div>
       )}
@@ -577,7 +578,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
             }}>
             {isLiking ? (
               <span style={{ display: 'inline-block', width: '16px', height: '16px', border: '2px solid rgba(217,28,210,0.3)', borderTop: '2px solid #D91CD2', borderRadius: '50%', animation: 'v79Spin 0.7s linear infinite' }}></span>
-            ) : '❤️'}
+            ) : <SvgIcon name="heart" size={16} />}
           </button>
           {/* Photo button */}
           <button onClick={() => handlePhoto(c.id)} title="Ajouter photo"
@@ -587,7 +588,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
               minWidth: '44px', minHeight: '36px',
               display: 'flex', alignItems: 'center', justifyContent: 'center'
             }}>
-            📸
+            <SvgIcon name="camera" size={16} />
           </button>
           {/* Delete button */}
           <button onClick={() => handleDelete(c.id)} title="Supprimer"
@@ -597,7 +598,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
               minWidth: '44px', minHeight: '36px',
               display: 'flex', alignItems: 'center', justifyContent: 'center'
             }}>
-            🗑️
+            <SvgIcon name="trash" size={16} />
           </button>
         </div>
         );
@@ -617,7 +618,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
         <span style={{
           display: 'inline-block',
           animation: refreshing ? 'v79RefreshSpin 1s linear infinite' : 'none'
-        }}>🔄</span>
+        }}><SvgIcon name="refresh" size={14} /></span>
         {refreshing ? 'Rafraîchissement...' : 'Rafraîchir les commentaires'}
       </button>
     </div>
@@ -5121,16 +5122,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // v37.2: "Ma Page" et "Paiements" supprimés — centralisés dans le HUB Gestion
   const baseTabs = [
     { id: "reservations", label: t('reservations') },
-    { id: "offers", label: "🎛️ Gestion" },
+    { id: "offers", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="settings" size={14} /> Gestion</span> },
     { id: "codes", label: t('promoCodes') },
-    { id: "contacts", label: "📇 Contacts" },
-    { id: "campaigns", label: "📢 Campagnes" },
-    { id: "conversations", label: unreadCount > 0 ? `💬 Conversations (${unreadCount})` : "💬 Conversations" }
+    { id: "contacts", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="users" size={14} /> Contacts</span> },
+    { id: "campaigns", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="megaphone" size={14} /> Campagnes</span> },
+    { id: "conversations", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="messageCircle" size={14} /> {unreadCount > 0 ? `Conversations (${unreadCount})` : "Conversations"}</span> }
   ];
 
   // v37.2: Boutique et Stripe pour coachs partenaires uniquement
   const tabs = !isSuperAdmin
-    ? [...baseTabs.filter(t => !ADMIN_ONLY_TAB_IDS.includes(t.id)), { id: "boutique", label: "💎 Boutique" }, { id: "stripe", label: "🔗 Mon Stripe" }]
+    ? [...baseTabs.filter(t => !ADMIN_ONLY_TAB_IDS.includes(t.id)), { id: "boutique", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="diamond" size={14} /> Boutique</span> }, { id: "stripe", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="link" size={14} /> Mon Stripe</span> }]
     : [...baseTabs];
 
   // v9.2.5: COMPOSANT DE SECOURS - Affiche le squelette du dashboard pendant le chargement
@@ -5159,7 +5160,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   border: `1px solid ${isSuperAdmin ? 'rgba(217,28,210,0.6)' : 'rgba(167,139,250,0.3)'}`
                 }}
               >
-                {isSuperAdmin ? '👑 SUPER ADMIN : ACCÈS ILLIMITÉ' : 'COMPTE PARTENAIRE'}
+                {isSuperAdmin ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="crown" size={14} /> SUPER ADMIN : ACCÈS ILLIMITÉ</span> : 'COMPTE PARTENAIRE'}
               </span>
               {!isSuperAdmin && (
                 <span
@@ -5197,7 +5198,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           className="p-8 rounded-xl text-center"
           style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(217,28,210,0.3)' }}
         >
-          <div className="text-4xl mb-4 animate-pulse">⏳</div>
+          <div className="mb-4 flex justify-center"><SvgIcon name="loader" size={36} className="animate-spin" /></div>
           <h2 className="text-xl font-bold text-white mb-2">Initialisation de votre espace...</h2>
           <p className="text-white/60">Chargement de vos données en cours</p>
         </div>
@@ -5257,7 +5258,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', position: 'relative', zIndex: 1 }}>
               <div>
                 <h2 style={{ fontSize: '22px', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '10px', margin: 0 }}>
-                  <span style={{ fontSize: '28px' }}>🎵</span> Studio Audio
+                  <span style={{ display: 'inline-flex' }}><SvgIcon name="music" size={28} /></span> Studio Audio
                 </h2>
                 <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', margin: '4px 0 0 0' }}>
                   Cours : <span style={{ color: '#d91cd2' }}>{selectedCourseForAudio.name}</span>
@@ -5307,12 +5308,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               />
               {uploadingAudio ? (
                 <div>
-                  <div style={{ fontSize: '36px', marginBottom: '8px' }}>⏳</div>
+                  <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'center', color: '#d91cd2' }}><SvgIcon name="loader" size={36} className="animate-spin" /></div>
                   <p style={{ color: '#d91cd2', fontWeight: 600, fontSize: '14px' }}>Upload en cours...</p>
                 </div>
               ) : (
                 <div>
-                  <div style={{ fontSize: '42px', marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(217,28,210,0.5))' }}>🎶</div>
+                  <div style={{ marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(217,28,210,0.5))', display: 'flex', justifyContent: 'center', color: '#d91cd2' }}><SvgIcon name="music" size={42} /></div>
                   <p style={{ color: '#fff', fontWeight: 700, fontSize: '15px', marginBottom: '4px' }}>Glissez vos fichiers audio ici</p>
                   <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>ou cliquez pour sélectionner • MP3, WAV, OGG, AAC (max 15MB)</p>
                 </div>
@@ -5358,9 +5359,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         {/* Reorder buttons (touch-friendly) + drag handle */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flexShrink: 0 }}>
                           <button onClick={(e) => { e.stopPropagation(); if (index === 0) return; const sorted = [...audioTracks].sort((a,b) => a.order - b.order); const updated = [...sorted]; const [moved] = updated.splice(index, 1); updated.splice(index - 1, 0, moved); setAudioTracks(updated.map((t, i) => ({ ...t, order: i }))); }}
-                            style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index === 0 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index === 0 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>▲</button>
+                            style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index === 0 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index === 0 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }} aria-label="Monter la piste"><SvgIcon name="arrowUp" size={14} /></button>
                           <button onClick={(e) => { e.stopPropagation(); const sorted = [...audioTracks].sort((a,b) => a.order - b.order); if (index >= sorted.length - 1) return; const updated = [...sorted]; const [moved] = updated.splice(index, 1); updated.splice(index + 1, 0, moved); setAudioTracks(updated.map((t, i) => ({ ...t, order: i }))); }}
-                            style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index >= audioTracks.length - 1 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index >= audioTracks.length - 1 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index >= audioTracks.length - 1 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>▼</button>
+                            style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index >= audioTracks.length - 1 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index >= audioTracks.length - 1 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index >= audioTracks.length - 1 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }} aria-label="Descendre la piste"><SvgIcon name="arrowDown" size={14} /></button>
                         </div>
 
                         {/* Cover thumbnail */}
@@ -5375,7 +5376,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                             boxShadow: '0 0 15px rgba(217,28,210,0.2)'
                           }}
                         >
-                          {!track.cover_url && <span style={{ fontSize: '20px' }}>🎵</span>}
+                          {!track.cover_url && <span style={{ display: 'inline-flex' }}><SvgIcon name="music" size={20} /></span>}
                           <div style={{
                             position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -5384,7 +5385,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                             onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
                             onMouseLeave={(e) => { e.currentTarget.style.opacity = '0'; }}
                           >
-                            <span style={{ fontSize: '14px' }}>📷</span>
+                            <span style={{ display: 'inline-flex' }}><SvgIcon name="camera" size={14} /></span>
                           </div>
                         </div>
 
@@ -5424,7 +5425,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                               cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px'
                             }}
                             title="Éditer"
-                          >✏️</button>
+                          ><SvgIcon name="edit" size={14} /></button>
                           <button
                             onClick={(e) => { e.stopPropagation(); removeTrack(track.id); }}
                             style={{
@@ -5433,7 +5434,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                               cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px'
                             }}
                             title="Supprimer"
-                          >🗑️</button>
+                          ><SvgIcon name="trash" size={14} /></button>
                         </div>
                       </div>
 
@@ -5571,7 +5572,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 }}
                 data-testid="save-playlist-btn"
               >
-                {savingPlaylist ? '⏳ Sauvegarde...' : '💾 Sauvegarder le Studio'}
+                <span className="inline-flex items-center justify-center gap-1.5">{savingPlaylist ? <><SvgIcon name="loader" size={14} className="animate-spin" /> Sauvegarde...</> : <><SvgIcon name="save" size={14} /> Sauvegarder le Studio</>}</span>
               </button>
             </div>
           </div>
@@ -5631,7 +5632,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           }}
           data-testid="coach-logout-fixed"
         >
-          🚪 Déconnexion
+          <SvgIcon name="logout" size={14} /> Déconnexion
         </button>
       </div>
       
@@ -5690,7 +5691,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                       }}
                       data-testid="coach-credits-badge"
                     >
-                      <span style={{ color: coachCredits <= 0 ? '#ef4444' : '#D91CD2' }}>💰</span>
+                      <span style={{ color: coachCredits <= 0 ? '#ef4444' : '#D91CD2', display: 'inline-flex' }}><SvgIcon name="dollarSign" size={16} /></span>
                       <div className="flex flex-col">
                         <span 
                           className="text-xs font-bold"
@@ -5729,7 +5730,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         }}
                         data-testid="buy-credits-btn"
                       >
-                        🛒 Acheter
+                        <span className="inline-flex items-center gap-1.5"><SvgIcon name="shoppingCart" size={14} /> Acheter</span>
                       </button>
                     )}
                   </div>
@@ -5746,7 +5747,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     }}
                     data-testid="super-admin-badge"
                   >
-                    <span>👑</span> Crédits : Illimités ♾️
+                    <SvgIcon name="crown" size={14} /> Crédits : Illimités ∞
                   </span>
                 )}
               </div>
@@ -5796,7 +5797,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     {/* Toggle: Accès Partenaires */}
                     <div className="px-4 py-3 flex items-center justify-between hover:bg-white/5 transition-colors">
                       <div className="flex items-center gap-3">
-                        <span className="text-lg">{platformSettings.partner_access_enabled ? '🟢' : '🔴'}</span>
+                        <span className={`inline-block w-2 h-2 rounded-full ${platformSettings.partner_access_enabled ? 'bg-green-500' : 'bg-red-500'}`} />
                         <div>
                           <p className="text-sm text-white font-medium">Accès Partenaires</p>
                           <p className="text-xs text-white/40">Inscription & connexion</p>
@@ -5822,7 +5823,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     {/* Toggle: Mode Maintenance */}
                     <div className="px-4 py-3 flex items-center justify-between hover:bg-white/5 transition-colors">
                       <div className="flex items-center gap-3">
-                        <span className="text-lg">{platformSettings.maintenance_mode ? '🔴' : '🟢'}</span>
+                        <span className={`inline-block w-2 h-2 rounded-full ${platformSettings.maintenance_mode ? 'bg-red-500' : 'bg-green-500'}`} />
                         <div>
                           <p className="text-sm text-white font-medium">Mode Maintenance</p>
                           <p className="text-xs text-white/40">Bloquer tout accès</p>
@@ -5895,7 +5896,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 }}
                 data-testid="stripe-connect-btn"
               >
-                <span className="text-lg">{stripeConnectStatus?.connected ? '✅' : '💳'}</span>
+                <span className="inline-flex">{stripeConnectStatus?.connected ? <SvgIcon name="check" size={18} /> : <SvgIcon name="creditCard" size={18} />}</span>
                 <span className="text-white/80 text-xs">{stripeConnectLoading ? '...' : 'Stripe'}</span>
               </button>
             )}
@@ -5968,38 +5969,38 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             <button onClick={dismissDashOnboarding} style={{
               position: 'absolute', top: '10px', right: '12px',
               background: 'none', border: 'none', color: '#aaa', fontSize: '18px', cursor: 'pointer'
-            }}>✕</button>
-            <h3 style={{ color: '#d91cd2', margin: '0 0 14px 0', fontSize: '17px' }}>
-              🎉 Bienvenue sur ton Espace Partenaire !
+            }} aria-label="Fermer"><SvgIcon name="close" size={18} /></button>
+            <h3 style={{ color: '#d91cd2', margin: '0 0 14px 0', fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <SvgIcon name="sparkles" size={18} /> Bienvenue sur ton Espace Partenaire !
             </h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
               <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
-                <div style={{ fontSize: '22px', marginBottom: '6px' }}>💰</div>
+                <div style={{ marginBottom: '6px' }}><SvgIcon name="dollarSign" size={22} /></div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Crédits</div>
                 <div style={{ color: '#aaa', fontSize: '12px' }}>Gère ici tes séances converties en services. Chaque action consomme des crédits.</div>
               </div>
               <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
-                <div style={{ fontSize: '22px', marginBottom: '6px' }}>🎯</div>
+                <div style={{ marginBottom: '6px' }}><SvgIcon name="target" size={22} /></div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Gestion & Contenus</div>
                 <div style={{ color: '#aaa', fontSize: '12px' }}>Crée tes propres offres en toute autonomie. Publie des contenus attractifs pour tes clients.</div>
               </div>
               <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
-                <div style={{ fontSize: '22px', marginBottom: '6px' }}>💬</div>
+                <div style={{ marginBottom: '6px' }}><SvgIcon name="messageCircle" size={22} /></div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Conversations IA</div>
                 <div style={{ color: '#aaa', fontSize: '12px' }}>Engage tes prospects avec notre assistant IA intégré. Réponds automatiquement 24h/24.</div>
               </div>
               <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
-                <div style={{ fontSize: '22px', marginBottom: '6px' }}>🏷️</div>
+                <div style={{ marginBottom: '6px' }}><SvgIcon name="tag" size={22} /></div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Codes Promo</div>
                 <div style={{ color: '#aaa', fontSize: '12px' }}>Crée des codes de réduction pour booster tes ventes et fidéliser tes clients.</div>
               </div>
               <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
-                <div style={{ fontSize: '22px', marginBottom: '6px' }}>📣</div>
+                <div style={{ marginBottom: '6px' }}><SvgIcon name="megaphone" size={22} /></div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Campagnes Email</div>
                 <div style={{ color: '#aaa', fontSize: '12px' }}>Lance des campagnes ciblées pour promouvoir tes offres et tes événements.</div>
               </div>
               <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
-                <div style={{ fontSize: '22px', marginBottom: '6px' }}>🔒</div>
+                <div style={{ marginBottom: '6px' }}><SvgIcon name="lock" size={22} /></div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Sécurité & Isolation</div>
                 <div style={{ color: '#aaa', fontSize: '12px' }}>Tes données sont isolées. Tu ne vois que ton activité, personne d'autre.</div>
               </div>
@@ -6059,13 +6060,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 const totalAudioTracks = courses.reduce((acc, c) => acc + (c.audio_tracks?.length || c.playlist?.length || 0), 0);
                 const totalVideos = (concept?.heroVideos || []).filter(v => v && (v.url || v.file_id)).length;
                 return [
-                  { id: 'contenus', icon: '🎁', label: 'Offres & Cours', badge: (offers?.length || 0) + courses.length },
-                  { id: 'audio', icon: '🎵', label: 'Audio', badge: totalAudioTracks },
-                  { id: 'social', icon: '💬', label: 'Social Boost', badge: 0 },
-                  { id: 'emojis', icon: '😊', label: 'Emojis', badge: 0 },
-                  { id: 'video-hero', icon: '🎬', label: 'Vidéo Hero', badge: totalVideos },
-                  { id: 'vitrine', icon: '🖼️', label: 'Ma Vitrine', badge: 0 },
-                  { id: 'boutique-hub', icon: '💳', label: 'Paiements', badge: 0 }
+                  { id: 'contenus', icon: 'gift', label: 'Offres & Cours', badge: (offers?.length || 0) + courses.length },
+                  { id: 'audio', icon: 'music', label: 'Audio', badge: totalAudioTracks },
+                  { id: 'social', icon: 'messageCircle', label: 'Social Boost', badge: 0 },
+                  { id: 'emojis', icon: 'smile', label: 'Emojis', badge: 0 },
+                  { id: 'video-hero', icon: 'video', label: 'Vidéo Hero', badge: totalVideos },
+                  { id: 'vitrine', icon: 'image', label: 'Ma Vitrine', badge: 0 },
+                  { id: 'boutique-hub', icon: 'creditCard', label: 'Paiements', badge: 0 }
                 ];
               })().map(sub => (
                 <button
@@ -6091,7 +6092,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     position: 'relative'
                   }}
                 >
-                  <span style={{ fontSize: '18px' }}>{sub.icon}</span>
+                  <span style={{ display: 'inline-flex' }}><SvgIcon name={sub.icon} size={24} /></span>
                   <span style={{
                     color: offersSubTab === sub.id ? '#D91CD2' : 'rgba(255,255,255,0.7)',
                     fontSize: '10px',
@@ -6155,9 +6156,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     gap: '10px',
                     flexWrap: 'wrap'
                   }}>
-                    <span style={{ fontSize: '18px' }}>
-                      {nextExpiration.next.days_left <= 3 ? '🔴' : nextExpiration.next.days_left <= 7 ? '🟡' : '🟢'}
-                    </span>
+                    <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${nextExpiration.next.days_left <= 3 ? 'bg-red-500' : nextExpiration.next.days_left <= 7 ? 'bg-yellow-500' : 'bg-green-500'}`} />
                     <div style={{ flex: 1, minWidth: '200px' }}>
                       <div style={{ color: '#fff', fontSize: '13px', fontWeight: 600 }}>
                         Prochaine expiration : <span style={{ color: '#D91CD2' }}>{nextExpiration.next.name}</span>
@@ -6168,7 +6167,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           : `Dans ${nextExpiration.next.days_left} jour${nextExpiration.next.days_left > 1 ? 's' : ''}`}
                         {' • '}
                         {new Date(nextExpiration.next.expiration_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}
-                        {nextExpiration.next.is_auto_prolong ? ' • ♻️ Auto-renouvellement' : ' • ⏹️ Pas de renouvellement'}
+                        {nextExpiration.next.is_auto_prolong
+                          ? <span className="inline-flex items-center gap-1"> &bull; <SvgIcon name="refresh" size={14} /> Auto-renouvellement</span>
+                          : <span className="inline-flex items-center gap-1"> &bull; <SvgIcon name="stop" size={14} /> Pas de renouvellement</span>}
                       </div>
                     </div>
                     <div style={{
@@ -6194,7 +6195,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     border: '1px solid rgba(217,28,210,0.2)'
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
-                      <span style={{ fontSize: '20px' }}>💬</span>
+                      <span style={{ display: 'inline-flex' }}><SvgIcon name="messageCircle" size={20} /></span>
                       <h3 style={{ color: '#fff', fontSize: '15px', fontWeight: 700, margin: 0 }}>Social Boost</h3>
                       <span style={{
                         background: 'rgba(217,28,210,0.2)', color: '#D91CD2',
@@ -6203,7 +6204,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     </div>
                     {/* v106.6: Ligne Avis (commentaires) */}
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '8px' }}>
-                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', fontWeight: 600, minWidth: '50px' }}>💬 Avis</span>
+                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', fontWeight: 600, minWidth: '50px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}><SvgIcon name="messageCircle" size={14} /> Avis</span>
                       {/* +1 Avis */}
                       <button
                         onClick={async (e) => {
@@ -6231,7 +6232,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           fontSize: '12px', fontWeight: 600, cursor: 'pointer'
                         }}
                       >
-                        💬 +1 Avis
+                        <span className="inline-flex items-center gap-1.5"><SvgIcon name="messageCircle" size={14} /> +1 Avis</span>
                       </button>
                       {/* +50 Avis */}
                       <button
@@ -6269,7 +6270,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     </div>
                     {/* v106.6: Ligne Likes */}
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '8px' }}>
-                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', fontWeight: 600, minWidth: '50px' }}>❤️ Likes</span>
+                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', fontWeight: 600, minWidth: '50px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}><SvgIcon name="heart" size={14} /> Likes</span>
                       {/* +1 Like */}
                       <button
                         onClick={async () => {
@@ -6291,7 +6292,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           fontSize: '12px', fontWeight: 600, cursor: 'pointer'
                         }}
                       >
-                        ❤️ +1 Like
+                        <span className="inline-flex items-center gap-1.5"><SvgIcon name="heart" size={14} /> +1 Like</span>
                       </button>
                       {/* +100 Likes */}
                       <button
@@ -6314,7 +6315,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           fontSize: '12px', fontWeight: 600, cursor: 'pointer'
                         }}
                       >
-                        ❤️ +100 Likes
+                        <span className="inline-flex items-center gap-1.5"><SvgIcon name="heart" size={14} /> +100 Likes</span>
                       </button>
                     </div>
                     {/* v106.6: Ligne Actions */}
@@ -6338,7 +6339,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           fontSize: '13px', fontWeight: 600, cursor: 'pointer'
                         }}
                       >
-                        🗑️ Reset
+                        <span className="inline-flex items-center gap-1.5"><SvgIcon name="trash" size={14} /> Reset</span>
                       </button>
                     </div>
 
@@ -6402,7 +6403,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   {/* v44: Header autonome — plus de sélecteur de cours */}
                   <div style={{ position: 'relative', zIndex: 1, marginBottom: '16px' }}>
                     <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '10px', margin: '0 0 4px 0' }}>
-                      <span style={{ fontSize: '26px' }}>🎵</span> Studio Audio
+                      <span style={{ display: 'inline-flex' }}><SvgIcon name="music" size={26} /></span> Studio Audio
                       <span style={{ fontSize: '12px', fontWeight: 600, color: 'rgba(217,28,210,0.7)', background: 'rgba(217,28,210,0.1)', padding: '2px 8px', borderRadius: '8px' }}>
                         {audioTracks.length} piste{audioTracks.length !== 1 ? 's' : ''}
                       </span>
@@ -6445,12 +6446,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         />
                         {uploadingAudio ? (
                           <div>
-                            <div style={{ fontSize: '36px', marginBottom: '8px' }}>⏳</div>
+                            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'center', color: '#d91cd2' }}><SvgIcon name="loader" size={36} className="animate-spin" /></div>
                             <p style={{ color: '#d91cd2', fontWeight: 600, fontSize: '14px', margin: 0 }}>Upload en cours...</p>
                           </div>
                         ) : (
                           <div>
-                            <div style={{ fontSize: '42px', marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(217,28,210,0.5))' }}>🎶</div>
+                            <div style={{ marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(217,28,210,0.5))', display: 'flex', justifyContent: 'center', color: '#d91cd2' }}><SvgIcon name="music" size={42} /></div>
                             <p style={{ color: '#fff', fontWeight: 700, fontSize: '15px', marginBottom: '4px' }}>Glissez vos fichiers audio ici</p>
                             <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: 0 }}>ou cliquez pour sélectionner • MP3, WAV, OGG, AAC (max 15MB)</p>
                           </div>
@@ -6491,9 +6492,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                   {/* v46: Reorder buttons (touch-friendly) */}
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flexShrink: 0 }}>
                                     <button onClick={(e) => { e.stopPropagation(); if (index === 0) return; const sorted = [...audioTracks].sort((a,b) => a.order - b.order); const updated = [...sorted]; const [moved] = updated.splice(index, 1); updated.splice(index - 1, 0, moved); setAudioTracks(updated.map((t, i) => ({ ...t, order: i }))); }}
-                                      style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index === 0 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index === 0 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>▲</button>
+                                      style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index === 0 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index === 0 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }} aria-label="Monter la piste"><SvgIcon name="arrowUp" size={14} /></button>
                                     <button onClick={(e) => { e.stopPropagation(); const sorted = [...audioTracks].sort((a,b) => a.order - b.order); if (index >= sorted.length - 1) return; const updated = [...sorted]; const [moved] = updated.splice(index, 1); updated.splice(index + 1, 0, moved); setAudioTracks(updated.map((t, i) => ({ ...t, order: i }))); }}
-                                      style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index >= audioTracks.length - 1 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index >= audioTracks.length - 1 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index >= audioTracks.length - 1 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>▼</button>
+                                      style={{ width: '24px', height: '20px', border: 'none', borderRadius: '4px', background: index >= audioTracks.length - 1 ? 'transparent' : 'rgba(255,255,255,0.08)', color: index >= audioTracks.length - 1 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.5)', cursor: index >= audioTracks.length - 1 ? 'default' : 'pointer', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }} aria-label="Descendre la piste"><SvgIcon name="arrowDown" size={14} /></button>
                                   </div>
                                   <div
                                     onClick={(e) => { e.stopPropagation(); setCoverUploadTrackId(track.id); audioCoverInputRef.current?.click(); }}
@@ -6506,7 +6507,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                       boxShadow: '0 0 15px rgba(217,28,210,0.2)'
                                     }}
                                   >
-                                    {!track.cover_url && <span style={{ fontSize: '20px' }}>🎵</span>}
+                                    {!track.cover_url && <span style={{ display: 'inline-flex' }}><SvgIcon name="music" size={20} /></span>}
                                   </div>
                                   <div style={{ flex: 1, minWidth: 0 }}>
                                     <p style={{ color: '#fff', fontSize: '14px', fontWeight: 600, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{track.title}</p>
@@ -6532,10 +6533,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                   <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                                     <button onClick={(e) => { e.stopPropagation(); setEditingTrackId(editingTrackId === track.id ? null : track.id); }}
                                       style={{ width: '32px', height: '32px', borderRadius: '8px', border: 'none', background: editingTrackId === track.id ? 'rgba(217,28,210,0.3)' : 'rgba(255,255,255,0.08)', color: editingTrackId === track.id ? '#d91cd2' : 'rgba(255,255,255,0.5)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}
-                                      title="Éditer">✏️</button>
+                                      title="Éditer"><SvgIcon name="edit" size={14} /></button>
                                     <button onClick={(e) => { e.stopPropagation(); removeTrack(track.id); }}
                                       style={{ width: '32px', height: '32px', borderRadius: '8px', border: 'none', background: 'rgba(239,68,68,0.1)', color: '#ef4444', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}
-                                      title="Supprimer">🗑️</button>
+                                      title="Supprimer"><SvgIcon name="trash" size={14} /></button>
                                   </div>
                                 </div>
 
@@ -6599,7 +6600,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           }}
                           data-testid="save-audio-inline"
                         >
-                          {savingPlaylist ? '⏳ Sauvegarde...' : '💾 Sauvegarder le Studio Audio'}
+                          <span className="inline-flex items-center justify-center gap-1.5">{savingPlaylist ? <><SvgIcon name="loader" size={14} className="animate-spin" /> Sauvegarde...</> : <><SvgIcon name="save" size={14} /> Sauvegarder le Studio Audio</>}</span>
                         </button>
                       </div>
                     </div>
@@ -6633,7 +6634,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   marginTop: '20px'
                 }}>
                   <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '10px', margin: '0 0 12px 0' }}>
-                    <span style={{ fontSize: '24px' }}>😊</span> Emojis Personnalisés
+                    <span style={{ display: 'inline-flex' }}><SvgIcon name="smile" size={24} /></span> Emojis Personnalisés
                     <span style={{ fontSize: '12px', fontWeight: 600, color: 'rgba(217,28,210,0.7)', background: 'rgba(217,28,210,0.1)', padding: '2px 8px', borderRadius: '8px' }}>
                       {customEmojis.length} emoji{customEmojis.length !== 1 ? 's' : ''}
                     </span>
@@ -6686,7 +6687,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         whiteSpace: 'nowrap'
                       }}
                     >
-                      📤 Uploader
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="upload" size={14} /> Uploader</span>
                     </button>
                   </div>
 
@@ -6725,7 +6726,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                               display: 'flex', alignItems: 'center', justifyContent: 'center'
                             }}
                             title="Supprimer"
-                          >✕</button>
+                          ><SvgIcon name="close" size={12} /></button>
                         </div>
                       ))}
                     </div>
@@ -6849,7 +6850,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         transition: 'background 0.2s'
                       }}
                     >
-                      Visiter ↗
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>Visiter <SvgIcon name="externalLink" size={14} /></span>
                     </a>
                   </div>
                 )}
@@ -6933,7 +6934,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         {/* === CONTACTS TAB v18 === */}
         {tab === "contacts" && (
           <div className="card-gradient rounded-xl p-4 sm:p-6">
-            <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: 700, marginBottom: '16px' }}>📇 Mes Contacts</h2>
+            <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: 700, marginBottom: '16px' , display: 'flex', alignItems: 'center', gap: '8px' }}><SvgIcon name="users" size={18} /> Mes Contacts</h2>
             <ContactsManager API={API} coachEmail={coachUser?.email} isSuperAdmin={isSuperAdmin} />
           </div>
         )}

@@ -2,6 +2,7 @@
 // Compatible Vercel - Extrait de App.js pour architecture modulaire
 import { useState, useMemo, useEffect } from 'react';
 import emailjs from '@emailjs/browser';
+import SvgIcon from './SvgIcon';
 
 // Initialisation immédiate d'EmailJS avec votre clé publique
 emailjs.init("5LfgQSIEQoqq_XSqt");
@@ -180,10 +181,10 @@ export const ContactCounter = ({ contactStats, directSendMode, onToggleDirectSen
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div>
         <h3 className="text-white font-semibold text-lg">
-          👥 Nombre de clients ciblés : <span className="text-pink-400">{contactStats.total}</span>
+          <SvgIcon name="users" size={18} />{' '}Nombre de clients ciblés : <span className="text-pink-400">{contactStats.total}</span>
         </h3>
         <p className="text-sm text-white/60 mt-1">
-          📧 {contactStats.withEmail} avec email • 📱 {contactStats.withPhone} avec WhatsApp
+          <SvgIcon name="mail" size={14} />{' '}{contactStats.withEmail} avec email • <SvgIcon name="phone" size={14} />{' '}{contactStats.withPhone} avec WhatsApp
         </p>
       </div>
       <div className="flex gap-2">
@@ -192,7 +193,11 @@ export const ContactCounter = ({ contactStats, directSendMode, onToggleDirectSen
           onClick={onToggleDirectSend}
           className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${directSendMode ? 'bg-pink-600 text-white' : 'glass text-white border border-purple-500/30'}`}
         >
-          {directSendMode ? '✓ Mode Envoi Direct' : '🚀 Envoi Direct'}
+          {directSendMode ? (
+            <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Mode Envoi Direct</span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5"><SvgIcon name="rocket" size={14} /> Envoi Direct</span>
+          )}
         </button>
       </div>
     </div>
@@ -219,7 +224,8 @@ export const DirectSendPanel = ({
 }) => (
   <div className="mb-8 p-5 rounded-xl glass border-2 border-pink-500/50">
     <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-      🚀 Envoi Direct par Canal
+      <SvgIcon name="rocket" size={14} />
+      Envoi Direct par Canal
       <span className="text-xs text-pink-400 font-normal">(Utilisez le message ci-dessous)</span>
     </h3>
 
@@ -233,7 +239,7 @@ export const DirectSendPanel = ({
         placeholder="Votre message..."
       />
       {newCampaign.mediaUrl && (
-        <p className="text-xs text-green-400 mt-1">✓ Média attaché: {newCampaign.mediaUrl.substring(0, 50)}...</p>
+        <p className="text-xs text-green-400 mt-1"><SvgIcon name="check" size={14} />{' '}Média attaché: {newCampaign.mediaUrl.substring(0, 50)}...</p>
       )}
     </div>
 
@@ -242,7 +248,8 @@ export const DirectSendPanel = ({
       {/* === EMAIL AUTOMATISÉ EMAILJS === */}
       <div className="p-4 rounded-xl bg-blue-900/40 border-2 border-blue-400">
         <h4 className="text-white font-bold mb-3 flex items-center gap-2 text-sm">
-          📧 Email Automatique
+          <SvgIcon name="mail" size={14} />
+          Email Automatique
         </h4>
         <button 
           type="button"
@@ -250,7 +257,11 @@ export const DirectSendPanel = ({
           disabled={isSendingAuto || contactStats.withEmail === 0}
           className={`w-full py-3 rounded-lg ${isSendingAuto ? 'bg-gray-600' : 'bg-gradient-to-r from-blue-500 to-indigo-600 hover:scale-105'} text-white text-center font-bold transition-all shadow-lg`}
         >
-          {isSendingAuto ? '⏳ Envoi...' : '🚀 Lancer l\'envoi'}
+          {isSendingAuto ? (
+            <span className="inline-flex items-center gap-1.5"><SvgIcon name="loader" size={14} className="animate-spin" /> Envoi...</span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5"><SvgIcon name="rocket" size={14} /> Lancer l'envoi</span>
+          )}
         </button>
         <p className="text-[10px] text-blue-200 mt-2 text-center">Via votre compte EmailJS</p>
       </div>
@@ -258,7 +269,8 @@ export const DirectSendPanel = ({
       {/* === WHATSAPP UN PAR UN === */}
       <div className="p-4 rounded-xl bg-green-900/20 border border-green-500/30">
         <h4 className="text-white font-semibold mb-3 flex items-center gap-2 text-sm">
-          📱 WhatsApp
+          <SvgIcon name="phone" size={14} />
+          WhatsApp
         </h4>
         {contactStats.withPhone > 0 ? (
           <>
@@ -281,24 +293,26 @@ export const DirectSendPanel = ({
               rel="noopener noreferrer"
               className="block w-full py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-center font-medium mb-2 transition-all"
             >
-              📱 Ouvrir WA
+              <span className="inline-flex items-center gap-1.5"><SvgIcon name="phone" size={14} /> Ouvrir WA</span>
             </a>
             <div className="flex gap-2">
               <button 
                 type="button"
                 onClick={prevWhatsAppContact}
                 disabled={currentWhatsAppIndex === 0}
+                aria-label="Contact précédent"
                 className="flex-1 py-1 rounded-lg glass text-white text-xs disabled:opacity-30"
               >
-                ←
+                <SvgIcon name="arrowLeft" size={14} />
               </button>
               <button 
                 type="button"
                 onClick={nextWhatsAppContact}
                 disabled={currentWhatsAppIndex >= contactStats.withPhone - 1}
+                aria-label="Contact suivant"
                 className="flex-1 py-1 rounded-lg glass text-white text-xs disabled:opacity-30"
               >
-                →
+                <SvgIcon name="arrowRight" size={14} />
               </button>
             </div>
           </>
@@ -312,14 +326,19 @@ export const DirectSendPanel = ({
       {/* === INSTAGRAM DM === */}
       <div className="p-4 rounded-xl bg-purple-900/20 border border-purple-500/30">
         <h4 className="text-white font-semibold mb-3 flex items-center gap-2 text-sm">
-          📸 Instagram DM
+          <SvgIcon name="camera" size={14} />
+          Instagram DM
         </h4>
         <button 
           type="button"
           onClick={() => copyMessageForInstagram(newCampaign.message, newCampaign.mediaUrl)}
           className={`w-full py-2 rounded-lg ${messageCopied ? 'bg-green-600' : 'bg-purple-600 hover:bg-purple-700'} text-white text-sm font-medium mb-2 transition-all`}
         >
-          {messageCopied ? '✓ Copié !' : '📋 Copier'}
+          {messageCopied ? (
+            <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Copié !</span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5"><SvgIcon name="clipboard" size={14} /> Copier</span>
+          )}
         </button>
         <a 
           href={generateInstagramLink(instagramProfile)}
@@ -338,17 +357,17 @@ export const DirectSendPanel = ({
 // === COMPOSANT BADGE STATUT ===
 export const CampaignStatusBadge = ({ status }) => {
   const statusConfig = {
-    draft: { label: '📝 Brouillon', className: 'bg-gray-600/30 text-gray-400' },
-    scheduled: { label: '⏰ Programmée', className: 'bg-yellow-600/30 text-yellow-400' },
-    sending: { label: '🚀 En cours', className: 'bg-blue-600/30 text-blue-400' },
-    completed: { label: '✅ Terminée', className: 'bg-green-600/30 text-green-400' },
-    failed: { label: '❌ Échouée', className: 'bg-red-600/30 text-red-400' }
+    draft: { label: <><SvgIcon name="edit" size={14} /> Brouillon</>, className: 'bg-gray-600/30 text-gray-400' },
+    scheduled: { label: <><SvgIcon name="clock" size={14} /> Programmée</>, className: 'bg-yellow-600/30 text-yellow-400' },
+    sending: { label: <><SvgIcon name="rocket" size={14} /> En cours</>, className: 'bg-blue-600/30 text-blue-400' },
+    completed: { label: <><SvgIcon name="check" size={14} /> Terminée</>, className: 'bg-green-600/30 text-green-400' },
+    failed: { label: <><SvgIcon name="close" size={14} /> Échouée</>, className: 'bg-red-600/30 text-red-400' }
   };
-  
+
   const config = statusConfig[status] || statusConfig.draft;
-  
+
   return (
-    <span className={`px-2 py-1 rounded text-xs ${config.className}`}>
+    <span className={`px-2 py-1 rounded text-xs inline-flex items-center gap-1.5 ${config.className}`}>
       {config.label}
     </span>
   );
@@ -357,12 +376,12 @@ export const CampaignStatusBadge = ({ status }) => {
 // === COMPOSANT RESULT BADGE ===
 export const ResultBadge = ({ status }) => {
   if (status === 'sent') {
-    return <span className="px-2 py-1 rounded text-xs bg-green-600/30 text-green-400">✅ Envoyé</span>;
+    return <span className="px-2 py-1 rounded text-xs inline-flex items-center gap-1.5 bg-green-600/30 text-green-400"><SvgIcon name="check" size={14} /> Envoyé</span>;
   }
   if (status === 'failed') {
-    return <span className="px-2 py-1 rounded text-xs bg-red-600/30 text-red-400">❌ Échec</span>;
+    return <span className="px-2 py-1 rounded text-xs inline-flex items-center gap-1.5 bg-red-600/30 text-red-400"><SvgIcon name="close" size={14} /> Échec</span>;
   }
-  return <span className="px-2 py-1 rounded text-xs bg-gray-600/30 text-gray-400">⏳ En attente</span>;
+  return <span className="px-2 py-1 rounded text-xs inline-flex items-center gap-1.5 bg-gray-600/30 text-gray-400"><SvgIcon name="hourglass" size={14} /> En attente</span>;
 };
 
 export default {
