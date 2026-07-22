@@ -1587,6 +1587,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
   // 'subscription' | 'payment'). 'all' conserve l'affichage groupe par
   // sections pose en V236 ; un type precis affiche la liste de ce seul type.
   var _cTxF = useState('all'); var v240TxFilter = _cTxF[0]; var setV240TxFilter = _cTxF[1];
+  // V242: texte de recherche de l'ecran Transactions. Filtrage cote client, sur
+  // les 100 transactions deja chargees — aucun appel reseau a la frappe.
+  var _cTxQ = useState(''); var v242TxQuery = _cTxQ[0]; var setV242TxQuery = _cTxQ[1];
   var _cqr = useState(''); var qrScanCode = _cqr[0]; var setQrScanCode = _cqr[1];
   var _cqrR = useState(null); var qrScanResult = _cqrR[0]; var setQrScanResult = _cqrR[1];
   // v162e: QR camera scanner
@@ -4163,6 +4166,91 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
         return next;
       });
     });
+  };
+
+  // V242: une transaction correspond-elle a la recherche ?
+  //
+  // Les champs interroges sont EXACTEMENT ceux que la carte affiche (memes
+  // replis que le rendu : `_tx_name || userName`, `_tx_code || reservationCode`,
+  // etc.). C'est la seule facon de garantir que ce qu'on lit a l'ecran est
+  // aussi ce qu'on peut retrouver.
+  //
+  // Les noms de champs different selon le type : une reservation porte
+  // `userName` / `userEmail` / `reservationCode`, une souscription porte
+  // `name` / `email` / `code`. Chercher uniquement les seconds — ce que
+  // suggerait la specification — ne trouvait AUCUNE des 81 reservations :
+  // mesure sur les donnees de production, « aurelie » remontait 1 resultat au
+  // lieu de 8, et un code « AF9E51 » aucun.
+  var v242MatchSearch = function(item, query) {
+    if (!query) return true;
+    var q = String(query).toLowerCase().trim();
+    if (!q) return true;
+    var fields = [
+      item._tx_name, item.userName, item.name,
+      item._tx_email, item.userEmail, item.email,
+      item._tx_offer, item.courseName, item.offerName, item.offer_name,
+      item._tx_code, item.reservationCode, item.code,
+      item.discountCode, item.promoCode,
+      item.id
+    ];
+    for (var i = 0; i < fields.length; i++) {
+      if (fields[i] && String(fields[i]).toLowerCase().indexOf(q) !== -1) return true;
+    }
+    return false;
+  };
+
+  // V242: liste apres recherche. Les onglets ET la liste consomment cette meme
+  // source, pour que les compteurs annoncent le nombre de resultats reellement
+  // atteignables et non le total charge.
+  var v242FilterBySearch = function(items) {
+    var list = items || [];
+    if (!v242TxQuery) return list;
+    return list.filter(function(it) { return v242MatchSearch(it, v242TxQuery); });
+  };
+
+  // V242: champ de recherche, pose entre le titre et les onglets.
+  var v242RenderSearch = function() {
+    return React.createElement('div', {
+      style: { position: 'relative', marginBottom: '8px' }
+    },
+      React.createElement('input', {
+        type: 'text',
+        value: v242TxQuery,
+        onChange: function(e) { setV242TxQuery(e.target.value); },
+        onClick: function(e) { e.stopPropagation(); },
+        placeholder: 'Rechercher par nom, email, code...',
+        'aria-label': 'Rechercher une transaction',
+        'data-testid': 'tx-search',
+        style: {
+          width: '100%',
+          boxSizing: 'border-box',
+          background: 'rgba(255,255,255,0.08)',
+          border: '1px solid rgba(255,255,255,0.15)',
+          borderRadius: '8px',
+          color: '#fff',
+          fontSize: '12px',
+          padding: '8px 30px 8px 12px',
+          outline: 'none'
+        }
+      }),
+      // V242: la croix n'apparait qu'une fois du texte saisi — sur un widget
+      // etroit, un bouton permanent mangerait de la largeur pour rien.
+      v242TxQuery ? React.createElement('button', {
+        type: 'button',
+        'aria-label': 'Effacer la recherche',
+        title: 'Effacer la recherche',
+        onClick: function(e) { e.stopPropagation(); setV242TxQuery(''); },
+        style: {
+          position: 'absolute', right: '6px', top: '50%',
+          transform: 'translateY(-50%)',
+          width: '20px', height: '20px', borderRadius: '50%',
+          border: 'none', background: 'rgba(255,255,255,0.12)',
+          color: '#fff', fontSize: '12px', lineHeight: 1,
+          cursor: 'pointer', padding: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }
+      }, '✕') : null
+    );
   };
 
   // V240: barre d'onglets de filtre de l'ecran Transactions.
@@ -7446,12 +7534,23 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                       <div style={{ color: '#fff', fontSize: '12px', marginBottom: '12px', opacity: 0.7 }}>
                         Transactions ({coachReservations.length})
                       </div>
+                      {/* V242: champ de recherche, entre le titre et les onglets. */}
+                      {v242RenderSearch()}
                       {/* V240: onglets de filtre. Rendus meme quand la liste est
-                          vide, pour que l'ecran reste coherent au chargement. */}
-                      {v240RenderTxTabs(coachReservations)}
-                      {coachReservations.length === 0 ? (
+                          vide, pour que l'ecran reste coherent au chargement.
+                          V242: alimentes par la liste APRES recherche — les
+                          compteurs annoncent ainsi le nombre de resultats
+                          reellement atteignables, pas le total charge. */}
+                      {v240RenderTxTabs(v242FilterBySearch(coachReservations))}
+                      {v242FilterBySearch(coachReservations).length === 0 ? (
                         <div style={{ color: '#fff', opacity: 0.5, textAlign: 'center', padding: '20px', fontSize: '13px' }}>
-                          Aucune transaction
+                          {/* V242: message distinct selon qu'il n'y a aucune
+                              donnee ou aucun RESULTAT — « Aucune transaction »
+                              sur une recherche infructueuse laisserait croire
+                              que le compte est vide. */}
+                          {coachReservations.length === 0
+                            ? 'Aucune transaction'
+                            : 'Aucun résultat pour « ' + v242TxQuery + ' »'}
                         </div>
                       ) : (
                         /* V236: regroupement par type. Le `.slice(0, 50)` est
@@ -7460,7 +7559,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                            mais surtout, un plafond global aurait tronque des
                            groupes SANS le dire, et le compteur affiche a cote
                            du titre aurait alors menti. */
-                        v240RenderFiltered(coachReservations, function(r, idx) {
+                        v240RenderFiltered(v242FilterBySearch(coachReservations), function(r, idx) {
                           var txType = r._tx_type || 'reservation';
                           var txIcon = txType === 'subscription' ? '⭐' : (txType === 'payment' ? '💳' : (r.isProduct ? '🛒' : '📅'));
                           var txLabel = txType === 'subscription' ? 'Souscription' : (txType === 'payment' ? 'Paiement' : (r.isProduct ? 'Achat' : 'Réservation'));
