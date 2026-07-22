@@ -4827,6 +4827,66 @@ async def debug_discount_code(access_code: str, fix: Optional[float] = None):
     }
 
 
+@api_router.post("/admin/migrate-offers-coach-id")
+async def migrate_offers_coach_id(request: Request, dry_run: bool = True, target: str = ""):
+    """V238 — attribue un proprietaire aux offres qui n'en ont pas.
+
+    A EXECUTER AVANT /admin/migrate-subscriptions-coach-id.
+
+    Les offres creees avant v19 n'ont pas de `coach_id`. Or c'est l'offre qui
+    porte le lien vers le coach : tant qu'elle n'a pas de proprietaire, aucune
+    souscription ni aucun paiement ne peut etre rattache, et la migration des
+    souscriptions renvoie 0 rattachement (constate en simulation : 42
+    souscriptions, 0 resolues).
+
+    `target` = email a attribuer ; par defaut celui de l'admin appelant, ces
+    offres etant historiquement les siennes.
+
+    `dry_run=true` PAR DEFAUT : rien n'est ecrit tant que ?dry_run=false n'est
+    pas passe explicitement.
+    """
+    caller_email = require_auth(request)
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Reserve aux super admins")
+
+    owner = (target or "").strip().lower() or caller_email
+    if "@" not in owner:
+        # Garde-fou : `bassi_default` n'est l'email d'aucun coach. L'attribuer
+        # ici rendrait les offres invisibles a tout le monde sauf l'admin, en
+        # reproduisant exactement le probleme qu'on cherche a corriger.
+        raise HTTPException(
+            status_code=400,
+            detail="target doit etre une adresse email de coach (un sentinelle comme 'bassi_default' ne correspondrait a aucun compte)"
+        )
+
+    orphans = await db.offers.find(
+        {"$or": [{"coach_id": {"$exists": False}}, {"coach_id": None}, {"coach_id": ""}]},
+        {"_id": 0, "id": 1, "name": 1}
+    ).to_list(500)
+
+    if not dry_run and orphans:
+        await db.offers.update_many(
+            {"$or": [{"coach_id": {"$exists": False}}, {"coach_id": None}, {"coach_id": ""}]},
+            {"$set": {"coach_id": owner}}
+        )
+
+    logger.info(
+        f"[V238 MIGRATION OFFRES] dry_run={dry_run} par {caller_email}: "
+        f"{len(orphans)} offres -> {owner}"
+    )
+
+    return {
+        "success": True,
+        "dry_run": dry_run,
+        "message": ("SIMULATION — aucune ecriture. Relancer avec ?dry_run=false pour appliquer."
+                    if dry_run else "Attribution appliquee."),
+        "proprietaire_attribue": owner,
+        "offres_sans_proprietaire": len(orphans),
+        "offres": [{"id": o.get("id"), "name": o.get("name")} for o in orphans],
+        "etape_suivante": "POST /api/admin/migrate-subscriptions-coach-id?dry_run=true",
+    }
+
+
 @api_router.post("/admin/migrate-subscriptions-coach-id")
 async def migrate_subscriptions_coach_id(request: Request, dry_run: bool = True):
     """V237 — rattache les souscriptions existantes a leur coach.
