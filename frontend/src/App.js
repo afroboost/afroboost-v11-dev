@@ -3630,6 +3630,7 @@ function App() {
   const [selectedSession, setSelectedSession] = useState(null);
   const [quantity, setQuantity] = useState(1); // Quantité pour achats multiples
   const [showTermsModal, setShowTermsModal] = useState(false); // Modal CGV
+  const [showLegalModal, setShowLegalModal] = useState(false); // V235: Modal mentions légales (Impressum)
   const [selectedVariants, setSelectedVariants] = useState({}); // Variantes sélectionnées { size: "M", color: "Noir" }
 
   const [userName, setUserName] = useState("");
@@ -7409,6 +7410,34 @@ function App() {
           </div>
         )}
 
+        {/* V235: Modal Mentions légales (Impressum) — exigé par Stripe pour TWINT */}
+        {showLegalModal && (
+          <div className="modal-overlay" onClick={() => setShowLegalModal(false)}>
+            <div className="modal-content glass rounded-xl p-6 max-w-lg w-full neon-border" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold text-white">Mentions légales</h3>
+                <button onClick={() => setShowLegalModal(false)} className="text-2xl text-white hover:text-purple-400">×</button>
+              </div>
+              <div className="max-h-[60vh] overflow-y-auto text-white text-sm" style={{ lineHeight: '1.8' }}>
+                <p style={{ fontWeight: 'bold', marginBottom: '12px', fontSize: '14px' }}>Impressum</p>
+                <p><strong>Dénomination :</strong> Association Afroboosteur</p>
+                <p><strong>Adresse :</strong> Rue Maillefer 39, 2000 Neuchâtel, Suisse</p>
+                <p><strong>Contact :</strong> <a href="mailto:contact@afroboosteur.com" style={{ color: '#D91CD2' }}>contact@afroboosteur.com</a></p>
+                <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                  <p style={{ fontWeight: 'bold', marginBottom: '8px', fontSize: '14px' }}>Moyens de paiement</p>
+                  <p>Les paiements sont traités de manière sécurisée via Stripe. Les moyens de paiement acceptés incluent TWINT, carte de crédit (Visa, Mastercard) et PayPal selon la configuration du coach.</p>
+                  <p style={{ marginTop: '8px' }}>Devise : CHF (francs suisses). Livraison : Suisse.</p>
+                </div>
+                <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                  <p style={{ fontWeight: 'bold', marginBottom: '8px', fontSize: '14px' }}>Responsabilité</p>
+                  <p>Le contenu de ce site est fourni à titre informatif. L'Association Afroboosteur décline toute responsabilité pour les erreurs ou omissions dans le contenu proposé.</p>
+                </div>
+              </div>
+              <button onClick={() => setShowLegalModal(false)} className="mt-4 w-full py-3 rounded-lg btn-primary">Fermer</button>
+            </div>
+          </div>
+        )}
+
         {/* v73: Section "Ce que disent nos clients" SUPPRIMÉE — tout passe par l'icône Glow du Hero */}
 
         {/* v104: Section FAQ Accordéon Homepage — titre cliquable */}
@@ -7491,6 +7520,14 @@ function App() {
               onMouseEnter={(e) => e.target.style.color = '#d946ef'}
               onMouseLeave={(e) => e.target.style.color = 'rgba(255,255,255,0.4)'}
             >Association</a>
+
+            <span style={{ color: 'rgba(255,255,255,0.15)', fontSize: '0.8rem' }}>|</span>
+
+            {/* V235: Mentions légales — exigé par Stripe/TWINT */}
+            <button onClick={() => setShowLegalModal(true)} style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.8rem', background: 'none', border: 'none', cursor: 'pointer', transition: 'color 0.2s' }}
+              onMouseEnter={(e) => e.target.style.color = '#d946ef'}
+              onMouseLeave={(e) => e.target.style.color = 'rgba(255,255,255,0.4)'}
+            >Mentions légales</button>
 
             {/* Séparateur avant paiement */}
             {(concept.paymentTwint || concept.paymentPaypal || concept.paymentCreditCard) && (

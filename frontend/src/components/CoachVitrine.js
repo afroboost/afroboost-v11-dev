@@ -165,6 +165,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const [socialComments, setSocialComments] = useState([]);
   const [socialTotalCount, setSocialTotalCount] = useState(0); // v106.7: vrai total commentaires
   const [showCommentsPanel, setShowCommentsPanel] = useState(false);
+  const [showLegalModal, setShowLegalModal] = useState(false); // V235: Mentions légales
   const [zoomedPhoto, setZoomedPhoto] = useState(null); // v74: Zoom photo profil
 
   // v17: INLINE booking multi-séances (tableau de { course, date })
@@ -2004,11 +2005,35 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           </div>
         )}
 
+        {/* V235: Modal Mentions légales (Impressum) — exigé par Stripe pour TWINT */}
+        {showLegalModal && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }} onClick={() => setShowLegalModal(false)}>
+            <div style={{ background: '#1a1a2e', borderRadius: '12px', padding: '24px', maxWidth: '500px', width: '100%', maxHeight: '80vh', overflowY: 'auto', border: '1px solid rgba(217,28,210,0.3)' }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ color: '#fff', fontSize: '18px', fontWeight: 'bold' }}>Mentions légales</h3>
+                <button onClick={() => setShowLegalModal(false)} style={{ color: '#fff', fontSize: '24px', background: 'none', border: 'none', cursor: 'pointer' }}>×</button>
+              </div>
+              <div style={{ color: '#fff', fontSize: '13px', lineHeight: '1.8' }}>
+                <p style={{ fontWeight: 'bold', marginBottom: '12px' }}>Impressum</p>
+                <p><strong>Dénomination :</strong> Association Afroboosteur</p>
+                <p><strong>Adresse :</strong> Rue Maillefer 39, 2000 Neuchâtel, Suisse</p>
+                <p><strong>Contact :</strong> <a href="mailto:contact@afroboosteur.com" style={{ color: '#D91CD2' }}>contact@afroboosteur.com</a></p>
+                <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                  <p style={{ fontWeight: 'bold', marginBottom: '8px' }}>Moyens de paiement</p>
+                  <p>Les paiements sont traités de manière sécurisée via Stripe. Devise : CHF. Livraison : Suisse.</p>
+                </div>
+              </div>
+              <button onClick={() => setShowLegalModal(false)} style={{ marginTop: '16px', width: '100%', padding: '10px', borderRadius: '8px', background: 'linear-gradient(135deg, #D91CD2, #FF2DAA)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>Fermer</button>
+            </div>
+          </div>
+        )}
+
         {/* === Footer === */}
         <div className="text-center mt-4 pb-8">
           <p className="text-white/30 text-xs">
             Propulsé par <span style={{ color: '#d91cd2' }}>Afroboost</span> - La plateforme des coachs
           </p>
+          <button onClick={() => setShowLegalModal(true)} style={{ color: 'rgba(255,255,255,0.25)', fontSize: '10px', background: 'none', border: 'none', cursor: 'pointer', marginTop: '4px' }}>Mentions légales</button>
         </div>
       </div>
     </div>
