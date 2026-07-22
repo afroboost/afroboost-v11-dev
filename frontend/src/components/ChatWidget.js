@@ -1583,6 +1583,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
   // les boutons +/- pendant l'appel reseau — sans cela un double clic envoie
   // deux ajustements et retire deux seances au lieu d'une.
   var _cAdj = useState({}); var v236Adjusting = _cAdj[0]; var setV236Adjusting = _cAdj[1];
+  // V240: onglet de filtre de l'ecran Transactions ('all' | 'reservation' |
+  // 'subscription' | 'payment'). 'all' conserve l'affichage groupe par
+  // sections pose en V236 ; un type precis affiche la liste de ce seul type.
+  var _cTxF = useState('all'); var v240TxFilter = _cTxF[0]; var setV240TxFilter = _cTxF[1];
   var _cqr = useState(''); var qrScanCode = _cqr[0]; var setQrScanCode = _cqr[1];
   var _cqrR = useState(null); var qrScanResult = _cqrR[0]; var setQrScanResult = _cqrR[1];
   // v162e: QR camera scanner
@@ -4161,6 +4165,59 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
     });
   };
 
+  // V240: barre d'onglets de filtre de l'ecran Transactions.
+  //
+  // Les compteurs sont calcules sur la liste COMPLETE, pas sur la liste
+  // affichee : un onglet doit annoncer ce qu'il contient, meme quand un autre
+  // est actif. Un onglet a 0 reste visible (grise) — le masquer ferait croire
+  // que la categorie n'existe pas, alors qu'elle est simplement vide.
+  var v240RenderTxTabs = function(items) {
+    var list = items || [];
+    var countOf = function(type) {
+      if (type === 'all') return list.length;
+      return list.filter(function(it) {
+        return (it._tx_type || 'reservation') === type;
+      }).length;
+    };
+    var TABS = [
+      { key: 'all', label: 'Tout' },
+      { key: 'reservation', label: 'Réservations' },
+      { key: 'subscription', label: 'Souscriptions' },
+      { key: 'payment', label: 'Paiements' }
+    ];
+    return React.createElement('div', {
+      style: { display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '12px' }
+    }, TABS.map(function(t) {
+      var n = countOf(t.key);
+      var active = v240TxFilter === t.key;
+      var empty = n === 0 && t.key !== 'all';
+      return React.createElement('button', {
+        key: 'v240tab-' + t.key,
+        type: 'button',
+        'aria-pressed': active,
+        onClick: function(e) {
+          e.stopPropagation();
+          setV240TxFilter(t.key);
+        },
+        style: {
+          padding: '6px 10px',
+          borderRadius: '8px',
+          fontSize: '11px',
+          lineHeight: 1.2,
+          cursor: 'pointer',
+          whiteSpace: 'nowrap',
+          color: '#fff',
+          background: active ? 'rgba(217,28,210,0.2)' : 'rgba(255,255,255,0.05)',
+          border: active ? '1px solid #D91CD2' : '1px solid transparent',
+          // V240: l'onglet vide est attenue mais reste CLIQUABLE — le desactiver
+          // empecherait de revenir dessus pour constater qu'il est vide.
+          opacity: empty ? 0.4 : 1,
+          transition: 'background 0.2s ease, opacity 0.2s ease'
+        }
+      }, t.label + ' (' + n + ')');
+    }));
+  };
+
   // V236: regroupe les transactions par type et rend un intitule par groupe.
   //
   // `renderItem` est la fonction de rendu d'une ligne, inchangee : ce
@@ -4218,6 +4275,27 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
     if (others.length > 0) out.push(buildGroup('autres', 'Autres', others));
 
     return out;
+  };
+
+  // V240: aiguillage entre les deux modes d'affichage.
+  //
+  // « Tout » conserve le regroupement par sections pose en V236 : sur une liste
+  // melangee, les intitules restent le seul moyen de s'y retrouver. Un onglet
+  // de type precis n'a en revanche aucun besoin d'un titre qui repeterait le
+  // nom de l'onglet — la liste est rendue a plat.
+  var v240RenderFiltered = function(items, renderItem) {
+    var list = items || [];
+    if (v240TxFilter === 'all') return v236RenderGroups(list, renderItem);
+
+    var rows = list.filter(function(it) {
+      return (it._tx_type || 'reservation') === v240TxFilter;
+    });
+    if (rows.length === 0) {
+      return React.createElement('div', {
+        style: { color: '#fff', opacity: 0.5, textAlign: 'center', padding: '20px', fontSize: '13px' }
+      }, 'Aucune transaction de ce type');
+    }
+    return rows.map(renderItem);
   };
 
   // V178: Valider un code QR (resa OU abonnement) avec sélecteur de cours si pas auto-détecté
@@ -7368,6 +7446,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                       <div style={{ color: '#fff', fontSize: '12px', marginBottom: '12px', opacity: 0.7 }}>
                         Transactions ({coachReservations.length})
                       </div>
+                      {/* V240: onglets de filtre. Rendus meme quand la liste est
+                          vide, pour que l'ecran reste coherent au chargement. */}
+                      {v240RenderTxTabs(coachReservations)}
                       {coachReservations.length === 0 ? (
                         <div style={{ color: '#fff', opacity: 0.5, textAlign: 'center', padding: '20px', fontSize: '13px' }}>
                           Aucune transaction
@@ -7379,7 +7460,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                            mais surtout, un plafond global aurait tronque des
                            groupes SANS le dire, et le compteur affiche a cote
                            du titre aurait alors menti. */
-                        v236RenderGroups(coachReservations, function(r, idx) {
+                        v240RenderFiltered(coachReservations, function(r, idx) {
                           var txType = r._tx_type || 'reservation';
                           var txIcon = txType === 'subscription' ? '⭐' : (txType === 'payment' ? '💳' : (r.isProduct ? '🛒' : '📅'));
                           var txLabel = txType === 'subscription' ? 'Souscription' : (txType === 'payment' ? 'Paiement' : (r.isProduct ? 'Achat' : 'Réservation'));
