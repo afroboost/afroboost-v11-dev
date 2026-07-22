@@ -3,6 +3,23 @@ import React from 'react';
 
 const PINK = '#D91CD2';
 
+// V227: detection « ce media est-il une video ? » pour la miniature du dashboard.
+// Jusqu'ici la couverture etait TOUJOURS rendue en <img> : un fichier .mp4/.mov
+// donnait un cadre vide. La logique de reconnaissance est celle, DURCIE, de
+// parseMediaUrl (frontend/src/App.js) : l'extension doit se trouver en FIN DE
+// CHEMIN, apres retrait d'une eventuelle chaine de requete (?) ou ancre (#).
+// Un `includes('.mov')` naif prendrait une image hebergee sur un domaine
+// `cdn.movie...` (ou dans un dossier `/x.movies/`) pour une video et afficherait
+// un lecteur noir. parseMediaUrl n'est pas exportee : sa logique est reprise ici
+// volontairement, sans import ni modification de App.js.
+const V227_VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.avi', '.m4v', '.ogv'];
+
+function isVideoUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  const lowerPath = url.trim().toLowerCase().split('#')[0].split('?')[0];
+  return V227_VIDEO_EXTENSIONS.some((ext) => lowerPath.endsWith(ext));
+}
+
 // V226: icones SVG extraites en petits composants locaux (a la place des
 // emoji ⏱/📍/👥) — memes traces que la carte publique (App.js), reutilisees
 // a plusieurs endroits de cette carte plutot que recopiees inline. `color`
@@ -99,7 +116,20 @@ export default function OfferCard({
         opacity: isDragging ? 0.5 : 1
       }}
     >
-      {cover ? (
+      {/* V227: une couverture video est rendue en <video> autoplay muet et non
+          plus en <img> (qui n'affichait qu'un cadre vide). Le cas image est
+          strictement inchange. */}
+      {cover && isVideoUrl(cover) ? (
+        <video
+          src={cover}
+          style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', background: '#0a0a0f' }}
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="metadata"
+        />
+      ) : cover ? (
         <img src={cover} alt={offer.name} style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover' }} />
       ) : (
         <div style={{ width: '100%', aspectRatio: '16 / 9', background: '#0a0a0f', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '32px' }}>🎧</div>
