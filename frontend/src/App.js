@@ -2120,6 +2120,12 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 style={{ margin: '8px 0' }}
                 onClick={e => e.stopPropagation()}
                 data-testid={`offer-qty-${offer.id}`}
+                /* V228: un <select> natif annoncait "Taille, liste, M" a un
+                   lecteur d'ecran ; des <button> nus n'annoncent que cinq
+                   bascules independantes sans lien entre elles. role="group"
+                   + aria-label restaurent ce contexte de choix unique. */
+                role="group"
+                aria-label="Quantité"
               >
                 <div className="variant-label">Quantité</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
@@ -2193,6 +2199,11 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                   transition: 'border-color 0.2s ease, box-shadow 0.2s ease'
                 }}
                 data-testid={`offer-variant-${dim.key}-${offer.id}`}
+                /* V228: idem quantite — restaure le contexte de groupe perdu
+                   avec le <select>. Le libelle de la dimension (S/M/L,
+                   couleur, poids...) sert d'aria-label. */
+                role="group"
+                aria-label={dim.label}
               >
                 <div className="variant-label">{dim.label}</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>

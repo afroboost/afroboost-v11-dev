@@ -97,6 +97,14 @@
   justify-content: center;
   padding: 6px 14px;
   border-radius: 20px;
+  /* V228: repli rgba() AVANT color-mix. Le preflight Tailwind (@tailwind base)
+     met `border-width: 0` sur tout element ; seule cette declaration de
+     bordure la restaure. Si le navigateur ne comprend pas `color-mix` (Chrome
+     < 111, Samsung Internet 21), la ligne color-mix est ignoree en bloc et
+     CE repli reste actif — sans lui la bordure resterait a 0 et le chip
+     perdrait tout contour. Sur un navigateur recent, color-mix est valide et
+     ecrase ce repli (meme propriete, regle en cascade). */
+  border: 1px solid rgba(217, 28, 210, .5);
   border: 1px solid color-mix(in srgb, var(--primary-color) 50%, transparent);
   background: transparent;
   color: rgba(255, 255, 255, 0.8);
@@ -115,6 +123,8 @@
 }
 
 .variant-chip.selected {
+  /* V228: meme repli que ci-dessus, pour le fond de l'etat selectionne. */
+  background: rgba(217, 28, 210, .25);
   background: color-mix(in srgb, var(--primary-color) 25%, transparent);
   border-color: var(--primary-color);
   color: #fff;
