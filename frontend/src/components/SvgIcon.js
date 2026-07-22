@@ -645,6 +645,106 @@ const V228_PATHS = {
       <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4" />
       <path d="M2 7h20" />
     </>
+  ),
+
+  // --- Ajouts du lot 4 ---------------------------------------------------
+  // Emoji restes sans equivalent apres les lots 2 et 3. Chaque entree comble un
+  // usage REEL et repere du code, pas un manque theorique :
+  //   layers        <- 🧩  etapes de tunnel / questions (SmartLinksSection ×2, LinkSimulator)
+  //   cpu           <- 🧠  « Prompt Systeme » (CampaignModal, SmartLinksSection)
+  //   book          <- 📚  nom du cours (ReservationTab ×2)
+  //   paperclip     <- 📎  « Media » (CampaignModal)
+  //   radio         <- 📡  « Canaux d'envoi » (CampaignModal)
+  //   hash          <- 🔢  type de question « Nombre » (SmartLinksSection)
+  //   messageSquare <- 💌  canal « Chat interne » (CampaignManager) — `messageCircle`
+  //                        etait deja pris par 💬 dans la meme cellule
+  //   inbox         <- 📬  « delivre », a distinguer de `check` = « envoye »
+  //   moon          <- 🌑  « Couleur de fond » (ConceptEditor)
+  //   cake          <- 🎂  anniversaires (ContactsManager) — `gift` aurait dit « cadeau »
+  //   flask         <- 🧪  mode « Sandbox » (PaymentConfigTab)
+  // NB : 🔘 (bouton radio) ne demande aucun trace nouveau — `circleDot`, pose au
+  // lot 1, est exactement ce pictogramme.
+  // Restent volontairement en emoji : 🅿️ (marque PawaPay) et 🇨🇭 (drapeau) — une
+  // marque et un drapeau n'ont pas vocation a devenir des traces monochromes.
+  layers: (
+    <>
+      <polygon points="12 2 2 7 12 12 22 7 12 2" />
+      <polyline points="2 17 12 22 22 17" />
+      <polyline points="2 12 12 17 22 12" />
+    </>
+  ),
+  cpu: (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="2" ry="2" />
+      <rect x="9" y="9" width="6" height="6" />
+      <line x1="9" y1="1" x2="9" y2="4" />
+      <line x1="15" y1="1" x2="15" y2="4" />
+      <line x1="9" y1="20" x2="9" y2="23" />
+      <line x1="15" y1="20" x2="15" y2="23" />
+      <line x1="20" y1="9" x2="23" y2="9" />
+      <line x1="20" y1="14" x2="23" y2="14" />
+      <line x1="1" y1="9" x2="4" y2="9" />
+      <line x1="1" y1="14" x2="4" y2="14" />
+    </>
+  ),
+  book: (
+    <>
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+    </>
+  ),
+  paperclip: <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />,
+  radio: (
+    <>
+      <circle cx="12" cy="12" r="2" />
+      <path d="M16.24 7.76a6 6 0 0 1 0 8.49" />
+      <path d="M7.76 16.24a6 6 0 0 1 0-8.49" />
+      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+      <path d="M4.93 19.07a10 10 0 0 1 0-14.14" />
+    </>
+  ),
+  hash: (
+    <>
+      <line x1="4" y1="9" x2="20" y2="9" />
+      <line x1="4" y1="15" x2="20" y2="15" />
+      <line x1="10" y1="3" x2="8" y2="21" />
+      <line x1="16" y1="3" x2="14" y2="21" />
+    </>
+  ),
+  // NB : un trace `handshake` (Lucide) a ete ecrit puis RETIRE apres rendu — a
+  // 32px et stroke 2 il ne se lit pas comme une poignee de main, juste comme une
+  // forme pliee. Syntaxiquement valide, geometriquement illisible : exactement le
+  // mode de defaillance que la galerie sert a attraper. 🤝 (« Partenaire ») est
+  // donc rendu par `link`, generique mais reconnaissable.
+  messageSquare: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+  inbox: (
+    <>
+      <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+      <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+    </>
+  ),
+  moon: <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />,
+  cake: (
+    <>
+      <path d="M20 21v-8a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8" />
+      <path d="M4 16s.5-1 2-1 2.5 2 4 2 2.5-2 4-2 2.5 2 4 2 2-1 2-1" />
+      <path d="M2 21h20" />
+      <path d="M7 8v3" />
+      <path d="M12 8v3" />
+      <path d="M17 8v3" />
+      <path d="M7 4h.01" />
+      <path d="M12 4h.01" />
+      <path d="M17 4h.01" />
+    </>
+  ),
+  flask: (
+    <>
+      <path d="M10 2v7.31" />
+      <path d="M14 9.3V1.99" />
+      <path d="M8.5 2h7" />
+      <path d="M14 9.3a6.5 6.5 0 1 1-4 0" />
+      <path d="M5.58 16.5h12.85" />
+    </>
   )
 };
 
