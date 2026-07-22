@@ -8,6 +8,24 @@ import OfferCard from './OfferCard';       // V224
 import SvgIcon from '../SvgIcon';          // V228
 import CloudinaryUploadButton from '../CloudinaryUploadButton'; // V229
 
+// V234: detecter si une URL est une video (extension ou Cloudinary /video/upload/)
+function isVideoUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  const lower = url.toLowerCase();
+  const path = lower.split('#')[0].split('?')[0];
+  if (['.mp4', '.webm', '.mov', '.avi', '.m4v', '.ogv'].some(ext => path.endsWith(ext))) return true;
+  if (lower.includes('cloudinary.com') && lower.includes('/video/upload/')) return true;
+  return false;
+}
+
+// V234: helper — premier media disponible (videoUrl > images[0] > thumbnail)
+function getOfferMedia(offer) {
+  if (offer.videoUrl && typeof offer.videoUrl === 'string' && offer.videoUrl.trim()) return offer.videoUrl.trim();
+  if (offer.images?.[0]) return offer.images[0];
+  if (offer.thumbnail) return offer.thumbnail;
+  return null;
+}
+
 const OffersManager = ({
   offers,
   setOffers,
@@ -609,13 +627,17 @@ const OffersManager = ({
                 <span style={{ letterSpacing: '1px' }}>⋮⋮</span>
                 <span style={{ fontSize: '10px' }}>Glisser pour déplacer</span>
               </div>
-              {/* Image et nom */}
+              {/* Image/Video et nom — V234: inclure videoUrl */}
               <div className="flex items-center gap-3 mb-3">
-                {offer.images?.[0] || offer.thumbnail ? (
-                  <img src={offer.images?.[0] || offer.thumbnail} alt="" className="w-16 h-16 rounded-lg object-cover flex-shrink-0" loading="lazy" />
-                ) : (
-                  <div className="w-16 h-16 rounded-lg bg-purple-900/30 flex items-center justify-center text-2xl flex-shrink-0"><SvgIcon name="headphones" size={24} /></div>
-                )}
+                {(() => {
+                  const media = getOfferMedia(offer);
+                  if (!media) return <div className="w-16 h-16 rounded-lg bg-purple-900/30 flex items-center justify-center text-2xl flex-shrink-0"><SvgIcon name="headphones" size={24} /></div>;
+                  if (isVideoUrl(media)) return (
+                    <video src={media} className="w-16 h-16 rounded-lg object-cover flex-shrink-0" style={{ background: '#000' }}
+                      playsInline autoPlay muted loop preload="metadata" />
+                  );
+                  return <img src={media} alt="" className="w-16 h-16 rounded-lg object-cover flex-shrink-0" loading="lazy" />;
+                })()}
                 <div className="flex-1 min-w-0">
                   <h4 className="text-white font-semibold text-sm truncate">{offer.name}</h4>
                   <p className="text-purple-400 text-xs">{offer.price} CHF</p>
@@ -725,11 +747,16 @@ const OffersManager = ({
               </div>
               <div className="flex justify-between items-start mb-3">
                 <div className="flex items-center gap-3">
-                  {offer.images?.[0] || offer.thumbnail ? (
-                    <img src={offer.images?.[0] || offer.thumbnail} alt="" className="w-12 h-12 rounded-lg object-cover" loading="lazy" />
-                  ) : (
-                    <div className="w-12 h-12 rounded-lg bg-purple-900/30 flex items-center justify-center text-2xl"><SvgIcon name="headphones" size={24} /></div>
-                  )}
+                  {/* V234: inclure videoUrl dans l'apercu */}
+                  {(() => {
+                    const media = getOfferMedia(offer);
+                    if (!media) return <div className="w-12 h-12 rounded-lg bg-purple-900/30 flex items-center justify-center text-2xl"><SvgIcon name="headphones" size={24} /></div>;
+                    if (isVideoUrl(media)) return (
+                      <video src={media} className="w-12 h-12 rounded-lg object-cover" style={{ background: '#000' }}
+                        playsInline autoPlay muted loop preload="metadata" />
+                    );
+                    return <img src={media} alt="" className="w-12 h-12 rounded-lg object-cover" loading="lazy" />;
+                  })()}
                   <div>
                     <h4 className="text-white font-semibold">{offer.name}</h4>
                     <p className="text-purple-400 text-sm">{offer.price} CHF • {offer.images?.filter(i => i).length || 0} images</p>

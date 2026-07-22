@@ -1885,11 +1885,58 @@ export default function OfferWizard({
               />
             ) : (
               <video
+                ref={(el) => { if (el) el._v234 = true; }}
                 src={form.videoUrl}
                 controls
                 playsInline
                 style={{ width: '100%', maxHeight: '260px', background: '#000' }}
+                onLoadedMetadata={(e) => {
+                  // V234: stocker la duree pour le slider de miniature
+                  const dur = Math.floor(e.currentTarget.duration || 0);
+                  if (dur > 0 && !form._v234Duration) {
+                    setForm(prev => ({ ...prev, _v234Duration: dur }));
+                  }
+                }}
               />
+            )}
+            {/* V234: selecteur de miniature pour videos Cloudinary */}
+            {form.videoUrl && form.videoUrl.includes('cloudinary.com') && form.videoUrl.includes('/video/upload/') && (
+              <div style={{ marginTop: '10px', padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
+                <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginBottom: '6px' }}>
+                  <SvgIcon name="image" size={12} /> Miniature de la vidéo
+                </p>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <input
+                    type="range"
+                    min="0"
+                    max={form._v234Duration || 10}
+                    step="1"
+                    value={form._v234Sec || 0}
+                    onChange={(e) => {
+                      const sec = parseInt(e.target.value, 10);
+                      // Generer le thumbnail Cloudinary a la seconde choisie
+                      // ex: /video/upload/so_3,w_400,h_400,c_fill,f_jpg/...
+                      const thumbUrl = form.videoUrl
+                        .replace('/video/upload/', `/video/upload/so_${sec},w_400,h_400,c_fill,f_jpg/`)
+                        .replace(/\.[^.]+$/, '.jpg');
+                      setForm(prev => ({ ...prev, _v234Sec: sec, thumbnail: thumbUrl }));
+                    }}
+                    style={{ flex: 1, accentColor: '#D91CD2' }}
+                  />
+                  <span style={{ fontSize: '11px', color: '#fff', minWidth: '30px' }}>{form._v234Sec || 0}s</span>
+                </div>
+                {form.thumbnail && form.thumbnail.includes('cloudinary.com') && (
+                  <div style={{ marginTop: '8px', display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+                    <img
+                      src={form.thumbnail}
+                      alt="Miniature"
+                      style={{ width: '80px', height: '80px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #333' }}
+                      onError={(e) => { e.target.style.display = 'none'; }}
+                    />
+                    <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)' }}>Aperçu miniature</span>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}
