@@ -579,11 +579,13 @@ export default function OfferWizard({
     setCoursesError('');
     try {
       const res = await axios.post(`${API}/courses`, {
-        name: 'Nouveau cours',
+        // V251: le nouvel horaire herite du nom et du lieu de l'offre — le coach
+        // n'a plus a les retaper. Repli sur les valeurs par defaut si vides.
+        name: (form.name && form.name.trim()) || 'Nouveau cours',
         weekday: 3,
         time: '18:30',
-        locationName: '',
-        mapsUrl: '',
+        locationName: form.location || form.locationName || '',
+        mapsUrl: form.mapsUrl || '',
         visible: false
       });
       const created = res.data;
@@ -1588,8 +1590,11 @@ export default function OfferWizard({
 
           {/* V225: on conserve la possibilite de rattacher un cours DEJA existant,
               qu'assuraient les anciennes cases a cocher — sinon un horaire delie
-              par erreur, ou partage entre deux offres, deviendrait inatteignable. */}
-          {visibleCourses.some(c => !linkedCourses.some(lc => lc.id === c.id)) && (
+              par erreur, ou partage entre deux offres, deviendrait inatteignable.
+              V251: MASQUE (false &&) — trop confus pour un coach non technique ;
+              « + Ajouter un horaire » suffit au parcours normal. Le bloc est
+              conserve, pas supprime, pour reactivation eventuelle. */}
+          {false && visibleCourses.some(c => !linkedCourses.some(lc => lc.id === c.id)) && (
             <div className="mt-3">
               <label className="block text-xs mb-1" style={LABEL_STYLE}>
                 Ou rattacher un cours existant
@@ -1677,7 +1682,11 @@ export default function OfferWizard({
         </div>
       )}
 
-      {/* V224: metadonnees d'activite */}
+      {/* V224: metadonnees d'activite.
+          V251: masquees des qu'un horaire est lie — le lieu et le detail sont
+          alors portes par le cours lui-meme, ces champs faisaient doublon. Sans
+          horaire lie, ils restent visibles (retrocompatible). */}
+      {linkedCourses.length === 0 && (
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
           <label className="block text-xs mb-1" style={LABEL_STYLE}>
@@ -1721,6 +1730,7 @@ export default function OfferWizard({
           />
         </div>
       </div>
+      )}
 
       {/* Categorie / type / visibilite */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">

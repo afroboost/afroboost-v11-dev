@@ -838,6 +838,7 @@ async def _process_successful_payment(
         "id": subscription_id,
         "email": customer_email.lower().strip(),
         "name": customer_name,
+        "whatsapp": customer_phone or "",  # V251: evite de redemander le numero dans l'espace abonne
         "code": access_code,
         "offer_name": items_product_name or "Achat Afroboost",
         "total_sessions": sessions_count,

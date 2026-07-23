@@ -4135,6 +4135,9 @@ async def stripe_webhook(request: Request):
                     "id": str(uuid.uuid4()),
                     "email": customer_email.lower().strip(),
                     "name": metadata.get("customer_name", customer_email.split("@")[0]),
+                    # V251: WhatsApp collecte par Stripe (customer_details.phone) ou
+                    # passe en metadata — evite de le redemander dans l'espace abonne.
+                    "whatsapp": (session.get("customer_details") or {}).get("phone") or metadata.get("customer_phone", "") or "",
                     "code": new_code,
                     "offer_name": product_name,
                     "coach_id": _sub_coach_id,  # V237
@@ -4626,6 +4629,7 @@ async def admin_create_code(request: Request):
 
         subscription_data = {
             "id": str(uuid.uuid4()), "email": customer_email, "name": customer_name,
+            "whatsapp": (body.get("whatsapp") or body.get("customer_phone") or ""),  # V251
             "code": new_code, "offer_name": product_name,
             "coach_id": _manual_coach_id,  # V237
             "total_sessions": sessions_count, "used_sessions": 0,
@@ -5849,6 +5853,14 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
         _dedup.append(o)
     occurrences = _dedup
     occurrences.sort(key=lambda o: o.get("datetime", ""))
+
+    # V251: afficher le nom de l'OFFRE (« Cours a l'unite test ») plutot que
+    # celui du cours (« Nouveau cours »). Fait APRES la deduplication V250, qui a
+    # besoin des noms d'origine pour distinguer deux vrais cours au meme creneau.
+    if offer and offer.get("name"):
+        _offer_display = offer["name"]
+        for occ in occurrences:
+            occ["name"] = _offer_display
 
     # V208c: Historique de réservations — par member_slug pour les groupes, par email sinon
     import re as _re_mod
