@@ -5252,6 +5252,10 @@ async def fix_null_coach_id(request: Request, collection: str = "", target: str 
         "reservations": db.reservations,
         "campaigns": db.campaigns,
         "payment_transactions": db.payment_transactions,
+        # V244: ajoutees pour finir de vider les coach_id null residuels.
+        "chat_participants": db.chat_participants,
+        "chat_sessions": db.chat_sessions,
+        "leads": db.leads,
     }
     if collection not in allowed:
         raise HTTPException(
