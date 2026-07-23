@@ -5017,10 +5017,26 @@ async def reconcile_stripe_payments(request: Request, dry_run: bool = True, sess
         }
         try:
             import httpx  # importe localement, comme ailleurs dans ce fichier
+            # On serialise nous-memes le corps pour poster EXACTEMENT les octets
+            # signes. Depuis que STRIPE_WEBHOOK_SECRET_CHECKOUT est configure, le
+            # webhook exige une signature valide : on la genere ici avec le meme
+            # secret (algorithme officiel Stripe : HMAC-SHA256 de
+            # « timestamp.payload »). Sans secret, on poste sans signature (le
+            # webhook accepte alors le POST non signe).
+            _body_bytes = json.dumps(event_payload).encode("utf-8")
+            _headers = {"Content-Type": "application/json"}
+            _wh_secret = os.environ.get('STRIPE_WEBHOOK_SECRET_CHECKOUT')
+            if _wh_secret:
+                import hmac as _hmac, hashlib as _hashlib, time as _time
+                _ts = int(_time.time())
+                _signed = f"{_ts}.".encode("utf-8") + _body_bytes
+                _sig = _hmac.new(_wh_secret.encode("utf-8"), _signed, _hashlib.sha256).hexdigest()
+                _headers["Stripe-Signature"] = f"t={_ts},v1={_sig}"
             async with httpx.AsyncClient(timeout=45.0) as client:
                 resp = await client.post(
                     base_url + "/api/webhook/stripe",
-                    json=event_payload,
+                    content=_body_bytes,
+                    headers=_headers,
                 )
             entry["webhook_http"] = resp.status_code
             if resp.status_code != 200:
