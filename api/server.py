@@ -5833,10 +5833,16 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     # lequel garder releve du coach) mais on ne montre chaque creneau qu'UNE
     # fois : cle = date + heure + nom + lieu. Deux vrais cours distincts au meme
     # instant gardent chacun leur ligne (le nom ou le lieu differe).
+    # V250: cle NORMALISEE (strip + minuscules) — un cours saisi « Sunday Vibes »
+    # et « Sunday Vibes  » (espace parasite) est le meme creneau. On ne fusionne
+    # PAS les lieux reellement differents (Neuchatel vs Lausanne au meme
+    # horaire = deux vrais cours) : le lieu fait partie de la cle.
+    def _norm(s):
+        return (s or "").strip().lower()
     _seen_occ = set()
     _dedup = []
     for o in occurrences:
-        k = (o.get("datetime"), o.get("name"), o.get("locationName"))
+        k = (o.get("datetime"), _norm(o.get("name")), _norm(o.get("locationName")))
         if k in _seen_occ:
             continue
         _seen_occ.add(k)
