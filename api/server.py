@@ -156,7 +156,7 @@ SUPER_ADMIN_EMAILS = [
     "afroboost.bassi@gmail.com"
 ]
 SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"  # Legacy - pour compatibilité
-DEFAULT_COACH_ID = "bassi_default"  # ID par défaut pour les données existantes
+DEFAULT_COACH_ID = SUPER_ADMIN_EMAILS[0]  # V244: etait "bassi_default" (sentinelle sans compte, invisible a tout coach). Pointe desormais sur l'admin, seul coach reel — les replis coach_id inconnu lui reviennent.
 
 # Rôles disponibles
 ROLE_SUPER_ADMIN = "super_admin"
@@ -5110,6 +5110,58 @@ async def reconcile_stripe_payments(request: Request, dry_run: bool = True, sess
     }
 
 
+@api_router.post("/admin/migrate-sentinel-coach-id")
+async def migrate_sentinel_coach_id(request: Request, dry_run: bool = True, target: str = ""):
+    """V244 — remplace le sentinelle `bassi_default` par un vrai coach sur
+    TOUTES les collections.
+
+    `bassi_default` (DEFAULT_COACH_ID) n'est l'email d'aucun compte : un document
+    qui le porte n'est visible d'aucun coach par le filtrage normal, et forcait
+    le repli V243 « montrer tous les cours ». On le remplace par un email de
+    coach reel (defaut : l'admin appelant).
+
+    `dry_run=true` PAR DEFAUT. `target` = email a attribuer.
+    """
+    caller_email = require_auth(request)
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Reserve aux super admins")
+
+    owner = (target or "").strip().lower() or caller_email
+    if "@" not in owner:
+        raise HTTPException(status_code=400, detail="target doit etre une adresse email de coach")
+
+    collections = ["subscriptions", "payment_transactions", "reservations",
+                   "offers", "courses", "campaigns", "chat_participants",
+                   "chat_sessions", "discount_codes", "leads"]
+    sentinel = "bassi_default"
+    rows = []
+    total = 0
+    for name in collections:
+        coll = db[name]
+        try:
+            count = await coll.count_documents({"coach_id": sentinel})
+        except Exception as e:
+            rows.append({"collection": name, "erreur": str(e)[:80]})
+            continue
+        if count and not dry_run:
+            await coll.update_many({"coach_id": sentinel}, {"$set": {"coach_id": owner}})
+        total += count
+        rows.append({"collection": name, "bassi_default": count})
+
+    logger.info(f"[V244 MIGRATION] dry_run={dry_run} par {caller_email}: "
+                f"{total} documents bassi_default -> {owner}")
+
+    return {
+        "success": True,
+        "dry_run": dry_run,
+        "message": ("SIMULATION — aucune ecriture. Relancer avec ?dry_run=false pour appliquer."
+                    if dry_run else "Migration appliquee."),
+        "proprietaire_attribue": owner,
+        "total_bassi_default": total,
+        "par_collection": rows,
+    }
+
+
 @api_router.get("/admin/audit-coach-id")
 async def audit_coach_id(request: Request):
     """V241 — audit de rattachement : par collection, combien de documents
@@ -5741,26 +5793,29 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     for course in courses_raw:
         occurrences.extend(_v184_next_occurrences(course, days_ahead=14))
 
-    # V243: repli. Le coach resolu ci-dessus est souvent le sentinelle
-    # `bassi_default` (souscription dont l'offre n'a pas pu etre rattachee a un
-    # vrai coach) ; or aucun cours ne porte ce coach_id, d'ou « Aucun cours
-    # disponible » sur l'espace d'un client qui a pourtant paye. Quand le filtre
-    # par coach ne renvoie AUCUNE occurrence, on retombe sur tous les cours
-    # visibles : mieux vaut proposer les seances du seul coach reel que de
-    # laisser un client paye sans pouvoir reserver. Ne se declenche que si le
-    # filtre coach etait actif ET n'a rien donne — le cas nominal (coach avec
-    # ses cours) est strictement inchange.
+    # V243/V244: repli, RESSERRE. Depuis V244 le sentinelle bassi_default est
+    # migre : un coach_id valide (email d'un coach reel) qui n'a aucun cours
+    # signifie « ce coach n'a pas encore de seance », PAS « coach_id casse » — on
+    # ne doit alors PAS montrer les cours des autres. Le repli ne se declenche
+    # donc que si le coach_id resolu ne correspond a AUCUN compte coach connu
+    # (donnee orpheline). Un client paye sur une donnee orpheline peut ainsi
+    # quand meme reserver, sans exposer le catalogue d'un coach a un autre.
     if not occurrences and course_query.get("coach_id"):
-        fallback_query = {"archived": {"$ne": True}, "visible": {"$ne": False}}
-        fallback_raw = await db.courses.find(fallback_query, {"_id": 0}).to_list(200)
-        for course in fallback_raw:
-            occurrences.extend(_v184_next_occurrences(course, days_ahead=14))
-        if occurrences:
-            logger.info(
-                f"[V243] Repli cours: aucun cours pour coach_id="
-                f"{course_query.get('coach_id')}, {len(occurrences)} occurrences "
-                f"servies depuis l'ensemble des cours visibles."
-            )
+        _cid = course_query.get("coach_id")
+        _coach_exists = await db.coaches.find_one(
+            {"$or": [{"email": _cid}, {"id": _cid}]}, {"_id": 0, "email": 1}
+        )
+        _is_real = bool(_coach_exists) or is_super_admin(_cid)
+        if not _is_real:
+            fallback_query = {"archived": {"$ne": True}, "visible": {"$ne": False}}
+            fallback_raw = await db.courses.find(fallback_query, {"_id": 0}).to_list(200)
+            for course in fallback_raw:
+                occurrences.extend(_v184_next_occurrences(course, days_ahead=14))
+            if occurrences:
+                logger.info(
+                    f"[V244] Repli cours: coach_id={_cid} orphelin (aucun compte), "
+                    f"{len(occurrences)} occurrences servies depuis tous les cours visibles."
+                )
 
     occurrences.sort(key=lambda o: o.get("datetime", ""))
 
@@ -6310,7 +6365,7 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         {"$inc": {"used": quantity}}
     )
 
-    coach_id = subscription.get("coach_id") or course.get("coach_id") or "bassi_default"
+    coach_id = subscription.get("coach_id") or course.get("coach_id") or DEFAULT_COACH_ID  # V244
 
     reservation_doc = {
         "id": str(uuid.uuid4()),

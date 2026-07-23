@@ -10,7 +10,7 @@ SUPER_ADMIN_EMAILS = [
     "afroboost.bassi@gmail.com"
 ]
 SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"  # Legacy compatibilité
-DEFAULT_COACH_ID = "bassi_default"
+DEFAULT_COACH_ID = SUPER_ADMIN_EMAILS[0]  # V244: etait "bassi_default" (sentinelle sans compte, invisible a tout coach). Pointe desormais sur l'admin, seul coach reel — les replis coach_id inconnu lui reviennent.
 ROLE_SUPER_ADMIN = "super_admin"
 ROLE_COACH = "coach"
 ROLE_USER = "user"

@@ -464,6 +464,9 @@ SUPER_ADMIN_EMAILS = [
     "afroboost.bassi@gmail.com"
 ]
 SUPER_ADMIN_EMAIL = "contact.artboost@gmail.com"  # Legacy
+# V244: etait "bassi_default" (sentinelle sans compte). Pointe desormais sur
+# l'admin, coherent avec server.py — les replis coach_id inconnu lui reviennent.
+DEFAULT_COACH_ID = SUPER_ADMIN_EMAILS[0]
 
 def is_super_admin(email: str) -> bool:
     """Vérifie si l'email est celui d'un Super Admin"""
@@ -528,7 +531,8 @@ async def get_reservations(request: Request, page: int = 1, limit: int = 20, all
     """Get reservations with pagination - Filtré par coach_id"""
     caller_email = request.headers.get("X-User-Email", "").lower().strip()
     # V206: Super admin voit tout (y compris bassi_default)
-    base_query = {} if is_super_admin(caller_email) else {"coach_id": {"$in": [caller_email, "bassi_default"]}} if caller_email else {"coach_id": "__no_access__"}
+    # V244: isolation stricte — le sentinelle bassi_default a ete migre, plus aucun doc ne le porte.
+    base_query = {} if is_super_admin(caller_email) else {"coach_id": caller_email} if caller_email else {"coach_id": "__no_access__"}
     projection = {
         "_id": 0, "id": 1, "reservationCode": 1, "userName": 1, "userEmail": 1,
         "userWhatsapp": 1, "courseName": 1, "courseTime": 1, "datetime": 1,
@@ -677,7 +681,7 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
     if not effective_coach_id and reservation.coach_id:
         effective_coach_id = reservation.coach_id.lower().strip()
     if not effective_coach_id:
-        effective_coach_id = "bassi_default"
+        effective_coach_id = DEFAULT_COACH_ID  # V244
     reservation_data = Reservation(
         userName=reservation.userName, userEmail=reservation.userEmail, userWhatsapp=reservation.userWhatsapp,
         userLanguage=reservation.userLanguage,
@@ -850,7 +854,7 @@ async def delete_reservation(reservation_id: str):
             "recredited": recredited,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "read": False,
-            "coach_id": reservation.get("coach_id", "bassi_default"),
+            "coach_id": reservation.get("coach_id", DEFAULT_COACH_ID),  # V244
         })
     except Exception as _e:
         logger.warning(f"[CANCEL] Erreur sauvegarde notification: {_e}")
@@ -1317,7 +1321,7 @@ async def _qr_scan_validate_inner(request: Request):
     swiss_tz = timezone(_td(hours=2))
     now_swiss = datetime.now(swiss_tz)
     today_weekday = now_swiss.weekday()
-    coach_id = subscription.get("coach_id") or "bassi_default"
+    coach_id = subscription.get("coach_id") or DEFAULT_COACH_ID  # V244
 
     courses = await db.courses.find({"weekday": today_weekday, "visible": True, "archived": False, "coach_id": coach_id}, {"_id": 0}).to_list(50)
     if not courses:
