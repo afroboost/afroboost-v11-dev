@@ -598,6 +598,15 @@ const V228_PATHS = {
       <path d="m5 11 9 9" />
     </>
   ),
+  // V245: grille 2x2 pour l'onglet « Tout » de la vitrine (Feather `grid`).
+  grid: (
+    <>
+      <rect x="3" y="3" width="7" height="7" />
+      <rect x="14" y="3" width="7" height="7" />
+      <rect x="14" y="14" width="7" height="7" />
+      <rect x="3" y="14" width="7" height="7" />
+    </>
+  ),
 
   // V228 — Indicateur d'etat. Les emoji 🟢🔴🟡 du code existant ne sont PAS des
   // pictogrammes mais des pastilles de couleur : les rendre en trace monochrome

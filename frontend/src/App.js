@@ -6395,11 +6395,13 @@ function App() {
         }}
       >
         <div className="max-w-4xl mx-auto flex items-center gap-1 px-4 py-2 overflow-x-auto hide-scrollbar">
+          {/* V245: emoji des onglets remplaces par SvgIcon (icones vectorielles
+              qui suivent currentColor, coherentes avec la migration V228+). */}
           {[
-            { key: 'all', label: t('all'), icon: '✨' },
-            { key: 'sessions', label: t('sessions'), icon: '📅' },
-            { key: 'offers', label: t('offersFilter'), icon: '🎁' },
-            { key: 'shop', label: t('shopFilter'), icon: '🛒' }
+            { key: 'all', label: t('all'), icon: 'grid' },
+            { key: 'sessions', label: t('sessions'), icon: 'calendar' },
+            { key: 'offers', label: t('offersFilter'), icon: 'gift' },
+            { key: 'shop', label: t('shopFilter'), icon: 'shoppingCart' }
           ].map(tab => (
             <button
               key={tab.key}
@@ -6422,7 +6424,7 @@ function App() {
                 color: activeFilter === tab.key ? '#fff' : 'rgba(255, 255, 255, 0.6)'
               }}
             >
-              <span>{tab.icon}</span>
+              <SvgIcon name={tab.icon} size={16} />
               <span>{tab.label}</span>
             </button>
           ))}

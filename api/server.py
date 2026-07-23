@@ -5172,7 +5172,7 @@ async def migrate_sentinel_coach_id(request: Request, dry_run: bool = True, targ
 
 
 @api_router.get("/admin/debug-push")
-async def debug_push(request: Request):
+async def debug_push(request: Request, send_test: bool = False):
     """V245 — diagnostic notifications push (endpoint temporaire).
 
     Le systeme d'envoi existe et le webhook l'appelle, mais rien n'arrive. On
@@ -5196,6 +5196,23 @@ async def debug_push(request: Request):
         if ps.get("email"):
             emails.add(ps["email"])
 
+    # V245: combien de souscriptions portent reellement un champ `email` — c'est
+    # le premier critere de `send_push_by_email`. `/push/subscribe` ne le pose
+    # pas, donc ce lien depend entierement du participant_id.
+    with_email = await db.push_subscriptions.count_documents({"email": {"$exists": True, "$nin": [None, ""]}})
+    # participant_id au format « coach_<email> » (enregistre par le dashboard) ?
+    coach_pid = await db.push_subscriptions.count_documents(
+        {"participant_id": {"$regex": "^coach_"}}
+    )
+
+    test_result = None
+    if send_test:
+        # envoi reel au caller, pour localiser l'echec dans la chaine complete.
+        sent = await send_push_by_email(caller_email, "Test Afroboost",
+                                        "Ceci est une notification de test.",
+                                        {"type": "debug_test"})
+        test_result = {"cible": caller_email, "envoi_reussi (sent>0)": sent}
+
     return {
         "success": True,
         "WEBPUSH_AVAILABLE (lib pywebpush)": WEBPUSH_AVAILABLE,
@@ -5203,7 +5220,10 @@ async def debug_push(request: Request):
         "VAPID_PRIVATE_KEY_present": bool(VAPID_PRIVATE_KEY),
         "push_subscriptions_total": total,
         "push_subscriptions_actives": active,
+        "souscriptions_avec_champ_email": with_email,
+        "souscriptions_participant_id_coach_prefix": coach_pid,
         "emails_distincts_abonnes": sorted(emails),
+        "test_envoi": test_result,
         "apercu": sample,
         "diagnostic": (
             "lib absente" if not WEBPUSH_AVAILABLE else
