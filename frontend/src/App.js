@@ -1083,7 +1083,11 @@ function StickyCountdownBar(props) {
 
   return (
     <div data-sticky-countdown="active" style={{
-      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 10000,
+      /* V248 FIX3: zIndex 10000 -> 40. A 10000 le bandeau passait AU-DESSUS de
+         tout, y compris les modals produit — il masquait leur contenu et leur
+         bouton fermer. 40 le garde en tete de page (au-dessus du contenu normal)
+         mais SOUS le widget chat (50) et les modals (>=1000). */
+      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 40,
       background: '#000000', borderBottom: '3px solid #D91CD2',
       minHeight: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center',
       flexWrap: 'wrap', gap: '2px 6px',

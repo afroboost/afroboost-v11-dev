@@ -145,6 +145,20 @@ async def create_checkout_session(req: CreateCheckoutRequest):
             payment_method="free",
             discount_code=req.discount_code
         )
+        # V248: notification push au coach — le flux gratuit ne passe pas par le
+        # webhook Stripe, il n'avait donc AUCUNE notif (l'email, lui, part deja
+        # depuis _process_successful_payment). Import LAZY pour eviter le cycle :
+        # server.py importe deja ce module au chargement.
+        try:
+            from api.server import send_push_by_email as _v248_push
+            _v248_offer = (req.items[0].name if req.items else "") or "une offre gratuite"
+            await _v248_push(
+                req.coach_email,
+                "Nouvelle souscription",
+                f"{req.customer_name or 'Un client'} s'est inscrit à {_v248_offer} (gratuit)"
+            )
+        except Exception as _v248_err:
+            logger.warning(f"[V248] Push gratuit non-bloquant: {_v248_err}")
         return {
             "success": True,
             "free": True,
