@@ -1401,17 +1401,49 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
             update_data["last_prolonged_date"] = None
     else:
         update_data["expiration_date"] = None
-    # v159: Validation linked_course_ids sur update
-    linked_ids = update_data.get("linked_course_ids") or []
-    if linked_ids:
-        existing_offer = await db.offers.find_one({"id": offer_id}, {"_id": 0, "coach_id": 1})
+    # v159 + V254: Validation ET protection anti-ecrasement de linked_course_ids.
+    #
+    # Deux mecanismes effacaient les liens a CHAQUE sauvegarde d'offre :
+    #  (1) le wizard renvoie parfois [] alors que l'offre a des liens (cours
+    #      absents de sa prop `courses`) ;
+    #  (2) la validation par coach_id retirait TOUS les ids quand le coach_id de
+    #      l'offre ne correspond pas a celui des cours — typiquement une offre a
+    #      coach_id absent (donnee ancienne) dont les cours appartiennent au coach
+    #      reel : le filtre `{"coach_id": None}` ne matchait rien -> [].
+    #
+    # On recupere l'offre existante UNE fois et on preserve les liens en place
+    # quand l'entrant les effacerait sans intention claire. Delier entierement
+    # une offre se fait via l'endpoint admin /admin/link-offer-courses.
+    existing_offer = await db.offers.find_one({"id": offer_id}, {"_id": 0})
+    existing_linked = (existing_offer or {}).get("linked_course_ids") or []
+    incoming_linked = update_data.get("linked_course_ids") or []
+    if incoming_linked:
         offer_coach_id = (existing_offer or {}).get("coach_id") or update_data.get("coach_id")
-        valid_courses = await db.courses.find(
-            {"id": {"$in": linked_ids}, "coach_id": offer_coach_id},
-            {"_id": 0, "id": 1}
-        ).to_list(length=500)
-        valid_ids = {c["id"] for c in valid_courses}
-        update_data["linked_course_ids"] = [cid for cid in linked_ids if cid in valid_ids]
+        if offer_coach_id:
+            valid_courses = await db.courses.find(
+                {"id": {"$in": incoming_linked}, "coach_id": offer_coach_id},
+                {"_id": 0, "id": 1}
+            ).to_list(length=500)
+            valid_ids = {c["id"] for c in valid_courses}
+            filtered = [cid for cid in incoming_linked if cid in valid_ids]
+            if filtered:
+                update_data["linked_course_ids"] = filtered
+            elif existing_linked:
+                # V254: la validation a tout retire alors que l'offre avait des
+                # liens -> mismatch coach_id, pas une volonte de delier. Preserver.
+                update_data["linked_course_ids"] = existing_linked
+                logger.info(f"[V254] linked_course_ids preserve (mismatch coach) offre {offer_id}: {existing_linked}")
+            else:
+                update_data["linked_course_ids"] = []
+        else:
+            # Offre sans coach_id : impossible de valider par coach. On accepte les
+            # ids entrants tels quels (deja verifies a la creation du lien).
+            update_data["linked_course_ids"] = incoming_linked
+    elif existing_linked:
+        # V254: body vide alors que des liens existent -> preserver (anti-wipe).
+        update_data["linked_course_ids"] = existing_linked
+        logger.info(f"[V254] linked_course_ids preserve (body vide) offre {offer_id}: {existing_linked}")
+    # else: aucun lien entrant ni existant -> reste []
     await db.offers.update_one({"id": offer_id}, {"$set": update_data})
     updated = await db.offers.find_one({"id": offer_id}, {"_id": 0})
     return updated
