@@ -5272,6 +5272,9 @@ async def debug_sub(request: Request, email: str = ""):
     e = (email or "").strip().lower()
     subs = await db.subscriptions.find({"email": e}, {"_id": 0}).sort("created_at", -1).to_list(5)
     codes = await db.discount_codes.find({"assignedEmail": e}, {"_id": 0}).sort("created_at", -1).to_list(5)
+    # V248: aussi les reservations — le flux gratuit d'App.js en cree une SANS
+    # souscription ni code d'acces.
+    resa = await db.reservations.find({"userEmail": e}, {"_id": 0, "reservationCode": 1, "courseName": 1, "offerName": 1, "createdAt": 1, "validated": 1}).sort("createdAt", -1).to_list(5)
     # chaque code : est-il trouvable tel quel (validation) ?
     checks = []
     for c in codes:
@@ -5291,6 +5294,7 @@ async def debug_sub(request: Request, email: str = ""):
                            "remaining": s.get("remaining_sessions"),
                            "created_at": s.get("created_at")} for s in subs],
         "codes": checks,
+        "reservations": resa,
     }
 
 
