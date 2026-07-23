@@ -5335,7 +5335,10 @@ function App() {
     if (totalPrice === 0) {
       setLoading(true);
       try {
-        const freeRes = await axios.post(`${API}/api/checkout/free`, {
+        // HOTFIX: `API` vaut deja `${BACKEND_URL}/api` (l.66) — l'URL correcte
+        // est donc `${API}/checkout/free`, PAS `${API}/api/checkout/free` qui
+        // donnait `/api/api/checkout/free` -> 405 Method Not Allowed.
+        const freeRes = await axios.post(`${API}/checkout/free`, {
           coach_email: selectedOffer.coach_id || '',
           items: [{
             type: isPhysicalProduct ? 'product' : 'offer',
