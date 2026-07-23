@@ -5260,6 +5260,40 @@ async def test_push_email(email: str, request: Request):
     }
 
 
+@api_router.get("/admin/debug-sub")
+async def debug_sub(request: Request, email: str = ""):
+    """V248 — inspecte la souscription + le code d'un client (super admin).
+
+    Diagnostic du checkout gratuit : le code est-il bien en base et valide ?
+    """
+    caller_email = require_auth(request)
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Reserve aux super admins")
+    e = (email or "").strip().lower()
+    subs = await db.subscriptions.find({"email": e}, {"_id": 0}).sort("created_at", -1).to_list(5)
+    codes = await db.discount_codes.find({"assignedEmail": e}, {"_id": 0}).sort("created_at", -1).to_list(5)
+    # chaque code : est-il trouvable tel quel (validation) ?
+    checks = []
+    for c in codes:
+        code_val = c.get("code", "")
+        found = await db.discount_codes.find_one(
+            {"code": {"$regex": f"^{code_val}$", "$options": "i"}, "active": {"$ne": False}},
+            {"_id": 0, "code": 1}
+        )
+        checks.append({"code": code_val, "actif": c.get("active"),
+                       "trouvable_par_validation": bool(found),
+                       "source": c.get("source"), "maxUses": c.get("maxUses"),
+                       "used": c.get("used")})
+    return {
+        "email": e,
+        "souscriptions": [{"code": s.get("code"), "offer": s.get("offer_name"),
+                           "source": s.get("source"), "coach_id": s.get("coach_id"),
+                           "remaining": s.get("remaining_sessions"),
+                           "created_at": s.get("created_at")} for s in subs],
+        "codes": checks,
+    }
+
+
 @api_router.get("/admin/debug-push")
 async def debug_push(request: Request, send_test: bool = False):
     """V245 — diagnostic notifications push (endpoint temporaire).

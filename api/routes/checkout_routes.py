@@ -812,6 +812,14 @@ async def _process_successful_payment(
                             <img src="{qr_image_url}" alt="QR Code" style="width: 150px; height: 150px;" />
                             <p style="color: rgba(255,255,255,0.6); font-size: 12px;">Scannez ce QR code pour accéder à vos services</p>
                         </div>
+                        <!-- V248: bouton de reservation MANQUANT — le client recevait un
+                             code mais aucun lien pour reserver sa seance, et devait
+                             recopier le code a la main (source d'erreurs de saisie).
+                             Meme espace que le flow Stripe : /espace/{{code}}. -->
+                        <div style="text-align: center; margin: 24px 0;">
+                            <a href="https://afroboost.com/espace/{access_code}" style="display: inline-block; background: #D91CD2; color: white; padding: 16px 36px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 16px;">&#128197; Réserver ma séance</a>
+                            <p style="color: rgba(255,255,255,0.5); font-size: 12px; margin: 10px 0 0;">Ton espace personnel : choisis ta date et confirme en un clic.</p>
+                        </div>
                         <p><strong>Détail :</strong> {items_desc}</p>
                         <p><strong>Méthode :</strong> {payment_method}</p>
                         <hr style="border-color: rgba(255,255,255,0.1);" />
