@@ -6032,6 +6032,26 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
             for occ in occurrences:
                 occ["locationName"] = _offer_loc
 
+    # V252: 2e passe de deduplication, APRES uniformisation du nom (V251) et du
+    # lieu (FIX 2). La 1re passe (ci-dessus) tourne sur les noms d'ORIGINE : deux
+    # cours lies a la meme offre mais nommes differemment (« Nouveau cours » et
+    # « Cours a l'unite test »), au meme creneau et meme lieu, y survivaient tous
+    # deux — puis le renommage V251 les rendait identiques a l'ecran (doublon
+    # « dim. 26 juil. » affiche deux fois). Une fois nom et lieu uniformises, un
+    # meme (datetime, lieu) est le meme creneau pour le client : on le garde une
+    # seule fois. Ne s'active que sous filtrage par cours lies (occurrences toutes
+    # de la meme offre) — hors de ce cas, le comportement reste strictement V250.
+    if linked_ids and occurrences:
+        _seen2 = set()
+        _dedup2 = []
+        for o in occurrences:
+            k2 = (o.get("datetime"), (o.get("locationName") or "").strip().lower())
+            if k2 in _seen2:
+                continue
+            _seen2.add(k2)
+            _dedup2.append(o)
+        occurrences = _dedup2
+
     # V208c: Historique de réservations — par member_slug pour les groupes, par email sinon
     import re as _re_mod
     user_email_escaped = _re_mod.escape(user_email) if user_email else ""
