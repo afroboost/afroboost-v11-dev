@@ -5002,6 +5002,10 @@ async def reconcile_stripe_payments(request: Request, dry_run: bool = True, sess
                     json=event_payload,
                 )
             entry["webhook_http"] = resp.status_code
+            if resp.status_code != 200:
+                # le detail du webhook (ex. « Webhook error: ... ») est la seule
+                # facon de voir ce qui a echoue cote traitement.
+                entry["webhook_detail"] = resp.text[:300]
             # verification : le code a-t-il bien ete cree ?
             created = await db.discount_codes.find_one(
                 {"session_id": sid}, {"_id": 0, "code": 1}
