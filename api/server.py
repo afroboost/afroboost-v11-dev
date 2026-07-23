@@ -4345,6 +4345,10 @@ async def stripe_webhook(request: Request):
                     # dans le webhook (ou une exception priverait l'acheteur de
                     # son code AFR et de ses credits).
                     espace_url = f"https://afroboost.com/espace/{new_code}"  # V225
+                    # V243: message WhatsApp pre-encode pour le bouton de partage
+                    # de l'email (le lien wa.me exige un texte URL-encode).
+                    from urllib.parse import quote as _url_quote
+                    _wa_share_text = _url_quote(f"Mon lien de réservation Afroboost : {espace_url}")
                     html = f"""<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;background:#0a0a0a;color:#fff;">
                         <div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:28px 24px;text-align:center;">
                             <h1 style="color:white;margin:0;font-size:24px;">Bienvenue chez Afroboost !</h1>
@@ -4371,6 +4375,14 @@ async def stripe_webhook(request: Request):
                             <div style="text-align:center;margin:0 0 24px;">
                                 <a href="{espace_url}" style="display:inline-block;background:#d91cd2;color:white;padding:16px 36px;text-decoration:none;border-radius:12px;font-weight:bold;font-size:16px;">&#128197; Reserver ma seance</a>
                                 <p style="color:#a855f7;font-size:12px;margin:10px 0 0;line-height:1.5;">Ton espace personnel : choisis ta date et confirme en un clic.</p>
+                                <!-- V243: partage WhatsApp du lien d'espace. wa.me/?text=
+                                     ouvre WhatsApp avec le message pre-rempli ; le
+                                     destinataire est choisi dans l'app. L'URL est encodee
+                                     cote serveur (quote) pour survivre aux caracteres
+                                     speciaux du code. -->
+                                <div style="margin:12px 0 0;">
+                                    <a href="https://wa.me/?text={_wa_share_text}" style="display:inline-block;background:#25D366;color:white;padding:10px 24px;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">&#128241; Partager via WhatsApp</a>
+                                </div>
                             </div>
 
                             <!-- BOUTON ACCES DIRECT CHAT -->
@@ -4441,7 +4453,33 @@ async def stripe_webhook(request: Request):
                     except Exception as mail_err:
                         logger.warning(f"[PAYMENT] Email error: {mail_err}")
                 # v8.7: Sync CRM - Creer/MAJ contact (email unique)
-                await db.chat_participants.update_one({"email": customer_email}, {"$set": {"email": customer_email, "name": metadata.get("customer_name", customer_email.split("@")[0]), "source": "stripe_payment", "updated_at": datetime.now(timezone.utc).isoformat()}, "$setOnInsert": {"id": str(uuid.uuid4()), "created_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+                # V243: on capture aussi le telephone WhatsApp (collecte par
+                # Stripe au checkout) et on rattache le contact au coach — sans
+                # ces deux champs, l'acheteur apparaissait sans numero et
+                # echappait a l'isolation coach.
+                _contact_phone = (session.get("customer_details") or {}).get("phone") or ""
+                _contact_set = {
+                    "email": customer_email,
+                    "name": metadata.get("customer_name", customer_email.split("@")[0]),
+                    "source": "stripe_payment",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+                if _contact_phone:
+                    _contact_set["phone"] = _contact_phone
+                # coach_id et created_at en $setOnInsert : on ne REATTRIBUE jamais
+                # un contact existant a un autre coach (l'ecraser casserait
+                # l'isolation si le contact appartient deja a quelqu'un), et on
+                # ne remet pas non plus la date de creation a jour.
+                await db.chat_participants.update_one(
+                    {"email": customer_email},
+                    {"$set": _contact_set,
+                     "$setOnInsert": {
+                         "id": str(uuid.uuid4()),
+                         "coach_id": _sub_coach_id,
+                         "created_at": datetime.now(timezone.utc).isoformat(),
+                     }},
+                    upsert=True
+                )
                 # v162m: Notifier le coach par email de la souscription
                 if RESEND_AVAILABLE and RESEND_API_KEY:
                     try:
@@ -5702,6 +5740,28 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     occurrences = []
     for course in courses_raw:
         occurrences.extend(_v184_next_occurrences(course, days_ahead=14))
+
+    # V243: repli. Le coach resolu ci-dessus est souvent le sentinelle
+    # `bassi_default` (souscription dont l'offre n'a pas pu etre rattachee a un
+    # vrai coach) ; or aucun cours ne porte ce coach_id, d'ou « Aucun cours
+    # disponible » sur l'espace d'un client qui a pourtant paye. Quand le filtre
+    # par coach ne renvoie AUCUNE occurrence, on retombe sur tous les cours
+    # visibles : mieux vaut proposer les seances du seul coach reel que de
+    # laisser un client paye sans pouvoir reserver. Ne se declenche que si le
+    # filtre coach etait actif ET n'a rien donne — le cas nominal (coach avec
+    # ses cours) est strictement inchange.
+    if not occurrences and course_query.get("coach_id"):
+        fallback_query = {"archived": {"$ne": True}, "visible": {"$ne": False}}
+        fallback_raw = await db.courses.find(fallback_query, {"_id": 0}).to_list(200)
+        for course in fallback_raw:
+            occurrences.extend(_v184_next_occurrences(course, days_ahead=14))
+        if occurrences:
+            logger.info(
+                f"[V243] Repli cours: aucun cours pour coach_id="
+                f"{course_query.get('coach_id')}, {len(occurrences)} occurrences "
+                f"servies depuis l'ensemble des cours visibles."
+            )
+
     occurrences.sort(key=lambda o: o.get("datetime", ""))
 
     # V208c: Historique de réservations — par member_slug pour les groupes, par email sinon

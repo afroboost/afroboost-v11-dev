@@ -1100,16 +1100,35 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             </li>
           </ol>
           {shareUrl && (
-            <button
-              type="button"
-              onClick={handleShareCopy}
-              className="mt-4 text-xs text-white/40 underline"
-              data-testid="copy-own-link"
-            >
-              {shareCopied ? (
-                <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Lien copié</span>
-              ) : "Copier mon lien personnel"}
-            </button>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={handleShareCopy}
+                className="text-xs text-white/40 underline"
+                data-testid="copy-own-link"
+              >
+                {shareCopied ? (
+                  <span className="inline-flex items-center gap-1.5"><SvgIcon name="check" size={14} /> Lien copié</span>
+                ) : "Copier mon lien personnel"}
+              </button>
+              {/* V243: partage WhatsApp du lien d'espace. Ouvre WhatsApp (app ou
+                  web) avec le message pre-rempli ; l'abonne choisit le
+                  destinataire — lui-meme ou un proche. */}
+              <a
+                href={`https://wa.me/?text=${encodeURIComponent('Mon lien de réservation Afroboost : ' + shareUrl)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="share-whatsapp-link"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                  background: '#25D366', color: '#fff',
+                  padding: '6px 14px', borderRadius: '8px',
+                  fontSize: '12px', fontWeight: 600, textDecoration: 'none'
+                }}
+              >
+                <SvgIcon name="phone" size={14} /> Partager via WhatsApp
+              </a>
+            </div>
           )}
         </section>
 
