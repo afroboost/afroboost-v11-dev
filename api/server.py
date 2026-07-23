@@ -5207,11 +5207,33 @@ async def debug_push(request: Request, send_test: bool = False):
 
     test_result = None
     if send_test:
-        # envoi reel au caller, pour localiser l'echec dans la chaine complete.
-        sent = await send_push_by_email(caller_email, "Test Afroboost",
-                                        "Ceci est une notification de test.",
-                                        {"type": "debug_test"})
-        test_result = {"cible": caller_email, "envoi_reussi (sent>0)": sent}
+        # Envoi DIRECT sur les premieres souscriptions actives, en capturant
+        # l'erreur webpush exacte (status + message) — send_push_by_email
+        # l'avale. C'est ce qui distingue un mismatch VAPID (401/403) d'un
+        # endpoint expire (404/410).
+        from pywebpush import webpush as _wp, WebPushException as _WPE
+        attempts = []
+        cursor = db.push_subscriptions.find({"active": True}, {"_id": 0, "subscription": 1, "participant_id": 1}).limit(3)
+        async for s in cursor:
+            si = s.get("subscription")
+            if not si:
+                continue
+            entry = {"pid": str(s.get("participant_id"))[:20]}
+            try:
+                _wp(subscription_info=si,
+                    data=json.dumps({"title": "Test Afroboost", "body": "Notification de test."}),
+                    vapid_private_key=VAPID_PRIVATE_KEY,
+                    vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"})
+                entry["resultat"] = "OK"
+            except _WPE as we:
+                entry["resultat"] = "WebPushException"
+                entry["status"] = we.response.status_code if we.response is not None else None
+                entry["message"] = str(we)[:150]
+            except Exception as e:
+                entry["resultat"] = type(e).__name__
+                entry["message"] = str(e)[:150]
+            attempts.append(entry)
+        test_result = {"VAPID_CLAIMS_EMAIL": VAPID_CLAIMS_EMAIL, "essais": attempts}
 
     return {
         "success": True,
