@@ -4647,6 +4647,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
     if (isCoachMode && isOpen) {
       loadCoachSessions();
       loadCoachProfile();
+      // V252b: charge les transactions des l'entree en mode coach. Avant, elles
+      // n'etaient chargees qu'au clic sur l'onglet Transactions (ligne ~7382) :
+      // le compteur affichait « Transactions (0) » tant qu'on n'avait pas clique,
+      // et une session desktop sans header d'identification restait a 0. Le
+      // chargement anticipe (couple au repli JWT backend) corrige le symptome.
+      loadCoachReservations();
       setStep('coach');
     }
   }, [isCoachMode, isOpen]);

@@ -128,6 +128,38 @@ def require_auth(request: Request) -> str:
     return email
 
 
+def _email_from_jwt(request: Request) -> str:
+    """V252b — repli d'identification par JWT.
+
+    Plusieurs endpoints (dont /dashboard/all-transactions) n'identifient le
+    coach QUE par le header X-User-Email. Or l'intercepteur axios global du
+    frontend (App.js, V133) envoie TOUJOURS le JWT signe en `Authorization:
+    Bearer`, mais ne pose X-User-Email QUE si `afroboost_coach_user` existe en
+    localStorage. Sur une session desktop authentifiee par JWT seul (coach_user
+    absent), X-User-Email manque donc et le coach ne voyait AUCUNE transaction
+    (« Transactions (0) »), alors que le meme compte fonctionne sur mobile.
+
+    On decode ici le JWT (signature VERIFIEE avec JWT_SECRET, algo HS256, meme
+    secret que generate_jwt_token cote auth_routes) pour en extraire l'email.
+    Repli seulement : retourne '' si l'en-tete est absent, le secret indisponible
+    ou le token invalide/expire — jamais d'exception. N'accorde aucun acces
+    supplementaire : l'email obtenu passe par le meme filtrage d'isolation.
+    """
+    try:
+        auth = request.headers.get("Authorization", "")
+        if not auth.lower().startswith("bearer "):
+            return ""
+        token = auth.split(" ", 1)[1].strip()
+        secret = os.environ.get("JWT_SECRET", "")
+        if not token or not secret:
+            return ""
+        import jwt as _pyjwt
+        payload = _pyjwt.decode(token, secret, algorithms=["HS256"])
+        return (payload.get("email") or "").lower().strip()
+    except Exception:
+        return ""
+
+
 # Créer l'application FastAPI (interne)
 fastapi_app = FastAPI(title="Afroboost API")
 api_router = APIRouter(prefix="/api")
@@ -15837,6 +15869,12 @@ async def update_platform_settings(request: Request):
 async def get_all_transactions(request: Request, page: int = 1, limit: int = 50):
     """Retourne toutes les transactions: reservations, souscriptions Stripe, achats produits"""
     caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    # V252b: session desktop authentifiee par JWT seul (afroboost_coach_user
+    # absent) -> X-User-Email manque. On identifie alors le coach via le JWT
+    # signe, toujours envoye par l'intercepteur frontend. Sans ce repli, la liste
+    # renvoyait 0 sur desktop alors qu'elle fonctionnait sur mobile.
+    if not caller_email:
+        caller_email = _email_from_jwt(request)
 
     all_items = []
 
