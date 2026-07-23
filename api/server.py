@@ -5213,7 +5213,14 @@ async def debug_push(request: Request, send_test: bool = False):
         # endpoint expire (404/410).
         from pywebpush import webpush as _wp, WebPushException as _WPE
         attempts = []
-        cursor = db.push_subscriptions.find({"active": True}, {"_id": 0, "subscription": 1, "participant_id": 1}).limit(3)
+        # V246: cibler les souscriptions DU COACH appelant (coach_<email> ou
+        # champ email), les plus RECENTES d'abord — la fraiche creee a la
+        # re-souscription, pas les vieux fantomes.
+        _cid = f"coach_{caller_email}"
+        cursor = db.push_subscriptions.find(
+            {"active": True, "$or": [{"participant_id": _cid}, {"email": caller_email}]},
+            {"_id": 0, "subscription": 1, "participant_id": 1, "updated_at": 1, "created_at": 1}
+        ).sort("updated_at", -1).limit(3)
         async for s in cursor:
             si = s.get("subscription")
             if not si:
@@ -5233,7 +5240,14 @@ async def debug_push(request: Request, send_test: bool = False):
                 entry["resultat"] = type(e).__name__
                 entry["message"] = str(e)[:150]
             attempts.append(entry)
-        test_result = {"VAPID_CLAIMS_EMAIL": VAPID_CLAIMS_EMAIL, "essais": attempts}
+        # V246: et le vrai chemin de production, qui beneficie du fix multi-sub.
+        via_send = await send_push_by_email(caller_email, "Test Afroboost",
+                                            "Notification de test V246.", {"type": "debug"})
+        test_result = {
+            "VAPID_CLAIMS_EMAIL": VAPID_CLAIMS_EMAIL,
+            "essais_souscriptions_recentes_du_coach": attempts,
+            "send_push_by_email_reussi": via_send,
+        }
 
     return {
         "success": True,
@@ -13967,14 +13981,15 @@ async def send_push_by_email(email: str, title: str, body: str, data: dict = Non
                 candidate_pids.add(u["id"])
     except Exception:
         pass
+    # V246: trace du flux push pour diagnostic en production.
+    logger.info(f"[PUSH-DEBUG] envoi a {email_lower} — {len(candidate_pids)} pid(s) candidat(s)")
     sent = 0
     for pid in candidate_pids:
         if not pid:
             continue
         if await send_push_notification(pid, title, body, data):
             sent += 1
-    if sent > 0:
-        logger.info(f"[PUSH-V206] {sent} notif(s) -> {email_lower}: {title}")
+    logger.info(f"[PUSH-DEBUG] resultat pour {email_lower}: {sent} envoi(s) reussi(s) sur {len(candidate_pids)} pid(s) — « {title} »")
     return sent > 0
 
 
