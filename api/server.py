@@ -4502,9 +4502,19 @@ async def stripe_webhook(request: Request):
             except Exception as v195_err:
                 logger.warning(f"[V195] Traitement payment_intent.payment_failed: {v195_err}")
         return {"received": True}
+    except HTTPException:
+        # HOTFIX 2026-07-23: une HTTPException levee volontairement plus haut
+        # (403, 400 « customer_email requis »...) etait re-emballee en 400
+        # « Webhook error: » au message VIDE, masquant sa vraie cause. On la
+        # laisse remonter telle quelle.
+        raise
     except Exception as e:
-        logger.error(f"Webhook error: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Webhook error: {str(e)}")
+        # HOTFIX: `str(e)` etait vide pour certaines exceptions (message nul),
+        # rendant le diagnostic impossible. On journalise le type + le
+        # traceback, et on expose le type dans le detail.
+        import traceback as _tb
+        logger.error(f"Webhook error: {type(e).__name__}: {str(e)}\n{_tb.format_exc()}")
+        raise HTTPException(status_code=400, detail=f"Webhook error: {type(e).__name__}: {str(e)}")
 
 # === V204d: Admin — Créer code manuellement pour un paiement manqué ===
 @api_router.post("/admin/create-code")
