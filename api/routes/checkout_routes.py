@@ -454,6 +454,111 @@ async def create_checkout_session(req: CreateCheckoutRequest):
         raise HTTPException(status_code=400, detail=f"Méthode de paiement non supportée : {req.payment_method}")
 
 
+class FreeCheckoutRequest(BaseModel):
+    coach_email: str
+    items: List[CheckoutItem]
+    customer_name: str
+    customer_email: str
+    customer_phone: str = ""
+    discount_code: Optional[str] = None
+
+
+@router.post("/free")
+async def free_checkout(req: FreeCheckoutRequest):
+    """V249 — checkout d'une offre GRATUITE (0 CHF), de bout en bout.
+
+    Aligne le flux gratuit sur le flux payant : jusqu'ici la vitrine (App.js)
+    faisait un simple POST /reservations qui ne creait NI souscription NI code
+    d'acces — le client recevait un message promettant un « code AFR- » qui
+    n'existait pas et restait bloque sur /chat.
+
+    Cet endpoint reutilise `_process_successful_payment` (souscription + code
+    AFR- + email avec lien de reservation) puis complete par la
+    payment_transaction, la notif push au coach et le contact — exactement ce
+    que produit le webhook Stripe pour un achat payant.
+    """
+    # garde-fou : on refuse un item non gratuit ici, ce chemin est reserve au 0 CHF.
+    total = sum((it.price or 0) * (it.quantity or 1) for it in req.items)
+    if total > 0:
+        raise HTTPException(status_code=400, detail="Cet endpoint ne traite que les offres gratuites (0 CHF).")
+    if not req.customer_email or "@" not in req.customer_email:
+        raise HTTPException(status_code=400, detail="Email client requis.")
+
+    transaction_id = f"free_{uuid.uuid4().hex[:12]}"
+    result = await _process_successful_payment(
+        transaction_id=transaction_id,
+        coach_email=req.coach_email,
+        customer_name=req.customer_name,
+        customer_email=req.customer_email,
+        customer_phone=req.customer_phone,
+        items=req.items,
+        total=0,
+        currency="CHF",
+        payment_method="free",
+        discount_code=req.discount_code,
+    )
+    access_code = (result or {}).get("access_code", "")
+    product_name = (result or {}).get("product_name", "Offre gratuite")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # payment_transaction (montant 0, deja payee) — pour que la vente gratuite
+    # apparaisse dans l'onglet Transactions au meme titre qu'une vente payante.
+    try:
+        await db["payment_transactions"].insert_one({
+            "id": str(uuid.uuid4()),
+            "session_id": transaction_id,
+            "amount": 0,
+            "currency": "chf",
+            "product_name": product_name,
+            "customer_email": req.customer_email.lower().strip(),
+            "coach_id": req.coach_email,
+            "payment_status": "paid",
+            "status": "completed",
+            "payment_method": "free",
+            "metadata": {"customer_name": req.customer_name,
+                         "customer_email": req.customer_email,
+                         "product_name": product_name},
+            "created_at": now_iso,
+            "webhook_received_at": now_iso,
+        })
+    except Exception as _pt_err:
+        logger.warning(f"[V249] payment_transaction gratuite non-bloquant: {_pt_err}")
+
+    # notif push au coach (non bloquant) — import lazy, comme V248.
+    try:
+        from api.server import send_push_by_email as _push
+        await _push(req.coach_email, "Nouvelle souscription",
+                    f"{req.customer_name or 'Un client'} s'est inscrit à {product_name} (gratuit)")
+    except Exception as _push_err:
+        logger.warning(f"[V249] push gratuit non-bloquant: {_push_err}")
+
+    # contact CRM (non bloquant) — coach_id en $setOnInsert pour ne pas
+    # reattribuer un contact existant.
+    try:
+        _cset = {"email": req.customer_email.lower().strip(),
+                 "name": req.customer_name or req.customer_email.split("@")[0],
+                 "source": "free_checkout", "updated_at": now_iso}
+        if req.customer_phone:
+            _cset["phone"] = req.customer_phone
+        await db["chat_participants"].update_one(
+            {"email": req.customer_email.lower().strip()},
+            {"$set": _cset,
+             "$setOnInsert": {"id": str(uuid.uuid4()), "coach_id": req.coach_email, "created_at": now_iso}},
+            upsert=True,
+        )
+    except Exception as _c_err:
+        logger.warning(f"[V249] contact gratuit non-bloquant: {_c_err}")
+
+    return {
+        "success": True,
+        "free": True,
+        "access_code": access_code,
+        "transaction_id": transaction_id,
+        "message": "Réservation confirmée gratuitement !",
+    }
+
+
 # ===== WEBHOOKS =====
 
 @router.post("/webhook/stripe")
@@ -863,3 +968,8 @@ async def _process_successful_payment(
         logger.warning("[CHECKOUT] Resend non disponible, emails non envoyés")
 
     logger.info(f"[CHECKOUT] Paiement traité: {transaction_id}, code={access_code}, vendeur={coach_email}")
+    # V249: on renvoie le code + les infos utiles pour que l'appelant (endpoint
+    # /free) puisse creer la payment_transaction, notifier le coach et rattacher
+    # le contact — sans dupliquer la generation du code.
+    return {"access_code": access_code, "sessions_count": sessions_count,
+            "product_name": items_product_name or "Achat Afroboost"}

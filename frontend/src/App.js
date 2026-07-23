@@ -3191,9 +3191,22 @@ const EventPosterModal = ({ mediaUrl, onClose }) => {
                 title="Event poster"
               />
             </div>
+          ) : /\.(mp4|webm|mov|m4v|ogv)(\?|#|$)/i.test(mediaUrl || '') ? (
+            /* V249: une video directe (.mp4 Cloudinary...) n'est ni YouTube ni
+               Vimeo — elle tombait dans le <img> et s'affichait cassee. Rendue
+               en <video>. Le fix V247 ne couvrait que l'apercu du dashboard. */
+            <video
+              src={mediaUrl}
+              className="w-full h-auto max-h-[80vh] object-contain"
+              controls
+              autoPlay
+              muted
+              loop
+              playsInline
+            />
           ) : (
-            <img 
-              src={mediaUrl} 
+            <img
+              src={mediaUrl}
               alt="Événement Afroboost"
               className="w-full h-auto max-h-[80vh] object-contain"
               onError={(e) => { e.target.style.display = 'none'; }}
@@ -5312,48 +5325,61 @@ function App() {
       isAudio: isAudioPurchase
     };
 
-    // DYNAMISME DU BOUTON: Si total = 0 (100% gratuit), réservation directe sans paiement
+    // V249: offre gratuite (total 0). AVANT, ce bloc faisait un POST /reservations
+    // qui ne creait NI souscription NI code d'acces : le client recevait un
+    // message promettant un « code AFR- » inexistant et restait bloque sur /chat.
+    // Il passe desormais par POST /api/checkout/free, qui produit EXACTEMENT le
+    // meme resultat que le flux Stripe (souscription + code AFR- + email avec
+    // lien de reservation + push coach + contact). POST /reservations n'est pas
+    // touche : il reste utilise par les autres parcours.
     if (totalPrice === 0) {
       setLoading(true);
       try {
-        // Create user
-        try { await axios.post(`${API}/users`, { name: userName, email: userEmail, whatsapp: userWhatsapp }); }
-        catch (err) { console.error("User creation error:", err); }
-        
-        // Create reservation directly (no payment needed)
-        const res = await axios.post(`${API}/reservations`, reservation);
-        
-        // Mark discount code as used
+        const freeRes = await axios.post(`${API}/api/checkout/free`, {
+          coach_email: selectedOffer.coach_id || '',
+          items: [{
+            type: isPhysicalProduct ? 'product' : 'offer',
+            id: selectedOffer.id,
+            name: selectedOffer.name,
+            price: 0,
+            quantity: dateCount || 1
+          }],
+          customer_name: userName,
+          customer_email: userEmail,
+          customer_phone: userWhatsapp || '',
+          discount_code: appliedDiscount?.code || null
+        });
+
+        // Marquer le code promo comme utilise (inchange).
         if (appliedDiscount) {
-          await axios.post(`${API}/discount-codes/${appliedDiscount.id}/use`);
+          try { await axios.post(`${API}/discount-codes/${appliedDiscount.id}/use`); } catch (e) { /* non bloquant */ }
         }
-        
-        // MÉMORISATION CLIENT: Save client info for next visit
+
         saveClientInfo(userName, userEmail, userWhatsapp);
-        
-        setLastReservation(res.data);
-        // v158.7: Désactivé — l'email et WhatsApp arrivent via le backend Resend + Twilio, pas de popup
-        // sendWhatsAppNotification(res.data, true);
-        // sendWhatsAppNotification(res.data, false);
+        setLastReservation(freeRes.data);
+        // Le backend a deja envoye email client + email coach + push : plus
+        // besoin de notifyCoachAutomatic (qui aurait fait doublon).
 
-        // NOTIFICATION AUTOMATIQUE AU COACH (email + WhatsApp API)
-        notifyCoachAutomatic(res.data);
-
-        // v158.7: Ne plus afficher le popup plein écran — l'utilisateur reçoit tout par email
-        // setShowSuccess(true);
-        // v159: Notification toast "consultez votre email"
+        // Toast — le code d'acces AFR- existe desormais reellement.
         try {
           const existingToast = document.getElementById('v159-email-toast');
           if (existingToast) existingToast.remove();
           const toast = document.createElement('div');
           toast.id = 'v159-email-toast';
-          toast.innerHTML = '✅&nbsp; <strong>Réservation confirmée !</strong><br/><span style="font-size:13px;opacity:0.95;">📧 Consultez votre email pour recevoir votre QR code et code d\'accès AFRO</span>';
+          toast.innerHTML = '✅&nbsp; <strong>Réservation confirmée !</strong><br/><span style="font-size:13px;opacity:0.95;">📧 Consultez votre email pour recevoir votre QR code et code d\'accès AFR</span>';
           toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#10b981,#d91cd2);color:white;padding:16px 28px;border-radius:14px;font-size:15px;box-shadow:0 10px 40px rgba(217,28,210,0.5);max-width:90%;text-align:center;animation:fadeInScale 0.4s ease;';
           document.body.appendChild(toast);
           setTimeout(() => { if (toast.parentNode) toast.remove(); }, 10000);
         } catch (e) { /* ignore */ }
         resetFormKeepClient();
-      } catch (err) { console.error(err); }
+      } catch (err) {
+        // V249: l'ancien code avalait TOUTE erreur en silence — le client ne
+        // voyait rien et n'etait jamais cree. On affiche desormais un message.
+        console.error('[V249] Checkout gratuit echoue:', err);
+        const detail = err.response?.data?.detail || '';
+        setValidationMessage(detail || 'La réservation gratuite a échoué. Vérifiez votre connexion et réessayez.');
+        setTimeout(() => setValidationMessage(''), 6000);
+      }
       setLoading(false);
       return;
     }
