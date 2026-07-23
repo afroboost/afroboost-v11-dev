@@ -4893,6 +4893,134 @@ async def debug_recent_payments(request: Request, limit: int = 15):
     }
 
 
+@api_router.post("/admin/reconcile-stripe-payments")
+async def reconcile_stripe_payments(request: Request, dry_run: bool = True, session_id: str = "", limit: int = 30):
+    """HOTFIX 2026-07-23 — rejoue le traitement des paiements que le webhook
+    Stripe n'a jamais recus.
+
+    CONSTAT : `payment_transactions` = 61 documents, TOUS `pending`, aucun
+    `webhook_received_at`. Le webhook `/api/webhook/stripe` n'a jamais ete
+    appele — la cause est cote configuration Stripe Dashboard (endpoint webhook
+    absent ou pointant ailleurs), pas dans le code : le webhook, quand il tourne,
+    cree le code d'acces, la souscription, envoie les emails et les notifs push.
+
+    Cet endpoint interroge Stripe pour chaque paiement en attente ; pour ceux
+    reellement `paid`, il REJOUE le webhook en interne (self-POST), exactement
+    comme Stripe l'aurait fait. Le webhook n'est pas modifie.
+
+    IDEMPOTENCE : un paiement dont un `discount_code` porte deja le `session_id`
+    a deja ete traite — il est saute. Sans cette garde, un rejeu creerait un
+    second code et une seconde souscription pour le meme paiement.
+
+    `dry_run=true` PAR DEFAUT : liste les paiements reellement payes sans rien
+    rejouer. `session_id` cible un paiement precis ; sinon les `limit` derniers
+    `pending` sont examines.
+    """
+    caller_email = require_auth(request)
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Reserve aux super admins")
+
+    stripe_key = os.environ.get('STRIPE_SECRET_KEY')
+    if not stripe_key:
+        raise HTTPException(status_code=500, detail="STRIPE_SECRET_KEY absente — impossible d'interroger Stripe")
+
+    if session_id:
+        pendings = await db.payment_transactions.find(
+            {"session_id": session_id}, {"_id": 0}
+        ).to_list(1)
+    else:
+        pendings = await db.payment_transactions.find(
+            {"payment_status": {"$ne": "paid"}}, {"_id": 0}
+        ).sort("created_at", -1).to_list(limit)
+
+    base_url = os.environ.get('FRONTEND_URL', 'https://afroboost.com').rstrip('/')
+    results = []
+    replayed = 0
+    already = 0
+    not_paid = 0
+
+    for pt in pendings:
+        sid = pt.get("session_id")
+        entry = {"session_id": sid, "amount": pt.get("amount"),
+                 "product": pt.get("product_name")}
+        if not sid:
+            entry["action"] = "ignore (pas de session_id)"
+            results.append(entry); continue
+
+        # 1) etat reel cote Stripe
+        try:
+            sess = await asyncio.to_thread(
+                stripe.checkout.Session.retrieve, sid, api_key=stripe_key
+            )
+        except Exception as rerr:
+            entry["action"] = "erreur retrieve Stripe"
+            entry["detail"] = str(rerr)[:120]
+            results.append(entry); continue
+
+        pay_status = sess.get("payment_status")
+        entry["stripe_payment_status"] = pay_status
+        if pay_status != "paid":
+            not_paid += 1
+            entry["action"] = "saute (non paye cote Stripe)"
+            results.append(entry); continue
+
+        # 2) idempotence : deja traite ?
+        existing_code = await db.discount_codes.find_one(
+            {"session_id": sid}, {"_id": 0, "code": 1}
+        )
+        if existing_code:
+            already += 1
+            entry["action"] = "deja traite"
+            entry["code"] = existing_code.get("code")
+            results.append(entry); continue
+
+        if dry_run:
+            entry["action"] = "A REJOUER (simulation)"
+            results.append(entry); continue
+
+        # 3) rejeu : self-POST au webhook, event reconstruit a l'identique de
+        #    ce que Stripe enverrait. Le webhook accepte un POST non signe tant
+        #    que STRIPE_WEBHOOK_SECRET_CHECKOUT n'est pas configure (cas actuel).
+        event_payload = {
+            "id": "evt_reconcile_" + sid[:24],
+            "type": "checkout.session.completed",
+            "data": {"object": dict(sess)},
+        }
+        try:
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                resp = await client.post(
+                    base_url + "/api/webhook/stripe",
+                    json=event_payload,
+                )
+            entry["webhook_http"] = resp.status_code
+            # verification : le code a-t-il bien ete cree ?
+            created = await db.discount_codes.find_one(
+                {"session_id": sid}, {"_id": 0, "code": 1}
+            )
+            if resp.status_code == 200 and created:
+                replayed += 1
+                entry["action"] = "REJOUE"
+                entry["code"] = created.get("code")
+            else:
+                entry["action"] = "REJEU INCERTAIN — a verifier"
+        except Exception as werr:
+            entry["action"] = "erreur self-POST webhook"
+            entry["detail"] = str(werr)[:120]
+        results.append(entry)
+
+    return {
+        "success": True,
+        "dry_run": dry_run,
+        "examines": len(pendings),
+        "rejoues": replayed,
+        "deja_traites": already,
+        "non_payes": not_paid,
+        "message": ("SIMULATION — aucun rejeu. Relancer avec ?dry_run=false pour appliquer."
+                    if dry_run else "Rejeu applique."),
+        "details": results,
+    }
+
+
 @api_router.get("/admin/audit-coach-id")
 async def audit_coach_id(request: Request):
     """V241 — audit de rattachement : par collection, combien de documents
