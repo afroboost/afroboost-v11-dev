@@ -5780,11 +5780,20 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     # Offer details (optionnel)
     offer = await db.offers.find_one({"name": offer_name}, {"_id": 0}) if offer_name else None
 
+    # V250: l'offre porte les cours qui lui sont rattaches (`linked_course_ids`).
+    # Jusqu'ici ce champ etait ignore : l'espace affichait TOUS les cours du
+    # coach, y compris ceux d'autres offres/lieux. On filtre desormais dessus.
+    linked_ids = (offer or {}).get("linked_course_ids") or []
+
     # Prochaines occurrences sur 14 jours, filtrées par coach quand connu
     course_query = {"archived": {"$ne": True}, "visible": {"$ne": False}}
     coach_email_for_courses = (coach or {}).get("email") or coach_id_hint
     if coach_email_for_courses:
         course_query["coach_id"] = coach_email_for_courses
+    # V250: offre avec cours lies -> uniquement ceux-la. Offre sans lien ->
+    # comportement inchange (tous les cours du coach), retrocompatible.
+    if linked_ids:
+        course_query["id"] = {"$in": linked_ids}
     courses_raw = await db.courses.find(course_query, {"_id": 0}).to_list(200)
 
     occurrences = []
@@ -5798,7 +5807,10 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     # donc que si le coach_id resolu ne correspond a AUCUN compte coach connu
     # (donnee orpheline). Un client paye sur une donnee orpheline peut ainsi
     # quand meme reserver, sans exposer le catalogue d'un coach a un autre.
-    if not occurrences and course_query.get("coach_id"):
+    # V250: le repli ne s'applique PAS si l'offre filtre par cours lies. Sans
+    # cette garde, un cours lie n'ayant plus de date a venir rouvrirait tout le
+    # catalogue du coach — exactement le melange de dates que V250 corrige.
+    if not occurrences and course_query.get("coach_id") and not linked_ids:
         _cid = course_query.get("coach_id")
         _coach_exists = await db.coaches.find_one(
             {"$or": [{"email": _cid}, {"id": _cid}]}, {"_id": 0, "email": 1}
@@ -5815,6 +5827,21 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
                     f"{len(occurrences)} occurrences servies depuis tous les cours visibles."
                 )
 
+    # V250: deduplication. La meme seance apparaissait plusieurs fois dans le
+    # selecteur parce que le cours est DUPLIQUE en base (« Nouveau cours »
+    # mercredi 18:30 y existe 6 fois). On ne touche pas aux donnees (savoir
+    # lequel garder releve du coach) mais on ne montre chaque creneau qu'UNE
+    # fois : cle = date + heure + nom + lieu. Deux vrais cours distincts au meme
+    # instant gardent chacun leur ligne (le nom ou le lieu differe).
+    _seen_occ = set()
+    _dedup = []
+    for o in occurrences:
+        k = (o.get("datetime"), o.get("name"), o.get("locationName"))
+        if k in _seen_occ:
+            continue
+        _seen_occ.add(k)
+        _dedup.append(o)
+    occurrences = _dedup
     occurrences.sort(key=lambda o: o.get("datetime", ""))
 
     # V208c: Historique de réservations — par member_slug pour les groupes, par email sinon
