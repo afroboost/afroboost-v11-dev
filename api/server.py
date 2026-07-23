@@ -4519,9 +4519,12 @@ async def stripe_webhook(request: Request):
         # localiser l'AttributeError sans acces aux logs serveur. A retirer.
         _frames = _tb.extract_tb(e.__traceback__)
         _loc = ""
-        if _frames:
-            _last = _frames[-1]
-            _loc = f" @ {_last.filename.split('/')[-1]}:{_last.lineno} `{_last.line}`"
+        # derniere frame DANS server.py (l'AttributeError est levee dans la lib
+        # Stripe, mais c'est notre acces attribut qui la declenche).
+        _ours = [f for f in _frames if 'server.py' in f.filename]
+        _pick = _ours[-1] if _ours else (_frames[-1] if _frames else None)
+        if _pick:
+            _loc = f" @ {_pick.filename.split('/')[-1]}:{_pick.lineno} `{_pick.line}`"
         raise HTTPException(status_code=400, detail=f"Webhook error: {type(e).__name__}: {str(e)}{_loc}")
 
 # === V204d: Admin — Créer code manuellement pour un paiement manqué ===
