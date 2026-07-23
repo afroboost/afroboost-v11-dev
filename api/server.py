@@ -13902,26 +13902,42 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
     #             return False
     #     except Exception:
     #         pass
-    # Recuperer la souscription
-    sub = await db.push_subscriptions.find_one({"participant_id": participant_id, "active": True}, {"_id": 0})
-    if not sub or not sub.get("subscription"):
+    # V245: un participant peut avoir PLUSIEURS souscriptions (le frontend
+    # re-souscrit sans dedupliquer). L'ancien `find_one` n'en testait qu'une :
+    # si c'etait une souscription expiree, l'envoi echouait alors qu'une autre,
+    # fraiche, aurait pu aboutir. On les essaie TOUTES et on s'arrete au premier
+    # succes ; chaque endpoint mort (404/410) est desactive individuellement par
+    # son propre endpoint, pas en bloc sur le participant_id.
+    subs = await db.push_subscriptions.find(
+        {"participant_id": participant_id, "active": True}, {"_id": 0}
+    ).to_list(20)
+    if not subs:
         return False
-    subscription_info = sub["subscription"]
     payload = json.dumps({"title": title, "body": body, "icon": "/logo192.png", "badge": "/logo192.png", "data": data or {}, "timestamp": datetime.now(timezone.utc).isoformat()})
-    try:
-        webpush(subscription_info=subscription_info, data=payload, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"})
-        logger.debug(f"[PUSH] Sent OK")
-        return True
-    except WebPushException as e:
-        if e.response and e.response.status_code in [404, 410]:
-            await db.push_subscriptions.update_one({"participant_id": participant_id}, {"$set": {"active": False}})
-            logger.debug(f"[PUSH] Subscription desactivee (410/404)")
-        else:
-            logger.error(f"[PUSH] Echec critique: {str(e)}")
-        return False
-    except Exception as e:
-        logger.error(f"[PUSH] Erreur: {str(e)}")
-        return False
+    any_sent = False
+    for sub in subs:
+        subscription_info = sub.get("subscription")
+        if not subscription_info:
+            continue
+        _endpoint = subscription_info.get("endpoint", "")
+        try:
+            webpush(subscription_info=subscription_info, data=payload, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"})
+            any_sent = True
+            break  # un device notifie suffit
+        except WebPushException as e:
+            if e.response is not None and e.response.status_code in [404, 410]:
+                # V245: desactiver PAR endpoint, pas tout le participant — sinon
+                # une souscription morte tuerait aussi les fraiches du meme pid.
+                if _endpoint:
+                    await db.push_subscriptions.update_one({"subscription.endpoint": _endpoint}, {"$set": {"active": False}})
+                else:
+                    await db.push_subscriptions.update_one({"participant_id": participant_id, "subscription": subscription_info}, {"$set": {"active": False}})
+                logger.debug(f"[PUSH] Souscription expiree desactivee (410/404)")
+            else:
+                logger.error(f"[PUSH] Echec critique: {str(e)}")
+        except Exception as e:
+            logger.error(f"[PUSH] Erreur: {str(e)}")
+    return any_sent
 
 async def send_push_by_email(email: str, title: str, body: str, data: dict = None):
     """V180/V206: Envoie une notification push à tous les participants liés à un email."""
