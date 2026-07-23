@@ -4839,6 +4839,60 @@ async def debug_discount_code(access_code: str, fix: Optional[float] = None):
     }
 
 
+@api_router.get("/admin/debug-recent-payments")
+async def debug_recent_payments(request: Request, limit: int = 15):
+    """HOTFIX 2026-07-23 — diagnostic paiement client (endpoint temporaire).
+
+    Un paiement reussi cote Stripe n'a produit ni confirmation, ni code, ni
+    ligne au dashboard. On regarde ce qui existe REELLEMENT en base pour situer
+    la rupture, sans supposer sa cause.
+    """
+    caller_email = require_auth(request)
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Reserve aux super admins")
+
+    def _clean(docs):
+        for d in docs:
+            d.pop("_id", None)
+        return docs
+
+    # payment_transactions recents, avec les seuls champs utiles au diagnostic.
+    pt = await db.payment_transactions.find(
+        {}, {"_id": 0, "session_id": 1, "amount": 1, "amount_total": 1,
+             "product_name": 1, "customer_email": 1, "payment_status": 1,
+             "status": 1, "coach_id": 1, "webhook_received_at": 1,
+             "created_at": 1, "metadata": 1}
+    ).sort("created_at", -1).to_list(limit)
+
+    # Repartition des statuts sur TOUTE la collection : « combien ont ete
+    # confirmes par un webhook ».
+    status_counts = {}
+    async for d in db.payment_transactions.find({}, {"_id": 0, "payment_status": 1}).limit(5000):
+        k = str(d.get("payment_status"))
+        status_counts[k] = status_counts.get(k, 0) + 1
+
+    # combien de documents portent un `webhook_received_at` : un 0 ici prouve
+    # que le webhook n'a JAMAIS abouti sur cette collection.
+    webhook_seen = await db.payment_transactions.count_documents(
+        {"webhook_received_at": {"$exists": True}}
+    )
+
+    disc = _clean(await db.discount_codes.find(
+        {"source": "stripe_payment"}
+    ).sort("created_at", -1).to_list(5))
+
+    return {
+        "success": True,
+        "payment_transactions_total": await db.payment_transactions.count_documents({}),
+        "avec_webhook_received_at": webhook_seen,
+        "repartition_payment_status": status_counts,
+        "derniers_paiements": pt,
+        "derniers_codes_stripe_payment": disc,
+        "webhook_secret_checkout_configure": bool(os.environ.get('STRIPE_WEBHOOK_SECRET_CHECKOUT')),
+        "webhook_secret_principal_configure": bool(os.environ.get('STRIPE_WEBHOOK_SECRET')),
+    }
+
+
 @api_router.get("/admin/audit-coach-id")
 async def audit_coach_id(request: Request):
     """V241 — audit de rattachement : par collection, combien de documents
