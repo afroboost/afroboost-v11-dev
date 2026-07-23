@@ -5164,6 +5164,16 @@ def _v252_norm_loc(s):
     """Normalise un lieu pour comparaison : minuscules, espaces compresses."""
     return " ".join((s or "").strip().lower().split())
 
+def _v252_slug_name(s):
+    """Normalise un nom d'offre pour comparaison tolerante : retire les accents,
+    remplace toute ponctuation par un espace, minuscules, espaces compresses.
+    « Cours a l'unite test » et « Cours a l unite test » donnent le meme slug."""
+    import unicodedata as _ud
+    s = _ud.normalize("NFKD", s or "")
+    s = "".join(c for c in s if not _ud.combining(c))
+    s = "".join(c if c.isalnum() else " " for c in s.lower())
+    return " ".join(s.split())
+
 @api_router.post("/admin/link-offer-courses")
 async def link_offer_courses(request: Request, dry_run: bool = True, offer_id: str = ""):
     """V252 — rattache a chaque offre les cours du MEME coach dont le LIEU
@@ -5913,6 +5923,22 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
 
     # Offer details (optionnel)
     offer = await db.offers.find_one({"name": offer_name}, {"_id": 0}) if offer_name else None
+
+    # V252: repli TOLERANT aux accents/apostrophes/ponctuation. Les souscriptions
+    # historiques (checkout gratuit, imports) stockent parfois un offer_name
+    # DESACCENTUE — « Cours a l unite test » — qui ne matche pas le nom exact de
+    # l'offre en base — « Cours a l'unite test » (avec accents et apostrophe).
+    # Sans ce repli, `offer` reste None, `linked_ids` vide, et l'espace retombe
+    # sur TOUS les cours du coach (le bug de lieu V252). Le repli couvre tous les
+    # codes AFR-/AFF- deja emis, sans toucher aux donnees. La recherche exacte
+    # ci-dessus reste prioritaire (aucun cout ajoute au cas nominal).
+    if not offer and offer_name:
+        _target_slug = _v252_slug_name(offer_name)
+        _all_offers = await db.offers.find({}, {"_id": 0}).to_list(200)
+        for _o in _all_offers:
+            if _v252_slug_name(_o.get("name")) == _target_slug:
+                offer = _o
+                break
 
     # V250: l'offre porte les cours qui lui sont rattaches (`linked_course_ids`).
     # Jusqu'ici ce champ etait ignore : l'espace affichait TOUS les cours du
