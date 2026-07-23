@@ -5275,6 +5275,16 @@ async def debug_sub(request: Request, email: str = ""):
     # V248: aussi les reservations — le flux gratuit d'App.js en cree une SANS
     # souscription ni code d'acces.
     resa = await db.reservations.find({"userEmail": e}, {"_id": 0, "reservationCode": 1, "courseName": 1, "offerName": 1, "createdAt": 1, "validated": 1}).sort("createdAt", -1).to_list(5)
+    # V248: recherche large — le client peut avoir une trace sous une autre
+    # casse d'email, ou par nom/telephone. Et les 5 dernieres reservations
+    # globales, pour situer ce que le flux gratuit a REELLEMENT cree.
+    resa_large = await db.reservations.find(
+        {"$or": [{"userEmail": {"$regex": e, "$options": "i"}},
+                 {"userName": {"$regex": "^test$", "$options": "i"}},
+                 {"userWhatsapp": {"$regex": "765203363"}}]},
+        {"_id": 0, "reservationCode": 1, "userName": 1, "userEmail": 1, "userWhatsapp": 1, "offerName": 1, "createdAt": 1}
+    ).sort("createdAt", -1).to_list(10)
+    last_resa = await db.reservations.find({}, {"_id": 0, "userName": 1, "userEmail": 1, "offerName": 1, "createdAt": 1}).sort("createdAt", -1).to_list(5)
     # chaque code : est-il trouvable tel quel (validation) ?
     checks = []
     for c in codes:
@@ -5295,6 +5305,8 @@ async def debug_sub(request: Request, email: str = ""):
                            "created_at": s.get("created_at")} for s in subs],
         "codes": checks,
         "reservations": resa,
+        "recherche_large": resa_large,
+        "dernieres_reservations_globales": last_resa,
     }
 
 
