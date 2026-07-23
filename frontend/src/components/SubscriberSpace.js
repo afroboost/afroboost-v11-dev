@@ -934,6 +934,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                     const isSelected = i === safeIdx;
                     const cKey = `${c.course_id}_${c.datetime}`;
                     const isConfirmed = confirmedKeys[cKey];
+                    // V252 FIX 4 : date UNIQUE non encore reservee -> presentee en vert
+                    // « pret a reserver » (present-selectionnee). Teinte plus douce que
+                    // le vert plein « confirme » (#22c55e) pour ne pas les confondre.
+                    const singleReady = visibleCourses.length === 1 && isSelected && !isConfirmed;
                     return (
                       <button key={i} type="button"
                         onClick={() => { setSelectedCourseIdx(i); setActionError(""); }}
@@ -941,13 +945,17 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                         style={{
                           background: isConfirmed
                             ? "rgba(34,197,94,0.25)"
-                            : isSelected
-                              ? "rgba(255,255,255,0.10)"
-                              : "rgba(255,255,255,0.04)",
+                            : singleReady
+                              ? "rgba(34,197,94,0.12)"
+                              : isSelected
+                                ? "rgba(255,255,255,0.10)"
+                                : "rgba(255,255,255,0.04)",
                           border: isConfirmed
                             ? "2px solid #22c55e"
-                            : isSelected ? "2px solid rgba(255,255,255,0.5)" : "1px solid rgba(255,255,255,0.08)",
-                          color: isConfirmed ? "#86efac" : isSelected ? "white" : "rgba(255,255,255,0.6)",
+                            : singleReady
+                              ? "2px solid rgba(34,197,94,0.6)"
+                              : isSelected ? "2px solid rgba(255,255,255,0.5)" : "1px solid rgba(255,255,255,0.08)",
+                          color: isConfirmed ? "#86efac" : singleReady ? "#86efac" : isSelected ? "white" : "rgba(255,255,255,0.6)",
                         }}
                       >
                         <span className="font-semibold" style={{ fontSize: "11px" }}>{d.date}</span>
