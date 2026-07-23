@@ -4513,8 +4513,16 @@ async def stripe_webhook(request: Request):
         # rendant le diagnostic impossible. On journalise le type + le
         # traceback, et on expose le type dans le detail.
         import traceback as _tb
-        logger.error(f"Webhook error: {type(e).__name__}: {str(e)}\n{_tb.format_exc()}")
-        raise HTTPException(status_code=400, detail=f"Webhook error: {type(e).__name__}: {str(e)}")
+        _full = _tb.format_exc()
+        logger.error(f"Webhook error: {type(e).__name__}: {str(e)}\n{_full}")
+        # HOTFIX debug: derniere frame « fichier:ligne » du traceback, pour
+        # localiser l'AttributeError sans acces aux logs serveur. A retirer.
+        _frames = _tb.extract_tb(e.__traceback__)
+        _loc = ""
+        if _frames:
+            _last = _frames[-1]
+            _loc = f" @ {_last.filename.split('/')[-1]}:{_last.lineno} `{_last.line}`"
+        raise HTTPException(status_code=400, detail=f"Webhook error: {type(e).__name__}: {str(e)}{_loc}")
 
 # === V204d: Admin — Créer code manuellement pour un paiement manqué ===
 @api_router.post("/admin/create-code")
