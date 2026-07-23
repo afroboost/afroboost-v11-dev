@@ -339,7 +339,10 @@ class Course(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
-    weekday: int
+    # V246: weekday devient optionnel — un cours PONCTUEL porte `date` a la place
+    # (aucune valeur imposee cassee : les cours recurrents gardent leur weekday).
+    weekday: Optional[int] = None
+    date: Optional[str] = None  # V246: cours ponctuel « 2026-08-21 »
     time: str
     locationName: str
     location: Optional[str] = None  # Alias de locationName pour le frontend
@@ -352,7 +355,8 @@ class Course(BaseModel):
 
 class CourseCreate(BaseModel):
     name: str
-    weekday: int
+    weekday: Optional[int] = None  # V246: optionnel (cours ponctuel -> `date`)
+    date: Optional[str] = None     # V246: cours ponctuel « 2026-08-21 »
     time: str
     locationName: str
     mapsUrl: Optional[str] = ""
@@ -4802,6 +4806,41 @@ def _v184_next_occurrences(course, days_ahead=14):
        en local par le frontend → "20:30" pendant l'heure d'été. On serialise
        maintenant en datetime naïf (sans tzinfo), interprété comme local.
     """
+    # V246: cours PONCTUEL (date fixe) — nouveau format « 2026-08-21 » + time.
+    # Prioritaire sur weekday : si `date` est renseignee, le cours a lieu une
+    # seule fois, pas chaque semaine. Une occurrence unique est generee si la
+    # date est encore a venir (fenetre elargie a 365 j pour ne pas masquer un
+    # evenement programme loin). Le format recurrent (weekday) reste gere plus
+    # bas, INCHANGE — retrocompatibilite totale des cours existants.
+    _fixed_date = course.get("date")
+    if _fixed_date and isinstance(_fixed_date, str) and _fixed_date.strip():
+        try:
+            hm_fixed = _v184_parse_time_hhmm(course.get("time", ""))
+            fh, fm = hm_fixed if hm_fixed else (9, 0)
+            d_parts = _fixed_date.strip()[:10].split("-")
+            fixed_dt = datetime(int(d_parts[0]), int(d_parts[1]), int(d_parts[2]), fh, fm)
+        except (ValueError, IndexError, TypeError):
+            return []
+        try:
+            from zoneinfo import ZoneInfo
+            now_fx = datetime.now(ZoneInfo("Europe/Zurich")).replace(tzinfo=None)
+        except Exception:
+            now_fx = datetime.utcnow() + timedelta(hours=2)
+        # tolerance : on garde une seance du jour meme apres l'heure (2h)
+        if fixed_dt < now_fx - timedelta(hours=2):
+            return []
+        return [{
+            "course_id": course.get("id"),
+            "name": course.get("name"),
+            "weekday": fixed_dt.weekday(),  # informatif
+            "weekday_label": _V184_WEEKDAY_LABELS_FR[fixed_dt.weekday()],
+            "time": course.get("time"),
+            "locationName": course.get("locationName") or course.get("location", ""),
+            "datetime": fixed_dt.isoformat(),
+            "date": fixed_dt.date().isoformat(),
+            "is_fixed_date": True,  # le frontend affiche « jeu. 21 aout 2026 »
+        }]
+
     weekday_value = course.get("weekday")
     try:
         js_weekday = int(weekday_value) if weekday_value is not None else None
@@ -5168,6 +5207,56 @@ async def migrate_sentinel_coach_id(request: Request, dry_run: bool = True, targ
         "proprietaire_attribue": owner,
         "total_bassi_default": total,
         "par_collection": rows,
+    }
+
+
+@api_router.get("/admin/test-push/{email}")
+async def test_push_email(email: str, request: Request):
+    """V246 — test push de bout en bout pour un email (super admin).
+
+    Passe par le VRAI chemin de production (send_push_by_email), qui cherche les
+    souscriptions par email, par prefixe `coach_<email>`, et via
+    chat_participants/users, puis essaie chacune (fix V245) en s'arretant au
+    premier succes. Retourne aussi le detail par souscription du coach.
+    """
+    caller_email = require_auth(request)
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Reserve aux super admins")
+
+    target = (email or "").strip().lower()
+    from pywebpush import webpush as _wp, WebPushException as _WPE
+
+    # detail par souscription (coach_<email> ou champ email), plus recentes d'abord
+    details = []
+    cursor = db.push_subscriptions.find(
+        {"active": True, "$or": [{"participant_id": f"coach_{target}"}, {"email": target}]},
+        {"_id": 0, "subscription": 1, "participant_id": 1}
+    ).sort("updated_at", -1).limit(10)
+    async for s in cursor:
+        si = s.get("subscription")
+        if not si:
+            continue
+        d = {"endpoint": (si.get("endpoint") or "")[:60]}
+        try:
+            _wp(subscription_info=si,
+                data=json.dumps({"title": "Test Afroboost",
+                                 "body": "Si vous voyez ceci, les notifications fonctionnent !"}),
+                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"})
+            d["status"] = "envoye"
+        except _WPE as e:
+            d["status"] = f"erreur {e.response.status_code if e.response is not None else '?'}"
+        except Exception as e:
+            d["status"] = f"erreur {type(e).__name__}"
+        details.append(d)
+
+    return {
+        "email": target,
+        "souscriptions_coach_actives": len(details),
+        "resultats": details,
+        "au_moins_un_envoye": any(d["status"] == "envoye" for d in details),
+        "note": ("Si au moins un 'envoye', la notif est partie — sa VISIBILITE depend "
+                 "ensuite de l'appareil (permission accordee, service worker actif)."),
     }
 
 

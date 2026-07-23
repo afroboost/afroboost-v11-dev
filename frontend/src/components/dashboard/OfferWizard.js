@@ -30,6 +30,23 @@ const HINT_STYLE = { color: 'rgba(255,255,255,0.4)' };
 
 const WEEKDAYS = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
 
+// V246: libelle d'un horaire, retrocompatible. Cours PONCTUEL (`date`) ->
+// « jeu. 21 août 2026 » ; cours RECURRENT (`weekday`) -> « Mercredi ». Renvoie
+// une chaine vide si ni l'un ni l'autre n'est exploitable.
+const formatCourseSchedule = (course) => {
+  if (course && course.date) {
+    try {
+      const d = new Date(course.date + 'T12:00:00');
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleDateString('fr-CH', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
+      }
+    } catch (e) { /* fallback ci-dessous */ }
+    return course.date;
+  }
+  if (course && Number.isInteger(course.weekday)) return WEEKDAYS[course.weekday] || '';
+  return '';
+};
+
 // V224: cles des variantes produit, dans l'ordre d'affichage.
 const VARIANT_FIELDS = [
   { key: 'sizes', placeholder: 'S, M, L, XL' },
@@ -1159,7 +1176,7 @@ export default function OfferWizard({
                   <span className="text-sm text-white">
                     <span className="font-medium">{course.name || course.title || 'Cours'}</span>
                     <span className="text-white/50 text-xs ml-2">
-                      {Number.isInteger(course.weekday) ? WEEKDAYS[course.weekday] : ''}
+                      {formatCourseSchedule(course)}
                       {course.time ? ` • ${course.time}` : ''}
                     </span>
                   </span>
@@ -1232,17 +1249,27 @@ export default function OfferWizard({
                   </button>
                 </div>
 
+                {/* V246: date complete (jour/mois/annee) via l'input date natif,
+                    a la place du seul jour de la semaine. Choisir une date pose
+                    `date` et neutralise `weekday` — le cours devient ponctuel.
+                    Un cours ancien (weekday, sans date) garde son rappel « jour
+                    recurrent actuel » sous le champ tant qu'aucune date n'est
+                    saisie : sa reservation continue de fonctionner. */}
                 <div className="grid grid-cols-2 gap-2 mt-2">
-                  <select
-                    value={Number.isInteger(course.weekday) ? course.weekday : 0}
-                    onChange={(e) => setCourseField(course.id, 'weekday', parseInt(e.target.value, 10))}
+                  <input
+                    type="date"
+                    value={course.date || ''}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setLinkedCourses(prev => prev.map(c =>
+                        c.id === course.id ? { ...c, date: v, weekday: v ? null : c.weekday } : c
+                      ));
+                      markDirty(course.id);
+                      if (coursesError) setCoursesError('');
+                    }}
                     style={INPUT_STYLE}
                     className="text-sm v224-input"
-                  >
-                    {WEEKDAYS.map((d, i) => (
-                      <option key={i} value={i}>{d}</option>
-                    ))}
-                  </select>
+                  />
                   <input
                     type="time"
                     value={course.time || ''}
@@ -1251,6 +1278,11 @@ export default function OfferWizard({
                     className="text-sm v224-input"
                   />
                 </div>
+                {!course.date && Number.isInteger(course.weekday) && (
+                  <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                    Cours récurrent actuel : {WEEKDAYS[course.weekday]}. Choisissez une date pour le fixer.
+                  </p>
+                )}
 
                 <input
                   type="text"
@@ -1505,7 +1537,7 @@ export default function OfferWizard({
                     <span className="text-xs text-white">
                       {course.name || 'Cours'}
                       <span className="text-white/50 ml-2">
-                        {Number.isInteger(course.weekday) ? WEEKDAYS[course.weekday] : ''}
+                        {formatCourseSchedule(course)}
                         {course.time ? ` • ${course.time}` : ''}
                       </span>
                     </span>
@@ -1581,7 +1613,7 @@ export default function OfferWizard({
                           rattacher, puis le republier. */}
                       {c.visible === false ? '🚫 ' : ''}
                       {(c.name || 'Cours')}
-                      {Number.isInteger(c.weekday) ? ` • ${WEEKDAYS[c.weekday]}` : ''}
+                      {formatCourseSchedule(c) ? ` • ${formatCourseSchedule(c)}` : ''}
                       {c.time ? ` ${c.time}` : ''}
                     </option>
                   ))}
@@ -1630,7 +1662,7 @@ export default function OfferWizard({
                   <span className="flex-1">
                     <span className="font-medium">{course.name || course.title || 'Cours'}</span>
                     <span className="text-white/50 text-xs ml-2">
-                      {course.weekday !== undefined && WEEKDAYS[course.weekday]} • {course.time}
+                      {formatCourseSchedule(course)} • {course.time}
                     </span>
                   </span>
                 </label>
