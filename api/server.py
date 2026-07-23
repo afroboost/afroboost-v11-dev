@@ -3793,7 +3793,14 @@ async def stripe_webhook(request: Request):
                 "l'endpoint /api/webhook/stripe (Stripe Dashboard > Webhooks) "
                 "pour empêcher la création de packs sans paiement."
             )
-            event = stripe.Event.construct_from(stripe.util.json.loads(body), stripe.api_key)
+            # HOTFIX 2026-07-23 — CAUSE RACINE. `stripe.util.json` a ete supprime
+            # dans la lib stripe 14.x : cet acces levait une AttributeError
+            # (message vide) capturee par le catch-all et renvoyee en 400. Comme
+            # STRIPE_WEBHOOK_SECRET_CHECKOUT n'est pas configure, TOUS les
+            # webhooks passaient par cette branche — donc AUCUN paiement client
+            # n'a jamais ete traite (0 code cree, 0 webhook_received_at sur 61
+            # transactions). Le `json` standard fait exactement le meme travail.
+            event = stripe.Event.construct_from(json.loads(body), stripe.api_key)
         if event.type == 'checkout.session.completed':
             session = event.data.object
             metadata = session.metadata or {}
@@ -4509,23 +4516,16 @@ async def stripe_webhook(request: Request):
         # laisse remonter telle quelle.
         raise
     except Exception as e:
-        # HOTFIX: `str(e)` etait vide pour certaines exceptions (message nul),
-        # rendant le diagnostic impossible. On journalise le type + le
-        # traceback, et on expose le type dans le detail.
+        # Le type + le traceback complet vont dans les LOGS (jamais dans la
+        # reponse HTTP, qui est renvoyee a l'appelant du webhook). Le message
+        # vide historique (`str(e)` nul sur AttributeError) masquait la cause —
+        # on journalise desormais le type et la stack cote serveur.
         import traceback as _tb
-        _full = _tb.format_exc()
-        logger.error(f"Webhook error: {type(e).__name__}: {str(e)}\n{_full}")
-        # HOTFIX debug: derniere frame « fichier:ligne » du traceback, pour
-        # localiser l'AttributeError sans acces aux logs serveur. A retirer.
-        _frames = _tb.extract_tb(e.__traceback__)
-        _loc = ""
-        # derniere frame DANS server.py (l'AttributeError est levee dans la lib
-        # Stripe, mais c'est notre acces attribut qui la declenche).
-        _ours = [f for f in _frames if 'server.py' in f.filename]
-        _pick = _ours[-1] if _ours else (_frames[-1] if _frames else None)
-        if _pick:
-            _loc = f" @ {_pick.filename.split('/')[-1]}:{_pick.lineno} `{_pick.line}`"
-        raise HTTPException(status_code=400, detail=f"Webhook error: {type(e).__name__}: {str(e)}{_loc}")
+        logger.error(f"Webhook error: {type(e).__name__}: {str(e)}\n{_tb.format_exc()}")
+        # La reponse n'expose que le type d'exception, sans emplacement de code
+        # ni contenu de ligne (le security review a signale la fuite du
+        # traceback dans le detail HTTP).
+        raise HTTPException(status_code=400, detail=f"Webhook error: {type(e).__name__}")
 
 # === V204d: Admin — Créer code manuellement pour un paiement manqué ===
 @api_router.post("/admin/create-code")
@@ -5023,10 +5023,6 @@ async def reconcile_stripe_payments(request: Request, dry_run: bool = True, sess
                     json=event_payload,
                 )
             entry["webhook_http"] = resp.status_code
-            if resp.status_code != 200:
-                # le detail du webhook (ex. « Webhook error: ... ») est la seule
-                # facon de voir ce qui a echoue cote traitement.
-                entry["webhook_detail"] = resp.text[:300]
             # verification : le code a-t-il bien ete cree ?
             created = await db.discount_codes.find_one(
                 {"session_id": sid}, {"_id": 0, "code": 1}
