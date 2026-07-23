@@ -4981,12 +4981,21 @@ async def reconcile_stripe_payments(request: Request, dry_run: bool = True, sess
         # 3) rejeu : self-POST au webhook, event reconstruit a l'identique de
         #    ce que Stripe enverrait. Le webhook accepte un POST non signe tant
         #    que STRIPE_WEBHOOK_SECRET_CHECKOUT n'est pas configure (cas actuel).
+        # str(StripeObject) rend un JSON complet et recursif (via
+        # to_dict_recursive) : json.loads dessus donne un dict pur, entierement
+        # serialisable — contrairement a dict(sess) qui laisserait les
+        # sous-objets (metadata, customer_details) en StripeObject non-JSON.
+        try:
+            session_dict = json.loads(str(sess))
+        except Exception:
+            session_dict = dict(sess)
         event_payload = {
             "id": "evt_reconcile_" + sid[:24],
             "type": "checkout.session.completed",
-            "data": {"object": dict(sess)},
+            "data": {"object": session_dict},
         }
         try:
+            import httpx  # importe localement, comme ailleurs dans ce fichier
             async with httpx.AsyncClient(timeout=45.0) as client:
                 resp = await client.post(
                     base_url + "/api/webhook/stripe",
