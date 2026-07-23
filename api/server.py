@@ -5171,6 +5171,50 @@ async def migrate_sentinel_coach_id(request: Request, dry_run: bool = True, targ
     }
 
 
+@api_router.get("/admin/debug-push")
+async def debug_push(request: Request):
+    """V245 — diagnostic notifications push (endpoint temporaire).
+
+    Le systeme d'envoi existe et le webhook l'appelle, mais rien n'arrive. On
+    verifie les 3 conditions necessaires : lib disponible, cle PRIVEE presente
+    (la publique l'est deja), et au moins une souscription active en base — sans
+    abonne enregistre, le code d'envoi n'a personne a qui ecrire.
+    """
+    caller_email = require_auth(request)
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Reserve aux super admins")
+
+    total = await db.push_subscriptions.count_documents({})
+    active = await db.push_subscriptions.count_documents({"active": True})
+    # apercu (endpoints tronques, pas de cle exposee)
+    sample = []
+    async for ps in db.push_subscriptions.find({}, {"_id": 0, "participant_id": 1, "email": 1, "active": 1}).limit(10):
+        sample.append(ps)
+    # emails distincts couverts
+    emails = set()
+    async for ps in db.push_subscriptions.find({}, {"_id": 0, "email": 1}).limit(500):
+        if ps.get("email"):
+            emails.add(ps["email"])
+
+    return {
+        "success": True,
+        "WEBPUSH_AVAILABLE (lib pywebpush)": WEBPUSH_AVAILABLE,
+        "VAPID_PUBLIC_KEY_present": bool(VAPID_PUBLIC_KEY),
+        "VAPID_PRIVATE_KEY_present": bool(VAPID_PRIVATE_KEY),
+        "push_subscriptions_total": total,
+        "push_subscriptions_actives": active,
+        "emails_distincts_abonnes": sorted(emails),
+        "apercu": sample,
+        "diagnostic": (
+            "lib absente" if not WEBPUSH_AVAILABLE else
+            "cle privee VAPID absente" if not VAPID_PRIVATE_KEY else
+            "AUCUNE souscription en base — personne a notifier" if total == 0 else
+            "aucune souscription ACTIVE" if active == 0 else
+            "conditions d'envoi reunies — verifier le contenu des souscriptions"
+        ),
+    }
+
+
 @api_router.get("/admin/audit-coach-id")
 async def audit_coach_id(request: Request):
     """V241 — audit de rattachement : par collection, combien de documents
