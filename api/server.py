@@ -430,6 +430,10 @@ class Offer(BaseModel):
     # response_model=List[Offer] de GET /offers les filtrerait silencieusement.
     active_price: Optional[float] = None
     active_tier: Optional[str] = None
+    # V252: prochaine date de cours liee a l'offre, calculee a la lecture
+    # (idem : a declarer ici sinon filtree par le response_model).
+    next_date: Optional[str] = None        # ISO datetime de la prochaine occurrence
+    next_date_label: Optional[str] = None  # libelle court FR pret a afficher
 
 class OfferCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -1187,6 +1191,54 @@ def _enrich_offers_with_active_price(offers_list):
         _o["active_tier"] = _p["tier"]
     return offers_list
 
+_V252_MONTHS_FR = ["janv.", "fevr.", "mars", "avr.", "mai", "juin",
+                   "juil.", "aout", "sept.", "oct.", "nov.", "dec."]
+
+async def _enrich_offers_with_next_date(offers_list):
+    """V252 FIX 3 : pose `next_date` / `next_date_label` sur chaque offre a partir
+    de la prochaine occurrence de ses cours LIES (`linked_course_ids`).
+
+    Non-bloquant : toute erreur laisse simplement l'offre sans next_date (la carte
+    vitrine masque la ligne quand le champ est absent). Une seule requete DB pour
+    tous les cours de toutes les offres, puis calcul en memoire — pas de N+1.
+    Seules les offres a cours lies sont enrichies : sans lien, « prochaine date »
+    n'a pas de sens univoque (tous les cours du coach) et resterait ambigu.
+    """
+    try:
+        all_ids = []
+        for _o in offers_list:
+            for _cid in (_o.get("linked_course_ids") or []):
+                if _cid and _cid not in all_ids:
+                    all_ids.append(_cid)
+        if not all_ids:
+            return offers_list
+        rows = await db.courses.find({"id": {"$in": all_ids}}, {"_id": 0}).to_list(500)
+        by_id = {r.get("id"): r for r in rows}
+        for _o in offers_list:
+            try:
+                occ = []
+                for _cid in (_o.get("linked_course_ids") or []):
+                    c = by_id.get(_cid)
+                    if c:
+                        occ.extend(_v184_next_occurrences(c, days_ahead=60))
+                if not occ:
+                    continue
+                occ.sort(key=lambda x: x.get("datetime", ""))
+                nxt = occ[0]
+                _o["next_date"] = nxt.get("datetime")
+                try:
+                    _dt = datetime.fromisoformat(nxt["datetime"])
+                    _o["next_date_label"] = "%s. %d %s" % (
+                        _V184_WEEKDAY_LABELS_FR[_dt.weekday()][:3], _dt.day,
+                        _V252_MONTHS_FR[_dt.month - 1])
+                except Exception:
+                    _o["next_date_label"] = nxt.get("weekday_label") or ""
+            except Exception:
+                continue
+    except Exception as _e:
+        logger.info(f"[V252] next_date enrichment skipped: {_e}")
+    return offers_list
+
 @api_router.get("/offers", response_model=List[Offer])
 async def get_offers(request: Request, scope: str = ""):
     # V237 — isolation par coach, en OPT-IN explicite (`?scope=mine`).
@@ -1213,7 +1265,7 @@ async def get_offers(request: Request, scope: str = ""):
         else:
             return []
         scoped = await db.offers.find(query, {"_id": 0}).to_list(100)
-        return _enrich_offers_with_active_price(scoped)
+        return await _enrich_offers_with_next_date(_enrich_offers_with_active_price(scoped))
 
     offers = await db.offers.find({}, {"_id": 0}).to_list(100)
     if not offers:
@@ -1233,7 +1285,7 @@ async def get_offers(request: Request, scope: str = ""):
         ]
         await db.offers.insert_many(default_offers)
         return _enrich_offers_with_active_price(default_offers)  # V223
-    return _enrich_offers_with_active_price(offers)  # V223
+    return await _enrich_offers_with_next_date(_enrich_offers_with_active_price(offers))  # V223 + V252
 
 # V223: Prix actif d'une offre — utilisé par la page activité
 @api_router.get("/offers/{offer_id}/active-price")
@@ -5108,6 +5160,73 @@ async def reconcile_stripe_payments(request: Request, dry_run: bool = True, sess
     }
 
 
+def _v252_norm_loc(s):
+    """Normalise un lieu pour comparaison : minuscules, espaces compresses."""
+    return " ".join((s or "").strip().lower().split())
+
+@api_router.post("/admin/link-offer-courses")
+async def link_offer_courses(request: Request, dry_run: bool = True, offer_id: str = ""):
+    """V252 — rattache a chaque offre les cours du MEME coach dont le LIEU
+    correspond exactement a `offer.location`.
+
+    CONSTAT : certaines offres portent un `location` mais `linked_course_ids: []`
+    (horaire cree via le wizard puis offre jamais re-sauvegardee). L'espace abonne
+    tombe alors sur le repli « tous les cours du coach » et affiche un mauvais lieu
+    (BUG 1 V252). Cet endpoint pose le lien manquant, sans autre effet de bord :
+    un seul `$set` sur `linked_course_ids`, aucun autre champ touche.
+
+    SECURITE : ne modifie QUE les offres a `linked_course_ids` vide (idempotent,
+    ne surcharge jamais un lien pose a la main) et ne lie QUE des cours de meme
+    `coach_id` ET meme lieu exact. `dry_run=true` PAR DEFAUT. `offer_id` cible une
+    offre precise ; sinon toutes les offres eligibles sont examinees.
+    """
+    caller_email = require_auth(request)
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Reserve aux super admins")
+
+    q = {"linked_course_ids": {"$in": [None, []]}}
+    if offer_id:
+        q = {"id": offer_id}
+    offers = await db.offers.find(q, {"_id": 0}).to_list(200)
+    all_courses = await db.courses.find({}, {"_id": 0}).to_list(1000)
+
+    rows = []
+    linked_total = 0
+    for o in offers:
+        loc = _v252_norm_loc(o.get("location") or o.get("locationName"))
+        entry = {"offer_id": o.get("id"), "name": o.get("name"),
+                 "location": o.get("location"), "existing": len(o.get("linked_course_ids") or [])}
+        if not loc:
+            entry["action"] = "saute (offre sans lieu)"
+            rows.append(entry); continue
+        if not offer_id and (o.get("linked_course_ids") or []):
+            entry["action"] = "saute (deja liee)"
+            rows.append(entry); continue
+        matches = [c.get("id") for c in all_courses
+                   if c.get("coach_id") == o.get("coach_id")
+                   and _v252_norm_loc(c.get("locationName") or c.get("location")) == loc
+                   and c.get("id")]
+        entry["matched_courses"] = matches
+        if not matches:
+            entry["action"] = "aucun cours de meme lieu"
+            rows.append(entry); continue
+        entry["action"] = "lie" if not dry_run else "a lier (simulation)"
+        linked_total += len(matches)
+        if not dry_run:
+            await db.offers.update_one({"id": o.get("id")}, {"$set": {"linked_course_ids": matches}})
+        rows.append(entry)
+
+    return {
+        "success": True,
+        "dry_run": dry_run,
+        "offres_examinees": len(offers),
+        "cours_lies": linked_total,
+        "message": ("SIMULATION — relancer avec ?dry_run=false pour appliquer."
+                    if dry_run else "Liens appliques."),
+        "details": rows,
+    }
+
+
 @api_router.post("/admin/migrate-sentinel-coach-id")
 async def migrate_sentinel_coach_id(request: Request, dry_run: bool = True, target: str = ""):
     """V244 — remplace le sentinelle `bassi_default` par un vrai coach sur
@@ -5861,6 +5980,20 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
         _offer_display = offer["name"]
         for occ in occurrences:
             occ["name"] = _offer_display
+
+    # V252: afficher le LIEU de l'offre. UNIQUEMENT quand le filtrage par cours
+    # lies est actif (`linked_ids`) : les occurrences sont alors toutes celles de
+    # l'offre, il est correct de leur mettre son lieu. Sans filtrage (offre sans
+    # lien -> tous les cours du coach), on GARDE le lieu reel de chaque cours —
+    # sinon une date d'un cours de Lausanne serait faussement etiquetee du lieu
+    # de l'offre. Repli : lieu de l'offre, sinon celui du premier cours lie.
+    if linked_ids and occurrences:
+        _offer_loc = (offer or {}).get("location") or (offer or {}).get("locationName") or ""
+        if not _offer_loc and courses_raw:
+            _offer_loc = courses_raw[0].get("locationName") or courses_raw[0].get("location") or ""
+        if _offer_loc:
+            for occ in occurrences:
+                occ["locationName"] = _offer_loc
 
     # V208c: Historique de réservations — par member_slug pour les groupes, par email sinon
     import re as _re_mod

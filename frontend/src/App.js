@@ -1727,6 +1727,23 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // le formatage passe par formatDate(date, course.time, lang), comme
   // renderDates le fait deja pour la liste d'horaires.
   const nextSessionLabel = (() => {
+    // V252 FIX 3 : priorite au champ `next_date` calcule cote serveur
+    // (_enrich_offers_with_next_date). Il couvre les cours PONCTUELS (`date`)
+    // et n'exige pas que la liste globale `courses` soit chargee cote client —
+    // deux cas ou le calcul client ci-dessous rendait null. Repli inchange.
+    if (offer.next_date) {
+      try {
+        const nd = new Date(offer.next_date);
+        if (!isNaN(nd.getTime())) {
+          const dstr = nd.toLocaleDateString(lang === 'de' ? 'de-CH' : lang === 'en' ? 'en-GB' : 'fr-CH', {
+            weekday: 'short', day: '2-digit', month: '2-digit'
+          });
+          const hh = nd.getHours(), mm = nd.getMinutes();
+          return (hh || mm) ? (dstr + ' • ' + String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0')) : dstr;
+        }
+      } catch (e) { /* repli ci-dessous */ }
+    }
+    if (offer.next_date_label) return offer.next_date_label;
     const linkedIds = Array.isArray(offer.linked_course_ids) ? offer.linked_course_ids : [];
     if (!linkedIds.length || !Array.isArray(courses) || !courses.length) return null;
     const linked = linkedIds.map(id => courses.find(c => c && c.id === id)).filter(Boolean);
