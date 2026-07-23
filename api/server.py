@@ -5280,6 +5280,101 @@ async def link_offer_courses(request: Request, dry_run: bool = True, offer_id: s
     }
 
 
+# V252c: endpoint TEMPORAIRE de nettoyage des souscriptions de test creees
+# pendant le dev V249-V252. A RETIRER apres usage (voir commit V252c).
+@api_router.post("/admin/cleanup-test-subs")
+async def cleanup_test_subs(request: Request, confirm: bool = False):
+    """Supprime les souscriptions (et discount_codes / payment_transactions lies)
+    creees pour tester les flux V249-V252.
+
+    SELECTION PAR DOMAINE EXACT (pas la sous-chaine « test ») : seuls les emails
+    se terminant par un domaine JETABLE connu du dev sont vises, ce qui rend
+    impossible de toucher un vrai client dont l'email contiendrait « test ».
+    contact.artboost@gmail.com (vrai coach) est TOUJOURS protege, meme si une de
+    ses souscriptions s'appelle « ... test ».
+
+    `confirm=false` PAR DEFAUT : liste seulement (dry-run). Suppression seulement
+    avec `?confirm=true`.
+    """
+    caller_email = require_auth(request)
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Reserve aux super admins")
+
+    TEST_DOMAINS = ("@example.com", "@gwshare.com", "@jobraux.com")
+    PROTECTED = {"contact.artboost@gmail.com"}
+
+    def _is_test_email(e):
+        e = (e or "").lower().strip()
+        if not e or e in PROTECTED:
+            return False
+        return e.endswith(TEST_DOMAINS)
+
+    # 1. Souscriptions de test
+    all_subs = await db.subscriptions.find({}, {"_id": 0}).to_list(2000)
+    test_subs = [s for s in all_subs if _is_test_email(s.get("email"))]
+    test_emails = sorted({(s.get("email") or "").lower().strip() for s in test_subs})
+    test_codes = sorted({s.get("code") for s in test_subs if s.get("code")})
+
+    # 2. discount_codes lies (par code emis ou par email assigne)
+    if test_codes or test_emails:
+        dc_query = {"$or": [
+            {"code": {"$in": test_codes}},
+            {"assignedEmail": {"$in": test_emails}},
+        ]}
+    else:
+        dc_query = {"code": "__none__"}
+    test_dcs = await db.discount_codes.find(dc_query, {"_id": 0}).to_list(2000)
+
+    # 3. payment_transactions lies (email client dans metadata)
+    all_pays = await db.payment_transactions.find({}, {"_id": 0}).to_list(3000)
+    test_pays = [p for p in all_pays
+                 if _is_test_email((p.get("metadata") or {}).get("customer_email"))]
+    test_pay_sids = [p.get("session_id") for p in test_pays if p.get("session_id")]
+
+    details = {
+        "subscriptions": [{"code": s.get("code"), "email": s.get("email"),
+                           "name": s.get("name"), "offer": s.get("offer_name"),
+                           "created_at": s.get("created_at")} for s in test_subs],
+        "discount_codes": [{"code": d.get("code"), "assignedEmail": d.get("assignedEmail")}
+                           for d in test_dcs],
+        "payment_transactions": [{"session_id": p.get("session_id"),
+                                  "email": (p.get("metadata") or {}).get("customer_email")}
+                                 for p in test_pays],
+    }
+    counts = {k: len(v) for k, v in details.items()}
+
+    if not confirm:
+        return {
+            "success": True, "dry_run": True,
+            "protected_email": sorted(PROTECTED),
+            "test_domains": list(TEST_DOMAINS),
+            "would_delete": counts,
+            "details": details,
+            "message": "SIMULATION — relancer avec ?confirm=true pour supprimer.",
+        }
+
+    # SUPPRESSION effective
+    deleted = {"subscriptions": 0, "discount_codes": 0, "payment_transactions": 0}
+    if test_emails:
+        r1 = await db.subscriptions.delete_many({"email": {"$in": test_emails}})
+        deleted["subscriptions"] = r1.deleted_count
+    if test_codes or test_emails:
+        r2 = await db.discount_codes.delete_many(dc_query)
+        deleted["discount_codes"] = r2.deleted_count
+    if test_pay_sids:
+        r3 = await db.payment_transactions.delete_many({"session_id": {"$in": test_pay_sids}})
+        deleted["payment_transactions"] = r3.deleted_count
+
+    logger.info(f"[V252c] Nettoyage souscriptions de test par {caller_email}: "
+                f"{deleted} (emails={test_emails})")
+    return {
+        "success": True, "dry_run": False,
+        "deleted": deleted,
+        "emails_supprimes": test_emails,
+        "message": "Souscriptions de test supprimees.",
+    }
+
+
 @api_router.post("/admin/migrate-sentinel-coach-id")
 async def migrate_sentinel_coach_id(request: Request, dry_run: bool = True, target: str = ""):
     """V244 — remplace le sentinelle `bassi_default` par un vrai coach sur
