@@ -4470,16 +4470,25 @@ async def stripe_webhook(request: Request):
                 # un contact existant a un autre coach (l'ecraser casserait
                 # l'isolation si le contact appartient deja a quelqu'un), et on
                 # ne remet pas non plus la date de creation a jour.
-                await db.chat_participants.update_one(
-                    {"email": customer_email},
-                    {"$set": _contact_set,
-                     "$setOnInsert": {
-                         "id": str(uuid.uuid4()),
-                         "coach_id": _sub_coach_id,
-                         "created_at": datetime.now(timezone.utc).isoformat(),
-                     }},
-                    upsert=True
-                )
+                # HOTFIX 2026-07-23: le CRM est un ajout secondaire — s'il
+                # echouait (champ inattendu, souci Mongo), il ne doit pas
+                # empecher le reste du webhook. Le flow critique (code d'acces,
+                # souscription, email client) est deja execute AVANT ce point ;
+                # ce try/except garantit que meme un echec CRM ne renverra pas un
+                # 400 a Stripe, qui reessaierait tout le webhook.
+                try:
+                    await db.chat_participants.update_one(
+                        {"email": customer_email},
+                        {"$set": _contact_set,
+                         "$setOnInsert": {
+                             "id": str(uuid.uuid4()),
+                             "coach_id": _sub_coach_id,
+                             "created_at": datetime.now(timezone.utc).isoformat(),
+                         }},
+                        upsert=True
+                    )
+                except Exception as _crm_err:
+                    logger.warning(f"[V243] Sync CRM contact non-bloquant, echec ignore: {_crm_err}")
                 # v162m: Notifier le coach par email de la souscription
                 if RESEND_AVAILABLE and RESEND_API_KEY:
                     try:
