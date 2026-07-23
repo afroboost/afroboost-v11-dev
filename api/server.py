@@ -5207,9 +5207,15 @@ async def link_offer_courses(request: Request, dry_run: bool = True, offer_id: s
         # jamais posee) ne matcherait jamais ses propres cours. Mode balayage
         # (sans offer_id) : on garde la contrainte coach_id, plus prudente, pour
         # ne pas lier en masse des cours d'un coach a l'offre d'un autre.
+        # On ne lie que des cours REELLEMENT affichables : l'espace abonne filtre
+        # sur `visible != False` et `archived != True`. Lier un horaire invisible
+        # (cree via le wizard puis abandonne) polluerait linked_course_ids sans
+        # jamais s'afficher.
         matches = [c.get("id") for c in all_courses
                    if (bool(offer_id) or c.get("coach_id") == o.get("coach_id"))
                    and _v252_norm_loc(c.get("locationName") or c.get("location")) == loc
+                   and c.get("visible") is not False
+                   and c.get("archived") is not True
                    and c.get("id")]
         entry["matched_courses"] = matches
         if not matches:
