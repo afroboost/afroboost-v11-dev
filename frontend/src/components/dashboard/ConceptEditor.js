@@ -1029,10 +1029,21 @@ const ConceptEditor = ({
                           title="Event poster preview"
                         />
                       </div>
+                    ) : /\.(mp4|webm|mov|m4v|ogv)(\?|#|$)/i.test(concept.eventPosterMediaUrl) ? (
+                      /* V247 BUG6: une URL video (.mp4 Cloudinary...) etait rendue
+                         en <img>, d'ou l'apercu casse. On la rend en <video>. */
+                      <video
+                        src={concept.eventPosterMediaUrl}
+                        className="w-full"
+                        controls
+                        muted
+                        playsInline
+                        preload="metadata"
+                      />
                     ) : (
-                      <img 
-                        src={concept.eventPosterMediaUrl} 
-                        alt="Aperçu affiche événement" 
+                      <img
+                        src={concept.eventPosterMediaUrl}
+                        alt="Aperçu affiche événement"
                         className="w-full"
                         onError={(e) => { e.target.src = ''; e.target.alt = 'Image non valide'; }}
                       />
