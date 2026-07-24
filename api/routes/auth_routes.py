@@ -49,6 +49,14 @@ JWT_EXPIRATION_DAYS = 7
 def generate_jwt_token(email: str, role: str = "user") -> str:
     """Génère un JWT signé."""
     if not JWT_SECRET:
+        # V262: cet echec etait SILENCIEUX — la connexion reussissait, le jeton
+        # partait vide, et le frontend retombait sans bruit sur l'en-tete
+        # `X-User-Email`, falsifiable. On le trace desormais : c'est le signal
+        # qu'il manque JWT_SECRET dans l'environnement.
+        logger.warning(
+            "[V262] JWT_SECRET absent — jeton vide pour %s. "
+            "L'authentification retombe sur X-User-Email (non signee).", email
+        )
         return ""
     payload = {
         "email": email.lower().strip(),

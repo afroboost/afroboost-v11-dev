@@ -23,6 +23,40 @@ axios.interceptors.request.use((config) => {
   } catch (e) { /* ignore */ }
   return config;
 });
+
+// V262: session devenue invalide -> retour propre a l'ecran de connexion.
+//
+// Le jour ou JWT_SECRET est pose cote serveur, les sessions ouvertes AVANT ne
+// portent aucun jeton signe (generate_jwt_token renvoyait une chaine vide sans
+// secret) : toutes leurs ecritures repondent alors 401. Sans ce filet, le coach
+// verrait des erreurs partout sans comprendre qu'il lui suffit de se
+// reconnecter.
+//
+// On ne reagit QU'AUX 401 marques `X-Auth-Reason` par require_auth : un 401
+// venant d'un mauvais code staff ou d'un code abonne inconnu ne doit surtout
+// pas deconnecter le coach.
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    try {
+      const res = error && error.response;
+      const reason = res && res.headers && (res.headers['x-auth-reason'] || res.headers['X-Auth-Reason']);
+      if (res && res.status === 401 && reason) {
+        const hadSession = !!localStorage.getItem('afroboost_coach_user');
+        localStorage.removeItem('afroboost_jwt');
+        localStorage.removeItem('afroboost_coach_user');
+        // Rechargement UNIQUEMENT s'il y avait une session a purger : sans
+        // cette garde, un visiteur non connecte pourrait boucler sur un
+        // rechargement perpetuel.
+        if (hadSession) {
+          alert('Votre session a expiré. Merci de vous reconnecter.');
+          window.location.reload();
+        }
+      }
+    } catch (e) { /* ignore */ }
+    return Promise.reject(error);
+  }
+);
 console.log("🚀 V72 : Icône interactive avec compteur et animation Pulse activée");
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";

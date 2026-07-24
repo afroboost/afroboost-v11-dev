@@ -114,17 +114,71 @@ logger = logging.getLogger(__name__)
 # ── HELPER SÉCURITÉ : vérification authentification par header ──────────
 def require_auth(request: Request) -> str:
     """
-    Vérifie que le header X-User-Email est présent dans la requête.
-    Retourne l'email (en minuscule, sans espaces) si valide.
-    Lève HTTP 401 si le header est absent ou vide.
-    Utilisé sur toutes les routes d'écriture (POST/PUT/DELETE).
+    Identifie l'appelant d'une route d'écriture. Retourne son email en
+    minuscules, ou leve HTTP 401.
+
+    V262 — LE JWT FAIT DESORMAIS FOI.
+    Jusqu'ici cette fonction ne lisait que `X-User-Email`, un en-tete que
+    N'IMPORTE QUI peut ecrire : un `curl` suffisait a agir au nom d'un coach sur
+    les ~28 routes qui l'utilisent. On verifie maintenant en priorite la
+    SIGNATURE du JWT (HS256, meme secret que generate_jwt_token).
+
+    BASCULE PROGRESSIVE, volontairement pilotee par la presence de JWT_SECRET :
+      - secret ABSENT  -> repli sur `X-User-Email`, comportement d'avant a
+        l'identique. Le site continue de tourner tel quel, rien ne casse.
+      - secret PRESENT -> seul un JWT valide est accepte. `X-User-Email` n'est
+        plus une preuve d'identite, la falsification cesse.
+    Poser la variable d'environnement suffit donc a activer la securite, sans
+    nouveau deploiement de code — et la retirer suffit a revenir en arriere si
+    quelque chose se passait mal.
+
+    CONSEQUENCE A CONNAITRE : le jour ou le secret est pose, les sessions
+    ouvertes AVANT ne portent pas de jeton valide (generate_jwt_token renvoyait
+    une chaine vide sans secret). Leurs requetes d'ecriture repondront 401 avec
+    l'en-tete `X-Auth-Reason: jwt-required` — le frontend s'en sert pour
+    reconduire proprement vers l'ecran de connexion (App.js, V262).
     """
+    secret = os.environ.get("JWT_SECRET", "")
+
+    # 1) JWT signe — seule preuve d'identite reelle.
+    auth = request.headers.get("Authorization", "")
+    if secret and auth.lower().startswith("bearer "):
+        token = auth.split(" ", 1)[1].strip()
+        if token:
+            try:
+                import jwt as _pyjwt
+                payload = _pyjwt.decode(token, secret, algorithms=["HS256"])
+                email = (payload.get("email") or "").lower().strip()
+                if email:
+                    return email
+            except Exception as e:
+                # Jeton expire ou falsifie : on le dit clairement plutot que de
+                # retomber sur l'en-tete, qui annulerait tout le benefice.
+                raise HTTPException(
+                    status_code=401,
+                    detail="Session expirée ou invalide — reconnectez-vous",
+                    headers={"X-Auth-Reason": "jwt-invalid"}
+                ) from e
+
+    # 2) Secret configure mais aucun jeton : acces refuse.
+    if secret:
+        raise HTTPException(
+            status_code=401,
+            detail="Session expirée — reconnectez-vous",
+            headers={"X-Auth-Reason": "jwt-required"}
+        )
+
+    # 3) Secret absent : repli historique, strictement le comportement d'avant.
     email = request.headers.get("X-User-Email", "").lower().strip()
     if not email:
         raise HTTPException(
             status_code=401,
             detail="Authentification requise : header X-User-Email manquant"
         )
+    logger.warning(
+        "[V262] Authentification par X-User-Email (non signee) pour %s — "
+        "posez JWT_SECRET dans l'environnement pour securiser", email
+    )
     return email
 
 
@@ -328,6 +382,10 @@ async def debug_config():
         "stripe_key_set": bool(os.environ.get('STRIPE_SECRET_KEY')),
         "openai_key_set": bool(os.environ.get('OPENAI_API_KEY')),
         "resend_key_set": bool(os.environ.get('RESEND_API_KEY')),
+        # V262: booleen SEUL, jamais la valeur — permet de verifier depuis
+        # l'exterieur si l'authentification signee est active, sans divulguer
+        # le secret qui la fonde.
+        "jwt_secret_set": bool(os.environ.get('JWT_SECRET')),
     })
 
 @fastapi_app.get("/api/debug/network")
@@ -5152,9 +5210,8 @@ async def list_social_proofs(request: Request, status: str = ""):
     exposerait publiquement. Un coach ne voit que les preuves de SES offres ;
     le Super Admin voit tout, comme partout ailleurs.
     """
-    user_email = request.headers.get("X-User-Email", "").lower().strip() or _email_from_jwt(request)
-    if not user_email:
-        raise HTTPException(status_code=401, detail="Authentification requise")
+    # V262: identification signee (JWT si JWT_SECRET est pose, repli en-tete sinon)
+    user_email = require_auth(request)
 
     query = get_coach_filter(user_email)  # {} pour le Super Admin
     if status:
@@ -5176,9 +5233,8 @@ async def delete_social_proof(proof_id: str, request: Request):
     dans `discount_codes`, il continue de fonctionner. C'est voulu : effacer une
     trace administrative ne doit pas retirer sans preavis un acces au client.
     """
-    user_email = request.headers.get("X-User-Email", "").lower().strip() or _email_from_jwt(request)
-    if not user_email:
-        raise HTTPException(status_code=401, detail="Authentification requise")
+    # V262: identification signee (JWT si JWT_SECRET est pose, repli en-tete sinon)
+    user_email = require_auth(request)
 
     proof = await db.social_proofs.find_one({"id": proof_id}, {"_id": 0})
     if not proof:
@@ -5202,9 +5258,8 @@ async def review_social_proof(proof_id: str, request: Request):
     l'un sans l'autre donnerait un code affiche nulle part, ou un code
     inutilisable.
     """
-    user_email = request.headers.get("X-User-Email", "").lower().strip() or _email_from_jwt(request)
-    if not user_email:
-        raise HTTPException(status_code=401, detail="Authentification requise")
+    # V262: identification signee (JWT si JWT_SECRET est pose, repli en-tete sinon)
+    user_email = require_auth(request)
 
     body = await request.json()
     action = body.get("action")
@@ -5547,9 +5602,8 @@ async def list_publications():
 @api_router.delete("/publications/{pub_id}")
 async def delete_publication(pub_id: str, request: Request):
     """V261: le coach retire une publication."""
-    user_email = request.headers.get("X-User-Email", "").lower().strip() or _email_from_jwt(request)
-    if not user_email:
-        raise HTTPException(status_code=401, detail="Authentification requise")
+    # V262: identification signee (JWT si JWT_SECRET est pose, repli en-tete sinon)
+    user_email = require_auth(request)
     # Reserve aux comptes coach : sans cette garde, l'endpoint laisserait
     # n'importe qui vider le mur de la vitrine.
     if not is_super_admin(user_email):
@@ -8375,7 +8429,9 @@ async def get_concept(request: Request):
 
 @api_router.put("/concept")
 async def update_concept(concept: ConceptUpdate, request: Request):
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
+    # V262: ecriture -> identite verifiee. Auparavant un en-tete vide creait un
+    # concept « concept_ » fantome, et un en-tete falsifie ecrivait chez autrui.
+    user_email = require_auth(request)
     is_admin = is_super_admin(user_email)  # v9.5.6
     
     # Super Admin: concept global, Coach: concept personnel
@@ -16623,7 +16679,9 @@ async def get_platform_settings(request: Request):
 @api_router.put("/platform-settings")
 async def update_platform_settings(request: Request):
     """Mettre à jour les paramètres globaux (Super Admin uniquement)"""
-    user_email = request.headers.get('X-User-Email', '').lower()
+    # V262: identite verifiee AVANT le controle super admin — sans quoi le
+    # controle portait sur une valeur que l'appelant choisissait lui-meme.
+    user_email = require_auth(request).lower()
     
     # Vérification Super Admin v9.5.6
     if not is_super_admin(user_email):
@@ -17354,6 +17412,12 @@ fastapi_app.add_middleware(
     allow_origins=os.environ.get('CORS_ORIGINS', '*').split(',') + ['http://localhost:3000'],
     allow_methods=["*"],
     allow_headers=["*"],
+    # V262: sans cette ligne, le navigateur MASQUE `X-Auth-Reason` au code JS
+    # en cross-origin — seule une poignee d'en-tetes est exposee par defaut.
+    # En production front et API partagent l'origine, mais pas en developpement
+    # (localhost:3000 -> API distante) : l'intercepteur de reponse d'App.js y
+    # serait aveugle et le coach resterait bloque sur des 401 muets.
+    expose_headers=["X-Auth-Reason"],
 )
 
 # Dynamic manifest.json endpoint for PWA
