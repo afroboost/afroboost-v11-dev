@@ -12,8 +12,8 @@ const STEPS = [
   { n: 3, label: 'Medias' }
 ];
 
-const PINK = '#D91CD2';
-const ACCENT_BORDER = 'rgba(217,28,210,0.2)';
+const PINK = 'var(--primary-color, #D91CD2)';
+const ACCENT_BORDER = 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)';
 
 // V224: style commun a tous les inputs du wizard (palette v224-constraints).
 const INPUT_STYLE = {
@@ -870,7 +870,7 @@ export default function OfferWizard({
             type="checkbox"
             checked={!!form.progressive_pricing}
             onChange={(e) => set('progressive_pricing', e.target.checked)}
-            className="accent-[#D91CD2] w-4 h-4 v224-input"
+            className="w-4 h-4 v224-input" style={{ accentColor: 'var(--primary-color, #D91CD2)' }}
           />
           <span className="text-white text-sm font-medium inline-flex items-center gap-1.5">
             <SvgIcon name="barChart" size={14} /> Activer les 3 paliers de prix
@@ -883,7 +883,7 @@ export default function OfferWizard({
         {form.progressive_pricing && (
           <div className="mt-4 space-y-3">
             {!form.countdown_date && (
-              <p className="text-xs p-2 rounded" style={{ background: 'rgba(217,28,210,0.1)', color: PINK }}>
+              <p className="text-xs p-2 rounded" style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)', color: PINK }}>
                 <SvgIcon name="warning" size={14} />{' '}Activez le compte à rebours (étape 2 « Logistique ») : sans date de
                 référence, les paliers ne s'appliquent pas et le prix normal reste affiché.
               </p>
@@ -963,8 +963,8 @@ export default function OfferWizard({
               disabled={aiLoading || !(form.description || '').trim()}
               className="text-xs px-2 py-1 rounded-lg"
               style={{
-                background: aiLoading ? 'rgba(139,92,246,0.2)' : 'rgba(217,28,210,0.2)',
-                border: '1px solid rgba(217,28,210,0.4)',
+                background: aiLoading ? 'rgba(139,92,246,0.2)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
+                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
                 color: PINK,
                 cursor: aiLoading ? 'wait' : 'pointer',
                 opacity: !(form.description || '').trim() ? 0.4 : 1
@@ -1091,7 +1091,7 @@ export default function OfferWizard({
       </div>
 
       {/* Duree de validite */}
-      <div className="p-4 rounded-lg" style={{ border: `2px solid ${PINK}`, background: 'rgba(217,28,210,0.08)' }}>
+      <div className="p-4 rounded-lg" style={{ border: `2px solid ${PINK}`, background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)' }}>
         <p className="text-sm font-bold mb-3 flex items-center gap-1.5" style={{ color: PINK }}>
           <SvgIcon name="clock" size={14} /> DURÉE DE VALIDITÉ
         </p>
@@ -1157,7 +1157,7 @@ export default function OfferWizard({
       {/* V225: Cours lies — EDITABLES sur place (nom, jour, heure, lieu, Maps).
           Le coach n'a plus a quitter le wizard pour toucher un horaire. */}
       {!form.isProduct && canEditCourses && (
-        <div className="p-3 rounded-lg" style={{ border: '1px solid rgba(217,28,210,0.3)', background: 'rgba(217,28,210,0.05)' }}>
+        <div className="p-3 rounded-lg" style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.05)' }}>
           <label className="text-xs text-white font-semibold mb-2 block">
             <SvgIcon name="calendar" size={14} />{' '}Horaires de cette offre
           </label>
@@ -1457,8 +1457,8 @@ export default function OfferWizard({
                       title="Inviter vos abonnés actifs à laisser un avis sur ce cours"
                       className="text-xs px-3 py-1.5 rounded-lg"
                       style={{
-                        background: 'rgba(217,28,210,0.1)',
-                        border: '1px solid rgba(217,28,210,0.3)',
+                        background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)',
+                        border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                         color: PINK,
                         cursor: reviewRequestSending[course.id] ? 'wait' : 'pointer',
                         opacity: reviewRequestSending[course.id] ? 0.6 : 1
@@ -1638,7 +1638,7 @@ export default function OfferWizard({
             className="w-full text-sm py-3 rounded-xl mt-3"
             style={{
               background: 'none',
-              border: '1px dashed rgba(217,28,210,0.5)',
+              border: '1px dashed rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
               borderRadius: '12px',
               color: PINK,
               cursor: addingCourse ? 'wait' : 'pointer'
@@ -1701,7 +1701,7 @@ export default function OfferWizard({
       {/* V224: ancienne liste de cases a cocher. Conservee et utilisee en repli
           quand la prop `API` n'est pas fournie (aucune requete cours possible). */}
       {!form.isProduct && !canEditCourses && visibleCourses.length > 0 && (
-        <div className="p-3 rounded-lg" style={{ border: '1px solid rgba(217,28,210,0.3)', background: 'rgba(217,28,210,0.05)' }}>
+        <div className="p-3 rounded-lg" style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.05)' }}>
           <label className="text-xs text-white font-semibold mb-2 block">
             <SvgIcon name="calendar" size={14} />{' '}Cours associés à cette offre
           </label>
@@ -1911,7 +1911,7 @@ export default function OfferWizard({
           decocher n'efface PAS l'URL saisie, elle est simplement masquee et
           cesse d'etre publiee. Le coach peut donc reactiver le lien sans tout
           retaper. */}
-      <div className="p-4 rounded-lg" style={{ border: `2px solid ${PINK}`, background: 'rgba(217,28,210,0.08)' }}>
+      <div className="p-4 rounded-lg" style={{ border: `2px solid ${PINK}`, background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)' }}>
         <label className="text-sm font-bold mb-1 flex items-center gap-1.5" style={{ color: PINK, cursor: 'pointer' }}>
           <input
             type="checkbox"
@@ -2084,7 +2084,7 @@ export default function OfferWizard({
                         .replace(/\.[^.]+$/, '.jpg');
                       setForm(prev => ({ ...prev, _v234Sec: sec, thumbnail: thumbUrl }));
                     }}
-                    style={{ flex: 1, accentColor: '#D91CD2' }}
+                    style={{ flex: 1, accentColor: 'var(--primary-color, #D91CD2)' }}
                   />
                   <span style={{ fontSize: '11px', color: '#fff', minWidth: '30px' }}>{form._v234Sec || 0}s</span>
                 </div>

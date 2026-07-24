@@ -163,7 +163,7 @@ export default function CloudinaryUploadButton({
         data-testid={dataTestId}
         title={`${label} (max ${maxSizeMB} Mo)`}
         style={{
-          background: uploading ? '#333' : 'linear-gradient(135deg, #D91CD2, #FF2DAA)',
+          background: uploading ? '#333' : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #FF2DAA)',
           border: 'none',
           borderRadius: '8px',
           color: '#fff',

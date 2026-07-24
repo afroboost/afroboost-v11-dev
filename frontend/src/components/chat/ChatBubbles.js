@@ -81,10 +81,10 @@ const BubbleAvatar = memo(({ src, name, isCoach, onClick }) => {
       style={{
         width: '32px', height: '32px', borderRadius: '50%',
         flexShrink: 0, cursor: src ? 'pointer' : 'default',
-        border: isCoach ? '2px solid #D91CD2' : '2px solid rgba(255,255,255,0.1)',
+        border: isCoach ? '2px solid var(--primary-color, #D91CD2)' : '2px solid rgba(255,255,255,0.1)',
         overflow: 'hidden',
         background: isCoach
-          ? 'linear-gradient(135deg, #D91CD2, #9333ea)'
+          ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)'
           : 'rgba(255,255,255,0.08)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}
@@ -112,7 +112,7 @@ const BubbleStatus = ({ timestamp, status, isCoach }) => {
       {!isCoach && status && (
         status === 'sent' ? <Check size={10} color="rgba(255,255,255,0.2)" /> :
         status === 'delivered' ? <CheckCheck size={10} color="rgba(255,255,255,0.2)" /> :
-        status === 'read' ? <CheckCheck size={10} color="#D91CD2" /> :
+        status === 'read' ? <CheckCheck size={10} color="var(--primary-color, #D91CD2)" /> :
         <Clock size={10} color="rgba(255,255,255,0.15)" />
       )}
     </div>
@@ -158,14 +158,14 @@ const CoachBubble = memo(({ message, avatar, name, onAvatarClick, onDelete }) =>
         <div>
           {/* Name + AI badge */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
-            <span style={{ color: '#D91CD2', fontSize: '10px', fontWeight: '700' }}>
+            <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '10px', fontWeight: '700' }}>
               {name || 'Afroboost'}
             </span>
             {isAi && (
               <span style={{
                 padding: '1px 5px', borderRadius: '6px',
-                background: 'rgba(217,28,210,0.12)',
-                fontSize: '8px', color: '#D91CD2', fontWeight: '700',
+                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
+                fontSize: '8px', color: 'var(--primary-color, #D91CD2)', fontWeight: '700',
                 display: 'flex', alignItems: 'center', gap: '2px',
               }}>
                 <Bot size={8} /> IA
@@ -194,12 +194,12 @@ const CoachBubble = memo(({ message, avatar, name, onAvatarClick, onDelete }) =>
           {/* Text bubble */}
           {message.text && (
             <div style={{
-              background: '#D91CD2',
+              background: 'var(--primary-color, #D91CD2)',
               padding: '10px 14px',
               borderRadius: '14px 14px 14px 4px',
               fontSize: '13px', lineHeight: '1.4',
               color: '#fff',
-              boxShadow: '0 2px 8px rgba(217,28,210,0.2)',
+              boxShadow: '0 2px 8px rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
               wordBreak: 'break-word',
             }}>
               {message.is_deleted ? (
@@ -336,20 +336,20 @@ const TypingIndicator = memo(({ name }) => (
   }}>
     <div style={{
       width: '24px', height: '24px', borderRadius: '50%',
-      background: 'linear-gradient(135deg, #D91CD2, #9333ea)',
+      background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
     }}>
       <Bot size={12} color="#fff" />
     </div>
     <div style={{
-      background: 'rgba(217,28,210,0.08)',
+      background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)',
       padding: '8px 14px', borderRadius: '14px 14px 14px 4px',
       display: 'flex', gap: '4px', alignItems: 'center',
     }}>
       {[0, 1, 2].map(i => (
         <div key={i} style={{
           width: '6px', height: '6px', borderRadius: '50%',
-          background: '#D91CD2', opacity: 0.5,
+          background: 'var(--primary-color, #D91CD2)', opacity: 0.5,
           animation: `typingDot 1.2s infinite ${i * 0.2}s`,
         }} />
       ))}

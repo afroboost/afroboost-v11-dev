@@ -114,7 +114,7 @@ const InvoiceGenerator = ({ coachEmail }) => {
   return (
     <div style={{ padding: '16px' }} data-testid="invoice-generator">
       {/* === Émetteur === */}
-      <h4 style={{ color: '#D91CD2', marginBottom: '8px', fontSize: '14px', fontWeight: 600 }}>Émetteur</h4>
+      <h4 style={{ color: 'var(--primary-color, #D91CD2)', marginBottom: '8px', fontSize: '14px', fontWeight: 600 }}>Émetteur</h4>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
         <input value={emitter.name} onChange={e => setEmitter({ ...emitter, name: e.target.value })} placeholder="Nom" style={inputStyle} />
         <input value={emitter.address} onChange={e => setEmitter({ ...emitter, address: e.target.value })} placeholder="Adresse" style={inputStyle} />
@@ -159,7 +159,7 @@ const InvoiceGenerator = ({ coachEmail }) => {
         style={{ background: 'transparent', border: '1px dashed #555', borderRadius: '8px', color: '#888', padding: '8px', width: '100%', cursor: 'pointer', marginBottom: '16px' }}
       >+ Ajouter une ligne</button>
 
-      <div style={{ textAlign: 'right', color: '#D91CD2', fontSize: '18px', fontWeight: 700, marginBottom: '16px' }}>
+      <div style={{ textAlign: 'right', color: 'var(--primary-color, #D91CD2)', fontSize: '18px', fontWeight: 700, marginBottom: '16px' }}>
         Total : {total.toFixed(2)} CHF
       </div>
 
@@ -169,7 +169,7 @@ const InvoiceGenerator = ({ coachEmail }) => {
         <button
           onClick={enhanceNotesWithAI}
           disabled={aiLoading}
-          style={{ padding: '4px 10px', background: aiLoading ? 'rgba(139,92,246,0.3)' : 'linear-gradient(135deg, #D91CD2, #8B5CF6)', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '11px', cursor: aiLoading ? 'wait' : 'pointer', fontWeight: 600 }}
+          style={{ padding: '4px 10px', background: aiLoading ? 'rgba(139,92,246,0.3)' : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8B5CF6)', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '11px', cursor: aiLoading ? 'wait' : 'pointer', fontWeight: 600 }}
           title="Améliorer les modalités avec l'IA"
         >
           {aiLoading
@@ -191,7 +191,7 @@ const InvoiceGenerator = ({ coachEmail }) => {
         disabled={loading || items.every(it => !it.description && !it.unit_price)}
         style={{
           width: '100%', padding: '14px', marginTop: '16px',
-          background: 'linear-gradient(135deg, #D91CD2, #8B5CF6)',
+          background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8B5CF6)',
           border: 'none', borderRadius: '12px', color: '#fff',
           fontSize: '16px', fontWeight: 700,
           cursor: loading ? 'wait' : 'pointer',

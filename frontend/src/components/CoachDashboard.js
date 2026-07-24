@@ -205,7 +205,7 @@ const MediaDisplay = ({ url, className }) => {
     paddingBottom: '56.25%',
     overflow: 'hidden',
     borderRadius: '16px',
-    border: '1px solid rgba(217, 28, 210, 0.3)',
+    border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
     background: '#0a0a0a'
   };
 
@@ -427,9 +427,9 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
           100% { transform: rotate(360deg); }
         }
         @keyframes v79LikeFlash {
-          0% { color: #D91CD2; }
+          0% { color: var(--primary-color, #D91CD2); }
           50% { color: #00ff88; font-size: 14px; }
-          100% { color: #D91CD2; }
+          100% { color: var(--primary-color, #D91CD2); }
         }
         @keyframes v79ToastIn {
           from { transform: translateY(20px); opacity: 0; }
@@ -453,15 +453,15 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
       )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-        <div style={{ color: '#D91CD2', fontSize: '12px', fontWeight: 600 }}>
+        <div style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '12px', fontWeight: 600 }}>
           5 derniers commentaires :
         </div>
         {/* v79: Bouton + Ajouter commentaire */}
         <button onClick={() => setShowAddForm(!showAddForm)}
           style={{
-            background: showAddForm ? 'rgba(217,28,210,0.3)' : 'rgba(217,28,210,0.1)',
-            border: '1px solid rgba(217,28,210,0.4)', borderRadius: '6px',
-            color: '#D91CD2', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+            background: showAddForm ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)',
+            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)', borderRadius: '6px',
+            color: 'var(--primary-color, #D91CD2)', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
             padding: '4px 10px', display: 'inline-flex', alignItems: 'center', gap: '6px'
           }}>
           {showAddForm ? <><SvgIcon name="close" size={14} /> Fermer</> : <>＋ Ajouter</>}
@@ -471,10 +471,10 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
       {/* v79: Formulaire d'ajout manuel */}
       {showAddForm && (
         <div style={{
-          background: 'rgba(217,28,210,0.06)', border: '1px solid rgba(217,28,210,0.2)',
+          background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
           borderRadius: '10px', padding: '12px', marginBottom: '10px'
         }}>
-          <div style={{ fontSize: '12px', color: '#D91CD2', fontWeight: 600, marginBottom: '8px' }}>
+          <div style={{ fontSize: '12px', color: 'var(--primary-color, #D91CD2)', fontWeight: 600, marginBottom: '8px' }}>
             Nouveau commentaire manuel
           </div>
           <input value={newName} onChange={e => setNewName(e.target.value)}
@@ -503,7 +503,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
           <button onClick={handleAddComment}
             disabled={adding || !newName.trim() || !newText.trim()}
             style={{
-              background: adding ? 'rgba(150,150,150,0.3)' : 'linear-gradient(135deg, #D91CD2, #8B5CF6)',
+              background: adding ? 'rgba(150,150,150,0.3)' : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8B5CF6)',
               border: 'none', borderRadius: '8px', color: '#fff', fontSize: '13px',
               fontWeight: 600, padding: '10px 20px', cursor: adding ? 'wait' : 'pointer',
               opacity: (!newName.trim() || !newText.trim()) ? 0.5 : 1,
@@ -538,12 +538,12 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
           {c.profile_photo ? (
             <img src={c.profile_photo} alt="" style={{
               width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover',
-              border: '2px solid #D91CD2', flexShrink: 0
+              border: '2px solid var(--primary-color, #D91CD2)', flexShrink: 0
             }} />
           ) : (
             <div style={{
               width: '32px', height: '32px', borderRadius: '50%', flexShrink: 0,
-              background: '#D91CD2', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'var(--primary-color, #D91CD2)', display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: '13px', fontWeight: 700, color: '#fff'
             }}>{(c.user_name || '?')[0].toUpperCase()}</div>
           )}
@@ -556,7 +556,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
           </div>
           {/* Likes count */}
           <span style={{
-            color: justLiked ? '#00ff88' : '#D91CD2',
+            color: justLiked ? '#00ff88' : 'var(--primary-color, #D91CD2)',
             fontSize: justLiked ? '14px' : '12px',
             fontWeight: 700, minWidth: '35px', textAlign: 'center',
             transition: 'all 0.3s ease',
@@ -568,8 +568,8 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
           <button onClick={() => handleLike(c.id)} title="+1 Like"
             disabled={!!isLiking}
             style={{
-              background: (justLiked || isLiking) ? 'rgba(217,28,210,0.2)' : 'none',
-              border: (justLiked || isLiking) ? '1px solid #D91CD2' : '1px solid transparent',
+              background: (justLiked || isLiking) ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)' : 'none',
+              border: (justLiked || isLiking) ? '1px solid var(--primary-color, #D91CD2)' : '1px solid transparent',
               borderRadius: '8px', cursor: isLiking ? 'wait' : 'pointer', fontSize: '18px',
               padding: '6px 10px', minWidth: '44px', minHeight: '36px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -577,7 +577,7 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
               transition: 'all 0.2s ease', opacity: isLiking ? 0.6 : 1
             }}>
             {isLiking ? (
-              <span style={{ display: 'inline-block', width: '16px', height: '16px', border: '2px solid rgba(217,28,210,0.3)', borderTop: '2px solid #D91CD2', borderRadius: '50%', animation: 'v79Spin 0.7s linear infinite' }}></span>
+              <span style={{ display: 'inline-block', width: '16px', height: '16px', border: '2px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', borderTop: '2px solid var(--primary-color, #D91CD2)', borderRadius: '50%', animation: 'v79Spin 0.7s linear infinite' }}></span>
             ) : <SvgIcon name="heart" size={16} />}
           </button>
           {/* Photo button */}
@@ -606,9 +606,9 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
       {/* v79: Refresh button */}
       <button onClick={handleRefresh} disabled={refreshing}
         style={{
-          background: refreshing ? 'rgba(217,28,210,0.15)' : 'rgba(217,28,210,0.08)',
-          border: '1px solid rgba(217,28,210,0.3)', borderRadius: '8px',
-          color: '#D91CD2', fontSize: '13px', fontWeight: 600,
+          background: refreshing ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)',
+          border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', borderRadius: '8px',
+          color: 'var(--primary-color, #D91CD2)', fontSize: '13px', fontWeight: 600,
           cursor: refreshing ? 'wait' : 'pointer',
           padding: '8px 16px', marginTop: '8px',
           display: 'flex', alignItems: 'center', gap: '6px',
@@ -5180,10 +5180,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 className="ml-2 px-3 py-1 rounded-full text-xs font-bold tracking-wide"
                 style={{
                   background: isSuperAdmin
-                    ? 'linear-gradient(135deg, rgba(217,28,210,0.3), rgba(139,92,246,0.3))'
+                    ? 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.3), rgba(139,92,246,0.3))'
                     : 'rgba(255,255,255,0.08)',
-                  color: isSuperAdmin ? '#D91CD2' : '#a78bfa',
-                  border: `1px solid ${isSuperAdmin ? 'rgba(217,28,210,0.6)' : 'rgba(167,139,250,0.3)'}`
+                  color: isSuperAdmin ? 'var(--primary-color, #D91CD2)' : '#a78bfa',
+                  border: `1px solid ${isSuperAdmin ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.6)' : 'rgba(167,139,250,0.3)'}`
                 }}
               >
                 {isSuperAdmin ? <span className="inline-flex items-center gap-1.5"><SvgIcon name="crown" size={14} /> SUPER ADMIN : ACCÈS ILLIMITÉ</span> : 'COMPTE PARTENAIRE'}
@@ -5212,7 +5212,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             <div 
               key={i}
               className="px-4 py-2 rounded-lg text-white/60 text-sm"
-              style={{ background: i === 0 ? 'rgba(217,28,210,0.3)' : 'rgba(255,255,255,0.1)' }}
+              style={{ background: i === 0 ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)' : 'rgba(255,255,255,0.1)' }}
             >
               {tabName}
             </div>
@@ -5222,7 +5222,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         {/* Message de chargement */}
         <div 
           className="p-8 rounded-xl text-center"
-          style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(217,28,210,0.3)' }}
+          style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }}
         >
           <div className="mb-4 flex justify-center"><SvgIcon name="loader" size={36} className="animate-spin" /></div>
           <h2 className="text-xl font-bold text-white mb-2">Initialisation de votre espace...</h2>
@@ -5260,8 +5260,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               borderRadius: '20px',
               padding: '28px',
               background: 'linear-gradient(180deg, rgba(15,5,25,0.95) 0%, rgba(5,0,15,0.98) 100%)',
-              border: '1px solid rgba(217,28,210,0.3)',
-              boxShadow: '0 0 60px rgba(217,28,210,0.15), 0 0 120px rgba(139,92,246,0.08)',
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
+              boxShadow: '0 0 60px rgba(var(--primary-rgb, 217, 28, 210), 0.15), 0 0 120px rgba(139,92,246,0.08)',
               backdropFilter: 'blur(20px)',
               position: 'relative',
               overflow: 'hidden'
@@ -5271,7 +5271,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             {/* Background glow */}
             <div style={{
               position: 'absolute', top: '-80px', right: '-80px', width: '250px', height: '250px',
-              borderRadius: '50%', background: 'radial-gradient(circle, rgba(217,28,210,0.12), transparent 70%)',
+              borderRadius: '50%', background: 'radial-gradient(circle, rgba(var(--primary-rgb, 217, 28, 210), 0.12), transparent 70%)',
               filter: 'blur(40px)', pointerEvents: 'none'
             }} />
             <div style={{
@@ -5287,7 +5287,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   <span style={{ display: 'inline-flex' }}><SvgIcon name="music" size={28} /></span> Studio Audio
                 </h2>
                 <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', margin: '4px 0 0 0' }}>
-                  Cours : <span style={{ color: '#d91cd2' }}>{selectedCourseForAudio.name}</span>
+                  Cours : <span style={{ color: 'var(--primary-color, #D91CD2)' }}>{selectedCourseForAudio.name}</span>
                   {audioTracks.length > 0 && <span style={{ marginLeft: '8px', color: 'rgba(255,255,255,0.3)' }}>• {audioTracks.length} piste{audioTracks.length > 1 ? 's' : ''}</span>}
                 </p>
               </div>
@@ -5303,19 +5303,19 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             <div
               style={{
                 position: 'relative', zIndex: 1,
-                border: '2px dashed rgba(217,28,210,0.4)',
+                border: '2px dashed rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
                 borderRadius: '16px',
                 padding: '28px',
                 textAlign: 'center',
                 marginBottom: '24px',
-                background: 'rgba(217,28,210,0.04)',
+                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.04)',
                 cursor: 'pointer',
                 transition: 'all 0.3s ease'
               }}
               onClick={() => audioFileInputRef.current?.click()}
-              onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'rgba(217,28,210,0.8)'; e.currentTarget.style.background = 'rgba(217,28,210,0.1)'; }}
-              onDragLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(217,28,210,0.4)'; e.currentTarget.style.background = 'rgba(217,28,210,0.04)'; }}
-              onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'rgba(217,28,210,0.4)'; e.currentTarget.style.background = 'rgba(217,28,210,0.04)'; handleAudioFileUpload(e.dataTransfer.files); }}
+              onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.8)'; e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)'; }}
+              onDragLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.4)'; e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.04)'; }}
+              onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.4)'; e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.04)'; handleAudioFileUpload(e.dataTransfer.files); }}
             >
               <input
                 ref={audioFileInputRef}
@@ -5334,12 +5334,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               />
               {uploadingAudio ? (
                 <div>
-                  <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'center', color: '#d91cd2' }}><SvgIcon name="loader" size={36} className="animate-spin" /></div>
-                  <p style={{ color: '#d91cd2', fontWeight: 600, fontSize: '14px' }}>Upload en cours...</p>
+                  <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'center', color: 'var(--primary-color, #D91CD2)' }}><SvgIcon name="loader" size={36} className="animate-spin" /></div>
+                  <p style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: 600, fontSize: '14px' }}>Upload en cours...</p>
                 </div>
               ) : (
                 <div>
-                  <div style={{ marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(217,28,210,0.5))', display: 'flex', justifyContent: 'center', color: '#d91cd2' }}><SvgIcon name="music" size={42} /></div>
+                  <div style={{ marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.5))', display: 'flex', justifyContent: 'center', color: 'var(--primary-color, #D91CD2)' }}><SvgIcon name="music" size={42} /></div>
                   <p style={{ color: '#fff', fontWeight: 700, fontSize: '15px', marginBottom: '4px' }}>Glissez vos fichiers audio ici</p>
                   <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>ou cliquez pour sélectionner • MP3, WAV, OGG, AAC (max 15MB)</p>
                 </div>
@@ -5370,10 +5370,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         borderRadius: '14px',
                         padding: editingTrackId === track.id ? '16px' : '12px',
                         background: dragOverIndex === index
-                          ? 'rgba(217,28,210,0.15)'
+                          ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)'
                           : 'rgba(255,255,255,0.04)',
                         border: dragOverIndex === index
-                          ? '1px solid rgba(217,28,210,0.5)'
+                          ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)'
                           : '1px solid rgba(255,255,255,0.06)',
                         transition: 'all 0.2s ease',
                         cursor: 'grab',
@@ -5395,11 +5395,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           onClick={(e) => { e.stopPropagation(); setCoverUploadTrackId(track.id); audioCoverInputRef.current?.click(); }}
                           style={{
                             width: '52px', height: '52px', borderRadius: '10px', flexShrink: 0,
-                            background: track.cover_url ? `url(${track.cover_url}) center/cover` : 'linear-gradient(135deg, rgba(217,28,210,0.3), rgba(139,92,246,0.2))',
-                            border: '2px solid rgba(217,28,210,0.3)',
+                            background: track.cover_url ? `url(${track.cover_url}) center/cover` : 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.3), rgba(139,92,246,0.2))',
+                            border: '2px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                             cursor: 'pointer', position: 'relative', overflow: 'hidden',
-                            boxShadow: '0 0 15px rgba(217,28,210,0.2)'
+                            boxShadow: '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
                           }}
                         >
                           {!track.cover_url && <span style={{ display: 'inline-flex' }}><SvgIcon name="music" size={20} /></span>}
@@ -5446,8 +5446,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                             onClick={(e) => { e.stopPropagation(); setEditingTrackId(editingTrackId === track.id ? null : track.id); }}
                             style={{
                               width: '32px', height: '32px', borderRadius: '8px', border: 'none',
-                              background: editingTrackId === track.id ? 'rgba(217,28,210,0.3)' : 'rgba(255,255,255,0.08)',
-                              color: editingTrackId === track.id ? '#d91cd2' : 'rgba(255,255,255,0.5)',
+                              background: editingTrackId === track.id ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)' : 'rgba(255,255,255,0.08)',
+                              color: editingTrackId === track.id ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.5)',
                               cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px'
                             }}
                             title="Éditer"
@@ -5591,10 +5591,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 disabled={savingPlaylist}
                 style={{
                   flex: 1, padding: '14px', borderRadius: '12px', fontSize: '14px', fontWeight: 700,
-                  background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)',
+                  background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                   border: 'none', color: '#fff', cursor: 'pointer',
                   opacity: savingPlaylist ? 0.7 : 1,
-                  boxShadow: '0 0 20px rgba(217,28,210,0.3)'
+                  boxShadow: '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.3)'
                 }}
                 data-testid="save-playlist-btn"
               >
@@ -5635,7 +5635,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           className="flex items-center gap-1 px-3 py-2 rounded-lg text-white text-xs font-medium shadow-lg"
           style={{
             background: 'rgba(139, 92, 246, 0.85)',
-            border: '1px solid rgba(217, 28, 210, 0.6)',
+            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.6)',
             backdropFilter: 'blur(8px)'
           }}
           title="Voir ma vitrine publique"
@@ -5672,9 +5672,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           left: '12px',
           zIndex: 9999,
           background: 'rgba(139, 92, 246, 0.3)', 
-          border: '1px solid rgba(217, 28, 210, 0.4)',
+          border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
           backdropFilter: 'blur(8px)',
-          boxShadow: '0 0 10px rgba(217, 28, 210, 0.2)'
+          boxShadow: '0 0 10px rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
         }}
         data-testid="coach-back"
       >
@@ -5699,7 +5699,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     src={coachUser.picture} 
                     alt={coachUser.name} 
                     className="w-6 h-6 rounded-full"
-                    style={{ border: '2px solid #d91cd2' }}
+                    style={{ border: '2px solid var(--primary-color, #D91CD2)' }}
                   />
                 )}
                 <span className="text-white/60 text-sm">
@@ -5712,16 +5712,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     <div 
                       className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
                       style={{
-                        background: coachCredits <= 0 ? 'rgba(239,68,68,0.15)' : 'rgba(217,28,210,0.15)',
-                        border: coachCredits <= 0 ? '1px solid rgba(239,68,68,0.4)' : '1px solid rgba(217,28,210,0.4)'
+                        background: coachCredits <= 0 ? 'rgba(239,68,68,0.15)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
+                        border: coachCredits <= 0 ? '1px solid rgba(239,68,68,0.4)' : '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)'
                       }}
                       data-testid="coach-credits-badge"
                     >
-                      <span style={{ color: coachCredits <= 0 ? '#ef4444' : '#D91CD2', display: 'inline-flex' }}><SvgIcon name="dollarSign" size={16} /></span>
+                      <span style={{ color: coachCredits <= 0 ? '#ef4444' : 'var(--primary-color, #D91CD2)', display: 'inline-flex' }}><SvgIcon name="dollarSign" size={16} /></span>
                       <div className="flex flex-col">
                         <span 
                           className="text-xs font-bold"
-                          style={{ color: coachCredits <= 0 ? '#ef4444' : '#D91CD2' }}
+                          style={{ color: coachCredits <= 0 ? '#ef4444' : 'var(--primary-color, #D91CD2)' }}
                         >
                           {coachCredits <= 0 ? '0' : coachCredits} Crédit{coachCredits !== 1 ? 's' : ''}
                         </span>
@@ -5738,7 +5738,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                 ? '#ef4444' 
                                 : coachCredits < 5 
                                   ? 'linear-gradient(90deg, #ef4444, #f97316)' 
-                                  : 'linear-gradient(90deg, #D91CD2, #8b5cf6)'
+                                  : 'linear-gradient(90deg, var(--primary-color, #D91CD2), #8b5cf6)'
                             }}
                           />
                         </div>
@@ -5750,9 +5750,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         onClick={() => window.location.hash = '#become-coach'}
                         className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover:scale-105"
                         style={{
-                          background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                          background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                           color: 'white',
-                          boxShadow: '0 0 10px rgba(217,28,210,0.4)'
+                          boxShadow: '0 0 10px rgba(var(--primary-rgb, 217, 28, 210), 0.4)'
                         }}
                         data-testid="buy-credits-btn"
                       >
@@ -5766,10 +5766,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   <span 
                     className="ml-2 px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-1"
                     style={{ 
-                      background: 'linear-gradient(135deg, rgba(217,28,210,0.2), rgba(139,92,246,0.2))', 
-                      color: '#D91CD2', 
-                      border: '1px solid rgba(217,28,210,0.4)',
-                      boxShadow: '0 0 15px rgba(217,28,210,0.3)'
+                      background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.2), rgba(139,92,246,0.2))', 
+                      color: 'var(--primary-color, #D91CD2)', 
+                      border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+                      boxShadow: '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.3)'
                     }}
                     data-testid="super-admin-badge"
                   >
@@ -5790,10 +5790,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   className="w-full h-20 rounded-2xl flex flex-col items-center justify-center gap-2 transition-all duration-200 hover:scale-105"
                   style={{ 
                     background: showQuickControl 
-                      ? 'linear-gradient(135deg, rgba(217,28,210,0.3), rgba(139,92,246,0.3))' 
+                      ? 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.3), rgba(139,92,246,0.3))' 
                       : 'rgba(255,255,255,0.05)',
-                    border: showQuickControl ? '1px solid rgba(217,28,210,0.5)' : '1px solid rgba(255,255,255,0.1)',
-                    boxShadow: showQuickControl ? '0 0 20px rgba(217,28,210,0.3)' : 'none'
+                    border: showQuickControl ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)' : '1px solid rgba(255,255,255,0.1)',
+                    boxShadow: showQuickControl ? '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.3)' : 'none'
                   }}
                   data-testid="quick-control-btn"
                 >
@@ -5811,8 +5811,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     className="fixed sm:absolute left-4 right-4 sm:left-1/2 sm:right-auto sm:transform sm:-translate-x-1/2 mt-2 sm:w-64 rounded-xl overflow-hidden z-50"
                     style={{
                       background: 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(10,5,20,0.99) 100%)',
-                      border: '1px solid rgba(217,28,210,0.3)',
-                      boxShadow: '0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(217,28,210,0.2)'
+                      border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
+                      boxShadow: '0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
                     }}
                     data-testid="quick-control-menu"
                   >
@@ -5860,10 +5860,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         className="w-11 h-6 rounded-full relative transition-all duration-300"
                         style={{ 
                           background: platformSettings.maintenance_mode 
-                            ? 'linear-gradient(90deg, #D91CD2, #8b5cf6)' 
+                            ? 'linear-gradient(90deg, var(--primary-color, #D91CD2), #8b5cf6)' 
                             : 'rgba(255,255,255,0.15)',
                           boxShadow: platformSettings.maintenance_mode 
-                            ? '0 0 15px rgba(217, 28, 210, 0.6)' 
+                            ? '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.6)' 
                             : 'none'
                         }}
                         data-testid="toggle-maintenance"
@@ -5891,9 +5891,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 title="Panneau Super Admin"
                 className="h-20 rounded-2xl flex flex-col items-center justify-center gap-2 transition-all duration-200 hover:scale-105"
                 style={{ 
-                  background: 'linear-gradient(135deg, rgba(217,28,210,0.2), rgba(139,92,246,0.2))',
-                  border: '1px solid rgba(217, 28, 210, 0.3)',
-                  boxShadow: '0 0 15px rgba(217, 28, 210, 0.2)'
+                  background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.2), rgba(139,92,246,0.2))',
+                  border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
+                  boxShadow: '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
                 }}
                 data-testid="super-admin-btn"
               >
@@ -5985,8 +5985,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
           {showDashOnboarding && !isSuperAdmin && (
           <div style={{
-            background: 'linear-gradient(135deg, rgba(217,28,210,0.12), rgba(120,40,200,0.08))',
-            border: '1px solid rgba(217,28,210,0.35)',
+            background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.12), rgba(120,40,200,0.08))',
+            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35)',
             borderRadius: '16px',
             padding: '20px',
             marginBottom: '20px',
@@ -5996,36 +5996,36 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               position: 'absolute', top: '10px', right: '12px',
               background: 'none', border: 'none', color: '#aaa', fontSize: '18px', cursor: 'pointer'
             }} aria-label="Fermer"><SvgIcon name="close" size={18} /></button>
-            <h3 style={{ color: '#d91cd2', margin: '0 0 14px 0', fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h3 style={{ color: 'var(--primary-color, #D91CD2)', margin: '0 0 14px 0', fontSize: '17px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <SvgIcon name="sparkles" size={18} /> Bienvenue sur ton Espace Partenaire !
             </h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
+              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }}>
                 <div style={{ marginBottom: '6px' }}><SvgIcon name="dollarSign" size={22} /></div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Crédits</div>
                 <div style={{ color: '#aaa', fontSize: '12px' }}>Gère ici tes séances converties en services. Chaque action consomme des crédits.</div>
               </div>
-              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
+              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }}>
                 <div style={{ marginBottom: '6px' }}><SvgIcon name="target" size={22} /></div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Gestion & Contenus</div>
                 <div style={{ color: '#aaa', fontSize: '12px' }}>Crée tes propres offres en toute autonomie. Publie des contenus attractifs pour tes clients.</div>
               </div>
-              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
+              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }}>
                 <div style={{ marginBottom: '6px' }}><SvgIcon name="messageCircle" size={22} /></div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Conversations IA</div>
                 <div style={{ color: '#aaa', fontSize: '12px' }}>Engage tes prospects avec notre assistant IA intégré. Réponds automatiquement 24h/24.</div>
               </div>
-              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
+              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }}>
                 <div style={{ marginBottom: '6px' }}><SvgIcon name="tag" size={22} /></div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Codes Promo</div>
                 <div style={{ color: '#aaa', fontSize: '12px' }}>Crée des codes de réduction pour booster tes ventes et fidéliser tes clients.</div>
               </div>
-              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
+              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }}>
                 <div style={{ marginBottom: '6px' }}><SvgIcon name="megaphone" size={22} /></div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Campagnes Email</div>
                 <div style={{ color: '#aaa', fontSize: '12px' }}>Lance des campagnes ciblées pour promouvoir tes offres et tes événements.</div>
               </div>
-              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(217,28,210,0.2)' }}>
+              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }}>
                 <div style={{ marginBottom: '6px' }}><SvgIcon name="lock" size={22} /></div>
                 <div style={{ color: '#e0e0e0', fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>Sécurité & Isolation</div>
                 <div style={{ color: '#aaa', fontSize: '12px' }}>Tes données sont isolées. Tu ne vois que ton activité, personne d'autre.</div>
@@ -6033,7 +6033,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             </div>
             <div style={{ textAlign: 'center', marginTop: '14px' }}>
               <button onClick={dismissDashOnboarding} style={{
-                background: 'linear-gradient(135deg, #d91cd2, #ff2daa)',
+                background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #ff2daa)',
                 color: '#fff', border: 'none', borderRadius: '8px',
                 padding: '8px 24px', cursor: 'pointer', fontSize: '13px', fontWeight: 600
               }}>J'ai compris, c'est parti !</button>
@@ -6107,10 +6107,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     padding: '8px 6px',
                     borderRadius: '10px',
                     border: offersSubTab === sub.id
-                      ? '2px solid rgba(217,28,210,0.7)'
+                      ? '2px solid rgba(var(--primary-rgb, 217, 28, 210), 0.7)'
                       : '1px solid rgba(255,255,255,0.08)',
                     background: offersSubTab === sub.id
-                      ? 'linear-gradient(135deg, rgba(217,28,210,0.18), rgba(139,92,246,0.12))'
+                      ? 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.18), rgba(139,92,246,0.12))'
                       : 'rgba(255,255,255,0.03)',
                     cursor: 'pointer',
                     transition: 'all 0.2s ease',
@@ -6125,7 +6125,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                       libelle rose et le fond du bouton. */}
                   <span style={{ display: 'inline-flex' }}><SvgIcon name={sub.icon} size={28} color="#fff" /></span>
                   <span style={{
-                    color: offersSubTab === sub.id ? '#D91CD2' : 'rgba(255,255,255,0.7)',
+                    color: offersSubTab === sub.id ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.7)',
                     fontSize: '10px',
                     fontWeight: offersSubTab === sub.id ? 700 : 500,
                     textAlign: 'center',
@@ -6134,12 +6134,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   {sub.badge > 0 && (
                     <span style={{
                       position: 'absolute', top: '3px', right: '4px',
-                      background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)',
+                      background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                       color: '#fff', fontSize: '9px', fontWeight: 800,
                       minWidth: '16px', height: '16px', borderRadius: '8px',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       padding: '0 4px',
-                      boxShadow: '0 0 6px rgba(217,28,210,0.4)'
+                      boxShadow: '0 0 6px rgba(var(--primary-rgb, 217, 28, 210), 0.4)'
                     }}>{sub.badge}</span>
                   )}
                 </button>
@@ -6190,7 +6190,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${nextExpiration.next.days_left <= 3 ? 'bg-red-500' : nextExpiration.next.days_left <= 7 ? 'bg-yellow-500' : 'bg-green-500'}`} />
                     <div style={{ flex: 1, minWidth: '200px' }}>
                       <div style={{ color: '#fff', fontSize: '13px', fontWeight: 600 }}>
-                        Prochaine expiration : <span style={{ color: '#D91CD2' }}>{nextExpiration.next.name}</span>
+                        Prochaine expiration : <span style={{ color: 'var(--primary-color, #D91CD2)' }}>{nextExpiration.next.name}</span>
                       </div>
                       <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', marginTop: '2px' }}>
                         {nextExpiration.next.days_left === 0
@@ -6206,9 +6206,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                     <div style={{
                       padding: '4px 10px',
                       borderRadius: '8px',
-                      background: 'rgba(217,28,210,0.15)',
-                      border: '1px solid rgba(217,28,210,0.3)',
-                      color: '#D91CD2',
+                      background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
+                      border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
+                      color: 'var(--primary-color, #D91CD2)',
                       fontSize: '11px',
                       fontWeight: 700
                     }}>
@@ -6222,14 +6222,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   <div style={{
                     marginTop: '16px', marginBottom: '16px',
                     borderRadius: '16px', padding: '20px',
-                    background: 'linear-gradient(135deg, rgba(217,28,210,0.08) 0%, rgba(139,92,246,0.08) 100%)',
-                    border: '1px solid rgba(217,28,210,0.2)'
+                    background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.08) 0%, rgba(139,92,246,0.08) 100%)',
+                    border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
                       <span style={{ display: 'inline-flex' }}><SvgIcon name="messageCircle" size={20} /></span>
                       <h3 style={{ color: '#fff', fontSize: '15px', fontWeight: 700, margin: 0 }}>Social Boost</h3>
                       <span style={{
-                        background: 'rgba(217,28,210,0.2)', color: '#D91CD2',
+                        background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)', color: 'var(--primary-color, #D91CD2)',
                         fontSize: '10px', padding: '2px 8px', borderRadius: '10px', fontWeight: 600
                       }}>ADMIN</span>
                     </div>
@@ -6258,7 +6258,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         }}
                         style={{
                           background: 'rgba(255,255,255,0.08)',
-                          color: '#fff', border: '1px solid rgba(217,28,210,0.3)',
+                          color: '#fff', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                           padding: '8px 14px', borderRadius: '10px',
                           fontSize: '12px', fontWeight: 600, cursor: 'pointer'
                         }}
@@ -6289,10 +6289,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           }
                         }}
                         style={{
-                          background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                          background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                           color: '#fff', border: 'none', padding: '8px 14px',
                           borderRadius: '10px', fontSize: '12px', fontWeight: 600,
-                          cursor: 'pointer', boxShadow: '0 0 12px rgba(217,28,210,0.3)',
+                          cursor: 'pointer', boxShadow: '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                           transition: 'opacity 0.2s'
                         }}
                       >
@@ -6318,7 +6318,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         }}
                         style={{
                           background: 'rgba(255,255,255,0.08)',
-                          color: '#fff', border: '1px solid rgba(217,28,210,0.3)',
+                          color: '#fff', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                           padding: '8px 14px', borderRadius: '10px',
                           fontSize: '12px', fontWeight: 600, cursor: 'pointer'
                         }}
@@ -6341,7 +6341,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         }}
                         style={{
                           background: 'rgba(255,255,255,0.08)',
-                          color: '#fff', border: '1px solid rgba(217,28,210,0.3)',
+                          color: '#fff', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                           padding: '8px 14px', borderRadius: '10px',
                           fontSize: '12px', fontWeight: 600, cursor: 'pointer'
                         }}
@@ -6419,7 +6419,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   borderRadius: '16px',
                   padding: '20px',
                   background: 'linear-gradient(180deg, rgba(15,5,25,0.6) 0%, rgba(5,0,15,0.8) 100%)',
-                  border: '1px solid rgba(217,28,210,0.2)',
+                  border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
                   marginBottom: '20px',
                   position: 'relative',
                   overflow: 'hidden'
@@ -6427,7 +6427,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   {/* Background glow */}
                   <div style={{
                     position: 'absolute', top: '-60px', right: '-60px', width: '180px', height: '180px',
-                    borderRadius: '50%', background: 'radial-gradient(circle, rgba(217,28,210,0.1), transparent 70%)',
+                    borderRadius: '50%', background: 'radial-gradient(circle, rgba(var(--primary-rgb, 217, 28, 210), 0.1), transparent 70%)',
                     filter: 'blur(30px)', pointerEvents: 'none'
                   }} />
 
@@ -6435,7 +6435,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   <div style={{ position: 'relative', zIndex: 1, marginBottom: '16px' }}>
                     <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '10px', margin: '0 0 4px 0' }}>
                       <span style={{ display: 'inline-flex' }}><SvgIcon name="music" size={26} /></span> Studio Audio
-                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'rgba(217,28,210,0.7)', background: 'rgba(217,28,210,0.1)', padding: '2px 8px', borderRadius: '8px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'rgba(var(--primary-rgb, 217, 28, 210), 0.7)', background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)', padding: '2px 8px', borderRadius: '8px' }}>
                         {audioTracks.length} piste{audioTracks.length !== 1 ? 's' : ''}
                       </span>
                     </h2>
@@ -6446,19 +6446,19 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   <div style={{ position: 'relative', zIndex: 1 }}>
                       <div
                         style={{
-                          border: '2px dashed rgba(217,28,210,0.4)',
+                          border: '2px dashed rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
                           borderRadius: '16px',
                           padding: '28px',
                           textAlign: 'center',
                           marginBottom: '20px',
-                          background: 'rgba(217,28,210,0.04)',
+                          background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.04)',
                           cursor: 'pointer',
                           transition: 'all 0.3s ease'
                         }}
                         onClick={() => audioFileInputRef.current?.click()}
-                        onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'rgba(217,28,210,0.8)'; e.currentTarget.style.background = 'rgba(217,28,210,0.1)'; }}
-                        onDragLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(217,28,210,0.4)'; e.currentTarget.style.background = 'rgba(217,28,210,0.04)'; }}
-                        onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'rgba(217,28,210,0.4)'; e.currentTarget.style.background = 'rgba(217,28,210,0.04)'; handleAudioFileUpload(e.dataTransfer.files); }}
+                        onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.8)'; e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)'; }}
+                        onDragLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.4)'; e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.04)'; }}
+                        onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.4)'; e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.04)'; handleAudioFileUpload(e.dataTransfer.files); }}
                       >
                         <input
                           ref={audioFileInputRef}
@@ -6477,12 +6477,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         />
                         {uploadingAudio ? (
                           <div>
-                            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'center', color: '#d91cd2' }}><SvgIcon name="loader" size={36} className="animate-spin" /></div>
-                            <p style={{ color: '#d91cd2', fontWeight: 600, fontSize: '14px', margin: 0 }}>Upload en cours...</p>
+                            <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'center', color: 'var(--primary-color, #D91CD2)' }}><SvgIcon name="loader" size={36} className="animate-spin" /></div>
+                            <p style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: 600, fontSize: '14px', margin: 0 }}>Upload en cours...</p>
                           </div>
                         ) : (
                           <div>
-                            <div style={{ marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(217,28,210,0.5))', display: 'flex', justifyContent: 'center', color: '#d91cd2' }}><SvgIcon name="music" size={42} /></div>
+                            <div style={{ marginBottom: '8px', filter: 'drop-shadow(0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.5))', display: 'flex', justifyContent: 'center', color: 'var(--primary-color, #D91CD2)' }}><SvgIcon name="music" size={42} /></div>
                             <p style={{ color: '#fff', fontWeight: 700, fontSize: '15px', marginBottom: '4px' }}>Glissez vos fichiers audio ici</p>
                             <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: 0 }}>ou cliquez pour sélectionner • MP3, WAV, OGG, AAC (max 15MB)</p>
                           </div>
@@ -6512,8 +6512,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                 style={{
                                   borderRadius: '14px',
                                   padding: editingTrackId === track.id ? '16px' : '12px',
-                                  background: dragOverIndex === index ? 'rgba(217,28,210,0.15)' : 'rgba(255,255,255,0.04)',
-                                  border: dragOverIndex === index ? '1px solid rgba(217,28,210,0.5)' : '1px solid rgba(255,255,255,0.06)',
+                                  background: dragOverIndex === index ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)' : 'rgba(255,255,255,0.04)',
+                                  border: dragOverIndex === index ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)' : '1px solid rgba(255,255,255,0.06)',
                                   transition: 'all 0.2s ease',
                                   cursor: 'grab',
                                   opacity: draggedTrackId === track.id ? 0.5 : 1
@@ -6531,11 +6531,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                     onClick={(e) => { e.stopPropagation(); setCoverUploadTrackId(track.id); audioCoverInputRef.current?.click(); }}
                                     style={{
                                       width: '52px', height: '52px', borderRadius: '10px', flexShrink: 0,
-                                      background: track.cover_url ? `url(${track.cover_url}) center/cover` : 'linear-gradient(135deg, rgba(217,28,210,0.3), rgba(139,92,246,0.2))',
-                                      border: '2px solid rgba(217,28,210,0.3)',
+                                      background: track.cover_url ? `url(${track.cover_url}) center/cover` : 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.3), rgba(139,92,246,0.2))',
+                                      border: '2px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                                       cursor: 'pointer', position: 'relative', overflow: 'hidden',
-                                      boxShadow: '0 0 15px rgba(217,28,210,0.2)'
+                                      boxShadow: '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
                                     }}
                                   >
                                     {!track.cover_url && <span style={{ display: 'inline-flex' }}><SvgIcon name="music" size={20} /></span>}
@@ -6563,7 +6563,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                                   </div>
                                   <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                                     <button onClick={(e) => { e.stopPropagation(); setEditingTrackId(editingTrackId === track.id ? null : track.id); }}
-                                      style={{ width: '32px', height: '32px', borderRadius: '8px', border: 'none', background: editingTrackId === track.id ? 'rgba(217,28,210,0.3)' : 'rgba(255,255,255,0.08)', color: editingTrackId === track.id ? '#d91cd2' : 'rgba(255,255,255,0.5)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}
+                                      style={{ width: '32px', height: '32px', borderRadius: '8px', border: 'none', background: editingTrackId === track.id ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)' : 'rgba(255,255,255,0.08)', color: editingTrackId === track.id ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.5)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}
                                       title="Éditer"><SvgIcon name="edit" size={14} /></button>
                                     <button onClick={(e) => { e.stopPropagation(); removeTrack(track.id); }}
                                       style={{ width: '32px', height: '32px', borderRadius: '8px', border: 'none', background: 'rgba(239,68,68,0.1)', color: '#ef4444', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}
@@ -6623,10 +6623,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                           disabled={savingPlaylist}
                           style={{
                             width: '100%', padding: '14px', borderRadius: '12px', fontSize: '14px', fontWeight: 700,
-                            background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)',
+                            background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                             border: 'none', color: '#fff', cursor: 'pointer',
                             opacity: savingPlaylist ? 0.7 : 1,
-                            boxShadow: '0 0 20px rgba(217,28,210,0.3)',
+                            boxShadow: '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                             transition: 'all 0.3s ease'
                           }}
                           data-testid="save-audio-inline"
@@ -6661,12 +6661,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   borderRadius: '16px',
                   padding: '20px',
                   background: 'linear-gradient(180deg, rgba(15,5,25,0.6) 0%, rgba(5,0,15,0.8) 100%)',
-                  border: '1px solid rgba(217,28,210,0.2)',
+                  border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
                   marginTop: '20px'
                 }}>
                   <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '10px', margin: '0 0 12px 0' }}>
                     <span style={{ display: 'inline-flex' }}><SvgIcon name="smile" size={24} /></span> Emojis Personnalisés
-                    <span style={{ fontSize: '12px', fontWeight: 600, color: 'rgba(217,28,210,0.7)', background: 'rgba(217,28,210,0.1)', padding: '2px 8px', borderRadius: '8px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: 'rgba(var(--primary-rgb, 217, 28, 210), 0.7)', background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)', padding: '2px 8px', borderRadius: '8px' }}>
                       {customEmojis.length} emoji{customEmojis.length !== 1 ? 's' : ''}
                     </span>
                   </h2>
@@ -6709,7 +6709,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                       style={{
                         padding: '10px 20px',
                         borderRadius: '10px',
-                        background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                        background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                         border: 'none',
                         color: '#fff',
                         fontSize: '13px',

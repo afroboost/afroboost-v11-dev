@@ -356,7 +356,7 @@ const ReservationCard = memo(({ reservation: r, isProduct, onValidate, onDelete,
           <span className="text-pink-400 font-bold text-sm">{r.reservationCode || '-'}</span>
           {/* V191: badge × N places si réservation multi-personnes */}
           {Number(r.quantity) > 1 && (
-            <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(217,28,210,0.18)', color: '#F0A8EE' }}>
+            <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)', color: '#F0A8EE' }}>
               × {r.quantity} places
             </span>
           )}
@@ -452,7 +452,7 @@ const ReservationRow = memo(({ reservation: r, isProduct, onValidate, onDelete, 
       <div>{r.reservationCode || '-'}</div>
       {/* V191: badge × N places */}
       {Number(r.quantity) > 1 && (
-        <div className="text-[10px] mt-1 inline-block px-2 py-0.5 rounded-full" style={{ background: 'rgba(217,28,210,0.18)', color: '#F0A8EE' }}>
+        <div className="text-[10px] mt-1 inline-block px-2 py-0.5 rounded-full" style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)', color: '#F0A8EE' }}>
           × {r.quantity} places
         </div>
       )}

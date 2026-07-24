@@ -516,21 +516,21 @@ export default function ContactsManager({ API, coachEmail }) {
       ),
       React.createElement('div', { style: { display: 'flex', gap: '10px', marginBottom: '15px' } },
         React.createElement('div', { style: { flex: 1, background: 'rgba(139,92,246,0.15)', borderRadius: '10px', padding: '10px', textAlign: 'center' } },
-          React.createElement('div', { style: { color: '#D91CD2', fontSize: '20px', fontWeight: 'bold' } }, birthdayData.length),
+          React.createElement('div', { style: { color: 'var(--primary-color, #D91CD2)', fontSize: '20px', fontWeight: 'bold' } }, birthdayData.length),
           React.createElement('div', { style: { color: 'rgba(255,255,255,0.6)', fontSize: '10px' } }, 'Total')
         ),
-        React.createElement('div', { style: { flex: 1, background: 'rgba(217,28,210,0.15)', borderRadius: '10px', padding: '10px', textAlign: 'center' } },
-          React.createElement('div', { style: { color: '#D91CD2', fontSize: '20px', fontWeight: 'bold' } }, birthdayData.filter(function(p) { var mm = String(birthdayMonth + 1).padStart(2, '0'); return p.birthday && p.birthday.substring(0, 2) === mm; }).length),
+        React.createElement('div', { style: { flex: 1, background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)', borderRadius: '10px', padding: '10px', textAlign: 'center' } },
+          React.createElement('div', { style: { color: 'var(--primary-color, #D91CD2)', fontSize: '20px', fontWeight: 'bold' } }, birthdayData.filter(function(p) { var mm = String(birthdayMonth + 1).padStart(2, '0'); return p.birthday && p.birthday.substring(0, 2) === mm; }).length),
           React.createElement('div', { style: { color: 'rgba(255,255,255,0.6)', fontSize: '10px' } }, 'Ce mois')
         )
       ),
       React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '15px' } },
         ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'].map(function(d) { return React.createElement('div', { key: d, style: { textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: '10px', padding: '5px' } }, d); }),
-        getBirthdayCalendar().map(function(week, wi) { return week.map(function(cell, ci) { if (!cell) return React.createElement('div', { key: 'e'+wi+ci, style: { padding: '5px', minHeight: '35px' } }); var hasBday = cell.matches && cell.matches.length > 0; return React.createElement('div', { key: 'c'+wi+ci, style: { padding: '3px', minHeight: '35px', textAlign: 'center', borderRadius: '6px', background: hasBday ? 'rgba(217,28,210,0.25)' : 'rgba(255,255,255,0.03)', border: hasBday ? '1px solid rgba(217,28,210,0.5)' : '1px solid transparent' } }, React.createElement('div', { style: { color: '#fff', fontSize: '11px' } }, cell.day), hasBday ? cell.matches.map(function(m) { return React.createElement('div', { key: m.id, style: { fontSize: '8px', color: '#D91CD2', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '2px', overflow: 'hidden' } }, React.createElement(SvgIcon, { name: 'cake', size: 10 }), React.createElement('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, (m.name || '').split(' ')[0])); }) : null); }); })
+        getBirthdayCalendar().map(function(week, wi) { return week.map(function(cell, ci) { if (!cell) return React.createElement('div', { key: 'e'+wi+ci, style: { padding: '5px', minHeight: '35px' } }); var hasBday = cell.matches && cell.matches.length > 0; return React.createElement('div', { key: 'c'+wi+ci, style: { padding: '3px', minHeight: '35px', textAlign: 'center', borderRadius: '6px', background: hasBday ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.25)' : 'rgba(255,255,255,0.03)', border: hasBday ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)' : '1px solid transparent' } }, React.createElement('div', { style: { color: '#fff', fontSize: '11px' } }, cell.day), hasBday ? cell.matches.map(function(m) { return React.createElement('div', { key: m.id, style: { fontSize: '8px', color: 'var(--primary-color, #D91CD2)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '2px', overflow: 'hidden' } }, React.createElement(SvgIcon, { name: 'cake', size: 10 }), React.createElement('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, (m.name || '').split(' ')[0])); }) : null); }); })
       ),
       React.createElement('div', { style: { color: '#c4b5fd', fontSize: '12px', fontWeight: 'bold', marginBottom: '8px' } }, 'Anniversaires en ' + monthNames[birthdayMonth]),
-      birthdayData.filter(function(p) { var mm = String(birthdayMonth + 1).padStart(2, '0'); return p.birthday && p.birthday.substring(0, 2) === mm; }).sort(function(a, b) { return a.birthday.localeCompare(b.birthday); }).map(function(p) { return React.createElement('div', { key: p.id, style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', marginBottom: '4px' } }, React.createElement(SvgIcon, { name: 'cake', size: 16 }), React.createElement('span', { style: { color: '#fff', fontSize: '12px', flex: 1 } }, p.name || 'Membre'), React.createElement('span', { style: { color: '#D91CD2', fontSize: '11px' } }, p.birthday)); }),
-      birthdayLoading ? React.createElement('div', { style: { color: '#D91CD2', textAlign: 'center', padding: '20px' } }, 'Chargement...') : null
+      birthdayData.filter(function(p) { var mm = String(birthdayMonth + 1).padStart(2, '0'); return p.birthday && p.birthday.substring(0, 2) === mm; }).sort(function(a, b) { return a.birthday.localeCompare(b.birthday); }).map(function(p) { return React.createElement('div', { key: p.id, style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', marginBottom: '4px' } }, React.createElement(SvgIcon, { name: 'cake', size: 16 }), React.createElement('span', { style: { color: '#fff', fontSize: '12px', flex: 1 } }, p.name || 'Membre'), React.createElement('span', { style: { color: 'var(--primary-color, #D91CD2)', fontSize: '11px' } }, p.birthday)); }),
+      birthdayLoading ? React.createElement('div', { style: { color: 'var(--primary-color, #D91CD2)', textAlign: 'center', padding: '20px' } }, 'Chargement...') : null
     );
   }
 
@@ -618,8 +618,8 @@ export default function ContactsManager({ API, coachEmail }) {
         <input ref={importRef} type="file" accept=".csv,.vcf,.txt" onChange={handleFileImport} style={{ display: 'none' }} />
         <button onClick={() => importRef.current?.click()} style={{
           flex: '1 1 auto', padding: '10px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,
-          background: 'rgba(217,28,210,0.08)', border: '1px dashed rgba(217,28,210,0.4)',
-          color: '#D91CD2', cursor: 'pointer', minWidth: '120px',
+          background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)', border: '1px dashed rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+          color: 'var(--primary-color, #D91CD2)', cursor: 'pointer', minWidth: '120px',
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
         }}>
           <SvgIcon name="upload" size={14} /> Importer CSV / vCard
@@ -654,7 +654,7 @@ export default function ContactsManager({ API, coachEmail }) {
           data-testid="add-contact-btn"
           style={{
             padding: '10px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
-            background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', border: 'none',
+            background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)', border: 'none',
             color: 'white', cursor: 'pointer', whiteSpace: 'nowrap',
             display: 'inline-flex', alignItems: 'center', gap: '6px'
           }}
@@ -797,9 +797,9 @@ export default function ContactsManager({ API, coachEmail }) {
         <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '10px', marginTop: '6px' }}>
           <button onClick={() => setFilterCategory('all')} style={{
             padding: '4px 10px', borderRadius: '14px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
-            background: filterCategory === 'all' ? 'rgba(217,28,210,0.25)' : 'rgba(255,255,255,0.04)',
-            border: filterCategory === 'all' ? '1px solid rgba(217,28,210,0.5)' : '1px solid rgba(255,255,255,0.08)',
-            color: filterCategory === 'all' ? '#D91CD2' : 'rgba(255,255,255,0.45)'
+            background: filterCategory === 'all' ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.25)' : 'rgba(255,255,255,0.04)',
+            border: filterCategory === 'all' ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)' : '1px solid rgba(255,255,255,0.08)',
+            color: filterCategory === 'all' ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.45)'
           }}>Toutes catégories</button>
           {categories.map(function(cat) {
             return (
@@ -1022,8 +1022,8 @@ export default function ContactsManager({ API, coachEmail }) {
                 )}
                 <span style={{
                   padding: '2px 8px', borderRadius: '10px', fontSize: '10px',
-                  background: c.source === 'google' ? 'rgba(34,197,94,0.1)' : c.source === 'app' ? 'rgba(59,130,246,0.1)' : 'rgba(217,28,210,0.1)',
-                  color: c.source === 'google' ? '#22c55e' : c.source === 'app' ? '#3b82f6' : '#D91CD2',
+                  background: c.source === 'google' ? 'rgba(34,197,94,0.1)' : c.source === 'app' ? 'rgba(59,130,246,0.1)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)',
+                  color: c.source === 'google' ? '#22c55e' : c.source === 'app' ? '#3b82f6' : 'var(--primary-color, #D91CD2)',
                   flexShrink: 0
                 }}>
                   {c.source === 'google' ? 'Google' : c.source === 'app' ? 'App' : c.source === 'stripe_payment' ? 'Stripe' : c.source || 'Import'}
@@ -1034,7 +1034,7 @@ export default function ContactsManager({ API, coachEmail }) {
                   const isBusy = shareLinkBusy === c.email;
                   // V228: `label` passe de chaine a element JSX pour porter un
                   // pictogramme. Les textes et les couleurs sont inchanges.
-                  let label = <><SvgIcon name="link" size={11} /> Lien</>; let bg = 'rgba(217,28,210,0.18)'; let col = '#F0A8EE';
+                  let label = <><SvgIcon name="link" size={11} /> Lien</>; let bg = 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)'; let col = '#F0A8EE';
                   if (isBusy) { label = '…'; }
                   else if (status === 'copied') { label = <><SvgIcon name="check" size={11} /> Copié</>; bg = 'rgba(34,197,94,0.18)'; col = '#86efac'; }
                   else if (status === 'none') { label = <><SvgIcon name="close" size={11} /> Pas abonné</>; bg = 'rgba(255,255,255,0.06)'; col = 'rgba(255,255,255,0.5)'; }
@@ -1170,7 +1170,7 @@ export default function ContactsManager({ API, coachEmail }) {
                 data-testid="confirm-add-contact"
                 style={{
                   padding: '10px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600,
-                  background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', border: 'none',
+                  background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)', border: 'none',
                   color: 'white', cursor: addingContact ? 'wait' : 'pointer'
                 }}
               >

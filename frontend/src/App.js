@@ -61,6 +61,7 @@ import SvgIcon from "./components/SvgIcon";
 // V184: Espace abonné accès rapide (lien public /espace/AFR-XXXXXX)
 import SubscriberSpace from "./components/SubscriberSpace";
 import { useDataCache, invalidateCache } from "./hooks/useDataCache";
+import { applyPrimaryColor } from "./utils/themeColor"; // V259
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -915,8 +916,8 @@ const MediaDisplay = ({ url, className }) => {
     paddingBottom: '56.25%',
     overflow: 'hidden',
     borderRadius: '16px',
-    border: '1px solid rgba(217, 28, 210, 0.3)',
-    boxShadow: '0 0 30px rgba(217, 28, 210, 0.2)',
+    border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
+    boxShadow: '0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
     background: '#0a0a0a'
   };
 
@@ -939,7 +940,7 @@ const MediaDisplay = ({ url, className }) => {
     minWidth: isMuted ? 'auto' : '32px',
     height: '32px',
     borderRadius: isMuted ? '16px' : '50%',
-    background: isMuted ? 'linear-gradient(135deg, #d91cd2 0%, #8b5cf6 100%)' : 'rgba(0, 0, 0, 0.7)',
+    background: isMuted ? 'linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, #8b5cf6 100%)' : 'rgba(0, 0, 0, 0.7)',
     border: '1px solid rgba(255, 255, 255, 0.3)',
     display: 'flex',
     alignItems: 'center',
@@ -950,7 +951,7 @@ const MediaDisplay = ({ url, className }) => {
     fontSize: '14px',
     opacity: 1,
     transition: 'all 0.2s ease',
-    boxShadow: isMuted ? '0 0 15px rgba(217, 28, 210, 0.2)' : '0 2px 8px rgba(0,0,0,0.3)',
+    boxShadow: isMuted ? '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.2)' : '0 2px 8px rgba(0,0,0,0.3)',
     animation: isMuted ? 'pulse 2s infinite' : 'none'
   };
 
@@ -1173,15 +1174,15 @@ function StickyCountdownBar(props) {
          bouton fermer. 40 le garde en tete de page (au-dessus du contenu normal)
          mais SOUS le widget chat (50) et les modals (>=1000). */
       position: 'fixed', top: 0, left: 0, right: 0, zIndex: 40,
-      background: '#000000', borderBottom: '3px solid #D91CD2',
+      background: '#000000', borderBottom: '3px solid var(--primary-color, #D91CD2)',
       minHeight: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center',
       flexWrap: 'wrap', gap: '2px 6px',
       padding: '6px 12px', textAlign: 'center',
       fontFamily: 'system-ui, sans-serif',
-      boxShadow: '0 4px 25px rgba(217, 28, 210, 0.2)'
+      boxShadow: '0 4px 25px rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
     }}>
       <span style={{ color: '#FFFFFF', fontSize: 'clamp(13px, 3.5vw, 18px)', fontWeight: 700, whiteSpace: 'nowrap' }}>{'\uD83D\uDD25'} {text} :</span>
-      <span style={{ color: '#D91CD2', fontSize: 'clamp(16px, 4.5vw, 22px)', fontWeight: 900, fontFamily: "'Courier New', monospace", letterSpacing: '2px', textShadow: '0 0 10px #D91CD2, 0 0 20px #D91CD2, 0 0 40px rgba(217,28,210,0.4)', whiteSpace: 'nowrap' }}>{timerStr}</span>
+      <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: 'clamp(16px, 4.5vw, 22px)', fontWeight: 900, fontFamily: "'Courier New', monospace", letterSpacing: '2px', textShadow: '0 0 10px var(--primary-color, #D91CD2), 0 0 20px var(--primary-color, #D91CD2), 0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.4)', whiteSpace: 'nowrap' }}>{timerStr}</span>
       <span style={{ color: '#FFFFFF', fontSize: 'clamp(13px, 3.5vw, 18px)', fontWeight: 700, whiteSpace: 'nowrap' }}>— Réserve vite ! {'\uD83D\uDE80'}</span>
     </div>
   );
@@ -1214,7 +1215,7 @@ function OfferCountdown(props) {
   var text = offer.countdown_text || "L'OFFRE FINIT DANS :";
   var timerStr = countdownPad(p.d) + 'j ' + countdownPad(p.h) + 'h ' + countdownPad(p.m) + 'm ' + countdownPad(p.s) + 's';
   return (
-    <div data-countdown="active" style={{ marginTop: '10px', padding: '14px 10px', borderRadius: '12px', background: 'linear-gradient(135deg, #D91CD2 0%, #a716a1 100%)', textAlign: 'center', boxShadow: '0 0 20px rgba(217, 28, 210, 0.24), 0 0 40px rgba(217, 28, 210, 0.12), inset 0 1px 0 rgba(255,255,255,0.2)', width: '100%', boxSizing: 'border-box' }}>
+    <div data-countdown="active" style={{ marginTop: '10px', padding: '14px 10px', borderRadius: '12px', background: 'linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, #a716a1 100%)', textAlign: 'center', boxShadow: '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.24), 0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.12), inset 0 1px 0 rgba(255,255,255,0.2)', width: '100%', boxSizing: 'border-box' }}>
       <div style={{ fontSize: '13px', color: '#FFFFFF', fontWeight: 800, letterSpacing: '1px', marginBottom: '6px', textTransform: 'uppercase', animation: 'v147blink 0.8s ease-in-out infinite' }}>{text}</div>
       <div style={{ fontSize: '22px', color: '#FFFFFF', fontWeight: 900, fontFamily: "'Courier New', monospace", letterSpacing: '2.5px', textShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>{timerStr}</div>
     </div>
@@ -1282,8 +1283,8 @@ const OfferCard = ({ offer, selected, onClick }) => {
               style={{
                 left: '8px',
                 right: 'auto',
-                background: 'rgba(217, 28, 210, 0.85)',
-                boxShadow: '0 0 8px rgba(217, 28, 210, 0.2)',
+                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.85)',
+                boxShadow: '0 0 8px rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
                 border: 'none'
               }}
               title="Photo"
@@ -1321,10 +1322,10 @@ const OfferCard = ({ offer, selected, onClick }) => {
             whiteSpace: 'pre-wrap'
           }}>
             {offer.description}{' '}
-            <span onClick={toggleDescription} className="cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
+            <span onClick={toggleDescription} className="cursor-pointer font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>Lire plus</span>
           </p>
         )}
-        <span className="font-bold" style={{ color: '#d91cd2', fontSize: '18px' }}>CHF {offer.price}.-</span>
+        <span className="font-bold" style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '18px' }}>CHF {offer.price}.-</span>
         <OfferCountdown offer={offer} />
       </div>
     </div>
@@ -1925,7 +1926,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
               src={currentImage} 
               alt={offer.name} 
               className="max-w-full max-h-[80vh] object-contain rounded-xl"
-              style={{ boxShadow: '0 0 40px rgba(217, 28, 210, 0.2)' }}
+              style={{ boxShadow: '0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }}
             />
             
             {/* Flèches UNIQUEMENT dans le zoom */}
@@ -2001,7 +2002,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
           className={`offer-card-slider rounded-xl overflow-visible cursor-pointer transition-all duration-300`}
           style={{
             boxShadow: selected
-              ? '0 0 0 1.5px #d91cd2, 0 0 12px rgba(217, 28, 210, 0.25)'
+              ? '0 0 0 1.5px var(--primary-color, #D91CD2), 0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.25)'
               : pending
               ? '0 0 0 2.5px #FF2DAA, 0 0 22px rgba(255, 45, 170, 0.55)'
               : '0 0 0 1px rgba(139, 92, 246, 0.2), 0 4px 24px rgba(0,0,0,0.5)',
@@ -2105,8 +2106,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 <div
                   className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-all hover:scale-110"
                   style={{
-                    background: 'rgba(217, 28, 210, 0.85)',
-                    boxShadow: '0 0 12px rgba(217, 28, 210, 0.2)',
+                    background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.85)',
+                    boxShadow: '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
                     border: '2px solid rgba(255, 255, 255, 0.3)'
                   }}
                   onClick={toggleZoom}
@@ -2125,8 +2126,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                   <div
                     className="absolute bottom-3 left-3 px-3 py-1 rounded-full text-xs font-bold text-white flex items-center gap-1"
                     style={{
-                      background: 'linear-gradient(135deg, #d91cd2 0%, #8b5cf6 100%)',
-                      boxShadow: '0 0 15px rgba(217, 28, 210, 0.28)'
+                      background: 'linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, #8b5cf6 100%)',
+                      boxShadow: '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.28)'
                     }}
                   >
                     <span>✓</span> Sélectionné
@@ -2137,7 +2138,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
               /* Description Panel — V119.1: overflow scroll pour texte long */
               <div
                 className="w-full h-full flex flex-col justify-start p-5 pt-10 overflow-y-auto"
-                style={{ background: 'linear-gradient(180deg, rgba(139, 92, 246, 0.95) 0%, rgba(217, 28, 210, 0.9) 100%)' }}
+                style={{ background: 'linear-gradient(180deg, rgba(139, 92, 246, 0.95) 0%, rgba(var(--primary-rgb, 217, 28, 210), 0.9) 100%)' }}
               >
                 <p className="text-white text-sm leading-relaxed" style={{ whiteSpace: 'pre-wrap' }}>{offer.description}</p>
                 <button
@@ -2168,8 +2169,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
               <span
                 className="text-2xl font-bold"
                 style={{
-                  color: '#d91cd2',
-                  textShadow: selected ? '0 0 15px rgba(217, 28, 210, 0.24)' : 'none'
+                  color: 'var(--primary-color, #D91CD2)',
+                  textShadow: selected ? '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.24)' : 'none'
                 }}
               >
                 {/* V223: prix du palier actif, sinon rendu d'origine */}
@@ -2211,7 +2212,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                     {offer.description}
                   </p>
                 )}
-                <span onClick={(e) => { e.stopPropagation(); setShowDescription(true); }} className="text-xs cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
+                <span onClick={(e) => { e.stopPropagation(); setShowDescription(true); }} className="text-xs cursor-pointer font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>Lire plus</span>
               </div>
             )}
 
@@ -2234,9 +2235,9 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                   rel="noopener noreferrer"
                   onClick={e => e.stopPropagation()}
                   className="text-xs"
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#D91CD2', textDecoration: 'none', marginBottom: '6px' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--primary-color, #D91CD2)', textDecoration: 'none', marginBottom: '6px' }}
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--primary-color, #D91CD2)' }} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
                     <circle cx="12" cy="10" r="3" />
                   </svg>
@@ -2279,7 +2280,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: '4px',
                   background: 'none', border: 'none', padding: '2px 0',
-                  color: '#d91cd2', fontSize: '12px', fontWeight: 600, cursor: 'pointer'
+                  color: 'var(--primary-color, #D91CD2)', fontSize: '12px', fontWeight: 600, cursor: 'pointer'
                 }}
               >
                 {v255ShowAllSchedules ? 'Voir moins d\'horaires' : `+${v255HiddenSchedules} autre${v255HiddenSchedules > 1 ? 's' : ''} horaire${v255HiddenSchedules > 1 ? 's' : ''}`}
@@ -2601,8 +2602,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: '6px',
-                      border: '1px solid #D91CD2',
-                      color: '#D91CD2',
+                      border: '1px solid var(--primary-color, #D91CD2)',
+                      color: 'var(--primary-color, #D91CD2)',
                       background: 'transparent',
                       textDecoration: 'none'
                     }}
@@ -2640,7 +2641,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 }}
                 className="text-xs px-3 py-2 rounded-lg font-semibold transition-all"
                 style={{
-                  background: (checkoutBusy || v226BlockedByVariant) ? '#5a2a58' : '#D91CD2',
+                  background: (checkoutBusy || v226BlockedByVariant) ? '#5a2a58' : 'var(--primary-color, #D91CD2)',
                   color: '#fff',
                   opacity: (checkoutBusy || v226BlockedByVariant) ? 0.7 : 1,
                   cursor: checkoutBusy ? 'wait' : v226BlockedByVariant ? 'not-allowed' : 'pointer'
@@ -2878,8 +2879,8 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
               left: '4px',
               width: '32px',
               height: '32px',
-              background: '#D91CD2',
-              boxShadow: '0 2px 10px rgba(217, 28, 210, 0.24)',
+              background: 'var(--primary-color, #D91CD2)',
+              boxShadow: '0 2px 10px rgba(var(--primary-rgb, 217, 28, 210), 0.24)',
               border: '1.5px solid rgba(255,255,255,0.3)',
               opacity: currentIndex === 0 ? 0.3 : 0.9,
               cursor: currentIndex === 0 ? 'default' : 'pointer',
@@ -2909,8 +2910,8 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
               right: '4px',
               width: '32px',
               height: '32px',
-              background: '#D91CD2',
-              boxShadow: '0 2px 10px rgba(217, 28, 210, 0.24)',
+              background: 'var(--primary-color, #D91CD2)',
+              boxShadow: '0 2px 10px rgba(var(--primary-rgb, 217, 28, 210), 0.24)',
               border: '1.5px solid rgba(255,255,255,0.3)',
               opacity: currentIndex >= offers.length - 1 ? 0.3 : 0.9,
               cursor: currentIndex >= offers.length - 1 ? 'default' : 'pointer',
@@ -3389,7 +3390,7 @@ const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers, reserveLa
       onClick={onClose}
     >
       {/* V257b: la carte ne porte plus ni fond degrade ni bordure — le media
-          l'occupe entierement, coins arrondis a 20px et halo #D91CD2. Le fond
+          l'occupe entierement, coins arrondis a 20px et halo var(--primary-color, #D91CD2). Le fond
           sombre restait visible en bandes de part et d'autre d'une affiche qui
           ne remplissait pas le cadre.
           `maxWidth: 480` (au lieu de max-w-2xl = 672px) : meme cadrage compact
@@ -3399,7 +3400,7 @@ const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers, reserveLa
         style={{
           maxWidth: 480,
           borderRadius: 20,
-          boxShadow: '0 0 40px rgba(217, 28, 210, 0.3)',
+          boxShadow: '0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
           maxHeight: '92vh'
         }}
         onClick={(e) => e.stopPropagation()}
@@ -3528,7 +3529,7 @@ const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers, reserveLa
                   type="button"
                   onClick={() => { onClose(); onReserve(); }}
                   style={{
-                    background: 'rgba(217,28,210,0.85)',
+                    background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.85)',
                     color: '#fff',
                     border: 'none',
                     padding: '8px 18px',
@@ -3753,7 +3754,7 @@ const SuccessOverlay = ({ t, data, onClose, onClearTicket }) => {
             <p className="text-xs text-gray-600 mt-2">{t('scanToValidate') || 'Scannez pour valider'}</p>
           </div>
           
-          <div className="my-3 p-3 rounded-lg bg-white/10 border-2 border-dashed" style={{ borderColor: '#d91cd2' }}>
+          <div className="my-3 p-3 rounded-lg bg-white/10 border-2 border-dashed" style={{ borderColor: 'var(--primary-color, #D91CD2)' }}>
             <p className="text-xs text-white opacity-60">{t('reservationCode')}:</p>
             <p className="text-2xl font-bold tracking-widest text-white" data-testid="reservation-code">{data.reservationCode}</p>
           </div>
@@ -3780,8 +3781,8 @@ const SuccessOverlay = ({ t, data, onClose, onClearTicket }) => {
               disabled={isGenerating}
               className="flex-1 p-3 rounded-lg font-semibold text-white transition-all"
               style={{ 
-                background: 'linear-gradient(135deg, #d91cd2 0%, #8b5cf6 100%)',
-                boxShadow: '0 0 15px rgba(217, 28, 210, 0.16)'
+                background: 'linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, #8b5cf6 100%)',
+                boxShadow: '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.16)'
               }}
               data-testid="save-ticket-btn"
             >
@@ -4417,7 +4418,7 @@ function App() {
       if (data.concept) {
         setConcept(prev => ({ ...prev, ...data.concept }));
         if (data.concept.primaryColor) {
-          document.documentElement.style.setProperty('--primary-color', data.concept.primaryColor);
+          applyPrimaryColor(data.concept.primaryColor); // V259: pose aussi --primary-rgb
         }
         if (data.concept.backgroundColor) {
           document.documentElement.style.setProperty('--background-color', data.concept.backgroundColor);
@@ -4950,7 +4951,7 @@ function App() {
         setConcept(cachedConcept);
         // Appliquer les couleurs personnalisées
         if (cachedConcept.primaryColor) {
-          document.documentElement.style.setProperty('--primary-color', cachedConcept.primaryColor);
+          applyPrimaryColor(cachedConcept.primaryColor); // V259: pose aussi --primary-rgb
           // Glow: utiliser glowColor si défini, sinon primaryColor
           const glowBase = cachedConcept.glowColor || cachedConcept.primaryColor;
           document.documentElement.style.setProperty('--glow-color', `${glowBase}66`);
@@ -4970,7 +4971,7 @@ function App() {
         setConcept(conceptData);
         // Appliquer les couleurs personnalisées
         if (conceptData.primaryColor) {
-          document.documentElement.style.setProperty('--primary-color', conceptData.primaryColor);
+          applyPrimaryColor(conceptData.primaryColor); // V259: pose aussi --primary-rgb
           // Glow: utiliser glowColor si défini, sinon primaryColor
           const glowBase = conceptData.glowColor || conceptData.primaryColor;
           document.documentElement.style.setProperty('--glow-color', `${glowBase}66`);
@@ -5494,7 +5495,7 @@ function App() {
       const sessionsEl = document.getElementById('sessions-section');
       if (sessionsEl) {
         sessionsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        sessionsEl.style.boxShadow = '0 0 0 3px #d91cd2, 0 0 40px rgba(217,28,210, 0.24)';
+        sessionsEl.style.boxShadow = '0 0 0 3px var(--primary-color, #D91CD2), 0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.24)';
         sessionsEl.style.borderRadius = '12px';
         sessionsEl.style.transition = 'box-shadow 0.3s';
         setTimeout(() => { sessionsEl.style.boxShadow = ''; }, 6000);
@@ -5509,7 +5510,7 @@ function App() {
       const toast = document.createElement('div');
       toast.id = 'v158-session-toast';
       toast.innerHTML = `✨&nbsp; <strong>${offer?.name || 'Offre'}</strong><br/><span style="font-size:12px;opacity:0.9;">${hintMsg}</span>`;
-      toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#d91cd2,#8b5cf6);color:white;padding:14px 24px;border-radius:12px;font-size:14px;box-shadow:0 8px 30px rgba(217,28,210,0.5);max-width:90%;text-align:center;animation:bounce 0.5s ease;';
+      toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,var(--primary-color, #D91CD2),#8b5cf6);color:white;padding:14px 24px;border-radius:12px;font-size:14px;box-shadow:0 8px 30px rgba(var(--primary-rgb, 217, 28, 210), 0.5);max-width:90%;text-align:center;animation:bounce 0.5s ease;';
       document.body.appendChild(toast);
       setTimeout(() => { if (toast.parentNode) toast.remove(); }, 8000);
       return; // ne pas définir selectedOffer
@@ -5741,7 +5742,7 @@ function App() {
           const toast = document.createElement('div');
           toast.id = 'v159-email-toast';
           toast.innerHTML = '✅&nbsp; <strong>Réservation confirmée !</strong><br/><span style="font-size:13px;opacity:0.95;">📧 Consultez votre email pour recevoir votre QR code et code d\'accès AFR</span>';
-          toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#10b981,#d91cd2);color:white;padding:16px 28px;border-radius:14px;font-size:15px;box-shadow:0 10px 40px rgba(217,28,210,0.5);max-width:90%;text-align:center;animation:fadeInScale 0.4s ease;';
+          toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#10b981,var(--primary-color, #D91CD2));color:white;padding:16px 28px;border-radius:14px;font-size:15px;box-shadow:0 10px 40px rgba(var(--primary-rgb, 217, 28, 210), 0.5);max-width:90%;text-align:center;animation:fadeInScale 0.4s ease;';
           document.body.appendChild(toast);
           setTimeout(() => { if (toast.parentNode) toast.remove(); }, 10000);
         } catch (e) { /* ignore */ }
@@ -5898,7 +5899,7 @@ function App() {
         const toast = document.createElement('div');
         toast.id = 'v159-email-toast';
         toast.innerHTML = '✅&nbsp; <strong>Paiement confirmé !</strong><br/><span style="font-size:13px;opacity:0.95;">📧 Consultez votre email pour recevoir votre QR code et code d\'accès AFRO</span>';
-        toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#10b981,#d91cd2);color:white;padding:16px 28px;border-radius:14px;font-size:15px;box-shadow:0 10px 40px rgba(217,28,210,0.5);max-width:90%;text-align:center;animation:fadeInScale 0.4s ease;';
+        toast.style.cssText = 'position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:99999;background:linear-gradient(135deg,#10b981,var(--primary-color, #D91CD2));color:white;padding:16px 28px;border-radius:14px;font-size:15px;box-shadow:0 10px 40px rgba(var(--primary-rgb, 217, 28, 210), 0.5);max-width:90%;text-align:center;animation:fadeInScale 0.4s ease;';
         document.body.appendChild(toast);
         setTimeout(() => { if (toast.parentNode) toast.remove(); }, 10000);
       } catch (e) { /* ignore */ }
@@ -6136,10 +6137,10 @@ function App() {
           className="mb-8"
           style={{
             animation: 'pulse 2s ease-in-out infinite',
-            filter: 'drop-shadow(0 0 20px rgba(217, 28, 210, 0.5))'
+            filter: 'drop-shadow(0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.5))'
           }}
         >
-          <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="1.5">
+          <svg width="80" height="80" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--primary-color, #D91CD2)' }} strokeWidth="1.5">
             <path d="M12 2L2 7l10 5 10-5-10-5z" />
             <path d="M2 17l10 5 10-5" />
             <path d="M2 12l10 5 10-5" />
@@ -6150,7 +6151,7 @@ function App() {
         <h1 
           className="text-3xl md:text-4xl font-bold mb-4 text-center"
           style={{
-            background: 'linear-gradient(135deg, #D91CD2, #8B5CF6)',
+            background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8B5CF6)',
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent'
           }}
@@ -6173,7 +6174,7 @@ function App() {
           <div 
             className="h-full rounded-full"
             style={{
-              background: 'linear-gradient(90deg, #D91CD2, #8B5CF6)',
+              background: 'linear-gradient(90deg, var(--primary-color, #D91CD2), #8B5CF6)',
               width: '30%',
               animation: 'loading 1.5s ease-in-out infinite'
             }}
@@ -6386,7 +6387,7 @@ function App() {
               window.location.href = window.location.origin + '/#partner-dashboard';
             }}
             style={{
-              background: 'linear-gradient(135deg, #D91CD2, #7B2FBE)',
+              background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #7B2FBE)',
               color: 'white',
               border: 'none',
               borderRadius: '12px',
@@ -6397,11 +6398,11 @@ function App() {
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
-              boxShadow: '0 4px 20px rgba(217,28,210, 0.16)',
+              boxShadow: '0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.16)',
               transition: 'transform 0.2s, box-shadow 0.2s'
             }}
-            onMouseEnter={e => { e.target.style.transform = 'scale(1.05)'; e.target.style.boxShadow = '0 6px 25px rgba(217,28,210, 0.24)'; }}
-            onMouseLeave={e => { e.target.style.transform = 'scale(1)'; e.target.style.boxShadow = '0 4px 20px rgba(217,28,210, 0.16)'; }}
+            onMouseEnter={e => { e.target.style.transform = 'scale(1.05)'; e.target.style.boxShadow = '0 6px 25px rgba(var(--primary-rgb, 217, 28, 210), 0.24)'; }}
+            onMouseLeave={e => { e.target.style.transform = 'scale(1)'; e.target.style.boxShadow = '0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.16)'; }}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M19 12H5"></path>
@@ -6464,7 +6465,7 @@ function App() {
         <div
           className="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-2"
           style={{
-            background: 'linear-gradient(135deg, rgba(217,28,210,0.9), rgba(139,92,246,0.9))',
+            background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.9), rgba(139,92,246,0.9))',
             backdropFilter: 'blur(10px)',
             borderBottom: '1px solid rgba(255,255,255,0.2)',
             boxShadow: '0 2px 12px rgba(0,0,0,0.3)'
@@ -6490,7 +6491,7 @@ function App() {
           className="fixed bottom-0 left-0 right-0 z-50 px-3 py-2"
           style={{
             background: 'rgba(10, 10, 20, 0.95)',
-            borderTop: '1px solid rgba(217, 28, 210, 0.3)',
+            borderTop: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
             backdropFilter: 'blur(12px)'
           }}
           data-testid="pwa-install-banner"
@@ -6506,7 +6507,7 @@ function App() {
               <button
                 onClick={handleInstallClick}
                 className="px-3 py-1.5 rounded-full text-xs font-medium"
-                style={{ background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', color: '#fff' }}
+                style={{ background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)', color: '#fff' }}
                 data-testid="pwa-install-btn"
               >
                 {isIOS ? 'Comment ?' : 'Installer'}
@@ -6532,7 +6533,7 @@ function App() {
         >
           <div
             className="mx-4 rounded-2xl p-6 max-w-sm w-full text-center"
-            style={{ background: 'linear-gradient(145deg, #1a1a2e, #16213e)', border: '1px solid rgba(217,28,210,0.3)' }}
+            style={{ background: 'linear-gradient(145deg, #1a1a2e, #16213e)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }}
             onClick={(e) => e.stopPropagation()}
           >
             {installStatus === 'waiting' && !isIOS && (
@@ -6603,7 +6604,7 @@ function App() {
                   <div
                     className="h-2 rounded-full"
                     style={{
-                      background: 'linear-gradient(90deg, #D91CD2, #8b5cf6)',
+                      background: 'linear-gradient(90deg, var(--primary-color, #D91CD2), #8b5cf6)',
                       animation: 'installProgress 45s ease-out forwards'
                     }}
                   />
@@ -6622,7 +6623,7 @@ function App() {
                 <button
                   onClick={() => setInstallStatus(null)}
                   className="px-6 py-2.5 rounded-full text-sm font-medium text-white"
-                  style={{ background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)' }}
+                  style={{ background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)' }}
                 >
                   Super !
                 </button>
@@ -6662,8 +6663,8 @@ function App() {
           <div style={{
             background: 'linear-gradient(180deg, #1a1a2e 0%, #0a0a0f 100%)',
             borderRadius: '20px', padding: '32px 28px', maxWidth: '400px', width: '100%',
-            border: '1px solid rgba(217,28,210,0.3)',
-            boxShadow: '0 20px 60px rgba(217,28,210,0.2)',
+            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
+            boxShadow: '0 20px 60px rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
             textAlign: 'center'
           }} onClick={e => e.stopPropagation()}>
             <div style={{ fontSize: '40px', marginBottom: '12px' }}>💳</div>
@@ -6673,14 +6674,14 @@ function App() {
             <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '14px', margin: '0 0 8px' }}>
               {pendingReservation.offerName} — {pendingReservation.courseName}
             </p>
-            <p style={{ color: '#D91CD2', fontSize: '22px', fontWeight: 700, margin: '0 0 24px' }}>
+            <p style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '22px', fontWeight: 700, margin: '0 0 24px' }}>
               CHF {pendingReservation.totalPrice?.toFixed(2)}
             </p>
             <button onClick={handlePaymentChoiceCard} style={{
               width: '100%', padding: '16px', borderRadius: '14px', border: 'none',
-              background: 'linear-gradient(135deg, #D91CD2, #9B59B6)', color: '#fff',
+              background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9B59B6)', color: '#fff',
               fontSize: '16px', fontWeight: 700, cursor: 'pointer', marginBottom: '12px',
-              boxShadow: '0 4px 20px rgba(217,28,210, 0.16)',
+              boxShadow: '0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.16)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px'
             }}>
               <span>💳</span> Payer par carte
@@ -6733,8 +6734,8 @@ function App() {
             className="w-full max-w-md rounded-2xl p-6 text-center"
             style={{
               background: '#1a0a1f',
-              border: '1px solid rgba(217,28,210,0.35)',
-              boxShadow: '0 10px 50px rgba(217,28,210, 0.14)'
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35)',
+              boxShadow: '0 10px 50px rgba(var(--primary-rgb, 217, 28, 210), 0.14)'
             }}
           >
             <div className="text-4xl mb-3">✅</div>
@@ -6745,7 +6746,7 @@ function App() {
               </p>
             ) : null}
             {progressiveConfirm.amount != null ? (
-              <p className="text-2xl font-bold mb-4" style={{ color: '#D91CD2' }}>
+              <p className="text-2xl font-bold mb-4" style={{ color: 'var(--primary-color, #D91CD2)' }}>
                 {/* V225 REVUE FINALE: meme mise en forme que la carte d'offre.
                     Le total (unitaire x qte) peut etre fractionnaire — 3 x 19.50
                     rendrait « 58.5 » sans cela. */}
@@ -6762,7 +6763,7 @@ function App() {
               type="button"
               onClick={() => setProgressiveConfirm(null)}
               className="w-full py-3 rounded-xl font-bold"
-              style={{ background: 'linear-gradient(135deg, #D91CD2, #FF2DAA)', color: '#fff', border: 'none' }}
+              style={{ background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #FF2DAA)', color: '#fff', border: 'none' }}
             >
               J'ai compris
             </button>
@@ -6859,10 +6860,10 @@ function App() {
               className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all"
               style={{
                 background: activeFilter === tab.key
-                  ? 'linear-gradient(135deg, rgba(217, 28, 210, 0.3), rgba(139, 92, 246, 0.3))'
+                  ? 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.3), rgba(139, 92, 246, 0.3))'
                   : 'rgba(255, 255, 255, 0.06)',
                 border: activeFilter === tab.key
-                  ? '1px solid rgba(217, 28, 210, 0.5)'
+                  ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)'
                   : '1px solid rgba(255, 255, 255, 0.1)',
                 color: activeFilter === tab.key ? '#fff' : 'rgba(255, 255, 255, 0.6)'
               }}
@@ -6873,7 +6874,7 @@ function App() {
           ))}
           {/* V106: Barre de recherche universelle dans la sticky nav */}
           <div style={{ position: 'relative', marginLeft: 'auto', minWidth: '140px', maxWidth: '200px' }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(217,28,210,0.5)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(var(--primary-rgb, 217, 28, 210), 0.5)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
               style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
@@ -6884,17 +6885,17 @@ function App() {
               placeholder={t('searchPlaceholder')}
               style={{
                 width: '100%', padding: '6px 30px 6px 32px', borderRadius: '16px',
-                border: '1px solid rgba(217,28,210,0.3)', background: 'rgba(0,0,0,0.3)',
+                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', background: 'rgba(0,0,0,0.3)',
                 color: '#fff', fontSize: '11px', fontWeight: '300', outline: 'none',
                 transition: 'all 0.3s ease'
               }}
-              onFocus={(e) => { e.target.style.borderColor = '#D91CD2'; e.target.style.boxShadow = '0 0 8px rgba(217,28,210,0.2)'; }}
-              onBlur={(e) => { e.target.style.borderColor = 'rgba(217,28,210, 0.12)'; e.target.style.boxShadow = 'none'; }}
+              onFocus={(e) => { e.target.style.borderColor = 'var(--primary-color, #D91CD2)'; e.target.style.boxShadow = '0 0 8px rgba(var(--primary-rgb, 217, 28, 210), 0.2)'; }}
+              onBlur={(e) => { e.target.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)'; e.target.style.boxShadow = 'none'; }}
             />
             {searchQuery && (
               <button onClick={() => setSearchQuery('')}
                 style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)',
-                  background: 'none', border: 'none', color: 'rgba(217,28,210,0.6)', cursor: 'pointer', padding: '2px', display: 'flex' }}>
+                  background: 'none', border: 'none', color: 'rgba(var(--primary-rgb, 217, 28, 210), 0.6)', cursor: 'pointer', padding: '2px', display: 'flex' }}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                 </svg>
@@ -6921,7 +6922,7 @@ function App() {
             <button 
               onClick={() => { setSearchQuery(''); setActiveFilter('all'); }}
               className="mt-3 px-4 py-2 rounded-lg text-sm"
-              style={{ background: 'rgba(217, 28, 210, 0.3)', color: '#fff' }}
+              style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)', color: '#fff' }}
             >
               Réinitialiser les filtres
             </button>
@@ -6977,9 +6978,9 @@ function App() {
                     className={`course-card rounded-xl p-5 ${selectedCourse?.id === course.id ? 'selected' : ''}`}
                     data-testid={`course-card-${course.id}`}
                     style={{
-                      background: selectedCourse?.id === course.id ? 'rgba(217, 28, 210, 0.08)' : 'transparent',
+                      background: selectedCourse?.id === course.id ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)' : 'transparent',
                       border: 'none',
-                      borderLeft: selectedCourse?.id === course.id ? '2px solid #d91cd2' : 'none',
+                      borderLeft: selectedCourse?.id === course.id ? '2px solid var(--primary-color, #D91CD2)' : 'none',
                       borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
                       boxShadow: 'none'
                     }}
@@ -7008,7 +7009,7 @@ function App() {
               <h2 className="font-semibold mb-2 text-white" style={{ fontSize: '18px' }}>{t('chooseOffer')}</h2>
 
               {activeOffer ? (
-                <p className="text-sm mb-4" style={{ color: '#d91cd2' }}>
+                <p className="text-sm mb-4" style={{ color: 'var(--primary-color, #D91CD2)' }}>
                   👇 Choisissez votre horaire ci-dessous pour cette offre
                 </p>
               ) : (
@@ -7051,9 +7052,9 @@ function App() {
               onClick={() => setShowAudioPlayer(true)}
               className="w-full py-4 rounded-xl font-semibold text-white transition-all duration-300 hover:scale-[1.02] flex items-center justify-center gap-3"
               style={{
-                background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.3), rgba(217, 28, 210, 0.3))',
-                border: '1px solid rgba(217, 28, 210, 0.5)',
-                boxShadow: '0 0 20px rgba(217, 28, 210, 0.2)'
+                background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.3), rgba(var(--primary-rgb, 217, 28, 210), 0.3))',
+                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
+                boxShadow: '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
               }}
               data-testid="join-audio-experience-btn"
             >
@@ -7075,7 +7076,7 @@ function App() {
             className="fixed bottom-0 left-0 right-0 z-50 p-4"
             style={{
               background: 'linear-gradient(to top, #000000, rgba(0,0,0,0.95))',
-              borderTop: '1px solid rgba(217, 28, 210, 0.3)',
+              borderTop: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
               boxShadow: '0 -10px 30px rgba(0,0,0,0.8)'
             }}
           >
@@ -7125,8 +7126,8 @@ function App() {
                   }}
                   className="w-12 h-12 rounded-full flex items-center justify-center transition-all hover:scale-110"
                   style={{
-                    background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)',
-                    boxShadow: isPlaying ? '0 0 20px rgba(217, 28, 210, 0.2)' : 'none'
+                    background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
+                    boxShadow: isPlaying ? '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.2)' : 'none'
                   }}
                   data-testid="audio-play-pause"
                 >
@@ -7201,7 +7202,7 @@ function App() {
                     }}
                     className="flex-1 h-1 rounded-full appearance-none cursor-pointer"
                     style={{
-                      background: `linear-gradient(to right, #d91cd2 0%, #d91cd2 ${audioVolume * 100}%, rgba(255,255,255,0.2) ${audioVolume * 100}%, rgba(255,255,255,0.2) 100%)`
+                      background: `linear-gradient(to right, var(--primary-color, #D91CD2) 0%, var(--primary-color, #D91CD2) ${audioVolume * 100}%, rgba(255,255,255,0.2) ${audioVolume * 100}%, rgba(255,255,255,0.2) 100%)`
                     }}
                     data-testid="audio-volume"
                   />
@@ -7372,8 +7373,8 @@ function App() {
                 </div>
                 <span style={{
                   fontSize: '11px', padding: '4px 10px', borderRadius: '20px',
-                  background: 'rgba(217,28,210,0.12)', border: '1px solid rgba(217,28,210,0.25)',
-                  color: 'rgba(217,28,210,0.9)'
+                  background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.25)',
+                  color: 'rgba(var(--primary-rgb, 217, 28, 210), 0.9)'
                 }}>
                   🎵 {allAudioTracks.length} titre{allAudioTracks.length > 1 ? 's' : ''}
                 </span>
@@ -7383,7 +7384,7 @@ function App() {
               {paidTracks.length >= 2 && (
                 <div style={{
                   padding: '8px 14px', borderRadius: '10px', marginBottom: '12px',
-                  background: 'linear-gradient(135deg, rgba(34,197,94,0.1), rgba(217,28,210,0.08))',
+                  background: 'linear-gradient(135deg, rgba(34,197,94,0.1), rgba(var(--primary-rgb, 217, 28, 210), 0.08))',
                   border: '1px solid rgba(34,197,94,0.2)',
                   display: 'flex', alignItems: 'center', gap: '8px'
                 }}>
@@ -7401,7 +7402,7 @@ function App() {
                   maxHeight: '380px', overflowY: 'auto',
                   paddingRight: '4px',
                   scrollbarWidth: 'thin',
-                  scrollbarColor: 'rgba(217,28,210,0.3) transparent'
+                  scrollbarColor: 'rgba(var(--primary-rgb, 217, 28, 210), 0.3) transparent'
                 } : {})
               }}>
                 {allAudioTracks.map((track, idx) => {
@@ -7439,8 +7440,8 @@ function App() {
               {selectedCount >= 2 && (
                 <div style={{
                   marginTop: '16px', padding: '16px', borderRadius: '14px',
-                  background: 'linear-gradient(135deg, rgba(217,28,210,0.12), rgba(139,92,246,0.1))',
-                  border: '1px solid rgba(217,28,210,0.3)',
+                  background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.12), rgba(139,92,246,0.1))',
+                  border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                   textAlign: 'center'
                 }}>
                   <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
@@ -7461,10 +7462,10 @@ function App() {
                     onClick={handleBuyBundle}
                     style={{
                       width: '100%', padding: '12px 20px', borderRadius: '12px',
-                      background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                      background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                       color: '#fff', fontWeight: 700, fontSize: '14px',
                       border: 'none', cursor: 'pointer',
-                      boxShadow: '0 0 20px rgba(217,28,210, 0.12)',
+                      boxShadow: '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
                       transition: 'transform 0.2s'
                     }}
                     onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.02)'; }}
@@ -7496,19 +7497,19 @@ function App() {
               style={{
                 position: 'fixed', top: '16px', right: '16px', zIndex: 10000,
                 width: '44px', height: '44px', borderRadius: '50%',
-                background: 'rgba(217, 28, 210, 0.9)', border: '2px solid rgba(255,255,255,0.3)',
+                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.9)', border: '2px solid rgba(255,255,255,0.3)',
                 color: '#fff', fontSize: '20px', fontWeight: 700, cursor: 'pointer',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 0 20px rgba(217, 28, 210, 0.2), 0 4px 12px rgba(0,0,0,0.5)'
+                boxShadow: '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.2), 0 4px 12px rgba(0,0,0,0.5)'
               }}
             >✕</button>
             <div
               onClick={(e) => e.stopPropagation()}
               style={{
                 maxWidth: '400px', width: '100%', borderRadius: '20px',
-                background: 'rgba(20,10,30,0.95)', border: '1px solid rgba(217,28,210,0.3)',
+                background: 'rgba(20,10,30,0.95)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                 padding: '24px', paddingTop: '20px', cursor: 'default', position: 'relative',
-                boxShadow: '0 0 40px rgba(217,28,210,0.2)',
+                boxShadow: '0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
                 maxHeight: '85vh', overflowY: 'auto', WebkitOverflowScrolling: 'touch',
                 margin: 'auto'
               }}
@@ -7520,13 +7521,13 @@ function App() {
                   alt={audioLightbox.title}
                   style={{
                     width: '100%', borderRadius: '14px', marginBottom: '16px',
-                    boxShadow: '0 0 30px rgba(217,28,210, 0.12)'
+                    boxShadow: '0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.12)'
                   }}
                 />
               ) : (
                 <div style={{
                   width: '100%', height: '200px', borderRadius: '14px', marginBottom: '16px',
-                  background: 'linear-gradient(135deg, rgba(217,28,210,0.3), rgba(139,92,246,0.2))',
+                  background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.3), rgba(139,92,246,0.2))',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '60px'
                 }}>🎵</div>
               )}
@@ -7536,7 +7537,7 @@ function App() {
               {audioLightbox.price > 0 && (
                 <span style={{
                   display: 'inline-block', padding: '4px 12px', borderRadius: '8px',
-                  background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                  background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                   color: '#fff', fontWeight: 700, fontSize: '13px', marginBottom: '12px'
                 }}>
                   {audioLightbox.price} CHF
@@ -7567,8 +7568,8 @@ function App() {
               className="inline-flex items-center gap-2 px-6 py-3 rounded-full transition-all duration-300 hover:scale-105"
               style={{
                 background: 'transparent',
-                border: '2px solid rgba(217, 28, 210, 0.7)',
-                boxShadow: '0 0 15px rgba(217, 28, 210, 0.16), inset 0 0 10px rgba(139, 92, 246, 0.1)',
+                border: '2px solid rgba(var(--primary-rgb, 217, 28, 210), 0.7)',
+                boxShadow: '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.16), inset 0 0 10px rgba(139, 92, 246, 0.1)',
                 color: '#fff'
               }}
               data-testid="google-reviews-btn"
@@ -7719,8 +7720,8 @@ function App() {
                       {/* Pour les services/cours: Afficher les dates sélectionnées */}
                       {!selectedOffer?.isProduct && !selectedOffer?.isPhysicalProduct && selectedDates.length > 0 && (
                         <div className="mb-3 p-3 rounded-lg" style={{ 
-                          background: 'rgba(217, 28, 210, 0.1)', 
-                          border: '1px solid rgba(217, 28, 210, 0.3)' 
+                          background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)', 
+                          border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' 
                         }}>
                           <p className="text-xs text-pink-400 mb-2 font-medium">📅 Dates sélectionnées ({selectedDates.length})</p>
                           <div className="flex flex-wrap gap-2">
@@ -7729,8 +7730,8 @@ function App() {
                                 key={idx}
                                 className="px-2 py-1 rounded-full text-xs text-white"
                                 style={{ 
-                                  background: 'rgba(217, 28, 210, 0.3)',
-                                  border: '1px solid #D91CD2'
+                                  background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
+                                  border: '1px solid var(--primary-color, #D91CD2)'
                                 }}
                               >
                                 {new Date(dateISO).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })}
@@ -7798,7 +7799,7 @@ function App() {
                   )}
                   <p className="font-bold text-white text-lg flex justify-between" data-testid="total-price">
                     <span>{t('total')}:</span>
-                    <span style={{ color: parseFloat(totalPrice) === 0 ? '#4ade80' : '#d91cd2' }}>
+                    <span style={{ color: parseFloat(totalPrice) === 0 ? '#4ade80' : 'var(--primary-color, #D91CD2)' }}>
                       CHF {totalPrice}
                       {parseFloat(totalPrice) === 0 && <span className="ml-2 text-sm">(GRATUIT)</span>}
                     </span>
@@ -7814,7 +7815,7 @@ function App() {
                       type="button"
                       onClick={(e) => { e.preventDefault(); setShowTermsModal(true); }}
                       className="underline hover:text-purple-400"
-                      style={{ color: '#d91cd2' }}
+                      style={{ color: 'var(--primary-color, #D91CD2)' }}
                       data-testid="terms-link"
                     >
                       {t('termsLink') || 'conditions générales'}
@@ -7867,7 +7868,7 @@ function App() {
                 <p style={{ fontWeight: 'bold', marginBottom: '12px', fontSize: '14px' }}>Impressum</p>
                 <p><strong>Dénomination :</strong> Association Afroboosteur</p>
                 <p><strong>Adresse :</strong> Rue Maillefer 39, 2000 Neuchâtel, Suisse</p>
-                <p><strong>Contact :</strong> <a href="mailto:contact@afroboosteur.com" style={{ color: '#D91CD2' }}>contact@afroboosteur.com</a></p>
+                <p><strong>Contact :</strong> <a href="mailto:contact@afroboosteur.com" style={{ color: 'var(--primary-color, #D91CD2)' }}>contact@afroboosteur.com</a></p>
                 <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
                   <p style={{ fontWeight: 'bold', marginBottom: '8px', fontSize: '14px' }}>Moyens de paiement</p>
                   <p>Les paiements sont traités de manière sécurisée via Stripe. Les moyens de paiement acceptés incluent TWINT, carte de crédit (Visa, Mastercard) et PayPal selon la configuration du coach.</p>
@@ -7900,7 +7901,7 @@ function App() {
                 {t('faq')}
               </h3>
               <span style={{
-                color: '#D91CD2', fontSize: '20px', fontWeight: '300',
+                color: 'var(--primary-color, #D91CD2)', fontSize: '20px', fontWeight: '300',
                 transform: faqSectionOpen ? 'rotate(45deg)' : 'none',
                 transition: 'transform 0.2s ease',
               }}>+</span>
@@ -7923,7 +7924,7 @@ function App() {
                     >
                       <span style={{ color: '#fff', fontSize: '14px', fontWeight: 500 }}>{faq.question}</span>
                       <span style={{
-                        color: '#D91CD2', fontSize: '18px', fontWeight: '300',
+                        color: 'var(--primary-color, #D91CD2)', fontSize: '18px', fontWeight: '300',
                         transform: openFaqId === faq.id ? 'rotate(45deg)' : 'none',
                         transition: 'transform 0.2s ease',
                       }}>+</span>
@@ -8132,14 +8133,14 @@ function App() {
                           style={{
                             width: '36px', height: '36px', borderRadius: '50%',
                             overflow: 'hidden', cursor: 'pointer', flexShrink: 0,
-                            border: '2px solid #D91CD2'
+                            border: '2px solid var(--primary-color, #D91CD2)'
                           }}
                         >
                           <img
                             src={photoUrl}
                             alt={comment.user_name}
                             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                            onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.innerHTML = `<div style="width:100%;height:100%;background:#D91CD2;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff">${(comment.user_name || '?')[0].toUpperCase()}</div>`; }}
+                            onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.innerHTML = `<div style="width:100%;height:100%;background:var(--primary-color, #D91CD2);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff">${(comment.user_name || '?')[0].toUpperCase()}</div>`; }}
                           />
                         </div>
                       );
@@ -8153,7 +8154,7 @@ function App() {
                         {/* v86: Badge "Vérifié" pour les avis réels post-session */}
                         {comment.is_verified && (
                           <span style={{
-                            background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                            background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                             color: '#fff',
                             fontSize: '9px',
                             fontWeight: 700,
@@ -8165,7 +8166,7 @@ function App() {
                         <div style={{ display: 'flex', gap: '1px' }}>
                           {[1,2,3,4,5].map(i => (
                             <svg key={i} width="10" height="10" viewBox="0 0 24 24"
-                              fill={i <= (comment.rating || 5) ? '#D91CD2' : '#ddd'}
+                              fill={i <= (comment.rating || 5) ? 'var(--primary-color, #D91CD2)' : '#ddd'}
                               stroke="none"
                             >
                               <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
@@ -8186,7 +8187,7 @@ function App() {
                             c.id === comment.id ? { ...c, likes: (c.likes || 0) + 1 } : c
                           ));
                           btn.style.transform = 'scale(1.3)';
-                          btn.style.color = '#D91CD2';
+                          btn.style.color = 'var(--primary-color, #D91CD2)';
                           setTimeout(() => { btn.style.transform = 'scale(1)'; }, 300);
                           setTimeout(() => { btn.style.color = '#606060'; }, 1500);
                           try {
@@ -8258,8 +8259,8 @@ function App() {
             onClick={(e) => e.stopPropagation()}
             style={{
               width: 'min(70vw, 280px)', height: 'min(70vw, 280px)', borderRadius: '50%',
-              overflow: 'hidden', border: '5px solid #D91CD2',
-              boxShadow: '0 0 40px rgba(217,28,210, 0.24), 0 0 80px rgba(217,28,210, 0.12), 0 0 120px rgba(217,28,210,0.1)',
+              overflow: 'hidden', border: '5px solid var(--primary-color, #D91CD2)',
+              boxShadow: '0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.24), 0 0 80px rgba(var(--primary-rgb, 217, 28, 210), 0.12), 0 0 120px rgba(var(--primary-rgb, 217, 28, 210), 0.1)',
               animation: 'v76ZoomIn 0.25s ease-out'
             }}
           >
@@ -8279,8 +8280,8 @@ function App() {
           to { transform: translateY(0); }
         }
         @keyframes v73GlowPulse {
-          0%, 100% { transform: scale(1); box-shadow: 0 0 14px rgba(217,28,210,0.5), 0 0 30px rgba(217,28,210,0.2); }
-          50% { transform: scale(1.06); box-shadow: 0 0 20px rgba(217,28,210,0.6), 0 0 45px rgba(217,28,210,0.25); }
+          0%, 100% { transform: scale(1); box-shadow: 0 0 14px rgba(var(--primary-rgb, 217, 28, 210), 0.5), 0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.2); }
+          50% { transform: scale(1.06); box-shadow: 0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.6), 0 0 45px rgba(var(--primary-rgb, 217, 28, 210), 0.25); }
         }
         @keyframes v74ZoomIn {
           from { transform: scale(0.5); opacity: 0; }

@@ -221,9 +221,9 @@ const FAQManager = ({ API, coachEmail, t }) => {
             className="inline-flex items-center justify-center gap-1.5"
             style={{
               padding: '8px 12px', borderRadius: '8px', whiteSpace: 'nowrap',
-              background: aiLoading ? 'rgba(139,92,246,0.2)' : 'rgba(217,28,210,0.2)',
-              border: '1px solid rgba(217,28,210,0.4)',
-              color: '#D91CD2', fontSize: '12px',
+              background: aiLoading ? 'rgba(139,92,246,0.2)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+              color: 'var(--primary-color, #D91CD2)', fontSize: '12px',
               cursor: (aiLoading || !newQuestion.trim()) ? 'not-allowed' : 'pointer',
               opacity: !newQuestion.trim() ? 0.4 : 1
             }}
@@ -242,7 +242,7 @@ const FAQManager = ({ API, coachEmail, t }) => {
           className="flex items-center justify-center gap-1.5"
           style={{
             width: '100%', padding: '10px', borderRadius: '8px',
-            background: saving ? 'rgba(139,92,246,0.3)' : 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+            background: saving ? 'rgba(139,92,246,0.3)' : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
             color: '#fff', fontWeight: 600, fontSize: '13px', border: 'none',
             cursor: saving ? 'wait' : 'pointer',
             opacity: !newQuestion.trim() ? 0.5 : 1

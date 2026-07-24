@@ -236,7 +236,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
           {/* Header - v12.1: Design Premium Sans Cadre */}
           <div className="flex justify-between items-center mb-8">
             <div className="flex items-center gap-3">
-              <span style={{ color: '#D91CD2' }}><CrownIcon /></span>
+              <span style={{ color: 'var(--primary-color, #D91CD2)' }}><CrownIcon /></span>
               <h1 className="text-2xl font-bold text-white">Panneau Super Admin</h1>
             </div>
             <button 
@@ -258,7 +258,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                   ? 'text-white' 
                   : 'text-white/40 hover:text-white/70'
               }`}
-              style={activeTab === 'packs' ? { color: '#D91CD2' } : {}}
+              style={activeTab === 'packs' ? { color: 'var(--primary-color, #D91CD2)' } : {}}
               data-testid="tab-packs"
             >
               Packs Coach ({packs.length})
@@ -270,7 +270,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                   ? 'text-white' 
                   : 'text-white/40 hover:text-white/70'
               }`}
-              style={activeTab === 'coaches' ? { color: '#D91CD2' } : {}}
+              style={activeTab === 'coaches' ? { color: 'var(--primary-color, #D91CD2)' } : {}}
               data-testid="tab-coaches"
             >
               Coachs Partenaires ({coaches.length})
@@ -282,7 +282,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                   ? 'text-white' 
                   : 'text-white/40 hover:text-white/70'
               }`}
-              style={activeTab === 'pricing' ? { color: '#D91CD2' } : {}}
+              style={activeTab === 'pricing' ? { color: 'var(--primary-color, #D91CD2)' } : {}}
               data-testid="tab-pricing"
             >
               <span className="inline-flex items-center gap-1.5"><SvgIcon name="diamond" size={14} /> Tarifs Services</span>
@@ -308,7 +308,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                   setShowPackForm(true);
                 }}
                 className="flex items-center gap-2 px-6 py-3 text-white font-medium transition-all hover:opacity-80"
-                style={{ background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', borderRadius: '8px' }}
+                style={{ background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)', borderRadius: '8px' }}
                 data-testid="create-pack-btn"
               >
                 <PlusIcon />
@@ -317,7 +317,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
 
               {/* Formulaire Pack - v12.1: Design Sans Cadre */}
               {showPackForm && (
-                <div className="py-6" style={{ borderTop: '1px solid rgba(217, 28, 210, 0.3)', borderBottom: '1px solid rgba(217, 28, 210, 0.3)' }}>
+                <div className="py-6" style={{ borderTop: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', borderBottom: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }}>
                   <h3 className="text-lg font-semibold text-white mb-6">
                     {editingPack ? 'Modifier le Pack' : 'Nouveau Pack'}
                   </h3>
@@ -364,9 +364,9 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                           disabled={aiPackLoading || !(packForm.description?.trim())}
                           className="text-xs px-2 py-1 rounded-lg"
                           style={{
-                            background: aiPackLoading ? 'rgba(139,92,246,0.2)' : 'rgba(217,28,210,0.2)',
-                            border: '1px solid rgba(217,28,210,0.4)',
-                            color: '#D91CD2',
+                            background: aiPackLoading ? 'rgba(139,92,246,0.2)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
+                            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+                            color: 'var(--primary-color, #D91CD2)',
                             cursor: aiPackLoading ? 'wait' : 'pointer',
                             opacity: !(packForm.description?.trim()) ? 0.4 : 1
                           }}
@@ -412,7 +412,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                       onClick={handleSavePack}
                       disabled={!packForm.name || !packForm.price || !packForm.credits}
                       className="px-6 py-2 text-white font-medium transition-all hover:opacity-80 disabled:opacity-30"
-                      style={{ background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', borderRadius: '8px' }}
+                      style={{ background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)', borderRadius: '8px' }}
                       data-testid="save-pack-btn"
                     >
                       {editingPack ? 'Modifier' : 'Créer'}
@@ -449,7 +449,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                         </button>
                       </div>
                     </div>
-                    <div className="text-2xl font-bold mb-1" style={{ color: '#D91CD2' }}>
+                    <div className="text-2xl font-bold mb-1" style={{ color: 'var(--primary-color, #D91CD2)' }}>
                       {pack.price} CHF
                     </div>
                     <div className="text-white/50 text-sm mb-2">{pack.credits} crédits</div>
@@ -585,7 +585,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                     value={servicePrices.campaign}
                     onChange={(e) => setServicePrices(prev => ({ ...prev, campaign: parseInt(e.target.value) || 0 }))}
                     className="w-20 px-3 py-2 text-center text-white text-lg font-bold"
-                    style={{ background: 'transparent', border: 'none', borderBottom: '2px solid #D91CD2' }}
+                    style={{ background: 'transparent', border: 'none', borderBottom: '2px solid var(--primary-color, #D91CD2)' }}
                     data-testid="price-campaign"
                   />
                   <span className="text-white/40 text-sm">crédits</span>
@@ -608,7 +608,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                     value={servicePrices.ai_conversation}
                     onChange={(e) => setServicePrices(prev => ({ ...prev, ai_conversation: parseInt(e.target.value) || 0 }))}
                     className="w-20 px-3 py-2 text-center text-white text-lg font-bold"
-                    style={{ background: 'transparent', border: 'none', borderBottom: '2px solid #D91CD2' }}
+                    style={{ background: 'transparent', border: 'none', borderBottom: '2px solid var(--primary-color, #D91CD2)' }}
                     data-testid="price-ai-conversation"
                   />
                   <span className="text-white/40 text-sm">crédits</span>
@@ -631,7 +631,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                     value={servicePrices.promo_code}
                     onChange={(e) => setServicePrices(prev => ({ ...prev, promo_code: parseInt(e.target.value) || 0 }))}
                     className="w-20 px-3 py-2 text-center text-white text-lg font-bold"
-                    style={{ background: 'transparent', border: 'none', borderBottom: '2px solid #D91CD2' }}
+                    style={{ background: 'transparent', border: 'none', borderBottom: '2px solid var(--primary-color, #D91CD2)' }}
                     data-testid="price-promo-code"
                   />
                   <span className="text-white/40 text-sm">crédits</span>
@@ -645,7 +645,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                   disabled={savingPrices}
                   className="px-8 py-3 text-white font-medium transition-all hover:opacity-80 disabled:opacity-50"
                   style={{ 
-                    background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                    background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                     borderRadius: '8px'
                   }}
                   data-testid="save-prices-btn"

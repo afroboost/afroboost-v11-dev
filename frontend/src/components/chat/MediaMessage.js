@@ -65,7 +65,7 @@ const CTA_CONFIG = {
   OFFRE: {
     icon: ShoppingIcon,
     defaultText: 'VOIR L\'OFFRE',
-    color: '#d91cd2', // Rose Afroboost
+    color: 'var(--primary-color, #D91CD2)', // Rose Afroboost
     hoverColor: '#c026d3'
   },
   PERSONNALISE: {
@@ -82,7 +82,7 @@ const CTA_CONFIG = {
       </svg>
     ),
     defaultText: 'DISCUTER AVEC L\'IA',
-    color: '#D91CD2', // Rose Afroboost
+    color: 'var(--primary-color, #D91CD2)', // Rose Afroboost
     hoverColor: '#c026d3'
   }
 };
@@ -201,12 +201,12 @@ const MediaMessage = ({
                   width: '64px',
                   height: '64px',
                   borderRadius: '50%',
-                  background: 'rgba(217, 28, 210, 0.85)',
+                  background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.85)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   color: '#fff',
-                  boxShadow: '0 4px 24px rgba(217, 28, 210, 0.4)',
+                  boxShadow: '0 4px 24px rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
                   transition: 'transform 0.2s'
                 }}>
                   <PlayIcon />
@@ -275,7 +275,7 @@ const MediaMessage = ({
                 width: '80px',
                 height: '80px',
                 borderRadius: '50%',
-                background: 'linear-gradient(135deg, #9333ea 0%, #d91cd2 100%)',
+                background: 'linear-gradient(135deg, #9333ea 0%, var(--primary-color, #D91CD2) 100%)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',

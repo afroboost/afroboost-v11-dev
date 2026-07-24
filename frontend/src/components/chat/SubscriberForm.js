@@ -364,11 +364,11 @@ const SubscriberForm = ({
           gap: '10px',
           padding: '10px 12px',
           background: rememberMe
-            ? 'rgba(217, 28, 210, 0.15)'
+            ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)'
             : 'rgba(255,255,255,0.05)',
           borderRadius: '10px',
           border: rememberMe
-            ? '1px solid rgba(217, 28, 210, 0.3)'
+            ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)'
             : '1px solid rgba(255,255,255,0.1)',
           cursor: 'pointer',
           transition: 'all 0.3s ease',
@@ -384,11 +384,11 @@ const SubscriberForm = ({
           height: '22px',
           flexShrink: 0,
           background: rememberMe
-            ? 'linear-gradient(135deg, #D91CD2, #9333ea)'
+            ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)'
             : 'rgba(255,255,255,0.2)',
           borderRadius: '11px',
           transition: 'background 0.3s ease',
-          boxShadow: rememberMe ? '0 0 8px rgba(217, 28, 210, 0.4)' : 'none'
+          boxShadow: rememberMe ? '0 0 8px rgba(var(--primary-rgb, 217, 28, 210), 0.4)' : 'none'
         }}>
           <div style={{
             position: 'absolute',
@@ -406,7 +406,7 @@ const SubscriberForm = ({
         {/* Label + description */}
         <div style={{ flex: 1 }}>
           <span style={{
-            color: rememberMe ? '#D91CD2' : 'rgba(255,255,255,0.7)',
+            color: rememberMe ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.7)',
             fontSize: '12px',
             fontWeight: '500',
             transition: 'color 0.3s ease'

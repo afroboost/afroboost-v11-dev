@@ -131,7 +131,7 @@ const VitrineCheckout = ({
   // === STYLES ===
   const containerStyle = {
     background: 'rgba(255,255,255,0.03)',
-    border: '1px solid rgba(217, 28, 210, 0.2)',
+    border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
     borderRadius: '16px',
     padding: '24px',
     marginTop: '16px'
@@ -141,8 +141,8 @@ const VitrineCheckout = ({
     flex: 1,
     padding: '16px 12px',
     borderRadius: '10px',
-    border: `2px solid ${selectedMethod === id ? '#D91CD2' : 'rgba(255,255,255,0.1)'}`,
-    background: selectedMethod === id ? 'rgba(217, 28, 210, 0.08)' : 'rgba(255,255,255,0.02)',
+    border: `2px solid ${selectedMethod === id ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.1)'}`,
+    background: selectedMethod === id ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)' : 'rgba(255,255,255,0.02)',
     cursor: 'pointer',
     textAlign: 'center',
     transition: 'all 0.2s',
@@ -227,7 +227,7 @@ const VitrineCheckout = ({
           {items.map((item, i) => (
             <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
               <span style={{ color: 'white', fontSize: '14px' }}>{item.name}</span>
-              <span style={{ color: '#D91CD2', fontSize: '14px', fontWeight: '600' }}>{item.price} CHF</span>
+              <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '14px', fontWeight: '600' }}>{item.price} CHF</span>
             </div>
           ))}
           {discountAmount > 0 && (
@@ -238,7 +238,7 @@ const VitrineCheckout = ({
           )}
           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 0', marginTop: '4px' }}>
             <span style={{ color: 'white', fontSize: '16px', fontWeight: '700' }}>Total</span>
-            <span style={{ color: '#D91CD2', fontSize: '18px', fontWeight: '700' }}>{total.toFixed(2)} CHF</span>
+            <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '18px', fontWeight: '700' }}>{total.toFixed(2)} CHF</span>
           </div>
         </div>
       )}
@@ -259,7 +259,7 @@ const VitrineCheckout = ({
                 style={methodCardStyle(method)}
               >
                 {selectedMethod === method && (
-                  <div style={{ position: 'absolute', top: '6px', right: '6px', width: '18px', height: '18px', borderRadius: '50%', background: '#D91CD2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ position: 'absolute', top: '6px', right: '6px', width: '18px', height: '18px', borderRadius: '50%', background: 'var(--primary-color, #D91CD2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <span style={{ color: 'white', fontSize: '11px' }}>✓</span>
                   </div>
                 )}
@@ -294,7 +294,7 @@ const VitrineCheckout = ({
           padding: '14px',
           borderRadius: '10px',
           border: 'none',
-          background: submitting || !selectedMethod ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+          background: submitting || !selectedMethod ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
           color: 'white',
           fontSize: '16px',
           fontWeight: '600',

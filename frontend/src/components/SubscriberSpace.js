@@ -15,7 +15,7 @@ const API = `${BACKEND_URL}/api`;
 
 const COLORS = {
   bg: "#0A0A0F",
-  primary: "#D91CD2",
+  primary: "var(--primary-color, #D91CD2)",
   secondary: "#FF2DAA",
   panel: "rgba(255,255,255,0.04)",
   border: "rgba(255,255,255,0.08)",
@@ -1152,10 +1152,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             const btnStyle = {
               background: isEmpty
                 ? `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`
-                : "rgba(217,28,210,0.18)",
+                : "rgba(var(--primary-rgb, 217, 28, 210), 0.18)",
               color: isEmpty ? "white" : "#F0A8EE",
               border: isEmpty ? "none" : `1px solid ${COLORS.primary}55`,
-              boxShadow: isEmpty ? "0 6px 20px rgba(217,28,210,0.35)" : "none",
+              boxShadow: isEmpty ? "0 6px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.35)" : "none",
             };
             if (hasStripe) {
               return (

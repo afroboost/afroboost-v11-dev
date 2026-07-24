@@ -206,6 +206,51 @@ def is_super_admin(email: str) -> bool:
     """Vérifie si l'email est celui d'un Super Admin"""
     return email and email.lower().strip() in [e.lower() for e in SUPER_ADMIN_EMAILS]
 
+
+# === V259: couleur de marque dans les emails ===
+# Un email ne peut pas lire les variables CSS du site : la couleur doit y partir
+# en dur, donc etre relue en base au moment de l'envoi. Les memes helpers vivent
+# dans api/routes/shared.py pour les modules de routes, qui ont leur propre
+# handle `db` et ne peuvent pas importer server.py (dependance circulaire).
+_V259_DEFAULT_COLOR = "#D91CD2"
+
+
+def _v259_primary_rgb(hex_color: str) -> str:
+    """« r, g, b » d'une couleur #rrggbb, pour les rgba() des emails."""
+    try:
+        h = (hex_color or "").strip().lstrip("#")
+        if len(h) == 3:
+            h = h[0] * 2 + h[1] * 2 + h[2] * 2
+        if len(h) != 6:
+            raise ValueError(h)
+        return "%d, %d, %d" % (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+    except Exception:
+        return "217, 28, 210"
+
+
+async def _v259_primary_color(coach_email: str = "") -> str:
+    """Couleur de marque a injecter dans un email.
+
+    Le concept est MULTI-TENANT (`concept_{email}` par coach, `concept` pour
+    l'administration) : on lit d'abord celui du coach concerne quand il est
+    connu, sinon l'email d'un partenaire porterait la couleur d'un autre.
+    Jamais bloquant — l'envoi prime sur sa couleur.
+    """
+    try:
+        if coach_email:
+            doc = await db.concept.find_one(
+                {"id": "concept_" + str(coach_email).lower().strip()},
+                {"_id": 0, "primaryColor": 1}
+            )
+            if doc and doc.get("primaryColor"):
+                return doc["primaryColor"]
+        doc = await db.concept.find_one({"id": "concept"}, {"_id": 0, "primaryColor": 1})
+        if doc and doc.get("primaryColor"):
+            return doc["primaryColor"]
+    except Exception as e:
+        logger.warning(f"[V259] Couleur de marque non lue, repli sur le defaut: {e}")
+    return _V259_DEFAULT_COLOR
+
 def get_coach_filter(email: str) -> dict:
     """Retourne le filtre MongoDB pour l'isolation des données coach"""
     if is_super_admin(email):
@@ -4023,15 +4068,18 @@ async def stripe_webhook(request: Request):
                     # Notification email au coach
                     if RESEND_AVAILABLE and coach_email:
                         try:
+                            # V259: couleur de marque relue en base (un email ne lit pas les variables CSS)
+                            primary_color = await _v259_primary_color(coach_email)
+                            primary_rgb = _v259_primary_rgb(primary_color)
                             html = f"""<div style="font-family:Arial;max-width:600px;margin:0 auto;background:#0a0a0a;">
-                            <div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:24px;text-align:center;">
+                            <div style="background:linear-gradient(135deg,{primary_color},#8b5cf6);padding:24px;text-align:center;">
                             <h1 style="color:white;margin:0;">Crédits ajoutés ! 🎉</h1></div>
                             <div style="padding:24px;color:#fff;">
                             <p>Bonjour {metadata.get('customer_name', 'Coach')},</p>
                             <p>Votre achat de <strong>{pack_name}</strong> a été confirmé.</p>
-                            <div style="background:rgba(217,28,210,0.15);border:1px solid rgba(217,28,210,0.3);padding:20px;border-radius:8px;margin:20px 0;text-align:center;">
+                            <div style="background:rgba({primary_rgb}, 0.15);border:1px solid rgba({primary_rgb}, 0.3);padding:20px;border-radius:8px;margin:20px 0;text-align:center;">
                             <p style="margin:0;color:#22c55e;font-size:32px;font-weight:bold;">+{credits} crédits</p>
-                            <p style="margin:12px 0 0;color:#888;">Nouveau solde: <strong style="color:#d91cd2;">{new_balance} crédits</strong></p>
+                            <p style="margin:12px 0 0;color:#888;">Nouveau solde: <strong style="color:{primary_color};">{new_balance} crédits</strong></p>
                             </div>
                             <p style="color:#888;font-size:12px;">Utilisez vos crédits pour les campagnes, conversations IA et codes promo.</p>
                             </div></div>"""
@@ -4053,7 +4101,7 @@ async def stripe_webhook(request: Request):
                             <p style="margin:0;color:#fff;"><strong>Coach:</strong> {coach_email}</p>
                             <p style="margin:8px 0 0;color:#fff;"><strong>Pack:</strong> {pack_name}</p>
                             <p style="margin:8px 0 0;color:#22c55e;"><strong>Montant:</strong> {price_chf} CHF</p>
-                            <p style="margin:8px 0 0;color:#d91cd2;"><strong>Crédits:</strong> +{credits}</p>
+                            <p style="margin:8px 0 0;color:{primary_color};"><strong>Crédits:</strong> +{credits}</p>
                             </div></div>"""
                             await asyncio.to_thread(resend.Emails.send, {
                                 "from": "Afroboost System <notifications@afroboost.com>",
@@ -4097,8 +4145,8 @@ async def stripe_webhook(request: Request):
                     try:
                         pack_name = metadata.get("pack_name", "Pack Coach")
                         bassi_html = f"""<div style="font-family:Arial;max-width:600px;margin:0 auto;background:#1a1a2e;padding:24px;">
-                        <h2 style="color:#d91cd2;margin:0 0 16px;">🔔 Nouveau Coach inscrit !</h2>
-                        <div style="background:rgba(217,28,210,0.1);border:1px solid rgba(217,28,210,0.3);padding:16px;border-radius:8px;margin-bottom:16px;">
+                        <h2 style="color:{primary_color};margin:0 0 16px;">🔔 Nouveau Coach inscrit !</h2>
+                        <div style="background:rgba({primary_rgb}, 0.1);border:1px solid rgba({primary_rgb}, 0.3);padding:16px;border-radius:8px;margin-bottom:16px;">
                         <p style="margin:0;color:#fff;"><strong>Email:</strong> {coach_email}</p>
                         <p style="margin:8px 0 0;color:#fff;"><strong>Nom:</strong> {coach_name}</p>
                         <p style="margin:8px 0 0;color:#fff;"><strong>Pack:</strong> {pack_name}</p>
@@ -4115,7 +4163,7 @@ async def stripe_webhook(request: Request):
                 if RESEND_AVAILABLE and coach_email:
                     try:
                         html = f"""<div style="font-family:Arial;max-width:600px;margin:0 auto;background:#0a0a0a;">
-                        <div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:24px;text-align:center;">
+                        <div style="background:linear-gradient(135deg,{primary_color},#8b5cf6);padding:24px;text-align:center;">
                         <h1 style="color:white;margin:0;">Bienvenue Coach !</h1></div>
                         <div style="padding:24px;color:#fff;">
                         <p>Félicitations {coach_name} !</p>
@@ -4529,7 +4577,7 @@ async def stripe_webhook(request: Request):
                     from urllib.parse import quote as _url_quote
                     _wa_share_text = _url_quote(f"Mon lien de réservation Afroboost : {espace_url}")
                     html = f"""<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;background:#0a0a0a;color:#fff;">
-                        <div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:28px 24px;text-align:center;">
+                        <div style="background:linear-gradient(135deg,{primary_color},#8b5cf6);padding:28px 24px;text-align:center;">
                             <h1 style="color:white;margin:0;font-size:24px;">Bienvenue chez Afroboost !</h1>
                             <p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">Ta souscription est confirmee</p>
                         </div>
@@ -4540,7 +4588,7 @@ async def stripe_webhook(request: Request):
                             <!-- CODE + QR -->
                             <div style="background:rgba(147,51,234,0.15);border:1px solid rgba(147,51,234,0.3);border-radius:14px;padding:22px;margin:0 0 24px;text-align:center;">
                                 <p style="margin:0 0 6px;color:#888;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Ton code d'acces personnel</p>
-                                <p style="margin:0;color:#d91cd2;font-size:30px;font-weight:bold;letter-spacing:3px;">{new_code}</p>
+                                <p style="margin:0;color:{primary_color};font-size:30px;font-weight:bold;letter-spacing:3px;">{new_code}</p>
                                 <p style="margin:10px 0 20px;color:#888;font-size:13px;">{sessions_count} seance(s) incluse(s)</p>
                                 <img src="{qr_url}" alt="QR Code Afroboost" width="180" height="180" style="background:white;padding:12px;border-radius:10px;display:block;margin:0 auto;"/>
                                 <p style="color:#a855f7;font-size:12px;margin:14px 0 0;line-height:1.5;">
@@ -4552,7 +4600,7 @@ async def stripe_webhook(request: Request):
 
                             <!-- V225: BOUTON PRINCIPAL — RESERVER SA SEANCE -->
                             <div style="text-align:center;margin:0 0 24px;">
-                                <a href="{espace_url}" style="display:inline-block;background:#d91cd2;color:white;padding:16px 36px;text-decoration:none;border-radius:12px;font-weight:bold;font-size:16px;">&#128197; Reserver ma seance</a>
+                                <a href="{espace_url}" style="display:inline-block;background:{primary_color};color:white;padding:16px 36px;text-decoration:none;border-radius:12px;font-weight:bold;font-size:16px;">&#128197; Reserver ma seance</a>
                                 <p style="color:#a855f7;font-size:12px;margin:10px 0 0;line-height:1.5;">Ton espace personnel : choisis ta date et confirme en un clic.</p>
                                 <!-- V243: partage WhatsApp du lien d'espace. wa.me/?text=
                                      ouvre WhatsApp avec le message pre-rempli ; le
@@ -4566,7 +4614,7 @@ async def stripe_webhook(request: Request):
 
                             <!-- BOUTON ACCES DIRECT CHAT -->
                             <div style="text-align:center;margin:0 0 28px;">
-                                <a href="{chat_url}" style="display:inline-block;background:transparent;color:#d91cd2;border:1px solid #d91cd2;padding:14px 32px;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">Acceder a mon espace chat</a>
+                                <a href="{chat_url}" style="display:inline-block;background:transparent;color:{primary_color};border:1px solid {primary_color};padding:14px 32px;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">Acceder a mon espace chat</a>
                                 <p style="color:#666;font-size:11px;margin:10px 0 0;">Ce lien te connecte automatiquement avec ton code</p>
                             </div>
 
@@ -4576,7 +4624,7 @@ async def stripe_webhook(request: Request):
                                 <table style="width:100%;border-spacing:0;">
                                     <tr>
                                         <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
-                                            <div style="background:#d91cd2;color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">1</div>
+                                            <div style="background:{primary_color};color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">1</div>
                                         </td>
                                         <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
                                             <strong>Ouvre ton espace chat</strong> en cliquant sur le bouton ci-dessus, ou scanne le QR code avec ton telephone.
@@ -4584,7 +4632,7 @@ async def stripe_webhook(request: Request):
                                     </tr>
                                     <tr>
                                         <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
-                                            <div style="background:#d91cd2;color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">2</div>
+                                            <div style="background:{primary_color};color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">2</div>
                                         </td>
                                         <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
                                             <strong>Entre ton code</strong> {new_code} si demande (il est deja memorise si tu viens du lien).
@@ -4592,7 +4640,7 @@ async def stripe_webhook(request: Request):
                                     </tr>
                                     <tr>
                                         <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
-                                            <div style="background:#d91cd2;color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">3</div>
+                                            <div style="background:{primary_color};color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">3</div>
                                         </td>
                                         <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
                                             <strong>Dis a l'IA "je veux reserver"</strong> ou choisis une date dans la liste des sessions disponibles.
@@ -4600,7 +4648,7 @@ async def stripe_webhook(request: Request):
                                     </tr>
                                     <tr>
                                         <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
-                                            <div style="background:#d91cd2;color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">4</div>
+                                            <div style="background:{primary_color};color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">4</div>
                                         </td>
                                         <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
                                             <strong>Confirme ta reservation</strong> - tes seances restantes se mettent a jour automatiquement.
@@ -4819,8 +4867,11 @@ async def admin_create_code(request: Request):
         if RESEND_AVAILABLE and RESEND_API_KEY and customer_email:
             qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=https://afroboost.com/?qr={new_code}&format=png"
             chat_url = f"https://afroboost.com/?qr={new_code}"
+            # V259: couleur de marque relue en base (un email ne lit pas les variables CSS)
+            primary_color = await _v259_primary_color()
+            primary_rgb = _v259_primary_rgb(primary_color)
             html = f"""<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;background:#0a0a0a;color:#fff;">
-                <div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:28px 24px;text-align:center;">
+                <div style="background:linear-gradient(135deg,{primary_color},#8b5cf6);padding:28px 24px;text-align:center;">
                     <h1 style="color:white;margin:0;font-size:24px;">Bienvenue chez Afroboost !</h1>
                     <p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">Ta souscription est confirmee</p>
                 </div>
@@ -4828,12 +4879,12 @@ async def admin_create_code(request: Request):
                     <p style="color:#e2e8f0;font-size:15px;">Merci pour ton achat {customer_name} ! Voici ton code d'acces :</p>
                     <div style="background:rgba(147,51,234,0.15);border:1px solid rgba(147,51,234,0.3);border-radius:14px;padding:22px;margin:16px 0;text-align:center;">
                         <p style="margin:0 0 6px;color:#888;font-size:12px;text-transform:uppercase;">Ton code d'acces personnel</p>
-                        <p style="margin:0;color:#d91cd2;font-size:30px;font-weight:bold;letter-spacing:3px;">{new_code}</p>
+                        <p style="margin:0;color:{primary_color};font-size:30px;font-weight:bold;letter-spacing:3px;">{new_code}</p>
                         <p style="margin:10px 0 20px;color:#888;font-size:13px;">{sessions_count} seance(s) incluse(s)</p>
                         <img src="{qr_url}" alt="QR Code" width="180" height="180" style="background:white;padding:12px;border-radius:10px;display:block;margin:0 auto;"/>
                     </div>
                     <div style="text-align:center;margin:20px 0;">
-                        <a href="{chat_url}" style="display:inline-block;background:#d91cd2;color:white;padding:14px 32px;text-decoration:none;border-radius:10px;font-weight:bold;">Acceder a mon espace</a>
+                        <a href="{chat_url}" style="display:inline-block;background:{primary_color};color:white;padding:14px 32px;text-decoration:none;border-radius:10px;font-weight:bold;">Acceder a mon espace</a>
                     </div>
                 </div>
             </div>"""
@@ -7020,8 +7071,11 @@ async def _v195_send_renewal_notification(sub: dict, message: str, subject: str 
     # Email — réutilise le pattern Resend déjà utilisé dans server.py
     if RESEND_AVAILABLE and RESEND_API_KEY and email:
         try:
+            # V259: couleur de marque relue en base (un email ne lit pas les variables CSS)
+            primary_color = await _v259_primary_color()
+            primary_rgb = _v259_primary_rgb(primary_color)
             html = f"""<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#0a0a0a;color:#fff;padding:24px;">
-                <h1 style="color:#d91cd2;font-size:20px;margin:0 0 12px;">Afroboost</h1>
+                <h1 style="color:{primary_color};font-size:20px;margin:0 0 12px;">Afroboost</h1>
                 <p style="font-size:14px;line-height:1.6;color:#e2e8f0;">{message}</p>
                 <p style="font-size:11px;color:#888;margin-top:24px;">Pour gérer votre abonnement : <a style="color:#a855f7;" href="https://afroboost.com/espace/{sub.get('code','')}">afroboost.com/espace/{sub.get('code','')}</a></p>
             </div>"""
@@ -7696,6 +7750,21 @@ async def update_concept(concept: ConceptUpdate, request: Request):
     
     try:
         updates = {k: v for k, v in concept.model_dump().items() if v is not None}
+        # V259: l'affiche evenement est un popup impose a TOUS les visiteurs des
+        # l'arrivee — sa gestion est reservee a l'administration. Le masquage
+        # cote dashboard (ConceptEditor) n'est qu'un confort d'interface : sans
+        # ce filtre, un PUT direct la reactiverait.
+        # Union avec `is_admin` (SUPER_ADMIN_EMAILS) pour la meme raison que
+        # cote front : la liste ci-dessous ne recouvre pas SUPER_ADMIN_EMAILS,
+        # et s'y tenir seule retirerait l'acces a un super admin en place.
+        # Les champs sont RETIRES de la mise a jour, pas rejetes en erreur : le
+        # reste du formulaire (logo, couleurs, CGV...) doit continuer de
+        # s'enregistrer normalement pour un coach ordinaire.
+        V259_POSTER_ADMIN_EMAILS = ["contact.artboost@gmail.com", "contact@afroboosteur.com"]
+        if not (is_admin or user_email in V259_POSTER_ADMIN_EMAILS):
+            for _f in ("eventPosterEnabled", "eventPosterMediaUrl",
+                       "eventPosterReserveLabel", "eventPosterOffersLabel"):
+                updates.pop(_f, None)
         updates["coach_id"] = user_email if not is_admin else None
         result = await db.concept.update_one({"id": concept_id}, {"$set": updates}, upsert=True)
         updated = await db.concept.find_one({"id": concept_id}, {"_id": 0})
@@ -14314,10 +14383,14 @@ async def send_backup_email(participant_id: str, message_preview: str):
     if not RESEND_AVAILABLE or not RESEND_API_KEY:
         logger.debug(f"[EMAIL] Simulation -> {email}")
         return True
-    
+
+    # V259: couleur de marque relue en base (un email ne lit pas les variables CSS)
+    primary_color = await _v259_primary_color()
+    primary_rgb = _v259_primary_rgb(primary_color)
+
     html_content = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <div style="background: linear-gradient(135deg, #d91cd2, #8b5cf6); padding: 20px; border-radius: 12px 12px 0 0; text-align: center;">
+        <div style="background: linear-gradient(135deg, {primary_color}, #8b5cf6); padding: 20px; border-radius: 12px 12px 0 0; text-align: center;">
             <h1 style="color: white; margin: 0; font-size: 24px;">Afroboost</h1>
         </div>
         <div style="background: #1a1a1a; padding: 30px; color: #ffffff; border-radius: 0 0 12px 12px;">
@@ -14333,7 +14406,7 @@ async def send_backup_email(participant_id: str, message_preview: str):
                 </p>
             </div>
             <a href="https://afroboost.com" 
-               style="display: inline-block; background: linear-gradient(135deg, #d91cd2, #8b5cf6); color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+               style="display: inline-block; background: linear-gradient(135deg, {primary_color}, #8b5cf6); color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold;">
                 Voir la conversation
             </a>
             <p style="font-size: 12px; color: #666666; margin-top: 30px;">
@@ -14371,6 +14444,10 @@ async def notify_coach_new_message(participant_name: str, message_preview: str, 
         return False
     
     coach_email = coach_auth.get("email")
+
+    # V259: couleur de marque du coach destinataire
+    primary_color = await _v259_primary_color(coach_email)
+    primary_rgb = _v259_primary_rgb(primary_color)
     
     # Mode simulation si Resend non configuré
     if not RESEND_AVAILABLE or not RESEND_API_KEY:
@@ -14383,7 +14460,7 @@ async def notify_coach_new_message(participant_name: str, message_preview: str, 
     
     html_content = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <div style="background: linear-gradient(135deg, #d91cd2, #8b5cf6); padding: 20px; border-radius: 12px 12px 0 0; text-align: center;">
+        <div style="background: linear-gradient(135deg, {primary_color}, #8b5cf6); padding: 20px; border-radius: 12px 12px 0 0; text-align: center;">
             <h1 style="color: white; margin: 0; font-size: 24px;">🔔 Nouveau message !</h1>
         </div>
         <div style="background: #1a1a1a; padding: 30px; color: #ffffff; border-radius: 0 0 12px 12px;">
@@ -14399,7 +14476,7 @@ async def notify_coach_new_message(participant_name: str, message_preview: str, 
                 Ce message nécessite votre réponse en mode humain.
             </p>
             <a href="https://afroboost.com/coach" 
-               style="display: inline-block; background: linear-gradient(135deg, #d91cd2, #8b5cf6); color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+               style="display: inline-block; background: linear-gradient(135deg, {primary_color}, #8b5cf6); color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold;">
                 Répondre maintenant
             </a>
         </div>
@@ -14638,6 +14715,9 @@ async def send_bulk_campaign_email(request: Request, background_tasks: Backgroun
             )
     
     # Fonction d'envoi en arrière-plan
+    # V259: couleur de marque relue en base (un email ne lit pas les variables CSS)
+    primary_color = await _v259_primary_color()
+    primary_rgb = _v259_primary_rgb(primary_color)
     async def send_emails_background(recipients_list, subj, msg, media, coach):
         results = {"sent": 0, "failed": 0, "errors": []}
         for recipient in recipients_list:
@@ -14664,7 +14744,7 @@ async def send_bulk_campaign_email(request: Request, background_tasks: Backgroun
 <tr><td align="center" style="padding:20px;">
 <table width="600" cellpadding="0" cellspacing="0" border="0" style="background:#1a1a1a;border-radius:12px;">
 <tr><td style="padding:30px;">
-<h1 style="color:#D91CD2;margin:0;font-size:24px;">Afroboost</h1>
+<h1 style="color:{primary_color};margin:0;font-size:24px;">Afroboost</h1>
 <p style="color:#ffffff;margin-top:20px;line-height:1.6;">{personalized_msg.replace(chr(10), '<br>')}</p>
 </td></tr>
 <tr><td style="padding:15px;border-top:1px solid #333;text-align:center;">
@@ -15182,10 +15262,16 @@ async def cron_check_campaigns(request: Request):
     }
 
 # === v70: EMAILS EXPIRATION OFFRES — Design Afroboost Premium ===
-def _email_wrapper(header_gradient: str, body_html: str) -> str:
-    """V70: Template email Afroboost unifié avec design premium"""
+def _email_wrapper(header_gradient: str, body_html: str, accent: str = "#D91CD2") -> str:
+    """V70: Template email Afroboost unifié avec design premium
+
+    V259: `accent` colore le lien de pied de page et le cadre. Parametre
+    PLUTOT que relu en base ici — cette fonction est synchrone, elle ne peut pas
+    awaiter ; ses trois appelants ont deja la couleur en main.
+    """
+    accent_rgb = _v259_primary_rgb(accent)
     return f"""<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:520px;margin:0 auto;background:#0a0a0a;">
-<div style="background:#111;border-radius:16px;overflow:hidden;border:1px solid rgba(217,28,210,0.2);">
+<div style="background:#111;border-radius:16px;overflow:hidden;border:1px solid rgba({accent_rgb}, 0.2);">
 <div style="background:{header_gradient};padding:24px;text-align:center;">
 <div style="font-size:28px;margin-bottom:4px;">💃</div>
 <span style="color:#fff;font-size:22px;font-weight:800;letter-spacing:1px;">AFROBOOST</span>
@@ -15195,7 +15281,7 @@ def _email_wrapper(header_gradient: str, body_html: str) -> str:
 <div style="padding:16px;text-align:center;border-top:1px solid rgba(255,255,255,0.08);">
 <div style="color:#666;font-size:11px;">© 2026 Afroboost — Tous droits réservés</div>
 <div style="margin-top:6px;">
-<a href="https://afroboost-v11-dev-pm7l.vercel.app" style="color:#D91CD2;font-size:11px;text-decoration:none;">afroboost.com</a>
+<a href="https://afroboost-v11-dev-pm7l.vercel.app" style="color:{accent};font-size:11px;text-decoration:none;">afroboost.com</a>
 </div>
 </div>
 </div></div>"""
@@ -15211,17 +15297,23 @@ async def send_expiry_reminder_email(coach_email: str, offer_name: str, days_rem
 <span style="color:#f59e0b;font-size:24px;font-weight:800;">{days_remaining}</span>
 <span style="color:#f59e0b;font-size:13px;font-weight:600;margin-left:6px;">jour{"s" if days_remaining > 1 else ""} restant{"s" if days_remaining > 1 else ""}</span>
 </div>"""
+    # V259: couleur de marque relue en base (un email ne lit pas les variables CSS)
+    primary_color = await _v259_primary_color()
+    primary_rgb = _v259_primary_rgb(primary_color)
     body = f"""<div style="padding:24px;color:#fff;">
 <p style="font-size:16px;margin:0 0 12px;">Salut <strong>{first_name}</strong> 👋</p>
-<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:0 0 8px;">Votre offre <strong style="color:#D91CD2;">"{offer_name}"</strong> arrive bientôt à expiration.</p>
+<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:0 0 8px;">Votre offre <strong style="color:{primary_color};">"{offer_name}"</strong> arrive bientôt à expiration.</p>
 {urgency_bar}
 <p style="color:rgba(255,255,255,0.7);line-height:1.6;font-size:14px;margin:0 0 8px;">🔄 Si la <strong style="color:#fff;">prolongation automatique</strong> est activée, votre offre sera renouvelée sans action de votre part.</p>
 <p style="color:rgba(255,255,255,0.7);line-height:1.6;font-size:14px;margin:0 0 20px;">Sinon, pensez à la renouveler manuellement depuis votre tableau de bord.</p>
 <div style="text-align:center;margin:20px 0;">
-<a href="https://afroboost-v11-dev-pm7l.vercel.app/#partner-dashboard" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#9333EA,#D91CD2);color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.5px;">Gérer mes offres →</a>
+<a href="https://afroboost-v11-dev-pm7l.vercel.app/#partner-dashboard" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#9333EA,{primary_color});color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.5px;">Gérer mes offres →</a>
 </div>
 </div>"""
-    html = _email_wrapper("linear-gradient(135deg,#9333EA,#D91CD2)", body)
+    # V259: f-string OBLIGATOIRE ici — cette chaine est un argument, pas un
+    # bloc HTML : sans le prefixe f, « {primary_color} » partirait tel quel dans
+    # le degrade de l'en-tete de l'email.
+    html = _email_wrapper(f"linear-gradient(135deg,#9333EA,{primary_color})", body, primary_color)
     try:
         import resend as resend_lib
         resend_lib.api_key = RESEND_API_KEY
@@ -15236,22 +15328,25 @@ async def send_prolongation_email(coach_email: str, offer_name: str):
         return
     first_name = coach_email.split('@')[0].capitalize()
     subject = f"✅ C'est fait ! Votre offre \"{offer_name}\" a été prolongée"
+    # V259: couleur de marque relue en base (un email ne lit pas les variables CSS)
+    primary_color = await _v259_primary_color()
+    primary_rgb = _v259_primary_rgb(primary_color)
     body = f"""<div style="padding:24px;color:#fff;">
 <p style="font-size:16px;margin:0 0 12px;">Salut <strong>{first_name}</strong> 👋</p>
 <div style="background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.4);border-radius:10px;padding:14px 16px;margin:12px 0;text-align:center;">
 <span style="font-size:22px;">✅</span>
 <span style="color:#10b981;font-size:15px;font-weight:700;margin-left:8px;">Prolongation effectuée avec succès</span>
 </div>
-<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:12px 0 8px;">Votre offre <strong style="color:#D91CD2;">"{offer_name}"</strong> a été automatiquement renouvelée. Vos clients peuvent continuer à en profiter !</p>
+<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:12px 0 8px;">Votre offre <strong style="color:{primary_color};">"{offer_name}"</strong> a été automatiquement renouvelée. Vos clients peuvent continuer à en profiter !</p>
 <div style="background:rgba(245,158,11,0.1);border-left:3px solid #f59e0b;padding:10px 14px;margin:16px 0;border-radius:0 8px 8px 0;">
 <p style="color:#f59e0b;font-size:12px;font-weight:700;margin:0 0 4px;">⚖️ MENTION LÉGALE</p>
 <p style="color:rgba(255,255,255,0.7);font-size:12px;margin:0;line-height:1.5;">Conformément aux conditions générales d'utilisation de la plateforme Afroboost, cette prolongation automatique est <strong style="color:#f59e0b;">définitive et non remboursable</strong>. En activant le renouvellement automatique, vous avez accepté ces conditions. Pour désactiver le renouvellement futur, rendez-vous dans votre tableau de bord.</p>
 </div>
 <div style="text-align:center;margin:20px 0;">
-<a href="https://afroboost-v11-dev-pm7l.vercel.app/#partner-dashboard" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#9333EA,#D91CD2);color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.5px;">Voir mes offres →</a>
+<a href="https://afroboost-v11-dev-pm7l.vercel.app/#partner-dashboard" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#9333EA,{primary_color});color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.5px;">Voir mes offres →</a>
 </div>
 </div>"""
-    html = _email_wrapper("linear-gradient(135deg,#059669,#10b981)", body)
+    html = _email_wrapper("linear-gradient(135deg,#059669,#10b981)", body, primary_color)
     try:
         import resend as resend_lib
         resend_lib.api_key = RESEND_API_KEY
@@ -15278,7 +15373,7 @@ async def send_expired_no_credits_email(coach_email: str, offer_name: str):
 <a href="https://afroboost-v11-dev-pm7l.vercel.app/#partner-dashboard" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.5px;">Recharger mes crédits →</a>
 </div>
 </div>"""
-    html = _email_wrapper("linear-gradient(135deg,#dc2626,#ef4444)", body)
+    html = _email_wrapper("linear-gradient(135deg,#dc2626,#ef4444)", body, primary_color)
     try:
         import resend as resend_lib
         resend_lib.api_key = RESEND_API_KEY
@@ -16175,11 +16270,14 @@ async def forgot_staff_code(request: Request):
         raise HTTPException(status_code=503, detail="Service d'email indisponible")
 
     # V257: charte Afroboost — fond sombre, accent #D91CD2.
+    # V259: couleur de marque relue en base (un email ne lit pas les variables CSS)
+    primary_color = await _v259_primary_color()
+    primary_rgb = _v259_primary_rgb(primary_color)
     html = f"""
     <div style="font-family:Arial,sans-serif;max-width:420px;margin:0 auto;padding:24px;background:#0a0a1a;border-radius:12px;">
-        <h2 style="color:#D91CD2;text-align:center;margin:0 0 12px;">Code Staff Afroboost</h2>
+        <h2 style="color:{primary_color};text-align:center;margin:0 0 12px;">Code Staff Afroboost</h2>
         <p style="color:#ccc;font-size:14px;text-align:center;">Voici le code staff actuellement actif :</p>
-        <div style="background:#1a1a2e;color:#fff;padding:20px;border-radius:8px;text-align:center;font-size:28px;font-weight:bold;letter-spacing:6px;margin:20px 0;border:1px solid #D91CD2;">
+        <div style="background:#1a1a2e;color:#fff;padding:20px;border-radius:8px;text-align:center;font-size:28px;font-weight:bold;letter-spacing:6px;margin:20px 0;border:1px solid {primary_color};">
             {staff_code}
         </div>
         <p style="color:#888;font-size:12px;text-align:center;">Ce code donne accès aux réservations et au scanner QR. Ne le partagez qu'avec votre équipe sur place.</p>

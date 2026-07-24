@@ -90,7 +90,7 @@ const DashboardHeader = ({
               <div className="text-white/50 text-xs">Crédits</div>
               <div 
                 className="text-xl font-bold"
-                style={{ color: coachCredits < 5 ? '#ef4444' : '#D91CD2' }}
+                style={{ color: coachCredits < 5 ? '#ef4444' : 'var(--primary-color, #D91CD2)' }}
               >
                 {coachCredits === -1 ? '∞' : coachCredits}
               </div>
@@ -109,7 +109,7 @@ const DashboardHeader = ({
             }}
             data-testid="reservations-stat-card"
           >
-            <span className="text-2xl font-bold" style={{ color: '#D91CD2' }}>{totalReservations}</span>
+            <span className="text-2xl font-bold" style={{ color: 'var(--primary-color, #D91CD2)' }}>{totalReservations}</span>
             <span className="text-white/50 text-xs">Réservations</span>
           </div>
           
@@ -134,7 +134,7 @@ const DashboardHeader = ({
               className="h-20 rounded-2xl flex flex-col items-center justify-center gap-2 transition-all duration-200 hover:scale-105"
               style={{ 
                 background: 'rgba(255,255,255,0.03)',
-                borderBottom: '1px solid rgba(217, 28, 210, 0.2)'
+                borderBottom: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
               }}
               data-testid="super-admin-btn"
             >

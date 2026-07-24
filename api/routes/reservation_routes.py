@@ -354,6 +354,10 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
         return
     resend.api_key = _RESEND_KEY
 
+    # V259: couleur de marque relue en base (un email ne lit pas les variables CSS)
+    primary_color = await get_primary_color(db)
+    primary_rgb = hex_to_rgb_triplet(primary_color)
+
     res_code = reservation_data.get("reservationCode", "N/A")
     offer = reservation_data.get("offerName", "Réservation")
     course = reservation_data.get("courseName", "")
@@ -380,16 +384,16 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={quote(chat_deeplink)}&format=png"
 
     html = f"""<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0a0a0a;">
-        <div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:24px;text-align:center;">
+        <div style="background:linear-gradient(135deg,{primary_color},#8b5cf6);padding:24px;text-align:center;">
             <h1 style="color:white;margin:0;font-size:22px;">{t['hero_title']}</h1>
         </div>
         <div style="padding:24px;color:#fff;">
             <p style="color:#a855f7;font-size:16px;line-height:1.6;">
                 {t['thanks'].format(name=user_name or '')}
             </p>
-            <div style="background:rgba(217,28,210,0.1);border:1px solid rgba(217,28,210,0.3);border-radius:12px;padding:20px;margin:20px 0;">
+            <div style="background:rgba({primary_rgb}, 0.1);border:1px solid rgba({primary_rgb}, 0.3);border-radius:12px;padding:20px;margin:20px 0;">
                 <table style="width:100%;color:#fff;font-size:14px;">
-                    <tr><td style="color:#888;padding:6px 0;">{t['reference']}</td><td style="font-weight:bold;color:#d91cd2;">{res_code}</td></tr>
+                    <tr><td style="color:#888;padding:6px 0;">{t['reference']}</td><td style="font-weight:bold;color:{primary_color};">{res_code}</td></tr>
                     <tr><td style="color:#888;padding:6px 0;">{t['offer']}</td><td>{offer}</td></tr>
                     {"<tr><td style='color:#888;padding:6px 0;'>" + t['course'] + "</td><td>" + course + "</td></tr>" if course else ""}
                     {"<tr><td style='color:#888;padding:6px 0;'>" + t['dates'] + "</td><td>" + dates_text + "</td></tr>" if dates_text else ""}
@@ -399,9 +403,9 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
             </div>
             {sub_html}
             <!-- Code d'accès permanent -->
-            <div style="background:linear-gradient(135deg,rgba(217,28,210,0.2),rgba(139,92,246,0.2));border:2px solid #d91cd2;border-radius:12px;padding:20px;margin:20px 0;text-align:center;">
+            <div style="background:linear-gradient(135deg,rgba({primary_rgb}, 0.2),rgba(139,92,246,0.2));border:2px solid {primary_color};border-radius:12px;padding:20px;margin:20px 0;text-align:center;">
                 <p style="color:#fff;font-size:15px;font-weight:bold;margin:0 0 10px;">{t['access_title']}</p>
-                <p style="color:#d91cd2;font-size:26px;font-weight:bold;letter-spacing:2px;margin:10px 0;font-family:monospace;">{access_code}</p>
+                <p style="color:{primary_color};font-size:26px;font-weight:bold;letter-spacing:2px;margin:10px 0;font-family:monospace;">{access_code}</p>
                 <p style="color:rgba(255,255,255,0.7);font-size:12px;margin:8px 0 0;">{t['access_intro']}</p>
             </div>
             <!-- QR Code -->
@@ -440,7 +444,7 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
             </div>
             <!-- CTAs: les 2 boutons redirigent vers la page chat où l'utilisateur se connecte avec son code AFRO -->
             <div style="text-align:center;margin:28px 0;">
-                <a href="{chat_deeplink}" style="display:inline-block;background:#d91cd2;color:white;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;margin:4px;">{t['cta_chat']}</a>
+                <a href="{chat_deeplink}" style="display:inline-block;background:{primary_color};color:white;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;margin:4px;">{t['cta_chat']}</a>
                 <a href="{chat_deeplink}" style="display:inline-block;background:rgba(139,92,246,0.3);color:white;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;margin:4px;border:1px solid rgba(139,92,246,0.5);">{t['cta_space']}</a>
             </div>
             <p style="color:#666;font-size:11px;text-align:center;margin-top:24px;">{t['footer']}</p>
@@ -482,6 +486,8 @@ def get_coach_filter(email: str) -> dict:
 reservation_router = APIRouter(tags=["reservations"])
 
 # Variable db sera injectée depuis server.py
+from api.routes.shared import get_primary_color, hex_to_rgb_triplet  # V259
+
 db = None
 
 def init_reservation_db(database):

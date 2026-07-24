@@ -45,24 +45,24 @@ const SmartLinkCard = memo(({ link, copiedLinkId, onCopy, onDelete, onEdit, onPr
             ? 'linear-gradient(135deg, #1A1A1A 0%, #1f1028 100%)'
             : '#1A1A1A',
         border: selected
-          ? '1.5px solid rgba(217,28,210,0.6)'
+          ? '1.5px solid rgba(var(--primary-rgb, 217, 28, 210), 0.6)'
           : hovered
-            ? '1px solid rgba(217,28,210,0.35)'
+            ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35)'
             : '1px solid rgba(255,255,255,0.08)',
         borderRadius: '16px',
         overflow: 'hidden',
         transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
         boxShadow: selected
-          ? '0 0 24px rgba(217,28,210,0.2), 0 8px 32px rgba(0,0,0,0.4)'
+          ? '0 0 24px rgba(var(--primary-rgb, 217, 28, 210), 0.2), 0 8px 32px rgba(0,0,0,0.4)'
           : hovered
-            ? '0 0 16px rgba(217,28,210,0.12), 0 8px 24px rgba(0,0,0,0.3)'
+            ? '0 0 16px rgba(var(--primary-rgb, 217, 28, 210), 0.12), 0 8px 24px rgba(0,0,0,0.3)'
             : '0 2px 8px rgba(0,0,0,0.3)',
       }}
     >
       {/* Top glow gradient bar */}
       <div style={{
         height: hovered || selected ? '4px' : '3px',
-        background: `linear-gradient(90deg, ${leadType.color}, #D91CD2, ${leadType.color})`,
+        background: `linear-gradient(90deg, ${leadType.color}, var(--primary-color, #D91CD2), ${leadType.color})`,
         opacity: hovered || selected ? 1 : 0.4,
         transition: 'all 0.3s',
       }} />
@@ -70,7 +70,7 @@ const SmartLinkCard = memo(({ link, copiedLinkId, onCopy, onDelete, onEdit, onPr
       {/* Subtle violet glow overlay at top */}
       <div style={{
         position: 'absolute', top: 0, left: 0, right: 0, height: '60px',
-        background: 'linear-gradient(180deg, rgba(217,28,210,0.06) 0%, transparent 100%)',
+        background: 'linear-gradient(180deg, rgba(var(--primary-rgb, 217, 28, 210), 0.06) 0%, transparent 100%)',
         pointerEvents: 'none',
         opacity: hovered || selected ? 1 : 0,
         transition: 'opacity 0.3s',
@@ -86,11 +86,11 @@ const SmartLinkCard = memo(({ link, copiedLinkId, onCopy, onDelete, onEdit, onPr
               style={{
                 width: '22px', height: '22px', borderRadius: '6px', flexShrink: 0,
                 marginTop: '2px',
-                background: selected ? 'linear-gradient(135deg, #D91CD2, #9333ea)' : 'rgba(255,255,255,0.06)',
+                background: selected ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)' : 'rgba(255,255,255,0.06)',
                 border: selected ? 'none' : '1.5px solid rgba(255,255,255,0.15)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 cursor: 'pointer', transition: 'all 0.2s',
-                boxShadow: selected ? '0 0 8px rgba(217,28,210,0.4)' : 'none',
+                boxShadow: selected ? '0 0 8px rgba(var(--primary-rgb, 217, 28, 210), 0.4)' : 'none',
               }}
             >
               {selected && <Check size={13} color="#fff" strokeWidth={3} />}
@@ -142,7 +142,7 @@ const SmartLinkCard = memo(({ link, copiedLinkId, onCopy, onDelete, onEdit, onPr
             background: 'rgba(255,255,255,0.06)',
             border: '1px solid rgba(255,255,255,0.08)',
           }}>
-            <Eye size={12} color="#D91CD2" />
+            <Eye size={12} color="var(--primary-color, #D91CD2)" />
             <span style={{ color: '#FFFFFF', fontSize: '13px', fontWeight: '800' }}>{usageCount}</span>
             <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px' }}>clic{usageCount !== 1 ? 's' : ''}</span>
           </div>
@@ -150,12 +150,12 @@ const SmartLinkCard = memo(({ link, copiedLinkId, onCopy, onDelete, onEdit, onPr
             <div style={{
               display: 'flex', alignItems: 'center', gap: '5px',
               padding: '5px 12px', borderRadius: '8px',
-              background: 'rgba(217,28,210,0.08)',
-              border: '1px solid rgba(217,28,210,0.18)',
+              background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)',
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.18)',
             }}>
-              <MessageCircle size={12} color="#D91CD2" />
-              <span style={{ color: '#D91CD2', fontSize: '13px', fontWeight: '800' }}>{questionsCount}</span>
-              <span style={{ color: 'rgba(217,28,210,0.7)', fontSize: '10px' }}>Q</span>
+              <MessageCircle size={12} color="var(--primary-color, #D91CD2)" />
+              <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '13px', fontWeight: '800' }}>{questionsCount}</span>
+              <span style={{ color: 'rgba(var(--primary-rgb, 217, 28, 210), 0.7)', fontSize: '10px' }}>Q</span>
             </div>
           )}
           {actionsCount > 0 && (

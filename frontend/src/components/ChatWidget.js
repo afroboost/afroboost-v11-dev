@@ -184,11 +184,11 @@ const InlineYouTubePlayer = ({ videoId, thumbnailUrl }) => {
             width: '56px',
             height: '56px',
             borderRadius: '50%',
-            background: 'rgba(217, 28, 210, 0.85)',
+            background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.85)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: '0 4px 20px rgba(217, 28, 210, 0.4)',
+            boxShadow: '0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
             transition: 'transform 0.2s'
           }}>
             <svg width="22" height="22" fill="#fff" viewBox="0 0 24 24">
@@ -327,7 +327,7 @@ const InlineCtaButton = ({ label, url }) => {
         gap: '8px',
         marginTop: '10px',
         padding: '12px 20px',
-        background: 'linear-gradient(135deg, #9333ea, #d91cd2)',
+        background: 'linear-gradient(135deg, #9333ea, var(--primary-color, #D91CD2))',
         borderRadius: '12px',
         color: '#fff',
         fontWeight: '600',
@@ -463,8 +463,8 @@ const PaymentScreen = ({
           alt="Afroboost"
           style={{
             width: '56px', height: '56px', borderRadius: '50%', marginBottom: '8px',
-            border: '2px solid rgba(217,28,210,0.3)',
-            boxShadow: '0 0 16px rgba(217,28,210,0.2)'
+            border: '2px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
+            boxShadow: '0 0 16px rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
           }}
         />
         <h2 style={{ color: '#ffffff', fontSize: '20px', fontWeight: 700, margin: '0 0 6px 0' }}>
@@ -479,9 +479,9 @@ const PaymentScreen = ({
       <div style={{
         width: '100%', maxWidth: '340px', marginBottom: '20px',
         padding: '14px 16px', borderRadius: '12px',
-        background: 'rgba(217,28,210,0.08)',
-        border: '1px solid rgba(217,28,210,0.25)',
-        boxShadow: '0 0 12px rgba(217,28,210,0.12)'
+        background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)',
+        border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.25)',
+        boxShadow: '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.12)'
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
           <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '12px' }}>Article</span>
@@ -492,7 +492,7 @@ const PaymentScreen = ({
         {configuredAmount > 0 ? (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '12px' }}>Montant</span>
-            <span style={{ color: '#D91CD2', fontSize: '18px', fontWeight: 700 }}>
+            <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '18px', fontWeight: 700 }}>
               {configuredAmount.toFixed(2)} CHF
             </span>
           </div>
@@ -538,10 +538,10 @@ const PaymentScreen = ({
         style={{
           width: '100%', maxWidth: '340px', padding: '14px 20px', borderRadius: '12px',
           border: 'none',
-          background: isLoading ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+          background: isLoading ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
           color: '#ffffff', fontSize: '15px', fontWeight: 700,
           cursor: isLoading ? 'wait' : 'pointer',
-          boxShadow: isLoading ? 'none' : '0 4px 20px rgba(217,28,210,0.4)',
+          boxShadow: isLoading ? 'none' : '0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
           marginBottom: '10px',
           transition: 'all 0.2s ease'
         }}
@@ -556,8 +556,8 @@ const PaymentScreen = ({
           disabled={isLoading}
           style={{
             width: '100%', maxWidth: '340px', padding: '12px 20px', borderRadius: '12px',
-            border: '1px solid rgba(217,28,210,0.4)',
-            background: 'rgba(217,28,210,0.08)',
+            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+            background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)',
             color: '#fff', fontSize: '14px', fontWeight: 600,
             cursor: isLoading ? 'not-allowed' : 'pointer',
             marginBottom: '10px',
@@ -672,11 +672,11 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
           <button
             onClick={() => setIsMinimized(false)}
             style={{
-              background: 'rgba(217, 28, 210, 0.2)',
-              border: '1px solid rgba(217, 28, 210, 0.4)',
+              background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
               borderRadius: '12px',
               padding: '10px 16px',
-              color: '#D91CD2',
+              color: 'var(--primary-color, #D91CD2)',
               fontSize: '12px',
               cursor: 'pointer',
               display: 'flex',
@@ -711,10 +711,10 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
         <div
           style={{
             background: 'linear-gradient(135deg, rgba(20, 10, 30, 0.95) 0%, rgba(30, 15, 45, 0.95) 100%)',
-            border: '1px solid rgba(217, 28, 210, 0.5)',
+            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
             borderRadius: '20px',
             padding: '16px',
-            boxShadow: '0 0 15px rgba(217, 28, 210, 0.15)',
+            boxShadow: '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
             position: 'relative'
           }}
         >
@@ -739,7 +739,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
               transition: 'all 0.2s'
             }}
             onMouseOver={(e) => {
-              e.target.style.background = 'rgba(217, 28, 210, 0.3)';
+              e.target.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)';
               e.target.style.color = 'white';
             }}
             onMouseOut={(e) => {
@@ -754,11 +754,11 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
           <div style={{ textAlign: 'center', marginBottom: '12px' }}>
             <span style={{ fontSize: '24px' }}>✨</span>
             <h4 style={{ 
-              color: '#D91CD2', 
+              color: 'var(--primary-color, #D91CD2)', 
               fontSize: '14px', 
               fontWeight: 'bold',
               margin: '8px 0 4px 0',
-              textShadow: '0 0 10px rgba(217, 28, 210, 0.5)'
+              textShadow: '0 0 10px rgba(var(--primary-rgb, 217, 28, 210), 0.5)'
             }}>
               RÉSERVATION CONFIRMÉE
             </h4>
@@ -767,7 +767,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {/* Offre / Cours */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ color: '#D91CD2', fontSize: '14px' }}>📅</span>
+              <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '14px' }}>📅</span>
               <div>
                 <div style={{ color: '#A78BFA', fontSize: '10px', fontWeight: '600' }}>SÉANCE</div>
                 <div style={{ color: 'white', fontSize: '13px', fontWeight: '500' }}>{details.courseName}</div>
@@ -777,7 +777,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             {/* v11.5: Date et Heure de la réservation */}
             {details.reservationDate && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ color: '#D91CD2', fontSize: '14px' }}>🗓️</span>
+                <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '14px' }}>🗓️</span>
                 <div>
                   <div style={{ color: '#A78BFA', fontSize: '10px', fontWeight: '600' }}>DATE & HEURE</div>
                   <div style={{ color: 'white', fontSize: '13px', fontWeight: '700' }}>
@@ -790,7 +790,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             {/* Solde restant */}
             {details.remaining && details.remaining !== 'N/A' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ color: '#D91CD2', fontSize: '14px' }}>🎟️</span>
+                <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '14px' }}>🎟️</span>
                 <div>
                   <div style={{ color: '#A78BFA', fontSize: '10px', fontWeight: '600' }}>SOLDE</div>
                   <div style={{ color: 'white', fontSize: '13px', fontWeight: '500' }}>
@@ -803,7 +803,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             {/* Validité */}
             {details.expiry && details.expiry !== 'Non définie' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ color: '#D91CD2', fontSize: '14px' }}>⏰</span>
+                <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '14px' }}>⏰</span>
                 <div>
                   <div style={{ color: '#A78BFA', fontSize: '10px', fontWeight: '600' }}>VALIDITÉ</div>
                   <div style={{ color: 'white', fontSize: '13px', fontWeight: '500' }}>
@@ -815,7 +815,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             
             {/* Client */}
             <div style={{ 
-              borderTop: '1px solid rgba(217, 28, 210, 0.3)', 
+              borderTop: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', 
               paddingTop: '10px',
               marginTop: '4px'
             }}>
@@ -824,7 +824,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
               </div>
               {details.promoCode && details.promoCode !== 'N/A' && (
                 <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '11px' }}>
-                  Code: <span style={{ color: '#D91CD2', fontWeight: '500' }}>{details.promoCode}</span>
+                  Code: <span style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: '500' }}>{details.promoCode}</span>
                 </div>
               )}
             </div>
@@ -929,7 +929,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
   const getBubbleBackground = () => {
     if (isUser) {
       // Messages envoyés par l'utilisateur actuel (à droite)
-      return 'linear-gradient(135deg, #d91cd2, #8b5cf6)';
+      return 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)';
     }
     if (isCoachMessage) {
       // Messages du Coach HUMAIN: Violet solide
@@ -959,7 +959,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             minWidth: '32px',
             borderRadius: '50%',
             overflow: 'hidden',
-            border: '2px solid #D91CD2',
+            border: '2px solid var(--primary-color, #D91CD2)',
             cursor: 'pointer',
             flexShrink: 0,
             WebkitTapHighlightColor: 'transparent',
@@ -4303,8 +4303,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
           cursor: 'pointer',
           whiteSpace: 'nowrap',
           color: '#fff',
-          background: active ? 'rgba(217,28,210,0.2)' : 'rgba(255,255,255,0.05)',
-          border: active ? '1px solid #D91CD2' : '1px solid transparent',
+          background: active ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)' : 'rgba(255,255,255,0.05)',
+          border: active ? '1px solid var(--primary-color, #D91CD2)' : '1px solid transparent',
           // V240: l'onglet vide est attenue mais reste CLIQUABLE — le desactiver
           // empecherait de revenir dessus pour constater qu'il est vide.
           opacity: empty ? 0.4 : 1,
@@ -4347,8 +4347,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
           React.createElement('span', null, label),
           React.createElement('span', {
             style: {
-              color: '#D91CD2', fontSize: '11px', fontWeight: 700,
-              background: 'rgba(217,28,210,0.12)',
+              color: 'var(--primary-color, #D91CD2)', fontSize: '11px', fontWeight: 700,
+              background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
               padding: '1px 8px', borderRadius: '10px'
             }
           }, String(rows.length))
@@ -5677,13 +5677,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
             width: '56px',
             height: '56px',
             borderRadius: '50%',
-            background: '#D91CD2', /* v9.4.2: Violet Afroboost au lieu de vert WhatsApp */
+            background: 'var(--primary-color, #D91CD2)', /* v9.4.2: Violet Afroboost au lieu de vert WhatsApp */
             border: 'none',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: '0 4px 15px rgba(217, 28, 210, 0.4)', /* Ombre violette */
+            boxShadow: '0 4px 15px rgba(var(--primary-rgb, 217, 28, 210), 0.4)', /* Ombre violette */
             position: 'fixed', /* Assurer position fixe */
             zIndex: 50 /* Inférieur à la barre de saisie */
           }}
@@ -5728,7 +5728,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                 width: '18px',
                 height: '18px',
                 borderRadius: '50%',
-                background: '#d91cd2',
+                background: 'var(--primary-color, #D91CD2)',
                 border: '2px solid #0a0a0a',
                 display: 'flex',
                 alignItems: 'center',
@@ -5760,7 +5760,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
             minHeight: isFullscreen ? '100dvh' : '400px',
             borderRadius: isFullscreen ? '0' : '16px',
             background: '#0a0a0a',
-            border: isFullscreen ? 'none' : '1px solid rgba(217, 28, 210, 0.3)',
+            border: isFullscreen ? 'none' : '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden'
@@ -5772,7 +5772,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
             style={{
               background: isCommunityMode 
                 ? 'linear-gradient(135deg, #8b5cf6, #6366f1)' 
-                : 'linear-gradient(135deg, #D91CD2, #9333ea)', /* v9.4.2: Violet Afroboost */
+                : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)', /* v9.4.2: Violet Afroboost */
               padding: '12px 16px',
               display: 'flex',
               alignItems: 'center',
@@ -5817,7 +5817,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                       <div className="flex flex-col">
                         <span className="flex items-center gap-1">
                           <span style={{ fontSize: '12px' }}>🤖</span>
-                          <span className="font-bold" style={{ color: '#D91CD2' }}>{sessionData.title}</span>
+                          <span className="font-bold" style={{ color: 'var(--primary-color, #D91CD2)' }}>{sessionData.title}</span>
                         </span>
                         <span className="text-xs opacity-70" style={{ fontSize: '9px' }}>
                           ✓ Session Active
@@ -5992,8 +5992,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                             padding: '10px 14px',
                             textAlign: 'left',
                             fontSize: '12px',
-                            color: '#D91CD2',
-                            background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.15), rgba(139, 92, 246, 0.15))',
+                            color: 'var(--primary-color, #D91CD2)',
+                            background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.15), rgba(139, 92, 246, 0.15))',
                             border: 'none',
                             cursor: 'pointer',
                             display: 'flex',
@@ -6023,7 +6023,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                             padding: '10px 14px',
                             textAlign: 'left',
                             fontSize: '12px',
-                            color: '#D91CD2',
+                            color: 'var(--primary-color, #D91CD2)',
                             background: 'none',
                             border: 'none',
                             cursor: 'pointer',
@@ -6474,7 +6474,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                     <button
                       type="submit"
                       disabled={coachLoginLoading}
-                      style={{ padding: '12px', borderRadius: '10px', border: 'none', background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', color: '#fff', fontSize: '14px', fontWeight: 700, cursor: coachLoginLoading ? 'wait' : 'pointer', boxShadow: '0 2px 12px rgba(217,28,210,0.4)' }}
+                      style={{ padding: '12px', borderRadius: '10px', border: 'none', background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)', color: '#fff', fontSize: '14px', fontWeight: 700, cursor: coachLoginLoading ? 'wait' : 'pointer', boxShadow: '0 2px 12px rgba(var(--primary-rgb, 217, 28, 210), 0.4)' }}
                     >
                       {coachLoginLoading ? 'Connexion...' : 'Se connecter'}
                     </button>
@@ -6487,7 +6487,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                     </button>
                     <div style={{ textAlign: 'center', marginTop: '6px', padding: '10px', borderRadius: '8px', background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.25)' }}>
                       <p style={{ color: '#c4b5fd', fontSize: '10px', margin: 0 }}>
-                        💡 Pas encore coach ? <a href="#become-coach" style={{ color: '#D91CD2', textDecoration: 'underline' }}>Devenir partenaire</a>
+                        💡 Pas encore coach ? <a href="#become-coach" style={{ color: 'var(--primary-color, #D91CD2)', textDecoration: 'underline' }}>Devenir partenaire</a>
                       </p>
                     </div>
                   </form>
@@ -6529,7 +6529,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px' }}>
                             Votre code abonné
                           </p>
-                          <p style={{ color: '#D91CD2', fontSize: '22px', fontWeight: '800', letterSpacing: '3px', marginTop: '4px' }}>
+                          <p style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '22px', fontWeight: '800', letterSpacing: '3px', marginTop: '4px' }}>
                             {recoverResult.code}
                           </p>
                           {recoverResult.offer_name && (
@@ -6779,7 +6779,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         disabled={isLoading}
                         className="py-3 rounded-lg font-semibold text-sm transition-all"
                         style={{
-                          background: '#D91CD2',
+                          background: 'var(--primary-color, #D91CD2)',
                           color: '#fff',
                           border: 'none',
                           cursor: isLoading ? 'wait' : 'pointer',
@@ -6849,7 +6849,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           className="w-full px-4 py-3 rounded-lg text-sm"
                           style={{
                             background: 'rgba(255,255,255,0.1)',
-                            border: '1px solid rgba(217, 28, 210, 0.4)',
+                            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
                             color: '#fff',
                             outline: 'none',
                             fontSize: '15px'
@@ -6863,7 +6863,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         disabled={emailChecking}
                         className="py-3 rounded-lg font-semibold text-sm transition-all"
                         style={{
-                          background: '#D91CD2',
+                          background: 'var(--primary-color, #D91CD2)',
                           color: '#fff',
                           border: 'none',
                           cursor: emailChecking ? 'wait' : 'pointer',
@@ -6931,9 +6931,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                 {/* Header Coach MINIMALISTE - Masque en mode Vue Visiteur */}
                 {!isVisitorPreview && (
                 <div style={{ 
-                  background: 'rgba(217, 28, 210, 0.2)', 
+                  background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)', 
                   padding: '8px 16px', 
-                  borderBottom: '1px solid rgba(217, 28, 210, 0.3)',
+                  borderBottom: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center'
@@ -6946,13 +6946,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           onClick={function() { setZoomedChatPhoto(coachProfile.photo_url); }}
                           style={{
                             width: '30px', height: '30px', borderRadius: '50%', objectFit: 'cover',
-                            border: '2px solid #d91cd2', cursor: 'pointer'
+                            border: '2px solid var(--primary-color, #D91CD2)', cursor: 'pointer'
                           }} />
                       ) : (
                         <label style={{ cursor: 'pointer' }}>
                           <div style={{
                             width: '30px', height: '30px', borderRadius: '50%',
-                            background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)',
+                            background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                             fontSize: '13px', color: '#fff'
                           }}>📷</div>
@@ -6994,7 +6994,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         <label style={{
                           position: 'absolute', bottom: '-2px', right: '-2px',
                           width: '14px', height: '14px', borderRadius: '50%',
-                          background: '#d91cd2', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          background: 'var(--primary-color, #D91CD2)', display: 'flex', alignItems: 'center', justifyContent: 'center',
                           cursor: 'pointer', border: '1px solid #1a1a2e'
                         }}>
                           <span style={{ fontSize: '8px', color: '#fff', lineHeight: 1 }}>✎</span>
@@ -7032,7 +7032,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         </label>
                       )}
                     </div>
-                    <span style={{ color: isStaffMode ? '#f59e0b' : '#d91cd2', fontSize: '12px', fontWeight: 'bold' }}>
+                    <span style={{ color: isStaffMode ? '#f59e0b' : 'var(--primary-color, #D91CD2)', fontSize: '12px', fontWeight: 'bold' }}>
                       {isStaffMode ? 'Mode Staff' : 'Mode Coach'}
                     </span>
                   </div>
@@ -7319,7 +7319,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         anciennes teintes ambre/violet/vert variaient selon le
                         mode et ne correspondaient a aucune couleur de la
                         marque. */}
-                    <div style={{ color: '#D91CD2', fontSize: '14px', fontWeight: 'bold' }}>
+                    <div style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '14px', fontWeight: 'bold' }}>
                       {staffModalMode === 'enter' ? 'Accès Staff' : staffModalMode === 'unlock' ? 'Débloquer Mode Coach' : 'Changer le code Staff'}
                     </div>
                     <div style={{ color: '#888', fontSize: '11px', textAlign: 'center', maxWidth: '240px' }}>
@@ -7336,8 +7336,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                       style={{
                         width: '100%', maxWidth: '220px', padding: '10px 14px',
                         borderRadius: '8px',
-                        border: '1px solid rgba(217,28,210,0.4)',
-                        background: 'rgba(217,28,210,0.08)',
+                        border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+                        background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)',
                         color: '#fff', fontSize: '14px', textAlign: 'center', letterSpacing: '2px', outline: 'none'
                       }}
                       autoFocus
@@ -7351,8 +7351,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         placeholder="Nouveau code"
                         style={{
                           width: '100%', maxWidth: '220px', padding: '10px 14px',
-                          borderRadius: '8px', border: '1px solid rgba(217,28,210,0.4)',
-                          background: 'rgba(217,28,210,0.08)', color: '#fff',
+                          borderRadius: '8px', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+                          background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)', color: '#fff',
                           fontSize: '14px', textAlign: 'center', letterSpacing: '2px', outline: 'none'
                         }}
                       />
@@ -7387,11 +7387,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           gap: '6px'
                         }}
                       >
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--primary-color, #D91CD2)' }} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <rect x="2" y="4" width="20" height="16" rx="2"></rect>
                           <polyline points="22,7 12,13 2,7"></polyline>
                         </svg>
-                        <span style={{ color: '#D91CD2', fontSize: '11px' }}>
+                        <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '11px' }}>
                           {forgotStaffLoading ? 'Envoi…' : 'Code oublié ?'}
                         </span>
                       </button>
@@ -7426,7 +7426,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                       >{staffModalMode === 'change' ? '← Retour' : 'Annuler'}</button>
                       <button onClick={handleStaffAction} style={{
                         padding: '8px 16px', borderRadius: '8px', border: 'none',
-                        background: '#D91CD2', color: '#fff',
+                        background: 'var(--primary-color, #D91CD2)', color: '#fff',
                         fontSize: '12px', cursor: 'pointer', fontWeight: 'bold'
                       }}>{staffModalMode === 'enter' ? 'Connexion' : staffModalMode === 'unlock' ? 'Débloquer' : 'Modifier'}</button>
                     </div>
@@ -7444,7 +7444,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           setForgotStaffMsg('');
                         }}
                         style={{
-                          color: '#D91CD2', fontSize: '11px',
+                          color: 'var(--primary-color, #D91CD2)', fontSize: '11px',
                           textDecoration: 'underline', cursor: 'pointer', marginTop: '4px'
                         }}
                       >Changer le code Staff</span>
@@ -7494,10 +7494,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                             flex: 1,
                             padding: '8px 4px',
                             fontSize: '11px',
-                            color: coachDashTab === tab.key ? '#d91cd2' : '#888',
+                            color: coachDashTab === tab.key ? 'var(--primary-color, #D91CD2)' : '#888',
                             background: 'none',
                             border: 'none',
-                            borderBottom: coachDashTab === tab.key ? '2px solid #d91cd2' : '2px solid transparent',
+                            borderBottom: coachDashTab === tab.key ? '2px solid var(--primary-color, #D91CD2)' : '2px solid transparent',
                             cursor: 'pointer',
                             transition: 'all 0.2s'
                           }
@@ -7511,7 +7511,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                       var renderSessionCard = function(session) {
                         var categoryBadge = null;
                         if (session.category === 'subscriber') {
-                          categoryBadge = React.createElement('span', { style: { background: '#D91CD2', color: '#fff', fontSize: '9px', padding: '2px 6px', borderRadius: '8px', marginLeft: '6px', fontWeight: 600 } }, 'Abonné');
+                          categoryBadge = React.createElement('span', { style: { background: 'var(--primary-color, #D91CD2)', color: '#fff', fontSize: '9px', padding: '2px 6px', borderRadius: '8px', marginLeft: '6px', fontWeight: 600 } }, 'Abonné');
                         } else if (session.category === 'smart_link') {
                           categoryBadge = React.createElement('span', { style: { background: '#FF2DAA', color: '#fff', fontSize: '9px', padding: '2px 6px', borderRadius: '8px', marginLeft: '6px', fontWeight: 600 } }, 'Lien');
                         }
@@ -7611,7 +7611,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           ) : (
                             <>
                               {/* V198: Abonnés */}
-                              {sectionHeader('⭐ Abonnés', subscriberSessions.length, '#D91CD2', 'rgba(217, 28, 210, 0.1)', showSubscribers, function() { setShowSubscribers(!showSubscribers); }, 'sessions-section-subscribers')}
+                              {sectionHeader('⭐ Abonnés', subscriberSessions.length, 'var(--primary-color, #D91CD2)', 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)', showSubscribers, function() { setShowSubscribers(!showSubscribers); }, 'sessions-section-subscribers')}
                               {showSubscribers && subscriberSessions.length === 0 && (
                                 <div style={{ color: '#666', fontSize: '11px', padding: '6px 12px 10px' }}>Aucun abonné en conversation</div>
                               )}
@@ -7671,7 +7671,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           var txType = r._tx_type || 'reservation';
                           var txIcon = txType === 'subscription' ? '⭐' : (txType === 'payment' ? '💳' : (r.isProduct ? '🛒' : '📅'));
                           var txLabel = txType === 'subscription' ? 'Souscription' : (txType === 'payment' ? 'Paiement' : (r.isProduct ? 'Achat' : 'Réservation'));
-                          var txColor = txType === 'subscription' ? '#22c55e' : (txType === 'payment' ? '#3b82f6' : '#d91cd2');
+                          var txColor = txType === 'subscription' ? '#22c55e' : (txType === 'payment' ? '#3b82f6' : 'var(--primary-color, #D91CD2)');
                           var txName = r._tx_name || r.userName || 'Inconnu';
                           var txOffer = r._tx_offer || r.courseName || r.offerName || '';
                           var txPrice = r._tx_price || r.totalPrice || 0;
@@ -7724,7 +7724,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                               style: {
                                 display: 'inline-block', marginTop: '4px', padding: '2px 8px',
                                 borderRadius: '10px', fontSize: '10px', fontWeight: 600,
-                                background: 'rgba(217,28,210,0.18)', color: '#F0A8EE'
+                                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)', color: '#F0A8EE'
                               }
                             }, '× ' + qty + ' places'),
                             React.createElement('div', { style: { color: '#aaa', fontSize: '11px', marginTop: '4px' } },
@@ -7742,8 +7742,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                               },
                                 React.createElement('span', {
                                   style: {
-                                    color: '#D91CD2', fontSize: '11px', fontWeight: 700,
-                                    background: 'rgba(217,28,210,0.12)',
+                                    color: 'var(--primary-color, #D91CD2)', fontSize: '11px', fontWeight: 700,
+                                    background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
                                     padding: '2px 8px', borderRadius: '10px', whiteSpace: 'nowrap'
                                   }
                                 }, String(txRemaining) + '/' + String(txTotal) + ' séances'),
@@ -7780,8 +7780,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                                   },
                                   style: {
                                     width: '24px', height: '24px', borderRadius: '50%',
-                                    border: '1px solid rgba(217,28,210,0.4)',
-                                    background: 'rgba(217,28,210,0.12)',
+                                    border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+                                    background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
                                     color: txBusy ? '#555' : '#fff',
                                     fontSize: '14px', lineHeight: '1',
                                     cursor: txBusy ? 'not-allowed' : 'pointer',
@@ -7798,7 +7798,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                                 React.createElement('div', {
                                   style: {
                                     width: String(txPct) + '%', height: '100%',
-                                    background: '#D91CD2', borderRadius: '2px',
+                                    background: 'var(--primary-color, #D91CD2)', borderRadius: '2px',
                                     transition: 'width 0.25s ease'
                                   }
                                 })
@@ -7832,8 +7832,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         <div style={{ display: 'flex', gap: '8px', width: '100%', maxWidth: '280px' }}>
                           <button onClick={startQrCamera} style={{
                             flex: 1, padding: '14px 8px', borderRadius: '10px',
-                            border: '2px dashed rgba(217,28,210,0.4)',
-                            background: 'rgba(217,28,210,0.06)', color: '#d91cd2',
+                            border: '2px dashed rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+                            background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)', color: 'var(--primary-color, #D91CD2)',
                             fontSize: '13px', cursor: 'pointer', textAlign: 'center'
                           }}>📷 Caméra</button>
                         </div>
@@ -7880,7 +7880,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           padding: '10px 24px',
                           borderRadius: '8px',
                           border: 'none',
-                          background: qrScanCode.trim() ? '#d91cd2' : 'rgba(255,255,255,0.1)',
+                          background: qrScanCode.trim() ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.1)',
                           color: '#fff',
                           fontSize: '14px',
                           cursor: qrScanCode.trim() ? 'pointer' : 'default',
@@ -7964,7 +7964,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                                     padding: '6px 12px',
                                     borderRadius: '12px',
                                     border: 'none',
-                                    background: reply.active ? '#D91CD2' : '#555',
+                                    background: reply.active ? 'var(--primary-color, #D91CD2)' : '#555',
                                     color: '#fff',
                                     fontSize: '11px',
                                     cursor: 'pointer',
@@ -8002,7 +8002,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                                   disabled={botRepliesSavingId === reply.id}
                                   style={{
                                     padding: '6px 16px',
-                                    background: 'linear-gradient(135deg, #D91CD2, #8B5CF6)',
+                                    background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8B5CF6)',
                                     border: 'none',
                                     borderRadius: '8px',
                                     color: '#fff',
@@ -8038,7 +8038,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         style={{ 
                           background: 'none', 
                           border: 'none', 
-                          color: '#d91cd2', 
+                          color: 'var(--primary-color, #D91CD2)', 
                           cursor: 'pointer',
                           fontSize: '14px'
                         }}
@@ -8079,9 +8079,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
 
                     {/* v162f: AI suggestion zone */}
                     {(aiSuggestion || aiSuggestionLoading) && (
-                      <div style={{ padding: '8px 12px', borderTop: '1px solid rgba(217,28,210,0.2)', background: 'rgba(217,28,210,0.05)' }}>
+                      <div style={{ padding: '8px 12px', borderTop: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)', background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.05)' }}>
                         {aiSuggestionLoading ? (
-                          <div style={{ color: '#d91cd2', fontSize: '12px', textAlign: 'center' }}>
+                          <div style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '12px', textAlign: 'center' }}>
                             ✨ Génération de suggestion...
                           </div>
                         ) : (
@@ -8090,7 +8090,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                             <div style={{ color: '#ddd', fontSize: '12px', lineHeight: '1.4', marginBottom: '6px' }}>{aiSuggestion}</div>
                             <div style={{ display: 'flex', gap: '6px' }}>
                               <button onClick={function() { setInputMessage(aiSuggestion); setAiSuggestion(''); }}
-                                style={{ padding: '4px 10px', borderRadius: '12px', border: 'none', background: '#d91cd2', color: '#fff', fontSize: '11px', cursor: 'pointer' }}>
+                                style={{ padding: '4px 10px', borderRadius: '12px', border: 'none', background: 'var(--primary-color, #D91CD2)', color: '#fff', fontSize: '11px', cursor: 'pointer' }}>
                                 Utiliser
                               </button>
                               <button onClick={function() { setAiSuggestion(''); }}
@@ -8127,7 +8127,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         title="Émojis"
                         style={{
                           width: '32px', height: '32px', borderRadius: '50%', border: 'none',
-                          background: showCoachEmojiPicker ? '#d91cd2' : 'transparent',
+                          background: showCoachEmojiPicker ? 'var(--primary-color, #D91CD2)' : 'transparent',
                           cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
                           flexShrink: 0, fontSize: '16px'
                         }}
@@ -8140,7 +8140,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         title="Suggestion IA"
                         style={{
                           width: '32px', height: '32px', borderRadius: '50%', border: 'none',
-                          background: aiSuggestionLoading ? 'rgba(217,28,210,0.3)' : 'transparent',
+                          background: aiSuggestionLoading ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)' : 'transparent',
                           cursor: aiSuggestionLoading ? 'wait' : 'pointer', display: 'flex',
                           alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '16px'
                         }}
@@ -8173,7 +8173,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         }}
                         disabled={isLoading || !inputMessage.trim()}
                         style={{
-                          background: inputMessage.trim() ? 'linear-gradient(135deg, #d91cd2, #8b5cf6)' : 'rgba(255,255,255,0.1)',
+                          background: inputMessage.trim() ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)' : 'rgba(255,255,255,0.1)',
                           border: 'none',
                           borderRadius: '50%',
                           width: '36px',
@@ -8224,7 +8224,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                     style={{
                       width: '100%',
                       padding: '8px 16px',
-                      background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.15), rgba(139, 92, 246, 0.1))',
+                      background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.15), rgba(139, 92, 246, 0.1))',
                       border: 'none',
                       cursor: 'pointer',
                       display: 'flex',
@@ -8236,8 +8236,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                     data-testid="become-partner-banner"
                   >
                     <span style={{ fontSize: '12px' }}>✨</span>
-                    <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: '700', letterSpacing: '0.3px' }}>Devenir Partenaire</span>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="2.5" strokeLinecap="round">
+                    <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '12px', fontWeight: '700', letterSpacing: '0.3px' }}>Devenir Partenaire</span>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--primary-color, #D91CD2)' }} strokeWidth="2.5" strokeLinecap="round">
                       <polyline points="9 18 15 12 9 6"></polyline>
                     </svg>
                   </button>
@@ -8255,9 +8255,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         alignItems: 'center',
                         justifyContent: 'space-between',
                         padding: '10px 16px',
-                        background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.12), rgba(147, 51, 234, 0.08))',
+                        background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.12), rgba(147, 51, 234, 0.08))',
                         border: 'none',
-                        borderBottom: '1px solid rgba(217, 28, 210, 0.15)',
+                        borderBottom: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
                         cursor: 'pointer',
                         transition: 'background 0.2s'
                       }}
@@ -8267,9 +8267,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         {/* Icône abonnement SVG */}
                         <div style={{
                           width: '28px', height: '28px', borderRadius: '8px',
-                          background: 'linear-gradient(135deg, #D91CD2, #9333ea)',
+                          background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)',
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          boxShadow: '0 2px 8px rgba(217, 28, 210, 0.3)'
+                          boxShadow: '0 2px 8px rgba(var(--primary-rgb, 217, 28, 210), 0.3)'
                         }}>
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
@@ -8297,7 +8297,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         {/* Mini compteur total */}
                         <div style={{
-                          background: 'linear-gradient(135deg, #D91CD2, #9333ea)',
+                          background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)',
                           padding: '3px 10px',
                           borderRadius: '12px',
                           fontSize: '11px',
@@ -8348,17 +8348,17 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
 
                           return (
                             <div key={sub?.id || idx} style={{
-                              background: 'linear-gradient(135deg, rgba(217, 28, 210, 0.08), rgba(147, 51, 234, 0.05))',
+                              background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.08), rgba(147, 51, 234, 0.05))',
                               borderRadius: '12px',
                               padding: '14px',
-                              border: '1px solid rgba(217, 28, 210, 0.15)'
+                              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.15)'
                             }}>
                               {/* En-tête : nom + compteur */}
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                   <div style={{
                                     width: '32px', height: '32px', borderRadius: '8px',
-                                    background: 'linear-gradient(135deg, #D91CD2, #9333ea)',
+                                    background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)',
                                     display: 'flex', alignItems: 'center', justifyContent: 'center'
                                   }}>
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -8381,13 +8381,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                                   </div>
                                 </div>
                                 <div style={{
-                                  background: 'linear-gradient(135deg, #D91CD2, #9333ea)',
+                                  background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)',
                                   padding: '4px 12px',
                                   borderRadius: '12px',
                                   fontSize: '12px',
                                   fontWeight: '700',
                                   color: '#fff',
-                                  boxShadow: '0 2px 8px rgba(217, 28, 210, 0.3)'
+                                  boxShadow: '0 2px 8px rgba(var(--primary-rgb, 217, 28, 210), 0.3)'
                                 }}>
                                   {remaining}/{total}
                                 </div>
@@ -8404,7 +8404,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                                 <div style={{
                                   height: '100%',
                                   width: `${pct}%`,
-                                  background: 'linear-gradient(90deg, #D91CD2, #9333ea)',
+                                  background: 'linear-gradient(90deg, var(--primary-color, #D91CD2), #9333ea)',
                                   borderRadius: '2px',
                                   transition: 'width 0.5s ease'
                                 }}></div>
@@ -8427,7 +8427,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                                     Code
                                   </div>
                                   <div style={{
-                                    fontSize: '15px', fontWeight: '800', color: '#D91CD2',
+                                    fontSize: '15px', fontWeight: '800', color: 'var(--primary-color, #D91CD2)',
                                     letterSpacing: '1.5px', fontFamily: 'monospace'
                                   }}>
                                     {sub?.code || afroboostProfile.code}
@@ -8459,10 +8459,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                       style={{
                         flex: 1,
                         padding: '10px 12px',
-                        background: chatMode === 'private' ? 'rgba(217, 28, 210, 0.1)' : 'transparent',
+                        background: chatMode === 'private' ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)' : 'transparent',
                         border: 'none',
-                        borderBottom: chatMode === 'private' ? '2px solid #d91cd2' : '2px solid rgba(255,255,255,0.08)',
-                        color: chatMode === 'private' ? '#d91cd2' : 'rgba(255,255,255,0.4)',
+                        borderBottom: chatMode === 'private' ? '2px solid var(--primary-color, #D91CD2)' : '2px solid rgba(255,255,255,0.08)',
+                        color: chatMode === 'private' ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.4)',
                         fontSize: '11px',
                         fontWeight: '600',
                         cursor: 'pointer',
@@ -8530,7 +8530,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         style={{
                           padding: '6px 14px', borderRadius: '16px', border: 'none', cursor: 'pointer',
                           background: selectedGroup?.id === g.id
-                            ? 'linear-gradient(135deg, #8b5cf6, #D91CD2)'
+                            ? 'linear-gradient(135deg, #8b5cf6, var(--primary-color, #D91CD2))'
                             : 'rgba(255,255,255,0.06)',
                           color: selectedGroup?.id === g.id ? '#fff' : 'rgba(255,255,255,0.5)',
                           fontSize: '11px', fontWeight: '600', whiteSpace: 'nowrap',
@@ -8610,7 +8610,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                                   gap: '6px',
                                   padding: '8px 14px',
                                   background: 'transparent',
-                                  border: '1.5px solid rgba(217, 28, 210, 0.5)',
+                                  border: '1.5px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
                                   borderRadius: '20px',
                                   color: '#FFFFFF',
                                   fontSize: '13px',
@@ -8620,12 +8620,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                                   whiteSpace: 'nowrap'
                                 }}
                                 onMouseOver={function(e) {
-                                  e.currentTarget.style.background = 'rgba(217, 28, 210, 0.2)';
-                                  e.currentTarget.style.borderColor = '#D91CD2';
+                                  e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)';
+                                  e.currentTarget.style.borderColor = 'var(--primary-color, #D91CD2)';
                                 }}
                                 onMouseOut={function(e) {
                                   e.currentTarget.style.background = 'transparent';
-                                  e.currentTarget.style.borderColor = 'rgba(217, 28, 210, 0.5)';
+                                  e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.5)';
                                 }}
                                 data-testid={'quick-reply-chip-' + reply.id}
                               >
@@ -8666,7 +8666,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                               onClick={handleContactCoachBassi}
                               style={{
                                 padding: '10px 20px',
-                                background: 'linear-gradient(135deg, #D91CD2, #8B5CF6)',
+                                background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8B5CF6)',
                                 border: 'none',
                                 borderRadius: '12px',
                                 color: '#FFFFFF',
@@ -8677,7 +8677,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 gap: '8px',
-                                boxShadow: '0 4px 12px rgba(217, 28, 210, 0.3)',
+                                boxShadow: '0 4px 12px rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                                 transition: 'transform 0.15s ease'
                               }}
                               onMouseDown={function(e) { e.currentTarget.style.transform = 'scale(0.97)'; }}
@@ -8739,7 +8739,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                     <div style={{
                       alignSelf: 'flex-start',
                       maxWidth: '320px',
-                      background: 'rgba(217, 28, 210, 0.1)',
+                      background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)',
                       borderRadius: '16px',
                       padding: '16px',
                       display: 'flex',
@@ -8747,7 +8747,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                       gap: '10px',
                       animation: 'afroMsgSlideIn 0.3s ease-out'
                     }}>
-                      <div style={{ fontSize: '11px', fontWeight: 600, color: '#D91CD2', marginBottom: '2px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--primary-color, #D91CD2)', marginBottom: '2px' }}>
                         Afroboost
                       </div>
                       <p style={{ color: '#fff', fontSize: '13px', lineHeight: 1.5, margin: 0 }}>
@@ -8759,7 +8759,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           setShowReviewForm(true);
                         }}
                         style={{
-                          background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                          background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                           border: 'none',
                           borderRadius: '20px',
                           padding: '10px 20px',
@@ -8782,7 +8782,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                   {/* === v86: FORMULAIRE AVIS INLINE — Stars + Texte === */}
                   {showReviewForm && !reviewSubmitted && (
                     <div style={{
-                      background: 'rgba(217, 28, 210, 0.08)',
+                      background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)',
                       borderRadius: '16px',
                       padding: '16px',
                       display: 'flex',
@@ -8793,7 +8793,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                     data-testid="review-form-inline"
                     >
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#D91CD2', fontSize: '13px', fontWeight: 700 }}>⭐ Ton avis</span>
+                        <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '13px', fontWeight: 700 }}>⭐ Ton avis</span>
                         <button
                           onClick={() => setShowReviewForm(false)}
                           style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: '16px' }}
@@ -8813,7 +8813,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                             }}
                           >
                             <svg width="28" height="28" viewBox="0 0 24 24"
-                              fill={star <= reviewRating ? '#D91CD2' : 'rgba(255,255,255,0.15)'}
+                              fill={star <= reviewRating ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.15)'}
                               stroke="none"
                             >
                               <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
@@ -8849,7 +8849,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         disabled={!reviewText.trim() || reviewSubmitting}
                         style={{
                           background: reviewText.trim()
-                            ? 'linear-gradient(135deg, #D91CD2, #8b5cf6)'
+                            ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)'
                             : 'rgba(255,255,255,0.1)',
                           border: 'none',
                           borderRadius: '20px',
@@ -9033,7 +9033,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         width: '36px',
                         height: '36px',
                         borderRadius: '50%',
-                        background: showAfricanEmojiPicker ? '#D91CD2' : 'transparent',
+                        background: showAfricanEmojiPicker ? 'var(--primary-color, #D91CD2)' : 'transparent',
                         border: 'none',
                         cursor: 'pointer',
                         display: 'flex',
@@ -9122,7 +9122,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                       width: '44px',
                       height: '44px',
                       borderRadius: '50%',
-                      background: '#D91CD2', /* v9.4.2: Violet Afroboost */
+                      background: 'var(--primary-color, #D91CD2)', /* v9.4.2: Violet Afroboost */
                       border: 'none',
                       cursor: isLoading || !inputMessage.trim() ? 'not-allowed' : 'pointer',
                       display: 'flex',
@@ -9216,8 +9216,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
               height: 'min(70vw, 280px)',
               borderRadius: '50%',
               overflow: 'hidden',
-              border: '5px solid #D91CD2',
-              boxShadow: '0 0 40px rgba(217,28,210,0.6), 0 0 80px rgba(217,28,210,0.3), 0 0 120px rgba(217,28,210,0.1)',
+              border: '5px solid var(--primary-color, #D91CD2)',
+              boxShadow: '0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.6), 0 0 80px rgba(var(--primary-rgb, 217, 28, 210), 0.3), 0 0 120px rgba(var(--primary-rgb, 217, 28, 210), 0.1)',
               animation: 'v76ZoomIn 0.25s ease-out'
             }}
           >
@@ -9379,13 +9379,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
             style={{
               maxWidth: '480px', width: '100%',
               background: 'linear-gradient(180deg, rgba(15,5,25,0.97) 0%, rgba(5,0,15,0.99) 100%)',
-              border: '1px solid rgba(217,28,210,0.4)',
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
               borderRadius: '20px', padding: '28px',
-              boxShadow: '0 0 60px rgba(217,28,210,0.25), 0 0 120px rgba(139,92,246,0.1)',
+              boxShadow: '0 0 60px rgba(var(--primary-rgb, 217, 28, 210), 0.25), 0 0 120px rgba(139,92,246,0.1)',
               position: 'relative'
             }}
           >
-            <h3 style={{ color: '#D91CD2', fontSize: '20px', fontWeight: '700', marginBottom: '8px', textAlign: 'center', margin: '0 0 8px' }}>
+            <h3 style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '20px', fontWeight: '700', marginBottom: '8px', textAlign: 'center', margin: '0 0 8px' }}>
               ✨ Choisir le cours
             </h3>
             <p style={{ color: '#aaa', fontSize: '13px', marginBottom: '20px', textAlign: 'center', margin: '0 0 20px' }}>
@@ -9400,16 +9400,16 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                     onClick={function() { setQrCourseSelector(null); handleQrValidation(course.id); }}
                     style={{
                       width: '100%', padding: '14px 16px',
-                      background: 'rgba(217,28,210,0.12)',
-                      border: '1px solid rgba(217,28,210,0.35)',
+                      background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
+                      border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35)',
                       borderRadius: '12px', color: 'white',
                       fontSize: '14px', fontWeight: '600',
                       cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s'
                     }}
-                    onMouseOver={function(e) { e.currentTarget.style.background = 'rgba(217,28,210,0.25)'; }}
-                    onMouseOut={function(e) { e.currentTarget.style.background = 'rgba(217,28,210,0.12)'; }}
+                    onMouseOver={function(e) { e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.25)'; }}
+                    onMouseOut={function(e) { e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)'; }}
                   >
-                    <div style={{ color: '#D91CD2', fontSize: '11px', fontWeight: '700', marginBottom: '4px', letterSpacing: '0.5px' }}>
+                    <div style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '11px', fontWeight: '700', marginBottom: '4px', letterSpacing: '0.5px' }}>
                       {days[course.weekday] || '?'} • {course.time}
                     </div>
                     <div>{course.name}</div>

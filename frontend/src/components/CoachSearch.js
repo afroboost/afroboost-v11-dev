@@ -15,7 +15,7 @@ const CoachIcon = ({ onClick, className = "" }) => (
     onClick={onClick}
     className={`p-2 rounded-full transition-all hover:scale-110 ${className}`}
     style={{ 
-      border: '2px solid #D91CD2',
+      border: '2px solid var(--primary-color, #D91CD2)',
       background: 'transparent'
     }}
     data-testid="coach-search-icon"
@@ -26,7 +26,7 @@ const CoachIcon = ({ onClick, className = "" }) => (
       height="24" 
       viewBox="0 0 24 24" 
       fill="none" 
-      stroke="#D91CD2" 
+      style={{ stroke: 'var(--primary-color, #D91CD2)' }} 
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
@@ -43,7 +43,7 @@ const ScanIcon = ({ onClick, className = "" }) => (
     onClick={onClick}
     className={`p-2 rounded-full transition-all hover:scale-110 ${className}`}
     style={{ 
-      border: '2px solid #D91CD2',
+      border: '2px solid var(--primary-color, #D91CD2)',
       background: 'transparent'
     }}
     data-testid="coach-scan-icon"
@@ -54,7 +54,7 @@ const ScanIcon = ({ onClick, className = "" }) => (
       height="24" 
       viewBox="0 0 24 24" 
       fill="none" 
-      stroke="#D91CD2" 
+      style={{ stroke: 'var(--primary-color, #D91CD2)' }} 
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
@@ -112,7 +112,7 @@ const CoachSearchModal = ({ isOpen, onClose, onSelectCoach }) => {
     >
       <div 
         className="glass rounded-2xl p-6 w-full max-w-md mx-4"
-        style={{ border: '1px solid rgba(217, 28, 210, 0.3)' }}
+        style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -136,7 +136,7 @@ const CoachSearchModal = ({ isOpen, onClose, onSelectCoach }) => {
             className="w-full px-4 py-3 rounded-xl pr-10"
             style={{ 
               background: 'rgba(255,255,255,0.1)', 
-              border: '1px solid rgba(217, 28, 210, 0.3)', 
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', 
               color: '#fff' 
             }}
             autoFocus
@@ -180,12 +180,12 @@ const CoachSearchModal = ({ isOpen, onClose, onSelectCoach }) => {
                   src={coach.photo_url} 
                   alt={coach.name}
                   className="w-10 h-10 rounded-full object-cover"
-                  style={{ border: '2px solid #D91CD2' }}
+                  style={{ border: '2px solid var(--primary-color, #D91CD2)' }}
                 />
               ) : (
                 <div 
                   className="w-10 h-10 rounded-full flex items-center justify-center text-lg"
-                  style={{ background: 'rgba(217, 28, 210, 0.2)', border: '2px solid #D91CD2' }}
+                  style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)', border: '2px solid var(--primary-color, #D91CD2)' }}
                 >
                   {coach.name?.charAt(0)?.toUpperCase() || '?'}
                 </div>

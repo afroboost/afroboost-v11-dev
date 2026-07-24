@@ -14,8 +14,8 @@ import SvgIcon from '../SvgIcon'; // V228: icones vectorielles en remplacement d
 
 // ====== STYLES PREMIUM PARTAGÉS ======
 const GLOW = {
-  violet: '0 0 12px rgba(217, 28, 210, 0.5), 0 0 24px rgba(217, 28, 210, 0.2)',
-  violetSoft: '0 0 8px rgba(217, 28, 210, 0.3)',
+  violet: '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.5), 0 0 24px rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
+  violetSoft: '0 0 8px rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
   green: '0 0 12px rgba(34, 197, 94, 0.5)',
   red: '0 0 8px rgba(239, 68, 68, 0.4)',
   amber: '0 0 8px rgba(245, 158, 11, 0.4)',
@@ -51,7 +51,7 @@ const NotificationBanner = memo(({
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '14px 20px',
-        background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(217, 28, 210, 0.08))',
+        background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(var(--primary-rgb, 217, 28, 210), 0.08))',
         borderBottom: '1px solid rgba(139, 92, 246, 0.15)',
       }}
       data-testid="notification-permission-banner"
@@ -140,14 +140,14 @@ const ToastNotifications = memo(({ toastNotifications, handleToastClick, dismiss
             padding: '14px 18px',
             cursor: 'pointer',
             boxShadow: GLOW.violet,
-            borderLeft: '3px solid #D91CD2',
+            borderLeft: '3px solid var(--primary-color, #D91CD2)',
             transition: 'transform 0.2s',
           }}
           data-testid={`toast-${toast.id}`}
         >
           <div style={{ display: 'flex', alignItems: 'start', justifyContent: 'space-between', gap: '12px' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ color: '#D91CD2', fontWeight: '600', fontSize: '13px', margin: 0 }}>
+              <p style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: '600', fontSize: '13px', margin: 0 }}>
                 {toast.senderName}
               </p>
               <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -197,7 +197,7 @@ const NotificationTestPanel = memo(({
           type="checkbox"
           checked={notifyOnAiResponse}
           onChange={toggleNotifyOnAiResponse}
-          style={{ accentColor: '#D91CD2', width: '14px', height: '14px' }}
+          style={{ accentColor: 'var(--primary-color, #D91CD2)', width: '14px', height: '14px' }}
         />
         <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>Notif IA</span>
       </label>
@@ -260,14 +260,14 @@ const GenerateLinkCard = memo(({
   };
 
   return (
-    <div style={{ padding: '24px 20px', borderBottom: '1px solid rgba(217, 28, 210, 0.1)' }}>
+    <div style={{ padding: '24px 20px', borderBottom: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.1)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
         <div style={{
           width: '32px', height: '32px', borderRadius: '50%',
-          background: 'rgba(217, 28, 210, 0.12)',
+          background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
-          <Link2 size={16} style={{ color: '#D91CD2' }} />
+          <Link2 size={16} style={{ color: 'var(--primary-color, #D91CD2)' }} />
         </div>
         <span style={{ color: '#fff', fontSize: '15px', fontWeight: '600', letterSpacing: '-0.01em' }}>
           Nouveau lien de chat
@@ -294,7 +294,7 @@ const GenerateLinkCard = memo(({
               outline: 'none',
               transition: 'border-color 0.2s',
             }}
-            onFocus={(e) => e.target.style.borderBottomColor = '#D91CD2'}
+            onFocus={(e) => e.target.style.borderBottomColor = 'var(--primary-color, #D91CD2)'}
             onBlur={(e) => e.target.style.borderBottomColor = 'rgba(255,255,255,0.08)'}
             data-testid="link-title-input"
           />
@@ -344,7 +344,7 @@ const GenerateLinkCard = memo(({
                 fontFamily: 'inherit',
                 transition: 'border-color 0.2s',
               }}
-              onFocus={(e) => e.target.style.borderBottomColor = '#D91CD2'}
+              onFocus={(e) => e.target.style.borderBottomColor = 'var(--primary-color, #D91CD2)'}
               onBlur={(e) => e.target.style.borderBottomColor = 'rgba(255,255,255,0.08)'}
               data-testid="link-prompt-input"
             />
@@ -356,7 +356,7 @@ const GenerateLinkCard = memo(({
           disabled={loadingConversations}
           style={{
             padding: '10px 24px',
-            background: '#D91CD2',
+            background: 'var(--primary-color, #D91CD2)',
             border: 'none',
             borderRadius: '24px',
             color: '#fff',
@@ -599,8 +599,8 @@ const ChatLinksList = memo(({ chatLinks, copiedLinkId, copyLinkToClipboard, dele
           Liens actifs
         </span>
         <span style={{
-          background: 'rgba(217, 28, 210, 0.15)',
-          color: '#D91CD2',
+          background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
+          color: 'var(--primary-color, #D91CD2)',
           fontSize: '10px',
           fontWeight: '700',
           padding: '2px 8px',
@@ -655,16 +655,16 @@ const ConversationItem = memo(({
         borderRadius: '12px',
         cursor: 'pointer',
         transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-        background: isBulkChecked ? 'rgba(239,68,68,0.08)' : isSelected ? 'rgba(217, 28, 210, 0.12)' : 'rgba(255,255,255,0.02)',
-        borderLeft: isBulkChecked ? '2px solid #ef4444' : isSelected ? '2px solid #D91CD2' : '2px solid transparent',
-        border: isSelected ? '1px solid rgba(217, 28, 210, 0.25)' : '1px solid rgba(255,255,255,0.04)',
+        background: isBulkChecked ? 'rgba(239,68,68,0.08)' : isSelected ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)' : 'rgba(255,255,255,0.02)',
+        borderLeft: isBulkChecked ? '2px solid #ef4444' : isSelected ? '2px solid var(--primary-color, #D91CD2)' : '2px solid transparent',
+        border: isSelected ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.25)' : '1px solid rgba(255,255,255,0.04)',
         borderLeftWidth: isBulkChecked || isSelected ? '2px' : '2px',
-        borderLeftColor: isBulkChecked ? '#ef4444' : isSelected ? '#D91CD2' : 'transparent',
-        boxShadow: isSelected ? '0 0 15px rgba(217, 28, 210, 0.08), inset 0 0 20px rgba(217, 28, 210, 0.03)' : 'none',
+        borderLeftColor: isBulkChecked ? '#ef4444' : isSelected ? 'var(--primary-color, #D91CD2)' : 'transparent',
+        boxShadow: isSelected ? '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.08), inset 0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.03)' : 'none',
         marginBottom: '4px',
         overflow: 'hidden',
       }}
-      onMouseEnter={(e) => { if (!isSelected && !isBulkChecked) { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.borderColor = 'rgba(217, 28, 210, 0.15)'; e.currentTarget.style.boxShadow = '0 0 10px rgba(217, 28, 210, 0.05)'; }}}
+      onMouseEnter={(e) => { if (!isSelected && !isBulkChecked) { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)'; e.currentTarget.style.boxShadow = '0 0 10px rgba(var(--primary-rgb, 217, 28, 210), 0.05)'; }}}
       onMouseLeave={(e) => { if (!isSelected && !isBulkChecked) { e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.04)'; e.currentTarget.style.boxShadow = 'none'; }}}
       data-testid={`conversation-${session.id}`}
     >
@@ -699,7 +699,7 @@ const ConversationItem = memo(({
             </p>
             {hasUnread && (
               <span style={{
-                background: '#D91CD2',
+                background: 'var(--primary-color, #D91CD2)',
                 color: '#fff',
                 fontSize: '10px',
                 fontWeight: '700',
@@ -821,7 +821,7 @@ const GroupedConversationList = memo(({
   const CATEGORY_META = useMemo(() => ([
     // V228: `iconName` remplace l'ancien champ `icon` (emoji). Ces metas sont
     // 100% locales à ce composant — rien n'est lu ni écrit en base ici.
-    { key: 'subscriber', label: 'Abonnés', iconName: 'star', color: '#D91CD2', bg: 'rgba(217, 28, 210, 0.08)', border: 'rgba(217, 28, 210, 0.18)' },
+    { key: 'subscriber', label: 'Abonnés', iconName: 'star', color: 'var(--primary-color, #D91CD2)', bg: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)', border: 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)' },
     { key: 'visitor', label: 'Visiteurs du site', iconName: 'messageCircle', color: '#8B5CF6', bg: 'rgba(139, 92, 246, 0.08)', border: 'rgba(139, 92, 246, 0.18)' },
     { key: 'smart_link', label: 'Liens Intelligents', iconName: 'link', color: '#FF2DAA', bg: 'rgba(255, 45, 170, 0.08)', border: 'rgba(255, 45, 170, 0.2)' },
   ]), []);
@@ -844,7 +844,7 @@ const GroupedConversationList = memo(({
     <div
       ref={conversationsListRef}
       onScroll={handleConversationsScroll}
-      style={{ maxHeight: '500px', overflowY: 'auto', paddingRight: '4px', borderRadius: '14px', background: '#1A1A1A', border: '1px solid rgba(217, 28, 210, 0.1)', padding: '8px' }}
+      style={{ maxHeight: '500px', overflowY: 'auto', paddingRight: '4px', borderRadius: '14px', background: '#1A1A1A', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.1)', padding: '8px' }}
     >
       {enrichedConversations.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '40px 20px' }}>
@@ -1005,7 +1005,7 @@ const SystemPromptBlock = memo(({ API, coachEmail }) => {
     <div style={{
       margin: '16px 0',
       borderRadius: '16px',
-      border: '1px solid rgba(217, 28, 210, 0.1)',
+      border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.1)',
       background: '#111111',
       overflow: 'hidden',
     }}>
@@ -1015,12 +1015,12 @@ const SystemPromptBlock = memo(({ API, coachEmail }) => {
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '16px 20px', cursor: 'pointer',
-          background: expanded ? 'rgba(217, 28, 210, 0.04)' : 'transparent',
+          background: expanded ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.04)' : 'transparent',
           transition: 'background 0.2s',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <Bot size={18} style={{ color: '#D91CD2' }} />
+          <Bot size={18} style={{ color: 'var(--primary-color, #D91CD2)' }} />
           <span style={{ color: '#fff', fontSize: '14px', fontWeight: '600' }}>Prompt Système IA</span>
           {hasChanges && (
             <span style={{
@@ -1058,15 +1058,15 @@ const SystemPromptBlock = memo(({ API, coachEmail }) => {
               padding: '10px 20px', marginBottom: '14px',
               borderRadius: '12px', border: 'none',
               background: generating
-                ? 'rgba(217, 28, 210, 0.15)'
-                : 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)'
+                : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
               color: '#fff', fontSize: '13px', fontWeight: '600',
               cursor: generating ? 'wait' : 'pointer',
               boxShadow: generating ? 'none' : GLOW.violet,
               transition: 'all 0.25s',
               width: '100%', justifyContent: 'center',
             }}
-            onMouseEnter={(e) => { if (!generating) e.currentTarget.style.boxShadow = '0 0 20px rgba(217, 28, 210, 0.6)'; }}
+            onMouseEnter={(e) => { if (!generating) e.currentTarget.style.boxShadow = '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.6)'; }}
             onMouseLeave={(e) => { e.currentTarget.style.boxShadow = generating ? 'none' : GLOW.violet; }}
           >
             <Zap size={15} />
@@ -1086,15 +1086,15 @@ const SystemPromptBlock = memo(({ API, coachEmail }) => {
                   width: '100%', minHeight: '250px',
                   padding: '14px',
                   background: '#1A1A1A',
-                  border: hasChanges ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(217, 28, 210, 0.12)',
+                  border: hasChanges ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
                   borderRadius: '12px',
                   color: '#fff', fontSize: '13px', lineHeight: '1.6',
                   fontFamily: 'monospace',
                   outline: 'none', resize: 'vertical',
                   transition: 'border-color 0.2s',
                 }}
-                onFocus={(e) => { e.target.style.borderColor = 'rgba(217, 28, 210, 0.4)'; e.target.style.boxShadow = '0 0 12px rgba(217, 28, 210, 0.08)'; }}
-                onBlur={(e) => { e.target.style.borderColor = hasChanges ? 'rgba(245, 158, 11, 0.3)' : 'rgba(217, 28, 210, 0.12)'; e.target.style.boxShadow = 'none'; }}
+                onFocus={(e) => { e.target.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.4)'; e.target.style.boxShadow = '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.08)'; }}
+                onBlur={(e) => { e.target.style.borderColor = hasChanges ? 'rgba(245, 158, 11, 0.3)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)'; e.target.style.boxShadow = 'none'; }}
               />
 
               {/* Footer: char count + save */}
@@ -1352,13 +1352,13 @@ const CRMSection = ({
           zIndex: 1000, backdropFilter: 'blur(4px)',
         }} onClick={() => setShowNewConversationDialog(false)}>
           <div style={{
-            background: '#111111', border: '1px solid rgba(217,28,210,0.2)', borderRadius: '16px',
+            background: '#111111', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)', borderRadius: '16px',
             padding: '20px', width: '90%', maxWidth: '500px', maxHeight: '80vh', overflowY: 'auto',
-            boxShadow: '0 10px 40px rgba(217,28,210,0.2)',
+            boxShadow: '0 10px 40px rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
           }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
               <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: '700', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <MessageCircle size={18} style={{ color: '#D91CD2' }} />
+                <MessageCircle size={18} style={{ color: 'var(--primary-color, #D91CD2)' }} />
                 Nouvelle conversation
               </h3>
               <button onClick={() => setShowNewConversationDialog(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: '20px', padding: '0' }}>
@@ -1380,22 +1380,22 @@ const CRMSection = ({
                       setShowNewConversationDialog(false);
                     }}
                     style={{
-                      padding: '12px 14px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(217,28,210,0.15)',
+                      padding: '12px 14px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
                       borderRadius: '10px', cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s',
                       display: 'flex', alignItems: 'center', gap: '10px',
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(217,28,210,0.1)';
-                      e.currentTarget.style.borderColor = 'rgba(217,28,210,0.3)';
+                      e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)';
+                      e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)';
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                      e.currentTarget.style.borderColor = 'rgba(217,28,210,0.15)';
+                      e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)';
                     }}
                   >
                     <div style={{
                       width: '36px', height: '36px', borderRadius: '50%',
-                      background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', display: 'flex',
+                      background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)', display: 'flex',
                       alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: '700', flexShrink: 0,
                     }}>
                       {(contact.name || contact.email || '?')[0].toUpperCase()}
@@ -1489,9 +1489,9 @@ const CRMSection = ({
         gridTemplateColumns: '1fr',
         gap: '0',
         borderRadius: '16px',
-        border: '1px solid rgba(217, 28, 210, 0.1)',
+        border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.1)',
         background: '#111111',
-        boxShadow: '0 0 25px rgba(217, 28, 210, 0.04)',
+        boxShadow: '0 0 25px rgba(var(--primary-rgb, 217, 28, 210), 0.04)',
         overflow: 'hidden',
       }}>
         <div className="crm-grid-premium" style={{
@@ -1504,7 +1504,7 @@ const CRMSection = ({
           {/* Left: Conversations List — V145 mobile fix */}
           <div className="crm-conv-list" style={{
             padding: '12px 8px',
-            borderRight: '1px solid rgba(217, 28, 210, 0.08)',
+            borderRight: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.08)',
             background: 'rgba(26, 26, 26, 0.4)',
             minWidth: 0,
             overflow: 'hidden',
@@ -1512,7 +1512,7 @@ const CRMSection = ({
             {/* Header */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <MessageCircle size={16} style={{ color: '#D91CD2' }} />
+                <MessageCircle size={16} style={{ color: 'var(--primary-color, #D91CD2)' }} />
                 <span style={{ color: '#fff', fontSize: '14px', fontWeight: '600' }}>
                   Conversations
                 </span>
@@ -1532,7 +1532,7 @@ const CRMSection = ({
                     width: '28px', height: '28px',
                   }}
                   title="Nouvelle conversation"
-                  onMouseEnter={(e) => { e.currentTarget.style.color = '#D91CD2'; e.currentTarget.style.boxShadow = GLOW.violetSoft; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--primary-color, #D91CD2)'; e.currentTarget.style.boxShadow = GLOW.violetSoft; }}
                   onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.3)'; e.currentTarget.style.boxShadow = 'none'; }}
                 >
                   <MessageCircle size={14} />
@@ -1547,7 +1547,7 @@ const CRMSection = ({
                     borderRadius: '8px',
                   }}
                   title={bulkMode ? 'Annuler la sélection' : 'Sélection multiple'}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = bulkMode ? '#ef4444' : '#D91CD2'; e.currentTarget.style.boxShadow = bulkMode ? GLOW.red : GLOW.violetSoft; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = bulkMode ? '#ef4444' : 'var(--primary-color, #D91CD2)'; e.currentTarget.style.boxShadow = bulkMode ? GLOW.red : GLOW.violetSoft; }}
                   onMouseLeave={(e) => { e.currentTarget.style.color = bulkMode ? '#ef4444' : 'rgba(255,255,255,0.3)'; e.currentTarget.style.boxShadow = 'none'; }}
                 >
                   {bulkMode ? <X size={14} /> : <Trash2 size={14} />}
@@ -1559,7 +1559,7 @@ const CRMSection = ({
                     ...iconBtn('rgba(255,255,255,0.3)'),
                     width: '28px', height: '28px',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = '#D91CD2'; e.currentTarget.style.boxShadow = GLOW.violetSoft; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--primary-color, #D91CD2)'; e.currentTarget.style.boxShadow = GLOW.violetSoft; }}
                   onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.3)'; e.currentTarget.style.boxShadow = 'none'; }}
                 >
                   {conversationsLoading ? <SvgIcon name="loader" size={14} className="animate-spin" /> : <RefreshCw size={14} />}
@@ -1572,7 +1572,7 @@ const CRMSection = ({
               <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 padding: '10px 14px', marginBottom: '12px', borderRadius: '12px',
-                background: 'linear-gradient(135deg, rgba(239,68,68,0.08), rgba(217,28,210,0.06))',
+                background: 'linear-gradient(135deg, rgba(239,68,68,0.08), rgba(var(--primary-rgb, 217, 28, 210), 0.06))',
                 border: '1px solid rgba(239,68,68,0.15)',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -1582,9 +1582,9 @@ const CRMSection = ({
                     style={{
                       width: '22px', height: '22px', minWidth: '22px', borderRadius: '6px',
                       border: bulkSelected.size === enrichedConversations.length && enrichedConversations.length > 0
-                        ? '2px solid #D91CD2' : '2px solid rgba(255,255,255,0.25)',
+                        ? '2px solid var(--primary-color, #D91CD2)' : '2px solid rgba(255,255,255,0.25)',
                       background: bulkSelected.size === enrichedConversations.length && enrichedConversations.length > 0
-                        ? '#D91CD2' : bulkSelected.size > 0 ? 'rgba(217,28,210,0.3)' : 'transparent',
+                        ? 'var(--primary-color, #D91CD2)' : bulkSelected.size > 0 ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)' : 'transparent',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       cursor: 'pointer', transition: 'all 0.2s ease',
                     }}
@@ -1631,15 +1631,15 @@ const CRMSection = ({
                   width: '100%',
                   padding: '10px 12px 10px 32px',
                   background: '#1A1A1A',
-                  border: '1px solid rgba(217, 28, 210, 0.1)',
+                  border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.1)',
                   borderRadius: '10px',
                   color: '#fff',
                   fontSize: '13px',
                   outline: 'none',
                   transition: 'all 0.25s',
                 }}
-                onFocus={(e) => { e.target.style.borderColor = 'rgba(217, 28, 210, 0.35)'; e.target.style.boxShadow = '0 0 12px rgba(217, 28, 210, 0.08)'; }}
-                onBlur={(e) => { e.target.style.borderColor = 'rgba(217, 28, 210, 0.1)'; e.target.style.boxShadow = 'none'; }}
+                onFocus={(e) => { e.target.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.35)'; e.target.style.boxShadow = '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.08)'; }}
+                onBlur={(e) => { e.target.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)'; e.target.style.boxShadow = 'none'; }}
                 data-testid="conversation-search"
               />
             </div>
@@ -1669,7 +1669,7 @@ const CRMSection = ({
             display: 'flex',
             flexDirection: 'column',
             minHeight: '350px',
-            borderTop: '1px solid rgba(217, 28, 210, 0.08)',
+            borderTop: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.08)',
             background: 'rgba(26, 26, 26, 0.3)',
             minWidth: 0,
             overflow: 'hidden',
@@ -1687,7 +1687,7 @@ const CRMSection = ({
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   paddingBottom: '12px',
-                  borderBottom: '1px solid rgba(217, 28, 210, 0.1)',
+                  borderBottom: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.1)',
                   marginBottom: '12px',
                   flexWrap: 'wrap',
                   gap: '8px',
@@ -1715,7 +1715,7 @@ const CRMSection = ({
                       </p>
                     )}
                     {selectedSession.title && (
-                      <p style={{ color: 'rgba(217, 28, 210, 0.5)', fontSize: '10px', margin: '2px 0 0 16px' }}>
+                      <p style={{ color: 'rgba(var(--primary-rgb, 217, 28, 210), 0.5)', fontSize: '10px', margin: '2px 0 0 16px' }}>
                         ✦ {selectedSession.title}
                       </p>
                     )}
@@ -1779,10 +1779,10 @@ const CRMSection = ({
                     marginBottom: '12px',
                     padding: '12px',
                     borderRadius: '10px',
-                    background: 'rgba(217,28,210,0.06)',
-                    border: '1px solid rgba(217,28,210,0.15)',
+                    background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)',
+                    border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
                   }}>
-                    <p style={{ color: '#D91CD2', fontSize: '11px', fontWeight: 600, margin: '0 0 8px 0', display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="clipboard" size={14} />Réponses du tunnel</p>
+                    <p style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '11px', fontWeight: 600, margin: '0 0 8px 0', display: 'inline-flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="clipboard" size={14} />Réponses du tunnel</p>
                     {Object.values(selectedSession.tunnel_answers).map((qa, i) => (
                       <div key={i} style={{ marginBottom: i < Object.keys(selectedSession.tunnel_answers).length - 1 ? '8px' : 0 }}>
                         <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', margin: '0 0 2px 0' }}>{qa.question || `Question ${i+1}`}</p>
@@ -1847,7 +1847,7 @@ const CRMSection = ({
                             borderRadius: isClientMessage ? '4px 16px 16px 16px' : '16px 4px 16px 16px',
                             background: isClientMessage
                               ? 'rgba(255,255,255,0.06)'
-                              : isAI ? 'linear-gradient(135deg, #8b5cf6, #D91CD2)' : '#D91CD2',
+                              : isAI ? 'linear-gradient(135deg, #8b5cf6, var(--primary-color, #D91CD2))' : 'var(--primary-color, #D91CD2)',
                             color: '#fff',
                             position: 'relative',
                           }}>
@@ -1925,7 +1925,7 @@ const CRMSection = ({
                     style={{
                       width: '30px', height: '30px',
                       borderRadius: '50%',
-                      background: showCoachEmojiPicker ? '#D91CD2' : 'transparent',
+                      background: showCoachEmojiPicker ? 'var(--primary-color, #D91CD2)' : 'transparent',
                       border: 'none',
                       cursor: 'pointer',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1964,22 +1964,22 @@ const CRMSection = ({
                       width: '34px', height: '34px',
                       borderRadius: '10px',
                       border: coachMessage.trim() && !rewritingAI
-                        ? '1px solid rgba(217, 28, 210, 0.5)'
+                        ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)'
                         : '1px solid rgba(255,255,255,0.08)',
                       background: coachMessage.trim() && !rewritingAI
-                        ? 'linear-gradient(135deg, #D91CD2, #8b5cf6)'
+                        ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)'
                         : 'rgba(255,255,255,0.04)',
                       color: coachMessage.trim() && !rewritingAI ? '#fff' : 'rgba(255,255,255,0.2)',
                       cursor: coachMessage.trim() && !rewritingAI ? 'pointer' : 'not-allowed',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                       boxShadow: coachMessage.trim() && !rewritingAI
-                        ? '0 0 16px rgba(217, 28, 210, 0.45), 0 0 32px rgba(217, 28, 210, 0.15)'
+                        ? '0 0 16px rgba(var(--primary-rgb, 217, 28, 210), 0.45), 0 0 32px rgba(var(--primary-rgb, 217, 28, 210), 0.15)'
                         : 'none',
                       flexShrink: 0,
                     }}
-                    onMouseEnter={(e) => { if (coachMessage.trim() && !rewritingAI) { e.currentTarget.style.boxShadow = '0 0 24px rgba(217, 28, 210, 0.6), 0 0 48px rgba(217, 28, 210, 0.25)'; e.currentTarget.style.transform = 'scale(1.08)'; }}}
-                    onMouseLeave={(e) => { e.currentTarget.style.boxShadow = coachMessage.trim() ? '0 0 16px rgba(217, 28, 210, 0.45), 0 0 32px rgba(217, 28, 210, 0.15)' : 'none'; e.currentTarget.style.transform = 'scale(1)'; }}
+                    onMouseEnter={(e) => { if (coachMessage.trim() && !rewritingAI) { e.currentTarget.style.boxShadow = '0 0 24px rgba(var(--primary-rgb, 217, 28, 210), 0.6), 0 0 48px rgba(var(--primary-rgb, 217, 28, 210), 0.25)'; e.currentTarget.style.transform = 'scale(1.08)'; }}}
+                    onMouseLeave={(e) => { e.currentTarget.style.boxShadow = coachMessage.trim() ? '0 0 16px rgba(var(--primary-rgb, 217, 28, 210), 0.45), 0 0 32px rgba(var(--primary-rgb, 217, 28, 210), 0.15)' : 'none'; e.currentTarget.style.transform = 'scale(1)'; }}
                   >
                     {rewritingAI ? <SvgIcon name="loader" size={14} className="animate-spin" /> : <SvgIcon name="sparkles" size={14} />}
                   </button>
@@ -1987,7 +1987,7 @@ const CRMSection = ({
                     onClick={handleSendMessage}
                     disabled={!coachMessage.trim()}
                     style={{
-                      ...iconBtn('#D91CD2'),
+                      ...iconBtn('var(--primary-color, #D91CD2)'),
                       width: '34px',
                       height: '34px',
                       opacity: !coachMessage.trim() ? 0.25 : 1,
@@ -2004,7 +2004,7 @@ const CRMSection = ({
             ) : (
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <div style={{ textAlign: 'center' }}>
-                  <MessageCircle size={36} style={{ color: 'rgba(217, 28, 210, 0.15)', margin: '0 auto 12px' }} />
+                  <MessageCircle size={36} style={{ color: 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)', margin: '0 auto 12px' }} />
                   <p style={{ color: 'rgba(255,255,255,0.2)', fontSize: '13px', margin: 0 }}>Sélectionnez une conversation</p>
                 </div>
               </div>

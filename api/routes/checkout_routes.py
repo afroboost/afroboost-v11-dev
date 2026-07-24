@@ -12,6 +12,8 @@ import json
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/checkout", tags=["checkout"])
+from api.routes.shared import get_primary_color, hex_to_rgb_triplet  # V259
+
 db = None
 
 SUPER_ADMIN_EMAILS = ["contact.artboost@gmail.com", "afroboost.bassi@gmail.com"]
@@ -894,6 +896,10 @@ async def _process_successful_payment(
         if resend_key:
             resend.api_key = resend_key
 
+            # V259: couleur de marque relue en base (un email ne lit pas les variables CSS)
+            primary_color = await get_primary_color(db)
+            primary_rgb = hex_to_rgb_triplet(primary_color)
+
             items_desc = ", ".join([
                 f"{(i.dict() if hasattr(i, 'dict') else i).get('name', 'Article')} x{(i.dict() if hasattr(i, 'dict') else i).get('quantity', 1)}"
                 for i in items
@@ -907,11 +913,11 @@ async def _process_successful_payment(
                     "subject": f"✅ Confirmation de votre achat - {access_code}",
                     "html": f"""
                     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #1a1a2e; color: white; padding: 30px; border-radius: 12px;">
-                        <h1 style="color: #D91CD2; text-align: center;">🎉 Merci pour votre achat !</h1>
+                        <h1 style="color: {primary_color}; text-align: center;">🎉 Merci pour votre achat !</h1>
                         <p>Bonjour <strong>{customer_name}</strong>,</p>
                         <p>Votre paiement de <strong>{total} {currency}</strong> a été confirmé.</p>
-                        <div style="background: rgba(217, 28, 210, 0.1); border: 1px solid #D91CD2; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center;">
-                            <p style="color: #D91CD2; font-size: 14px; margin: 0 0 10px 0;">Votre Code d'Accès</p>
+                        <div style="background: rgba({primary_rgb}, 0.1); border: 1px solid {primary_color}; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center;">
+                            <p style="color: {primary_color}; font-size: 14px; margin: 0 0 10px 0;">Votre Code d'Accès</p>
                             <p style="font-size: 28px; font-weight: bold; color: white; margin: 0; letter-spacing: 3px;">{access_code}</p>
                         </div>
                         <div style="text-align: center; margin: 20px 0;">
@@ -923,7 +929,7 @@ async def _process_successful_payment(
                              recopier le code a la main (source d'erreurs de saisie).
                              Meme espace que le flow Stripe : /espace/{{code}}. -->
                         <div style="text-align: center; margin: 24px 0;">
-                            <a href="https://afroboost.com/espace/{access_code}" style="display: inline-block; background: #D91CD2; color: white; padding: 16px 36px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 16px;">&#128197; Réserver ma séance</a>
+                            <a href="https://afroboost.com/espace/{access_code}" style="display: inline-block; background: {primary_color}; color: white; padding: 16px 36px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 16px;">&#128197; Réserver ma séance</a>
                             <p style="color: rgba(255,255,255,0.5); font-size: 12px; margin: 10px 0 0;">Ton espace personnel : choisis ta date et confirme en un clic.</p>
                         </div>
                         <p><strong>Détail :</strong> {items_desc}</p>

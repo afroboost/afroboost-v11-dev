@@ -30,7 +30,7 @@ const StripeConnectTab = ({
 
   return (
     <div className="space-y-6" data-testid="stripe-tab">
-      <div className="glass rounded-xl p-6" style={{ border: '1px solid rgba(217, 28, 210, 0.3)' }}>
+      <div className="glass rounded-xl p-6" style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }}>
         <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><SvgIcon name="creditCard" size={20} /> Stripe Connect</h2>
         <p className="text-white/70 mb-6">
           Connectez votre compte Stripe pour recevoir directement les paiements de vos clients.
@@ -92,7 +92,7 @@ const StripeConnectTab = ({
       </div>
       
       {/* === Personnalisation Marque Blanche === */}
-      <div className="glass rounded-xl p-6" style={{ border: '1px solid rgba(217, 28, 210, 0.3)' }}>
+      <div className="glass rounded-xl p-6" style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }}>
         <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><SvgIcon name="palette" size={20} /> Personnalisation</h2>
         <p className="text-white/70 mb-4">
           Personnalisez votre espace avec votre propre marque.
@@ -113,7 +113,7 @@ const StripeConnectTab = ({
               <button
                 onClick={handleSavePlatformName}
                 className="px-4 py-2 rounded-lg text-white font-medium"
-                style={{ background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)' }}
+                style={{ background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)' }}
                 data-testid="save-platform-name-btn"
               >
                 Enregistrer

@@ -235,9 +235,9 @@ const OffersManager = ({
     const linkedCourses = getLinkedCoursesForOffer(offer);
     const myCourses = (courses || []).filter(c => !c.archived && (isSuperAdmin || (c.coach_id || '').toLowerCase() === (coachEmail || '').toLowerCase()));
     return (
-      <div className="mt-3 p-3 rounded-lg" style={{ background: 'rgba(217,28,210,0.06)', border: '1px solid rgba(217,28,210,0.2)' }}>
+      <div className="mt-3 p-3 rounded-lg" style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }}>
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-semibold inline-flex items-center gap-1.5" style={{ color: '#d91cd2' }}>
+          <span className="text-xs font-semibold inline-flex items-center gap-1.5" style={{ color: 'var(--primary-color, #D91CD2)' }}>
             <SvgIcon name="calendar" size={14} /> <span>Horaires proposés ({linkedCourses.length})</span>
           </span>
           <span className="text-xs text-white/40">
@@ -249,7 +249,7 @@ const OffersManager = ({
           <div className="flex flex-wrap gap-2 mb-3">
             {linkedCourses.map(c => (
               <div key={c.id} className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs"
-                style={{ background: 'rgba(217,28,210,0.25)', border: '1px solid rgba(217,28,210,0.5)', color: '#fff' }}>
+                style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.25)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)', color: '#fff' }}>
                 <span>{c.name}</span>
                 <span className="text-white/60">•&nbsp;{WEEKDAYS[c.weekday]}&nbsp;{c.time}</span>
                 <button
@@ -498,8 +498,8 @@ const OffersManager = ({
       {/* v93: Onboarding tooltips for new partners */}
       {showOnboarding && !isSuperAdmin && (
         <div style={{
-          background: 'linear-gradient(135deg, rgba(217,28,210,0.15), rgba(255,45,170,0.1))',
-          border: '1px solid rgba(217,28,210,0.4)',
+          background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.15), rgba(255,45,170,0.1))',
+          border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
           borderRadius: '12px',
           padding: '16px',
           marginBottom: '16px',
@@ -510,7 +510,7 @@ const OffersManager = ({
             background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)',
             fontSize: '18px', cursor: 'pointer'
           }}>\u2715</button>
-          <h3 style={{ color: '#D91CD2', fontSize: '14px', fontWeight: 'bold', marginBottom: '10px' }}>
+          <h3 style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '14px', fontWeight: 'bold', marginBottom: '10px' }}>
             \ud83d\udca1 Bienvenue dans votre espace Offres !
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -561,7 +561,7 @@ const OffersManager = ({
       {/* V224: grille de cartes */}
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-white font-semibold">Mes offres</h3>
-        <button type="button" onClick={openCreate} className="text-xs px-4 py-2 rounded-lg" style={{ background: '#D91CD2', color: '#fff' }}>
+        <button type="button" onClick={openCreate} className="text-xs px-4 py-2 rounded-lg" style={{ background: 'var(--primary-color, #D91CD2)', color: '#fff' }}>
           + NOUVELLE OFFRE
         </button>
       </div>
@@ -681,7 +681,7 @@ const OffersManager = ({
               style={{
                 cursor: 'grab',
                 opacity: draggingId === offer.id ? 0.5 : 1,
-                border: dragOverId === offer.id && draggingId !== offer.id ? '2px dashed #d91cd2' : undefined,
+                border: dragOverId === offer.id && draggingId !== offer.id ? '2px dashed var(--primary-color, #D91CD2)' : undefined,
                 transition: 'opacity 0.2s',
               }}
             >
@@ -796,7 +796,7 @@ const OffersManager = ({
               style={{
                 cursor: 'grab',
                 opacity: draggingId === offer.id ? 0.5 : 1,
-                border: dragOverId === offer.id && draggingId !== offer.id ? '2px dashed #d91cd2' : undefined,
+                border: dragOverId === offer.id && draggingId !== offer.id ? '2px dashed var(--primary-color, #D91CD2)' : undefined,
                 transition: 'opacity 0.2s',
               }}
             >
@@ -912,13 +912,13 @@ const OffersManager = ({
         </div>
 
         {/* V223: Prix progressif 3 paliers */}
-        <div className="mt-4 p-4 rounded-lg" style={{ background: '#000', border: '1px solid rgba(217,28,210,0.2)' }}>
+        <div className="mt-4 p-4 rounded-lg" style={{ background: '#000', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }}>
           <label className="flex items-center gap-3 cursor-pointer">
             <input
               type="checkbox"
               checked={!!newOffer.progressive_pricing}
               onChange={e => setNewOffer({ ...newOffer, progressive_pricing: e.target.checked })}
-              className="accent-[#D91CD2] w-4 h-4"
+              className="w-4 h-4" style={{ accentColor: 'var(--primary-color, #D91CD2)' }}
             />
             <span className="text-white text-sm font-medium inline-flex items-center gap-1.5"><SvgIcon name="barChart" size={14} /> Activer les 3 paliers de prix</span>
           </label>
@@ -929,7 +929,7 @@ const OffersManager = ({
           {newOffer.progressive_pricing && (
             <div className="mt-4 space-y-3">
               {!newOffer.countdown_date && (
-                <p className="text-xs p-2 rounded" style={{ background: 'rgba(217,28,210,0.1)', color: '#D91CD2' }}>
+                <p className="text-xs p-2 rounded" style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)', color: 'var(--primary-color, #D91CD2)' }}>
                   <SvgIcon name="warning" size={14} /> Activez le compte à rebours ci-dessous : sans date de référence, les
                   paliers ne s'appliquent pas et le prix normal reste affiché.
                 </p>
@@ -964,7 +964,7 @@ const OffersManager = ({
                   });
                 }}
                 className="text-xs underline"
-                style={{ color: '#D91CD2' }}
+                style={{ color: 'var(--primary-color, #D91CD2)' }}
               >
                 Réinitialiser aux valeurs suggérées
               </button>
@@ -989,8 +989,8 @@ const OffersManager = ({
         </div>
 
         {/* === DURÉE DE VALIDITÉ (NOUVEAU) === */}
-        <div style={{ marginTop: '14px', padding: '14px', borderRadius: '10px', border: '2px solid #D91CD2', background: 'rgba(217, 28, 210, 0.08)', boxShadow: '0 0 12px rgba(217, 28, 210, 0.25)' }}>
-          <p style={{ fontSize: '14px', color: '#D91CD2', marginBottom: '12px', fontWeight: 'bold' }}><SvgIcon name="clock" size={14} /> DURÉE DE VALIDITÉ (NOUVEAU)</p>
+        <div style={{ marginTop: '14px', padding: '14px', borderRadius: '10px', border: '2px solid var(--primary-color, #D91CD2)', background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)', boxShadow: '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.25)' }}>
+          <p style={{ fontSize: '14px', color: 'var(--primary-color, #D91CD2)', marginBottom: '12px', fontWeight: 'bold' }}><SvgIcon name="clock" size={14} /> DURÉE DE VALIDITÉ (NOUVEAU)</p>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
             <div>
               <label style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', display: 'block', marginBottom: '4px' }}>Durée</label>
@@ -1024,11 +1024,11 @@ const OffersManager = ({
                   type="checkbox"
                   checked={newOffer.is_auto_prolong !== false}
                   onChange={e => setNewOffer({ ...newOffer, is_auto_prolong: e.target.checked })}
-                  style={{ width: '18px', height: '18px', accentColor: '#D91CD2' }}
+                  style={{ width: '18px', height: '18px', accentColor: 'var(--primary-color, #D91CD2)' }}
                 />
                 Prolonger automatiquement à l'expiration
               </label>
-              <p style={{ fontSize: '11px', color: '#D91CD2', marginTop: '6px', opacity: 0.8 }}>
+              <p style={{ fontSize: '11px', color: 'var(--primary-color, #D91CD2)', marginTop: '6px', opacity: 0.8 }}>
                 <SvgIcon name="calendar" size={12} /> Valide pendant {newOffer.duration_value} {newOffer.duration_unit === 'days' ? 'jour(s)' : newOffer.duration_unit === 'weeks' ? 'semaine(s)' : 'mois'}
                 {newOffer.is_auto_prolong !== false ? ' • Auto-prolongation activée' : ' • Expire sans renouvellement'}
               </p>
@@ -1168,9 +1168,9 @@ const OffersManager = ({
               disabled={aiLoading || !(newOffer.description?.trim())}
               className="text-xs px-2 py-1 rounded-lg"
               style={{
-                background: aiLoading ? 'rgba(139,92,246,0.2)' : 'rgba(217,28,210,0.2)',
-                border: '1px solid rgba(217,28,210,0.4)',
-                color: '#D91CD2',
+                background: aiLoading ? 'rgba(139,92,246,0.2)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
+                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+                color: 'var(--primary-color, #D91CD2)',
                 cursor: aiLoading ? 'wait' : 'pointer',
                 opacity: !(newOffer.description?.trim()) ? 0.4 : 1
               }}
@@ -1208,7 +1208,7 @@ const OffersManager = ({
 
         {/* v159: Cours liés à cette offre (many-to-many) */}
         {!newOffer.isProduct && courses && courses.length > 0 && (
-          <div className="mt-3 p-3 rounded-lg" style={{ border: '1px solid rgba(217, 28, 210, 0.3)', background: 'rgba(217, 28, 210, 0.05)' }}>
+          <div className="mt-3 p-3 rounded-lg" style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.05)' }}>
             <label className="text-xs text-white font-semibold mb-2 block">
               <SvgIcon name="calendar" size={14} /> Cours associés à cette offre
             </label>

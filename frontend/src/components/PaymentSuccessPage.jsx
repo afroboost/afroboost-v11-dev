@@ -58,7 +58,7 @@ const PaymentSuccessPage = ({
           transform: 'translateX(-50%)',
           width: '400px',
           height: '400px',
-          background: 'radial-gradient(circle, rgba(217, 28, 210, 0.15) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, rgba(var(--primary-rgb, 217, 28, 210), 0.15) 0%, transparent 70%)',
           pointerEvents: 'none',
           filter: 'blur(60px)'
         }}
@@ -76,7 +76,7 @@ const PaymentSuccessPage = ({
                 left: `${Math.random() * 100}%`,
                 width: `${8 + Math.random() * 8}px`,
                 height: `${8 + Math.random() * 8}px`,
-                background: ['#d91cd2', '#8b5cf6', '#06b6d4', '#f59e0b', '#10b981'][Math.floor(Math.random() * 5)],
+                background: ['var(--primary-color, #D91CD2)', '#8b5cf6', '#06b6d4', '#f59e0b', '#10b981'][Math.floor(Math.random() * 5)],
                 borderRadius: Math.random() > 0.5 ? '50%' : '2px',
                 animation: `confetti-fall ${3 + Math.random() * 2}s linear forwards`,
                 animationDelay: `${Math.random() * 2}s`,
@@ -125,7 +125,7 @@ const PaymentSuccessPage = ({
             fontWeight: 'bold',
             color: 'white',
             marginBottom: '12px',
-            textShadow: '0 0 20px rgba(217, 28, 210, 0.5)'
+            textShadow: '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.5)'
           }}
           data-testid="success-title"
         >
@@ -136,7 +136,7 @@ const PaymentSuccessPage = ({
         <p 
           style={{
             fontSize: '1.25rem',
-            color: '#d91cd2',
+            color: 'var(--primary-color, #D91CD2)',
             marginBottom: '24px',
             fontWeight: '500'
           }}
@@ -166,8 +166,8 @@ const PaymentSuccessPage = ({
               borderRadius: '16px',
               padding: '24px',
               marginBottom: '32px',
-              border: '1px solid rgba(217, 28, 210, 0.3)',
-              boxShadow: '0 0 30px rgba(217, 28, 210, 0.1)'
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
+              boxShadow: '0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.1)'
             }}
             data-testid="reservation-details"
           >
@@ -180,7 +180,7 @@ const PaymentSuccessPage = ({
                 style={{ 
                   fontSize: '1.5rem', 
                   fontWeight: 'bold', 
-                  color: '#d91cd2',
+                  color: 'var(--primary-color, #D91CD2)',
                   fontFamily: 'monospace',
                   letterSpacing: '2px'
                 }}
@@ -228,22 +228,22 @@ const PaymentSuccessPage = ({
               fontSize: '1.1rem',
               fontWeight: 'bold',
               color: 'white',
-              background: 'linear-gradient(135deg, #d91cd2 0%, #8b5cf6 100%)',
+              background: 'linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, #8b5cf6 100%)',
               border: 'none',
               borderRadius: '12px',
               cursor: 'pointer',
-              boxShadow: '0 4px 20px rgba(217, 28, 210, 0.4)',
+              boxShadow: '0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
               transition: 'all 0.3s ease',
               textTransform: 'uppercase',
               letterSpacing: '1px'
             }}
             onMouseEnter={(e) => {
               e.target.style.transform = 'translateY(-2px)';
-              e.target.style.boxShadow = '0 6px 30px rgba(217, 28, 210, 0.6)';
+              e.target.style.boxShadow = '0 6px 30px rgba(var(--primary-rgb, 217, 28, 210), 0.6)';
             }}
             onMouseLeave={(e) => {
               e.target.style.transform = 'translateY(0)';
-              e.target.style.boxShadow = '0 4px 20px rgba(217, 28, 210, 0.4)';
+              e.target.style.boxShadow = '0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.4)';
             }}
             data-testid="access-courses-btn"
           >

@@ -125,13 +125,13 @@ const BookingPanel = ({
       {/* v95: SÉLECTEUR MULTI-ABONNEMENTS */}
       {hasMultipleSubs && (
         <div style={{
-          background: 'rgba(217, 28, 210, 0.1)',
-          border: '1px solid rgba(217, 28, 210, 0.3)',
+          background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)',
+          border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
           borderRadius: '10px',
           padding: '10px',
           marginBottom: '8px'
         }}>
-          <p style={{ color: '#D91CD2', fontSize: '12px', margin: '0 0 8px 0', fontWeight: '600' }}>
+          <p style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '12px', margin: '0 0 8px 0', fontWeight: '600' }}>
             🔄 Réserver pour quel abonnement ?
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -147,10 +147,10 @@ const BookingPanel = ({
                     padding: '10px 12px',
                     borderRadius: '8px',
                     background: isSelected
-                      ? 'linear-gradient(135deg, rgba(217, 28, 210, 0.4), rgba(147, 51, 234, 0.4))'
+                      ? 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.4), rgba(147, 51, 234, 0.4))'
                       : 'rgba(255,255,255,0.05)',
                     border: isSelected
-                      ? '2px solid #D91CD2'
+                      ? '2px solid var(--primary-color, #D91CD2)'
                       : '1px solid rgba(255,255,255,0.1)',
                     color: '#fff',
                     textAlign: 'left',
@@ -314,12 +314,12 @@ const BookingPanel = ({
           {/* v95: Rappel abonnement sélectionné */}
           {hasMultipleSubs && selectedSubscription && (
             <div style={{
-              background: 'rgba(217, 28, 210, 0.15)',
+              background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
               borderRadius: '6px',
               padding: '6px 10px',
               marginBottom: '10px',
               fontSize: '11px',
-              color: '#D91CD2'
+              color: 'var(--primary-color, #D91CD2)'
             }}>
               🎯 Réservation via : <strong>{selectedSubscription.offer_name || selectedSubscription.code}</strong>
             </div>

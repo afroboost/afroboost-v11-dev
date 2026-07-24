@@ -143,8 +143,8 @@ const VitrinePartnerLink = ({ offer }) => {
         gap: '6px',
         padding: '6px 12px',
         borderRadius: '8px',
-        border: '1px solid #d91cd2',
-        color: '#d91cd2',
+        border: '1px solid var(--primary-color, #D91CD2)',
+        color: 'var(--primary-color, #D91CD2)',
         background: 'transparent',
         fontSize: '12px',
         fontWeight: 600,
@@ -196,7 +196,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
   const [cacheBusterTs] = useState(() => Date.now());
 
   // v17.0: Branding dynamique
-  const [brandAccent, setBrandAccent] = useState('#D91CD2');
+  const [brandAccent, setBrandAccent] = useState('var(--primary-color, #D91CD2)');
 
   // v44: Pistes audio autonomes (indépendantes des cours)
   const [audioTracks, setAudioTracks] = useState([]);
@@ -654,7 +654,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         <p className="text-red-400 text-xl font-semibold">{error || 'Coach non trouvé'}</p>
         <button onClick={onBack || onClose}
           className="px-6 py-3 rounded-xl text-white font-medium"
-          style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #d91cd2 100%)' }}>
+          style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, var(--primary-color, #D91CD2) 100%)' }}>
           <span className="inline-flex items-center gap-1.5"><SvgIcon name="arrowLeft" size={14} /> Retour</span>
         </button>
       </div>
@@ -761,7 +761,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             <p className="text-gray-600 text-sm mb-4 break-all">{vitrineUrl}</p>
             <button onClick={() => { navigator.clipboard.writeText(vitrineUrl); alert('Lien copié!'); }}
               className="w-full py-3 rounded-xl text-white font-medium"
-              style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #d91cd2 100%)' }}>
+              style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, var(--primary-color, #D91CD2) 100%)' }}>
               Copier le lien
             </button>
           </div>
@@ -789,7 +789,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             }}>
             <div style={{
               width: '48px', height: '48px', borderRadius: '50%',
-              border: '3px solid rgba(217,28,210,0.2)', borderTopColor: '#D91CD2',
+              border: '3px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)', borderTopColor: 'var(--primary-color, #D91CD2)',
               animation: 'spin 0.8s linear infinite'
             }} />
             <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
@@ -842,9 +842,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   >
                     <div style={{
                       width: '72px', height: '72px', borderRadius: '50%',
-                      background: 'rgba(217, 28, 210, 0.85)',
+                      background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.85)',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      boxShadow: '0 0 30px rgba(217, 28, 210, 0.5)',
+                      boxShadow: '0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
                       transition: 'transform 0.2s ease'
                     }}>
                       <svg width="28" height="32" viewBox="0 0 28 32" fill="none">
@@ -854,7 +854,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   </a>
                   {/* Gradient overlay */}
                   <div className="absolute inset-0" style={{
-                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(217, 28, 210, 0.1) 50%, rgba(30, 0, 50, 0.4) 100%)',
+                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(var(--primary-rgb, 217, 28, 210), 0.1) 50%, rgba(30, 0, 50, 0.4) 100%)',
                     zIndex: 1, pointerEvents: 'none'
                   }} />
                 </div>
@@ -915,15 +915,15 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 <div className="absolute inset-0" key={`vid-wrap-${activeVideoIndex}`}>
                   {/* V157: Gradient placeholder — attractive while video loads, smooth fade-out */}
                   <div id={`vid-fallback-${activeVideoIndex}`} className="absolute inset-0" style={{
-                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.7) 0%, rgba(217, 28, 210, 0.5) 50%, rgba(30, 0, 50, 0.95) 100%)',
+                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.7) 0%, rgba(var(--primary-rgb, 217, 28, 210), 0.5) 50%, rgba(30, 0, 50, 0.95) 100%)',
                     zIndex: 2, transition: 'opacity 0.8s ease-out'
                   }}>
                     <div className="absolute inset-0 flex items-center justify-center flex-col gap-3">
                       <div style={{
                         width: '64px', height: '64px', borderRadius: '50%',
-                        background: 'rgba(217, 28, 210, 0.7)',
+                        background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.7)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        boxShadow: '0 0 25px rgba(217, 28, 210, 0.4)',
+                        boxShadow: '0 0 25px rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
                         animation: 'pulse 2s ease-in-out infinite'
                       }}>
                         <svg width="22" height="26" viewBox="0 0 28 32" fill="none">
@@ -995,9 +995,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             // === FALLBACK — gradient décoratif ===
             return (
               <div className="absolute inset-0"
-                style={{ background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.5) 0%, rgba(217, 28, 210, 0.4) 100%)' }}>
+                style={{ background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.5) 0%, rgba(var(--primary-rgb, 217, 28, 210), 0.4) 100%)' }}>
                 <div className="absolute inset-0 flex items-center justify-center"
-                  style={{ background: 'radial-gradient(circle at 50% 50%, rgba(217, 28, 210, 0.3) 0%, transparent 70%)' }}>
+                  style={{ background: 'radial-gradient(circle at 50% 50%, rgba(var(--primary-rgb, 217, 28, 210), 0.3) 0%, transparent 70%)' }}>
                   <span className="text-5xl opacity-70"><SvgIcon name="video" size={48} /></span>
                 </div>
               </div>
@@ -1015,8 +1015,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 style={{
                   width: activeVideoIndex === idx ? '24px' : '10px', height: '10px',
                   borderRadius: '5px', border: 'none', cursor: 'pointer',
-                  background: activeVideoIndex === idx ? '#D91CD2' : 'rgba(255,255,255,0.4)',
-                  boxShadow: activeVideoIndex === idx ? '0 0 10px rgba(217,28,210,0.6)' : 'none',
+                  background: activeVideoIndex === idx ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.4)',
+                  boxShadow: activeVideoIndex === idx ? '0 0 10px rgba(var(--primary-rgb, 217, 28, 210), 0.6)' : 'none',
                   transition: 'all 0.3s ease'
                 }}
               />
@@ -1028,9 +1028,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         {isVideoPremium && !showVideoPreviewOverlay && (
           <div className="absolute z-20" style={{
             top: '60px', right: '16px',
-            background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+            background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
             padding: '4px 12px', borderRadius: '20px',
-            boxShadow: '0 0 15px rgba(217,28,210,0.4)',
+            boxShadow: '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
             fontSize: '12px', fontWeight: 700, color: '#fff'
           }}>
             <SvgIcon name="diamond" size={14} />{' '}{currentVideoPrice} CHF
@@ -1048,9 +1048,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           >
             <div style={{
               width: '80px', height: '80px', borderRadius: '50%',
-              background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+              background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 0 40px rgba(217,28,210,0.5)',
+              boxShadow: '0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
               marginBottom: '20px'
             }}>
               <svg width="36" height="36" viewBox="0 0 24 24" fill="white">
@@ -1073,10 +1073,10 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 });
               }}
               style={{
-                background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                 color: '#fff', border: 'none', padding: '14px 32px',
                 borderRadius: '30px', fontSize: '16px', fontWeight: 700,
-                cursor: 'pointer', boxShadow: '0 0 25px rgba(217,28,210,0.5)'
+                cursor: 'pointer', boxShadow: '0 0 25px rgba(var(--primary-rgb, 217, 28, 210), 0.5)'
               }}
             >
               Acheter — {currentVideoPrice} CHF
@@ -1116,7 +1116,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             <svg width="28" height="28" viewBox="0 0 40 40" fill="none">
               <defs>
                 <linearGradient id="vitrineLogo" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#D91CD2" />
+                  <stop offset="0%" style={{ stopColor: 'var(--primary-color, #D91CD2)' }} />
                   <stop offset="100%" stopColor="#8b5cf6" />
                 </linearGradient>
               </defs>
@@ -1138,10 +1138,10 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               <img src={coach.logo_url || coach.photo_url} alt={displayName}
                 className="w-10 h-10 rounded-full object-cover"
                 loading="lazy"
-                style={{ border: '2px solid #D91CD2' }} />
+                style={{ border: '2px solid var(--primary-color, #D91CD2)' }} />
             ) : (
               <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold"
-                style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #d91cd2 100%)', color: 'white', border: '2px solid #D91CD2' }}>
+                style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, var(--primary-color, #D91CD2) 100%)', color: 'white', border: '2px solid var(--primary-color, #D91CD2)' }}>
                 {initial}
               </div>
             )}
@@ -1152,7 +1152,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             <button onClick={() => setShowCommentsPanel(true)} className="flex flex-col items-center gap-1">
               <div className="w-10 h-10 rounded-full flex items-center justify-center"
                 style={{
-                  background: 'rgba(217, 28, 210, 0.3)',
+                  background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                   backdropFilter: 'blur(6px)',
                   border: '2px solid rgba(255, 255, 255, 0.85)',
                   boxShadow: '0 0 8px rgba(0, 0, 0, 0.4)'
@@ -1172,12 +1172,12 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             <div className="flex flex-col items-center gap-1">
               <div className="w-10 h-10 rounded-full flex items-center justify-center"
                 style={{
-                  background: 'rgba(217, 28, 210, 0.25)',
+                  background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.25)',
                   backdropFilter: 'blur(6px)',
                   border: '2px solid rgba(255, 255, 255, 0.85)',
                   boxShadow: '0 0 8px rgba(0, 0, 0, 0.4)'
                 }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="#D91CD2" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="18" height="18" viewBox="0 0 24 24" style={{ fill: 'var(--primary-color, #D91CD2)' }} stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
                 </svg>
               </div>
@@ -1215,7 +1215,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
           }} className="flex flex-col items-center gap-1">
             <div className="w-10 h-10 rounded-full flex items-center justify-center"
-              style={{ background: 'rgba(217, 28, 210, 0.6)', border: '2px solid rgba(255, 255, 255, 0.85)', boxShadow: '0 0 8px rgba(0, 0, 0, 0.4)' }}>
+              style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.6)', border: '2px solid rgba(255, 255, 255, 0.85)', boxShadow: '0 0 8px rgba(0, 0, 0, 0.4)' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
                 <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
                 <line x1="16" y1="2" x2="16" y2="6" />
@@ -1257,10 +1257,10 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   <img src={coach.photo_url || coach.logo_url} alt={displayName}
                     className="w-14 h-14 rounded-full object-cover"
                     loading="lazy"
-                    style={{ border: '2px solid rgba(217, 28, 210, 0.4)' }} />
+                    style={{ border: '2px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)' }} />
                 ) : (
                   <div className="w-14 h-14 rounded-full flex items-center justify-center text-lg font-bold"
-                    style={{ background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', color: '#fff' }}>
+                    style={{ background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)', color: '#fff' }}>
                     {(displayName || 'P').charAt(0).toUpperCase()}
                   </div>
                 )}
@@ -1281,9 +1281,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             {offerSessionHint && (
               <div className="mb-4 rounded-xl p-4 flex items-start gap-3 animate-pulse"
                 style={{
-                  background: 'linear-gradient(135deg, rgba(217,28,210,0.2), rgba(139,92,246,0.2))',
-                  border: '2px solid #d91cd2',
-                  boxShadow: '0 0 20px rgba(217,28,210,0.4)'
+                  background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.2), rgba(139,92,246,0.2))',
+                  border: '2px solid var(--primary-color, #D91CD2)',
+                  boxShadow: '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.4)'
                 }}>
                 <span style={{ fontSize: '22px' }}><SvgIcon name="warning" size={22} /></span>
                 <div>
@@ -1295,7 +1295,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             <h2 className="font-semibold mb-4 text-white flex items-center gap-2" style={{ fontSize: '18px' }}>
               Choisissez vos sessions
               {selectedBookings.length > 0 && (
-                <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'rgba(217, 28, 210, 0.3)', color: '#d91cd2' }}>
+                <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)', color: 'var(--primary-color, #D91CD2)' }}>
                   {selectedBookings.length} sélectionnée{selectedBookings.length > 1 ? 's' : ''}
                 </span>
               )}
@@ -1309,9 +1309,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   <div key={course.id}
                     className="rounded-xl p-5 transition-all duration-200"
                     style={{
-                      background: isSelected ? 'rgba(217, 28, 210, 0.08)' : 'transparent',
+                      background: isSelected ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)' : 'transparent',
                       borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-                      borderLeft: isSelected ? '2px solid #d91cd2' : 'none'
+                      borderLeft: isSelected ? '2px solid var(--primary-color, #D91CD2)' : 'none'
                     }}>
                     <h3 className="font-semibold text-white">{course.name || course.title}</h3>
 
@@ -1339,9 +1339,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                                 onClick={() => handleBookClick(course, date)}
                                 className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover:scale-105"
                                 style={{
-                                  background: isDateSelected ? 'rgba(217, 28, 210, 0.5)' : 'rgba(217, 28, 210, 0.2)',
-                                  border: isDateSelected ? '2px solid #d91cd2' : '1px solid rgba(217, 28, 210, 0.4)',
-                                  color: isDateSelected ? '#fff' : '#d91cd2',
+                                  background: isDateSelected ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.5)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
+                                  border: isDateSelected ? '2px solid var(--primary-color, #D91CD2)' : '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+                                  color: isDateSelected ? '#fff' : 'var(--primary-color, #D91CD2)',
                                   cursor: 'pointer'
                                 }}>
                                 {formatDateShort(date)} • {course.time}
@@ -1357,7 +1357,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                         rendait une pastille vide (`[...][null]` -> undefined). */}
                     {Number.isInteger(course.weekday) && upcomingDates.length === 0 && (
                       <div className="mt-2 px-3 py-1 inline-block rounded-full text-xs font-medium"
-                        style={{ background: 'rgba(217, 28, 210, 0.2)', color: '#d91cd2' }}>
+                        style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)', color: 'var(--primary-color, #D91CD2)' }}>
                         {['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'][course.weekday]}
                       </div>
                     )}
@@ -1374,7 +1374,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             <h2 className="font-semibold mb-2 text-white" style={{ fontSize: '18px' }}>
               {offers === DEFAULT_STARTER_OFFERS ? 'Offres de démarrage' : 'Choisissez votre offre'}
             </h2>
-            <p className="text-sm mb-4" style={{ color: '#d91cd2' }}>
+            <p className="text-sm mb-4" style={{ color: 'var(--primary-color, #D91CD2)' }}>
               Sélectionnez une offre pour continuer
             </p>
 
@@ -1391,9 +1391,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   <div key={offer.id} className="flex-shrink-0 snap-start" style={{ width: '280px', minWidth: '280px', padding: '4px' }}>
                     <div className="rounded-xl overflow-hidden cursor-pointer transition-all duration-300 hover:scale-[1.02]"
                       style={{
-                        boxShadow: isOfferSelected ? '0 0 20px rgba(217, 28, 210, 0.6)' : '0 4px 20px rgba(0,0,0,0.4)',
+                        boxShadow: isOfferSelected ? '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.6)' : '0 4px 20px rgba(0,0,0,0.4)',
                         background: 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(5,0,15,0.99) 100%)',
-                        border: isOfferSelected ? '2px solid #d91cd2' : '1px solid rgba(217, 28, 210, 0.3)'
+                        border: isOfferSelected ? '2px solid var(--primary-color, #D91CD2)' : '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)'
                       }}
                       onClick={() => {
                         // v158.4: Si pas de session choisie ET il y a des cours dispo → BLOQUER l'offre
@@ -1402,7 +1402,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           const sessionsEl = document.getElementById('vitrine-courses-section');
                           if (sessionsEl) {
                             sessionsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                            sessionsEl.style.boxShadow = '0 0 0 3px #d91cd2, 0 0 40px rgba(217,28,210,0.6)';
+                            sessionsEl.style.boxShadow = '0 0 0 3px var(--primary-color, #D91CD2), 0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.6)';
                             sessionsEl.style.borderRadius = '12px';
                             sessionsEl.style.transition = 'box-shadow 0.3s';
                             setTimeout(() => { sessionsEl.style.boxShadow = ''; }, 6000);
@@ -1435,8 +1435,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                         {/* Photo/Video Icon - Top Left */}
                         <div className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center"
                           style={{
-                            background: 'rgba(217, 28, 210, 0.85)',
-                            boxShadow: '0 0 12px rgba(217, 28, 210, 0.5)',
+                            background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.85)',
+                            boxShadow: '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
                             border: '2px solid rgba(255, 255, 255, 0.3)'
                           }}>
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
@@ -1455,7 +1455,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                         )}
                         {isOfferSelected && (
                           <div className="absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center"
-                            style={{ background: '#d91cd2' }}>
+                            style={{ background: 'var(--primary-color, #D91CD2)' }}>
                             <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
                               <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                             </svg>
@@ -1470,9 +1470,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                               {offer.description}
                             </p>
                           )}
-                          <span className="text-xs cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
+                          <span className="text-xs cursor-pointer font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>Lire plus</span>
                         </div>
-                        <span className="text-xl font-bold" style={{ color: '#d91cd2' }}>
+                        <span className="text-xl font-bold" style={{ color: 'var(--primary-color, #D91CD2)' }}>
                           {offer.price === 0 ? 'Offert' : `CHF ${offer.price}.-`}
                         </span>
                         {offer.duration_value && offer.duration_unit && (
@@ -1532,7 +1532,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                               const sessionsEl = document.getElementById('vitrine-courses-section');
                               if (sessionsEl) {
                                 sessionsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                                sessionsEl.style.boxShadow = '0 0 0 3px #d91cd2, 0 0 40px rgba(217,28,210,0.6)';
+                                sessionsEl.style.boxShadow = '0 0 0 3px var(--primary-color, #D91CD2), 0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.6)';
                                 sessionsEl.style.borderRadius = '12px';
                                 sessionsEl.style.transition = 'box-shadow 0.3s';
                                 setTimeout(() => { sessionsEl.style.boxShadow = ''; }, 6000);
@@ -1550,7 +1550,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           style={{
                             boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
                             background: 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(5,0,15,0.99) 100%)',
-                            border: '1px solid rgba(217, 28, 210, 0.3)'
+                            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)'
                           }}>
                           <div style={{ position: 'relative', height: '180px', overflow: 'hidden' }}>
                             {/* V233: video ou image */}
@@ -1567,8 +1567,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                             {/* Photo/Video Icon - Top Left */}
                             <div className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center"
                               style={{
-                                background: 'rgba(217, 28, 210, 0.85)',
-                                boxShadow: '0 0 12px rgba(217, 28, 210, 0.5)',
+                                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.85)',
+                                boxShadow: '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
                                 border: '2px solid rgba(255, 255, 255, 0.3)'
                               }}>
                               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
@@ -1594,9 +1594,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                                   {offer.description}
                                 </p>
                               )}
-                              <span className="text-xs cursor-pointer font-semibold" style={{ color: '#d91cd2' }}>Lire plus</span>
+                              <span className="text-xs cursor-pointer font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>Lire plus</span>
                             </div>
-                            <span className="text-xl font-bold" style={{ color: '#d91cd2' }}>
+                            <span className="text-xl font-bold" style={{ color: 'var(--primary-color, #D91CD2)' }}>
                               {offer.price === 0 ? 'Offert' : `CHF ${offer.price}.-`}
                             </span>
                             {offer.duration_value && offer.duration_unit && (
@@ -1661,8 +1661,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           <div id="vitrine-booking-form" ref={formRef} className="mb-8 rounded-xl p-6"
             style={{
               background: 'linear-gradient(180deg, rgba(20,10,30,0.6) 0%, rgba(10,5,20,0.8) 100%)',
-              border: '1px solid rgba(217, 28, 210, 0.3)',
-              boxShadow: '0 0 30px rgba(217, 28, 210, 0.15)'
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
+              boxShadow: '0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.15)'
             }}>
 
             {bookingSuccess ? (
@@ -1676,7 +1676,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   setSelectedOffer(null);
                 }}
                   className="px-6 py-3 rounded-xl text-white font-medium transition-all hover:scale-105"
-                  style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #d91cd2 100%)' }}>
+                  style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, var(--primary-color, #D91CD2) 100%)' }}>
                   Nouvelle réservation
                 </button>
               </div>
@@ -1688,7 +1688,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
 
                 {/* Récapitulatif multi-séances */}
                 <div className="rounded-lg p-4 mb-6"
-                  style={{ background: 'rgba(217, 28, 210, 0.1)', border: '1px solid rgba(217, 28, 210, 0.2)' }}>
+                  style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }}>
                   {selectedBookings.map((booking, idx) => (
                     <div key={idx} className={idx > 0 ? 'mt-3 pt-3' : ''} style={idx > 0 ? { borderTop: '1px solid rgba(255,255,255,0.1)' } : {}}>
                       <div className="flex items-center justify-between">
@@ -1707,7 +1707,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   ))}
                   {selectedOffer && (
                     <p className="text-white/60 text-sm mt-3 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                      Offre : <span className="text-white">{selectedOffer.name}</span> — <span style={{ color: '#d91cd2' }}>{selectedOffer.price === 0 ? 'Offert' : `CHF ${selectedOffer.price}.-`}</span>
+                      Offre : <span className="text-white">{selectedOffer.name}</span> — <span style={{ color: 'var(--primary-color, #D91CD2)' }}>{selectedOffer.price === 0 ? 'Offert' : `CHF ${selectedOffer.price}.-`}</span>
                     </p>
                   )}
                 </div>
@@ -1755,7 +1755,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                         placeholder="CODE123" />
                       <button type="button" onClick={() => validatePromoCode(bookingForm.promoCode)}
                         className="rounded-lg font-medium transition-all hover:scale-105 text-sm"
-                        style={{ flexShrink: 0, padding: '12px 14px', background: 'rgba(217, 28, 210, 0.3)', border: '1px solid rgba(217, 28, 210, 0.5)', color: '#D91CD2', whiteSpace: 'nowrap' }}>
+                        style={{ flexShrink: 0, padding: '12px 14px', background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)', color: 'var(--primary-color, #D91CD2)', whiteSpace: 'nowrap' }}>
                         Valider
                       </button>
                     </div>
@@ -1808,8 +1808,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                   <button type="submit" disabled={bookingLoading}
                     className="w-full py-4 rounded-xl text-white font-semibold transition-all hover:scale-[1.02]"
                     style={{
-                      background: bookingLoading ? 'rgba(139, 92, 246, 0.5)' : 'linear-gradient(135deg, #D91CD2 0%, #8b5cf6 100%)',
-                      boxShadow: bookingLoading ? 'none' : '0 0 25px rgba(217, 28, 210, 0.4)'
+                      background: bookingLoading ? 'rgba(139, 92, 246, 0.5)' : 'linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, #8b5cf6 100%)',
+                      boxShadow: bookingLoading ? 'none' : '0 0 25px rgba(var(--primary-rgb, 217, 28, 210), 0.4)'
                     }}>
                     {bookingLoading ? (
                       <span className="flex items-center justify-center gap-2">
@@ -1894,7 +1894,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           style={{
                             width: '36px', height: '36px', borderRadius: '50%',
                             overflow: 'hidden', cursor: 'pointer', flexShrink: 0,
-                            border: '2px solid #D91CD2'
+                            border: '2px solid var(--primary-color, #D91CD2)'
                           }}
                         >
                           <img
@@ -1906,7 +1906,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       ) : (
                         <div style={{
                           width: '36px', height: '36px', borderRadius: '50%',
-                          background: '#D91CD2',
+                          background: 'var(--primary-color, #D91CD2)',
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                           fontSize: '14px', fontWeight: 700, color: '#fff', flexShrink: 0
                         }}>
@@ -1921,7 +1921,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           {/* v86: Badge "Vérifié" pour les avis réels post-session */}
                           {comment.is_verified && (
                             <span style={{
-                              background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                              background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                               color: '#fff',
                               fontSize: '9px',
                               fontWeight: 700,
@@ -1936,7 +1936,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           <div style={{ display: 'flex', gap: '1px' }}>
                             {[1,2,3,4,5].map(i => (
                               <svg key={i} width="10" height="10" viewBox="0 0 24 24"
-                                fill={i <= (comment.rating || 5) ? '#D91CD2' : '#ddd'}
+                                fill={i <= (comment.rating || 5) ? 'var(--primary-color, #D91CD2)' : '#ddd'}
                                 stroke="none"
                               >
                                 <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
@@ -1990,8 +1990,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             <div style={{
               width: '260px', height: '260px', borderRadius: '50%',
               overflow: 'hidden',
-              border: '3px solid #D91CD2',
-              boxShadow: '0 0 30px rgba(217,28,210,0.5)',
+              border: '3px solid var(--primary-color, #D91CD2)',
+              boxShadow: '0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
               animation: 'v74ZoomIn 0.25s ease-out'
             }}>
               <img
@@ -2010,8 +2010,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             to { transform: translateY(0); }
           }
           @keyframes v73GlowPulse {
-            0%, 100% { transform: scale(1); box-shadow: 0 0 6px rgba(217,28,210,0.2); }
-            50% { transform: scale(1.03); box-shadow: 0 0 10px rgba(217,28,210,0.3); }
+            0%, 100% { transform: scale(1); box-shadow: 0 0 6px rgba(var(--primary-rgb, 217, 28, 210), 0.2); }
+            50% { transform: scale(1.03); box-shadow: 0 0 10px rgba(var(--primary-rgb, 217, 28, 210), 0.3); }
           }
           @keyframes v74ZoomIn {
             from { transform: scale(0.5); opacity: 0; }
@@ -2084,7 +2084,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         {/* V235: Modal Mentions légales (Impressum) — exigé par Stripe pour TWINT */}
         {showLegalModal && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }} onClick={() => setShowLegalModal(false)}>
-            <div style={{ background: '#1a1a2e', borderRadius: '12px', padding: '24px', maxWidth: '500px', width: '100%', maxHeight: '80vh', overflowY: 'auto', border: '1px solid rgba(217,28,210,0.3)' }} onClick={e => e.stopPropagation()}>
+            <div style={{ background: '#1a1a2e', borderRadius: '12px', padding: '24px', maxWidth: '500px', width: '100%', maxHeight: '80vh', overflowY: 'auto', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }} onClick={e => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <h3 style={{ color: '#fff', fontSize: '18px', fontWeight: 'bold' }}>Mentions légales</h3>
                 <button onClick={() => setShowLegalModal(false)} style={{ color: '#fff', fontSize: '24px', background: 'none', border: 'none', cursor: 'pointer' }}>×</button>
@@ -2093,13 +2093,13 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 <p style={{ fontWeight: 'bold', marginBottom: '12px' }}>Impressum</p>
                 <p><strong>Dénomination :</strong> Association Afroboosteur</p>
                 <p><strong>Adresse :</strong> Rue Maillefer 39, 2000 Neuchâtel, Suisse</p>
-                <p><strong>Contact :</strong> <a href="mailto:contact@afroboosteur.com" style={{ color: '#D91CD2' }}>contact@afroboosteur.com</a></p>
+                <p><strong>Contact :</strong> <a href="mailto:contact@afroboosteur.com" style={{ color: 'var(--primary-color, #D91CD2)' }}>contact@afroboosteur.com</a></p>
                 <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
                   <p style={{ fontWeight: 'bold', marginBottom: '8px' }}>Moyens de paiement</p>
                   <p>Les paiements sont traités de manière sécurisée via Stripe. Devise : CHF. Livraison : Suisse.</p>
                 </div>
               </div>
-              <button onClick={() => setShowLegalModal(false)} style={{ marginTop: '16px', width: '100%', padding: '10px', borderRadius: '8px', background: 'linear-gradient(135deg, #D91CD2, #FF2DAA)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>Fermer</button>
+              <button onClick={() => setShowLegalModal(false)} style={{ marginTop: '16px', width: '100%', padding: '10px', borderRadius: '8px', background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #FF2DAA)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>Fermer</button>
             </div>
           </div>
         )}
@@ -2107,7 +2107,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         {/* === Footer === */}
         <div className="text-center mt-4 pb-8">
           <p className="text-white/30 text-xs">
-            Propulsé par <span style={{ color: '#d91cd2' }}>Afroboost</span> - La plateforme des coachs
+            Propulsé par <span style={{ color: 'var(--primary-color, #D91CD2)' }}>Afroboost</span> - La plateforme des coachs
           </p>
           <button onClick={() => setShowLegalModal(true)} style={{ color: 'rgba(255,255,255,0.25)', fontSize: '10px', background: 'none', border: 'none', cursor: 'pointer', marginTop: '4px' }}>Mentions légales</button>
         </div>

@@ -110,9 +110,9 @@ const SEOManager = ({ API, coachEmail, coachUsername, t }) => {
               fontSize: '12px',
               padding: '4px 10px',
               borderRadius: '8px',
-              background: aiLoading ? 'rgba(139,92,246,0.2)' : 'rgba(217,28,210,0.2)',
-              border: '1px solid rgba(217,28,210,0.4)',
-              color: '#D91CD2',
+              background: aiLoading ? 'rgba(139,92,246,0.2)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+              color: 'var(--primary-color, #D91CD2)',
               cursor: aiLoading ? 'wait' : 'pointer'
             }}
             data-testid="ai-enhance-seo"
@@ -225,7 +225,7 @@ const SEOManager = ({ API, coachEmail, coachUsername, t }) => {
         disabled={saving}
         style={{
           width: '100%', padding: '10px', borderRadius: '8px',
-          background: saving ? 'rgba(139,92,246,0.3)' : 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+          background: saving ? 'rgba(139,92,246,0.3)' : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
           color: '#fff', fontWeight: 600, fontSize: '14px', border: 'none',
           cursor: saving ? 'wait' : 'pointer'
         }}

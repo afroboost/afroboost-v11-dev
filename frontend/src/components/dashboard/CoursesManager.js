@@ -281,9 +281,9 @@ const CoursesManager = ({
                 style={{
                   padding: '8px 14px',
                   borderRadius: '10px',
-                  border: '1px solid rgba(217,28,210,0.3)',
-                  background: 'rgba(217,28,210,0.1)',
-                  color: '#D91CD2',
+                  border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
+                  background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)',
+                  color: 'var(--primary-color, #D91CD2)',
                   fontSize: '12px',
                   fontWeight: 600,
                   cursor: reviewRequestSending[course.id] ? 'wait' : 'pointer',
@@ -316,7 +316,7 @@ const CoursesManager = ({
             </div>
 
             {/* === v17.5: Bouton Studio Audio GLOW === */}
-            {!hideAudioButton && <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid rgba(217,28,210,0.15)' }}>
+            {!hideAudioButton && <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.15)' }}>
               <button
                 onClick={() => openAudioModal(course)}
                 data-testid={`audio-course-${course.id}`}
@@ -324,8 +324,8 @@ const CoursesManager = ({
                   width: '100%',
                   padding: '14px 20px',
                   borderRadius: '14px',
-                  border: '1px solid rgba(217,28,210,0.4)',
-                  background: 'linear-gradient(135deg, rgba(217,28,210,0.15), rgba(139,92,246,0.1))',
+                  border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+                  background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.15), rgba(139,92,246,0.1))',
                   color: '#fff',
                   fontWeight: 700,
                   fontSize: '15px',
@@ -337,16 +337,16 @@ const CoursesManager = ({
                   position: 'relative',
                   overflow: 'hidden',
                   transition: 'all 0.3s ease',
-                  boxShadow: '0 0 25px rgba(217,28,210,0.2), inset 0 0 25px rgba(217,28,210,0.05)'
+                  boxShadow: '0 0 25px rgba(var(--primary-rgb, 217, 28, 210), 0.2), inset 0 0 25px rgba(var(--primary-rgb, 217, 28, 210), 0.05)'
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.boxShadow = '0 0 40px rgba(217,28,210,0.4), inset 0 0 30px rgba(217,28,210,0.1)';
-                  e.currentTarget.style.borderColor = 'rgba(217,28,210,0.7)';
+                  e.currentTarget.style.boxShadow = '0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.4), inset 0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.1)';
+                  e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.7)';
                   e.currentTarget.style.transform = 'translateY(-1px)';
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.boxShadow = '0 0 25px rgba(217,28,210,0.2), inset 0 0 25px rgba(217,28,210,0.05)';
-                  e.currentTarget.style.borderColor = 'rgba(217,28,210,0.4)';
+                  e.currentTarget.style.boxShadow = '0 0 25px rgba(var(--primary-rgb, 217, 28, 210), 0.2), inset 0 0 25px rgba(var(--primary-rgb, 217, 28, 210), 0.05)';
+                  e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.4)';
                   e.currentTarget.style.transform = 'translateY(0)';
                 }}
               >
@@ -359,7 +359,7 @@ const CoursesManager = ({
                   width: '120px',
                   height: '120px',
                   borderRadius: '50%',
-                  background: 'radial-gradient(circle, rgba(217,28,210,0.2), transparent 70%)',
+                  background: 'radial-gradient(circle, rgba(var(--primary-rgb, 217, 28, 210), 0.2), transparent 70%)',
                   filter: 'blur(20px)',
                   pointerEvents: 'none'
                 }} />
@@ -369,7 +369,7 @@ const CoursesManager = ({
                   <span style={{
                     position: 'relative',
                     zIndex: 1,
-                    background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)',
+                    background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                     padding: '2px 10px',
                     borderRadius: '12px',
                     fontSize: '12px',

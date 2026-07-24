@@ -7,7 +7,7 @@ import { Eye, Play, RotateCcw, Smartphone, Monitor, X } from 'lucide-react';
 import SvgIcon from '../SvgIcon';
 
 const GLOW = {
-  violet: '0 0 12px rgba(217, 28, 210, 0.5), 0 0 24px rgba(217, 28, 210, 0.2)',
+  violet: '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.5), 0 0 24px rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
 };
 
 // === Simulated Tunnel Step ===
@@ -24,7 +24,7 @@ const SimStep = ({ question, type, options, stepNum, totalSteps, onAnswer }) => 
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
         <div style={{
           width: '24px', height: '24px', borderRadius: '50%',
-          background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+          background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           color: '#fff', fontSize: '10px', fontWeight: '700',
         }}>
@@ -49,9 +49,9 @@ const SimStep = ({ question, type, options, stepNum, totalSteps, onAnswer }) => 
               onClick={() => { setSelectedBtn(opt); setTimeout(() => onAnswer(opt), 300); }}
               style={{
                 padding: '10px 14px', borderRadius: '10px',
-                background: selectedBtn === opt ? 'rgba(217,28,210,0.15)' : 'rgba(255,255,255,0.04)',
-                border: selectedBtn === opt ? '1.5px solid #D91CD2' : '1.5px solid rgba(255,255,255,0.1)',
-                color: selectedBtn === opt ? '#D91CD2' : '#fff',
+                background: selectedBtn === opt ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)' : 'rgba(255,255,255,0.04)',
+                border: selectedBtn === opt ? '1.5px solid var(--primary-color, #D91CD2)' : '1.5px solid rgba(255,255,255,0.1)',
+                color: selectedBtn === opt ? 'var(--primary-color, #D91CD2)' : '#fff',
                 fontSize: '13px', fontWeight: selectedBtn === opt ? '600' : '400',
                 cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s',
                 flexShrink: 0,
@@ -80,7 +80,7 @@ const SimStep = ({ question, type, options, stepNum, totalSteps, onAnswer }) => 
               background: 'rgba(0,0,0,0.3)', border: '1.5px solid rgba(255,255,255,0.1)',
               color: '#fff', fontSize: '13px', outline: 'none',
             }}
-            onFocus={e => e.target.style.borderColor = '#D91CD2'}
+            onFocus={e => e.target.style.borderColor = 'var(--primary-color, #D91CD2)'}
             onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.1)'}
           />
           <button
@@ -88,7 +88,7 @@ const SimStep = ({ question, type, options, stepNum, totalSteps, onAnswer }) => 
             disabled={!value.trim()}
             style={{
               padding: '10px 16px', borderRadius: '10px',
-              background: value.trim() ? 'linear-gradient(135deg, #D91CD2, #8b5cf6)' : 'rgba(255,255,255,0.06)',
+              background: value.trim() ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)' : 'rgba(255,255,255,0.06)',
               border: 'none', color: '#fff', fontSize: '12px', fontWeight: '600',
               cursor: value.trim() ? 'pointer' : 'not-allowed',
               opacity: value.trim() ? 1 : 0.4,
@@ -169,7 +169,7 @@ const LinkSimulator = memo(({ link, isOpen, onClose }) => {
           padding: '0 4px',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Eye size={16} color="#D91CD2" />
+            <Eye size={16} color="var(--primary-color, #D91CD2)" />
             <span style={{ color: '#fff', fontSize: '13px', fontWeight: '600' }}>
               Aperçu : {link?.title || 'Lien'}
             </span>
@@ -177,9 +177,9 @@ const LinkSimulator = memo(({ link, isOpen, onClose }) => {
           <div style={{ display: 'flex', gap: '6px' }}>
             <button onClick={() => setViewMode('mobile')} style={{
               padding: '6px 10px', borderRadius: '8px',
-              background: viewMode === 'mobile' ? 'rgba(217,28,210,0.2)' : 'rgba(255,255,255,0.06)',
-              border: viewMode === 'mobile' ? '1px solid rgba(217,28,210,0.4)' : '1px solid rgba(255,255,255,0.1)',
-              color: viewMode === 'mobile' ? '#D91CD2' : 'rgba(255,255,255,0.4)',
+              background: viewMode === 'mobile' ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)' : 'rgba(255,255,255,0.06)',
+              border: viewMode === 'mobile' ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)' : '1px solid rgba(255,255,255,0.1)',
+              color: viewMode === 'mobile' ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.4)',
               cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px',
               fontSize: '11px', fontWeight: '600',
             }}>
@@ -187,9 +187,9 @@ const LinkSimulator = memo(({ link, isOpen, onClose }) => {
             </button>
             <button onClick={() => setViewMode('desktop')} style={{
               padding: '6px 10px', borderRadius: '8px',
-              background: viewMode === 'desktop' ? 'rgba(217,28,210,0.2)' : 'rgba(255,255,255,0.06)',
-              border: viewMode === 'desktop' ? '1px solid rgba(217,28,210,0.4)' : '1px solid rgba(255,255,255,0.1)',
-              color: viewMode === 'desktop' ? '#D91CD2' : 'rgba(255,255,255,0.4)',
+              background: viewMode === 'desktop' ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)' : 'rgba(255,255,255,0.06)',
+              border: viewMode === 'desktop' ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)' : '1px solid rgba(255,255,255,0.1)',
+              color: viewMode === 'desktop' ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.4)',
               cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px',
               fontSize: '11px', fontWeight: '600',
             }}>
@@ -240,7 +240,7 @@ const LinkSimulator = memo(({ link, isOpen, onClose }) => {
           {/* Chat header */}
           <div style={{
             padding: '12px 16px',
-            background: 'linear-gradient(135deg, rgba(217,28,210,0.08), rgba(139,92,246,0.04))',
+            background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.08), rgba(139,92,246,0.04))',
             borderBottom: '1px solid rgba(255,255,255,0.06)',
             display: 'flex', alignItems: 'center', gap: '10px',
           }}>
@@ -250,7 +250,7 @@ const LinkSimulator = memo(({ link, isOpen, onClose }) => {
               style={{
                 width: '32px', height: '32px', borderRadius: '50%',
                 objectFit: 'cover',
-                border: '2px solid rgba(217,28,210,0.3)',
+                border: '2px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
               }}
             />
             <div>
@@ -274,10 +274,10 @@ const LinkSimulator = memo(({ link, isOpen, onClose }) => {
           }}>
             {/* Welcome message bubble */}
             <div style={{
-              background: '#D91CD2',
+              background: 'var(--primary-color, #D91CD2)',
               padding: '12px 16px', borderRadius: '16px 16px 16px 4px',
               maxWidth: '85%', fontSize: '13px', color: '#fff',
-              boxShadow: '0 2px 8px rgba(217,28,210,0.3)',
+              boxShadow: '0 2px 8px rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
             }}>
               {welcomeMessage}
             </div>
@@ -287,7 +287,7 @@ const LinkSimulator = memo(({ link, isOpen, onClose }) => {
               <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {/* AI question */}
                 <div style={{
-                  background: '#D91CD2', padding: '10px 14px',
+                  background: 'var(--primary-color, #D91CD2)', padding: '10px 14px',
                   borderRadius: '14px 14px 14px 4px',
                   maxWidth: '80%', fontSize: '12px', color: '#fff',
                   opacity: 0.7,
@@ -346,7 +346,7 @@ const LinkSimulator = memo(({ link, isOpen, onClose }) => {
             <div style={{
               height: '100%',
               width: `${((currentStep + (completed ? 1 : 0)) / allSteps.length) * 100}%`,
-              background: 'linear-gradient(90deg, #D91CD2, #8b5cf6)',
+              background: 'linear-gradient(90deg, var(--primary-color, #D91CD2), #8b5cf6)',
               transition: 'width 0.3s ease',
               borderRadius: '0 2px 2px 0',
             }} />

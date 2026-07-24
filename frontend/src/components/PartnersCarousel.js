@@ -23,7 +23,7 @@ const AfroboostLogo = () => (
   <svg width="28" height="28" viewBox="0 0 40 40" fill="none">
     <defs>
       <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="var(--primary-color, #D91CD2)" />
+        <stop offset="0%" style={{ stopColor: 'var(--primary-color, #D91CD2)' }} />
         <stop offset="100%" stopColor="var(--secondary-color, #8b5cf6)" />
       </linearGradient>
     </defs>
@@ -607,7 +607,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                         />
                       ) : (
                         <div className="absolute inset-0" style={{
-                          background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.7) 0%, rgba(217, 28, 210, 0.5) 50%, rgba(30, 0, 50, 0.95) 100%)',
+                          background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.7) 0%, rgba(var(--primary-rgb, 217, 28, 210), 0.5) 50%, rgba(30, 0, 50, 0.95) 100%)',
                           zIndex: 2,
                           opacity: videoReady ? 0 : 1,
                           transition: 'opacity 0.6s ease',
@@ -687,8 +687,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                             <div
                               className="w-20 h-20 rounded-full flex items-center justify-center transition-transform hover:scale-110"
                               style={{
-                                background: 'rgba(217, 28, 210, 0.85)',
-                                boxShadow: '0 0 30px rgba(217, 28, 210, 0.6), 0 0 60px rgba(217, 28, 210, 0.3)',
+                                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.85)',
+                                boxShadow: '0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.6), 0 0 60px rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                                 backdropFilter: 'blur(4px)'
                               }}
                             >
@@ -724,7 +724,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                     }}>
                       <div className="absolute inset-0 flex flex-col items-center justify-center px-8 text-center">
                         <div className="w-24 h-24 rounded-full flex items-center justify-center text-3xl font-bold mb-4"
-                          style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #8b5cf6 100%)', color: 'white' }}
+                          style={{ background: 'linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, #8b5cf6 100%)', color: 'white' }}
                         >{initial}</div>
                         <h2 className="text-white text-2xl font-bold mb-2">{displayName}</h2>
                       </div>
@@ -741,8 +741,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                           style={{
                             width: activeHeroIdx === idx ? '24px' : '10px', height: '10px',
                             borderRadius: '5px', cursor: 'pointer',
-                            background: activeHeroIdx === idx ? '#D91CD2' : 'rgba(255,255,255,0.4)',
-                            boxShadow: activeHeroIdx === idx ? '0 0 10px rgba(217,28,210,0.6)' : 'none',
+                            background: activeHeroIdx === idx ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.4)',
+                            boxShadow: activeHeroIdx === idx ? '0 0 10px rgba(var(--primary-rgb, 217, 28, 210), 0.6)' : 'none',
                             transition: 'all 0.3s ease'
                           }}
                         />
@@ -753,9 +753,9 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                   {/* v34: Badge prix si vidéo premium */}
                   {isCurrentHeroPremium && !showPreviewOverlay && (
                     <div className="absolute top-16 right-3 z-10" style={{
-                      background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                      background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                       padding: '4px 12px', borderRadius: '20px',
-                      boxShadow: '0 0 15px rgba(217,28,210,0.4)',
+                      boxShadow: '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
                       fontSize: '12px', fontWeight: 700, color: '#fff'
                     }}>
                       <SvgIcon name="diamond" size={14} />{' '}{currentHeroPrice} CHF
@@ -774,9 +774,9 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                     >
                       <div style={{
                         width: '80px', height: '80px', borderRadius: '50%',
-                        background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                        background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        boxShadow: '0 0 40px rgba(217,28,210,0.5)',
+                        boxShadow: '0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
                         marginBottom: '20px'
                       }}>
                         <svg width="36" height="36" viewBox="0 0 24 24" fill="white">
@@ -802,10 +802,10 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                           });
                         }}
                         style={{
-                          background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                          background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                           color: '#fff', border: 'none', padding: '14px 32px',
                           borderRadius: '30px', fontSize: '16px', fontWeight: 700,
-                          cursor: 'pointer', boxShadow: '0 0 25px rgba(217,28,210,0.5)',
+                          cursor: 'pointer', boxShadow: '0 0 25px rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
                           transition: 'transform 0.2s ease'
                         }}
                         onMouseOver={(e) => e.target.style.transform = 'scale(1.05)'}
@@ -852,8 +852,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                         <div
                           className="w-20 h-20 rounded-full flex items-center justify-center transition-transform hover:scale-110"
                           style={{
-                            background: 'rgba(217, 28, 210, 0.85)',
-                            boxShadow: '0 0 30px rgba(217, 28, 210, 0.6), 0 0 60px rgba(217, 28, 210, 0.3)',
+                            background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.85)',
+                            boxShadow: '0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.6), 0 0 60px rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                             backdropFilter: 'blur(4px)'
                           }}
                         >
@@ -973,9 +973,9 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                     <div
                       className="w-24 h-24 rounded-full flex items-center justify-center text-3xl font-bold mb-4"
                       style={{
-                        background: 'linear-gradient(135deg, #D91CD2 0%, #8b5cf6 100%)',
+                        background: 'linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, #8b5cf6 100%)',
                         color: 'white',
-                        boxShadow: '0 0 40px rgba(217, 28, 210, 0.5)'
+                        boxShadow: '0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.5)'
                       }}
                     >
                       {initial}
@@ -996,8 +996,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                       }}
                       className="mt-6 px-6 py-2.5 rounded-full text-white text-sm font-medium transition-all hover:scale-105"
                       style={{
-                        background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
-                        boxShadow: '0 4px 20px rgba(217, 28, 210, 0.4)'
+                        background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
+                        boxShadow: '0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.4)'
                       }}
                     >
                       Voir le profil
@@ -1012,7 +1012,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
               className="absolute inset-0 flex items-center justify-center"
               style={{ background: 'rgba(20, 10, 30, 0.8)' }}
             >
-              <div className="animate-pulse w-16 h-16 rounded-full" style={{ background: 'rgba(217, 28, 210, 0.3)' }}></div>
+              <div className="animate-pulse w-16 h-16 rounded-full" style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }}></div>
             </div>
           )}
           
@@ -1058,9 +1058,9 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
               <div
                 style={{
                   width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: '#D91CD2',
+                  background: 'var(--primary-color, #D91CD2)',
                   border: 'none',
-                  boxShadow: '0 0 14px rgba(217, 28, 210, 0.6), 0 0 30px rgba(217, 28, 210, 0.3), 0 4px 15px rgba(217, 28, 210, 0.4)'
+                  boxShadow: '0 0 14px rgba(var(--primary-rgb, 217, 28, 210), 0.6), 0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.3), 0 4px 15px rgba(var(--primary-rgb, 217, 28, 210), 0.4)'
                 }}
               >
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="rgba(255,255,255,0.95)" stroke="white" strokeWidth="0.5">
@@ -1091,9 +1091,9 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
             <div
               style={{
                 width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: '#D91CD2',
+                background: 'var(--primary-color, #D91CD2)',
                 border: 'none',
-                boxShadow: isLiked ? '0 0 20px rgba(217, 28, 210, 0.8), 0 0 40px rgba(217, 28, 210, 0.4), 0 4px 15px rgba(217, 28, 210, 0.4)' : '0 0 14px rgba(217, 28, 210, 0.6), 0 0 30px rgba(217, 28, 210, 0.3), 0 4px 15px rgba(217, 28, 210, 0.4)',
+                boxShadow: isLiked ? '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.8), 0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.4), 0 4px 15px rgba(var(--primary-rgb, 217, 28, 210), 0.4)' : '0 0 14px rgba(var(--primary-rgb, 217, 28, 210), 0.6), 0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.3), 0 4px 15px rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
                 transform: likeAnimating ? 'scale(1.3)' : 'scale(1)',
                 transition: 'all 0.3s ease'
               }}
@@ -1138,9 +1138,9 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
               <div
                 style={{
                   width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: '#D91CD2',
+                  background: 'var(--primary-color, #D91CD2)',
                   border: 'none',
-                  boxShadow: '0 0 14px rgba(217, 28, 210, 0.6), 0 0 30px rgba(217, 28, 210, 0.3), 0 4px 15px rgba(217, 28, 210, 0.4)'
+                  boxShadow: '0 0 14px rgba(var(--primary-rgb, 217, 28, 210), 0.6), 0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.3), 0 4px 15px rgba(var(--primary-rgb, 217, 28, 210), 0.4)'
                 }}
               >
                 <CalendarIcon />
@@ -1238,8 +1238,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                   key={i}
                   className="text-xs px-2 py-0.5 rounded-full"
                   style={{
-                    background: 'rgba(217, 28, 210, 0.2)',
-                    border: '1px solid rgba(217, 28, 210, 0.3)',
+                    background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
+                    border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
                     color: 'rgba(255, 255, 255, 0.8)',
                     textShadow: '0 1px 2px rgba(0,0,0,0.5)'
                   }}
@@ -1823,13 +1823,13 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
             onClick={(e) => e.stopPropagation()}
             style={{
               background: 'linear-gradient(180deg, #1a0a1f 0%, #0d0510 100%)',
-              border: '1px solid rgba(217,28,210,0.4)',
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
               borderRadius: '16px',
               padding: '24px',
               maxWidth: '360px',
               width: '100%',
               textAlign: 'center',
-              boxShadow: '0 0 40px rgba(217,28,210,0.3)'
+              boxShadow: '0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.3)'
             }}
           >
             <p style={{ color: '#fff', fontSize: '16px', fontWeight: 700, marginBottom: '6px' }}>
@@ -1868,7 +1868,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
                 onClick={() => setShowQRModal(false)}
                 style={{
                   flex: 1, padding: '10px', borderRadius: '8px', border: 'none',
-                  background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)', color: '#fff', fontSize: '13px', fontWeight: 600, cursor: 'pointer'
+                  background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)', color: '#fff', fontSize: '13px', fontWeight: 600, cursor: 'pointer'
                 }}
               >
                 Fermer

@@ -182,7 +182,7 @@ const CampaignManager = ({
     <div style={{ padding: '16px', borderRadius: '10px', marginBottom: '16px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
       <p style={{ color: '#f87171', fontWeight: 500, margin: '0 0 4px' }}><SvgIcon name="warning" size={14} /> Crédits insuffisants</p>
       <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px', margin: '0 0 8px' }}>Achetez un pack de crédits pour envoyer des campagnes.</p>
-      <a href="/#devenir-coach" style={{ display: 'inline-block', padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, background: 'linear-gradient(135deg, #d91cd2, #8b5cf6)', color: 'white', textDecoration: 'none' }}>
+      <a href="/#devenir-coach" style={{ display: 'inline-block', padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)', color: 'white', textDecoration: 'none' }}>
         Acheter des crédits
       </a>
     </div>

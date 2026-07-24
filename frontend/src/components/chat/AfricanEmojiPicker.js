@@ -82,7 +82,7 @@ const EmojiButton = memo(({ emoji, onSelect }) => (
       height: '40px',
     }}
     onMouseEnter={(e) => {
-      e.currentTarget.style.background = 'rgba(217, 28, 210, 0.2)';
+      e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)';
       e.currentTarget.style.transform = 'scale(1.15)';
     }}
     onMouseLeave={(e) => {
@@ -100,8 +100,8 @@ const SwahiliButton = memo(({ phrase, onSelect }) => (
   <button
     onClick={() => onSelect(phrase.text)}
     style={{
-      border: '1px solid rgba(217, 28, 210, 0.15)',
-      background: 'rgba(217, 28, 210, 0.06)',
+      border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
+      background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)',
       cursor: 'pointer',
       padding: '8px 12px',
       borderRadius: '10px',
@@ -113,13 +113,13 @@ const SwahiliButton = memo(({ phrase, onSelect }) => (
       width: '100%',
     }}
     onMouseEnter={(e) => {
-      e.currentTarget.style.background = 'rgba(217, 28, 210, 0.15)';
-      e.currentTarget.style.borderColor = 'rgba(217, 28, 210, 0.4)';
+      e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)';
+      e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.4)';
       e.currentTarget.style.transform = 'scale(1.02)';
     }}
     onMouseLeave={(e) => {
-      e.currentTarget.style.background = 'rgba(217, 28, 210, 0.06)';
-      e.currentTarget.style.borderColor = 'rgba(217, 28, 210, 0.15)';
+      e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)';
+      e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)';
       e.currentTarget.style.transform = 'scale(1)';
     }}
   >
@@ -135,7 +135,7 @@ const CategoryTab = memo(({ icon, label, isActive, onClick }) => (
     title={label}
     style={{
       border: 'none',
-      background: isActive ? '#D91CD2' : 'rgba(255,255,255,0.05)',
+      background: isActive ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.05)',
       color: '#fff',
       padding: '6px 10px',
       borderRadius: '8px',
@@ -194,7 +194,7 @@ const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose, position, customEm
         ...posStyle,
         zIndex: 9999,
         background: '#1a1a2e',
-        border: '1px solid rgba(217, 28, 210, 0.2)',
+        border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
         borderRadius: '12px',
         boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
         backdropFilter: 'blur(8px)',
@@ -243,7 +243,7 @@ const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose, position, customEm
             transition: 'all 0.2s ease',
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'rgba(217, 28, 210, 0.3)';
+            e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)';
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
@@ -305,8 +305,8 @@ const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose, position, customEm
                 key={`coach-${index}`}
                 onClick={() => handleSelectEmoji(`[emoji:${emoji.id}]`)}
                 style={{
-                  border: '1px solid rgba(217, 28, 210, 0.15)',
-                  background: 'rgba(217, 28, 210, 0.06)',
+                  border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
+                  background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)',
                   cursor: 'pointer',
                   padding: '6px',
                   borderRadius: '8px',
@@ -318,11 +318,11 @@ const AfricanEmojiPicker = memo(({ isOpen, onSelect, onClose, position, customEm
                   height: '48px',
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'rgba(217, 28, 210, 0.2)';
+                  e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)';
                   e.currentTarget.style.transform = 'scale(1.1)';
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'rgba(217, 28, 210, 0.06)';
+                  e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)';
                   e.currentTarget.style.transform = 'scale(1)';
                 }}
                 title={emoji.name}

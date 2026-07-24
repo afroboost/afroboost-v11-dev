@@ -6,7 +6,7 @@ import React from 'react';
 // deux traces uniquement. Les composants locaux restent la reference du fichier.
 import SvgIcon from '../SvgIcon';
 
-const PINK = '#D91CD2';
+const PINK = 'var(--primary-color, #D91CD2)';
 
 // V227: detection « ce media est-il une video ? » pour la miniature du dashboard.
 // Jusqu'ici la couverture etait TOUJOURS rendue en <img> : un fichier .mp4/.mov
@@ -211,8 +211,8 @@ export default function OfferCard({
         background: '#1a1a2e',
         // V226: retour visuel sur la cible survolee. La largeur reste a 1px et
         // le halo est un box-shadow : aucun decalage de mise en page au survol.
-        border: `1px solid ${isDragOver ? PINK : 'rgba(217,28,210,0.2)'}`,
-        boxShadow: isDragOver ? `0 0 0 2px rgba(217,28,210,0.45)` : 'none',
+        border: `1px solid ${isDragOver ? PINK : 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)'}`,
+        boxShadow: isDragOver ? `0 0 0 2px rgba(var(--primary-rgb, 217, 28, 210), 0.45)` : 'none',
         borderRadius: '12px',
         overflow: 'hidden',
         // V226: grab au repos, grabbing pendant le deplacement.
@@ -358,7 +358,7 @@ export default function OfferCard({
               className="text-xs py-1 px-2 rounded-lg inline-flex items-center justify-center"
               style={{
                 background: '#0a0a0f',
-                border: '1px solid rgba(217,28,210,0.2)',
+                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
                 color: '#fff',
                 opacity: canMoveUp ? 1 : 0.3,
                 cursor: canMoveUp ? 'pointer' : 'not-allowed'
@@ -373,7 +373,7 @@ export default function OfferCard({
               className="text-xs py-1 px-2 rounded-lg inline-flex items-center justify-center"
               style={{
                 background: '#0a0a0f',
-                border: '1px solid rgba(217,28,210,0.2)',
+                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
                 color: '#fff',
                 opacity: canMoveDown ? 1 : 0.3,
                 cursor: canMoveDown ? 'pointer' : 'not-allowed'

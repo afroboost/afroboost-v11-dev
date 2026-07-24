@@ -7,7 +7,7 @@ import SvgIcon from '../SvgIcon';
 import CloudinaryUploadButton from '../CloudinaryUploadButton';
 
 const BrandingManager = ({ API, coachEmail, t }) => {
-  const [accentColor, setAccentColor] = useState('#D91CD2');
+  const [accentColor, setAccentColor] = useState('var(--primary-color, #D91CD2)');
   const [logoUrl, setLogoUrl] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null);
@@ -213,7 +213,7 @@ const BrandingManager = ({ API, coachEmail, t }) => {
           width: '100%',
           padding: '10px',
           borderRadius: '8px',
-          background: saving ? 'rgba(139,92,246,0.3)' : 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+          background: saving ? 'rgba(139,92,246,0.3)' : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
           color: '#fff',
           fontWeight: 600,
           fontSize: '14px',

@@ -438,9 +438,9 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
               onClick={() => { onCancel(); window.location.hash = '#become-coach'; }}
               style={{
                 ...primaryBtnStyle,
-                background: 'linear-gradient(135deg, rgba(217,28,210,0.3), rgba(139,92,246,0.3))',
-                border: '1px solid rgba(217,28,210,0.5)',
-                color: '#D91CD2'
+                background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.3), rgba(139,92,246,0.3))',
+                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
+                color: 'var(--primary-color, #D91CD2)'
               }}
               data-testid="become-partner-btn"
             >

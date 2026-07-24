@@ -20,7 +20,7 @@ const CreditBoutique = ({
       {/* Header avec solde actuel - v12.1 Design Premium Sans Cadre */}
       <div className="text-center py-6" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
         <div className="text-white/50 text-sm mb-2">Votre solde actuel</div>
-        <div className="text-4xl font-bold" style={{ color: '#D91CD2' }}>
+        <div className="text-4xl font-bold" style={{ color: 'var(--primary-color, #D91CD2)' }}>
           {coachCredits === -1 ? '∞' : coachCredits} crédits
         </div>
         {coachCredits !== -1 && coachCredits < 10 && (
@@ -34,13 +34,13 @@ const CreditBoutique = ({
       {servicePrices && (
         <div style={{
           background: 'rgba(10,10,15,0.6)',
-          border: '1px solid rgba(217,28,210,0.2)',
+          border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
           borderRadius: '12px',
           padding: '16px',
           marginBottom: '16px'
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-            <h3 style={{ color: '#D91CD2', fontSize: '14px', fontWeight: 'bold', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <h3 style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '14px', fontWeight: 'bold', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
               {isSuperAdmin
                 ? <><SvgIcon name="settings" size={14} /> Tarifs des services (modifiable)</>
                 : <><SvgIcon name="dollarSign" size={14} /> Coût des services</>}
@@ -59,14 +59,14 @@ const CreditBoutique = ({
             ].map(s => (
               <div key={s.key} style={{
                 flex: '1 1 100px',
-                background: 'rgba(217,28,210,0.08)',
+                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)',
                 borderRadius: '8px',
                 padding: '10px',
                 textAlign: 'center'
               }}>
                 <div style={{ fontSize: '20px', marginBottom: '4px' }}><SvgIcon name={s.icon} size={20} /></div>
                 <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '10px', marginBottom: '4px' }}>{s.label}</div>
-                <div style={{ color: '#D91CD2', fontWeight: 'bold', fontSize: '16px' }}>
+                <div style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: 'bold', fontSize: '16px' }}>
                   {servicePrices[s.key] || 1} cr.
                 </div>
               </div>
@@ -92,7 +92,7 @@ const CreditBoutique = ({
                 className="relative py-6 transition-all hover:scale-105"
                 style={{ 
                   borderBottom: '1px solid rgba(255,255,255,0.1)',
-                  borderLeft: index === 1 ? '2px solid #D91CD2' : 'none'
+                  borderLeft: index === 1 ? '2px solid var(--primary-color, #D91CD2)' : 'none'
                 }}
                 data-testid={`pack-${pack.id}`}
               >
@@ -100,7 +100,7 @@ const CreditBoutique = ({
                 {index === 1 && (
                   <div 
                     className="absolute -top-3 left-0 text-xs px-3 py-1 text-white inline-flex items-center gap-1.5"
-                    style={{ background: '#D91CD2', borderRadius: '4px' }}
+                    style={{ background: 'var(--primary-color, #D91CD2)', borderRadius: '4px' }}
                   >
                     <SvgIcon name="star" size={12} /> Populaire
                   </div>
@@ -112,7 +112,7 @@ const CreditBoutique = ({
                   </div>
                   <div className="text-white/50 text-sm mb-4">crédits</div>
                   
-                  <div className="text-2xl font-bold mb-1" style={{ color: '#D91CD2' }}>
+                  <div className="text-2xl font-bold mb-1" style={{ color: 'var(--primary-color, #D91CD2)' }}>
                     {pack.price} CHF
                   </div>
                   
@@ -127,7 +127,7 @@ const CreditBoutique = ({
                     style={{ 
                       background: purchasingPack === pack.id 
                         ? 'rgba(255,255,255,0.1)' 
-                        : 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                        : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                       borderRadius: '8px'
                     }}
                     data-testid={`buy-pack-${pack.id}`}

@@ -428,7 +428,7 @@ const PromoCodesTab = ({
             <span className="text-blue-400 text-sm font-bold inline-flex items-center gap-1.5"><SvgIcon name="edit" size={14} /> Mode Édition</span>
             <span className="text-white/60 text-xs">Code: <span className="text-white font-mono">{newCode.code}</span></span>
             {(newCode.assignedEmails?.length > 0 || selectedBeneficiaries?.length > 0) && (
-              <span className="text-xs px-2 py-1 rounded-full" style={{ background: 'rgba(217, 28, 210, 0.15)', color: '#D91CD2', border: '1px solid rgba(217, 28, 210, 0.3)' }}>
+              <span className="text-xs px-2 py-1 rounded-full" style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)', color: 'var(--primary-color, #D91CD2)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }}>
                 <SvgIcon name="mail" size={14} /> Bénéficiaire: {(selectedBeneficiaries?.length > 0 ? selectedBeneficiaries : newCode.assignedEmails)?.join(', ')}
               </span>
             )}
@@ -836,7 +836,7 @@ const PromoCodesTab = ({
                   >
                     {copiedCodeId === code.id ? <CheckIcon /> : <CopyIcon />}
                   </button>
-                  <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(217, 28, 210, 0.3)', color: '#D91CD2' }}>
+                  <span className="px-2 py-0.5 rounded text-xs" style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)', color: 'var(--primary-color, #D91CD2)' }}>
                     {code.type === '100%' ? 'GRATUIT' : `${code.value}${code.type}`}
                   </span>
                   {code.linkedOfferName && (

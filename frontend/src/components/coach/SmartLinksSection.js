@@ -10,8 +10,8 @@ import SvgIcon from '../SvgIcon';
 
 // ====== STYLES ======
 const GLOW = {
-  violet: '0 0 12px rgba(217, 28, 210, 0.5), 0 0 24px rgba(217, 28, 210, 0.2)',
-  violetSoft: '0 0 8px rgba(217, 28, 210, 0.3)',
+  violet: '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.5), 0 0 24px rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
+  violetSoft: '0 0 8px rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
   green: '0 0 12px rgba(34, 197, 94, 0.5)',
   red: '0 0 8px rgba(239, 68, 68, 0.4)',
   amber: '0 0 8px rgba(245, 158, 11, 0.4)',
@@ -201,7 +201,7 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
       <div style={{
         width: '100%', maxWidth: '620px', maxHeight: '90vh',
         background: 'linear-gradient(135deg, #1a1025 0%, #0d0a14 100%)',
-        border: '1px solid rgba(217, 28, 210, 0.25)',
+        border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.25)',
         borderRadius: '16px',
         display: 'flex', flexDirection: 'column',
         overflow: 'hidden',
@@ -216,7 +216,7 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{
               width: '32px', height: '32px', borderRadius: '10px',
-              background: 'linear-gradient(135deg, #D91CD2, #9333ea)',
+              background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
               <Link2 size={16} color="#fff" />
@@ -246,12 +246,12 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
               style={{
                 flex: 1, padding: '8px', borderRadius: '10px',
                 background: step === s.id
-                  ? 'rgba(217, 28, 210, 0.2)'
+                  ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
                   : step > s.id
                     ? 'rgba(34, 197, 94, 0.12)'
                     : 'rgba(255,255,255,0.03)',
                 border: step === s.id
-                  ? '1px solid rgba(217, 28, 210, 0.4)'
+                  ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)'
                   : step > s.id
                     ? '1px solid rgba(34, 197, 94, 0.2)'
                     : '1px solid rgba(255,255,255,0.06)',
@@ -276,7 +276,7 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               {/* Nom du lien */}
               <div>
-                <label style={{ display: 'block', fontSize: '12px', color: '#D91CD2', fontWeight: '600', marginBottom: '8px' }}>
+                <label style={{ display: 'block', fontSize: '12px', color: 'var(--primary-color, #D91CD2)', fontWeight: '600', marginBottom: '8px' }}>
                   Nom du lien *
                 </label>
                 <input
@@ -289,14 +289,14 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                     border: '1px solid rgba(255,255,255,0.08)',
                     borderRadius: '10px', color: '#fff', fontSize: '14px', outline: 'none',
                   }}
-                  onFocus={e => e.target.style.borderColor = 'rgba(217,28,210,0.4)'}
+                  onFocus={e => e.target.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.4)'}
                   onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.08)'}
                 />
               </div>
 
               {/* Type de lead */}
               <div>
-                <label style={{ display: 'block', fontSize: '12px', color: '#D91CD2', fontWeight: '600', marginBottom: '10px' }}>
+                <label style={{ display: 'block', fontSize: '12px', color: 'var(--primary-color, #D91CD2)', fontWeight: '600', marginBottom: '10px' }}>
                   Type de lead
                 </label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
@@ -390,7 +390,7 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                   onClick={addQuestion}
                   style={{
                     padding: '8px 16px', borderRadius: '20px',
-                    background: 'linear-gradient(135deg, #D91CD2, #9333ea)',
+                    background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)',
                     border: 'none', color: '#fff', fontSize: '12px', fontWeight: '600',
                     cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
                     boxShadow: 'none', transition: 'all 0.2s',
@@ -407,14 +407,14 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                 onClick={() => setShowAiPanel(!showAiPanel)}
                 style={{
                   width: '100%', padding: '12px 16px', borderRadius: '12px',
-                  background: 'linear-gradient(135deg, rgba(139,92,246,0.12), rgba(217,28,210,0.08))',
+                  background: 'linear-gradient(135deg, rgba(139,92,246,0.12), rgba(var(--primary-rgb, 217, 28, 210), 0.08))',
                   border: '1px solid rgba(139,92,246,0.25)',
                   color: '#c4b5fd', fontSize: '13px', fontWeight: '600',
                   cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
                   transition: 'all 0.2s',
                 }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139,92,246,0.2), rgba(217,28,210,0.15))'; e.currentTarget.style.boxShadow = '0 0 16px rgba(139,92,246,0.2)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139,92,246,0.12), rgba(217,28,210,0.08))'; e.currentTarget.style.boxShadow = 'none'; }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139,92,246,0.2), rgba(var(--primary-rgb, 217, 28, 210), 0.15))'; e.currentTarget.style.boxShadow = '0 0 16px rgba(139,92,246,0.2)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139,92,246,0.12), rgba(var(--primary-rgb, 217, 28, 210), 0.08))'; e.currentTarget.style.boxShadow = 'none'; }}
               >
                 {/* V228: ce bouton portait deja une icone lucide <Sparkles> SUIVIE de
                     l'emoji ✨ — un doublon anterieur a ce lot. Convertir l'emoji aurait
@@ -453,7 +453,7 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                     disabled={aiLoading || !aiObjective.trim()}
                     style={{
                       marginTop: '10px', padding: '10px 20px', borderRadius: '10px',
-                      background: aiLoading || !aiObjective.trim() ? 'rgba(139,92,246,0.15)' : 'linear-gradient(135deg, #8b5cf6, #D91CD2)',
+                      background: aiLoading || !aiObjective.trim() ? 'rgba(139,92,246,0.15)' : 'linear-gradient(135deg, #8b5cf6, var(--primary-color, #D91CD2))',
                       border: 'none', color: '#fff', fontSize: '12px', fontWeight: '700',
                       cursor: aiLoading || !aiObjective.trim() ? 'not-allowed' : 'pointer',
                       opacity: aiLoading || !aiObjective.trim() ? 0.5 : 1,
@@ -475,7 +475,7 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
               {linkData.tunnel_questions.length === 0 && !showAiPanel && (
                 <div style={{
                   padding: '32px', textAlign: 'center',
-                  border: '2px dashed rgba(217,28,210,0.2)',
+                  border: '2px dashed rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
                   borderRadius: '12px',
                 }}>
                   <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '13px', margin: 0 }}>
@@ -491,7 +491,7 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
               {linkData.tunnel_questions.map((q, idx) => (
                 <div key={q.id} style={{
                   background: 'rgba(255,255,255,0.03)',
-                  border: '1px solid rgba(217,28,210,0.12)',
+                  border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
                   borderRadius: '12px', padding: '16px',
                   transition: 'border-color 0.2s',
                 }}>
@@ -499,7 +499,7 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
                     <div style={{
                       width: '24px', height: '24px', borderRadius: '50%',
-                      background: 'linear-gradient(135deg, #D91CD2, #9333ea)',
+                      background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       color: '#fff', fontSize: '11px', fontWeight: '700', flexShrink: 0,
                     }}>
@@ -515,7 +515,7 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                         border: '1px solid rgba(255,255,255,0.08)',
                         borderRadius: '8px', color: '#fff', fontSize: '13px', outline: 'none',
                       }}
-                      onFocus={e => e.target.style.borderColor = 'rgba(217,28,210,0.3)'}
+                      onFocus={e => e.target.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)'}
                       onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.08)'}
                     />
                     <button
@@ -537,11 +537,11 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                         onClick={() => updateQuestion(idx, 'type', qt.value)}
                         style={{
                           padding: '4px 10px', borderRadius: '14px',
-                          background: q.type === qt.value ? 'rgba(217,28,210,0.15)' : 'transparent',
+                          background: q.type === qt.value ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)' : 'transparent',
                           border: q.type === qt.value
-                            ? '1px solid rgba(217,28,210,0.3)'
+                            ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)'
                             : '1px solid rgba(255,255,255,0.06)',
-                          color: q.type === qt.value ? '#D91CD2' : 'rgba(255,255,255,0.35)',
+                          color: q.type === qt.value ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.35)',
                           fontSize: '10px', fontWeight: '600', cursor: 'pointer',
                           display: 'flex', alignItems: 'center', gap: '4px',
                           transition: 'all 0.15s',
@@ -557,7 +557,7 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                     <div style={{ marginTop: '8px', paddingLeft: '34px' }}>
                       {(q.options || []).map((opt, oIdx) => (
                         <div key={oIdx} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                          <span style={{ color: 'rgba(217,28,210,0.5)', fontSize: '10px' }}>●</span>
+                          <span style={{ color: 'rgba(var(--primary-rgb, 217, 28, 210), 0.5)', fontSize: '10px' }}>●</span>
                           <input
                             value={opt}
                             onChange={e => updateOption(idx, oIdx, e.target.value)}
@@ -580,8 +580,8 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                       <button
                         onClick={() => addOption(idx)}
                         style={{
-                          background: 'none', border: '1px dashed rgba(217,28,210,0.2)',
-                          borderRadius: '6px', color: 'rgba(217,28,210,0.5)',
+                          background: 'none', border: '1px dashed rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
+                          borderRadius: '6px', color: 'rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
                           fontSize: '11px', padding: '4px 12px', cursor: 'pointer',
                           marginTop: '4px',
                         }}
@@ -728,11 +728,11 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
 
               {/* Résumé */}
               <div style={{
-                background: 'rgba(217,28,210,0.06)',
-                border: '1px solid rgba(217,28,210,0.15)',
+                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)',
+                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
                 borderRadius: '12px', padding: '16px',
               }}>
-                <p style={{ color: '#D91CD2', fontSize: '12px', fontWeight: '700', margin: '0 0 10px' }}>
+                <p style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '12px', fontWeight: '700', margin: '0 0 10px' }}>
                   <span className="inline-flex items-center gap-1.5">
                     <SvgIcon name="clipboard" size={14} /> Résumé du lien
                   </span>
@@ -814,8 +814,8 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
               style={{
                 padding: '10px 24px', borderRadius: '10px',
                 background: canGoNext()
-                  ? 'linear-gradient(135deg, #D91CD2, #9333ea)'
-                  : 'rgba(217,28,210,0.15)',
+                  ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)'
+                  : 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
                 border: 'none', color: '#fff', fontSize: '13px', fontWeight: '600',
                 cursor: canGoNext() ? 'pointer' : 'not-allowed',
                 opacity: canGoNext() ? 1 : 0.5,
@@ -963,15 +963,15 @@ const SmartLinksSection = ({
   return (
     <>
       {/* Header section */}
-      <div style={{ padding: '20px', borderBottom: '1px solid rgba(217,28,210,0.1)' }}>
+      <div style={{ padding: '20px', borderBottom: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.1)' }}>
         {/* Titre + bouton créer */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <div style={{
               width: '36px', height: '36px', borderRadius: '10px',
-              background: 'linear-gradient(135deg, #D91CD2, #9333ea)',
+              background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 4px 12px rgba(217,28,210,0.3)',
+              boxShadow: '0 4px 12px rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
             }}>
               <Link2 size={18} color="#fff" />
             </div>
@@ -989,7 +989,7 @@ const SmartLinksSection = ({
             onClick={() => { setEditingLink(null); setShowModal(true); }}
             style={{
               padding: '10px 20px', borderRadius: '24px',
-              background: 'linear-gradient(135deg, #D91CD2, #9333ea)',
+              background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)',
               border: 'none', color: '#fff', fontSize: '13px', fontWeight: '600',
               cursor: 'pointer',
               display: 'flex', alignItems: 'center', gap: '8px',
@@ -1005,7 +1005,7 @@ const SmartLinksSection = ({
         {/* Stats mini */}
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
           {[
-            { label: 'Total liens', value: chatLinks.length, color: '#D91CD2' },
+            { label: 'Total liens', value: chatLinks.length, color: 'var(--primary-color, #D91CD2)' },
             { label: 'Total clics', value: totalClicks, color: '#22c55e' },
             { label: 'Avec tunnel', value: chatLinks.filter(l => (l.tunnel_questions || []).length > 0).length, color: '#f59e0b' },
           ].map((stat, i) => (
@@ -1029,9 +1029,9 @@ const SmartLinksSection = ({
             onClick={() => setFilter('all')}
             style={{
               padding: '4px 12px', borderRadius: '14px',
-              background: filter === 'all' ? 'rgba(217,28,210,0.15)' : 'transparent',
-              border: filter === 'all' ? '1px solid rgba(217,28,210,0.3)' : '1px solid rgba(255,255,255,0.06)',
-              color: filter === 'all' ? '#D91CD2' : 'rgba(255,255,255,0.35)',
+              background: filter === 'all' ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)' : 'transparent',
+              border: filter === 'all' ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' : '1px solid rgba(255,255,255,0.06)',
+              color: filter === 'all' ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.35)',
               fontSize: '11px', fontWeight: '600', cursor: 'pointer',
             }}
           >
@@ -1066,7 +1066,7 @@ const SmartLinksSection = ({
           padding: '10px 20px',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           borderBottom: '1px solid rgba(255,255,255,0.04)',
-          background: selectedLinks.size > 0 ? 'rgba(217,28,210,0.04)' : 'transparent',
+          background: selectedLinks.size > 0 ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.04)' : 'transparent',
           transition: 'background 0.2s',
         }}>
           <button
@@ -1074,7 +1074,7 @@ const SmartLinksSection = ({
             style={{
               display: 'flex', alignItems: 'center', gap: '8px',
               background: 'none', border: 'none',
-              color: allSelected ? '#D91CD2' : 'rgba(255,255,255,0.4)',
+              color: allSelected ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.4)',
               fontSize: '12px', fontWeight: '600', cursor: 'pointer',
               padding: '4px 0',
             }}
@@ -1084,7 +1084,7 @@ const SmartLinksSection = ({
           </button>
           {selectedLinks.size > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: '600' }}>
+              <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '12px', fontWeight: '600' }}>
                 {selectedLinks.size} sélectionné{selectedLinks.size > 1 ? 's' : ''}
               </span>
               <button
@@ -1115,13 +1115,13 @@ const SmartLinksSection = ({
         {filteredLinks.length === 0 && (
           <div style={{
             textAlign: 'center', padding: '48px 20px',
-            background: 'rgba(217,28,210,0.02)',
-            border: '2px dashed rgba(217,28,210,0.12)',
+            background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.02)',
+            border: '2px dashed rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
             borderRadius: '16px',
           }}>
             <div style={{
               width: '56px', height: '56px', borderRadius: '16px',
-              background: 'linear-gradient(135deg, rgba(217,28,210,0.1), rgba(147,51,234,0.08))',
+              background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.1), rgba(147,51,234,0.08))',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               margin: '0 auto 16px', fontSize: '24px',
             }}>
@@ -1153,7 +1153,7 @@ const SmartLinksSection = ({
               style={{
                 position: 'absolute', left: '-4px', top: '50%', transform: 'translateY(-50%)',
                 zIndex: 2, width: 36, height: 36, borderRadius: '50%',
-                background: 'rgba(217, 28, 210, 0.85)', border: 'none', color: '#fff',
+                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.85)', border: 'none', color: '#fff',
                 cursor: 'pointer', fontSize: '18px', fontWeight: 700, lineHeight: 1,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 boxShadow: '0 2px 10px rgba(0,0,0,0.4)'
@@ -1210,7 +1210,7 @@ const SmartLinksSection = ({
               style={{
                 position: 'absolute', right: '-4px', top: '50%', transform: 'translateY(-50%)',
                 zIndex: 2, width: 36, height: 36, borderRadius: '50%',
-                background: 'rgba(217, 28, 210, 0.85)', border: 'none', color: '#fff',
+                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.85)', border: 'none', color: '#fff',
                 cursor: 'pointer', fontSize: '18px', fontWeight: 700, lineHeight: 1,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 boxShadow: '0 2px 10px rgba(0,0,0,0.4)'

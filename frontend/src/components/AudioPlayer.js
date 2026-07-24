@@ -20,7 +20,7 @@ const AudioPlayer = ({
   duration: durationProp,
   price,
   description,
-  accentColor = '#D91CD2',
+  accentColor = 'var(--primary-color, #D91CD2)',
   isPreview = false,
   previewDuration = 30,
   onBuyClick,
@@ -132,10 +132,10 @@ const AudioPlayer = ({
         gap: '16px',
         padding: '16px',
         borderRadius: '18px',
-        background: previewEnded ? 'rgba(217,28,210,0.06)' : 'rgba(10,5,20,0.6)',
+        background: previewEnded ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)' : 'rgba(10,5,20,0.6)',
         backdropFilter: 'blur(16px)',
         WebkitBackdropFilter: 'blur(16px)',
-        border: `1px solid ${isSelected ? accentColor : previewEnded ? 'rgba(217,28,210,0.3)' : isHovered ? `${accentColor}50` : 'rgba(255,255,255,0.06)'}`,
+        border: `1px solid ${isSelected ? accentColor : previewEnded ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)' : isHovered ? `${accentColor}50` : 'rgba(255,255,255,0.06)'}`,
         position: 'relative',
         overflow: 'hidden',
         transition: 'all 0.3s ease',
@@ -193,7 +193,7 @@ const AudioPlayer = ({
           height: '80px',
           borderRadius: '14px',
           background: thumbnail ? 'none' : `linear-gradient(135deg, ${accentColor}40, ${accentColor}10)`,
-          border: `2px solid ${previewEnded ? 'rgba(217,28,210,0.6)' : `${accentColor}60`}`,
+          border: `2px solid ${previewEnded ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.6)' : `${accentColor}60`}`,
           overflow: 'hidden',
           display: 'flex',
           alignItems: 'center',
@@ -394,7 +394,7 @@ const AudioPlayer = ({
             width: '100%',
             height: '5px',
             borderRadius: '3px',
-            background: previewEnded ? 'rgba(217,28,210,0.15)' : 'rgba(255,255,255,0.08)',
+            background: previewEnded ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)' : 'rgba(255,255,255,0.08)',
             cursor: previewEnded ? 'default' : 'pointer',
             position: 'relative',
             marginTop: '4px'
@@ -405,7 +405,7 @@ const AudioPlayer = ({
             height: '100%',
             borderRadius: '3px',
             background: previewEnded
-              ? 'rgba(217,28,210,0.3)'
+              ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)'
               : `linear-gradient(90deg, ${accentColor}, #8b5cf6)`,
             transition: 'width 0.1s linear',
             boxShadow: progress > 0 && !previewEnded ? `0 0 8px ${accentColor}60` : 'none',
@@ -435,8 +435,8 @@ const AudioPlayer = ({
             marginTop: '10px',
             padding: '12px',
             borderRadius: '12px',
-            background: 'linear-gradient(135deg, rgba(217,28,210,0.1), rgba(139,92,246,0.08))',
-            border: '1px solid rgba(217,28,210,0.2)',
+            background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.1), rgba(139,92,246,0.08))',
+            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
             textAlign: 'center'
           }}>
             <p style={{

@@ -741,8 +741,8 @@ export default function CampaignModal({
                   onClick={() => importFileRef.current?.click()}
                   style={{
                     width: '100%', padding: '10px', borderRadius: '8px', fontSize: '12px',
-                    background: 'rgba(217,28,210,0.08)', border: '1px dashed rgba(217,28,210,0.4)',
-                    color: '#D91CD2', cursor: 'pointer', fontWeight: 500
+                    background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)', border: '1px dashed rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+                    color: 'var(--primary-color, #D91CD2)', cursor: 'pointer', fontWeight: 500
                   }}
                 >
                   <span className="inline-flex items-center gap-1.5"><SvgIcon name="upload" size={14} />Importer CSV / vCard (.vcf)</span>
@@ -924,7 +924,7 @@ export default function CampaignModal({
                           ctaText: prev.ctaText || (selectedLink ? `💬 ${selectedLink.title || 'Discuter'}` : 'Discuter avec l\'IA')
                         }));
                       }}
-                      style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', background: 'rgba(217,28,210,0.1)', border: '1px solid rgba(217,28,210,0.3)', color: '#fff', fontSize: '13px', outline: 'none' }}>
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', color: '#fff', fontSize: '13px', outline: 'none' }}>
                       <option value="">— Choisir un lien de conversation —</option>
                       {chatLinks.map(link => {
                         const token = link.link_token || link.token || '';
@@ -1064,7 +1064,7 @@ export default function CampaignModal({
                 {isSuperAdmin ? (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px' }} className="inline-flex items-center gap-1.5"><SvgIcon name="crown" size={14} />Mode Super Admin</span>
-                    <span style={{ color: '#D91CD2', fontWeight: 700, fontSize: '16px' }}>∞ Illimité</span>
+                    <span style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: 700, fontSize: '16px' }}>∞ Illimité</span>
                   </div>
                 ) : (
                   <div>

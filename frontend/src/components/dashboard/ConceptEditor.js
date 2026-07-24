@@ -16,6 +16,7 @@ import SvgIcon from '../SvgIcon';
 // nue, utilisee ici parce que cet ecran a DEJA ses propres boutons d'upload :
 // on change ou va le fichier, pas l'interface.
 import CloudinaryUploadButton, { uploadToCloudinary, isCloudinaryConfigured } from '../CloudinaryUploadButton';
+import { applyPrimaryColor } from '../../utils/themeColor'; // V259
 
 const ConceptEditor = ({
   concept,
@@ -32,6 +33,14 @@ const ConceptEditor = ({
 }) => {
   const [aiLegalLoading, setAiLegalLoading] = React.useState(false);
   const [uploadingVideo, setUploadingVideo] = React.useState(null); // slot index being uploaded
+
+  // V259: qui peut gerer l'affiche evenement.
+  // Union VOLONTAIRE avec `isSuperAdmin` : la liste d'adresses ci-dessous ne
+  // recouvre pas SUPER_ADMIN_EMAILS cote backend (api/server.py), et s'y tenir
+  // seule aurait retire l'acces a un super admin deja en place.
+  const V259_POSTER_ADMIN_EMAILS = ['contact.artboost@gmail.com', 'contact@afroboosteur.com'];
+  const v259CanEditPoster = isSuperAdmin
+    || V259_POSTER_ADMIN_EMAILS.includes((coachEmail || '').toLowerCase().trim());
 
   // v46: State pour pistes audio autonomes (collection audio_tracks)
   const [masterAudioTracks, setMasterAudioTracks] = useState([]);
@@ -253,11 +262,11 @@ const ConceptEditor = ({
               <div className="flex items-center gap-3">
                 <input 
                   type="color" 
-                  value={concept.primaryColor || '#D91CD2'} 
+                  value={concept.primaryColor || 'var(--primary-color, #D91CD2)'} 
                   onChange={(e) => {
                     const newColor = e.target.value;
                     setConcept({ ...concept, primaryColor: newColor });
-                    document.documentElement.style.setProperty('--primary-color', newColor);
+                    applyPrimaryColor(newColor); // V259: pose aussi --primary-rgb
                     if (!concept.glowColor) {
                       document.documentElement.style.setProperty('--glow-color', `${newColor}66`);
                       document.documentElement.style.setProperty('--glow-color-strong', `${newColor}99`);
@@ -270,19 +279,19 @@ const ConceptEditor = ({
                 <div>
                   <input 
                     type="text" 
-                    value={concept.primaryColor || '#D91CD2'} 
+                    value={concept.primaryColor || 'var(--primary-color, #D91CD2)'} 
                     onChange={(e) => {
                       const newColor = e.target.value;
                       if (/^#[0-9A-Fa-f]{6}$/.test(newColor)) {
                         setConcept({ ...concept, primaryColor: newColor });
-                        document.documentElement.style.setProperty('--primary-color', newColor);
+                        applyPrimaryColor(newColor); // V259: pose aussi --primary-rgb
                         if (!concept.glowColor) {
                           document.documentElement.style.setProperty('--glow-color', `${newColor}66`);
                         }
                       }
                     }}
                     className="px-3 py-2 rounded-lg neon-input text-sm uppercase w-28"
-                    placeholder="#D91CD2"
+                    placeholder="var(--primary-color, #D91CD2)"
                   />
                   <p className="text-xs mt-1 text-white/40">Rose par défaut</p>
                 </div>
@@ -402,8 +411,8 @@ const ConceptEditor = ({
                   type="button"
                   onClick={addHeroVideo}
                   style={{
-                    background: 'rgba(217,28,210,0.2)', border: '1px solid rgba(217,28,210,0.4)',
-                    color: '#D91CD2', fontSize: '11px', padding: '3px 10px', borderRadius: '8px', cursor: 'pointer'
+                    background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+                    color: 'var(--primary-color, #D91CD2)', fontSize: '11px', padding: '3px 10px', borderRadius: '8px', cursor: 'pointer'
                   }}
                 >+ Ajouter une vidéo</button>
               )}
@@ -412,8 +421,8 @@ const ConceptEditor = ({
               <div
                 onClick={addHeroVideo}
                 style={{
-                  border: '2px dashed rgba(217,28,210,0.3)', borderRadius: '12px', padding: '20px',
-                  textAlign: 'center', cursor: 'pointer', background: 'rgba(217,28,210,0.04)'
+                  border: '2px dashed rgba(var(--primary-rgb, 217, 28, 210), 0.3)', borderRadius: '12px', padding: '20px',
+                  textAlign: 'center', cursor: 'pointer', background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.04)'
                 }}
               >
                 <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>
@@ -428,7 +437,7 @@ const ConceptEditor = ({
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: 600 }}>Vidéo {idx + 1}</span>
+                    <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '12px', fontWeight: 600 }}>Vidéo {idx + 1}</span>
                     {/* v32: Boutons de positionnement manuel */}
                     {getHeroVideos().length > 1 && (
                       <div style={{ display: 'flex', gap: '4px' }}>
@@ -437,9 +446,9 @@ const ConceptEditor = ({
                           onClick={() => moveHeroVideo(idx, -1)}
                           disabled={idx === 0}
                           style={{
-                            background: idx === 0 ? 'rgba(255,255,255,0.05)' : 'rgba(217,28,210,0.15)',
-                            border: `1px solid ${idx === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(217,28,210,0.4)'}`,
-                            color: idx === 0 ? 'rgba(255,255,255,0.2)' : '#D91CD2',
+                            background: idx === 0 ? 'rgba(255,255,255,0.05)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
+                            border: `1px solid ${idx === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.4)'}`,
+                            color: idx === 0 ? 'rgba(255,255,255,0.2)' : 'var(--primary-color, #D91CD2)',
                             fontSize: '13px', padding: '1px 8px', borderRadius: '6px',
                             cursor: idx === 0 ? 'not-allowed' : 'pointer', fontWeight: 700,
                             transition: 'all 0.2s ease'
@@ -452,9 +461,9 @@ const ConceptEditor = ({
                           onClick={() => moveHeroVideo(idx, 1)}
                           disabled={idx === getHeroVideos().length - 1}
                           style={{
-                            background: idx === getHeroVideos().length - 1 ? 'rgba(255,255,255,0.05)' : 'rgba(217,28,210,0.15)',
-                            border: `1px solid ${idx === getHeroVideos().length - 1 ? 'rgba(255,255,255,0.1)' : 'rgba(217,28,210,0.4)'}`,
-                            color: idx === getHeroVideos().length - 1 ? 'rgba(255,255,255,0.2)' : '#D91CD2',
+                            background: idx === getHeroVideos().length - 1 ? 'rgba(255,255,255,0.05)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
+                            border: `1px solid ${idx === getHeroVideos().length - 1 ? 'rgba(255,255,255,0.1)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.4)'}`,
+                            color: idx === getHeroVideos().length - 1 ? 'rgba(255,255,255,0.2)' : 'var(--primary-color, #D91CD2)',
                             fontSize: '13px', padding: '1px 8px', borderRadius: '6px',
                             cursor: idx === getHeroVideos().length - 1 ? 'not-allowed' : 'pointer', fontWeight: 700,
                             transition: 'all 0.2s ease'
@@ -535,9 +544,9 @@ const ConceptEditor = ({
                 {/* v34: Champs Vidéo Premium — Prix, Description, Miniature */}
                 <div style={{
                   marginTop: '8px', padding: '10px', borderRadius: '8px',
-                  background: 'rgba(217,28,210,0.05)', border: '1px solid rgba(217,28,210,0.15)'
+                  background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.05)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.15)'
                 }}>
-                  <p style={{ color: '#D91CD2', fontSize: '11px', fontWeight: 600, marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="diamond" size={12} />Options Vidéo Premium</p>
+                  <p style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '11px', fontWeight: 600, marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}><SvgIcon name="diamond" size={12} />Options Vidéo Premium</p>
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
                     <div style={{ flex: '0 0 100px' }}>
                       <label style={{ display: 'block', color: 'rgba(255,255,255,0.5)', fontSize: '10px', marginBottom: '2px' }}>Prix (CHF)</label>
@@ -600,7 +609,7 @@ const ConceptEditor = ({
                         type="checkbox"
                         checked={video.is_visible !== false}
                         onChange={(e) => updateHeroVideo(idx, { is_visible: e.target.checked })}
-                        style={{ accentColor: '#D91CD2' }}
+                        style={{ accentColor: 'var(--primary-color, #D91CD2)' }}
                       />
                       <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                         {video.is_visible !== false
@@ -609,7 +618,7 @@ const ConceptEditor = ({
                       </span>
                     </label>
                     {(video.price || 0) > 0 && (
-                      <span style={{ fontSize: '10px', color: '#D91CD2', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      <span style={{ fontSize: '10px', color: 'var(--primary-color, #D91CD2)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                         <SvgIcon name="clock" size={12} />Preview 30s activée
                       </span>
                     )}
@@ -740,9 +749,9 @@ const ConceptEditor = ({
                 disabled={aiLegalLoading || !(concept.termsText?.trim()?.length >= 10)}
                 className="text-xs px-2 py-1 rounded-lg inline-flex items-center gap-1.5"
                 style={{
-                  background: aiLegalLoading ? 'rgba(139,92,246,0.2)' : 'rgba(217,28,210,0.2)',
-                  border: '1px solid rgba(217,28,210,0.4)',
-                  color: '#D91CD2',
+                  background: aiLegalLoading ? 'rgba(139,92,246,0.2)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
+                  border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+                  color: 'var(--primary-color, #D91CD2)',
                   cursor: aiLegalLoading ? 'wait' : 'pointer',
                   opacity: !(concept.termsText?.trim()?.length >= 10) ? 0.4 : 1
                 }}
@@ -809,10 +818,10 @@ const ConceptEditor = ({
               className="flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all inline-flex items-center justify-center gap-1.5"
               style={{
                 background: (concept.vitrineSectionOrder || 'sessions-first') === 'sessions-first'
-                  ? 'linear-gradient(135deg, rgba(217, 28, 210, 0.3), rgba(139, 92, 246, 0.3))'
+                  ? 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.3), rgba(139, 92, 246, 0.3))'
                   : 'rgba(255, 255, 255, 0.06)',
                 border: (concept.vitrineSectionOrder || 'sessions-first') === 'sessions-first'
-                  ? '1px solid rgba(217, 28, 210, 0.5)'
+                  ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)'
                   : '1px solid rgba(255, 255, 255, 0.1)',
                 color: (concept.vitrineSectionOrder || 'sessions-first') === 'sessions-first' ? '#fff' : 'rgba(255, 255, 255, 0.6)'
               }}
@@ -824,10 +833,10 @@ const ConceptEditor = ({
               className="flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all inline-flex items-center justify-center gap-1.5"
               style={{
                 background: concept.vitrineSectionOrder === 'offers-first'
-                  ? 'linear-gradient(135deg, rgba(217, 28, 210, 0.3), rgba(139, 92, 246, 0.3))'
+                  ? 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.3), rgba(139, 92, 246, 0.3))'
                   : 'rgba(255, 255, 255, 0.06)',
                 border: concept.vitrineSectionOrder === 'offers-first'
-                  ? '1px solid rgba(217, 28, 210, 0.5)'
+                  ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)'
                   : '1px solid rgba(255, 255, 255, 0.1)',
                 color: concept.vitrineSectionOrder === 'offers-first' ? '#fff' : 'rgba(255, 255, 255, 0.6)'
               }}
@@ -954,7 +963,14 @@ const ConceptEditor = ({
         </div>)}
 
         {/* Affiche Événement — v37.2: section vitrine */}
-        {showVitrine && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
+        {/* V259: reserve a l'administration. L'affiche est un popup qui
+            s'impose a TOUS les visiteurs des l'arrivee — ce n'est pas un
+            reglage de vitrine parmi d'autres. `v259CanEditPoster` fait l'union
+            du super admin existant et des adresses d'administration : gater sur
+            la seule liste d'adresses aurait retire l'acces a un super admin
+            deja en place. Le backend applique la MEME regle (PUT /concept), le
+            masquage ici n'etant qu'un confort d'interface. */}
+        {showVitrine && v259CanEditPoster && (<div className="border border-purple-500/30 rounded-lg p-4 bg-purple-900/10">
           <h3 className="text-white text-sm font-semibold mb-4 flex items-center gap-2"><SvgIcon name="sparkles" size={16} />Affiche Événement (Popup d'accueil)</h3>
           <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,0.4)' }}>
             Affichez une image ou vidéo en popup dès l'arrivée des visiteurs.
@@ -1105,7 +1121,7 @@ const ConceptEditor = ({
                   {/* Titre + infos */}
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      <span style={{ color: '#D91CD2', fontSize: '12px', fontWeight: 700 }}>#{idx + 1}</span>
+                      <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '12px', fontWeight: 700 }}>#{idx + 1}</span>
                       <span style={{ color: '#fff', fontSize: '12px', fontWeight: 500 }}>{video.title || video.description || 'Sans titre'}</span>
                       {(video.price || 0) > 0 && (
                         <span style={{ color: '#22c55e', fontSize: '11px', fontWeight: 600 }}>{video.price} CHF</span>

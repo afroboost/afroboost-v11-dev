@@ -8,7 +8,7 @@ import axios from "axios";
 // localement les mêmes valeurs plutôt que de dupliquer un import impossible.
 const COLORS = {
   bg: "#0A0A0F",
-  primary: "#D91CD2",
+  primary: "var(--primary-color, #D91CD2)",
   panel: "rgba(255,255,255,0.04)",
   border: "rgba(255,255,255,0.08)",
 };

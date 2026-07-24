@@ -187,7 +187,7 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
         background: 'linear-gradient(180deg, #0a0a0a 0%, #1a0a1a 100%)',
         borderRadius: '16px', width: '100%', maxWidth: '420px', margin: '0 auto',
       }}>
-        <img src="/logo192.png" alt="Afroboost" style={{ width: '48px', height: '48px', borderRadius: '50%', marginBottom: '16px', border: '2px solid rgba(217,28,210,0.3)' }} />
+        <img src="/logo192.png" alt="Afroboost" style={{ width: '48px', height: '48px', borderRadius: '50%', marginBottom: '16px', border: '2px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }} />
         <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '14px' }}>Chargement...</p>
       </div>
     );
@@ -206,7 +206,7 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
     }}>
       {/* Logo Afroboost officiel */}
       <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-        <img src="/logo192.png" alt="Afroboost" style={{ width: '56px', height: '56px', borderRadius: '50%', marginBottom: '8px', border: '2px solid rgba(217,28,210,0.3)', boxShadow: '0 0 16px rgba(217,28,210,0.2)' }} />
+        <img src="/logo192.png" alt="Afroboost" style={{ width: '56px', height: '56px', borderRadius: '50%', marginBottom: '8px', border: '2px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', boxShadow: '0 0 16px rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }} />
         <h2 style={{ color: '#ffffff', fontSize: '20px', fontWeight: '700', margin: '0 0 8px 0' }}>
           {welcomeMsg}
         </h2>
@@ -225,7 +225,7 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
             flex: 1, height: '4px', borderRadius: '2px',
             transition: 'all 0.3s ease',
             background: i + 1 <= currentStep
-              ? 'linear-gradient(90deg, #D91CD2, #8b5cf6)'
+              ? 'linear-gradient(90deg, var(--primary-color, #D91CD2), #8b5cf6)'
               : 'rgba(255,255,255,0.1)',
           }} />
         ))}
@@ -237,10 +237,10 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
       }}>
         <div style={{
           width: '28px', height: '28px', borderRadius: '50%',
-          background: 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+          background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           color: '#fff', fontSize: '12px', fontWeight: '700',
-          boxShadow: '0 0 12px rgba(217,28,210,0.4)',
+          boxShadow: '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
         }}>
           {currentStep}
         </div>
@@ -264,13 +264,13 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
                 onClick={() => setCurrentValue(opt)}
                 style={{
                   padding: '12px 16px', borderRadius: '12px',
-                  background: currentValue === opt ? 'rgba(217,28,210,0.15)' : 'rgba(255,255,255,0.04)',
-                  border: currentValue === opt ? '2px solid #D91CD2' : '2px solid rgba(255,255,255,0.12)',
-                  color: currentValue === opt ? '#D91CD2' : '#ffffff',
+                  background: currentValue === opt ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)' : 'rgba(255,255,255,0.04)',
+                  border: currentValue === opt ? '2px solid var(--primary-color, #D91CD2)' : '2px solid rgba(255,255,255,0.12)',
+                  color: currentValue === opt ? 'var(--primary-color, #D91CD2)' : '#ffffff',
                   fontSize: '15px', fontWeight: currentValue === opt ? '700' : '500',
                   cursor: 'pointer', textAlign: 'left',
                   transition: 'all 0.2s ease',
-                  boxShadow: currentValue === opt ? '0 0 12px rgba(217,28,210,0.2)' : 'none',
+                  boxShadow: currentValue === opt ? '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.2)' : 'none',
                 }}
               >
                 {opt}
@@ -293,7 +293,7 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
               background: 'rgba(0,0,0,0.4)', color: '#ffffff', fontSize: '16px',
               outline: 'none', transition: 'border-color 0.2s ease', boxSizing: 'border-box'
             }}
-            onFocus={(e) => { if (!error) e.target.style.borderColor = '#D91CD2'; }}
+            onFocus={(e) => { if (!error) e.target.style.borderColor = 'var(--primary-color, #D91CD2)'; }}
             onBlur={(e) => { if (!error) e.target.style.borderColor = 'rgba(255,255,255,0.15)'; }}
           />
         )}
@@ -325,11 +325,11 @@ const OnboardingTunnel = ({ linkToken, onComplete, welcomeTitle }) => {
           disabled={loading || !currentValue?.trim()}
           style={{
             flex: 1, padding: '14px 24px', borderRadius: '12px', border: 'none',
-            background: (!currentValue?.trim() || loading) ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+            background: (!currentValue?.trim() || loading) ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
             color: '#ffffff', fontSize: '15px', fontWeight: '700',
             cursor: (!currentValue?.trim() || loading) ? 'not-allowed' : 'pointer',
             transition: 'all 0.2s ease',
-            boxShadow: (!currentValue?.trim() || loading) ? 'none' : '0 4px 20px rgba(217, 28, 210, 0.4)',
+            boxShadow: (!currentValue?.trim() || loading) ? 'none' : '0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
             opacity: (!currentValue?.trim() || loading) ? 0.5 : 1
           }}
         >

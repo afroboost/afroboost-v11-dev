@@ -136,8 +136,8 @@ export const OfferCard = ({ offer, selected, onClick }) => {
               style={{
                 left: '8px',
                 right: 'auto',
-                background: 'rgba(217, 28, 210, 0.85)',
-                boxShadow: '0 0 8px rgba(217, 28, 210, 0.5)',
+                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.85)',
+                boxShadow: '0 0 8px rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
                 border: 'none'
               }}
               title="Photo"
@@ -180,13 +180,13 @@ export const OfferCard = ({ offer, selected, onClick }) => {
             <span
               onClick={toggleDescription}
               className="cursor-pointer font-semibold"
-              style={{ color: '#d91cd2' }}
+              style={{ color: 'var(--primary-color, #D91CD2)' }}
             >
               Lire plus
             </span>
           </p>
         )}
-        <span className="font-bold" style={{ color: '#d91cd2', fontSize: '18px' }}>CHF {offer.price}.-</span>
+        <span className="font-bold" style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '18px' }}>CHF {offer.price}.-</span>
         {/* V159: Countdown Timer */}
         <CountdownTimer offer={offer} />
       </div>
@@ -243,7 +243,7 @@ export const OfferCardSlider = ({ offer, selected, onClick }) => {
               src={currentImage} 
               alt={offer.name} 
               className="max-w-full max-h-[80vh] object-contain rounded-xl"
-              style={{ boxShadow: '0 0 40px rgba(217, 28, 210, 0.5)' }}
+              style={{ boxShadow: '0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.5)' }}
             />
             
             {/* Flèches UNIQUEMENT dans le zoom */}
@@ -288,7 +288,7 @@ export const OfferCardSlider = ({ offer, selected, onClick }) => {
           className={`offer-card-slider rounded-xl overflow-visible cursor-pointer transition-all duration-300`}
           style={{
             boxShadow: selected 
-              ? '0 0 0 3px #d91cd2, 0 0 30px #d91cd2, 0 0 60px rgba(217, 28, 210, 0.5)' 
+              ? '0 0 0 3px var(--primary-color, #D91CD2), 0 0 30px var(--primary-color, #D91CD2), 0 0 60px rgba(var(--primary-rgb, 217, 28, 210), 0.5)' 
               : '0 4px 20px rgba(0,0,0,0.4)',
             border: 'none',
             transform: selected ? 'scale(1.02)' : 'scale(1)',
@@ -328,8 +328,8 @@ export const OfferCardSlider = ({ offer, selected, onClick }) => {
                 <div
                   className="absolute top-3 left-3 w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-all hover:scale-110"
                   style={{
-                    background: 'rgba(217, 28, 210, 0.85)',
-                    boxShadow: '0 0 12px rgba(217, 28, 210, 0.5)',
+                    background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.85)',
+                    boxShadow: '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
                     border: '2px solid rgba(255, 255, 255, 0.3)'
                   }}
                   onClick={toggleZoom}
@@ -347,8 +347,8 @@ export const OfferCardSlider = ({ offer, selected, onClick }) => {
                   <div 
                     className="absolute bottom-3 left-3 px-3 py-1 rounded-full text-xs font-bold text-white flex items-center gap-1"
                     style={{ 
-                      background: 'linear-gradient(135deg, #d91cd2 0%, #8b5cf6 100%)', 
-                      boxShadow: '0 0 15px rgba(217, 28, 210, 0.7)' 
+                      background: 'linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, #8b5cf6 100%)', 
+                      boxShadow: '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.7)' 
                     }}
                   >
                     <span>✓</span> Sélectionné
@@ -359,7 +359,7 @@ export const OfferCardSlider = ({ offer, selected, onClick }) => {
               /* Description Panel */
               <div 
                 className="w-full h-full flex flex-col justify-center p-4"
-                style={{ background: 'linear-gradient(180deg, rgba(139, 92, 246, 0.95) 0%, rgba(217, 28, 210, 0.9) 100%)' }}
+                style={{ background: 'linear-gradient(180deg, rgba(139, 92, 246, 0.95) 0%, rgba(var(--primary-rgb, 217, 28, 210), 0.9) 100%)' }}
               >
                 <p className="text-white text-sm leading-relaxed">{offer.description}</p>
                 <button 
@@ -390,7 +390,7 @@ export const OfferCardSlider = ({ offer, selected, onClick }) => {
                 <span
                   onClick={(e) => { e.stopPropagation(); setShowDescription(true); }}
                   className="cursor-pointer font-semibold"
-                  style={{ color: '#d91cd2' }}
+                  style={{ color: 'var(--primary-color, #D91CD2)' }}
                 >
                   Lire plus
                 </span>
@@ -400,8 +400,8 @@ export const OfferCardSlider = ({ offer, selected, onClick }) => {
               <span
                 className="text-2xl font-bold"
                 style={{
-                  color: '#d91cd2',
-                  textShadow: selected ? '0 0 15px rgba(217, 28, 210, 0.6)' : 'none'
+                  color: 'var(--primary-color, #D91CD2)',
+                  textShadow: selected ? '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.6)' : 'none'
                 }}
               >
                 CHF {offer.price}.-

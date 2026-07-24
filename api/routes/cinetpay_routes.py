@@ -26,6 +26,8 @@ CINETPAY_SECRET_KEY = os.environ.get('CINETPAY_SECRET_KEY', '')
 CINETPAY_BASE_URL = "https://api-checkout.cinetpay.com/v2"
 
 # Variable db sera injectée depuis server.py
+from api.routes.shared import get_primary_color, hex_to_rgb_triplet  # V259
+
 db = None
 
 def init_db(database):
@@ -537,6 +539,10 @@ async def register_free_pack(request: RegisterFreePackRequest, response: Respons
             if resend_api_key:
                 resend.api_key = resend_api_key
 
+                # V259: couleur de marque relue en base pour ces emails
+                primary_color = await get_primary_color(db)
+                primary_rgb = hex_to_rgb_triplet(primary_color)
+
                 # Email au Super Admin
                 admin_email = "contact.artboost@gmail.com"
                 await asyncio.to_thread(resend.Emails.send, {
@@ -545,7 +551,7 @@ async def register_free_pack(request: RegisterFreePackRequest, response: Respons
                     "subject": f"🎉 Nouveau Partenaire Gratuit ! {name} ({email})",
                     "html": f"""
                     <div style="font-family:Arial,sans-serif;max-width:500px;margin:auto;padding:20px;background:#1a1a2e;color:white;border-radius:12px;">
-                        <h2 style="color:#D91CD2;">🎉 Nouveau Partenaire Afroboost (Inscription Gratuite)</h2>
+                        <h2 style="color:{primary_color};">🎉 Nouveau Partenaire Afroboost (Inscription Gratuite)</h2>
                         <p><strong>Nom:</strong> {name}</p>
                         <p><strong>Email:</strong> {email}</p>
                         <p><strong>Téléphone:</strong> {phone or 'N/A'}</p>
@@ -564,13 +570,13 @@ async def register_free_pack(request: RegisterFreePackRequest, response: Respons
                     "subject": "🎊 Bienvenue Partenaire Afroboost !",
                     "html": f"""
                     <div style="font-family:Arial,sans-serif;max-width:500px;margin:auto;padding:20px;background:#1a1a2e;color:white;border-radius:12px;">
-                        <h2 style="color:#D91CD2;">Bienvenue {name} ! 🎊</h2>
+                        <h2 style="color:{primary_color};">Bienvenue {name} ! 🎊</h2>
                         <p>Votre inscription comme Partenaire Afroboost est confirmée.</p>
                         <p><strong>Pack:</strong> {pack.get('name', '')}</p>
                         <p><strong>Crédits disponibles:</strong> {credits}</p>
                         <p style="margin-top:20px;">
                             <a href="https://afroboost.com/#partner-dashboard"
-                               style="display:inline-block;padding:12px 24px;background:linear-gradient(135deg,#D91CD2,#8b5cf6);color:white;text-decoration:none;border-radius:8px;font-weight:bold;">
+                               style="display:inline-block;padding:12px 24px;background:linear-gradient(135deg,{primary_color},#8b5cf6);color:white;text-decoration:none;border-radius:8px;font-weight:bold;">
                                 Accéder à mon Dashboard →
                             </a>
                         </p>
@@ -741,6 +747,10 @@ async def cinetpay_webhook(request: Request):
                 resend.api_key = os.environ.get('RESEND_API_KEY', '')
                 import asyncio
 
+                # V259: couleur de marque relue en base pour ces emails
+                primary_color = await get_primary_color(db)
+                primary_rgb = hex_to_rgb_triplet(primary_color)
+
                 # Email au Super Admin
                 await asyncio.to_thread(resend.Emails.send, {
                     "from": "Afroboost <notifications@afroboost.com>",
@@ -748,7 +758,7 @@ async def cinetpay_webhook(request: Request):
                     "subject": f"🎉 Nouveau Partenaire ! {customer_name} ({coach_email})",
                     "html": f"""
                     <div style="font-family:Arial,sans-serif;max-width:500px;margin:auto;padding:20px;background:#1a1a2e;color:white;border-radius:12px;">
-                        <h2 style="color:#D91CD2;">🎉 Nouveau Partenaire Afroboost</h2>
+                        <h2 style="color:{primary_color};">🎉 Nouveau Partenaire Afroboost</h2>
                         <p><strong>Nom:</strong> {customer_name}</p>
                         <p><strong>Email:</strong> {coach_email}</p>
                         <p><strong>Pack:</strong> {local_tx.get('pack_name', 'N/A')}</p>
@@ -768,13 +778,13 @@ async def cinetpay_webhook(request: Request):
                     "subject": "🎊 Bienvenue Partenaire Afroboost !",
                     "html": f"""
                     <div style="font-family:Arial,sans-serif;max-width:500px;margin:auto;padding:20px;background:#1a1a2e;color:white;border-radius:12px;">
-                        <h2 style="color:#D91CD2;">Bienvenue {customer_name} ! 🎊</h2>
+                        <h2 style="color:{primary_color};">Bienvenue {customer_name} ! 🎊</h2>
                         <p>Votre inscription comme Partenaire Afroboost est confirmée.</p>
                         <p><strong>Pack:</strong> {local_tx.get('pack_name', '')}</p>
                         <p><strong>Crédits disponibles:</strong> {credits}</p>
                         <p style="margin-top:20px;">
                             <a href="https://afroboost.com/#partner-dashboard"
-                               style="display:inline-block;padding:12px 24px;background:linear-gradient(135deg,#D91CD2,#8b5cf6);color:white;text-decoration:none;border-radius:8px;font-weight:bold;">
+                               style="display:inline-block;padding:12px 24px;background:linear-gradient(135deg,{primary_color},#8b5cf6);color:white;text-decoration:none;border-radius:8px;font-weight:bold;">
                                 Accéder à mon Dashboard →
                             </a>
                         </p>
@@ -848,11 +858,11 @@ async def cinetpay_webhook(request: Request):
                         "subject": f"Votre accès Afroboost - {access_code}",
                         "html": f"""
                         <div style="font-family:Arial,sans-serif;max-width:500px;margin:auto;padding:20px;background:#1a1a2e;color:white;border-radius:12px;">
-                            <h2 style="color:#D91CD2;">Bienvenue chez Afroboost ! 🎉</h2>
+                            <h2 style="color:{primary_color};">Bienvenue chez Afroboost ! 🎉</h2>
                             <p>Merci pour votre achat ! Voici vos accès :</p>
                             <div style="background:rgba(139,92,246,0.2);padding:16px;border-radius:8px;text-align:center;margin:16px 0;">
                                 <p style="font-size:12px;color:#c4b5fd;">Votre code d'identification</p>
-                                <p style="font-size:28px;font-weight:bold;color:#D91CD2;letter-spacing:4px;">{access_code}</p>
+                                <p style="font-size:28px;font-weight:bold;color:{primary_color};letter-spacing:4px;">{access_code}</p>
                                 <p style="font-size:12px;color:rgba(255,255,255,0.5);">Séances : {sessions_count}</p>
                             </div>
                             <div style="text-align:center;margin:16px 0;">

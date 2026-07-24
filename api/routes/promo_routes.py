@@ -11,6 +11,7 @@ import uuid
 import logging
 import asyncio
 import os
+from api.routes.shared import get_primary_color, hex_to_rgb_triplet  # V259
 
 logger = logging.getLogger(__name__)
 
@@ -31,18 +32,21 @@ async def _send_welcome_email(user_email: str, user_name: str, code_str: str, of
     resend.api_key = _RESEND_KEY
 
     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://afroboost.com/?qr={code_str}&format=png"
+    # V259: couleur de marque relue en base (un email ne lit pas les variables CSS)
+    primary_color = await get_primary_color(_db)
+    primary_rgb = hex_to_rgb_triplet(primary_color)
 
     html = f"""<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0a0a0a;">
-        <div style="background:linear-gradient(135deg,#d91cd2,#8b5cf6);padding:24px;text-align:center;">
+        <div style="background:linear-gradient(135deg,{primary_color},#8b5cf6);padding:24px;text-align:center;">
             <h1 style="color:white;margin:0;font-size:22px;">Bienvenue chez Afroboost !</h1>
         </div>
         <div style="padding:24px;color:#fff;">
             <p style="color:#a855f7;font-size:16px;line-height:1.6;">
                 Hey {user_name} ! Ton code personnel a bien été activé. Voici tes infos :
             </p>
-            <div style="background:rgba(217,28,210,0.1);border:1px solid rgba(217,28,210,0.3);border-radius:12px;padding:20px;margin:20px 0;text-align:center;">
+            <div style="background:rgba({primary_rgb}, 0.1);border:1px solid rgba({primary_rgb}, 0.3);border-radius:12px;padding:20px;margin:20px 0;text-align:center;">
                 <p style="margin:0 0 8px;color:#888;">Ton code d'accès personnel</p>
-                <p style="margin:0;color:#d91cd2;font-size:28px;font-weight:bold;letter-spacing:3px;">{code_str}</p>
+                <p style="margin:0;color:{primary_color};font-size:28px;font-weight:bold;letter-spacing:3px;">{code_str}</p>
                 <p style="margin:12px 0 4px;color:#fff;font-size:15px;">{offer_name}</p>
                 <p style="margin:0;color:#a855f7;font-size:14px;">{total_sessions} séance{"s" if total_sessions > 1 else ""} disponible{"s" if total_sessions > 1 else ""}</p>
             </div>
@@ -55,13 +59,13 @@ async def _send_welcome_email(user_email: str, user_name: str, code_str: str, of
                 <p style="margin:0;color:#a855f7;font-size:13px;font-weight:bold;">Comment ça marche ?</p>
                 <p style="margin:8px 0 0;color:#ccc;font-size:13px;line-height:1.5;">
                     1. Ouvre le chat sur afroboost.com<br>
-                    2. Entre ton code <strong style="color:#d91cd2;">{code_str}</strong> pour t'identifier<br>
+                    2. Entre ton code <strong style="color:{primary_color};">{code_str}</strong> pour t'identifier<br>
                     3. Réserve un cours ou une offre<br>
                     4. Présente ton QR Code à l'entrée
                 </p>
             </div>
             <div style="text-align:center;margin:24px 0;">
-                <a href="https://afroboost.com" style="display:inline-block;background:#d91cd2;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;">Accéder à mon espace</a>
+                <a href="https://afroboost.com" style="display:inline-block;background:{primary_color};color:white;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;">Accéder à mon espace</a>
             </div>
             <p style="color:#666;font-size:11px;text-align:center;margin-top:24px;">Ce code est personnel et ne peut pas être partagé. Conserve cet email précieusement.</p>
         </div>
@@ -84,9 +88,12 @@ async def _send_coach_sale_email(coach_email, customer_email, customer_name, cod
     if not _RESEND_OK or not _RESEND_KEY:
         return
     resend.api_key = _RESEND_KEY
+    # V259: couleur du coach concerne, pas celle d'un autre partenaire
+    primary_color = await get_primary_color(_db, coach_email)
+    primary_rgb = hex_to_rgb_triplet(primary_color)
     html = f"""<div style="font-family:Arial;max-width:600px;margin:0 auto;background:#1a1a2e;color:#fff;padding:24px;border-radius:12px">
         <div style="text-align:center;padding:16px 0">
-            <h2 style="color:#d91cd2">Nouvelle souscription Afroboost</h2>
+            <h2 style="color:{primary_color}">Nouvelle souscription Afroboost</h2>
         </div>
         <div style="background:#16213e;border-radius:8px;padding:16px;margin:12px 0">
             <p><strong>Client:</strong> {customer_name} ({customer_email})</p>

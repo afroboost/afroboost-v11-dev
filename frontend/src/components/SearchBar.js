@@ -138,7 +138,7 @@ export const NavigationBar = ({
               left: '12px',
               top: '50%',
               transform: 'translateY(-50%)',
-              color: 'rgba(217, 28, 210, 0.5)',
+              color: 'rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
               pointerEvents: 'none'
             }}
           >
@@ -155,7 +155,7 @@ export const NavigationBar = ({
               width: '100%',
               padding: '10px 36px 10px 36px',
               borderRadius: '20px',
-              border: '1px solid rgba(217, 28, 210, 0.4)',
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
               background: 'rgba(0, 0, 0, 0.3)',
               color: '#fff',
               fontSize: '13px',
@@ -176,7 +176,7 @@ export const NavigationBar = ({
                 transform: 'translateY(-50%)',
                 background: 'none',
                 border: 'none',
-                color: 'rgba(217, 28, 210, 0.6)',
+                color: 'rgba(var(--primary-rgb, 217, 28, 210), 0.6)',
                 cursor: 'pointer',
                 padding: '2px',
                 display: 'flex',
@@ -218,9 +218,9 @@ export const NavigationBar = ({
                   width: '26px',
                   height: '26px',
                   borderRadius: '50%',
-                  border: `1px solid ${isActive ? '#D91CD2' : 'rgba(255, 255, 255, 0.2)'}`,
-                  background: isActive ? 'rgba(217, 28, 210, 0.15)' : 'transparent',
-                  color: isActive ? '#D91CD2' : 'rgba(255, 255, 255, 0.5)',
+                  border: `1px solid ${isActive ? 'var(--primary-color, #D91CD2)' : 'rgba(255, 255, 255, 0.2)'}`,
+                  background: isActive ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)' : 'transparent',
+                  color: isActive ? 'var(--primary-color, #D91CD2)' : 'rgba(255, 255, 255, 0.5)',
                   cursor: 'pointer',
                   transition: 'all 0.25s ease',
                   outline: 'none',
@@ -247,9 +247,9 @@ export const NavigationBar = ({
                   width: '26px',
                   height: '26px',
                   borderRadius: '50%',
-                  border: '2px solid #D91CD2',
+                  border: '2px solid var(--primary-color, #D91CD2)',
                   background: 'transparent',
-                  color: '#D91CD2',
+                  color: 'var(--primary-color, #D91CD2)',
                   cursor: 'pointer',
                   transition: 'all 0.25s ease',
                   outline: 'none',
@@ -266,17 +266,17 @@ export const NavigationBar = ({
       {/* Styles pour hover et focus */}
       <style>{`
         .search-input-minimal:focus {
-          border-color: #D91CD2 !important;
-          box-shadow: 0 0 10px rgba(217, 28, 210, 0.25);
+          border-color: var(--primary-color, #D91CD2) !important;
+          box-shadow: 0 0 10px rgba(var(--primary-rgb, 217, 28, 210), 0.25);
         }
         .search-input-minimal::placeholder {
           color: rgba(255, 255, 255, 0.35);
           font-weight: 300;
         }
         .filter-icons-container button:hover {
-          border-color: rgba(217, 28, 210, 0.6) !important;
-          color: #D91CD2 !important;
-          background: rgba(217, 28, 210, 0.08) !important;
+          border-color: rgba(var(--primary-rgb, 217, 28, 210), 0.6) !important;
+          color: var(--primary-color, #D91CD2) !important;
+          background: rgba(var(--primary-rgb, 217, 28, 210), 0.08) !important;
         }
       `}</style>
     </div>
@@ -310,7 +310,7 @@ export const ScrollIndicator = ({ show }) => {
         height="28" 
         viewBox="0 0 24 24" 
         fill="none" 
-        stroke="#d91cd2" 
+        style={{ stroke: 'var(--primary-color, #D91CD2)' }} 
         strokeWidth="1.5" 
         strokeLinecap="round" 
         strokeLinejoin="round"

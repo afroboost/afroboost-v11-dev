@@ -15,14 +15,14 @@ const AiHumanSwitch = memo(({ isAi, onToggle, size = 'normal' }) => {
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-      <span style={{ fontSize: size === 'small' ? '11px' : '12px', color: !isAi ? '#D91CD2' : 'rgba(255,255,255,0.35)', fontWeight: !isAi ? '700' : '500', transition: 'all 0.2s' }}>
+      <span style={{ fontSize: size === 'small' ? '11px' : '12px', color: !isAi ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.35)', fontWeight: !isAi ? '700' : '500', transition: 'all 0.2s' }}>
         <UserCircle size={size === 'small' ? 12 : 14} style={{ marginRight: '3px', verticalAlign: 'middle' }} /> Humain
       </span>
       <button onClick={onToggle} style={{
         width: `${w}px`, height: `${h}px`, borderRadius: `${h}px`,
-        background: isAi ? 'linear-gradient(135deg, #D91CD2, #8b5cf6)' : 'rgba(255,255,255,0.12)',
+        background: isAi ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)' : 'rgba(255,255,255,0.12)',
         border: 'none', cursor: 'pointer', position: 'relative',
-        transition: 'all 0.3s ease', boxShadow: isAi ? '0 0 12px rgba(217,28,210,0.3)' : 'none',
+        transition: 'all 0.3s ease', boxShadow: isAi ? '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.3)' : 'none',
       }}>
         <div style={{
           width: `${dot}px`, height: `${dot}px`, borderRadius: '50%', background: '#fff',
@@ -30,10 +30,10 @@ const AiHumanSwitch = memo(({ isAi, onToggle, size = 'normal' }) => {
           left: isAi ? `${w - dot - 4}px` : '4px', transition: 'left 0.3s ease',
           boxShadow: '0 2px 4px rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
-          {isAi ? <Bot size={size === 'small' ? 10 : 14} color="#D91CD2" /> : <UserCircle size={size === 'small' ? 10 : 14} color="#666" />}
+          {isAi ? <Bot size={size === 'small' ? 10 : 14} color="var(--primary-color, #D91CD2)" /> : <UserCircle size={size === 'small' ? 10 : 14} color="#666" />}
         </div>
       </button>
-      <span style={{ fontSize: size === 'small' ? '11px' : '12px', color: isAi ? '#D91CD2' : 'rgba(255,255,255,0.35)', fontWeight: isAi ? '700' : '500', transition: 'all 0.2s' }}>
+      <span style={{ fontSize: size === 'small' ? '11px' : '12px', color: isAi ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.35)', fontWeight: isAi ? '700' : '500', transition: 'all 0.2s' }}>
         <Bot size={size === 'small' ? 12 : 14} style={{ marginRight: '3px', verticalAlign: 'middle' }} /> IA
       </span>
     </div>
@@ -56,7 +56,7 @@ const MemberSelector = memo(({ contacts = [], selectedIds, onToggleMember }) => 
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher un membre..."
           style={{ flex: 1, background: 'none', border: 'none', color: '#fff', fontSize: '12px', outline: 'none' }} />
         {selectedIds.size > 0 && (
-          <span style={{ padding: '2px 8px', borderRadius: '10px', background: 'rgba(217,28,210,0.15)', color: '#D91CD2', fontSize: '10px', fontWeight: '700' }}>
+          <span style={{ padding: '2px 8px', borderRadius: '10px', background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)', color: 'var(--primary-color, #D91CD2)', fontSize: '10px', fontWeight: '700' }}>
             {selectedIds.size}
           </span>
         )}
@@ -70,15 +70,15 @@ const MemberSelector = memo(({ contacts = [], selectedIds, onToggleMember }) => 
           return (
             <button key={cid} onClick={() => onToggleMember(cid)} style={{
               width: '100%', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px',
-              background: isSelected ? 'rgba(217,28,210,0.06)' : 'transparent',
+              background: isSelected ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)' : 'transparent',
               border: 'none', borderBottom: '1px solid rgba(255,255,255,0.03)', cursor: 'pointer', textAlign: 'left', transition: 'background 0.15s',
             }}>
               <div style={{
                 width: '32px', height: '32px', borderRadius: '50%',
-                background: isSelected ? 'linear-gradient(135deg, #D91CD2, #8b5cf6)' : 'rgba(255,255,255,0.08)',
+                background: isSelected ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)' : 'rgba(255,255,255,0.08)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 color: '#fff', fontSize: '12px', fontWeight: '700',
-                border: isSelected ? '2px solid #D91CD2' : '2px solid transparent', transition: 'all 0.2s',
+                border: isSelected ? '2px solid var(--primary-color, #D91CD2)' : '2px solid transparent', transition: 'all 0.2s',
               }}>
                 {isSelected ? <Check size={14} /> : (contact.name || '?')[0].toUpperCase()}
               </div>
@@ -148,17 +148,17 @@ const GroupChatPanel = memo(({ group, API, coachEmail, onClose }) => {
 
   return (
     <div style={{
-      background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(217,28,210,0.2)',
+      background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
       borderRadius: '12px', overflow: 'hidden', marginTop: '8px',
     }}>
       {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)',
-        background: 'linear-gradient(135deg, rgba(217,28,210,0.08), rgba(139,92,246,0.04))',
+        background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.08), rgba(139,92,246,0.04))',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Users size={14} color="#D91CD2" />
+          <Users size={14} color="var(--primary-color, #D91CD2)" />
           <span style={{ color: '#fff', fontSize: '12px', fontWeight: '700' }}>{group.name}</span>
           <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px' }}>
             {messages.length} msg
@@ -201,7 +201,7 @@ const GroupChatPanel = memo(({ group, API, coachEmail, onClose }) => {
             <div key={msg.id || idx} style={{ display: 'flex', justifyContent: isCoach || isAI ? 'flex-end' : 'flex-start' }}>
               <div style={{
                 maxWidth: '80%', padding: '8px 12px', borderRadius: isCoach || isAI ? '12px 4px 12px 12px' : '4px 12px 12px 12px',
-                background: isCoach ? '#D91CD2' : isAI ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.06)',
+                background: isCoach ? 'var(--primary-color, #D91CD2)' : isAI ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.06)',
               }}>
                 <p style={{ fontSize: '9px', fontWeight: '600', opacity: 0.5, color: '#fff', margin: '0 0 3px' }}>
                   {isCoach ? 'Vous' : isAI ? 'IA' : (msg.sender_name || 'Membre')}
@@ -243,7 +243,7 @@ const GroupChatPanel = memo(({ group, API, coachEmail, onClose }) => {
           disabled={!newMessage.trim() || sending}
           style={{
             background: 'none', border: 'none', cursor: newMessage.trim() && !sending ? 'pointer' : 'not-allowed',
-            color: newMessage.trim() && !sending ? '#D91CD2' : 'rgba(255,255,255,0.15)',
+            color: newMessage.trim() && !sending ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.15)',
             padding: '4px', transition: 'color 0.2s',
           }}
         >
@@ -270,16 +270,16 @@ const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, onOpenChat, onE
   return (
     <div onClick={() => onSelect(group)} style={{
       width: '100%', padding: '12px', borderRadius: '12px',
-      background: isActive ? 'rgba(217,28,210,0.08)' : '#1A1A1A',
-      border: isActive ? '1px solid rgba(217,28,210,0.3)' : '1px solid rgba(255,255,255,0.06)',
+      background: isActive ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)' : '#1A1A1A',
+      border: isActive ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' : '1px solid rgba(255,255,255,0.06)',
       cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', transition: 'all 0.2s',
     }}>
       <div style={{
         width: '40px', height: '40px', borderRadius: '12px',
-        background: 'linear-gradient(135deg, rgba(217,28,210,0.15), rgba(139,92,246,0.1))',
+        background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.15), rgba(139,92,246,0.1))',
         display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
       }}>
-        <Users size={18} color="#D91CD2" />
+        <Users size={18} color="var(--primary-color, #D91CD2)" />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <p style={{ color: '#fff', fontSize: '13px', fontWeight: '600', margin: 0 }}>{group.name || 'Groupe sans nom'}</p>
@@ -311,7 +311,7 @@ const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, onOpenChat, onE
               display: 'inline-flex', alignItems: 'center', gap: '4px',
               padding: '4px 10px', borderRadius: '12px',
               border: 'none',
-              background: group.visible_to_subscribers !== false ? '#D91CD2' : '#555',
+              background: group.visible_to_subscribers !== false ? 'var(--primary-color, #D91CD2)' : '#555',
               color: '#fff', fontSize: '11px', fontWeight: 600,
               cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap'
             }}
@@ -335,8 +335,8 @@ const GroupCard = memo(({ group, onSelect, onDelete, onCopyLink, onOpenChat, onE
         <button onClick={e => { e.stopPropagation(); onOpenChat(group); }}
           title="Ouvrir le chat du groupe"
           style={{
-            background: isActive ? 'rgba(217,28,210,0.2)' : 'none', border: 'none', padding: '4px', borderRadius: '6px',
-            color: isActive ? '#D91CD2' : 'rgba(255,255,255,0.3)', cursor: 'pointer', transition: 'all 0.2s',
+            background: isActive ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)' : 'none', border: 'none', padding: '4px', borderRadius: '6px',
+            color: isActive ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.3)', cursor: 'pointer', transition: 'all 0.2s',
           }}>
           <MessageSquare size={14} />
         </button>
@@ -422,12 +422,12 @@ const GroupForm = memo(({
 
   return (
     <div style={{
-      background: isEdit ? 'rgba(139,92,246,0.04)' : 'rgba(217,28,210,0.04)',
-      border: `1px solid ${isEdit ? 'rgba(139,92,246,0.2)' : 'rgba(217,28,210,0.15)'}`,
+      background: isEdit ? 'rgba(139,92,246,0.04)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.04)',
+      border: `1px solid ${isEdit ? 'rgba(139,92,246,0.2)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)'}`,
       borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px',
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ color: isEdit ? '#8b5cf6' : '#D91CD2', fontSize: '12px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <span style={{ color: isEdit ? '#8b5cf6' : 'var(--primary-color, #D91CD2)', fontSize: '12px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '6px' }}>
           {isEdit ? <><Edit2 size={12} /> Modifier le groupe</> : 'Nouveau groupe'}
         </span>
         <button onClick={onCancel} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', padding: '2px' }}>
@@ -450,7 +450,7 @@ const GroupForm = memo(({
         <label style={{ display: 'block', color: 'rgba(255,255,255,0.5)', fontSize: '10px', fontWeight: 600, marginBottom: '4px' }}>NOM DU GROUPE</label>
         <input value={groupName} onChange={e => setGroupName(e.target.value)} placeholder="Ex: Marathon, Diete, VIP..."
           style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
-          onFocus={e => e.target.style.borderColor = 'rgba(217,28,210,0.3)'}
+          onFocus={e => e.target.style.borderColor = 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)'}
           onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.08)'} />
       </div>
 
@@ -474,10 +474,10 @@ const GroupForm = memo(({
           style={{
             marginTop: '8px', padding: '10px 20px', borderRadius: '24px',
             background: groupName.trim() && !generatingPrompt
-              ? 'linear-gradient(135deg, #D91CD2, #8b5cf6)'
+              ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)'
               : 'rgba(255,255,255,0.06)',
             border: groupName.trim() && !generatingPrompt
-              ? '1px solid rgba(217,28,210,0.6)'
+              ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.6)'
               : '1px solid rgba(255,255,255,0.1)',
             color: groupName.trim() && !generatingPrompt ? '#fff' : 'rgba(255,255,255,0.25)',
             fontSize: '12px', fontWeight: '700', letterSpacing: '0.3px',
@@ -486,12 +486,12 @@ const GroupForm = memo(({
             transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
             width: 'fit-content',
             boxShadow: groupName.trim() && !generatingPrompt
-              ? '0 0 20px rgba(217, 28, 210, 0.4), 0 0 40px rgba(217, 28, 210, 0.15), inset 0 1px 0 rgba(255,255,255,0.15)'
+              ? '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.4), 0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.15), inset 0 1px 0 rgba(255,255,255,0.15)'
               : 'none',
             textShadow: groupName.trim() && !generatingPrompt ? '0 0 8px rgba(255,255,255,0.5)' : 'none',
           }}
-          onMouseEnter={e => { if (groupName.trim() && !generatingPrompt) { e.currentTarget.style.boxShadow = '0 0 30px rgba(217, 28, 210, 0.6), 0 0 60px rgba(217, 28, 210, 0.25), inset 0 1px 0 rgba(255,255,255,0.2)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}}
-          onMouseLeave={e => { if (groupName.trim() && !generatingPrompt) { e.currentTarget.style.boxShadow = '0 0 20px rgba(217, 28, 210, 0.4), 0 0 40px rgba(217, 28, 210, 0.15), inset 0 1px 0 rgba(255,255,255,0.15)'; e.currentTarget.style.transform = 'translateY(0)'; }}}
+          onMouseEnter={e => { if (groupName.trim() && !generatingPrompt) { e.currentTarget.style.boxShadow = '0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.6), 0 0 60px rgba(var(--primary-rgb, 217, 28, 210), 0.25), inset 0 1px 0 rgba(255,255,255,0.2)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}}
+          onMouseLeave={e => { if (groupName.trim() && !generatingPrompt) { e.currentTarget.style.boxShadow = '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.4), 0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.15), inset 0 1px 0 rgba(255,255,255,0.15)'; e.currentTarget.style.transform = 'translateY(0)'; }}}
         >
           {generatingPrompt
             ? <><SvgIcon name="loader" size={14} className="animate-spin" />Génération en cours...</>
@@ -517,7 +517,7 @@ const GroupForm = memo(({
       <button onClick={handleSubmit} disabled={!groupName.trim() || loading} style={{
         padding: '10px', borderRadius: '10px',
         background: groupName.trim() && !loading
-          ? (isEdit ? 'linear-gradient(135deg, #8b5cf6, #D91CD2)' : 'linear-gradient(135deg, #D91CD2, #9333ea)')
+          ? (isEdit ? 'linear-gradient(135deg, #8b5cf6, var(--primary-color, #D91CD2))' : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)')
           : 'rgba(255,255,255,0.06)',
         border: 'none', color: '#fff', fontSize: '12px', fontWeight: '700',
         cursor: groupName.trim() && !loading ? 'pointer' : 'not-allowed', opacity: groupName.trim() && !loading ? 1 : 0.4,
@@ -666,7 +666,7 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
         background: 'none', border: 'none', cursor: 'pointer',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ width: '28px', height: '28px', borderRadius: '8px', background: 'linear-gradient(135deg, #D91CD2, #9333ea)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: '28px', height: '28px', borderRadius: '8px', background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #9333ea)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Users size={14} color="#fff" />
           </div>
           <span style={{ color: '#fff', fontSize: '14px', fontWeight: '700' }}>Groupes de Chat ({groups.length})</span>
@@ -729,12 +729,12 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
           {!showCreateForm && !editingGroup ? (
             <button onClick={() => setShowCreateForm(true)} style={{
               width: '100%', padding: '10px', borderRadius: '10px',
-              background: 'rgba(217,28,210,0.08)', border: '1px dashed rgba(217,28,210,0.25)',
-              color: '#D91CD2', fontSize: '12px', fontWeight: '600',
+              background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)', border: '1px dashed rgba(var(--primary-rgb, 217, 28, 210), 0.25)',
+              color: 'var(--primary-color, #D91CD2)', fontSize: '12px', fontWeight: '600',
               cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', transition: 'all 0.2s',
             }}
-              onMouseEnter={e => e.currentTarget.style.background = 'rgba(217,28,210,0.15)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'rgba(217,28,210,0.08)'}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)'}
             >
               <Plus size={14} /> Creer un groupe
             </button>

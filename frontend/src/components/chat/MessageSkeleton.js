@@ -49,7 +49,7 @@ const SkeletonBubble = ({ width, isRight, delay = 0, hasMedia = false, hasCta = 
           height: '40px',
           borderRadius: isRight ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
           background: isRight 
-            ? 'linear-gradient(135deg, rgba(217, 28, 210, 0.15), rgba(139, 92, 246, 0.15))'
+            ? 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.15), rgba(139, 92, 246, 0.15))'
             : 'rgba(255, 255, 255, 0.08)',
           animation: 'skeletonPulse 1.5s ease-in-out infinite',
           animationDelay: `${delay}ms`
@@ -63,7 +63,7 @@ const SkeletonBubble = ({ width, isRight, delay = 0, hasMedia = false, hasCta = 
             width: '140px',
             height: '36px',
             borderRadius: '20px',
-            background: 'linear-gradient(135deg, rgba(147, 51, 234, 0.2), rgba(217, 28, 210, 0.2))',
+            background: 'linear-gradient(135deg, rgba(147, 51, 234, 0.2), rgba(var(--primary-rgb, 217, 28, 210), 0.2))',
             animation: 'skeletonPulse 1.5s ease-in-out infinite',
             animationDelay: `${delay + 50}ms`,
             alignSelf: 'center'

@@ -28,7 +28,7 @@ const PageVenteTab = ({
         {/* URL de la page de vente */}
         <div 
           className="rounded-lg p-4 mb-6"
-          style={{ background: 'rgba(217, 28, 210, 0.1)', border: '1px solid rgba(217, 28, 210, 0.3)' }}
+          style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }}
         >
           <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
             <div className="flex-1">
@@ -41,7 +41,7 @@ const PageVenteTab = ({
               <button
                 onClick={onCopyLink}
                 className="px-4 py-2 rounded-lg text-white text-sm font-semibold transition-all hover:scale-105 inline-flex items-center gap-1.5"
-                style={{ background: linkCopied ? 'rgba(34, 197, 94, 0.3)' : 'linear-gradient(135deg, #d91cd2, #8b5cf6)' }}
+                style={{ background: linkCopied ? 'rgba(34, 197, 94, 0.3)' : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)' }}
                 data-testid="copy-page-vente-link"
               >
                 {linkCopied

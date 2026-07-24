@@ -241,7 +241,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
         <div className="max-w-4xl mx-auto">
           <div className="flex justify-between items-center mb-8">
             <h1 className="text-2xl sm:text-3xl font-bold text-white flex items-center gap-3">
-              <span style={{ color: '#D91CD2' }}><CrownIcon /></span>
+              <span style={{ color: 'var(--primary-color, #D91CD2)' }}><CrownIcon /></span>
               Devenir Partenaire Afroboost
             </h1>
             <button 
@@ -258,14 +258,14 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
           
       {/* Onboarding - Présentation rapide */}
       <div style={{
-        background: 'linear-gradient(135deg, rgba(217,28,210,0.15), rgba(120,40,200,0.10))',
-        border: '1px solid rgba(217,28,210,0.4)',
+        background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.15), rgba(120,40,200,0.10))',
+        border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
         borderRadius: '16px',
         padding: '24px',
         marginBottom: '24px',
         position: 'relative'
       }}>
-        <h3 style={{ color: '#D91CD2', fontSize: '1.3rem', fontWeight: 700, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <h3 style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '1.3rem', fontWeight: 700, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
           🚀 Pourquoi devenir Partenaire ?
         </h3>
         <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '0.95rem', marginBottom: '16px', lineHeight: '1.5' }}>
@@ -306,7 +306,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
       </div>
 
       {/* Avantages */}
-          <div className="glass rounded-2xl p-6 mb-8" style={{ border: '1px solid rgba(217, 28, 210, 0.3)' }}>
+          <div className="glass rounded-2xl p-6 mb-8" style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }}>
             <h2 className="text-xl font-semibold text-white mb-4">Pourquoi devenir Partenaire Afroboost ?</h2>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="flex items-start gap-3">
@@ -347,13 +347,13 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                 }`}
                 style={{ 
                   border: selectedPack?.id === pack.id 
-                    ? '2px solid #D91CD2' 
+                    ? '2px solid var(--primary-color, #D91CD2)' 
                     : '1px solid rgba(255,255,255,0.1)'
                 }}
                 data-testid={`pack-${pack.id}`}
               >
                 <h3 className="text-lg font-bold text-white mb-2">{pack.name}</h3>
-                <div className="text-3xl font-bold mb-2" style={{ color: '#D91CD2' }}>
+                <div className="text-3xl font-bold mb-2" style={{ color: 'var(--primary-color, #D91CD2)' }}>
                   {pack.price} CHF
                 </div>
                 <div className="text-white/70 text-sm mb-3">
@@ -384,7 +384,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
 
           {/* Formulaire */}
           {selectedPack && (
-            <div className="glass rounded-2xl p-6" style={{ border: '1px solid rgba(217, 28, 210, 0.3)' }}>
+            <div className="glass rounded-2xl p-6" style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }}>
               <h2 className="text-xl font-semibold text-white mb-4">
                 {'Vos Informations'}
               </h2>
@@ -480,7 +480,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                     id="cgu-checkbox"
                     checked={acceptedCGU}
                     onChange={(e) => setAcceptedCGU(e.target.checked)}
-                    style={{ marginTop: '3px', accentColor: '#D91CD2', width: '18px', height: '18px', cursor: 'pointer' }}
+                    style={{ marginTop: '3px', accentColor: 'var(--primary-color, #D91CD2)', width: '18px', height: '18px', cursor: 'pointer' }}
                     data-testid="cgu-checkbox"
                   />
                   <label htmlFor="cgu-checkbox" style={{ color: 'rgba(255,255,255,0.7)', fontSize: '13px', cursor: 'pointer' }}>
@@ -489,7 +489,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                       href="/cgu"
                       target="_blank"
                       rel="noopener noreferrer"
-                      style={{ color: '#D91CD2', textDecoration: 'underline' }}
+                      style={{ color: 'var(--primary-color, #D91CD2)', textDecoration: 'underline' }}
                       onClick={(e) => e.stopPropagation()}
                     >
                       conditions générales d'utilisation
@@ -527,7 +527,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ color: '#fff', fontSize: '18px' }}>Total:</span>
-                    <span style={{ fontSize: '24px', fontWeight: '700', color: '#D91CD2' }}>
+                    <span style={{ fontSize: '24px', fontWeight: '700', color: 'var(--primary-color, #D91CD2)' }}>
                       {paymentMethod === 'mobile_money'
                         ? `${(selectedPack.price_xof || Math.round(selectedPack.price * 400)).toLocaleString('fr-FR')} FCFA`
                         : `${selectedPack.price} CHF`
@@ -551,7 +551,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                     opacity: (submitting || !acceptedCGU || !formData.name || !formData.email || !formData.password) ? 0.5 : 1,
                     background: paymentMethod === 'mobile_money'
                       ? 'linear-gradient(135deg, #F59E0B, #D97706)'
-                      : 'linear-gradient(135deg, #D91CD2, #8b5cf6)',
+                      : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                     transition: 'all 0.2s',
                     transform: 'scale(1)'
                   }}
@@ -625,7 +625,7 @@ const PartnerFAQ = () => {
           Questions fréquentes
         </h3>
         <span style={{
-          color: '#D91CD2', fontSize: '20px', fontWeight: '300',
+          color: 'var(--primary-color, #D91CD2)', fontSize: '20px', fontWeight: '300',
           transform: sectionOpen ? 'rotate(45deg)' : 'none',
           transition: 'transform 0.2s ease',
         }}>+</span>
@@ -647,7 +647,7 @@ const PartnerFAQ = () => {
               >
                 <span>{faq.question}</span>
                 <span style={{
-                  color: 'rgba(217,28,210,0.6)', fontSize: '18px', fontWeight: '300',
+                  color: 'rgba(var(--primary-rgb, 217, 28, 210), 0.6)', fontSize: '18px', fontWeight: '300',
                   transform: openId === faq.id ? 'rotate(45deg)' : 'none', transition: 'transform 0.2s',
                 }}>+</span>
               </button>
