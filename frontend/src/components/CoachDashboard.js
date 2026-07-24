@@ -635,7 +635,7 @@ const V260_PROOF_FILTERS = [
   { id: '', label: 'Toutes' }
 ];
 
-const V260ProofsPanel = ({ proofs, filter, setFilter, onLoad, onReview, busyId }) => {
+const V260ProofsPanel = ({ proofs, filter, setFilter, onLoad, onReview, onDelete, busyId }) => {
   // Recharge a l'ouverture de l'onglet ET a chaque changement de filtre.
   // `onLoad` est volontairement HORS des dependances : il est recree a chaque
   // rendu du dashboard, l'inclure relancerait la requete en boucle.
@@ -702,7 +702,29 @@ const V260ProofsPanel = ({ proofs, filter, setFilter, onLoad, onReview, busyId }
                 <p style={{ color: '#777', fontSize: '0.75rem', margin: '4px 0' }}>Offre : {proof.offer_name}</p>
               ) : null}
             </div>
-            <span style={statusStyle(proof.status)}>{statusLabel(proof.status)}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              <span style={statusStyle(proof.status)}>{statusLabel(proof.status)}</span>
+              {/* V260d: suppression definitive. Disponible quel que soit le
+                  statut — une demande traitee n'a plus a encombrer la liste. */}
+              <button
+                type="button"
+                onClick={() => onDelete(proof.id)}
+                disabled={busyId === proof.id}
+                title="Supprimer cette demande"
+                aria-label="Supprimer cette demande"
+                style={{
+                  background: 'none', border: 'none', padding: 4,
+                  cursor: busyId === proof.id ? 'wait' : 'pointer', color: '#f87171'
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  <line x1="10" y1="11" x2="10" y2="17" />
+                  <line x1="14" y1="11" x2="14" y2="17" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           {/* GARDE XSS — `video_link` est saisi par un inconnu sur un endpoint
@@ -934,6 +956,40 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
     setV260ProofBusy(null);
   };
+
+  // V260d: suppression definitive d'une demande.
+  const deleteV260Proof = async (proofId) => {
+    if (v260ProofBusy) return;
+    if (!window.confirm('Supprimer définitivement cette demande ?\n\nUn accès déjà accordé (code AFR-) reste actif.')) return;
+    setV260ProofBusy(proofId);
+    try {
+      await axios.delete(`${API}/social-proofs/${proofId}`, getCoachHeaders());
+      await loadV260Proofs();
+      await loadV260PendingCount();
+    } catch (err) {
+      alert(err?.response?.data?.detail || "La suppression a échoué.");
+    }
+    setV260ProofBusy(null);
+  };
+
+  // V260d: compteur du badge de la carte « Preuves ». Requete separee du
+  // panneau : le badge doit refleter les demandes EN ATTENTE meme quand le
+  // coach consulte le filtre « Validées », et rester juste sans ouvrir l'onglet.
+  const [v260PendingCount, setV260PendingCount] = useState(0);
+  const loadV260PendingCount = async () => {
+    try {
+      const res = await axios.get(`${API}/social-proofs`, {
+        ...getCoachHeaders(), params: { status: 'pending' }
+      });
+      setV260PendingCount(Array.isArray(res.data) ? res.data.length : 0);
+    } catch (err) {
+      setV260PendingCount(0);
+    }
+  };
+  useEffect(() => {
+    if (safeCoachUser?.email) loadV260PendingCount();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [safeCoachUser?.email]);
   
   // v94: GARDE DE SÉCURITÉ — vérifier l'authentification au montage
   useEffect(() => {
@@ -5434,9 +5490,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     { id: "codes", label: t('promoCodes') },
     { id: "contacts", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="users" size={14} /> Contacts</span> },
     { id: "campaigns", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="megaphone" size={14} /> Campagnes</span> },
-    { id: "conversations", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="messageCircle" size={14} /> {unreadCount > 0 ? `Conversations (${unreadCount})` : "Conversations"}</span> },
-    // V260: validation des essais gratuits obtenus contre preuve sociale
-    { id: "proofs", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="gift" size={14} /> Preuves</span> }
+    { id: "conversations", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="messageCircle" size={14} /> {unreadCount > 0 ? `Conversations (${unreadCount})` : "Conversations"}</span> }
+    // V260d: l'onglet « Preuves » a quitte cette barre — il est desormais une
+    // carte de la page Gestion, au meme rang que « Offres & Cours » ou
+    // « Ma Vitrine ». La barre principale reste ainsi lisible sur mobile.
   ];
 
   // v37.2: Boutique et Stripe pour coachs partenaires uniquement
@@ -6376,7 +6433,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   { id: 'emojis', icon: 'smile', label: 'Emojis', badge: 0 },
                   { id: 'video-hero', icon: 'video', label: 'Vidéo Hero', badge: totalVideos },
                   { id: 'vitrine', icon: 'image', label: 'Ma Vitrine', badge: 0 },
-                  { id: 'boutique-hub', icon: 'creditCard', label: 'Paiements', badge: 0 }
+                  { id: 'boutique-hub', icon: 'creditCard', label: 'Paiements', badge: 0 },
+                  // V260d: « Preuves » quitte la barre de navigation principale pour
+                  // rejoindre les autres cartes de Gestion. Le badge compte les demandes
+                  // EN ATTENTE — c'est la seule information qui appelle une action.
+                  { id: 'preuves', icon: 'gift', label: 'Preuves', badge: v260PendingCount }
                 ];
               })().map(sub => (
                 <button
@@ -7174,6 +7235,27 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
             {/* v37.2: Sous-onglet: 💳 Boutique & Paiements */}
             {/* V199: Réorganisation en 5 sections pliables — seul "Configuration des Paiements" ouvert par défaut */}
+            {/* V260d: essais gratuits a valider + mur des abonnes */}
+            {offersSubTab === 'preuves' && (
+              <>
+                <V260ProofsPanel
+                  proofs={v260Proofs}
+                  filter={v260ProofFilter}
+                  setFilter={setV260ProofFilter}
+                  onLoad={loadV260Proofs}
+                  onReview={reviewV260Proof}
+                  onDelete={deleteV260Proof}
+                  busyId={v260ProofBusy}
+                />
+                <V261PublicationsPanel
+                  publications={v261Pubs}
+                  onLoad={loadV261Pubs}
+                  onDelete={deleteV261Pub}
+                  busyId={v261Busy}
+                />
+              </>
+            )}
+
             {offersSubTab === 'boutique-hub' && (
               <V199BoutiqueAccordion
                 concept={concept}
@@ -7201,27 +7283,6 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             Le chargement est declenche a l'ouverture de l'onglet plutot qu'au
             montage du dashboard : inutile d'appeler l'API pour un coach qui ne
             propose aucune offre a preuve sociale. */}
-        {tab === "proofs" && (
-          <>
-            <V260ProofsPanel
-              proofs={v260Proofs}
-              filter={v260ProofFilter}
-              setFilter={setV260ProofFilter}
-              onLoad={loadV260Proofs}
-              onReview={reviewV260Proof}
-              busyId={v260ProofBusy}
-            />
-            {/* V261: le mur des abonnes vit dans le meme onglet — ce sont les
-                deux endroits ou le coach arbitre du contenu venu des clients. */}
-            <V261PublicationsPanel
-              publications={v261Pubs}
-              onLoad={loadV261Pubs}
-              onDelete={deleteV261Pub}
-              busyId={v261Busy}
-            />
-          </>
-        )}
-
         {tab === "codes" && (
           <PromoCodesTab
             // === Credits Gate ===

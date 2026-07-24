@@ -5045,6 +5045,51 @@ async def submit_social_proof(request: Request):
     await db.social_proofs.insert_one(doc)
     logger.info(f"[V260] Preuve sociale recue de {proof.client_email} pour l'offre {offer_id}")
 
+    # V260d: le demandeur entre dans le CRM du coach.
+    #
+    # La page « Mes Contacts » n'a PAS de collection `contacts` : elle agrege
+    # `chat_participants` (isole par coach_id) et `users` — voir GET
+    # /contacts/all. C'est donc dans `chat_participants` qu'il faut ecrire, avec
+    # sa forme reelle : id / name / email / whatsapp / source / coach_id /
+    # created_at. Inventer une collection `contacts` aurait produit des
+    # documents que rien n'affiche.
+    #
+    # Dedup par (coach_id, email) : le meme visiteur peut soumettre plusieurs
+    # demandes, il ne doit pas apparaitre plusieurs fois dans le CRM. La cle
+    # inclut le coach — deux coachs peuvent legitimement avoir le meme contact.
+    try:
+        _p_coach = proof.coach_id or DEFAULT_COACH_ID
+        _existing = None
+        if proof.client_email:
+            _existing = await db.chat_participants.find_one(
+                {"coach_id": _p_coach, "email": proof.client_email}, {"_id": 0, "id": 1, "whatsapp": 1}
+            )
+        if _existing:
+            # On ENRICHIT sans jamais ecraser : un telephone deja connu vaut
+            # mieux que celui d'une nouvelle demande, potentiellement laisse
+            # vide. Le nom n'est pas touche non plus.
+            if proof.client_phone and not (_existing.get("whatsapp") or "").strip():
+                await db.chat_participants.update_one(
+                    {"id": _existing["id"]}, {"$set": {"whatsapp": proof.client_phone}}
+                )
+        else:
+            await db.chat_participants.insert_one({
+                "id": str(uuid.uuid4()),
+                "name": proof.client_name,
+                "email": proof.client_email,
+                "whatsapp": proof.client_phone or "",
+                # `source` alimente la colonne « catégorie » du CRM : le coach
+                # voit d'un coup d'oeil d'ou vient le contact.
+                "source": "social_proof",
+                "coach_id": _p_coach,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            logger.info(f"[V260d] Contact CRM cree pour {proof.client_email} (coach {_p_coach})")
+    except Exception as e:
+        # Le CRM ne doit jamais faire echouer une demande d'essai : la preuve
+        # est deja enregistree et visible au dashboard.
+        logger.error(f"[V260d] Enregistrement du contact echoue: {e}")
+
     # Notification au coach proprietaire de l'offre
     if RESEND_AVAILABLE and RESEND_API_KEY:
         coach_email = proof.coach_id
@@ -5116,6 +5161,34 @@ async def list_social_proofs(request: Request, status: str = ""):
         query["status"] = status
     proofs = await db.social_proofs.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
     return proofs
+
+
+@api_router.delete("/social-proofs/{proof_id}")
+async def delete_social_proof(proof_id: str, request: Request):
+    """V260d: le coach supprime definitivement une demande d'essai.
+
+    `id` en CHAINE, pas ObjectId : comme partout ailleurs dans ce projet, les
+    documents portent un uuid dans un champ `id` et `_id` est exclu des
+    lectures. Chercher par ObjectId ne remonterait rien.
+
+    Meme perimetre que la revue : un coach ne touche qu'a SES demandes.
+    La suppression n'annule PAS un acces deja accorde — le code AFR- emis vit
+    dans `discount_codes`, il continue de fonctionner. C'est voulu : effacer une
+    trace administrative ne doit pas retirer sans preavis un acces au client.
+    """
+    user_email = request.headers.get("X-User-Email", "").lower().strip() or _email_from_jwt(request)
+    if not user_email:
+        raise HTTPException(status_code=401, detail="Authentification requise")
+
+    proof = await db.social_proofs.find_one({"id": proof_id}, {"_id": 0})
+    if not proof:
+        raise HTTPException(status_code=404, detail="Preuve non trouvée")
+    if not is_super_admin(user_email) and (proof.get("coach_id") or "") != user_email:
+        raise HTTPException(status_code=403, detail="Accès refusé")
+
+    await db.social_proofs.delete_one({"id": proof_id})
+    logger.info(f"[V260d] Preuve {proof_id} supprimee par {user_email}")
+    return {"status": "ok"}
 
 
 @api_router.put("/social-proofs/{proof_id}/review")
