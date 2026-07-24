@@ -117,6 +117,15 @@ const LocationIcon = () => (
   </svg>
 );
 
+// V255: horloge SVG, en remplacement de l'emoji ⏰ de la carte de session
+// (meme trace que LocationIcon ci-dessus, pour un rendu homogene).
+const ClockIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="10"/>
+    <polyline points="12 6 12 12 16 14"/>
+  </svg>
+);
+
 const CoachVitrine = ({ username, onClose, onBack }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -514,6 +523,22 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
 
   const formatDateShort = (d) => {
     return d.toLocaleDateString('fr-CH', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  };
+
+  // V255: dates reservables d'un cours, cours PONCTUEL (V246) compris.
+  // Un cours ponctuel porte `date` et un `weekday` a null : l'appel direct a
+  // getNextOccurrences(null) calculait `null - jour`, ce qui produisait une
+  // serie hebdomadaire bidon n'ayant aucun rapport avec la date reelle du
+  // cours. On rend desormais sa seule vraie date, et rien si elle est passee.
+  // Les cours recurrents gardent exactement le comportement d'avant.
+  const v255CourseDates = (course) => {
+    if (course && typeof course.date === 'string' && course.date) {
+      const d = new Date(course.date + 'T' + (/^\d{2}:\d{2}/.test(course.time || '') ? course.time.slice(0, 5) : '00:00') + ':00');
+      if (isNaN(d.getTime())) return [];
+      return d >= new Date(new Date().setHours(0, 0, 0, 0)) ? [d] : [];
+    }
+    if (course && Number.isInteger(course.weekday)) return getNextOccurrences(course.weekday, 4);
+    return [];
   };
 
   // v18.4: Auto-rotation du carousel héro (8s par slide)
@@ -1234,7 +1259,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             <div className="space-y-4 sessions-scrollbar"
               style={{ maxHeight: '400px', overflowY: 'auto', paddingRight: '8px' }}>
               {uniqueCourses.map(course => {
-                const upcomingDates = course.weekday !== undefined ? getNextOccurrences(course.weekday, 4) : [];
+                const upcomingDates = v255CourseDates(course);
                 const isSelected = selectedBookings.some(b => b.course.id === course.id);
                 return (
                   <div key={course.id}
@@ -1254,9 +1279,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                     )}
 
                     {course.time && (
-                      <div className="flex items-center gap-2 mt-2">
-                        <span className="text-sm">⏰</span>
-                        <span className="text-purple-400 font-medium text-sm">{course.time}</span>
+                      <div className="flex items-center gap-2 mt-2 text-purple-400">
+                        <ClockIcon />
+                        <span className="font-medium text-sm">{course.time}</span>
                       </div>
                     )}
 
@@ -1283,7 +1308,10 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       </div>
                     )}
 
-                    {course.weekday !== undefined && upcomingDates.length === 0 && (
+                    {/* V255: `Number.isInteger` et non `!== undefined` — un cours
+                        ponctuel a `weekday: null`, ce qui passait la condition et
+                        rendait une pastille vide (`[...][null]` -> undefined). */}
+                    {Number.isInteger(course.weekday) && upcomingDates.length === 0 && (
                       <div className="mt-2 px-3 py-1 inline-block rounded-full text-xs font-medium"
                         style={{ background: 'rgba(217, 28, 210, 0.2)', color: '#d91cd2' }}>
                         {['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'][course.weekday]}

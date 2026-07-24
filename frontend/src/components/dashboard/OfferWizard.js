@@ -1280,6 +1280,20 @@ export default function OfferWizard({
                     className="text-sm v224-input"
                   />
                 </div>
+                {/* V255: rappel du jour de la semaine de la date choisie.
+                    L'input natif rend « 05.07.2026 » : le coach ne voyait pas
+                    s'il programmait un dimanche ou un mercredi, alors que c'est
+                    l'information qui compte pour un cours. Parse a midi local
+                    pour qu'aucun decalage de fuseau ne fasse basculer le jour. */}
+                {course.date && (() => {
+                  const d = new Date(course.date + 'T12:00:00');
+                  if (isNaN(d.getTime())) return null;
+                  return (
+                    <p className="text-xs mt-1 font-semibold" style={{ color: PINK }}>
+                      {WEEKDAYS[d.getDay()]}
+                    </p>
+                  );
+                })()}
                 {!course.date && Number.isInteger(course.weekday) && (
                   <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
                     Cours récurrent actuel : {WEEKDAYS[course.weekday]}. Choisissez une date pour le fixer.

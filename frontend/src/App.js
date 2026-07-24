@@ -651,6 +651,61 @@ function formatDate(d, time, lang) {
   return `${formatted} • ${time}`;
 }
 
+// V255: jours courts des cartes publiques. Le rendu d'horaires les a toujours
+// affiches en francais, quelle que soit la langue de la vitrine : on conserve
+// ce comportement tel quel plutot que d'introduire ici une traduction que rien
+// ne demande.
+const V255_SHORT_DAYS = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+
+// V255: date/heure reelle d'un cours PONCTUEL (V246), ou null.
+// Un cours ponctuel porte `date` (« 2026-08-05 ») et un `weekday` a null (voir
+// api/server.py:370-378 et OfferWizard, qui neutralise `weekday` des qu'une
+// date est saisie). L'heure est concatenee quand elle est exploitable, pour que
+// deux seances du meme jour se departagent correctement.
+function v255CourseDateTime(course) {
+  if (!course || typeof course.date !== 'string' || !course.date) return null;
+  const time = (typeof course.time === 'string' && /^\d{1,2}:\d{2}/.test(course.time))
+    ? (course.time.length === 4 ? '0' + course.time : course.time.slice(0, 5))
+    : '00:00';
+  const d = new Date(course.date + 'T' + time + ':00');
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// V255 FIX 1: jour affiche d'un horaire.
+// L'ancien rendu ne lisait que `course.weekday`. Pour un cours ponctuel ce
+// champ vaut null (ou garde la valeur d'un ancien cours recurrent) : deux
+// seances a des dates differentes — mercredi 05.08 et dimanche 09.08 —
+// affichaient donc le MEME libelle. La date fait foi quand elle existe ;
+// `weekday` ne sert plus que de repli aux cours recurrents.
+function v255CourseDayLabel(course) {
+  if (!course) return undefined;
+  if (typeof course.date === 'string' && course.date) {
+    // Midi local : evite qu'un fuseau/DST ne fasse basculer la date d'un jour.
+    const d = new Date(course.date + 'T12:00:00');
+    if (!isNaN(d.getTime())) return V255_SHORT_DAYS[d.getDay()];
+  }
+  return V255_SHORT_DAYS[course.weekday];
+}
+
+// V255 FIX 1: horaires d'une offre, dedupliques sur ce qui est REELLEMENT
+// affiche (jour + heure). Deux cours distincts tombant le meme jour a la meme
+// heure rendaient deux lignes stricticement identiques sur la carte, ce qui se
+// lisait comme un bug d'affichage. On garde le premier de chaque libelle.
+function v255UniqueSchedules(offer) {
+  const seen = new Set();
+  const out = [];
+  (offer && Array.isArray(offer.linkedCourses) ? offer.linkedCourses : []).forEach(course => {
+    if (!course) return;
+    const dayLabel = v255CourseDayLabel(course);
+    if (!dayLabel && !course.time) return;
+    const key = (dayLabel || '') + '|' + (course.time || '');
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ id: course.id, dayLabel, time: course.time, key });
+  });
+  return out;
+}
+
 // Parse media URL (YouTube, Vimeo, Image)
 function parseMediaUrl(url) {
   if (!url || typeof url !== 'string') return null;
@@ -1332,6 +1387,9 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // Portee LOCALE a la carte (comme `v225Qty` ci-dessus) : deplier un selecteur
   // sur une carte ne touche aucune autre carte du slider.
   const [v230Open, setV230Open] = useState({});
+  // V255: la carte n'affiche que 2 horaires ; ce booleen deplie les suivants.
+  // Portee LOCALE a la carte, comme `v225Qty` / `v230Open` ci-dessus.
+  const [v255ShowAllSchedules, setV255ShowAllSchedules] = useState(false);
   const v230IsOpen = (key) => Boolean(v230Open[key]);
   const v230Toggle = (key) => setV230Open(prev => ({ ...prev, [key]: !prev[key] }));
 
@@ -1744,23 +1802,64 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
       } catch (e) { /* repli ci-dessous */ }
     }
     if (offer.next_date_label) return offer.next_date_label;
-    const linkedIds = Array.isArray(offer.linked_course_ids) ? offer.linked_course_ids : [];
-    if (!linkedIds.length || !Array.isArray(courses) || !courses.length) return null;
-    const linked = linkedIds.map(id => courses.find(c => c && c.id === id)).filter(Boolean);
+    // V255 FIX 5: le repli ne regardait que `linked[0]`. Une offre dont le
+    // premier cours lie etait ponctuel et PASSE — ou simplement plus tardif que
+    // les autres — annoncait donc soit rien, soit une seance qui n'etait pas la
+    // prochaine. On balaie desormais TOUS les cours lies et on retient la date
+    // future la plus proche.
+    // Source : `linkedCourses` (deja resolu et filtre visible/archive par
+    // v225EnrichedOffers) quand il est present, sinon l'ancien chemin
+    // linked_course_ids + `courses`, conserve intact pour les points de montage
+    // qui ne passent pas d'offres enrichies.
+    const linked = (Array.isArray(offer.linkedCourses) && offer.linkedCourses.length)
+      ? offer.linkedCourses.filter(Boolean)
+      : (() => {
+          const linkedIds = Array.isArray(offer.linked_course_ids) ? offer.linked_course_ids : [];
+          if (!linkedIds.length || !Array.isArray(courses) || !courses.length) return [];
+          return linkedIds.map(id => courses.find(c => c && c.id === id)).filter(Boolean);
+        })();
     if (!linked.length) return null;
-    const course = linked[0];
-    if (course.weekday == null) return null;
-    const next = getNextOccurrences(course.weekday, 1)[0];
-    if (!next) return null;
+
+    const now = new Date();
+    let nextDate = null;
+    let nextCourse = null;
+    linked.forEach(course => {
+      let dt = null;
+      if (course.date) {
+        // Cours ponctuel : sa date fait foi, et une date passee ne peut pas
+        // etre une « prochaine seance ».
+        dt = v255CourseDateTime(course);
+        if (dt && dt <= now) dt = null;
+      } else if (course.weekday != null) {
+        const occ = getNextOccurrences(course.weekday, 1)[0];
+        if (occ) {
+          dt = new Date(occ);
+          if (typeof course.time === 'string' && /^\d{1,2}:\d{2}/.test(course.time)) {
+            const parts = course.time.split(':');
+            dt.setHours(parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
+          }
+        }
+      }
+      if (dt && (!nextDate || dt < nextDate)) {
+        nextDate = dt;
+        nextCourse = course;
+      }
+    });
+    if (!nextDate) return null;
     // V224: formatDate concatene " • <heure>" ; sans heure renseignee on evite
     // le separateur orphelin en formatant la date seule.
-    if (!course.time) {
-      return next.toLocaleDateString(lang === 'de' ? 'de-CH' : lang === 'en' ? 'en-GB' : 'fr-CH', {
+    if (!nextCourse.time) {
+      return nextDate.toLocaleDateString(lang === 'de' ? 'de-CH' : lang === 'en' ? 'en-GB' : 'fr-CH', {
         weekday: 'short', day: '2-digit', month: '2-digit'
       });
     }
-    return formatDate(next, course.time, lang);
+    return formatDate(nextDate, nextCourse.time, lang);
   })();
+
+  // V255 FIX 1 + 4: horaires dedupliques, et au plus 2 affiches par defaut.
+  const v255Schedules = v255UniqueSchedules(offer);
+  const v255VisibleSchedules = v255ShowAllSchedules ? v255Schedules : v255Schedules.slice(0, 2);
+  const v255HiddenSchedules = v255Schedules.length - v255VisibleSchedules.length;
 
   // V225 (revue): lieu issu des cours lies, calcule UNE fois pour deux usages —
   // le rendu de la ligne epingle ci-dessous, et la suppression du doublon avec
@@ -2025,6 +2124,56 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
           {/* Content Section — V119.1: plus d'espace, extrait de description */}
           <div className="p-4 pb-5">
             <p className="font-semibold text-white mb-1" style={{ fontSize: '17px', lineHeight: '1.3' }}>{offer.name}</p>
+
+            {/* V255 FIX 3: le prix remonte ICI, juste sous le nom.
+                Il etait rendu APRES la description, le lieu et la liste des
+                horaires : sur une offre bavarde (description longue + plusieurs
+                horaires), il tombait sous la ligne de flottaison de la carte et
+                le visiteur devait faire defiler pour voir combien ca coute.
+                Le bloc est deplace tel quel — meme balisage, meme source
+                (v223UnitPrice / v225FormatAmount), memes badges palier et TVA.
+                Rien d'autre ne change, y compris la ligne « frais de port » qui
+                le suit et n'a de sens qu'accolee au prix. */}
+            <div className="flex items-baseline gap-2 mb-1">
+              <span
+                className="text-2xl font-bold"
+                style={{
+                  color: '#d91cd2',
+                  textShadow: selected ? '0 0 15px rgba(217, 28, 210, 0.24)' : 'none'
+                }}
+              >
+                {/* V223: prix du palier actif, sinon rendu d'origine */}
+                {/* V224: passe par v223UnitPrice, point de verite unique du prix
+                    cote client — la logique n'est plus reimplementee ici. */}
+                {/* V225 REVUE FINALE: meme format que le bouton d'achat quelques
+                    pixels plus bas. Sans cela un prix a 19.50 rendait « 19.5 »
+                    ici et « 19.50 » sur le bouton. Le montant reste issu de
+                    v223UnitPrice, point de verite unique — v225FormatAmount ne
+                    fait que le mettre en forme. */}
+                CHF {v225FormatAmount(v223UnitPrice(offer))}.-
+              </span>
+              {/* V223: badge du palier tarifaire */}
+              {offer.progressive_pricing && V223_TIERS[offer.active_tier] && (
+                <span style={{
+                  fontSize: 11, padding: '2px 8px', borderRadius: 999,
+                  background: `${V223_TIERS[offer.active_tier].color}22`,
+                  color: V223_TIERS[offer.active_tier].color,
+                }}>
+                  {/* V225: le libelle personnalise prime. Sans cela le badge
+                      affichait « 🎯 Early Bird » pendant que la grille des
+                      paliers, quelques pixels plus bas sur la MEME carte,
+                      affichait « Prevente Ete » — deux noms pour un seul palier. */}
+                  {offer[`label_${offer.active_tier}`] || V223_TIERS[offer.active_tier].label}
+                </span>
+              )}
+              {offer.tva > 0 && (
+                <span className="text-xs text-white opacity-50">TVA {offer.tva}%</span>
+              )}
+            </div>
+            {offer.isProduct && offer.shippingCost > 0 && (
+              <p className="text-xs text-white opacity-50 mb-1">+ CHF {offer.shippingCost} frais de port</p>
+            )}
+
             {!showDescription && (
               <div className="mb-2">
                 {offer.description && (
@@ -2067,58 +2216,44 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
             })()}
 
             {/* V225: horaires des cours lies. `linkedCourses` vaut [] pour toute
-                offre sans `linked_course_ids` : .map sur [] ne rend rien, aucune
-                ligne vide. Un cours sans `weekday`/`time` exploitable est ignore
-                plutot que d'afficher « undefined · undefined ». */}
-            {(offer.linkedCourses || []).map(course => {
-              const days = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
-              const day = days[course.weekday];
-              if (!day && !course.time) return null;
-              return (
-                <div key={course.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px', color: '#aaa', fontSize: '12px' }}>
-                  <span>🕐</span>
-                  <span>{[day, course.time].filter(Boolean).join(' · ')}</span>
-                </div>
-              );
-            })}
-            <div className="flex items-baseline gap-2">
-              <span
-                className="text-2xl font-bold"
+                offre sans `linked_course_ids` : la liste est alors vide et rien
+                n'est rendu, aucune ligne vide. Un cours sans jour NI heure
+                exploitable est ignore plutot que d'afficher
+                « undefined · undefined ».
+                V255 FIX 1 : le jour vient de v255CourseDayLabel (date du cours
+                ponctuel prioritaire sur `weekday`) et les libelles identiques
+                sont dedupliques — voir v255UniqueSchedules.
+                V255 FIX 4 : 2 horaires au maximum, les suivants sont replies
+                derriere un lien. Une offre a huit seances allongeait la carte
+                jusqu'a repousser le bouton d'achat hors ecran. */}
+            {v255VisibleSchedules.map(schedule => (
+              <div key={schedule.id || schedule.key} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px', color: '#aaa', fontSize: '12px' }}>
+                {/* V255: emoji 🕐 remplace par un SVG inline (meme horloge que la
+                    ligne « duree » plus bas, pour un rendu homogene). */}
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+                <span>{[schedule.dayLabel, schedule.time].filter(Boolean).join(' · ')}</span>
+              </div>
+            ))}
+            {/* V255 FIX 4: bascule vers les horaires restants.
+                stopPropagation VITAL : la carte entiere porte un onClick qui
+                part en checkout — sans lui, deplier les horaires declencherait
+                un paiement. Meme piege que le lien Maps ci-dessus. */}
+            {v255Schedules.length > 2 && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setV255ShowAllSchedules(v => !v); }}
+                aria-expanded={v255ShowAllSchedules}
                 style={{
-                  color: '#d91cd2',
-                  textShadow: selected ? '0 0 15px rgba(217, 28, 210, 0.24)' : 'none'
+                  display: 'inline-flex', alignItems: 'center', gap: '4px',
+                  background: 'none', border: 'none', padding: '2px 0',
+                  color: '#d91cd2', fontSize: '12px', fontWeight: 600, cursor: 'pointer'
                 }}
               >
-                {/* V223: prix du palier actif, sinon rendu d'origine */}
-                {/* V224: passe par v223UnitPrice, point de verite unique du prix
-                    cote client — la logique n'est plus reimplementee ici. */}
-                {/* V225 REVUE FINALE: meme format que le bouton d'achat quelques
-                    pixels plus bas. Sans cela un prix a 19.50 rendait « 19.5 »
-                    ici et « 19.50 » sur le bouton. Le montant reste issu de
-                    v223UnitPrice, point de verite unique — v225FormatAmount ne
-                    fait que le mettre en forme. */}
-                CHF {v225FormatAmount(v223UnitPrice(offer))}.-
-              </span>
-              {/* V223: badge du palier tarifaire */}
-              {offer.progressive_pricing && V223_TIERS[offer.active_tier] && (
-                <span style={{
-                  fontSize: 11, padding: '2px 8px', borderRadius: 999,
-                  background: `${V223_TIERS[offer.active_tier].color}22`,
-                  color: V223_TIERS[offer.active_tier].color,
-                }}>
-                  {/* V225: le libelle personnalise prime. Sans cela le badge
-                      affichait « 🎯 Early Bird » pendant que la grille des
-                      paliers, quelques pixels plus bas sur la MEME carte,
-                      affichait « Prevente Ete » — deux noms pour un seul palier. */}
-                  {offer[`label_${offer.active_tier}`] || V223_TIERS[offer.active_tier].label}
-                </span>
-              )}
-              {offer.tva > 0 && (
-                <span className="text-xs text-white opacity-50">TVA {offer.tva}%</span>
-              )}
-            </div>
-            {offer.isProduct && offer.shippingCost > 0 && (
-              <p className="text-xs text-white opacity-50 mt-1">+ CHF {offer.shippingCost} frais de port</p>
+                {v255ShowAllSchedules ? 'Voir moins d\'horaires' : `+${v255HiddenSchedules} autre${v255HiddenSchedules > 1 ? 's' : ''} horaire${v255HiddenSchedules > 1 ? 's' : ''}`}
+              </button>
             )}
 
             {/* V225: les 3 paliers tarifaires, libelles personnalisables.
