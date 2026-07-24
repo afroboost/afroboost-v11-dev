@@ -1,13 +1,13 @@
 # CLAUDE.md — Instructions for AI Assistants
 
 ## Project Overview
-Afroboost is a SaaS fitness platform built on FastAPI + React, deployed on Vercel. Coach Bassi (owner) is based in Switzerland and is NOT a developer — explain things simply, step by step.
+Afroboost is a SaaS fitness platform built on FastAPI + React, deployed on Coolify (Hetzner VPS) — NOT Vercel, see the « Déploiement » section. Coach Bassi (owner) is based in Switzerland and is NOT a developer — explain things simply, step by step.
 
 ## Tech Stack
 - Backend: FastAPI (Python 3.11), Motor (async MongoDB), single file `api/server.py` (16,700+ lines)
 - Frontend: React 19, TailwindCSS, Radix UI/shadcn, CRACO
 - Database: MongoDB Atlas (49 collections)
-- Deploy: Vercel (serverless functions, 60s timeout, 1024MB RAM)
+- Deploy: Coolify sur VPS Hetzner (conteneur Docker, uvicorn). `vercel.json` est un résidu.
 - Payments: Stripe Connect + CinetPay
 - Messaging: WhatsApp Business API (Meta Cloud API)
 - Notifications: WebPush + Resend email
@@ -32,7 +32,7 @@ Afroboost is a SaaS fitness platform built on FastAPI + React, deployed on Verce
 ## Known Gotchas
 1. WhatsApp template variables CANNOT contain: emojis, full URLs (https://...), Unicode bold chars. Domain names without protocol are OK.
 2. MongoDB queries on large groups (800+ members) must use batch `$in` queries, NOT individual `find_one()` calls
-3. Vercel serverless has 60s timeout — long operations must be optimized
+3. Historiquement contraint par le timeout 60s de Vercel — le code en garde les optimisations (utile de toute façon)
 4. Frontend uses `--legacy-peer-deps` for npm install
 5. `re_tpl` is a pre-compiled regex module used in template cleaning — search for its definition before modifying regex patterns
 
@@ -40,48 +40,73 @@ Afroboost is a SaaS fitness platform built on FastAPI + React, deployed on Verce
 Required: MONGO_URL, STRIPE_SECRET_KEY, RESEND_API_KEY, META_WHATSAPP_TOKEN, META_WHATSAPP_PHONE_ID, META_WHATSAPP_VERIFY_TOKEN, OPENAI_API_KEY, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, JWT_SECRET
 
 ## Deployment
-- Frontend + API: Vercel (auto-deploy on git push)
-- Build: `cd frontend && npm install --legacy-peer-deps && CI=false npx craco build`
+- Frontend + API : auto-deploy sur `git push origin main` (voir « Déploiement » ci-dessous pour l'hébergeur RÉEL)
+- Build : `Dockerfile` à la racine (multi-étapes React + FastAPI)
 - API entry: `api/index.py` → imports `api/server.py`
 
-## Déploiement — les TROIS sites (V264)
+## Déploiement — les TROIS sites (V264b)
 
-> Écrit après avoir perdu du temps à chercher afroboost.com dans Coolify : il
-> n'y est pas. Trois sites distincts coexistent, sur deux hébergeurs.
-> Vérifications faites le 24 juillet 2026 (`dig`, en-têtes HTTP, `/api/debug/config`).
+> Trois sites distincts coexistent. **Les trois sont sur le MÊME serveur
+> Hetzner/Coolify** (`178.105.201.62`).
+> Vérifications faites le 24 juillet 2026 (`dig`, `curl` avec en-tête `Host`,
+> comparaison des hachages de bundle).
+
+### ⚠️ Ne PAS se fier au DNS ni aux traces Vercel
+afroboost.com est derrière le **proxy Cloudflare**. Trois pièges, tous
+rencontrés :
+1. `dig afroboost.com` renvoie des IP **Cloudflare** (104.21.x / 172.67.x) —
+   jamais l'origine. On ne peut RIEN en déduire sur l'hébergeur.
+2. Cloudflare réécrit l'en-tête `server:` en `cloudflare`, masquant le
+   `Server: uvicorn` de l'origine.
+3. Le dépôt contient un `vercel.json` et le DNS des TXT `_vercel`
+   (`vc-domain-verify`) : ce sont des **RÉSIDUS d'une ancienne installation
+   Vercel**, plus utilisés. `afroboost-v11-dev-pm7l.vercel.app` existe encore
+   mais sert un bundle PÉRIMÉ, différent de la production.
+
+**Le seul test fiable** — interroger l'origine directement en forçant l'hôte,
+puis comparer au bundle servi en production :
+```bash
+curl -sI -H "Host: afroboost.com" http://178.105.201.62/api/debug/config
+#   -> Server: uvicorn   (= FastAPI dans un conteneur, pas Vercel)
+curl -s -H "Host: afroboost.com" http://178.105.201.62/ | grep -o 'static/js/main\.[0-9a-f]*\.js'
+curl -s https://afroboost.com/ | grep -o 'static/js/main\.[0-9a-f]*\.js'
+#   -> hachages IDENTIQUES = c'est bien cette machine qui sert le site
+```
+(En HTTPS direct sur l'IP, `curl` échoue avec l'erreur 60 : le certificat ne
+couvre pas ce nom, Cloudflare parlant à l'origine en HTTP.)
 
 ### afroboost.com — plateforme fitness / ChatWidget (CE DÉPÔT)
-- **Hébergement** : **Vercel**, auto-deploy sur push `main`. PAS Coolify.
+- **Hébergement** : **Coolify sur VPS Hetzner `178.105.201.62`**, conteneur
+  Docker servi par **uvicorn**. PAS Vercel — voir l'encadré ci-dessus.
 - **Dépôt** : `afroboost/afroboost-v11-dev`, branche `main`
-- **Stack** : React (Craco) + FastAPI serverless (`vercel.json`)
+- **Build** : le `Dockerfile` à la racine (multi-étapes : build React puis
+  service FastAPI). C'est LUI qui construit, pas `vercel.json`.
+- **Stack** : React (Craco) + FastAPI
 - **Base** : MongoDB Atlas, DB `promo-credits-lab`
 - **Médias** : Cloudinary (cloud `dtm0r7hwq`, preset unsigned `afroboost`)
-- **DNS** : Cloudflare (compte bassicustomshoes@gmail.com), **proxy actif**
-  → `dig afroboost.com` renvoie des IP Cloudflare (104.21.x / 172.67.x),
-  jamais l'origine. Ne pas en déduire l'hébergeur.
-- **Preuve de l'hébergeur** : enregistrements TXT `_vercel.afroboost.com`
-  (`vc-domain-verify`) + `vercel.json` à la racine du dépôt.
-- **Déployer** : `git push origin main` → build automatique (~1 min)
+- **DNS** : Cloudflare (compte bassicustomshoes@gmail.com), proxy actif
+- **Déployer** : `git push origin main` → Coolify redéploie automatiquement
+  (webhook). Vérifié : une version poussée est en ligne en quelques minutes.
 - **Rollback** : `git revert <hash> && git push origin main`
-- **Variables d'env** : Vercel → Settings → Environment Variables
+- **Variables d'env** : **Coolify** → application afroboost → Environment
+  Variables. PAS Vercel : y ajouter une variable n'a AUCUN effet.
 - **Vérifier ce qui est en ligne** : `curl -s https://afroboost.com/api/debug/config`
-  Comparer aussi un marqueur de version dans le bundle servi :
-  `curl -s https://afroboost.com/ | grep -o 'static/js/main\.[0-9a-f]*\.js'`
 
 ### afroboosteur.com — site de l'association
 - **Hébergement** : Coolify sur VPS Hetzner — `178.105.201.62` (confirmé par `dig`)
 - **Dépôt** : `sambassi/afroboosteur-site`, branche `main`
 - **Stack** : Next.js + Supabase + Firebase — Build Pack Nixpacks, port 3000
 - **Coolify** : http://178.105.201.62:8000
-- **NE PAS CONFONDRE avec afroboost.com.** C'est l'IP Hetzner de CE site qu'on
-  trouve en cherchant « afroboost » dans Coolify, d'où la confusion.
+- **Même serveur qu'afroboost.com**, mais application Coolify DIFFÉRENTE.
+  C'est sur CE site qu'on tombe en cherchant « afroboost » dans Coolify —
+  d'où la confusion.
 
 ### formation.afroboosteur.com — plateforme de formation
 - **Hébergement** : Coolify, même serveur Hetzner
 - **Conteneurs** : `formation-backend` (port 8000) + `formation-frontend` (port 80)
 - **Troisième site, distinct des deux autres.**
 
-### Variables d'environnement à ne pas oublier (afroboost.com / Vercel)
+### Variables d'environnement à ne pas oublier (afroboost.com / **Coolify**)
 | Variable | Effet si absente |
 |----------|------------------|
 | `JWT_SECRET` | V262 retombe sur `X-User-Email`, **falsifiable**. `/api/debug/config` → `jwt_secret_set: false` |
