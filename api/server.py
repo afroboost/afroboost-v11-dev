@@ -16489,6 +16489,22 @@ async def v199_generate_invoice(request: Request):
 
     body = await request.json()
 
+    # V259b: couleur d'accent de la facture, alignee sur la marque du coach.
+    # Scopee par coach comme les emails (V259) : le concept est multi-tenant,
+    # une facture de partenaire ne doit pas sortir aux couleurs d'un autre.
+    #
+    # GARDE : `primaryColor` n'est pas valide en base — l'input du dashboard est
+    # un selecteur de couleur, mais un PUT direct pourrait y poser n'importe
+    # quoi, et `HexColor()` leve sur une valeur illisible. Une couleur fautive
+    # ne doit jamais empecher une facture d'etre emise : on retombe alors sur le
+    # rose historique, exactement le rendu d'avant la V259b.
+    _inv_email = request.headers.get("X-User-Email", "").lower().strip() or _email_from_jwt(request)
+    invoice_color = (await _v259_primary_color(_inv_email) or "").strip()
+    if not (len(invoice_color) == 7
+            and invoice_color[0] == "#"
+            and all(c in "0123456789abcdefABCDEF" for c in invoice_color[1:])):
+        invoice_color = _V259_DEFAULT_COLOR
+
     invoice_number = body.get("invoice_number") or f"AF-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
     invoice_date = body.get("invoice_date") or datetime.utcnow().strftime("%d.%m.%Y")
 
@@ -16517,7 +16533,7 @@ async def v199_generate_invoice(request: Request):
 
     elements = []
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('AfroTitle', parent=styles['Heading1'], textColor=HexColor('#D91CD2'), fontSize=22, spaceAfter=20)
+    title_style = ParagraphStyle('AfroTitle', parent=styles['Heading1'], textColor=HexColor(invoice_color), fontSize=22, spaceAfter=20)  # V259b
     subtitle_style = ParagraphStyle('AfroSubtitle', parent=styles['Heading2'], textColor=HexColor('#333333'), fontSize=14, spaceAfter=10)
     normal_style = ParagraphStyle('AfroNormal', parent=styles['Normal'], fontSize=10, leading=14)
     small_style = ParagraphStyle('AfroSmall', parent=styles['Normal'], fontSize=9, textColor=HexColor('#666666'), leading=12)
@@ -16601,7 +16617,7 @@ async def v199_generate_invoice(request: Request):
 
     table = Table(table_data, colWidths=[220, 60, 100, 100])
     table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), HexColor('#D91CD2')),
+        ('BACKGROUND', (0, 0), (-1, 0), HexColor(invoice_color)),  # V259b
         ('TEXTCOLOR', (0, 0), (-1, 0), HexColor('#FFFFFF')),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (-1, 0), 10),
