@@ -83,6 +83,8 @@ export const PublicationsCarousel = ({ publications }) => {
 };
 
 // Modale de publication, ouverte depuis l'espace abonne.
+// `subscriberCode` absent = mode COACH (V263) : le serveur identifie alors le
+// coach par sa session authentifiee, jamais par une valeur envoyee d'ici.
 export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -133,11 +135,12 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
       // V261b: `cloudinary_public_id` n'est PLUS envoye — le serveur le derive
       // lui-meme de l'URL. Il finissait en argument de `destroy()` : un client
       // pouvait y designer le media d'un autre et le faire effacer.
-      await axios.post(`${API}/publications`, {
-        subscriber_code: subscriberCode,
-        media_url: cloudRes.data.secure_url,
-        media_type: mediaType
-      });
+      // V263: sans code abonne, on n'envoie RIEN qui designe l'auteur — le
+      // serveur le deduit de la session (JWT ou en-tete). Envoyer un
+      // `coach_email` ici rouvrirait la falsification corrigee en V262.
+      var payload = { media_url: cloudRes.data.secure_url, media_type: mediaType };
+      if (subscriberCode) payload.subscriber_code = subscriberCode;
+      await axios.post(`${API}/publications`, payload);
       setUploading(false);
       if (onPublished) onPublished();
       onClose();

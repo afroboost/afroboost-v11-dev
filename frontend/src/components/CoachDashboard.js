@@ -6103,7 +6103,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   </div>
                 )}
                 {/* v9.5.9: Super Admin - Badge Illimité ♾️ */}
-                {isSuperAdmin && (
+                {/* V263: badge MASQUE a la demande du coach — il n'apporte
+                    rien au quotidien et encombrait l'en-tete. Le code est
+                    CONSERVE tel quel : remettre `isSuperAdmin` a la place de
+                    `false` suffit a le reafficher. */}
+                {false && isSuperAdmin && (
                   <span 
                     className="ml-2 px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-1"
                     style={{ 

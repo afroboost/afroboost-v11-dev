@@ -5528,15 +5528,65 @@ async def _v261_purge_expired() -> int:
     return len(expired)
 
 
+async def _v263_authenticated_coach(request: Request) -> str:
+    """V263: email du coach authentifie, ou '' — SANS lever d'exception.
+
+    `require_auth` leve un 401, ce qui ne convient pas ici : POST /publications
+    sert AUSSI les abonnes, qui n'ont pas de compte. On reprend donc sa regle
+    (JWT signe si JWT_SECRET est pose, repli sur l'en-tete sinon) sous une forme
+    silencieuse.
+
+    L'identite N'EST PAS lue dans le corps de la requete. Accepter un
+    `coach_email` fourni par l'appelant recreerait exactement la falsification
+    corrigee en V262 : n'importe qui publierait sous le nom du coach.
+    """
+    secret = os.environ.get("JWT_SECRET", "")
+    auth = request.headers.get("Authorization", "")
+    if secret and auth.lower().startswith("bearer "):
+        token = auth.split(" ", 1)[1].strip()
+        if token:
+            try:
+                import jwt as _pyjwt
+                payload = _pyjwt.decode(token, secret, algorithms=["HS256"])
+                return (payload.get("email") or "").lower().strip()
+            except Exception:
+                return ""
+        return ""
+    if secret:
+        return ""
+    return request.headers.get("X-User-Email", "").lower().strip()
+
+
 @api_router.post("/publications")
 async def create_publication(request: Request):
-    """V261: un abonne publie une image ou une video."""
+    """V261 + V263: un abonne OU un coach publie une image ou une video."""
     body = await request.json()
 
-    ok, subscriber_name = await _v261_resolve_subscriber(body.get("subscriber_code", ""))
-    if not ok:
-        raise HTTPException(status_code=403, detail="Code abonné invalide ou inactif")
-    code = body.get("subscriber_code", "").strip().upper()
+    code = (body.get("subscriber_code") or "").strip().upper()
+    ok, subscriber_name = (False, "")
+
+    if code:
+        # V261 — chemin abonne, INCHANGE.
+        ok, subscriber_name = await _v261_resolve_subscriber(code)
+        if not ok:
+            raise HTTPException(status_code=403, detail="Code abonné invalide ou inactif")
+    else:
+        # V263 — chemin coach. L'identite vient de la session authentifiee, pas
+        # du corps de la requete (cf. _v263_authenticated_coach).
+        _coach_email = await _v263_authenticated_coach(request)
+        if not _coach_email:
+            raise HTTPException(status_code=403, detail="Authentification requise")
+        _coach = await db.coaches.find_one({"email": _coach_email}, {"_id": 0, "name": 1})
+        if not _coach:
+            _coach = await db.coach_auth.find_one({"email": _coach_email}, {"_id": 0, "name": 1})
+        if not _coach and not is_super_admin(_coach_email):
+            raise HTTPException(status_code=403, detail="Accès refusé")
+        ok = True
+        subscriber_name = (_coach or {}).get("name") or _coach_email.split("@")[0]
+        # `code` sert de cle de plafonnement et d'appartenance : on y met
+        # l'email du coach, ce qui lui donne son propre quota sans se meler a
+        # celui des abonnes.
+        code = _coach_email
 
     media_url = (body.get("media_url") or "").strip()
     # V261b: le media doit non seulement venir de Cloudinary, mais vivre dans le
