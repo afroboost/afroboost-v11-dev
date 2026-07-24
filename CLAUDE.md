@@ -1,4 +1,107 @@
-# CLAUDE.md — Guide de Contexte Permanent Afroboost
+# CLAUDE.md — Instructions for AI Assistants
+
+## Project Overview
+Afroboost is a SaaS fitness platform built on FastAPI + React, deployed on Vercel. Coach Bassi (owner) is based in Switzerland and is NOT a developer — explain things simply, step by step.
+
+## Tech Stack
+- Backend: FastAPI (Python 3.11), Motor (async MongoDB), single file `api/server.py` (16,700+ lines)
+- Frontend: React 19, TailwindCSS, Radix UI/shadcn, CRACO
+- Database: MongoDB Atlas (49 collections)
+- Deploy: Vercel (serverless functions, 60s timeout, 1024MB RAM)
+- Payments: Stripe Connect + CinetPay
+- Messaging: WhatsApp Business API (Meta Cloud API)
+- Notifications: WebPush + Resend email
+- AI: OpenAI GPT
+
+## Critical Files
+- `api/server.py` — Main backend (16,700 lines). Be careful with edits, always search for the right line numbers.
+- `frontend/src/components/CoachDashboard.js` — Main dashboard (7,200 lines)
+- `frontend/src/components/ChatWidget.js` — Chat + mini-dashboard (9,400 lines, ES5 only)
+- `frontend/src/App.js` — Vitrine + routing (8,100 lines)
+- `vercel.json` — Deployment config + cron jobs
+- `api/routes/` — Modular route files (13 files)
+
+## Key Conventions
+- Version comments: changes are marked with `# V{number}: description` (e.g., `# V171.1: Fix template cleaning`)
+- Coach Bassi speaks French — respond in French
+- The brand color is #D91CD2 (magenta/pink)
+- Backend and frontend are in the same repo (monorepo)
+- All API routes start with `/api/` or are under router prefixes
+- **ALL icons must be SVG inline** — never use emoji Unicode characters (🕐, 📍, 👥, ⏱, etc.) as icons in the UI. Use inline `<svg>` elements with `stroke="currentColor"` instead. This applies to ALL components (App.js, CoachVitrine.js, OfferCard.js, CoachDashboard.js, OfferWizard.js, etc.).
+
+## Known Gotchas
+1. WhatsApp template variables CANNOT contain: emojis, full URLs (https://...), Unicode bold chars. Domain names without protocol are OK.
+2. MongoDB queries on large groups (800+ members) must use batch `$in` queries, NOT individual `find_one()` calls
+3. Vercel serverless has 60s timeout — long operations must be optimized
+4. Frontend uses `--legacy-peer-deps` for npm install
+5. `re_tpl` is a pre-compiled regex module used in template cleaning — search for its definition before modifying regex patterns
+
+## Environment Variables
+Required: MONGO_URL, STRIPE_SECRET_KEY, RESEND_API_KEY, META_WHATSAPP_TOKEN, META_WHATSAPP_PHONE_ID, META_WHATSAPP_VERIFY_TOKEN, OPENAI_API_KEY, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, JWT_SECRET
+
+## Deployment
+- Frontend + API: Vercel (auto-deploy on git push)
+- Build: `cd frontend && npm install --legacy-peer-deps && CI=false npx craco build`
+- API entry: `api/index.py` → imports `api/server.py`
+
+## Déploiement — les TROIS sites (V264)
+
+> Écrit après avoir perdu du temps à chercher afroboost.com dans Coolify : il
+> n'y est pas. Trois sites distincts coexistent, sur deux hébergeurs.
+> Vérifications faites le 24 juillet 2026 (`dig`, en-têtes HTTP, `/api/debug/config`).
+
+### afroboost.com — plateforme fitness / ChatWidget (CE DÉPÔT)
+- **Hébergement** : **Vercel**, auto-deploy sur push `main`. PAS Coolify.
+- **Dépôt** : `afroboost/afroboost-v11-dev`, branche `main`
+- **Stack** : React (Craco) + FastAPI serverless (`vercel.json`)
+- **Base** : MongoDB Atlas, DB `promo-credits-lab`
+- **Médias** : Cloudinary (cloud `dtm0r7hwq`, preset unsigned `afroboost`)
+- **DNS** : Cloudflare (compte bassicustomshoes@gmail.com), **proxy actif**
+  → `dig afroboost.com` renvoie des IP Cloudflare (104.21.x / 172.67.x),
+  jamais l'origine. Ne pas en déduire l'hébergeur.
+- **Preuve de l'hébergeur** : enregistrements TXT `_vercel.afroboost.com`
+  (`vc-domain-verify`) + `vercel.json` à la racine du dépôt.
+- **Déployer** : `git push origin main` → build automatique (~1 min)
+- **Rollback** : `git revert <hash> && git push origin main`
+- **Variables d'env** : Vercel → Settings → Environment Variables
+- **Vérifier ce qui est en ligne** : `curl -s https://afroboost.com/api/debug/config`
+  Comparer aussi un marqueur de version dans le bundle servi :
+  `curl -s https://afroboost.com/ | grep -o 'static/js/main\.[0-9a-f]*\.js'`
+
+### afroboosteur.com — site de l'association
+- **Hébergement** : Coolify sur VPS Hetzner — `178.105.201.62` (confirmé par `dig`)
+- **Dépôt** : `sambassi/afroboosteur-site`, branche `main`
+- **Stack** : Next.js + Supabase + Firebase — Build Pack Nixpacks, port 3000
+- **Coolify** : http://178.105.201.62:8000
+- **NE PAS CONFONDRE avec afroboost.com.** C'est l'IP Hetzner de CE site qu'on
+  trouve en cherchant « afroboost » dans Coolify, d'où la confusion.
+
+### formation.afroboosteur.com — plateforme de formation
+- **Hébergement** : Coolify, même serveur Hetzner
+- **Conteneurs** : `formation-backend` (port 8000) + `formation-frontend` (port 80)
+- **Troisième site, distinct des deux autres.**
+
+### Variables d'environnement à ne pas oublier (afroboost.com / Vercel)
+| Variable | Effet si absente |
+|----------|------------------|
+| `JWT_SECRET` | V262 retombe sur `X-User-Email`, **falsifiable**. `/api/debug/config` → `jwt_secret_set: false` |
+| `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | La purge 48 h (V261) retire les publications de la base mais laisse les fichiers chez Cloudinary |
+| `REACT_APP_*` | Inlinées **au build** par CRA : une variable posée seulement à l'exécution n'atteint jamais le bundle |
+
+## Testing
+- Test files: `backend_test.py`, `backend_regression_test.py`, `tests/`
+- Run: `python -m pytest tests/`
+
+## When Making Changes
+1. Always add a version comment (V{next_number})
+2. Test locally before deploying
+3. Be careful with the WhatsApp template cleaning code (~line 6572) — it went through 6 iterations
+4. When modifying CoachDashboard.js, check that you're not breaking other tabs/sections
+5. MongoDB collection names are lowercase with underscores
+
+---
+
+# LEGACY DOCUMENTATION (Archived)
 
 > Dernière mise à jour : 7 avril 2026 — v162m
 > Ce fichier sert de référence exhaustive pour toute intervention sur le projet.
@@ -330,13 +433,15 @@ git push https://<PAT>@github.com/afroboost/afroboost-v11-dev.git main
 
 2. **Ne jamais supprimer de données** : Le site est en production avec des abonnés actifs. Toute modification doit préserver les données existantes.
 
-3. **Ne pas toucher** :
+3. **Icônes en SVG uniquement** : Ne jamais utiliser d'emoji Unicode comme icônes dans l'interface. Toujours utiliser des `<svg>` inline avec `stroke="currentColor"`.
+
+4. **Ne pas toucher** :
    - Les 53 routes JWT auth existantes
    - Le Service Worker V140 (sauf bumps de version)
    - Le système de paiement Stripe (webhook critique)
    - Les fonctionnalités qui marchent déjà
 
-4. **Ne pas casser le paiement, les réservations, ni les conversations.**
+5. **Ne pas casser le paiement, les réservations, ni les conversations.**
 
 ### Style Python (Backend)
 - Type hints partout (Pydantic models)
