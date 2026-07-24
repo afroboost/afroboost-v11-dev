@@ -30,6 +30,15 @@ const HINT_STYLE = { color: 'rgba(255,255,255,0.4)' };
 
 const WEEKDAYS = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
 
+// V255b: jour de la semaine (convention JS, Dim=0) d'une date « 2026-08-05 »,
+// ou null si la chaine est inexploitable.
+// Midi local et NON minuit : minuit peut basculer d'un jour en heure d'ete.
+const weekdayFromDate = (value) => {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const d = new Date(value.trim().slice(0, 10) + 'T12:00:00');
+  return isNaN(d.getTime()) ? null : d.getDay();
+};
+
 // V246: libelle d'un horaire, retrocompatible. Cours PONCTUEL (`date`) ->
 // « jeu. 21 août 2026 » ; cours RECURRENT (`weekday`) -> « Mercredi ». Renvoie
 // une chaine vide si ni l'un ni l'autre n'est exploitable.
@@ -646,9 +655,18 @@ export default function OfferWizard({
     setCourseBusyId(id);
     setCoursesError('');
     try {
+      // V255b: la date du cours source est recopiee, elle aussi. Sans cela,
+      // dupliquer un cours PONCTUEL produisait un cours « dimanche recurrent »
+      // (weekday force a 0, date perdue) : c'est exactement ce qui a donne deux
+      // cartes « Dim · 18:30 » pour un mercredi et un dimanche.
+      const srcDate = typeof source.date === 'string' ? source.date.trim() : '';
+      const srcDerived = weekdayFromDate(srcDate);
       const res = await axios.post(`${API}/courses`, {
         name: `${(source.name || 'Cours')} (copie)`,
-        weekday: Number.isInteger(source.weekday) ? source.weekday : parseInt(source.weekday, 10) || 0,
+        weekday: srcDerived != null
+          ? srcDerived
+          : (Number.isInteger(source.weekday) ? source.weekday : parseInt(source.weekday, 10) || 0),
+        date: srcDerived != null ? srcDate : '',
         time: source.time || '',
         locationName: source.locationName || source.location || '',
         mapsUrl: source.mapsUrl || '',
@@ -692,10 +710,33 @@ export default function OfferWizard({
   // « Cours » du dashboard, qui l'hebergeait, est masquee).
   // Aucune autre cle n'est ajoutee : le $set partiel du serveur preserve
   // `playlist`, `audio_tracks` et `coach_id` des cours existants.
+  // V255b — LE BUG DE FOND : `date` n'etait PAS dans ce payload.
+  // Le coach saisissait « 05/08/2026 » (un mercredi), l'etat local portait bien
+  // `{date: '2026-08-05', weekday: null}` (voir l'input date, etape 2), mais
+  // l'enregistrement n'envoyait que `weekday` — et `parseInt(null, 10) || 0`
+  // le ramenait a 0, c'est-a-dire DIMANCHE. En base, tous les cours ponctuels
+  // se retrouvaient donc « dimanche, sans date » : deux seances a des dates
+  // differentes rendaient la meme ligne sur la carte storefront. Le rendu V255
+  // lit bien `course.date` en priorite, mais ce champ n'a jamais ete ecrit.
+  //
+  // Deux corrections ici :
+  // 1. `date` part dans le payload. Chaine VIDE et jamais null quand il n'y a
+  //    pas de date : PUT /courses (server.py l.1112) filtre les valeurs None,
+  //    un null serait ignore et une date ne pourrait plus jamais etre effacee.
+  // 2. `weekday` est DERIVE de la date au lieu d'etre force a 0. Le backend
+  //    discrimine ponctuel/recurrent sur `date` (server.py l.4935), jamais sur
+  //    `weekday` : garder les deux coherents ne change donc aucun aiguillage,
+  //    et tout code qui ne lit que `weekday` (anciennes vues, exports) affiche
+  //    enfin le bon jour au lieu de dimanche.
   const buildCoursePayload = (c) => {
+    const rawDate = typeof c.date === 'string' ? c.date.trim() : '';
+    const derived = weekdayFromDate(rawDate);
     const payload = {
       name: (c.name || '').trim(),
-      weekday: Number.isInteger(c.weekday) ? c.weekday : parseInt(c.weekday, 10) || 0,
+      weekday: derived != null
+        ? derived
+        : (Number.isInteger(c.weekday) ? c.weekday : parseInt(c.weekday, 10) || 0),
+      date: derived != null ? rawDate : '',
       time: c.time || '',
       locationName: c.locationName || '',
       location: c.locationName || '',
@@ -1263,8 +1304,17 @@ export default function OfferWizard({
                     value={course.date || ''}
                     onChange={(e) => {
                       const v = e.target.value;
+                      // V255b: `weekday` est SYNCHRONISE sur la date choisie, au
+                      // lieu d'etre mis a null. Un weekday null retombait sur 0
+                      // (dimanche) a l'enregistrement, et effacer la date apres
+                      // coup laissait le cours sur un jour faux. Le caractere
+                      // ponctuel du cours se lit sur `date`, pas sur l'absence
+                      // de weekday — cote backend comme cote vitrine.
+                      const derived = weekdayFromDate(v);
                       setLinkedCourses(prev => prev.map(c =>
-                        c.id === course.id ? { ...c, date: v, weekday: v ? null : c.weekday } : c
+                        c.id === course.id
+                          ? { ...c, date: v, weekday: derived != null ? derived : c.weekday }
+                          : c
                       ));
                       markDirty(course.id);
                       if (coursesError) setCoursesError('');

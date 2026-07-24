@@ -687,10 +687,20 @@ function v255CourseDayLabel(course) {
   return V255_SHORT_DAYS[course.weekday];
 }
 
-// V255 FIX 1: horaires d'une offre, dedupliques sur ce qui est REELLEMENT
-// affiche (jour + heure). Deux cours distincts tombant le meme jour a la meme
-// heure rendaient deux lignes stricticement identiques sur la carte, ce qui se
-// lisait comme un bug d'affichage. On garde le premier de chaque libelle.
+// V255 FIX 1: horaires d'une offre, dedupliques pour ne pas afficher deux fois
+// la meme ligne sur la carte.
+//
+// V255b — LA CLE DE DEDUP INCLUT LA DATE. Elle ne portait que « jour + heure » :
+// deux seances PONCTUELLES reellement distinctes — mercredi 05.08 et mercredi
+// 12.08, toutes deux a 18:30 — etaient donc fusionnees en une seule ligne, et
+// la seconde seance disparaissait de la carte. Seuls deux cours partageant la
+// MEME date (ou, pour les recurrents, le meme jour) sont desormais fusionnes.
+//
+// Corollaire assume : deux dates differentes tombant le meme jour de semaine
+// produiraient deux libelles « Mer · 18:30 » identiques. On leve l'ambiguite en
+// ajoutant la date courte (« Mer 05.08 ») aux SEULES lignes concernees — les
+// cartes a un seul horaire par jour, cas de toutes les offres actuelles,
+// gardent exactement le rendu « Mer · 18:30 » attendu.
 function v255UniqueSchedules(offer) {
   const seen = new Set();
   const out = [];
@@ -698,12 +708,32 @@ function v255UniqueSchedules(offer) {
     if (!course) return;
     const dayLabel = v255CourseDayLabel(course);
     if (!dayLabel && !course.time) return;
-    const key = (dayLabel || '') + '|' + (course.time || '');
+    const date = (typeof course.date === 'string' && course.date) ? course.date.slice(0, 10) : '';
+    const key = (dayLabel || '') + '|' + (course.time || '') + '|' + date;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ id: course.id, dayLabel, time: course.time, key });
+    out.push({ id: course.id, dayLabel, time: course.time, date, key });
   });
-  return out;
+
+  // Desambiguisation : un libelle visible (jour + heure) porte par plusieurs
+  // dates distinctes recoit le jour ET la date.
+  const labelCount = {};
+  out.forEach(s => {
+    const visible = (s.dayLabel || '') + '|' + (s.time || '');
+    labelCount[visible] = (labelCount[visible] || 0) + 1;
+  });
+  return out.map(s => {
+    const visible = (s.dayLabel || '') + '|' + (s.time || '');
+    if (labelCount[visible] > 1 && s.date) {
+      const d = new Date(s.date + 'T12:00:00');
+      if (!isNaN(d.getTime())) {
+        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        return { ...s, dayLabel: (s.dayLabel || '') + ' ' + dd + '.' + mm };
+      }
+    }
+    return s;
+  });
 }
 
 // Parse media URL (YouTube, Vimeo, Image)
