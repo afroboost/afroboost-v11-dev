@@ -5238,6 +5238,210 @@ async def review_social_proof(proof_id: str, request: Request):
     return {"status": "ok", "action": action, "code": granted_code}
 
 
+# =====================================================================
+# V261 — PUBLICATIONS DES ABONNES (image / video 9:16, duree de vie 48 h)
+#
+# Un abonne muni d'un code AFR- actif publie un media visible de tous sur la
+# vitrine. La publication s'efface d'elle-meme au bout de 48 h, en base et sur
+# Cloudinary. Le coach peut en supprimer une a tout moment.
+# =====================================================================
+
+V261_TTL_HOURS = 48
+# Plafond par code : sans lui, un abonne peut inonder la vitrine. 10 est large
+# pour un usage normal et rend le flood inoffensif.
+V261_MAX_ACTIVE_PER_CODE = 10
+# Les medias sont televerses par le frontend sur NOTRE espace Cloudinary. On
+# n'accepte donc que ces URL : `media_url` arrive d'un endpoint quasi public et
+# finit en `src` sur la vitrine. Sans ce filtre, n'importe qui pourrait y placer
+# l'URL de son choix — pistage, contenu heberge ailleurs, ou simple lien mort.
+V261_MEDIA_PREFIX = "https://res.cloudinary.com/"
+
+
+async def _v261_resolve_subscriber(code: str):
+    """V261: le code AFR- donne-t-il droit de publier ? Renvoie (ok, nom).
+
+    ATTENTION a la forme reelle des documents, elle differe d'une collection a
+    l'autre : `discount_codes` porte `active: True` (booleen) et N'A PAS de
+    champ `status` ; `subscriptions` porte `status: "active"`. Interroger
+    `discount_codes` sur `status` ne remonterait donc JAMAIS rien.
+    Le nom vient de la base, jamais du corps de la requete : c'est ce qui
+    empeche un client de publier sous l'identite d'un autre.
+    """
+    code = (code or "").strip().upper()
+    if not code.startswith("AFR-"):
+        return False, ""
+    sub = await db.subscriptions.find_one(
+        {"code": code, "status": "active"}, {"_id": 0, "name": 1, "email": 1}
+    )
+    if sub:
+        return True, (sub.get("name") or (sub.get("email") or "").split("@")[0] or "Abonné")
+    dc = await db.discount_codes.find_one(
+        {"code": code, "active": True}, {"_id": 0, "name": 1, "assignedEmail": 1, "maxUses": 1, "used": 1}
+    )
+    if dc:
+        # Un code epuise n'est plus un abonnement actif.
+        try:
+            if int(dc.get("maxUses") or 0) - int(dc.get("used") or 0) <= 0:
+                return False, ""
+        except (TypeError, ValueError):
+            pass
+        return True, (dc.get("name") or (dc.get("assignedEmail") or "").split("@")[0] or "Abonné")
+    return False, ""
+
+
+def _v261_cloudinary_destroy(public_id: str, media_type: str) -> None:
+    """V261: supprime un media Cloudinary. Silencieux et NON bloquant.
+
+    Le paquet `cloudinary` et les cles API peuvent etre absents de
+    l'environnement : la publication doit alors quand meme disparaitre de la
+    base. On perd le fichier distant, pas la coherence de la vitrine.
+    """
+    if not public_id:
+        return
+    try:
+        api_key = os.environ.get("CLOUDINARY_API_KEY", "")
+        api_secret = os.environ.get("CLOUDINARY_API_SECRET", "")
+        if not (api_key and api_secret):
+            logger.info("[V261] Cles Cloudinary absentes — media %s conserve cote Cloudinary", public_id)
+            return
+        import cloudinary
+        import cloudinary.uploader
+        cloudinary.config(
+            cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME", "dtm0r7hwq"),
+            api_key=api_key,
+            api_secret=api_secret,
+        )
+        cloudinary.uploader.destroy(
+            public_id, resource_type="video" if media_type == "video" else "image"
+        )
+        logger.info(f"[V261] Media Cloudinary supprime: {public_id}")
+    except ImportError:
+        logger.info("[V261] Paquet cloudinary non installe — media %s conserve", public_id)
+    except Exception as e:
+        logger.warning(f"[V261] Suppression Cloudinary de {public_id} echouee: {e}")
+
+
+async def _v261_purge_expired() -> int:
+    """V261: purge paresseuse des publications arrivees a echeance.
+
+    Declenchee a la lecture plutot que par un cron : les crons Vercel demandent
+    un plan Pro, et la vitrine est consultee bien plus souvent que toutes les
+    48 h. Les suppressions Cloudinary partent dans un thread pour ne pas
+    bloquer la boucle asyncio.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    expired = await db.publications.find(
+        {"expires_at": {"$lte": now_iso}}, {"_id": 0}
+    ).to_list(100)
+    if not expired:
+        return 0
+    for pub in expired:
+        try:
+            await asyncio.to_thread(
+                _v261_cloudinary_destroy,
+                pub.get("cloudinary_public_id", ""),
+                pub.get("media_type", "image"),
+            )
+        except Exception as e:
+            logger.warning(f"[V261] Purge Cloudinary partielle: {e}")
+    await db.publications.delete_many({"id": {"$in": [p["id"] for p in expired]}})
+    logger.info(f"[V261] {len(expired)} publication(s) expiree(s) supprimee(s)")
+    return len(expired)
+
+
+@api_router.post("/publications")
+async def create_publication(request: Request):
+    """V261: un abonne publie une image ou une video."""
+    body = await request.json()
+
+    ok, subscriber_name = await _v261_resolve_subscriber(body.get("subscriber_code", ""))
+    if not ok:
+        raise HTTPException(status_code=403, detail="Code abonné invalide ou inactif")
+    code = body.get("subscriber_code", "").strip().upper()
+
+    media_url = (body.get("media_url") or "").strip()
+    if not media_url.startswith(V261_MEDIA_PREFIX):
+        raise HTTPException(status_code=400, detail="Média invalide")
+    media_type = "video" if body.get("media_type") == "video" else "image"
+
+    active_count = await db.publications.count_documents({
+        "subscriber_code": code,
+        "expires_at": {"$gt": datetime.now(timezone.utc).isoformat()}
+    })
+    if active_count >= V261_MAX_ACTIVE_PER_CODE:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Vous avez déjà {V261_MAX_ACTIVE_PER_CODE} publications en ligne. Attendez qu'elles expirent."
+        )
+
+    now = datetime.now(timezone.utc)
+    pub = {
+        "id": str(uuid.uuid4()),
+        "subscriber_code": code,
+        "subscriber_name": subscriber_name,
+        "media_url": media_url,
+        "media_type": media_type,
+        "cloudinary_public_id": (body.get("cloudinary_public_id") or "").strip(),
+        # ISO en chaine, comme le reste des dates de la base — les comparaisons
+        # `$gt` / `$lte` restent exactes, l'ISO UTC etant ordonnable en texte.
+        "created_at": now.isoformat(),
+        "expires_at": (now + timedelta(hours=V261_TTL_HOURS)).isoformat(),
+    }
+    await db.publications.insert_one(pub)
+    logger.info(f"[V261] Publication de {code} ({media_type})")
+    return {"status": "ok", "id": pub["id"]}
+
+
+@api_router.get("/publications")
+async def list_publications():
+    """V261: publications encore en ligne. Public — c'est le mur de la vitrine.
+
+    Ne renvoie NI le code de l'abonne NI l'identifiant Cloudinary : la vitrine
+    n'en a pas besoin, et le code AFR- est un secret qui ouvre l'espace abonne.
+    """
+    await _v261_purge_expired()
+    now = datetime.now(timezone.utc)
+    pubs = await db.publications.find(
+        {"expires_at": {"$gt": now.isoformat()}},
+        {"_id": 0, "subscriber_code": 0, "cloudinary_public_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    for p in pubs:
+        try:
+            remaining = (datetime.fromisoformat(p["expires_at"]) - now).total_seconds()
+            p["remaining_hours"] = max(0, round(remaining / 3600, 1))
+        except Exception:
+            p["remaining_hours"] = 0
+    return pubs
+
+
+@api_router.delete("/publications/{pub_id}")
+async def delete_publication(pub_id: str, request: Request):
+    """V261: le coach retire une publication."""
+    user_email = request.headers.get("X-User-Email", "").lower().strip() or _email_from_jwt(request)
+    if not user_email:
+        raise HTTPException(status_code=401, detail="Authentification requise")
+    # Reserve aux comptes coach : sans cette garde, l'endpoint laisserait
+    # n'importe qui vider le mur de la vitrine.
+    if not is_super_admin(user_email):
+        known = await db.coaches.find_one({"email": user_email}, {"_id": 0, "email": 1})
+        if not known:
+            known = await db.coach_auth.find_one({"email": user_email}, {"_id": 0, "email": 1})
+        if not known:
+            raise HTTPException(status_code=403, detail="Accès refusé")
+
+    pub = await db.publications.find_one({"id": pub_id}, {"_id": 0})
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publication non trouvée")
+    await asyncio.to_thread(
+        _v261_cloudinary_destroy,
+        pub.get("cloudinary_public_id", ""),
+        pub.get("media_type", "image"),
+    )
+    await db.publications.delete_one({"id": pub_id})
+    logger.info(f"[V261] Publication {pub_id} supprimee par {user_email}")
+    return {"status": "ok"}
+
+
 # === ESPACE ABONNÉ — Lookup par code AFR-XXXXXX v11.0 ===
 @api_router.get("/subscriber/{code}")
 async def get_subscriber_by_code(code: str):

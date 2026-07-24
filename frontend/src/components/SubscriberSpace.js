@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { copyToClipboard } from "../utils/clipboard";
 import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
 import SvgIcon from "./SvgIcon";
+import { PublishModal } from "./Publications"; // V261
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
@@ -75,6 +76,9 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       return params.get("m") || "";
     } catch { return ""; }
   });
+
+  // V261: modale de publication sur le mur de la vitrine
+  const [v261ShowPublish, setV261ShowPublish] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -618,7 +622,36 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             <h1 className="text-xl font-semibold leading-tight truncate">Bienvenue {firstName} !</h1>
             <p className="text-white/50 text-xs truncate">{coach?.name || "Afroboost"}</p>
           </div>
+          {/* V261: publier sur le mur de la vitrine. Present UNIQUEMENT dans
+              l'espace abonne, donc invisible pour un simple visiteur — c'est
+              deja la garde d'interface ; le serveur revalide le code AFR- de
+              toute facon a la soumission. */}
+          <button
+            type="button"
+            onClick={() => setV261ShowPublish(true)}
+            title="Publier une photo ou une vidéo"
+            aria-label="Publier une photo ou une vidéo"
+            style={{
+              width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
+              background: COLORS.primary, color: '#fff', border: 'none', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+            }}
+            data-testid="subscriber-publish-button"
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
         </header>
+
+        {/* V261 */}
+        {v261ShowPublish && (
+          <PublishModal
+            subscriberCode={accessCode}
+            onClose={() => setV261ShowPublish(false)}
+          />
+        )}
 
         {/* ===== Mes séances restantes ===== */}
         <section

@@ -62,6 +62,7 @@ import SvgIcon from "./components/SvgIcon";
 import SubscriberSpace from "./components/SubscriberSpace";
 import { useDataCache, invalidateCache } from "./hooks/useDataCache";
 import { applyPrimaryColor } from "./utils/themeColor"; // V259
+import { PublicationsCarousel } from "./components/Publications"; // V261
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -4192,6 +4193,14 @@ function App() {
   const [showEventPoster, setShowEventPoster] = useState(false);
   // V260: offre en cours de choix / de saisie de preuve sociale (null = fermee)
   const [v260ChoiceOffer, setV260ChoiceOffer] = useState(null);
+  // V261: mur des abonnes. Chargement en arriere-plan, silencieux : une vitrine
+  // doit s'afficher meme si cet appel echoue — le carrousel se masque alors.
+  const [v261Publications, setV261Publications] = useState([]);
+  useEffect(() => {
+    axios.get(`${API}/publications`)
+      .then(res => setV261Publications(Array.isArray(res.data) ? res.data : []))
+      .catch(() => setV261Publications([]));
+  }, []);
   const [v260FormOffer, setV260FormOffer] = useState(null);
   const [discountCodes, setDiscountCodes] = useState([]);
   // v104: FAQ homepage
@@ -7311,6 +7320,13 @@ function App() {
             </div>
           );
 
+          // --- V261: MUR DES ABONNES, juste au-dessus des offres ---
+          // Le composant se rend null quand la liste est vide : aucune place
+          // occupee sur une vitrine sans publication.
+          const publicationsBlock = (
+            <PublicationsCarousel key="publications-block" publications={v261Publications} />
+          );
+
           // --- BLOC OFFRES (v159: flow offer-first — cliquez offre puis horaire apparaît) ---
           const offersBlock = activeFilter !== 'shop' && filteredServices.length > 0 && (
             <div key="offers-block" id="offers-section" className="mb-8 fade-in-section">
@@ -7342,9 +7358,11 @@ function App() {
           );
 
           // V119: Rendu dynamique selon l'ordre choisi
+          // V261: le mur des abonnes passe EN TETE, quel que soit cet ordre —
+          // c'est du contenu vivant, il perd son interet en bas de page.
           return isOffersFirst
-            ? <>{offersBlock}{sessionsBlock}</>
-            : <>{sessionsBlock}{offersBlock}</>;
+            ? <>{publicationsBlock}{offersBlock}{sessionsBlock}</>
+            : <>{publicationsBlock}{sessionsBlock}{offersBlock}</>;
         })()}
 
         {/* =====================================================

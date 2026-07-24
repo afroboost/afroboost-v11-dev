@@ -773,6 +773,68 @@ const V260ProofsPanel = ({ proofs, filter, setFilter, onLoad, onReview, busyId }
   );
 };
 
+// V261: mur des abonnes vu du dashboard — apercu et suppression.
+const V261PublicationsPanel = ({ publications, onLoad, onDelete, busyId }) => {
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { onLoad(); }, []);
+
+  return (
+    <div className="card-gradient rounded-xl p-4 sm:p-6 mt-6">
+      <h2 className="text-white font-semibold mb-1 flex items-center gap-2" style={{ fontSize: '18px' }}>
+        <SvgIcon name="image" size={18} /> Publications des abonnés ({publications.length})
+      </h2>
+      <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,0.45)' }}>
+        Publiées depuis l'espace abonné, visibles sur la vitrine. Elles disparaissent seules au bout de 48 h.
+      </p>
+
+      {publications.length === 0 ? (
+        <p className="text-sm" style={{ color: 'rgba(255,255,255,0.4)' }}>Aucune publication en ligne.</p>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8 }}>
+          {publications.map(pub => (
+            <div key={pub.id} style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', aspectRatio: '9/16', background: '#000' }}>
+              {pub.media_type === 'video' ? (
+                // Pas d'`autoPlay` ici : une grille de vignettes qui se lancent
+                // toutes en meme temps sature le reseau du coach pour rien.
+                <video src={pub.media_url} muted playsInline preload="metadata"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                <img src={pub.media_url} alt="" loading="lazy"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              )}
+              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,0.75)', padding: 6 }}>
+                <p style={{ color: '#fff', fontSize: '0.65rem', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {pub.subscriber_name}
+                </p>
+                <p style={{ color: '#999', fontSize: '0.6rem', margin: 0 }}>
+                  {pub.remaining_hours >= 1 ? Math.floor(pub.remaining_hours) + 'h restantes' : '< 1h'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onDelete(pub.id)}
+                disabled={busyId === pub.id}
+                title="Supprimer cette publication"
+                aria-label="Supprimer cette publication"
+                style={{
+                  position: 'absolute', top: 4, right: 4,
+                  background: 'rgba(248,113,113,0.9)', border: 'none', borderRadius: '50%',
+                  width: 24, height: 24, cursor: busyId === pub.id ? 'wait' : 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // v9.2.5: Protection ABSOLUE contre les erreurs - Valeurs par défaut GARANTIES
   const safeCoachUser = coachUser || {};
@@ -831,6 +893,34 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       console.error('[V260] Chargement des preuves sociales echoue:', err);
       setV260Proofs([]);
     }
+  };
+
+  // V261: mur des abonnes. La lecture est publique, mais la SUPPRESSION exige
+  // un compte coach — d'ou les en-tetes sur le DELETE seulement.
+  const [v261Pubs, setV261Pubs] = useState([]);
+  const [v261Busy, setV261Busy] = useState(null);
+
+  const loadV261Pubs = async () => {
+    try {
+      const res = await axios.get(`${API}/publications`);
+      setV261Pubs(Array.isArray(res.data) ? res.data : []);
+    } catch (err) {
+      console.error('[V261] Chargement des publications echoue:', err);
+      setV261Pubs([]);
+    }
+  };
+
+  const deleteV261Pub = async (pubId) => {
+    if (v261Busy) return;
+    if (!window.confirm('Supprimer définitivement cette publication ?')) return;
+    setV261Busy(pubId);
+    try {
+      await axios.delete(`${API}/publications/${pubId}`, getCoachHeaders());
+      await loadV261Pubs();
+    } catch (err) {
+      alert(err?.response?.data?.detail || "La suppression a échoué.");
+    }
+    setV261Busy(null);
   };
 
   const reviewV260Proof = async (proofId, action) => {
@@ -7112,14 +7202,24 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             montage du dashboard : inutile d'appeler l'API pour un coach qui ne
             propose aucune offre a preuve sociale. */}
         {tab === "proofs" && (
-          <V260ProofsPanel
-            proofs={v260Proofs}
-            filter={v260ProofFilter}
-            setFilter={setV260ProofFilter}
-            onLoad={loadV260Proofs}
-            onReview={reviewV260Proof}
-            busyId={v260ProofBusy}
-          />
+          <>
+            <V260ProofsPanel
+              proofs={v260Proofs}
+              filter={v260ProofFilter}
+              setFilter={setV260ProofFilter}
+              onLoad={loadV260Proofs}
+              onReview={reviewV260Proof}
+              busyId={v260ProofBusy}
+            />
+            {/* V261: le mur des abonnes vit dans le meme onglet — ce sont les
+                deux endroits ou le coach arbitre du contenu venu des clients. */}
+            <V261PublicationsPanel
+              publications={v261Pubs}
+              onLoad={loadV261Pubs}
+              onDelete={deleteV261Pub}
+              busyId={v261Busy}
+            />
+          </>
         )}
 
         {tab === "codes" && (
