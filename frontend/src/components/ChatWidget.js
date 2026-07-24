@@ -7045,20 +7045,24 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                     {/* V263: le coach publie lui aussi sur le mur de la vitrine.
                         Aucun code abonne transmis : le serveur l'identifie par
                         sa session (cf. _v263_authenticated_coach). */}
+                    {/* V267: pilule « Publier + » — le rond « + » seul n'etait
+                        pas compris. Texte AVANT le +, comme demande. */}
                     <button
                       type="button"
                       onClick={function() { setV263PublishCode(''); setV263ShowPublish(true); }}
                       title="Publier une photo ou une vidéo"
                       aria-label="Publier une photo ou une vidéo"
                       style={{
-                        width: '28px', height: '28px', borderRadius: '50%',
+                        height: '28px', borderRadius: '14px', padding: '0 12px',
                         background: 'var(--primary-color, #D91CD2)', color: '#fff',
                         border: 'none', cursor: 'pointer', flexShrink: 0,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                        display: 'flex', alignItems: 'center', gap: '5px',
+                        fontSize: '12px', fontWeight: 700
                       }}
                       data-testid="chat-publish-coach"
                     >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      Publier
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ flexShrink: 0 }}>
                         <line x1="12" y1="5" x2="12" y2="19"></line>
                         <line x1="5" y1="12" x2="19" y2="12"></line>
                       </svg>
@@ -8412,14 +8416,17 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           title="Publier une photo ou une vidéo"
                           aria-label="Publier une photo ou une vidéo"
                           style={{
-                            width: '28px', height: '28px', borderRadius: '50%',
+                            height: '28px', borderRadius: '14px', padding: '0 12px',
                             background: 'var(--primary-color, #D91CD2)', color: '#fff',
                             border: 'none', cursor: 'pointer', flexShrink: 0,
-                            display: 'flex', alignItems: 'center', justifyContent: 'center'
+                            display: 'flex', alignItems: 'center', gap: '5px',
+                            fontSize: '12px', fontWeight: 700
                           }}
                           data-testid="chat-publish-subscriber"
                         >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                          {/* V267: « Publier + » au lieu du rond « + » seul */}
+                          Publier
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ flexShrink: 0 }}>
                             <line x1="12" y1="5" x2="12" y2="19"></line>
                             <line x1="5" y1="12" x2="19" y2="12"></line>
                           </svg>

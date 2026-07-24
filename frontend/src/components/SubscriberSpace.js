@@ -626,20 +626,23 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               l'espace abonne, donc invisible pour un simple visiteur — c'est
               deja la garde d'interface ; le serveur revalide le code AFR- de
               toute facon a la soumission. */}
+          {/* V267: pilule « Publier + » — le rond « + » seul n'etait pas compris. */}
           <button
             type="button"
             onClick={() => setV261ShowPublish(true)}
             title="Publier une photo ou une vidéo"
             aria-label="Publier une photo ou une vidéo"
             style={{
-              width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
+              height: 40, borderRadius: 20, padding: '0 16px', flexShrink: 0,
               background: COLORS.primary, color: '#fff', border: 'none', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              display: 'flex', alignItems: 'center', gap: 6,
+              fontSize: 14, fontWeight: 700,
               boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
             }}
             data-testid="subscriber-publish-button"
           >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            Publier
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ flexShrink: 0 }}>
               <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
             </svg>
           </button>

@@ -131,14 +131,32 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
       // refuse (Cloudinary renvoie « Transformation parameter is not allowed
       // when using unsigned upload »). Le cadrage 9:16 est fait a l'affichage
       // par `objectFit: cover`, ce qui evite aussi de deteriorer l'original.
-      const cloudRes = await axios.post(endpoint, formData);
+      //
+      // V267 — LE BUG QUI CASSAIT TOUTE PUBLICATION. On utilisait `axios.post`,
+      // or l'intercepteur global (App.js) ajoute `Authorization` et
+      // `X-User-Email` a CHAQUE requete axios — y compris cet upload
+      // cross-origin vers Cloudinary. Ces en-tetes personnalises font passer la
+      // requete en preflight CORS, que l'endpoint d'upload Cloudinary refuse :
+      // le navigateur la BLOQUE, axios n'a aucune reponse, et la modale affiche
+      // le message de repli « La publication a échoué ». Cela cassait aussi bien
+      // avec que sans JWT (l'en-tete X-User-Email est injecte dans les deux cas).
+      // `fetch` n'est PAS soumis a l'intercepteur -> requete simple, pas de
+      // preflight, pas d'en-tete parasite. C'est exactement ce que fait deja le
+      // CloudinaryUploadButton qui fonctionne en production.
+      const cloudResp = await fetch(endpoint, { method: 'POST', body: formData });
+      const cloudData = await cloudResp.json().catch(function () { return {}; });
+      if (!cloudResp.ok || !cloudData.secure_url) {
+        throw new Error((cloudData.error && cloudData.error.message) || "L'envoi du média a échoué.");
+      }
       // V261b: `cloudinary_public_id` n'est PLUS envoye — le serveur le derive
       // lui-meme de l'URL. Il finissait en argument de `destroy()` : un client
       // pouvait y designer le media d'un autre et le faire effacer.
       // V263: sans code abonne, on n'envoie RIEN qui designe l'auteur — le
       // serveur le deduit de la session (JWT ou en-tete). Envoyer un
       // `coach_email` ici rouvrirait la falsification corrigee en V262.
-      var payload = { media_url: cloudRes.data.secure_url, media_type: mediaType };
+      // Le POST /publications, LUI, reste en axios : il est same-origin et a
+      // BESOIN de X-User-Email (auth coach) — l'intercepteur global le pose.
+      var payload = { media_url: cloudData.secure_url, media_type: mediaType };
       if (subscriberCode) payload.subscriber_code = subscriberCode;
       await axios.post(`${API}/publications`, payload);
       setUploading(false);
@@ -147,8 +165,8 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
     } catch (err) {
       setUploading(false);
       setError(
-        err?.response?.data?.detail
-        || err?.response?.data?.error?.message
+        (err && err.response && err.response.data && err.response.data.detail)
+        || (err && err.message)
         || "La publication a échoué. Réessayez."
       );
     }
