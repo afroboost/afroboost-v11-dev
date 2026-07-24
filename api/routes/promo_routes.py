@@ -188,6 +188,21 @@ async def _resolve_offer_details(courses_list, max_uses, offer_name_override=Non
                 offer_name = offer.get("name", offer_name)
                 offer_price = offer.get("price")
                 # v104: Déduire les séances du nom de l'offre si maxUses non défini
+                # V260c: le champ `pack_sessions` de l'offre (V223) est consulte
+                # AVANT la regex sur le nom — un pack de 10 nomme « Abonnement
+                # Decouverte » ne correspond a aucun motif « x10 » et donnait
+                # UNE seance. `maxUses`, pose explicitement sur le code par le
+                # coach, garde la priorite absolue : il n'est atteint que si
+                # `total_sessions` est deja None ici.
+                if total_sessions is None:
+                    try:
+                        _ps = offer.get("pack_sessions")
+                        # int(float(...)) : une valeur stockee en 10.0 ou "10"
+                        # doit compter, pas etre ignoree faute d'etre un int.
+                        if _ps is not None and int(float(_ps)) > 0:
+                            total_sessions = int(float(_ps))
+                    except (TypeError, ValueError):
+                        total_sessions = None
                 if total_sessions is None:
                     name_lower = offer_name.lower()
                     # Patterns: "x10", "x5", "x20", "× 10", etc.

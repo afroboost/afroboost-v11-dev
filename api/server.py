@@ -3747,9 +3747,17 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             logger.warning(f"[V223] Lecture de l'offre {request.offerId} échouée: {_off_err}")
         if _offer:
             server_tier = compute_active_price(_offer)["tier"]
+            # V260c: `isinstance(_ps, int)` laissait tomber une valeur stockee
+            # en 10.0 ou "10" — le pack partait alors vide en metadata et le
+            # webhook retombait sur UNE seance. Les donnees actuelles sont bien
+            # des int, mais rien ne le garantit (import, ecriture directe), et
+            # le silence de ce cas coute des seances au client.
             _ps = _offer.get("pack_sessions")
-            if isinstance(_ps, int) and _ps > 0:
-                server_pack_sessions = str(_ps)
+            try:
+                if _ps is not None and int(float(_ps)) > 0:
+                    server_pack_sessions = str(int(float(_ps)))
+            except (TypeError, ValueError):
+                server_pack_sessions = ""
         else:
             # V223: offre introuvable (archivée entre l'affichage et le paiement,
             # cache navigateur, autre canal). On NE bloque PAS le paiement : on

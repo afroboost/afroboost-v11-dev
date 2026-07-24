@@ -795,6 +795,17 @@ async def _process_successful_payment(
     access_code = f"AFR-{''.join(random.choices(string.ascii_uppercase + string.digits, k=6))}"
 
     # V216: Calculer le nombre de séances depuis les items
+    # V260c — LE PACK DE L'OFFRE FAIT DESORMAIS FOI.
+    # Ce calcul ne connaissait que la regex « x10 » sur le NOM de l'article :
+    # elle date de la V216, avant l'existence du champ `pack_sessions` (V223).
+    # Un pack de 10 seances nomme « Abonnement Decouverte » n'y correspondait
+    # pas et le client repartait avec UNE seance. Le webhook Stripe, lui, avait
+    # bien ete mis a jour en V223 — les deux chemins de paiement divergeaient
+    # donc sur le meme achat.
+    # L'article porte un `id` (CheckoutItem.id) : quand il resout une offre
+    # declarant `pack_sessions`, cette valeur prime. La regex reste le repli
+    # EXACT d'avant pour les articles sans id ou sans pack declare : rien ne
+    # change pour eux.
     import re as _re_checkout
     sessions_count = 0
     items_product_name = ""
@@ -804,12 +815,36 @@ async def _process_successful_payment(
         item_qty = int(item_data.get("quantity", 1))
         if not items_product_name:
             items_product_name = item_name
-        # Chercher "x10", "x5", etc. dans le nom
-        x_match = _re_checkout.search(r'x\s*(\d+)', item_name, _re_checkout.IGNORECASE)
-        if x_match:
-            sessions_count += int(x_match.group(1)) * item_qty
+
+        item_pack = None
+        item_id = item_data.get("id")
+        if item_id:
+            try:
+                _offer_doc = await db["offers"].find_one(
+                    {"id": item_id}, {"_id": 0, "pack_sessions": 1}
+                )
+                _ps = (_offer_doc or {}).get("pack_sessions")
+                # `int(...)` et non `isinstance` : une valeur stockee en 10.0 ou
+                # "10" doit compter comme un pack de 10, pas etre ignoree.
+                if _ps is not None and int(float(_ps)) > 0:
+                    item_pack = int(float(_ps))
+            except (TypeError, ValueError):
+                item_pack = None
+            except Exception as _pack_err:
+                # Lecture impossible : on retombe sur la regex plutot que de
+                # faire echouer un paiement deja encaisse.
+                logger.warning(f"[V260c] Lecture pack_sessions de l'offre {item_id} echouee: {_pack_err}")
+                item_pack = None
+
+        if item_pack:
+            sessions_count += item_pack * item_qty
         else:
-            sessions_count += item_qty
+            # Chercher "x10", "x5", etc. dans le nom
+            x_match = _re_checkout.search(r'x\s*(\d+)', item_name, _re_checkout.IGNORECASE)
+            if x_match:
+                sessions_count += int(x_match.group(1)) * item_qty
+            else:
+                sessions_count += item_qty
     if sessions_count <= 0:
         sessions_count = 1
 
