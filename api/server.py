@@ -16122,28 +16122,36 @@ async def staff_login(request: Request):
 
 @api_router.post("/staff/forgot-code")
 async def forgot_staff_code(request: Request):
-    """V256: renvoie le code staff par email a l'administrateur qui le demande.
+    """V256 / V257: renvoie le code staff par email au coach qui le demande.
 
-    PERIMETRE D'ACCES — reserve au Super Admin, DELIBEREMENT.
-    Le code staff est un secret unique a toute la plateforme : il ouvre les
-    reservations et le scanner. Le modifier exige deja `is_super_admin`
-    (PUT /platform-settings). Autoriser n'importe quel compte de `coaches` a se
-    le faire envoyer donnerait a chaque coach partenaire un secret qu'il n'a pas
-    le droit de changer — on aligne donc la lecture sur l'ecriture.
+    PERIMETRE D'ACCES — V257 l'ELARGIT a tout compte coach enregistre
+    (`coaches`, avec repli sur `coach_auth`), la V256 le reservant au Super
+    Admin. Consequence a connaitre : le code staff est unique a toute la
+    plateforme, donc chaque coach partenaire peut desormais l'obtenir, alors que
+    seul le Super Admin peut le CHANGER (PUT /platform-settings). Le risque
+    reste contenu — ce code ne fait que basculer une session DEJA authentifiee
+    entre mode complet et mode restreint, il n'ouvre aucun compte — mais la
+    lecture n'est plus alignee sur l'ecriture.
 
-    DESTINATAIRE — jamais une adresse fournie par la requete. On envoie a
-    l'email identifie, lequel vient de passer `is_super_admin`, donc appartient
-    forcement a la liste fermee SUPER_ADMIN_EMAILS. Le header X-User-Email etant
-    falsifiable, c'est ce qui empeche un tiers de se faire livrer le code : au
-    pire il declenche un envoi vers la boite de l'administrateur legitime.
+    DESTINATAIRE — jamais une adresse fournie par la requete. L'envoi part vers
+    l'email IDENTIFIE, qui vient d'etre retrouve en base. Le header
+    X-User-Email etant falsifiable, c'est ce qui empeche un tiers de se faire
+    livrer le code : au pire il declenche un envoi vers la boite du coach
+    legitime, qui est aussi son signal d'alerte.
 
     Le corps de la requete n'est pas lu : il n'y a rien a y mettre.
     """
     email = request.headers.get("X-User-Email", "").lower().strip() or _email_from_jwt(request)
     if not email:
         raise HTTPException(status_code=401, detail="Authentification requise")
+    # V257: Super Admin, OU coach enregistre (`coaches` puis repli `coach_auth`,
+    # les deux collections ne sont pas toujours peuplees ensemble).
     if not is_super_admin(email):
-        raise HTTPException(status_code=403, detail="Réservé à l'administrateur de la plateforme")
+        known = await db.coaches.find_one({"email": email}, {"_id": 0, "email": 1})
+        if not known:
+            known = await db.coach_auth.find_one({"email": email}, {"_id": 0, "email": 1})
+        if not known:
+            raise HTTPException(status_code=403, detail="Accès refusé")
 
     settings = await db.platform_settings.find_one({"_id": "global"}, {"_id": 0})
     staff_code = ((settings or {}).get("staff_access_code") or "").strip()
@@ -16154,15 +16162,16 @@ async def forgot_staff_code(request: Request):
         logger.error("[V256] Envoi du code staff impossible : Resend non configure")
         raise HTTPException(status_code=503, detail="Service d'email indisponible")
 
+    # V257: charte Afroboost — fond sombre, accent #D91CD2.
     html = f"""
-    <div style="font-family:Arial,sans-serif;max-width:420px;margin:0 auto;padding:24px;">
-        <h2 style="color:#d91cd2;margin:0 0 12px;">Code Staff Afroboost</h2>
-        <p style="color:#333;font-size:14px;">Voici le code staff actuellement actif :</p>
-        <div style="background:#1a1a2e;color:#fff;padding:16px;border-radius:8px;text-align:center;font-size:24px;font-weight:bold;letter-spacing:4px;margin:16px 0;">
+    <div style="font-family:Arial,sans-serif;max-width:420px;margin:0 auto;padding:24px;background:#0a0a1a;border-radius:12px;">
+        <h2 style="color:#D91CD2;text-align:center;margin:0 0 12px;">Code Staff Afroboost</h2>
+        <p style="color:#ccc;font-size:14px;text-align:center;">Voici le code staff actuellement actif :</p>
+        <div style="background:#1a1a2e;color:#fff;padding:20px;border-radius:8px;text-align:center;font-size:28px;font-weight:bold;letter-spacing:6px;margin:20px 0;border:1px solid #D91CD2;">
             {staff_code}
         </div>
-        <p style="color:#888;font-size:12px;">Ce code donne accès aux réservations et au scanner QR. Ne le partagez qu'avec votre équipe sur place.</p>
-        <p style="color:#888;font-size:12px;">Si vous n'êtes pas à l'origine de cette demande, changez le code depuis le menu coach.</p>
+        <p style="color:#888;font-size:12px;text-align:center;">Ce code donne accès aux réservations et au scanner QR. Ne le partagez qu'avec votre équipe sur place.</p>
+        <p style="color:#666;font-size:12px;text-align:center;">Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>
     </div>
     """
     try:

@@ -3342,7 +3342,10 @@ const QRScannerModal = ({ onClose, onValidate, scanResult, scanError, onManualVa
 // CoachLoginModal is now imported from ./components/CoachLoginModal
 
 // Event Poster Modal (Popup d'accueil)
-const EventPosterModal = ({ mediaUrl, onClose }) => {
+// V257: `onReserve` / `onSeeOffers` sont OPTIONNELS — sans eux, la modale rend
+// exactement ce qu'elle rendait avant (media + croix de fermeture), donc aucun
+// autre point de montage n'est affecte.
+const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers }) => {
   const [mediaType, setMediaType] = useState('image');
   
   useEffect(() => {
@@ -3383,12 +3386,17 @@ const EventPosterModal = ({ mediaUrl, onClose }) => {
       style={{ background: 'rgba(0, 0, 0, 0.85)' }}
       onClick={onClose}
     >
-      <div 
+      <div
         className="relative max-w-2xl w-full rounded-xl overflow-hidden"
-        style={{ 
+        style={{
           background: 'linear-gradient(180deg, #0a0a0f 0%, #1a0a1f 100%)',
           border: '2px solid rgba(217, 28, 210, 0.5)',
-          boxShadow: '0 0 30px rgba(217, 28, 210, 0.12)'
+          boxShadow: '0 0 30px rgba(217, 28, 210, 0.12)',
+          // V257: filet de securite pour les boutons ajoutes sous le media —
+          // sur un ecran court, la carte defile au lieu de deborder de l'ecran
+          // en emportant les boutons hors de vue.
+          maxHeight: '92vh',
+          overflowY: 'auto'
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -3422,9 +3430,12 @@ const EventPosterModal = ({ mediaUrl, onClose }) => {
             /* V249: une video directe (.mp4 Cloudinary...) n'est ni YouTube ni
                Vimeo — elle tombait dans le <img> et s'affichait cassee. Rendue
                en <video>. Le fix V247 ne couvrait que l'apercu du dashboard. */
+            /* V257: 80vh -> 68vh, pour que les boutons d'action ajoutes juste
+               dessous tiennent dans l'ecran sans defilement. Un appel a
+               l'action qu'il faut aller chercher n'en est pas un. */
             <video
               src={mediaUrl}
-              className="w-full h-auto max-h-[80vh] object-contain"
+              className="w-full h-auto max-h-[68vh] object-contain"
               controls
               autoPlay
               muted
@@ -3435,11 +3446,76 @@ const EventPosterModal = ({ mediaUrl, onClose }) => {
             <img
               src={mediaUrl}
               alt="Événement Afroboost"
-              className="w-full h-auto max-h-[80vh] object-contain"
+              className="w-full h-auto max-h-[68vh] object-contain"
               onError={(e) => { e.target.style.display = 'none'; }}
             />
           )}
         </div>
+
+        {/* V257: appels a l'action sous l'affiche. Le popup ne proposait que sa
+            croix de fermeture : un visiteur convaincu par l'affiche n'avait
+            aucun chemin vers la reservation.
+            Le bloc entier n'est rendu que si au moins un handler est fourni —
+            une modale montee sans eux garde son rendu d'origine. */}
+        {(onReserve || onSeeOffers) && (
+          <div
+            style={{
+              display: 'flex',
+              gap: 12,
+              justifyContent: 'center',
+              flexWrap: 'wrap',
+              padding: '16px'
+            }}
+          >
+            {onReserve && (
+              <button
+                type="button"
+                onClick={() => { onClose(); onReserve(); }}
+                style={{
+                  background: '#D91CD2',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '12px 32px',
+                  borderRadius: 25,
+                  fontSize: '1rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8
+                }}
+                data-testid="event-poster-reserve"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                  <line x1="16" y1="2" x2="16" y2="6" />
+                  <line x1="8" y1="2" x2="8" y2="6" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+                Réserver
+              </button>
+            )}
+            {onSeeOffers && (
+              <button
+                type="button"
+                onClick={() => { onClose(); onSeeOffers(); }}
+                style={{
+                  background: 'transparent',
+                  color: '#D91CD2',
+                  border: '2px solid #D91CD2',
+                  padding: '12px 32px',
+                  borderRadius: 25,
+                  fontSize: '1rem',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+                data-testid="event-poster-offers"
+              >
+                Nos offres
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -6273,6 +6349,36 @@ function App() {
         <EventPosterModal
           mediaUrl={concept.eventPosterMediaUrl}
           onClose={closeEventPoster}
+          /* V257: « Réserver » selectionne la premiere offre visible puis
+             descend jusqu'au bloc des offres.
+             `visibleServices` (~l.6099) est la source : deja filtree sur
+             `visible !== false`, deja debarrassee des produits, et deja triee
+             par `position` — donc « la premiere » est bien celle que le coach a
+             placee en tete de vitrine, pas un ordre de base de donnees.
+             ATTENTION : `handleSelectOffer` est le point d'entree normal du
+             parcours ; pour une offre de service PAYANTE il part directement en
+             checkout Stripe (v225IsDirectCheckout -> startProgressiveCheckout).
+             Le bouton envoie donc vers le paiement de cette offre-la, pas vers
+             un simple survol du catalogue. */
+          onReserve={() => {
+            const firstOffer = visibleServices[0];
+            if (firstOffer) handleSelectOffer(firstOffer);
+            // Le scroll est differe : `handleSelectOffer` peut monter le bloc
+            // des horaires, et viser l'ancre avant ce rendu ferait atterrir a
+            // la mauvaise hauteur.
+            setTimeout(() => {
+              const el = document.getElementById('offers-section');
+              if (el) el.scrollIntoView({ behavior: 'smooth' });
+            }, 300);
+          }}
+          /* V257: « Nos offres » ne fait que descendre au catalogue — aucune
+             selection, aucun paiement. */
+          onSeeOffers={() => {
+            setTimeout(() => {
+              const el = document.getElementById('offers-section');
+              if (el) el.scrollIntoView({ behavior: 'smooth' });
+            }, 100);
+          }}
         />
       )}
 

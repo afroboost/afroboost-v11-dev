@@ -1609,6 +1609,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
   // V256: envoi du code staff par email (« Code oublie ? »). ES5 comme tout ce fichier.
   var _csFgt = useState(false); var forgotStaffLoading = _csFgt[0]; var setForgotStaffLoading = _csFgt[1];
   var _csFgtMsg = useState(''); var forgotStaffMsg = _csFgtMsg[0]; var setForgotStaffMsg = _csFgtMsg[1];
+  // V257: succes ou echec du dernier envoi, pour colorer le message. Un booleen
+  // plutot qu'un test sur le TEXTE du message (« envoye ») : le libelle vient en
+  // partie du backend, et une reformulation la-bas repeindrait ici une erreur en
+  // vert.
+  var _csFgtOk = useState(false); var forgotStaffOk = _csFgtOk[0]; var setForgotStaffOk = _csFgtOk[1];
   // v162f: Coach profile photo
   var _cpro = useState(null); var coachProfile = _cpro[0]; var setCoachProfile = _cpro[1];
   // v162f: Coach emoji picker toggle (separate from chat emoji picker)
@@ -4580,14 +4585,20 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
     })
       .then(function() {
         setForgotStaffLoading(false);
+        setForgotStaffOk(true);
         // Message dans la modale plutot qu'une `alert()` : l'alerte native
         // ferme le clavier et fait perdre la saisie en cours sur mobile.
-        setForgotStaffMsg('Code envoyé sur votre email.');
+        setForgotStaffMsg('Code envoyé sur votre email !');
       })
       .catch(function(err) {
         setForgotStaffLoading(false);
-        var msg = (err.response && err.response.data && err.response.data.detail) || 'Envoi impossible';
-        setStaffLoginError(msg);
+        setForgotStaffOk(false);
+        // V257: l'erreur d'envoi va dans le message du bloc « code oublie »,
+        // et NON dans staffLoginError, qui signale l'echec de la saisie du code
+        // juste au-dessus — deux problemes distincts au meme endroit prêtaient
+        // a confusion.
+        var msg = (err.response && err.response.data && err.response.data.detail) || 'Erreur lors de l\'envoi';
+        setForgotStaffMsg(msg);
       });
   };
 
@@ -7119,7 +7130,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                               setShowCoachMenu(false);
                               setStaffModalMode('enter');
                               setStaffCode('');
+                              // V257: la modale porte maintenant AUSSI la vue
+                              // « changer le code » — on repart donc de champs
+                              // et de messages vierges a chaque ouverture.
+                              setStaffNewCode('');
                               setStaffLoginError('');
+                              setForgotStaffMsg('');
                               setShowStaffLogin(true);
                             }}
                             style={{
@@ -7143,48 +7159,25 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                             Accès Staff
                           </button>
                           )}
-                          {/* v162l: Changer code Staff (only in coach mode) */}
-                          {!isStaffMode && (
-                          <button
-                            onClick={function() {
-                              setShowCoachMenu(false);
-                              setStaffModalMode('change');
-                              setStaffCode('');
-                              setStaffNewCode('');
-                              setStaffLoginError('');
-                              // V256: sans ce reset, le « Code envoye » d'une
-                              // ouverture precedente s'affiche d'entree.
-                              setForgotStaffMsg('');
-                              setShowStaffLogin(true);
-                            }}
-                            style={{
-                              width: '100%',
-                              padding: '10px 14px',
-                              textAlign: 'left',
-                              fontSize: '12px',
-                              color: '#888',
-                              background: 'none',
-                              border: 'none',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '8px'
-                            }}
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                              <circle cx="12" cy="12" r="3"></circle>
-                              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-                            </svg>
-                            Changer code Staff
-                          </button>
-                          )}
+                          {/* v162l: « Changer code Staff » etait ici, comme item
+                              de menu distinct.
+                              V257: RETIRE du menu — il est desormais un lien a
+                              l'interieur de la modale « Acces Staff », d'ou l'on
+                              bascule entre les trois vues (enter / change /
+                              unlock) sans repasser par ce dropdown. Le menu ne
+                              porte donc plus qu'une seule entree staff, celle
+                              ci-dessus. Aucune fonctionnalite perdue : le
+                              changement de code reste accessible en deux clics
+                              (Acces Staff -> Changer le code Staff). */}
                           {isStaffMode && (
                           <button
                             onClick={function() {
                               setShowCoachMenu(false);
                               setStaffModalMode('unlock');
                               setStaffCode('');
+                              setStaffNewCode('');
                               setStaffLoginError('');
+                              setForgotStaffMsg(''); // V257
                               setShowStaffLogin(true);
                             }}
                             style={{
@@ -7322,10 +7315,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     flexDirection: 'column', gap: '12px', padding: '20px'
                   }}>
-                    <div style={{
-                      color: staffModalMode === 'unlock' ? '#22c55e' : staffModalMode === 'change' ? '#8b5cf6' : '#f59e0b',
-                      fontSize: '14px', fontWeight: 'bold'
-                    }}>
+                    {/* V257: charte Afroboost (#D91CD2) sur les trois vues. Les
+                        anciennes teintes ambre/violet/vert variaient selon le
+                        mode et ne correspondaient a aucune couleur de la
+                        marque. */}
+                    <div style={{ color: '#D91CD2', fontSize: '14px', fontWeight: 'bold' }}>
                       {staffModalMode === 'enter' ? 'Accès Staff' : staffModalMode === 'unlock' ? 'Débloquer Mode Coach' : 'Changer le code Staff'}
                     </div>
                     <div style={{ color: '#888', fontSize: '11px', textAlign: 'center', maxWidth: '240px' }}>
@@ -7333,26 +7327,6 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                        staffModalMode === 'unlock' ? 'Entrez le code pour retrouver l\'accès complet' :
                        'Entrez le code actuel puis le nouveau code'}
                     </div>
-                    {/* V256: « Code oublie ? ». Affiche UNIQUEMENT en mode
-                        'change' : les modes 'enter' et 'unlock' servent au
-                        personnel sur place, a qui on ne propose pas de se faire
-                        envoyer le secret — l'email part de toute facon a
-                        l'administrateur, pas a celui qui clique. */}
-                    {staffModalMode === 'change' && (
-                      <span
-                        onClick={forgotStaffLoading ? undefined : handleForgotStaffCode}
-                        style={{
-                          color: '#d91cd2',
-                          fontSize: '11px',
-                          textDecoration: 'underline',
-                          cursor: forgotStaffLoading ? 'wait' : 'pointer',
-                          opacity: forgotStaffLoading ? 0.6 : 1
-                        }}
-                      >{forgotStaffLoading ? 'Envoi en cours…' : 'Code oublié ? Le recevoir par email'}</span>
-                    )}
-                    {forgotStaffMsg && (
-                      <div style={{ color: '#22c55e', fontSize: '11px', textAlign: 'center' }}>{forgotStaffMsg}</div>
-                    )}
                     <input
                       type="text"
                       value={staffCode}
@@ -7362,8 +7336,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                       style={{
                         width: '100%', maxWidth: '220px', padding: '10px 14px',
                         borderRadius: '8px',
-                        border: '1px solid ' + (staffModalMode === 'unlock' ? 'rgba(34,197,94,0.4)' : staffModalMode === 'change' ? 'rgba(139,92,246,0.4)' : 'rgba(245,158,11,0.4)'),
-                        background: staffModalMode === 'unlock' ? 'rgba(34,197,94,0.08)' : staffModalMode === 'change' ? 'rgba(139,92,246,0.08)' : 'rgba(245,158,11,0.08)',
+                        border: '1px solid rgba(217,28,210,0.4)',
+                        background: 'rgba(217,28,210,0.08)',
                         color: '#fff', fontSize: '14px', textAlign: 'center', letterSpacing: '2px', outline: 'none'
                       }}
                       autoFocus
@@ -7377,27 +7351,85 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         placeholder="Nouveau code"
                         style={{
                           width: '100%', maxWidth: '220px', padding: '10px 14px',
-                          borderRadius: '8px', border: '1px solid rgba(139,92,246,0.4)',
-                          background: 'rgba(139,92,246,0.08)', color: '#fff',
+                          borderRadius: '8px', border: '1px solid rgba(217,28,210,0.4)',
+                          background: 'rgba(217,28,210,0.08)', color: '#fff',
                           fontSize: '14px', textAlign: 'center', letterSpacing: '2px', outline: 'none'
                         }}
                       />
+                    )}
+                    {/* V257: « Code oublie ? » desormais visible dans les vues
+                        'enter' ET 'change' — en V256 il n'apparaissait qu'en
+                        'change', vue qu'on n'atteignait que par un item de menu
+                        distinct : depuis « Acces Staff », le lien etait donc
+                        introuvable. Exclu de 'unlock' : cette vue s'affiche sur
+                        un appareil passe en mode staff, pas forcement entre les
+                        mains du coach, et l'email partirait de toute facon a
+                        l'adresse du compte connecte. */}
+                    {staffModalMode !== 'unlock' && (
+                      <span
+                        onClick={forgotStaffLoading ? undefined : handleForgotStaffCode}
+                        style={{
+                          color: '#D91CD2',
+                          fontSize: '11px',
+                          textDecoration: 'underline',
+                          cursor: forgotStaffLoading ? 'wait' : 'pointer',
+                          opacity: forgotStaffLoading ? 0.6 : 1
+                        }}
+                      >{forgotStaffLoading ? 'Envoi en cours…' : 'Code oublié ? Recevoir par email'}</span>
+                    )}
+                    {forgotStaffMsg && (
+                      <div style={{
+                        color: forgotStaffOk ? '#4ade80' : '#f87171',
+                        fontSize: '11px', textAlign: 'center'
+                      }}>{forgotStaffMsg}</div>
                     )}
                     {staffLoginError && (
                       <div style={{ color: '#ef4444', fontSize: '11px' }}>{staffLoginError}</div>
                     )}
                     <div style={{ display: 'flex', gap: '8px' }}>
-                      <button onClick={function() { setShowStaffLogin(false); }} style={{
-                        padding: '8px 16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)',
-                        background: 'none', color: '#888', fontSize: '12px', cursor: 'pointer'
-                      }}>Annuler</button>
+                      {/* V257: en vue 'change', ce bouton REVIENT a la vue
+                          'enter' au lieu de fermer la modale — la vue 'change'
+                          est maintenant une sous-vue, pas une modale a part. */}
+                      <button
+                        onClick={staffModalMode === 'change'
+                          ? function() {
+                              setStaffModalMode('enter');
+                              setStaffCode('');
+                              setStaffNewCode('');
+                              setStaffLoginError('');
+                              setForgotStaffMsg('');
+                            }
+                          : function() { setShowStaffLogin(false); }}
+                        style={{
+                          padding: '8px 16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)',
+                          background: 'none', color: '#888', fontSize: '12px', cursor: 'pointer'
+                        }}
+                      >{staffModalMode === 'change' ? '← Retour' : 'Annuler'}</button>
                       <button onClick={handleStaffAction} style={{
                         padding: '8px 16px', borderRadius: '8px', border: 'none',
-                        background: staffModalMode === 'unlock' ? '#22c55e' : staffModalMode === 'change' ? '#8b5cf6' : '#f59e0b',
-                        color: staffModalMode === 'unlock' ? '#fff' : '#000',
+                        background: '#D91CD2', color: '#fff',
                         fontSize: '12px', cursor: 'pointer', fontWeight: 'bold'
                       }}>{staffModalMode === 'enter' ? 'Connexion' : staffModalMode === 'unlock' ? 'Débloquer' : 'Modifier'}</button>
                     </div>
+                    {/* V257: acces a la vue « changer le code » depuis la vue
+                        'enter'. Remplace l'item de menu supprime plus haut.
+                        Masque en mode staff : un appareil restreint ne doit pas
+                        pouvoir changer le code qui le libere. */}
+                    {staffModalMode === 'enter' && !isStaffMode && (
+                      <span
+                        onClick={function() {
+                          setStaffModalMode('change');
+                          setStaffCode('');
+                          setStaffNewCode('');
+                          setStaffLoginError('');
+                          setForgotStaffMsg('');
+                        }}
+                        style={{
+                          color: '#D91CD2', fontSize: '11px',
+                          textDecoration: 'underline', cursor: 'pointer', marginTop: '4px'
+                        }}
+                      >Changer le code Staff</span>
+                    )}
                   </div>
                 )}
 
