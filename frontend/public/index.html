@@ -114,7 +114,13 @@
         <title>Afroboost | Cardio &amp; Danse Afrobeat avec Casques</title>
         <!-- Html5Qrcode library for QR code scanning -->
         <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-        <script src="https://assets.emergent.sh/scripts/emergent-main.js"></script>
+        <!-- V266: script emergent.sh RETIRE. C'etait de la telemetrie
+             d'overlay d'erreurs de la plateforme d'origine (il scrute
+             .react-error-overlay, vite-error-overlay...), inutile hors
+             emergent.sh. Il n'ecrasait RIEN du dashboard — mais il patchait la
+             console, ce qui attribuait a tort nos propres logs a
+             « emergent-main.js:56 » et a fait croire a une surcharge. Retire :
+             une dependance tierce de moins chargee a chaque visite. -->
         <!--
         These two scripts have been added for the Visual Edits, please do not edit or remove them
         -->

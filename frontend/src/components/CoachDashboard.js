@@ -976,6 +976,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // panneau : le badge doit refleter les demandes EN ATTENTE meme quand le
   // coach consulte le filtre « Validées », et rester juste sans ouvrir l'onglet.
   const [v260PendingCount, setV260PendingCount] = useState(0);
+  // V266: menu de navigation replie (hamburger) de la barre d'onglets principale.
+  const [v266NavOpen, setV266NavOpen] = useState(false);
   const loadV260PendingCount = async () => {
     try {
       const res = await axios.get(`${API}/social-proofs`, {
@@ -6302,29 +6304,68 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           </div>
         </div>
 
-        {/* v9.3.6: Menu tabs mobile scrollable horizontalement */}
-        <div 
-          className="flex gap-2 mb-6 items-center pb-2"
-          style={{
-            overflowX: 'auto',
-            overflowY: 'hidden',
-            whiteSpace: 'nowrap',
-            WebkitOverflowScrolling: 'touch',
-            scrollbarWidth: 'none',
-            msOverflowStyle: 'none'
-          }}
-        >
-          {tabs.map(tb => (
-            <button 
-              key={tb.id} 
-              onClick={() => setTab(tb.id)} 
-              className={`coach-tab px-3 py-2 rounded-lg text-xs sm:text-sm flex-shrink-0 ${tab === tb.id ? 'active' : ''}`}
-              style={{ color: 'white' }} 
-              data-testid={`coach-tab-${tb.id}`}
+        {/* V266: la rangée d'onglets défilante devient un menu HAMBURGER.
+            Sur mobile, les 6-8 onglets débordaient en défilement horizontal :
+            l'onglet actif restait souvent hors écran et le coach ne savait plus
+            où il était. Le bouton montre désormais l'onglet COURANT en clair et
+            replie les autres.
+            `setTab` et le tableau `tabs` sont INCHANGÉS — seule la présentation
+            change, donc aucune navigation cassée. Fermer au choix d'un onglet. */}
+        <div style={{ position: 'relative', marginBottom: '24px' }} data-testid="coach-nav">
+          <button
+            type="button"
+            onClick={() => setV266NavOpen(o => !o)}
+            aria-expanded={v266NavOpen}
+            data-testid="coach-nav-toggle"
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
+              padding: '10px 14px', borderRadius: '10px',
+              background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+              color: '#fff', cursor: 'pointer'
+            }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+            <span style={{ flex: 1, textAlign: 'left', fontSize: '14px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              {(tabs.find(t => t.id === tab) || tabs[0] || {}).label}
+            </span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2"
+              style={{ transform: v266NavOpen ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s ease', flexShrink: 0 }}>
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          {v266NavOpen && (
+            <div
+              style={{
+                position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px',
+                background: '#1a1a2e', borderRadius: '12px', padding: '6px',
+                zIndex: 200, boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+                border: '1px solid rgba(255,255,255,0.08)'
+              }}
             >
-              {tb.label}
-            </button>
-          ))}
+              {tabs.map(tb => (
+                <button
+                  key={tb.id}
+                  type="button"
+                  onClick={() => { setTab(tb.id); setV266NavOpen(false); }}
+                  data-testid={`coach-tab-${tb.id}`}
+                  style={{
+                    width: '100%', padding: '11px 14px', borderRadius: '8px',
+                    background: tab === tb.id ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)' : 'transparent',
+                    color: tab === tb.id ? 'var(--primary-color, #D91CD2)' : '#fff',
+                    border: 'none', cursor: 'pointer', textAlign: 'left',
+                    fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px'
+                  }}
+                >
+                  {tb.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
 
