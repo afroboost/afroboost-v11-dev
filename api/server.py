@@ -5011,6 +5011,15 @@ async def submit_social_proof(request: Request):
     if missing:
         raise HTTPException(status_code=400, detail="Champs obligatoires manquants")
 
+    # GARDE XSS — `video_link` vient d'un inconnu (endpoint public) et finit en
+    # `href` dans le DASHBOARD DU COACH. Une valeur `javascript:...` s'y
+    # executerait au clic, dans la session du coach. On n'accepte donc que
+    # http(s), refuse a la source plutot que stocke puis filtre a l'affichage.
+    # Meme regle que le lien partenaire des offres (V256).
+    _link = (body.get("video_link") or "").strip()
+    if not _link.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Le lien doit commencer par https://")
+
     proof = SocialProof(
         offer_id=offer_id,
         offer_name=offer.get("name", ""),
@@ -5034,17 +5043,33 @@ async def submit_social_proof(request: Request):
         if coach_email and "@" in str(coach_email):
             try:
                 primary_color = await _v259_primary_color(coach_email)
+                # ECHAPPEMENT OBLIGATOIRE — tout ce qui suit est saisi par un
+                # inconnu sur un endpoint public, puis rendu en HTML dans la
+                # boite du coach. Sans `escape`, une motivation contenant
+                # `</p><a href="...">` fabriquerait un faux contenu, un faux
+                # lien, ou casserait l'attribut `href` (breakout via `"`).
+                # `quote=True` echappe aussi les guillemets, indispensable
+                # puisque `video_link` est interpole DANS un attribut.
+                # Alias `_esc` : le nom `html` est deja pris par le corps du
+                # message quelques lignes plus bas.
+                from html import escape as _esc
+                _e_offer = _esc(proof.offer_name or "", quote=True)
+                _e_name = _esc(proof.client_name or "", quote=True)
+                _e_mail = _esc(proof.client_email or "", quote=True)
+                _e_insta = _esc(proof.instagram_username or "", quote=True)
+                _e_link = _esc(proof.video_link or "", quote=True)
+                _e_motiv = _esc(proof.motivation or "", quote=True)
                 html = f"""
                 <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:20px;background:#0a0a1a;border-radius:12px;">
                     <h2 style="color:{primary_color};text-align:center;">Nouvelle demande d'essai gratuit</h2>
                     <div style="background:#1a1a2e;padding:16px;border-radius:8px;margin:16px 0;">
-                        <p style="color:#fff;margin:6px 0;"><strong>Offre :</strong> {proof.offer_name}</p>
-                        <p style="color:#fff;margin:6px 0;"><strong>Client :</strong> {proof.client_name}</p>
-                        <p style="color:#fff;margin:6px 0;"><strong>Email :</strong> {proof.client_email}</p>
-                        <p style="color:#fff;margin:6px 0;"><strong>Instagram :</strong> @{proof.instagram_username}</p>
+                        <p style="color:#fff;margin:6px 0;"><strong>Offre :</strong> {_e_offer}</p>
+                        <p style="color:#fff;margin:6px 0;"><strong>Client :</strong> {_e_name}</p>
+                        <p style="color:#fff;margin:6px 0;"><strong>Email :</strong> {_e_mail}</p>
+                        <p style="color:#fff;margin:6px 0;"><strong>Instagram :</strong> @{_e_insta}</p>
                         <p style="color:#fff;margin:6px 0;"><strong>Publication :</strong>
-                           <a href="{proof.video_link}" style="color:{primary_color};">{proof.video_link}</a></p>
-                        <p style="color:#fff;margin:6px 0;"><strong>Motivation :</strong> {proof.motivation}</p>
+                           <a href="{_e_link}" style="color:{primary_color};">{_e_link}</a></p>
+                        <p style="color:#fff;margin:6px 0;"><strong>Motivation :</strong> {_e_motiv}</p>
                     </div>
                     <p style="color:#ccc;text-align:center;font-size:13px;">
                         Connectez-vous au dashboard, onglet « Preuves », pour valider ou refuser.
@@ -5054,7 +5079,7 @@ async def submit_social_proof(request: Request):
                 await asyncio.to_thread(resend.Emails.send, {
                     "from": "Afroboost <notifications@afroboost.com>",
                     "to": [coach_email],
-                    "subject": f"Nouvelle preuve sociale — {proof.client_name}",
+                    "subject": f"Nouvelle preuve sociale — {_e_name}",
                     "html": html
                 })
             except Exception as e:
@@ -5164,11 +5189,15 @@ async def review_social_proof(proof_id: str, request: Request):
     if RESEND_AVAILABLE and RESEND_API_KEY and proof.get("client_email"):
         try:
             primary_color = await _v259_primary_color(proof.get("coach_id") or "")
+            # Meme echappement que la notification au coach : `client_name` a ete
+            # saisi librement sur un endpoint public.
+            from html import escape as _esc
+            _e_client = _esc(proof.get("client_name") or "", quote=True)
             if action == "approve":
                 html = f"""
                 <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:20px;background:#0a0a1a;border-radius:12px;">
                     <h2 style="color:{primary_color};text-align:center;">Essai gratuit validé !</h2>
-                    <p style="color:#ccc;text-align:center;">Félicitations {proof.get('client_name','')} ! Votre demande a été approuvée.</p>
+                    <p style="color:#ccc;text-align:center;">Félicitations {_e_client} ! Votre demande a été approuvée.</p>
                     <div style="background:#1a1a2e;color:#fff;padding:20px;border-radius:8px;text-align:center;font-size:24px;font-weight:bold;letter-spacing:4px;margin:20px 0;border:1px solid {primary_color};">
                         {granted_code}
                     </div>

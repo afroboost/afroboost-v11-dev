@@ -705,16 +705,29 @@ const V260ProofsPanel = ({ proofs, filter, setFilter, onLoad, onReview, busyId }
             <span style={statusStyle(proof.status)}>{statusLabel(proof.status)}</span>
           </div>
 
-          {/* `rel="noopener noreferrer"` : le lien pointe vers un site tiers
-              fourni par un inconnu, il ne doit pas garder la main sur l'onglet. */}
-          <a
-            href={proof.video_link}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '0.85rem', wordBreak: 'break-all', display: 'inline-block', marginTop: 6 }}
-          >
-            {proof.video_link}
-          </a>
+          {/* GARDE XSS — `video_link` est saisi par un inconnu sur un endpoint
+              PUBLIC et atterrit ici en `href`, dans la session du coach : une
+              valeur `javascript:...` s'executerait a son clic, avec ses droits.
+              Le backend refuse deja tout ce qui n'est pas http(s) a la
+              soumission ; ce second controle couvre les lignes ecrites AVANT ce
+              filtre et tout autre chemin d'ecriture. Un lien non conforme est
+              affiche en texte brut, jamais en lien cliquable.
+              `rel="noopener noreferrer"` : le lien pointe vers un site tiers,
+              il ne doit pas garder la main sur l'onglet d'origine. */}
+          {/^https?:\/\//i.test(proof.video_link || '') ? (
+            <a
+              href={proof.video_link}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '0.85rem', wordBreak: 'break-all', display: 'inline-block', marginTop: 6 }}
+            >
+              {proof.video_link}
+            </a>
+          ) : (
+            <p style={{ color: '#f87171', fontSize: '0.8rem', wordBreak: 'break-all', marginTop: 6 }}>
+              Lien non valide (non cliquable) : {proof.video_link}
+            </p>
+          )}
 
           <p style={{ color: '#ccc', fontSize: '0.85rem', marginTop: 8, fontStyle: 'italic', whiteSpace: 'pre-wrap' }}>
             « {proof.motivation} »
