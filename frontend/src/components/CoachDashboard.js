@@ -625,6 +625,141 @@ const SocialBoostCommentsList = ({ API, coachEmail, axios }) => {
   );
 };
 
+// V260: panneau de validation des essais gratuits obtenus contre preuve
+// sociale. Composant de niveau module (et non fonction interne) pour ne pas
+// etre redefini a chaque rendu du dashboard, qui en compte deja beaucoup.
+const V260_PROOF_FILTERS = [
+  { id: 'pending', label: 'En attente' },
+  { id: 'approved', label: 'Validées' },
+  { id: 'rejected', label: 'Refusées' },
+  { id: '', label: 'Toutes' }
+];
+
+const V260ProofsPanel = ({ proofs, filter, setFilter, onLoad, onReview, busyId }) => {
+  // Recharge a l'ouverture de l'onglet ET a chaque changement de filtre.
+  // `onLoad` est volontairement HORS des dependances : il est recree a chaque
+  // rendu du dashboard, l'inclure relancerait la requete en boucle.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { onLoad(); }, [filter]);
+
+  const statusStyle = (status) => ({
+    fontSize: '0.7rem', padding: '4px 8px', borderRadius: 12,
+    background: status === 'pending' ? 'rgba(245,158,11,0.2)' : status === 'approved' ? 'rgba(74,222,128,0.2)' : 'rgba(248,113,113,0.2)',
+    color: status === 'pending' ? '#f59e0b' : status === 'approved' ? '#4ade80' : '#f87171'
+  });
+  const statusLabel = (s) => (s === 'pending' ? 'En attente' : s === 'approved' ? 'Validé' : 'Refusé');
+
+  const formatDate = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('fr-CH') + ' à ' + d.toLocaleTimeString('fr-CH', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  return (
+    <div className="card-gradient rounded-xl p-4 sm:p-6">
+      <h2 className="text-white font-semibold mb-1 flex items-center gap-2" style={{ fontSize: '18px' }}>
+        <SvgIcon name="gift" size={18} /> Essais gratuits — preuves sociales
+      </h2>
+      <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,0.45)' }}>
+        Demandes reçues sur vos offres gratuites. Valider crée un code AFR- et l'envoie au client par email.
+      </p>
+
+      <div className="flex gap-2 mb-4 flex-wrap">
+        {V260_PROOF_FILTERS.map(f => (
+          <button
+            key={f.id || 'all'}
+            type="button"
+            onClick={() => setFilter(f.id)}
+            className="px-3 py-1.5 rounded-lg text-xs"
+            style={{
+              background: filter === f.id ? 'var(--primary-color, #D91CD2)' : 'transparent',
+              color: filter === f.id ? '#fff' : 'rgba(255,255,255,0.6)',
+              border: `1px solid ${filter === f.id ? 'var(--primary-color, #D91CD2)' : '#333'}`,
+              cursor: 'pointer'
+            }}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {proofs.length === 0 ? (
+        <p className="text-sm" style={{ color: 'rgba(255,255,255,0.4)' }}>
+          Aucune demande pour ce filtre.
+        </p>
+      ) : proofs.map(proof => (
+        <div key={proof.id} style={{ background: '#1a1a2e', borderRadius: 12, padding: 16, marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ color: '#fff', fontWeight: 700, margin: 0 }}>{proof.client_name}</p>
+              <p style={{ color: '#999', fontSize: '0.8rem', margin: '4px 0', wordBreak: 'break-all' }}>{proof.client_email}</p>
+              {proof.client_phone ? (
+                <p style={{ color: '#999', fontSize: '0.8rem', margin: '4px 0' }}>{proof.client_phone}</p>
+              ) : null}
+              <p style={{ color: '#999', fontSize: '0.8rem', margin: '4px 0' }}>Instagram : @{proof.instagram_username}</p>
+              {proof.offer_name ? (
+                <p style={{ color: '#777', fontSize: '0.75rem', margin: '4px 0' }}>Offre : {proof.offer_name}</p>
+              ) : null}
+            </div>
+            <span style={statusStyle(proof.status)}>{statusLabel(proof.status)}</span>
+          </div>
+
+          {/* `rel="noopener noreferrer"` : le lien pointe vers un site tiers
+              fourni par un inconnu, il ne doit pas garder la main sur l'onglet. */}
+          <a
+            href={proof.video_link}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '0.85rem', wordBreak: 'break-all', display: 'inline-block', marginTop: 6 }}
+          >
+            {proof.video_link}
+          </a>
+
+          <p style={{ color: '#ccc', fontSize: '0.85rem', marginTop: 8, fontStyle: 'italic', whiteSpace: 'pre-wrap' }}>
+            « {proof.motivation} »
+          </p>
+
+          {proof.status === 'pending' && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+              <button
+                type="button"
+                disabled={busyId === proof.id}
+                onClick={() => onReview(proof.id, 'approve')}
+                style={{
+                  flex: 1, padding: '8px', borderRadius: 8, background: '#4ade80', color: '#000',
+                  border: 'none', cursor: busyId === proof.id ? 'wait' : 'pointer', fontWeight: 600, fontSize: '0.85rem'
+                }}
+              >
+                {busyId === proof.id ? '…' : 'Valider'}
+              </button>
+              <button
+                type="button"
+                disabled={busyId === proof.id}
+                onClick={() => onReview(proof.id, 'reject')}
+                style={{
+                  flex: 1, padding: '8px', borderRadius: 8, background: 'transparent', color: '#f87171',
+                  border: '1px solid #f87171', cursor: busyId === proof.id ? 'wait' : 'pointer', fontWeight: 600, fontSize: '0.85rem'
+                }}
+              >
+                Refuser
+              </button>
+            </div>
+          )}
+
+          {proof.granted_code ? (
+            <p style={{ color: '#4ade80', fontSize: '0.8rem', marginTop: 8 }}>
+              Code émis : <strong>{proof.granted_code}</strong>
+            </p>
+          ) : null}
+
+          <p style={{ color: '#666', fontSize: '0.7rem', marginTop: 8 }}>{formatDate(proof.created_at)}</p>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // v9.2.5: Protection ABSOLUE contre les erreurs - Valeurs par défaut GARANTIES
   const safeCoachUser = coachUser || {};
@@ -664,6 +799,38 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const getCoachHeaders = () => ({
     headers: { 'X-User-Email': safeCoachUser?.email || '' }
   });
+
+  // V260: preuves sociales a valider. L'endpoint est authentifie et isole par
+  // coach cote serveur — on lui passe donc les memes en-tetes que le reste du
+  // dashboard, sans quoi il repond 401.
+  const [v260Proofs, setV260Proofs] = useState([]);
+  const [v260ProofFilter, setV260ProofFilter] = useState('pending');
+  const [v260ProofBusy, setV260ProofBusy] = useState(null);
+
+  const loadV260Proofs = async () => {
+    try {
+      const res = await axios.get(`${API}/social-proofs`, {
+        ...getCoachHeaders(),
+        params: v260ProofFilter ? { status: v260ProofFilter } : {}
+      });
+      setV260Proofs(Array.isArray(res.data) ? res.data : []);
+    } catch (err) {
+      console.error('[V260] Chargement des preuves sociales echoue:', err);
+      setV260Proofs([]);
+    }
+  };
+
+  const reviewV260Proof = async (proofId, action) => {
+    if (v260ProofBusy) return;
+    setV260ProofBusy(proofId);
+    try {
+      await axios.put(`${API}/social-proofs/${proofId}/review`, { action }, getCoachHeaders());
+      await loadV260Proofs();
+    } catch (err) {
+      alert(err?.response?.data?.detail || "L'action n'a pas pu être enregistrée.");
+    }
+    setV260ProofBusy(null);
+  };
   
   // v94: GARDE DE SÉCURITÉ — vérifier l'authentification au montage
   useEffect(() => {
@@ -2385,6 +2552,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       external_link_url: offer.external_link_url || '',
       external_link_label: offer.external_link_label || '',
       external_link_enabled: !!offer.external_link_enabled,
+      // V260: sans ce report, rouvrir l'offre viderait le prix alternatif.
+      social_proof_price: offer.social_proof_price ?? '',
     });
     setEditingOfferId(offer.id);
     // Scroll vers le formulaire
@@ -2413,7 +2582,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       duration_minutes: '', location: '', max_participants: '',
       // V256: sans ce reset, le lien partenaire de l'offre precedente resterait
       // pre-rempli — et publie — sur l'offre suivante.
-      external_link_url: '', external_link_label: '', external_link_enabled: false
+      external_link_url: '', external_link_label: '', external_link_enabled: false,
+      social_proof_price: '' // V260
     });
     setEditingOfferId(null);
   };
@@ -2519,7 +2689,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // uniquement) et desactive le toggle si elle est vide.
         external_link_url: (src.external_link_url || '').trim() || null,
         external_link_label: (src.external_link_label || '').trim() || null,
-        external_link_enabled: !!src.external_link_enabled
+        external_link_enabled: !!src.external_link_enabled,
+        // V260: prix alternatif « sans preuve sociale ». Meme piege de liste
+        // blanche que les champs ci-dessus : absent d'ici, il serait remis a
+        // null en base a chaque sauvegarde d'offre.
+        // `null` et non 0 quand le champ est vide : 0 signifierait « gratuit
+        // meme sans preuve », ce qui desactiverait le choix sans le dire.
+        social_proof_price: (src.social_proof_price === '' || src.social_proof_price === null || src.social_proof_price === undefined)
+          ? null
+          : (parseFloat(src.social_proof_price) || null)
       };
       console.log("[V61] Sending offerData:", JSON.stringify(offerData));
 
@@ -2561,7 +2739,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       videoUrl: '', linked_course_ids: [],
       duration_minutes: '', location: '', max_participants: '',
       // V256: idem — le lien partenaire ne doit pas se reporter sur l'offre suivante.
-      external_link_url: '', external_link_label: '', external_link_enabled: false
+      external_link_url: '', external_link_label: '', external_link_enabled: false,
+      social_proof_price: '' // V260
       });
       return true; // V224: enregistrement reussi
     } catch (err) {
@@ -5152,7 +5331,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     { id: "codes", label: t('promoCodes') },
     { id: "contacts", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="users" size={14} /> Contacts</span> },
     { id: "campaigns", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="megaphone" size={14} /> Campagnes</span> },
-    { id: "conversations", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="messageCircle" size={14} /> {unreadCount > 0 ? `Conversations (${unreadCount})` : "Conversations"}</span> }
+    { id: "conversations", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="messageCircle" size={14} /> {unreadCount > 0 ? `Conversations (${unreadCount})` : "Conversations"}</span> },
+    // V260: validation des essais gratuits obtenus contre preuve sociale
+    { id: "proofs", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="gift" size={14} /> Preuves</span> }
   ];
 
   // v37.2: Boutique et Stripe pour coachs partenaires uniquement
@@ -6913,6 +7094,21 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         {/* v37.2: "Ma Page" supprimé — centralisé dans HUB > Ma Vitrine */}
 
         {/* v13.8: Promo Codes Tab - RESTAURATION COMPLÈTE */}
+        {/* V260: onglet « Preuves » — essais gratuits a valider.
+            Le chargement est declenche a l'ouverture de l'onglet plutot qu'au
+            montage du dashboard : inutile d'appeler l'API pour un coach qui ne
+            propose aucune offre a preuve sociale. */}
+        {tab === "proofs" && (
+          <V260ProofsPanel
+            proofs={v260Proofs}
+            filter={v260ProofFilter}
+            setFilter={setV260ProofFilter}
+            onLoad={loadV260Proofs}
+            onReview={reviewV260Proof}
+            busyId={v260ProofBusy}
+          />
+        )}
+
         {tab === "codes" && (
           <PromoCodesTab
             // === Credits Gate ===

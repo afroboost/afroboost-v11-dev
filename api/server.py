@@ -519,6 +519,11 @@ class Offer(BaseModel):
     external_link_url: Optional[str] = None
     external_link_label: Optional[str] = None
     external_link_enabled: bool = False
+    # V260: prix a payer quand le client REFUSE de faire la preuve sociale.
+    # N'a de sens que sur une offre a 0 CHF : `price == 0` + ce champ > 0 =
+    # l'offre propose le choix « gratuit contre preuve » ou « payer ce prix ».
+    # None ou 0 => comportement inchange (gratuit direct, ou payant normal).
+    social_proof_price: Optional[float] = None
 
 class OfferCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -577,6 +582,10 @@ class OfferCreate(BaseModel):
     external_link_url: Optional[str] = None
     external_link_label: Optional[str] = None
     external_link_enabled: Union[bool, str] = False
+    # V260: prix alternatif sans preuve sociale. DOIT figurer ici aussi, sinon
+    # le `$set: offer.model_dump()` de PUT /offers l'effacerait a chaque
+    # sauvegarde d'offre (meme piege que les libelles de paliers, V225).
+    social_proof_price: Optional[float] = None
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -4937,6 +4946,259 @@ async def check_subscriber_exists(email: str = ""):
         logger.error(f"[SUBSCRIBER-CHECK] Error: {e}")
         # En cas d'erreur, on ne bloque pas : l'utilisateur sera traité comme visiteur
         return {"found": False}
+
+
+# =====================================================================
+# V260 — PREUVE SOCIALE POUR LES COURS GRATUITS
+#
+# Une offre a 0 CHF portant `social_proof_price` propose deux voies au
+# visiteur : effectuer des actions de preuve sociale (partage + Instagram +
+# motivation) pour un acces gratuit, ou payer le prix alternatif et reserver
+# tout de suite. Les deux flux existants — offre payante, offre gratuite sans
+# `social_proof_price` — ne passent PAS par ici et sont inchanges.
+# =====================================================================
+
+class SocialProof(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    offer_id: str
+    offer_name: Optional[str] = ""
+    client_name: str
+    client_email: str
+    client_phone: Optional[str] = ""
+    video_link: str          # publication partagee sur les reseaux
+    instagram_username: str  # @compte du client
+    motivation: str          # pourquoi ce cours l'interesse, d'ou il/elle vient
+    # `pending` -> `approved` | `rejected`
+    status: str = "pending"
+    coach_id: Optional[str] = None  # isolation multi-tenant, comme partout ailleurs
+    created_at: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    reviewed_by: Optional[str] = None
+
+
+@api_router.post("/social-proofs")
+async def submit_social_proof(request: Request):
+    """V260: un visiteur soumet sa preuve sociale pour un cours gratuit.
+
+    Endpoint PUBLIC (le demandeur n'a pas de compte), donc volontairement
+    avare : rien n'est fait de confiance avec le corps recu.
+      - l'offre est relue en base, jamais crue sur parole : c'est elle qui
+        fournit `coach_id` et `offer_name`, et qui prouve que l'offre propose
+        vraiment la preuve sociale ;
+      - `status` est impose a `pending` cote serveur — un client qui poserait
+        `approved` dans son JSON s'auto-validerait sinon.
+    """
+    body = await request.json()
+    offer_id = (body.get("offer_id") or "").strip()
+    if not offer_id:
+        raise HTTPException(status_code=400, detail="Offre manquante")
+
+    offer = await db.offers.find_one({"id": offer_id}, {"_id": 0})
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offre introuvable")
+    # L'offre doit REELLEMENT proposer la preuve sociale, sinon n'importe qui
+    # pourrait reclamer un acces gratuit sur une offre payante.
+    try:
+        sp_price = float(offer.get("social_proof_price") or 0)
+    except (TypeError, ValueError):
+        sp_price = 0
+    if float(offer.get("price") or 0) != 0 or sp_price <= 0:
+        raise HTTPException(status_code=400, detail="Cette offre ne propose pas d'essai gratuit")
+
+    required = ("client_name", "client_email", "video_link", "instagram_username", "motivation")
+    missing = [f for f in required if not (body.get(f) or "").strip()]
+    if missing:
+        raise HTTPException(status_code=400, detail="Champs obligatoires manquants")
+
+    proof = SocialProof(
+        offer_id=offer_id,
+        offer_name=offer.get("name", ""),
+        client_name=body.get("client_name", "").strip(),
+        client_email=body.get("client_email", "").strip().lower(),
+        client_phone=(body.get("client_phone") or "").strip(),
+        video_link=body.get("video_link", "").strip(),
+        instagram_username=(body.get("instagram_username") or "").strip().lstrip("@"),
+        motivation=body.get("motivation", "").strip(),
+        status="pending",
+        coach_id=offer.get("coach_id") or DEFAULT_COACH_ID,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    doc = proof.model_dump()
+    await db.social_proofs.insert_one(doc)
+    logger.info(f"[V260] Preuve sociale recue de {proof.client_email} pour l'offre {offer_id}")
+
+    # Notification au coach proprietaire de l'offre
+    if RESEND_AVAILABLE and RESEND_API_KEY:
+        coach_email = proof.coach_id
+        if coach_email and "@" in str(coach_email):
+            try:
+                primary_color = await _v259_primary_color(coach_email)
+                html = f"""
+                <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:20px;background:#0a0a1a;border-radius:12px;">
+                    <h2 style="color:{primary_color};text-align:center;">Nouvelle demande d'essai gratuit</h2>
+                    <div style="background:#1a1a2e;padding:16px;border-radius:8px;margin:16px 0;">
+                        <p style="color:#fff;margin:6px 0;"><strong>Offre :</strong> {proof.offer_name}</p>
+                        <p style="color:#fff;margin:6px 0;"><strong>Client :</strong> {proof.client_name}</p>
+                        <p style="color:#fff;margin:6px 0;"><strong>Email :</strong> {proof.client_email}</p>
+                        <p style="color:#fff;margin:6px 0;"><strong>Instagram :</strong> @{proof.instagram_username}</p>
+                        <p style="color:#fff;margin:6px 0;"><strong>Publication :</strong>
+                           <a href="{proof.video_link}" style="color:{primary_color};">{proof.video_link}</a></p>
+                        <p style="color:#fff;margin:6px 0;"><strong>Motivation :</strong> {proof.motivation}</p>
+                    </div>
+                    <p style="color:#ccc;text-align:center;font-size:13px;">
+                        Connectez-vous au dashboard, onglet « Preuves », pour valider ou refuser.
+                    </p>
+                </div>
+                """
+                await asyncio.to_thread(resend.Emails.send, {
+                    "from": "Afroboost <notifications@afroboost.com>",
+                    "to": [coach_email],
+                    "subject": f"Nouvelle preuve sociale — {proof.client_name}",
+                    "html": html
+                })
+            except Exception as e:
+                # L'envoi de l'email ne doit JAMAIS faire echouer la soumission :
+                # la preuve est deja en base et visible au dashboard.
+                logger.error(f"[V260] Notification coach echouee: {e}")
+
+    return {"status": "ok", "id": proof.id}
+
+
+@api_router.get("/social-proofs")
+async def list_social_proofs(request: Request, status: str = ""):
+    """V260: liste des preuves sociales, pour le dashboard du coach.
+
+    AUTHENTIFIE et ISOLE : ces documents contiennent des donnees personnelles
+    (nom, email, telephone, compte Instagram). Sans garde, l'endpoint les
+    exposerait publiquement. Un coach ne voit que les preuves de SES offres ;
+    le Super Admin voit tout, comme partout ailleurs.
+    """
+    user_email = request.headers.get("X-User-Email", "").lower().strip() or _email_from_jwt(request)
+    if not user_email:
+        raise HTTPException(status_code=401, detail="Authentification requise")
+
+    query = get_coach_filter(user_email)  # {} pour le Super Admin
+    if status:
+        query["status"] = status
+    proofs = await db.social_proofs.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return proofs
+
+
+@api_router.put("/social-proofs/{proof_id}/review")
+async def review_social_proof(proof_id: str, request: Request):
+    """V260: le coach valide ou refuse une preuve sociale.
+
+    A l'approbation, l'acces gratuit est cree avec EXACTEMENT la meme forme que
+    les autres codes de la plateforme : un document `discount_codes` (c'est LUI
+    que lit l'espace abonne, cf. GET /subscriber/{code}) ET un document
+    `subscriptions` (c'est lui qui alimente les transactions du coach). Creer
+    l'un sans l'autre donnerait un code affiche nulle part, ou un code
+    inutilisable.
+    """
+    user_email = request.headers.get("X-User-Email", "").lower().strip() or _email_from_jwt(request)
+    if not user_email:
+        raise HTTPException(status_code=401, detail="Authentification requise")
+
+    body = await request.json()
+    action = body.get("action")
+    if action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="Action invalide")
+
+    proof = await db.social_proofs.find_one({"id": proof_id}, {"_id": 0})
+    if not proof:
+        raise HTTPException(status_code=404, detail="Preuve non trouvée")
+    # Un coach ne revoit que ses propres preuves.
+    if not is_super_admin(user_email) and (proof.get("coach_id") or "") != user_email:
+        raise HTTPException(status_code=403, detail="Accès refusé")
+    if proof.get("status") != "pending":
+        raise HTTPException(status_code=409, detail="Cette demande a déjà été traitée")
+
+    new_status = "approved" if action == "approve" else "rejected"
+    await db.social_proofs.update_one(
+        {"id": proof_id},
+        {"$set": {
+            "status": new_status,
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "reviewed_by": user_email
+        }}
+    )
+
+    granted_code = None
+    if action == "approve":
+        offer = await db.offers.find_one({"id": proof.get("offer_id")}, {"_id": 0}) or {}
+        # Nombre de seances offertes : le pack de l'offre, sinon UNE seance.
+        try:
+            sessions_count = int(offer.get("pack_sessions") or 0) or 1
+        except (TypeError, ValueError):
+            sessions_count = 1
+
+        granted_code = f"AFR-{str(uuid.uuid4())[:6].upper()}"
+        now_iso = datetime.now(timezone.utc).isoformat()
+        # Meme forme que admin_create_code (~l.4823) : c'est ce document que lit
+        # GET /subscriber/{code}.
+        await db.discount_codes.insert_one({
+            "id": str(uuid.uuid4()), "code": granted_code, "type": "100%", "value": 100,
+            "assignedEmail": proof.get("client_email", ""), "maxUses": sessions_count, "used": 0,
+            "active": True, "courses": [], "created_at": now_iso,
+            "source": "social_proof",
+        })
+        await db.subscriptions.insert_one({
+            "id": str(uuid.uuid4()), "email": proof.get("client_email", ""),
+            "name": proof.get("client_name", ""), "whatsapp": proof.get("client_phone", ""),
+            "code": granted_code, "offer_name": offer.get("name") or proof.get("offer_name", ""),
+            "coach_id": proof.get("coach_id") or DEFAULT_COACH_ID,
+            "total_sessions": sessions_count, "used_sessions": 0,
+            "remaining_sessions": sessions_count, "expires_at": None, "status": "active",
+            "created_at": now_iso, "updated_at": now_iso,
+            "source": "social_proof", "auto_renew": False,
+            "renewal_price": 0, "renewal_sessions": sessions_count,
+            "renewal_warnings_sent": [], "stripe_customer_id": None,
+            "stripe_payment_method": None, "last_renewal_date": None,
+            "social_proof_id": proof_id,
+        })
+        await db.social_proofs.update_one({"id": proof_id}, {"$set": {"granted_code": granted_code}})
+        logger.info(f"[V260] Preuve {proof_id} approuvee -> code {granted_code} pour {proof.get('client_email')}")
+
+    # Email au client (jamais bloquant : la decision est deja enregistree)
+    if RESEND_AVAILABLE and RESEND_API_KEY and proof.get("client_email"):
+        try:
+            primary_color = await _v259_primary_color(proof.get("coach_id") or "")
+            if action == "approve":
+                html = f"""
+                <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:20px;background:#0a0a1a;border-radius:12px;">
+                    <h2 style="color:{primary_color};text-align:center;">Essai gratuit validé !</h2>
+                    <p style="color:#ccc;text-align:center;">Félicitations {proof.get('client_name','')} ! Votre demande a été approuvée.</p>
+                    <div style="background:#1a1a2e;color:#fff;padding:20px;border-radius:8px;text-align:center;font-size:24px;font-weight:bold;letter-spacing:4px;margin:20px 0;border:1px solid {primary_color};">
+                        {granted_code}
+                    </div>
+                    <p style="color:#ccc;text-align:center;font-size:13px;">
+                        Utilisez ce code pour réserver votre séance sur afroboost.com
+                    </p>
+                </div>
+                """
+                subject = "Votre essai gratuit est validé !"
+            else:
+                html = f"""
+                <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:20px;background:#0a0a1a;border-radius:12px;">
+                    <h2 style="color:{primary_color};text-align:center;">Demande non validée</h2>
+                    <p style="color:#ccc;text-align:center;">
+                        Votre demande d'essai gratuit n'a pas pu être validée.
+                        Vous pouvez toujours réserver en payant le tarif indiqué sur la vitrine.
+                    </p>
+                </div>
+                """
+                subject = "Votre demande d'essai gratuit"
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": "Afroboost <notifications@afroboost.com>",
+                "to": [proof["client_email"]],
+                "subject": subject,
+                "html": html
+            })
+        except Exception as e:
+            logger.error(f"[V260] Email de decision non envoye: {e}")
+
+    return {"status": "ok", "action": action, "code": granted_code}
 
 
 # === ESPACE ABONNÉ — Lookup par code AFR-XXXXXX v11.0 ===

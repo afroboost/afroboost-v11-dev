@@ -863,6 +863,37 @@ export default function OfferWizard({
         />
       </div>
 
+      {/* V260: prix alternatif, propose au visiteur qui ne veut PAS faire la
+          preuve sociale. Le bloc n'apparait que sur une offre a 0 CHF — sur une
+          offre payante il n'aurait aucun sens, et le laisser visible ferait
+          croire a un second tarif.
+          Laisse vide, la preuve sociale est desactivee : l'offre gratuite
+          garde exactement son parcours actuel. */}
+      {(parseFloat(form.price) || 0) === 0 && (
+        <div className="p-4 rounded-lg" style={{ border: `2px solid ${PINK}`, background: 'rgba(217,28,210,0.08)' }}>
+          <p className="text-sm font-bold mb-1 flex items-center gap-1.5" style={{ color: PINK }}>
+            <SvgIcon name="gift" size={14} /> ESSAI GRATUIT CONTRE PREUVE SOCIALE
+          </p>
+          <p className="text-xs mb-2" style={HINT_STYLE}>
+            Le visiteur choisit : faire les étapes sociales (partage + Instagram + motivation)
+            pour un accès gratuit, ou payer le prix ci-dessous et réserver tout de suite.
+            Laissez vide pour désactiver — l'offre reste alors simplement gratuite.
+          </p>
+          <label className="block text-xs mb-1" style={LABEL_STYLE}>Prix sans preuve sociale (CHF)</label>
+          <input
+            type="number"
+            min="0"
+            step="0.5"
+            value={form.social_proof_price ?? ''}
+            onChange={(e) => set('social_proof_price', e.target.value === '' ? null : (parseFloat(e.target.value) || 0))}
+            placeholder="Ex : 25"
+            style={INPUT_STYLE}
+            className="text-sm v224-input"
+            data-testid="offer-social-proof-price"
+          />
+        </div>
+      )}
+
       {/* V223 repris : prix progressif 3 paliers */}
       <div className="p-4 rounded-lg" style={{ background: '#000', border: `1px solid ${ACCENT_BORDER}` }}>
         <label className="flex items-center gap-3 cursor-pointer">

@@ -3346,6 +3346,261 @@ const QRScannerModal = ({ onClose, onValidate, scanResult, scanError, onManualVa
 // V257: `onReserve` / `onSeeOffers` sont OPTIONNELS — sans eux, la modale rend
 // exactement ce qu'elle rendait avant (media + croix de fermeture), donc aucun
 // autre point de montage n'est affecte.
+// =====================================================================
+// V260 — PREUVE SOCIALE (offres a 0 CHF portant `social_proof_price`)
+//
+// `v260HasSocialProof` est le POINT DE DECISION UNIQUE : la carte, le bouton
+// « Réserver » et le rendu des modales s'y referent tous. Redériver la
+// condition ailleurs la ferait diverger a la premiere evolution — c'est le
+// piege deja rencontre avec `v225IsDirectCheckout`.
+// =====================================================================
+function v260HasSocialProof(offer) {
+  if (!offer) return false;
+  const price = parseFloat(offer.price);
+  const alt = parseFloat(offer.social_proof_price);
+  return (!price || price === 0) && !isNaN(alt) && alt > 0;
+}
+
+// Choix « essai gratuit contre preuve sociale » ou « payer le prix alternatif ».
+const SocialProofChoiceModal = ({ offer, onClose, onChooseFree, onChoosePay }) => (
+  <div
+    onClick={onClose}
+    style={{
+      position: 'fixed', inset: 0, zIndex: 9998,
+      background: 'rgba(0,0,0,0.85)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16
+    }}
+  >
+    <div
+      onClick={(e) => e.stopPropagation()}
+      style={{ background: '#1a1a2e', borderRadius: 16, padding: 24, maxWidth: 420, width: '100%' }}
+      data-testid="social-proof-choice"
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <h3 style={{ color: '#fff', fontSize: '1.05rem', margin: 0 }}>Comment souhaitez-vous réserver ?</h3>
+          {/* Le modele Offer nomme ce champ `name` — pas `title`. */}
+          <p style={{ color: '#999', fontSize: '0.85rem', margin: '4px 0 0' }}>{offer.name}</p>
+        </div>
+        <button
+          onClick={onClose}
+          aria-label="Fermer"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', padding: 0 }}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+
+      <button
+        type="button"
+        onClick={onChooseFree}
+        style={{
+          width: '100%', padding: '14px 16px', borderRadius: 12,
+          border: '2px solid var(--primary-color, #D91CD2)', background: 'transparent',
+          color: '#fff', cursor: 'pointer', margin: '20px 0 12px', textAlign: 'left'
+        }}
+        data-testid="social-proof-choose-free"
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--primary-color, #D91CD2)', flexShrink: 0 }} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="20 12 20 22 4 22 4 12" />
+            <rect x="2" y="7" width="20" height="5" />
+            <line x1="12" y1="22" x2="12" y2="7" />
+            <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z" />
+            <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" />
+          </svg>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>Essai GRATUIT</div>
+            <div style={{ fontSize: '0.75rem', color: '#999', marginTop: 2 }}>
+              Partagez sur vos réseaux sociaux et recevez un accès gratuit
+            </div>
+          </div>
+        </div>
+      </button>
+
+      <button
+        type="button"
+        onClick={onChoosePay}
+        style={{
+          width: '100%', padding: '14px 16px', borderRadius: 12,
+          border: '1px solid #333', background: 'transparent',
+          color: '#fff', cursor: 'pointer', textAlign: 'left'
+        }}
+        data-testid="social-proof-choose-pay"
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+            <line x1="1" y1="10" x2="23" y2="10" />
+          </svg>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>
+              Payer {v225FormatAmount(offer.social_proof_price)} CHF
+            </div>
+            <div style={{ fontSize: '0.75rem', color: '#999', marginTop: 2 }}>
+              Réserver directement, sans les étapes sociales
+            </div>
+          </div>
+        </div>
+      </button>
+    </div>
+  </div>
+);
+
+// Formulaire de preuve sociale.
+const SocialProofFormModal = ({ offer, onClose }) => {
+  const [formData, setFormData] = useState({
+    client_name: '', client_email: '', client_phone: '',
+    video_link: '', instagram_username: '', motivation: ''
+  });
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [error, setError] = useState('');
+
+  const inputStyle = {
+    width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #333',
+    background: '#0a0a1a', color: '#fff', fontSize: '0.9rem', marginBottom: 10
+  };
+
+  const handleSubmit = async () => {
+    const required = ['client_name', 'client_email', 'video_link', 'instagram_username', 'motivation'];
+    if (required.some(k => !String(formData[k] || '').trim())) {
+      setError('Merci de remplir tous les champs marqués d\'une étoile.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      // `offer.id` — les offres portent un uuid en chaine, pas un ObjectId.
+      await axios.post(`${API}/social-proofs`, { ...formData, offer_id: offer.id });
+      setSuccess(true);
+    } catch (err) {
+      setError(err?.response?.data?.detail || "L'envoi a échoué. Réessayez.");
+    }
+    setLoading(false);
+  };
+
+  if (success) {
+    return (
+      <div
+        onClick={onClose}
+        style={{
+          position: 'fixed', inset: 0, zIndex: 9998, background: 'rgba(0,0,0,0.85)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16
+        }}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{ background: '#1a1a2e', borderRadius: 16, padding: 32, maxWidth: 400, width: '100%', textAlign: 'center' }}
+          data-testid="social-proof-success"
+        >
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto 16px', display: 'block' }}>
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+            <polyline points="22 4 12 14.01 9 11.01" />
+          </svg>
+          <h3 style={{ color: '#fff', marginBottom: 8 }}>Demande envoyée !</h3>
+          <p style={{ color: '#999', fontSize: '0.85rem' }}>
+            Votre demande d'essai gratuit est en cours de vérification.
+            Vous recevrez un email dès qu'elle sera validée.
+          </p>
+          <button
+            onClick={onClose}
+            style={{
+              marginTop: 20, padding: '10px 32px', borderRadius: 25,
+              background: 'var(--primary-color, #D91CD2)', color: '#fff',
+              border: 'none', cursor: 'pointer', fontWeight: 600
+            }}
+          >
+            Fermer
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9998, background: 'rgba(0,0,0,0.85)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, overflowY: 'auto'
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: '#1a1a2e', borderRadius: 16, padding: 24, maxWidth: 440, width: '100%', maxHeight: '92vh', overflowY: 'auto' }}
+        data-testid="social-proof-form"
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h3 style={{ color: '#fff', fontSize: '1rem', margin: 0 }}>Essai gratuit — preuve sociale</h3>
+          <button
+            onClick={onClose}
+            aria-label="Fermer"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', padding: 0 }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        <div style={{ background: '#0a0a1a', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: '0.8rem', color: '#ccc' }}>
+          <p style={{ margin: '0 0 6px', fontWeight: 600, color: 'var(--primary-color, #D91CD2)' }}>
+            Pour bénéficier de l'essai gratuit :
+          </p>
+          <p style={{ margin: '0 0 4px' }}>1. Partagez la vidéo du cours sur vos réseaux sociaux</p>
+          <p style={{ margin: '0 0 4px' }}>2. Collez le lien de votre publication ci-dessous</p>
+          <p style={{ margin: '0 0 4px' }}>3. Abonnez-vous, likez et commentez sur notre Instagram</p>
+          <p style={{ margin: 0 }}>4. Expliquez pourquoi ce cours vous intéresse</p>
+        </div>
+
+        <input type="text" placeholder="Votre nom *" value={formData.client_name}
+          onChange={(e) => setFormData({ ...formData, client_name: e.target.value })} style={inputStyle} />
+        <input type="email" placeholder="Votre email *" value={formData.client_email}
+          onChange={(e) => setFormData({ ...formData, client_email: e.target.value })} style={inputStyle} />
+        <input type="tel" placeholder="Votre téléphone (optionnel)" value={formData.client_phone}
+          onChange={(e) => setFormData({ ...formData, client_phone: e.target.value })} style={inputStyle} />
+
+        <label style={{ fontSize: '0.8rem', color: '#999', marginBottom: 4, display: 'block' }}>Lien de votre publication *</label>
+        <input type="url" placeholder="https://instagram.com/p/..." value={formData.video_link}
+          onChange={(e) => setFormData({ ...formData, video_link: e.target.value })} style={inputStyle} />
+
+        <label style={{ fontSize: '0.8rem', color: '#999', marginBottom: 4, display: 'block' }}>Votre @Instagram *</label>
+        <input type="text" placeholder="votre_compte" value={formData.instagram_username}
+          onChange={(e) => setFormData({ ...formData, instagram_username: e.target.value.replace('@', '') })} style={inputStyle} />
+
+        <label style={{ fontSize: '0.8rem', color: '#999', marginBottom: 4, display: 'block' }}>
+          Pourquoi ce cours vous intéresse ? D'où venez-vous ? *
+        </label>
+        <textarea placeholder="Expliquez en quelques lignes..." value={formData.motivation}
+          onChange={(e) => setFormData({ ...formData, motivation: e.target.value })}
+          style={{ ...inputStyle, minHeight: 80, resize: 'vertical' }} />
+
+        {error && (
+          <div style={{ color: '#f87171', fontSize: '0.8rem', marginBottom: 8 }}>{error}</div>
+        )}
+
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={loading}
+          style={{
+            width: '100%', padding: '12px', borderRadius: 25,
+            background: loading ? '#666' : 'var(--primary-color, #D91CD2)',
+            color: '#fff', border: 'none', cursor: loading ? 'wait' : 'pointer',
+            fontWeight: 700, fontSize: '0.95rem', marginTop: 8
+          }}
+          data-testid="social-proof-submit"
+        >
+          {loading ? 'Envoi en cours…' : 'Envoyer ma demande'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // V257b: `reserveLabel` / `offersLabel` viennent du concept (editables au
 // dashboard). Absents, les libelles d'origine sont conserves.
 const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers, reserveLabel, offersLabel }) => {
@@ -3935,6 +4190,9 @@ function App() {
   const [paymentLinks, setPaymentLinks] = useState({ stripe: "", paypal: "", twint: "", coachWhatsapp: "" });
   const [concept, setConcept] = useState({ appName: "Afroboost", description: "", heroImageUrl: "", logoUrl: "", faviconUrl: "", termsText: "", googleReviewsUrl: "", defaultLandingSection: "sessions", vitrineSectionOrder: "sessions-first", externalLink1Title: "", externalLink1Url: "", externalLink2Title: "", externalLink2Url: "", paymentTwint: false, paymentPaypal: false, paymentCreditCard: false, eventPosterEnabled: false, eventPosterMediaUrl: "" });
   const [showEventPoster, setShowEventPoster] = useState(false);
+  // V260: offre en cours de choix / de saisie de preuve sociale (null = fermee)
+  const [v260ChoiceOffer, setV260ChoiceOffer] = useState(null);
+  const [v260FormOffer, setV260FormOffer] = useState(null);
   const [discountCodes, setDiscountCodes] = useState([]);
   // v104: FAQ homepage
   const [homeFaqs, setHomeFaqs] = useState([]);
@@ -5422,6 +5680,19 @@ function App() {
 
   // Sélection d'offre avec smooth scroll vers le formulaire "Vos informations"
   const handleSelectOffer = (offer) => {
+    // V260: offre a 0 CHF proposant la preuve sociale -> le visiteur choisit
+    // d'abord sa voie (essai gratuit contre preuve, ou prix alternatif).
+    //
+    // L'interception est posee ICI, en tete du point d'entree deja utilise par
+    // TOUS les chemins de selection, plutot que sur chaque bouton « Réserver » :
+    // un bouton oublie renverrait sinon au parcours gratuit sans preuve.
+    // `v260SkipChoice` est le laissez-passer du deuxieme tour, quand le choix
+    // vient d'etre fait — sans lui, choisir « payer » rouvrirait la meme modale
+    // en boucle.
+    if (!offer?.v260SkipChoice && v260HasSocialProof(offer)) {
+      setV260ChoiceOffer(offer);
+      return;
+    }
     // V225: toutes les offres de service payantes partent en achat direct.
     // (Elargit la garde V224 qui ne visait que `progressive_pricing`.)
     // V226: l'exclusion des produits physiques est LEVEE — l'adresse de
@@ -6411,6 +6682,43 @@ function App() {
             {t('backToDashboard')}
           </button>
         </div>
+      )}
+
+      {/* V260: choix « essai gratuit contre preuve sociale » / « payer » */}
+      {v260ChoiceOffer && (
+        <SocialProofChoiceModal
+          offer={v260ChoiceOffer}
+          onClose={() => setV260ChoiceOffer(null)}
+          onChooseFree={() => {
+            setV260FormOffer(v260ChoiceOffer);
+            setV260ChoiceOffer(null);
+          }}
+          onChoosePay={() => {
+            const chosen = v260ChoiceOffer;
+            setV260ChoiceOffer(null);
+            // Le parcours de paiement est celui d'une offre ordinaire : on lui
+            // presente donc l'offre avec `price` = prix alternatif. Le
+            // `v260SkipChoice` empeche `handleSelectOffer` de rouvrir la modale.
+            // Aucune ecriture en base : cet objet ne vit que le temps du
+            // checkout, l'offre du coach reste a 0 CHF.
+            handleSelectOffer({
+              ...chosen,
+              price: parseFloat(chosen.social_proof_price),
+              // V223/V225 : le prix affiche passe par v223UnitPrice, qui lit les
+              // paliers avant `price`. On neutralise donc le progressif pour ce
+              // passage, sinon le client paierait un montant sans rapport.
+              progressive_pricing: false,
+              active_price: parseFloat(chosen.social_proof_price),
+              v260SkipChoice: true
+            });
+          }}
+        />
+      )}
+      {v260FormOffer && (
+        <SocialProofFormModal
+          offer={v260FormOffer}
+          onClose={() => setV260FormOffer(null)}
+        />
       )}
 
       {/* Event Poster Modal (Popup d'accueil) */}
