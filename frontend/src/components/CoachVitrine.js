@@ -117,6 +117,50 @@ const LocationIcon = () => (
   </svg>
 );
 
+// V256: bouton secondaire vers le site d'un partenaire, sur la carte d'offre.
+// Rendu null pour toute offre sans lien active — invisible sur les offres
+// existantes. Deux gardes indispensables :
+//  - `stopPropagation` : la carte entiere est cliquable (elle selectionne
+//    l'offre et enchaine sur la reservation) ; sans lui, ouvrir le lien
+//    declencherait aussi cette selection ;
+//  - schema http(s) obligatoire : l'URL est saisie par le coach et rendue en
+//    `href` public, une valeur `javascript:` y serait executable. Le backend
+//    filtre deja (_v256_normalize_external_link), ceci est la seconde barriere.
+const VitrinePartnerLink = ({ offer }) => {
+  if (!offer || !offer.external_link_enabled) return null;
+  const raw = typeof offer.external_link_url === 'string' ? offer.external_link_url.trim() : '';
+  if (!/^https?:\/\//i.test(raw)) return null;
+  return (
+    <a
+      href={raw}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        marginTop: '8px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '6px 12px',
+        borderRadius: '8px',
+        border: '1px solid #d91cd2',
+        color: '#d91cd2',
+        background: 'transparent',
+        fontSize: '12px',
+        fontWeight: 600,
+        textDecoration: 'none'
+      }}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+        <polyline points="15 3 21 3 21 9" />
+        <line x1="10" y1="14" x2="21" y2="3" />
+      </svg>
+      {(offer.external_link_label || '').trim() || 'Voir le site'}
+    </a>
+  );
+};
+
 // V255: horloge SVG, en remplacement de l'emoji ⏰ de la carte de session
 // (meme trace que LocationIcon ci-dessus, pour un rendu homogene).
 const ClockIcon = () => (
@@ -1439,6 +1483,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                         )}
                         {/* V159: Countdown Timer côté client */}
                         <VitrineCountdown offer={offer} />
+                        {/* V256: lien partenaire */}
+                        <VitrinePartnerLink offer={offer} />
                       </div>
                     </div>
                   </div>
@@ -1561,6 +1607,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                             )}
                             {/* V159: Countdown Timer côté client */}
                             <VitrineCountdown offer={offer} />
+                            {/* V256: lien partenaire */}
+                            <VitrinePartnerLink offer={offer} />
                           </div>
                         </div>
                       </div>

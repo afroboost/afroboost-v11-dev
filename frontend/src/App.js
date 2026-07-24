@@ -2571,7 +2571,52 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
             </div>
             )}
 
-            <div className="mt-3 flex items-center justify-end">
+            {/* V256: bouton secondaire vers le site d'un partenaire.
+                `flex-wrap` + `gap` : sur une carte etroite (280px minimum), un
+                libelle long comme « Réserve ton casque » passe a la ligne au
+                lieu de comprimer « Réserver ».
+                Rendu null pour toute offre sans lien active — donc invisible
+                sur 100 % des offres existantes. */}
+            <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+              {(() => {
+                if (!offer.external_link_enabled) return null;
+                const raw = typeof offer.external_link_url === 'string' ? offer.external_link_url.trim() : '';
+                // GARDE XSS, en defense en profondeur du filtre backend
+                // (_v256_normalize_external_link) : une URL `javascript:` posee
+                // en base avant ce filtre — ou par un autre chemin d'ecriture —
+                // s'executerait au clic du visiteur. Meme regle que le lien
+                // Maps du cours lie (V225, ~l.1840).
+                if (!/^https?:\/\//i.test(raw)) return null;
+                return (
+                  <a
+                    href={raw}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    /* stopPropagation VITAL : la carte entiere porte un onClick
+                       qui part en checkout. Sans lui, cliquer le lien
+                       partenaire declencherait AUSSI un paiement. */
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-xs px-3 py-2 rounded-lg font-semibold transition-all"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      border: '1px solid #D91CD2',
+                      color: '#D91CD2',
+                      background: 'transparent',
+                      textDecoration: 'none'
+                    }}
+                    data-testid={`offer-external-link-${offer.id}`}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                      <polyline points="15 3 21 3 21 9" />
+                      <line x1="10" y1="14" x2="21" y2="3" />
+                    </svg>
+                    {(offer.external_link_label || '').trim() || 'Voir le site'}
+                  </a>
+                );
+              })()}
               <button
                 type="button"
                 /* V226: on bloque aussi tant qu'une variante proposee n'est pas

@@ -1901,6 +1901,63 @@ export default function OfferWizard({
           </div>
         </div>
       )}
+
+      {/* V256: lien vers un site partenaire (ex. Spordateur), rendu en bouton
+          secondaire a cote de « Réserver » sur la carte publique.
+          Le bloc entier est conditionne au toggle : une offre qui ne l'active
+          pas — cas de TOUTES les offres existantes — n'affiche rien de plus ici
+          et rien de plus sur la vitrine.
+          Les deux champs restent montes dans le DOM une fois le toggle actif ;
+          decocher n'efface PAS l'URL saisie, elle est simplement masquee et
+          cesse d'etre publiee. Le coach peut donc reactiver le lien sans tout
+          retaper. */}
+      <div className="p-4 rounded-lg" style={{ border: `2px solid ${PINK}`, background: 'rgba(217,28,210,0.08)' }}>
+        <label className="text-sm font-bold mb-1 flex items-center gap-1.5" style={{ color: PINK, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={!!form.external_link_enabled}
+            onChange={(e) => set('external_link_enabled', e.target.checked)}
+            style={{ accentColor: PINK, width: 16, height: 16, cursor: 'pointer' }}
+          />
+          <SvgIcon name="externalLink" size={14} /> LIEN PARTENAIRE
+        </label>
+        {form.external_link_enabled ? (
+          <div className="mt-3 space-y-2">
+            <div>
+              <label className="block text-xs mb-1" style={LABEL_STYLE}>Adresse du site</label>
+              <input
+                type="url"
+                value={form.external_link_url || ''}
+                onChange={(e) => set('external_link_url', e.target.value)}
+                placeholder="https://spordateur.com"
+                style={INPUT_STYLE}
+                className="text-sm v224-input"
+              />
+            </div>
+            <div>
+              <label className="block text-xs mb-1" style={LABEL_STYLE}>Texte du bouton</label>
+              <input
+                type="text"
+                value={form.external_link_label || ''}
+                onChange={(e) => set('external_link_label', e.target.value)}
+                placeholder="Réserve ton casque"
+                style={INPUT_STYLE}
+                className="text-sm v224-input"
+              />
+            </div>
+            {/* Le backend n'accepte que http(s) — une saisie sans schema serait
+                silencieusement ignoree, autant le dire tout de suite. */}
+            <p className="text-xs" style={HINT_STYLE}>
+              L'adresse doit commencer par https:// — sinon le bouton ne sera pas publié.
+              Sans texte, le bouton affichera « Voir le site ».
+            </p>
+          </div>
+        ) : (
+          <p className="text-xs mt-2" style={HINT_STYLE}>
+            Activez pour afficher un bouton vers un site partenaire sur la carte de l'offre
+          </p>
+        )}
+      </div>
     </div>
   );
 

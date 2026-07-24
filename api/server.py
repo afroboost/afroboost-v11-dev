@@ -466,6 +466,14 @@ class Offer(BaseModel):
     # (idem : a declarer ici sinon filtree par le response_model).
     next_date: Optional[str] = None        # ISO datetime de la prochaine occurrence
     next_date_label: Optional[str] = None  # libelle court FR pret a afficher
+    # V256: lien vers un site partenaire, affiche en bouton secondaire sur la
+    # carte publique. Meme regle de symetrie que les libelles de paliers
+    # ci-dessus : ces trois champs DOIVENT exister a l'identique dans
+    # OfferCreate, sinon le `$set: offer.model_dump()` de PUT /offers les
+    # effacerait a chaque sauvegarde d'offre.
+    external_link_url: Optional[str] = None
+    external_link_label: Optional[str] = None
+    external_link_enabled: bool = False
 
 class OfferCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -518,6 +526,12 @@ class OfferCreate(BaseModel):
     countdown_date: Optional[str] = None
     countdown_time: Optional[str] = None
     countdown_text: Optional[str] = None
+    # V256: lien partenaire (voir le commentaire de symetrie dans Offer).
+    # `Union[bool, str]` pour le toggle, comme countdown_enabled juste au-dessus :
+    # le frontend peut envoyer "true"/"false" en chaine selon le controle utilise.
+    external_link_url: Optional[str] = None
+    external_link_label: Optional[str] = None
+    external_link_enabled: Union[bool, str] = False
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -1327,6 +1341,36 @@ async def get_offer_active_price(offer_id: str):
         raise HTTPException(status_code=404, detail="Offre introuvable")
     return compute_active_price(offer)
 
+def _v256_normalize_external_link(data: dict) -> None:
+    """V256: normalise le lien partenaire d'une offre, EN PLACE.
+
+    GARDE XSS — c'est la raison d'etre de cette fonction. L'URL est saisie a la
+    main par le coach dans le wizard, puis rendue en `href` sur la carte
+    PUBLIQUE. Une valeur `javascript:...` y serait executable par n'importe quel
+    visiteur. On n'accepte donc que http(s) ; toute autre valeur desactive le
+    lien plutot que d'etre stockee. Meme regle que le garde-fou deja applique a
+    `mapsUrl` cote client (App.js, V225).
+
+    Normalise aussi le toggle en vrai booleen (le frontend peut envoyer la
+    chaine "true"/"false", cf. `Union[bool, str]` dans OfferCreate) et coupe les
+    espaces. Un lien active sans URL exploitable est ramene a desactive : la
+    carte n'affichera jamais un bouton qui ne mene nulle part.
+    """
+    raw_url = data.get("external_link_url")
+    url = raw_url.strip() if isinstance(raw_url, str) else ""
+    # `startswith` et non une regex : `re` n'est pas importe au niveau module
+    # dans ce fichier (il l'est localement dans chaque fonction qui s'en sert).
+    if not url.lower().startswith(("http://", "https://")):
+        url = ""
+    raw_label = data.get("external_link_label")
+    label = raw_label.strip() if isinstance(raw_label, str) else ""
+    enabled = data.get("external_link_enabled")
+    enabled = enabled not in (False, "false", "0", 0, None, "")
+    data["external_link_url"] = url or None
+    data["external_link_label"] = label or None
+    data["external_link_enabled"] = bool(enabled and url)
+
+
 @api_router.post("/offers", response_model=Offer)
 async def create_offer(offer: OfferCreate, request: Request):
     require_auth(request)
@@ -1346,6 +1390,8 @@ async def create_offer(offer: OfferCreate, request: Request):
     # Normaliser is_auto_prolong
     iap = offer_data.get("is_auto_prolong")
     offer_data["is_auto_prolong"] = iap not in (False, "false", "0", 0, None)
+    # V256: lien partenaire — garde XSS + normalisation du toggle
+    _v256_normalize_external_link(offer_data)
     print(f"[V61 DEBUG] POST /offers duration_value={offer_data.get('duration_value')} duration_unit={offer_data.get('duration_unit')} is_auto_prolong={offer_data.get('is_auto_prolong')}")
     if user_email and not offer_data.get("coach_id"):
         offer_data["coach_id"] = user_email
@@ -1388,6 +1434,8 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
         update_data["duration_unit"] = None
     iap = update_data.get("is_auto_prolong")
     update_data["is_auto_prolong"] = iap not in (False, "false", "0", 0, None)
+    # V256: lien partenaire — garde XSS + normalisation du toggle
+    _v256_normalize_external_link(update_data)
     print(f"[V61 DEBUG] PUT /offers/{offer_id} duration_value={update_data.get('duration_value')} duration_unit={update_data.get('duration_unit')}")
     # v59: Recalculer expiration si durée modifiée
     if update_data.get("duration_value") and update_data.get("duration_unit"):
@@ -16070,6 +16118,69 @@ async def staff_login(request: Request):
     if not staff_code or code != staff_code:
         raise HTTPException(status_code=403, detail="Code invalide")
     return {"success": True, "role": "staff", "permissions": ["scan_qr", "view_reservations"]}
+
+
+@api_router.post("/staff/forgot-code")
+async def forgot_staff_code(request: Request):
+    """V256: renvoie le code staff par email a l'administrateur qui le demande.
+
+    PERIMETRE D'ACCES — reserve au Super Admin, DELIBEREMENT.
+    Le code staff est un secret unique a toute la plateforme : il ouvre les
+    reservations et le scanner. Le modifier exige deja `is_super_admin`
+    (PUT /platform-settings). Autoriser n'importe quel compte de `coaches` a se
+    le faire envoyer donnerait a chaque coach partenaire un secret qu'il n'a pas
+    le droit de changer — on aligne donc la lecture sur l'ecriture.
+
+    DESTINATAIRE — jamais une adresse fournie par la requete. On envoie a
+    l'email identifie, lequel vient de passer `is_super_admin`, donc appartient
+    forcement a la liste fermee SUPER_ADMIN_EMAILS. Le header X-User-Email etant
+    falsifiable, c'est ce qui empeche un tiers de se faire livrer le code : au
+    pire il declenche un envoi vers la boite de l'administrateur legitime.
+
+    Le corps de la requete n'est pas lu : il n'y a rien a y mettre.
+    """
+    email = request.headers.get("X-User-Email", "").lower().strip() or _email_from_jwt(request)
+    if not email:
+        raise HTTPException(status_code=401, detail="Authentification requise")
+    if not is_super_admin(email):
+        raise HTTPException(status_code=403, detail="Réservé à l'administrateur de la plateforme")
+
+    settings = await db.platform_settings.find_one({"_id": "global"}, {"_id": 0})
+    staff_code = ((settings or {}).get("staff_access_code") or "").strip()
+    if not staff_code:
+        raise HTTPException(status_code=404, detail="Aucun code staff n'est configuré")
+
+    if not (RESEND_AVAILABLE and RESEND_API_KEY):
+        logger.error("[V256] Envoi du code staff impossible : Resend non configure")
+        raise HTTPException(status_code=503, detail="Service d'email indisponible")
+
+    html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:420px;margin:0 auto;padding:24px;">
+        <h2 style="color:#d91cd2;margin:0 0 12px;">Code Staff Afroboost</h2>
+        <p style="color:#333;font-size:14px;">Voici le code staff actuellement actif :</p>
+        <div style="background:#1a1a2e;color:#fff;padding:16px;border-radius:8px;text-align:center;font-size:24px;font-weight:bold;letter-spacing:4px;margin:16px 0;">
+            {staff_code}
+        </div>
+        <p style="color:#888;font-size:12px;">Ce code donne accès aux réservations et au scanner QR. Ne le partagez qu'avec votre équipe sur place.</p>
+        <p style="color:#888;font-size:12px;">Si vous n'êtes pas à l'origine de cette demande, changez le code depuis le menu coach.</p>
+    </div>
+    """
+    try:
+        await asyncio.to_thread(resend.Emails.send, {
+            "from": "Afroboost <notifications@afroboost.com>",
+            "to": [email],
+            "subject": "Votre code Staff Afroboost",
+            "html": html
+        })
+    except Exception as e:
+        # Le code NE DOIT PAS repartir dans la reponse HTTP en cas d'echec :
+        # l'email est le seul canal, c'est ce qui garantit que seul le
+        # proprietaire de la boite le lit.
+        logger.error(f"[V256] Erreur envoi code staff a {email}: {e}")
+        raise HTTPException(status_code=500, detail="L'email n'a pas pu être envoyé")
+
+    logger.info(f"[V256] Code staff renvoye par email a {email}")
+    return {"status": "ok", "message": "Code envoyé par email"}
 
 # V197b: Quick replies du bot visiteurs — chargés depuis MongoDB, éditables par le coach
 V197B_DEFAULT_QUICK_REPLIES = [

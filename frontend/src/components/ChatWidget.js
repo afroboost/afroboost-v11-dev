@@ -1606,6 +1606,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
   // v162l: Staff modal mode: 'enter' (enter staff), 'unlock' (return to coach), 'change' (change code)
   var _csMod = useState('enter'); var staffModalMode = _csMod[0]; var setStaffModalMode = _csMod[1];
   var _csNew = useState(''); var staffNewCode = _csNew[0]; var setStaffNewCode = _csNew[1];
+  // V256: envoi du code staff par email (« Code oublie ? »). ES5 comme tout ce fichier.
+  var _csFgt = useState(false); var forgotStaffLoading = _csFgt[0]; var setForgotStaffLoading = _csFgt[1];
+  var _csFgtMsg = useState(''); var forgotStaffMsg = _csFgtMsg[0]; var setForgotStaffMsg = _csFgtMsg[1];
   // v162f: Coach profile photo
   var _cpro = useState(null); var coachProfile = _cpro[0]; var setCoachProfile = _cpro[1];
   // v162f: Coach emoji picker toggle (separate from chat emoji picker)
@@ -4563,6 +4566,31 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
     }
   };
 
+  // V256: « Code oublie ? » — le backend renvoie le code par email a
+  // l'administrateur. Le code n'est JAMAIS renvoye dans la reponse HTTP : la
+  // boite mail est le seul canal, c'est ce qui protege le secret.
+  // ES5 strict (var / function / concatenation) comme tout ce fichier.
+  var handleForgotStaffCode = function() {
+    if (forgotStaffLoading) return;
+    setForgotStaffLoading(true);
+    setForgotStaffMsg('');
+    setStaffLoginError('');
+    axios.post(API + '/staff/forgot-code', {}, {
+      headers: { 'X-User-Email': getCoachEmail() }
+    })
+      .then(function() {
+        setForgotStaffLoading(false);
+        // Message dans la modale plutot qu'une `alert()` : l'alerte native
+        // ferme le clavier et fait perdre la saisie en cours sur mobile.
+        setForgotStaffMsg('Code envoyé sur votre email.');
+      })
+      .catch(function(err) {
+        setForgotStaffLoading(false);
+        var msg = (err.response && err.response.data && err.response.data.detail) || 'Envoi impossible';
+        setStaffLoginError(msg);
+      });
+  };
+
   // v162f: Load coach profile on mount (for photo)
   var loadCoachProfile = function() {
     var email = getCoachEmail();
@@ -7124,6 +7152,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                               setStaffCode('');
                               setStaffNewCode('');
                               setStaffLoginError('');
+                              // V256: sans ce reset, le « Code envoye » d'une
+                              // ouverture precedente s'affiche d'entree.
+                              setForgotStaffMsg('');
                               setShowStaffLogin(true);
                             }}
                             style={{
@@ -7302,6 +7333,26 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                        staffModalMode === 'unlock' ? 'Entrez le code pour retrouver l\'accès complet' :
                        'Entrez le code actuel puis le nouveau code'}
                     </div>
+                    {/* V256: « Code oublie ? ». Affiche UNIQUEMENT en mode
+                        'change' : les modes 'enter' et 'unlock' servent au
+                        personnel sur place, a qui on ne propose pas de se faire
+                        envoyer le secret — l'email part de toute facon a
+                        l'administrateur, pas a celui qui clique. */}
+                    {staffModalMode === 'change' && (
+                      <span
+                        onClick={forgotStaffLoading ? undefined : handleForgotStaffCode}
+                        style={{
+                          color: '#d91cd2',
+                          fontSize: '11px',
+                          textDecoration: 'underline',
+                          cursor: forgotStaffLoading ? 'wait' : 'pointer',
+                          opacity: forgotStaffLoading ? 0.6 : 1
+                        }}
+                      >{forgotStaffLoading ? 'Envoi en cours…' : 'Code oublié ? Le recevoir par email'}</span>
+                    )}
+                    {forgotStaffMsg && (
+                      <div style={{ color: '#22c55e', fontSize: '11px', textAlign: 'center' }}>{forgotStaffMsg}</div>
+                    )}
                     <input
                       type="text"
                       value={staffCode}

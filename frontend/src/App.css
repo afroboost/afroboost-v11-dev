@@ -789,6 +789,23 @@ select option {
   outline: none;
 }
 
+/* V256 FIX 0: icone du selecteur de date/heure invisible.
+   Le champ est peint en sombre par le wizard (#0a0a0f) mais le navigateur
+   continuait de dessiner ses controles NATIFS en theme clair : le pictogramme
+   calendrier sortait en noir sur noir.
+   `color-scheme: dark` est la propriete standard qui bascule ces controles en
+   theme sombre — le pictogramme devient blanc, et le panneau du calendrier
+   s'ouvre lui aussi en sombre.
+   ATTENTION — ne PAS y ajouter
+   `::-webkit-calendar-picker-indicator { filter: invert(1) }` :
+   sur les navigateurs qui honorent color-scheme (tous les moteurs actuels),
+   l'icone est deja blanche et la double inversion la remettrait en noir. Les
+   deux techniques s'excluent, elles ne se cumulent pas. */
+input.v224-input[type="date"],
+input.v224-input[type="time"] {
+  color-scheme: dark;
+}
+
 /* Valid Code Input */
 .valid-code {
   border: 2px solid #22c55e !important;

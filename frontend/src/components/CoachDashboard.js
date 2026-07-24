@@ -2379,6 +2379,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       // champ. `??` et non `||` : la position 0 est la premiere place, legitime,
       // et `0 || null` vaudrait null.
       position: offer.position ?? null,
+      // V256: recharger le lien partenaire, sinon le wizard s'ouvre avec le
+      // toggle a OFF et l'enregistrement effacerait en base un lien deja
+      // configure — exactement le defaut corrige en V223/V225 sur les paliers.
+      external_link_url: offer.external_link_url || '',
+      external_link_label: offer.external_link_label || '',
+      external_link_enabled: !!offer.external_link_enabled,
     });
     setEditingOfferId(offer.id);
     // Scroll vers le formulaire
@@ -2404,7 +2410,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       label_early_bird: '', label_standard: '', label_last_minute: '',
       // V224
       videoUrl: '', linked_course_ids: [],
-      duration_minutes: '', location: '', max_participants: ''
+      duration_minutes: '', location: '', max_participants: '',
+      // V256: sans ce reset, le lien partenaire de l'offre precedente resterait
+      // pre-rempli — et publie — sur l'offre suivante.
+      external_link_url: '', external_link_label: '', external_link_enabled: false
     });
     setEditingOfferId(null);
   };
@@ -2502,7 +2511,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // V224 (revue finale): `position` doit traverser la liste blanche, sinon
         // l'ordre range a la main via les fleches ▲▼ est perdu des la premiere
         // modification de l'offre. `??` et non `||` : la position 0 est valide.
-        position: src.position ?? null
+        position: src.position ?? null,
+        // V256: lien partenaire. Meme piege que les paliers et `position`
+        // ci-dessus — cet objet est une LISTE BLANCHE, un champ absent d'ici est
+        // absent du PUT, donc remis a zero en base par le
+        // `$set: offer.model_dump()`. Le backend revalide l'URL (http(s)
+        // uniquement) et desactive le toggle si elle est vide.
+        external_link_url: (src.external_link_url || '').trim() || null,
+        external_link_label: (src.external_link_label || '').trim() || null,
+        external_link_enabled: !!src.external_link_enabled
       };
       console.log("[V61] Sending offerData:", JSON.stringify(offerData));
 
@@ -2542,7 +2559,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       label_early_bird: '', label_standard: '', label_last_minute: '',
       // V224
       videoUrl: '', linked_course_ids: [],
-      duration_minutes: '', location: '', max_participants: ''
+      duration_minutes: '', location: '', max_participants: '',
+      // V256: idem — le lien partenaire ne doit pas se reporter sur l'offre suivante.
+      external_link_url: '', external_link_label: '', external_link_enabled: false
       });
       return true; // V224: enregistrement reussi
     } catch (err) {
