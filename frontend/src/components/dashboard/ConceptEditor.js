@@ -1060,9 +1060,15 @@ const ConceptEditor = ({
                     ) : /\.(mp4|webm|mov|m4v|ogv)(\?|#|$)/i.test(concept.eventPosterMediaUrl) ? (
                       /* V247 BUG6: une URL video (.mp4 Cloudinary...) etait rendue
                          en <img>, d'ou l'apercu casse. On la rend en <video>. */
+                      /* V258: meme regle d'affichage que la vitrine
+                         (objectFit: contain + fond noir) — l'apercu doit
+                         montrer ce que le visiteur verra, sinon le coach cadre
+                         son affiche sur un rendu qui n'est pas le bon.
+                         `controls` est CONSERVE ici : au dashboard il sert a
+                         verifier la video, et aucun bouton ne s'y superpose. */
                       <video
                         src={concept.eventPosterMediaUrl}
-                        className="w-full"
+                        style={{ width: '100%', display: 'block', maxHeight: 300, objectFit: 'contain', background: '#000' }}
                         controls
                         muted
                         playsInline
@@ -1072,7 +1078,7 @@ const ConceptEditor = ({
                       <img
                         src={concept.eventPosterMediaUrl}
                         alt="Aperçu affiche événement"
-                        className="w-full"
+                        style={{ width: '100%', display: 'block', maxHeight: 300, objectFit: 'contain', background: '#000' }}
                         onError={(e) => { e.target.src = ''; e.target.alt = 'Image non valide'; }}
                       />
                     )}

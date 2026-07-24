@@ -3453,10 +3453,23 @@ const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers, reserveLa
                superposait exactement a l'endroit ou se posent maintenant les
                boutons, et captait leurs clics. La video est de toute facon
                muette et en boucle : il n'y a rien a piloter. */
+            /* V258: `object-cover` -> `objectFit: contain`. En `cover`, une
+               affiche dont le ratio differe du cadre etait ROGNEE : une video
+               verticale 9:16 perdait le haut et le bas. En `contain`, le
+               fichier garde ses proportions exactes, quel qu'en soit le
+               format, et le fond noir habille les bandes eventuelles.
+               Les classes Tailwind de dimension sont remplacees par des styles
+               inline : `object-cover` y cohabitait avec un `objectFit` inline
+               et il fallait deux endroits pour comprendre une seule regle. */
             <video
               src={mediaUrl}
-              className="w-full h-auto max-h-[70vh] object-cover"
-              style={{ display: 'block' }}
+              style={{
+                width: '100%',
+                display: 'block',
+                maxHeight: '80vh',
+                objectFit: 'contain',
+                background: '#000'
+              }}
               autoPlay
               muted
               loop
@@ -3466,8 +3479,13 @@ const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers, reserveLa
             <img
               src={mediaUrl}
               alt="Événement Afroboost"
-              className="w-full h-auto max-h-[70vh] object-cover"
-              style={{ display: 'block' }}
+              style={{
+                width: '100%',
+                display: 'block',
+                maxHeight: '80vh',
+                objectFit: 'contain',
+                background: '#000'
+              }}
               onError={(e) => { e.target.style.display = 'none'; }}
             />
           )}
@@ -3477,59 +3495,90 @@ const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers, reserveLa
               opaque sous l'image coupait le visuel en deux.
               Le bloc n'est rendu que si un handler est fourni : une modale
               montee sans eux garde le rendu d'origine. */}
-          {(onReserve || onSeeOffers) && (
+          {/* V258: un bouton dont le LIBELLE est vide n'est plus rendu.
+              Vider le champ au dashboard etait sans effet : le repli
+              `|| 'Réserver'` le reaffichait aussitot. Le libelle vide est
+              desormais lu comme « je ne veux pas de ce bouton », et le
+              bandeau degrade lui-meme disparait quand les deux sont vides —
+              sinon il restait une bande sombre sans rien dedans.
+              Le repli sur les libelles par defaut n'a pas disparu : il est
+              remonte au point d'appel, ou l'on sait distinguer un champ JAMAIS
+              renseigne (-> defaut) d'un champ VIDE volontairement (-> masque). */}
+          {((onReserve && reserveLabel) || (onSeeOffers && offersLabel)) && (
             <div
               style={{
                 position: 'absolute',
                 bottom: 0,
                 left: 0,
                 right: 0,
-                background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
-                padding: '40px 20px 20px',
+                background: 'linear-gradient(transparent, rgba(0,0,0,0.7))',
+                padding: '32px 16px 16px',
                 display: 'flex',
-                gap: 10,
+                gap: 8,
                 justifyContent: 'center',
                 flexWrap: 'wrap'
               }}
             >
-              {onReserve && (
+              {/* V258: boutons plus discrets — 8px/18px au lieu de 10px/24px,
+                  0.8rem au lieu de 0.9rem, fond semi-transparent plutot que
+                  plein, et une icone SVG devant le texte. Ils se posent sur
+                  l'affiche du coach : ils doivent la servir, pas la masquer. */}
+              {onReserve && reserveLabel && (
                 <button
                   type="button"
                   onClick={() => { onClose(); onReserve(); }}
                   style={{
-                    background: '#D91CD2',
+                    background: 'rgba(217,28,210,0.85)',
                     color: '#fff',
                     border: 'none',
-                    padding: '10px 24px',
-                    borderRadius: 25,
-                    fontSize: '0.9rem',
+                    padding: '8px 18px',
+                    borderRadius: 20,
+                    fontSize: '0.8rem',
                     fontWeight: 600,
-                    cursor: 'pointer'
+                    cursor: 'pointer',
+                    backdropFilter: 'blur(8px)',
+                    WebkitBackdropFilter: 'blur(8px)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6
                   }}
                   data-testid="event-poster-reserve"
                 >
-                  {reserveLabel || 'Réserver'}
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                  </svg>
+                  {reserveLabel}
                 </button>
               )}
-              {onSeeOffers && (
+              {onSeeOffers && offersLabel && (
                 <button
                   type="button"
                   onClick={() => { onClose(); onSeeOffers(); }}
                   style={{
-                    background: 'rgba(255,255,255,0.15)',
+                    background: 'rgba(255,255,255,0.12)',
                     color: '#fff',
-                    border: '1px solid rgba(255,255,255,0.4)',
-                    padding: '10px 24px',
-                    borderRadius: 25,
-                    fontSize: '0.9rem',
+                    border: '1px solid rgba(255,255,255,0.3)',
+                    padding: '8px 18px',
+                    borderRadius: 20,
+                    fontSize: '0.8rem',
                     fontWeight: 600,
                     cursor: 'pointer',
                     backdropFilter: 'blur(8px)',
-                    WebkitBackdropFilter: 'blur(8px)'
+                    WebkitBackdropFilter: 'blur(8px)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6
                   }}
                   data-testid="event-poster-offers"
                 >
-                  {offersLabel || 'Nos offres'}
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                    <line x1="7" y1="7" x2="7.01" y2="7" />
+                  </svg>
+                  {offersLabel}
                 </button>
               )}
             </div>
@@ -6368,10 +6417,15 @@ function App() {
         <EventPosterModal
           mediaUrl={concept.eventPosterMediaUrl}
           onClose={closeEventPoster}
-          /* V257b: libelles personnalises par le coach (ConceptEditor). Le
-             repli sur les libelles d'origine est dans le composant. */
-          reserveLabel={concept.eventPosterReserveLabel}
-          offersLabel={concept.eventPosterOffersLabel}
+          /* V257b: libelles personnalises par le coach (ConceptEditor).
+             V258 — le repli est REMONTE ici, et il ne se declenche QUE sur
+             `undefined`, jamais sur la chaine vide. C'est la seule couche qui
+             sache faire la difference entre :
+              - champ JAMAIS renseigne (absent en base) -> libelle par defaut ;
+              - champ VIDE volontairement par le coach -> bouton masque.
+             Un `||` melangeait les deux et rendait le vidage inoperant. */
+          reserveLabel={concept.eventPosterReserveLabel === undefined ? 'Réserver' : concept.eventPosterReserveLabel}
+          offersLabel={concept.eventPosterOffersLabel === undefined ? 'Nos offres' : concept.eventPosterOffersLabel}
           /* V257: « Réserver » selectionne la premiere offre visible puis
              descend jusqu'au bloc des offres.
              `visibleServices` (~l.6099) est la source : deja filtree sur
