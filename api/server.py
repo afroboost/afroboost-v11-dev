@@ -5255,6 +5255,51 @@ V261_MAX_ACTIVE_PER_CODE = 10
 # finit en `src` sur la vitrine. Sans ce filtre, n'importe qui pourrait y placer
 # l'URL de son choix — pistage, contenu heberge ailleurs, ou simple lien mort.
 V261_MEDIA_PREFIX = "https://res.cloudinary.com/"
+# Dossier Cloudinary reserve aux publications. C'est la CLE de la garde de
+# suppression : tout ce qui vit ailleurs (affiches `events/`, visuels d'offres,
+# logos) est hors d'atteinte de la purge, quoi qu'annonce le client.
+V261_FOLDER = "publications/"
+
+
+def _v261_public_id_from_url(media_url: str) -> str:
+    """V261: deduit l'identifiant Cloudinary depuis l'URL de livraison.
+
+    L'identifiant N'EST PLUS accepte du client : il finissait en argument de
+    `cloudinary.uploader.destroy()`. Un abonne muni d'un code valide pouvait
+    publier une image anodine en declarant l'identifiant du media d'un AUTRE —
+    l'affiche evenement du coach, par exemple — et la purge a 48 h effacait ce
+    media-la. On le derive donc de l'URL, elle-meme deja validee.
+
+    Forme attendue :
+      https://res.cloudinary.com/<cloud>/<type>/upload/v<version>/publications/<nom>.<ext>
+    -> publications/<nom>
+
+    Toute forme inattendue (transformation intercalee, dossier different)
+    renvoie "" : on echoue en FERMETURE — au pire le fichier distant survit,
+    jamais on ne supprime a l'aveugle.
+    """
+    try:
+        marker = "/upload/"
+        if marker not in media_url:
+            return ""
+        tail = media_url.split(marker, 1)[1].split("?")[0].split("#")[0]
+        parts = [p for p in tail.split("/") if p]
+        # Segment de version « v1784808835 » : seul segment technique attendu.
+        if parts and len(parts[0]) > 1 and parts[0][0] == "v" and parts[0][1:].isdigit():
+            parts.pop(0)
+        if not parts:
+            return ""
+        if "." in parts[-1]:
+            parts[-1] = parts[-1].rsplit(".", 1)[0]
+        public_id = "/".join(parts)
+        # Garde finale : hors du dossier des publications, on ne rend rien.
+        # `..` est refuse explicitement — « publications/../events/x » commence
+        # bien par le bon prefixe tout en designant un AUTRE dossier.
+        if ".." in public_id.split("/"):
+            return ""
+        return public_id if public_id.startswith(V261_FOLDER) else ""
+    except Exception:
+        return ""
 
 
 async def _v261_resolve_subscriber(code: str):
@@ -5297,6 +5342,12 @@ def _v261_cloudinary_destroy(public_id: str, media_type: str) -> None:
     base. On perd le fichier distant, pas la coherence de la vitrine.
     """
     if not public_id:
+        return
+    # SECONDE BARRIERE — on ne supprime jamais hors du dossier des
+    # publications, meme si un identifiant douteux a atteint la base par un
+    # autre chemin (ligne ecrite avant cette garde, import, ecriture directe).
+    if not str(public_id).startswith(V261_FOLDER) or ".." in str(public_id).split("/"):
+        logger.warning(f"[V261] Suppression refusee, identifiant hors du dossier publications: {public_id}")
         return
     try:
         api_key = os.environ.get("CLOUDINARY_API_KEY", "")
@@ -5360,7 +5411,10 @@ async def create_publication(request: Request):
     code = body.get("subscriber_code", "").strip().upper()
 
     media_url = (body.get("media_url") or "").strip()
-    if not media_url.startswith(V261_MEDIA_PREFIX):
+    # V261b: le media doit non seulement venir de Cloudinary, mais vivre dans le
+    # dossier `publications/`. C'est ce qui cantonne la purge automatique a ce
+    # dossier et met les medias du coach hors de sa portee.
+    if not media_url.startswith(V261_MEDIA_PREFIX) or ("/" + V261_FOLDER) not in media_url:
         raise HTTPException(status_code=400, detail="Média invalide")
     media_type = "video" if body.get("media_type") == "video" else "image"
 
@@ -5381,7 +5435,10 @@ async def create_publication(request: Request):
         "subscriber_name": subscriber_name,
         "media_url": media_url,
         "media_type": media_type,
-        "cloudinary_public_id": (body.get("cloudinary_public_id") or "").strip(),
+        # V261b: DERIVE de l'URL, jamais recu du client — voir
+        # _v261_public_id_from_url. Le `cloudinary_public_id` du corps de la
+        # requete est desormais ignore.
+        "cloudinary_public_id": _v261_public_id_from_url(media_url),
         # ISO en chaine, comme le reste des dates de la base — les comparaisons
         # `$gt` / `$lte` restent exactes, l'ISO UTC etant ordonnable en texte.
         "created_at": now.isoformat(),

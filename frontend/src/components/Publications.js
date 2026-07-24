@@ -130,11 +130,13 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
       // when using unsigned upload »). Le cadrage 9:16 est fait a l'affichage
       // par `objectFit: cover`, ce qui evite aussi de deteriorer l'original.
       const cloudRes = await axios.post(endpoint, formData);
+      // V261b: `cloudinary_public_id` n'est PLUS envoye — le serveur le derive
+      // lui-meme de l'URL. Il finissait en argument de `destroy()` : un client
+      // pouvait y designer le media d'un autre et le faire effacer.
       await axios.post(`${API}/publications`, {
         subscriber_code: subscriberCode,
         media_url: cloudRes.data.secure_url,
-        media_type: mediaType,
-        cloudinary_public_id: cloudRes.data.public_id
+        media_type: mediaType
       });
       setUploading(false);
       if (onPublished) onPublished();
