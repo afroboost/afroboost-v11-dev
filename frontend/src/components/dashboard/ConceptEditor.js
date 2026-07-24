@@ -1000,7 +1000,35 @@ const ConceptEditor = ({
                   />
                 </div>
               </div>
-              
+
+              {/* V257b: libelles des deux boutons poses sur l'affiche.
+                  Laisses vides, la vitrine affiche « Réserver » et « Nos
+                  offres » — les valeurs qui etaient codees en dur. */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block mb-1 text-white text-xs opacity-70">Texte bouton 1</label>
+                  <input
+                    type="text"
+                    value={concept.eventPosterReserveLabel || ''}
+                    onChange={(e) => setConcept({ ...concept, eventPosterReserveLabel: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg neon-input text-sm"
+                    placeholder="Réserver"
+                    data-testid="event-poster-reserve-label"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 text-white text-xs opacity-70">Texte bouton 2</label>
+                  <input
+                    type="text"
+                    value={concept.eventPosterOffersLabel || ''}
+                    onChange={(e) => setConcept({ ...concept, eventPosterOffersLabel: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg neon-input text-sm"
+                    placeholder="Nos offres"
+                    data-testid="event-poster-offers-label"
+                  />
+                </div>
+              </div>
+
               {concept.eventPosterMediaUrl && (
                 <div className="mt-3">
                   <label className="block mb-2 text-white text-xs opacity-70">Aperçu :</label>

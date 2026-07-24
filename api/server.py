@@ -743,6 +743,11 @@ class Concept(BaseModel):
     # Affiche Événement (popup)
     eventPosterEnabled: bool = False
     eventPosterMediaUrl: str = ""  # URL image ou vidéo
+    # V257b: libelles des deux boutons de l'affiche, editables au dashboard.
+    # Valeurs par defaut = ce qui etait code en dur cote vitrine, donc une
+    # affiche deja configuree rend exactement la meme chose qu'avant.
+    eventPosterReserveLabel: str = "Réserver"
+    eventPosterOffersLabel: str = "Nos offres"
     # Personnalisation des couleurs
     primaryColor: str = "#D91CD2"  # Couleur principale (glow)
     secondaryColor: str = "#8b5cf6"  # Couleur secondaire
@@ -774,6 +779,9 @@ class ConceptUpdate(BaseModel):
     # Affiche Événement (popup)
     eventPosterEnabled: Optional[bool] = None
     eventPosterMediaUrl: Optional[str] = None
+    # V257b: libelles des boutons (voir Concept ci-dessus)
+    eventPosterReserveLabel: Optional[str] = None
+    eventPosterOffersLabel: Optional[str] = None
     # Personnalisation des couleurs
     primaryColor: Optional[str] = None
     secondaryColor: Optional[str] = None
@@ -16150,6 +16158,10 @@ async def forgot_staff_code(request: Request):
         known = await db.coaches.find_one({"email": email}, {"_id": 0, "email": 1})
         if not known:
             known = await db.coach_auth.find_one({"email": email}, {"_id": 0, "email": 1})
+        if not known:
+            # V257b: derniere collection d'authentification possible. Une
+            # collection absente renvoie simplement None, sans erreur.
+            known = await db.users_auth.find_one({"email": email}, {"_id": 0, "email": 1})
         if not known:
             raise HTTPException(status_code=403, detail="Accès refusé")
 

@@ -3345,7 +3345,9 @@ const QRScannerModal = ({ onClose, onValidate, scanResult, scanError, onManualVa
 // V257: `onReserve` / `onSeeOffers` sont OPTIONNELS — sans eux, la modale rend
 // exactement ce qu'elle rendait avant (media + croix de fermeture), donc aucun
 // autre point de montage n'est affecte.
-const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers }) => {
+// V257b: `reserveLabel` / `offersLabel` viennent du concept (editables au
+// dashboard). Absents, les libelles d'origine sont conserves.
+const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers, reserveLabel, offersLabel }) => {
   const [mediaType, setMediaType] = useState('image');
   
   useEffect(() => {
@@ -3386,38 +3388,55 @@ const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers }) => {
       style={{ background: 'rgba(0, 0, 0, 0.85)' }}
       onClick={onClose}
     >
+      {/* V257b: la carte ne porte plus ni fond degrade ni bordure — le media
+          l'occupe entierement, coins arrondis a 20px et halo #D91CD2. Le fond
+          sombre restait visible en bandes de part et d'autre d'une affiche qui
+          ne remplissait pas le cadre.
+          `maxWidth: 480` (au lieu de max-w-2xl = 672px) : meme cadrage compact
+          sur mobile et sur desktop, comme demande. */}
       <div
-        className="relative max-w-2xl w-full rounded-xl overflow-hidden"
+        className="relative w-full overflow-hidden"
         style={{
-          background: 'linear-gradient(180deg, #0a0a0f 0%, #1a0a1f 100%)',
-          border: '2px solid rgba(217, 28, 210, 0.5)',
-          boxShadow: '0 0 30px rgba(217, 28, 210, 0.12)',
-          // V257: filet de securite pour les boutons ajoutes sous le media —
-          // sur un ecran court, la carte defile au lieu de deborder de l'ecran
-          // en emportant les boutons hors de vue.
-          maxHeight: '92vh',
-          overflowY: 'auto'
+          maxWidth: 480,
+          borderRadius: 20,
+          boxShadow: '0 0 40px rgba(217, 28, 210, 0.3)',
+          maxHeight: '92vh'
         }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close Button */}
-        <button 
+        {/* V257b: le « × » etait un caractere Unicode. Remplace par un SVG,
+            conformement a la regle « toutes les icones en SVG ». */}
+        <button
           onClick={onClose}
-          className="absolute top-3 right-3 z-10 w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110"
-          style={{ 
-            background: 'rgba(0, 0, 0, 0.7)',
-            border: '1px solid rgba(255, 255, 255, 0.3)'
+          className="absolute top-3 right-3 z-10 rounded-full flex items-center justify-center transition-all hover:scale-110"
+          style={{
+            width: 32,
+            height: 32,
+            background: 'rgba(0, 0, 0, 0.6)',
+            border: 'none',
+            color: '#fff',
+            cursor: 'pointer',
+            backdropFilter: 'blur(4px)',
+            WebkitBackdropFilter: 'blur(4px)'
           }}
+          aria-label="Fermer"
           data-testid="close-event-poster"
         >
-          <span className="text-white text-2xl font-light">×</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
         </button>
-        
+
         {/* Media Content */}
-        <div className="w-full">
+        {/* V257b: `position: relative` — les boutons sont desormais poses EN
+            SUPERPOSITION sur le media (voir le bandeau degrade plus bas), et
+            non plus dans une bande sous lui. */}
+        <div className="w-full" style={{ position: 'relative' }}>
           {mediaType === 'video' ? (
             <div className="aspect-video">
-              <iframe 
+              <iframe
                 src={getVideoEmbed()}
                 className="w-full h-full"
                 frameBorder="0"
@@ -3430,13 +3449,14 @@ const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers }) => {
             /* V249: une video directe (.mp4 Cloudinary...) n'est ni YouTube ni
                Vimeo — elle tombait dans le <img> et s'affichait cassee. Rendue
                en <video>. Le fix V247 ne couvrait que l'apercu du dashboard. */
-            /* V257: 80vh -> 68vh, pour que les boutons d'action ajoutes juste
-               dessous tiennent dans l'ecran sans defilement. Un appel a
-               l'action qu'il faut aller chercher n'en est pas un. */
+            /* V257b: `controls` RETIRE — la barre de lecture native se
+               superposait exactement a l'endroit ou se posent maintenant les
+               boutons, et captait leurs clics. La video est de toute facon
+               muette et en boucle : il n'y a rien a piloter. */
             <video
               src={mediaUrl}
-              className="w-full h-auto max-h-[68vh] object-contain"
-              controls
+              className="w-full h-auto max-h-[70vh] object-cover"
+              style={{ display: 'block' }}
               autoPlay
               muted
               loop
@@ -3446,76 +3466,75 @@ const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers }) => {
             <img
               src={mediaUrl}
               alt="Événement Afroboost"
-              className="w-full h-auto max-h-[68vh] object-contain"
+              className="w-full h-auto max-h-[70vh] object-cover"
+              style={{ display: 'block' }}
               onError={(e) => { e.target.style.display = 'none'; }}
             />
           )}
-        </div>
 
-        {/* V257: appels a l'action sous l'affiche. Le popup ne proposait que sa
-            croix de fermeture : un visiteur convaincu par l'affiche n'avait
-            aucun chemin vers la reservation.
-            Le bloc entier n'est rendu que si au moins un handler est fourni —
-            une modale montee sans eux garde son rendu d'origine. */}
-        {(onReserve || onSeeOffers) && (
-          <div
-            style={{
-              display: 'flex',
-              gap: 12,
-              justifyContent: 'center',
-              flexWrap: 'wrap',
-              padding: '16px'
-            }}
-          >
-            {onReserve && (
-              <button
-                type="button"
-                onClick={() => { onClose(); onReserve(); }}
-                style={{
-                  background: '#D91CD2',
-                  color: '#fff',
-                  border: 'none',
-                  padding: '12px 32px',
-                  borderRadius: 25,
-                  fontSize: '1rem',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 8
-                }}
-                data-testid="event-poster-reserve"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                  <line x1="16" y1="2" x2="16" y2="6" />
-                  <line x1="8" y1="2" x2="8" y2="6" />
-                  <line x1="3" y1="10" x2="21" y2="10" />
-                </svg>
-                Réserver
-              </button>
-            )}
-            {onSeeOffers && (
-              <button
-                type="button"
-                onClick={() => { onClose(); onSeeOffers(); }}
-                style={{
-                  background: 'transparent',
-                  color: '#D91CD2',
-                  border: '2px solid #D91CD2',
-                  padding: '12px 32px',
-                  borderRadius: 25,
-                  fontSize: '1rem',
-                  fontWeight: 700,
-                  cursor: 'pointer'
-                }}
-                data-testid="event-poster-offers"
-              >
-                Nos offres
-              </button>
-            )}
-          </div>
-        )}
+          {/* V257b: appels a l'action POSES SUR le media, sur un degrade noir
+              qui garantit la lisibilite quelle que soit l'affiche — une bande
+              opaque sous l'image coupait le visuel en deux.
+              Le bloc n'est rendu que si un handler est fourni : une modale
+              montee sans eux garde le rendu d'origine. */}
+          {(onReserve || onSeeOffers) && (
+            <div
+              style={{
+                position: 'absolute',
+                bottom: 0,
+                left: 0,
+                right: 0,
+                background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
+                padding: '40px 20px 20px',
+                display: 'flex',
+                gap: 10,
+                justifyContent: 'center',
+                flexWrap: 'wrap'
+              }}
+            >
+              {onReserve && (
+                <button
+                  type="button"
+                  onClick={() => { onClose(); onReserve(); }}
+                  style={{
+                    background: '#D91CD2',
+                    color: '#fff',
+                    border: 'none',
+                    padding: '10px 24px',
+                    borderRadius: 25,
+                    fontSize: '0.9rem',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                  data-testid="event-poster-reserve"
+                >
+                  {reserveLabel || 'Réserver'}
+                </button>
+              )}
+              {onSeeOffers && (
+                <button
+                  type="button"
+                  onClick={() => { onClose(); onSeeOffers(); }}
+                  style={{
+                    background: 'rgba(255,255,255,0.15)',
+                    color: '#fff',
+                    border: '1px solid rgba(255,255,255,0.4)',
+                    padding: '10px 24px',
+                    borderRadius: 25,
+                    fontSize: '0.9rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    backdropFilter: 'blur(8px)',
+                    WebkitBackdropFilter: 'blur(8px)'
+                  }}
+                  data-testid="event-poster-offers"
+                >
+                  {offersLabel || 'Nos offres'}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -6349,6 +6368,10 @@ function App() {
         <EventPosterModal
           mediaUrl={concept.eventPosterMediaUrl}
           onClose={closeEventPoster}
+          /* V257b: libelles personnalises par le coach (ConceptEditor). Le
+             repli sur les libelles d'origine est dans le composant. */
+          reserveLabel={concept.eventPosterReserveLabel}
+          offersLabel={concept.eventPosterOffersLabel}
           /* V257: « Réserver » selectionne la premiere offre visible puis
              descend jusqu'au bloc des offres.
              `visibleServices` (~l.6099) est la source : deja filtree sur

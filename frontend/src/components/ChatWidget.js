@@ -7365,17 +7365,36 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                         un appareil passe en mode staff, pas forcement entre les
                         mains du coach, et l'email partirait de toute facon a
                         l'adresse du compte connecte. */}
+                    {/* V257b: bouton ICONE (enveloppe SVG) a la place du lien
+                        texte souligne. <button> et non <span> : c'est une
+                        action, elle doit etre atteignable au clavier et
+                        annoncee comme telle par un lecteur d'ecran. */}
                     {staffModalMode !== 'unlock' && (
-                      <span
+                      <button
+                        type="button"
                         onClick={forgotStaffLoading ? undefined : handleForgotStaffCode}
+                        disabled={forgotStaffLoading}
+                        title="Recevoir le code par email"
+                        aria-label="Recevoir le code par email"
                         style={{
-                          color: '#D91CD2',
-                          fontSize: '11px',
-                          textDecoration: 'underline',
+                          background: 'none',
+                          border: 'none',
+                          padding: '6px',
                           cursor: forgotStaffLoading ? 'wait' : 'pointer',
-                          opacity: forgotStaffLoading ? 0.6 : 1
+                          opacity: forgotStaffLoading ? 0.5 : 1,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px'
                         }}
-                      >{forgotStaffLoading ? 'Envoi en cours…' : 'Code oublié ? Recevoir par email'}</span>
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#D91CD2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+                          <polyline points="22,7 12,13 2,7"></polyline>
+                        </svg>
+                        <span style={{ color: '#D91CD2', fontSize: '11px' }}>
+                          {forgotStaffLoading ? 'Envoi…' : 'Code oublié ?'}
+                        </span>
+                      </button>
                     )}
                     {forgotStaffMsg && (
                       <div style={{
