@@ -6,8 +6,8 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v215';
-var SW_VERSION = 215;
+var CACHE_NAME = 'afroboost-v265'; // V265: bump pour forcer les clients caches sur le bundle V263
+var SW_VERSION = 265;
 
 var PRECACHE_URLS = [
   '/',

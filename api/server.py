@@ -117,26 +117,33 @@ def require_auth(request: Request) -> str:
     Identifie l'appelant d'une route d'écriture. Retourne son email en
     minuscules, ou leve HTTP 401.
 
-    V262 — LE JWT FAIT DESORMAIS FOI.
-    Jusqu'ici cette fonction ne lisait que `X-User-Email`, un en-tete que
-    N'IMPORTE QUI peut ecrire : un `curl` suffisait a agir au nom d'un coach sur
-    les ~28 routes qui l'utilisent. On verifie maintenant en priorite la
-    SIGNATURE du JWT (HS256, meme secret que generate_jwt_token).
+    V262 puis V265 — LE JWT FAIT FOI, MAIS L'EN-TETE RESTE UN REPLI TRANSITOIRE.
 
-    BASCULE PROGRESSIVE, volontairement pilotee par la presence de JWT_SECRET :
-      - secret ABSENT  -> repli sur `X-User-Email`, comportement d'avant a
-        l'identique. Le site continue de tourner tel quel, rien ne casse.
-      - secret PRESENT -> seul un JWT valide est accepte. `X-User-Email` n'est
-        plus une preuve d'identite, la falsification cesse.
-    Poser la variable d'environnement suffit donc a activer la securite, sans
-    nouveau deploiement de code — et la retirer suffit a revenir en arriere si
-    quelque chose se passait mal.
+    Jusqu'a V262 cette fonction ne lisait que `X-User-Email`, un en-tete que
+    N'IMPORTE QUI peut ecrire : un `curl` suffisait a agir au nom d'un coach.
+    On verifie donc en priorite la SIGNATURE du JWT (HS256).
 
-    CONSEQUENCE A CONNAITRE : le jour ou le secret est pose, les sessions
-    ouvertes AVANT ne portent pas de jeton valide (generate_jwt_token renvoyait
-    une chaine vide sans secret). Leurs requetes d'ecriture repondront 401 avec
-    l'en-tete `X-Auth-Reason: jwt-required` — le frontend s'en sert pour
-    reconduire proprement vers l'ecran de connexion (App.js, V262).
+    V265 — POURQUOI le repli est REVENU. La V262 refusait (401) toute requete
+    sans JWT valide des que le secret etait pose. Mais les sessions ouvertes
+    AVANT n'ont aucun jeton (generate_jwt_token renvoie "" sans secret) : poser
+    le secret cassait donc d'un coup uploads et publications pour TOUT LE MONDE.
+    Le seul moyen d'obtenir un jeton est de se reconnecter APRES l'activation,
+    ce qu'on ne peut pas imposer a tous les abonnes en meme temps.
+
+    D'ou le mode TRANSITOIRE, secret present :
+      1. JWT valide  -> identite du jeton (chemin sur, cible finale).
+      2. pas de JWT valide MAIS `X-User-Email` present -> accepte, avec un
+         WARNING logue. C'est le pont qui laisse vivre les anciennes sessions
+         pendant que chacune, en se reconnectant, recupere un vrai jeton.
+      3. rien d'exploitable -> 401.
+
+    COMPROMIS ASSUME ET TEMPORAIRE : tant que l'etape 2 existe, `X-User-Email`
+    est de nouveau falsifiable — le gain de securite de la V262 est neutralise
+    pendant la transition. La sortie se lit dans les logs : quand les WARNING
+    « [V265] repli X-User-Email » cessent, tout le monde a migre et on peut
+    RETIRER l'etape 2 (une version dediee) pour revenir au JWT strict.
+
+    Secret ABSENT : comportement d'avant a l'identique (en-tete seul).
     """
     secret = os.environ.get("JWT_SECRET", "")
 
@@ -151,35 +158,31 @@ def require_auth(request: Request) -> str:
                 email = (payload.get("email") or "").lower().strip()
                 if email:
                     return email
-            except Exception as e:
-                # Jeton expire ou falsifie : on le dit clairement plutot que de
-                # retomber sur l'en-tete, qui annulerait tout le benefice.
-                raise HTTPException(
-                    status_code=401,
-                    detail="Session expirée ou invalide — reconnectez-vous",
-                    headers={"X-Auth-Reason": "jwt-invalid"}
-                ) from e
+            except Exception:
+                # V265: jeton expire/invalide -> on NE 401 PAS ici. On retombe
+                # sur l'en-tete (etape 2), sinon une session de plus de 7 jours
+                # serait deconnectee de force alors que le repli la ferait vivre.
+                pass
 
-    # 2) Secret configure mais aucun jeton : acces refuse.
-    if secret:
-        raise HTTPException(
-            status_code=401,
-            detail="Session expirée — reconnectez-vous",
-            headers={"X-Auth-Reason": "jwt-required"}
-        )
-
-    # 3) Secret absent : repli historique, strictement le comportement d'avant.
+    # 2) Repli transitoire (V265) OU historique : l'en-tete X-User-Email.
+    #    Accepte que le secret soit pose ou non — c'est ce qui evite de casser
+    #    les sessions le jour de l'activation.
     email = request.headers.get("X-User-Email", "").lower().strip()
-    if not email:
-        raise HTTPException(
-            status_code=401,
-            detail="Authentification requise : header X-User-Email manquant"
-        )
-    logger.warning(
-        "[V262] Authentification par X-User-Email (non signee) pour %s — "
-        "posez JWT_SECRET dans l'environnement pour securiser", email
+    if email:
+        if secret:
+            logger.warning(
+                "[V265] repli X-User-Email (non signe) pour %s — session non "
+                "encore reconnectee depuis l'activation de JWT_SECRET", email
+            )
+        return email
+
+    # 3) Ni jeton exploitable ni en-tete : refus. `X-Auth-Reason` seulement si
+    #    le secret est pose, pour que le frontend sache proposer une reconnexion.
+    raise HTTPException(
+        status_code=401,
+        detail="Authentification requise — reconnectez-vous",
+        headers={"X-Auth-Reason": "jwt-required"} if secret else {}
     )
-    return email
 
 
 def _email_from_jwt(request: Request) -> str:
@@ -5539,6 +5542,11 @@ async def _v263_authenticated_coach(request: Request) -> str:
     L'identite N'EST PAS lue dans le corps de la requete. Accepter un
     `coach_email` fourni par l'appelant recreerait exactement la falsification
     corrigee en V262 : n'importe qui publierait sous le nom du coach.
+
+    V265 — meme mode transitoire que require_auth : quand le secret est pose
+    mais qu'aucun JWT valide n'accompagne la requete, on retombe sur
+    `X-User-Email`. Sans ce repli, activer JWT_SECRET cassait la publication
+    coach pour toute session non encore reconnectee.
     """
     secret = os.environ.get("JWT_SECRET", "")
     auth = request.headers.get("Authorization", "")
@@ -5548,13 +5556,16 @@ async def _v263_authenticated_coach(request: Request) -> str:
             try:
                 import jwt as _pyjwt
                 payload = _pyjwt.decode(token, secret, algorithms=["HS256"])
-                return (payload.get("email") or "").lower().strip()
+                _e = (payload.get("email") or "").lower().strip()
+                if _e:
+                    return _e
             except Exception:
-                return ""
-        return ""
-    if secret:
-        return ""
-    return request.headers.get("X-User-Email", "").lower().strip()
+                pass  # V265: on ne renonce pas, on tente l'en-tete ci-dessous
+    # Repli transitoire (V265) / historique : l'en-tete.
+    _hdr = request.headers.get("X-User-Email", "").lower().strip()
+    if _hdr and secret:
+        logger.warning("[V265] publication via repli X-User-Email (non signe) pour %s", _hdr)
+    return _hdr
 
 
 @api_router.post("/publications")

@@ -85,8 +85,14 @@ couvre pas ce nom, Cloudflare parlant à l'origine en HTTP.)
 - **Base** : MongoDB Atlas, DB `promo-credits-lab`
 - **Médias** : Cloudinary (cloud `dtm0r7hwq`, preset unsigned `afroboost`)
 - **DNS** : Cloudflare (compte bassicustomshoes@gmail.com), proxy actif
-- **Déployer** : `git push origin main` → Coolify redéploie automatiquement
-  (webhook). Vérifié : une version poussée est en ligne en quelques minutes.
+- **Déployer** : `git push origin main` → Coolify rebuild automatique (webhook),
+  **~4 min** (build du Dockerfile, pas un simple upload). Attendre la fin avant
+  de conclure « pas déployé » : le build prend du temps.
+- **Cache navigateur / PWA** : le Service Worker (`frontend/public/sw.js`,
+  `CACHE_NAME`) peut servir un ancien bundle même après un déploiement réussi.
+  Si un changement front n'apparaît pas alors que le bundle en ligne le contient
+  (`curl -s https://afroboost.com/ | grep -o 'static/js/main.[0-9a-f]*\.js'`),
+  BUMPER `CACHE_NAME` dans sw.js force tous les clients à se rafraîchir.
 - **Rollback** : `git revert <hash> && git push origin main`
 - **Variables d'env** : **Coolify** → application afroboost → Environment
   Variables. PAS Vercel : y ajouter une variable n'a AUCUN effet.
@@ -109,9 +115,34 @@ couvre pas ce nom, Cloudflare parlant à l'origine en HTTP.)
 ### Variables d'environnement à ne pas oublier (afroboost.com / **Coolify**)
 | Variable | Effet si absente |
 |----------|------------------|
-| `JWT_SECRET` | V262 retombe sur `X-User-Email`, **falsifiable**. `/api/debug/config` → `jwt_secret_set: false` |
+| `JWT_SECRET` | Auth retombe sur `X-User-Email` (falsifiable). `/api/debug/config` → `jwt_secret_set: false` |
 | `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | La purge 48 h (V261) retire les publications de la base mais laisse les fichiers chez Cloudinary |
 | `REACT_APP_*` | Inlinées **au build** par CRA : une variable posée seulement à l'exécution n'atteint jamais le bundle |
+
+### ⚠️ Activer `JWT_SECRET` — procédure (V265)
+Poser `JWT_SECRET` bascule l'authentification en mode signé. **Ne l'activer
+qu'avec le mode transitoire V265 déployé** (`require_auth` +
+`_v263_authenticated_coach`, server.py). Sans lui, l'activation avait cassé
+uploads et publications pour toute session ouverte avant — c'est ce qui s'est
+produit une première fois.
+
+Ce que fait le mode transitoire, secret posé :
+1. requête avec JWT valide → acceptée (chemin sûr, cible finale) ;
+2. requête sans JWT mais avec `X-User-Email` → acceptée AUSSI, avec un WARNING
+   `[V265] repli X-User-Email` dans les logs (les anciennes sessions survivent) ;
+3. rien → 401.
+
+Procédure :
+1. Vérifier que V265 est en ligne : `curl -s https://afroboost.com/api/debug/config`.
+2. Poser `JWT_SECRET` dans Coolify, redéployer (~4 min).
+3. Se déconnecter / reconnecter une fois (pour obtenir un vrai jeton signé).
+4. Surveiller les logs : tant que `[V265] repli X-User-Email` apparaît, des
+   sessions n'ont pas encore migré — NE PAS retirer le repli.
+5. Quand ces warnings ont cessé (tout le monde a un jeton), une version dédiée
+   pourra RETIRER l'étape 2 pour revenir au JWT strict, non falsifiable.
+
+⚠️ Tant que l'étape 2 existe, `X-User-Email` reste falsifiable : le mode
+transitoire est un pont, pas l'état final.
 
 ## Testing
 - Test files: `backend_test.py`, `backend_regression_test.py`, `tests/`
