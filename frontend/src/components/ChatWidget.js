@@ -2333,6 +2333,60 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     }
   };
 
+  // V279b : les avatars des publications (rendues dans App.js OU ici) demandent
+  // l'ouverture du mini-profil via un CustomEvent, pour eviter de faire descendre
+  // openMiniProfile en prop a travers plusieurs parents.
+  useEffect(() => {
+    const onOpen = (ev) => {
+      const d = ev && ev.detail;
+      if (d && d.id) openMiniProfile(d.id, d.name);
+    };
+    window.addEventListener('afroboost:open-miniprofile', onOpen);
+    return () => window.removeEventListener('afroboost:open-miniprofile', onOpen);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // === V279b : formulaire « Mon profil » (bio / age / passions) ===
+  // Indexe par participantId (l'identite chat), coherent avec le mini-profil et
+  // le backend. Champs optionnels ; rien n'est obligatoire.
+  const [showProfileForm, setShowProfileForm] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileData, setProfileData] = useState({ display_name: '', bio: '', age: '', passions: '' });
+
+  const openProfileForm = async () => {
+    setShowUserMenu(false);
+    try {
+      const res = await axios.get(`${API}/users/${encodeURIComponent(participantId)}/profile`);
+      const d = res.data || {};
+      setProfileData({
+        display_name: d.name || leadData.firstName || '',
+        bio: d.bio || '',
+        age: (d.age != null ? String(d.age) : ''),
+        passions: d.passions || ''
+      });
+    } catch (e) {
+      setProfileData({ display_name: leadData.firstName || '', bio: '', age: '', passions: '' });
+    }
+    setShowProfileForm(true);
+  };
+
+  const saveProfile = async () => {
+    if (!participantId) { setShowProfileForm(false); return; }
+    setSavingProfile(true);
+    try {
+      await axios.patch(`${API}/users/${encodeURIComponent(participantId)}/profile`, {
+        display_name: profileData.display_name,
+        bio: profileData.bio,
+        age: profileData.age ? parseInt(profileData.age, 10) : null,
+        passions: profileData.passions
+      }, { headers: { 'X-User-Email': getCoachEmail() } });
+      setShowProfileForm(false);
+    } catch (e) {
+      alert(e?.response?.data?.detail || "L'enregistrement a échoué.");
+    }
+    setSavingProfile(false);
+  };
+
   // === v75: UPLOAD DIRECT SANS CROP — Auto-centrage côté backend ===
   const handleDirectUpload = async (file) => {
     setUploadingPhoto(true);
@@ -6091,6 +6145,20 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         )}
                       </label>
 
+                      {/* V279b : « Mon profil » — bio / âge / passions (mini-profil) */}
+                      <button
+                        onClick={openProfileForm}
+                        style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '12px', textAlign: 'left' }}
+                        className="hover:bg-white/10"
+                        data-testid="open-profile-form"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                          <circle cx="12" cy="7" r="4" />
+                        </svg>
+                        Mon profil
+                      </button>
+
                       <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
 
                       {/* v84: Dashboard uniquement en Mode Coach, sinon Devenir Partenaire pour tous (abonnés + visiteurs) */}
@@ -9584,6 +9652,61 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
               >
                 {uploadingPhoto ? 'Envoi...' : 'Valider'}
               </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* === V279b : FORMULAIRE « Mon profil » === */}
+      {showProfileForm && ReactDOM.createPortal(
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000001, padding: '16px' }}
+          onClick={() => setShowProfileForm(false)}
+        >
+          <div
+            style={{ background: '#1a1a1a', borderRadius: '16px', padding: '24px', width: '320px', maxWidth: '92vw', maxHeight: '85vh', overflowY: 'auto' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#fff', marginBottom: '20px', textAlign: 'center' }}>Mon profil</div>
+
+            <label style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '4px', display: 'block' }}>Nom affiché</label>
+            <input
+              type="text" value={profileData.display_name} maxLength={50}
+              onChange={(e) => setProfileData(p => ({ ...p, display_name: e.target.value }))}
+              placeholder="Ton prénom ou pseudo"
+              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #333', background: '#111', color: '#fff', fontSize: '0.9rem', marginBottom: '14px', boxSizing: 'border-box' }}
+            />
+
+            <label style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '4px', display: 'block' }}>Biographie</label>
+            <textarea
+              value={profileData.bio} maxLength={200} rows={3}
+              onChange={(e) => setProfileData(p => ({ ...p, bio: e.target.value }))}
+              placeholder="Parle de toi en quelques mots..."
+              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #333', background: '#111', color: '#fff', fontSize: '0.9rem', marginBottom: '4px', resize: 'none', boxSizing: 'border-box' }}
+            />
+            <div style={{ fontSize: '0.7rem', color: '#555', textAlign: 'right', marginBottom: '14px' }}>{profileData.bio.length}/200</div>
+
+            <label style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '4px', display: 'block' }}>Âge</label>
+            <input
+              type="number" value={profileData.age} min={13} max={120}
+              onChange={(e) => setProfileData(p => ({ ...p, age: e.target.value }))}
+              placeholder="Ex: 28"
+              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #333', background: '#111', color: '#fff', fontSize: '0.9rem', marginBottom: '14px', boxSizing: 'border-box' }}
+            />
+
+            <label style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '4px', display: 'block' }}>Passions / Centres d'intérêt</label>
+            <input
+              type="text" value={profileData.passions} maxLength={150}
+              onChange={(e) => setProfileData(p => ({ ...p, passions: e.target.value }))}
+              placeholder="Danse, Fitness, Afrobeat, Yoga..."
+              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #333', background: '#111', color: '#fff', fontSize: '0.9rem', marginBottom: '6px', boxSizing: 'border-box' }}
+            />
+            <div style={{ fontSize: '0.7rem', color: '#666', marginBottom: '16px' }}>Sépare tes passions par des virgules</div>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+              <button onClick={() => setShowProfileForm(false)} style={{ padding: '10px 20px', background: '#333', color: '#aaa', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem' }}>Annuler</button>
+              <button onClick={saveProfile} disabled={savingProfile} style={{ padding: '10px 20px', background: 'var(--primary-color, #D91CD2)', color: '#fff', border: 'none', borderRadius: '8px', cursor: savingProfile ? 'wait' : 'pointer', fontSize: '0.85rem', fontWeight: 600, opacity: savingProfile ? 0.6 : 1 }}>{savingProfile ? 'Enregistrement...' : 'Enregistrer'}</button>
             </div>
           </div>
         </div>,

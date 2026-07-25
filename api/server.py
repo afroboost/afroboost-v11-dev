@@ -2468,8 +2468,10 @@ async def get_user_profile(participant_id: str):
     Cherche dans 'users' puis 'chat_participants'.
     """
     # 1. Chercher dans la collection 'users'
+    # V279b : on matche AUSSI par email — un profil de coach (identifie par son
+    # email) doit etre trouvable pour le mini-profil ouvert depuis une publication.
     user = await db.users.find_one(
-        {"$or": [{"id": participant_id}, {"participant_id": participant_id}]},
+        {"$or": [{"id": participant_id}, {"participant_id": participant_id}, {"email": participant_id}]},
         {"_id": 0}
     )
     
@@ -2530,6 +2532,28 @@ async def update_user_mini_profile(participant_id: str, request: Request):
     dans `users` (upsert par participant_id) — la meme collection que le GET lit
     en priorite. Aucune donnee supprimee.
     """
+    # V279b (fix IDOR) : sans garde, N'IMPORTE QUI pouvait ecraser le profil de
+    # N'IMPORTE QUEL participant en devinant/relevant un participant_id (ils
+    # transitent dans les listes de sessions, les messages...), y compris le
+    # profil d'un coach ou d'un super admin. On verrouille donc les profils
+    # RATTACHES A UN COMPTE (email) ou a un admin : seuls ce compte ou un super
+    # admin peuvent les editer. Les participants ANONYMES (aucun email lie)
+    # restent auto-editables — c'est le modele « capability » deja en place dans
+    # tout le chat (le participant_id EST l'identite du visiteur sans compte).
+    existing = await db.users.find_one(
+        {"$or": [{"id": participant_id}, {"participant_id": participant_id}, {"email": participant_id}]},
+        {"_id": 0, "email": 1}
+    )
+    linked_email = ((existing or {}).get("email") or "").strip()
+    # participant_id peut LUI-MEME etre un email (profil d'un coach).
+    if not linked_email and "@" in participant_id:
+        linked_email = participant_id.strip()
+    if linked_email:
+        caller = await _v263_authenticated_coach(request)  # email authentifie ou '' (sans lever)
+        allowed = bool(caller) and (caller.strip().lower() == linked_email.lower() or is_super_admin(caller))
+        if not allowed:
+            raise HTTPException(status_code=403, detail="Accès refusé")
+
     body = await request.json()
     update = {}
     if "bio" in body:
@@ -5806,6 +5830,18 @@ async def create_publication(request: Request):
             detail=f"Vous avez déjà {V261_MAX_ACTIVE_PER_CODE} publications en ligne. Attendez qu'elles expirent."
         )
 
+    # V279b : identite de l'auteur, pour rendre l'avatar de la publication
+    # cliquable vers son mini-profil. Le chemin coach met un email dans `code`
+    # (cf. plus haut) : c'est un identifiant que GET /users/{id}/profile sait
+    # resoudre. Le chemin abonne (code AFR-) n'a pas d'identite profil fiable ->
+    # author_id vide, l'avatar reste en initiales non cliquable. Comme les
+    # publications expirent en 48 h, aucune migration n'est utile.
+    author_id = code if ("@" in code) else ""
+    author_photo = ""
+    if author_id:
+        _au = await db.users.find_one({"email": author_id}, {"_id": 0, "photo_url": 1, "photoUrl": 1})
+        author_photo = (_au or {}).get("photo_url") or (_au or {}).get("photoUrl") or ""
+
     now = datetime.now(timezone.utc)
     pub = {
         "id": str(uuid.uuid4()),
@@ -5813,6 +5849,10 @@ async def create_publication(request: Request):
         "subscriber_name": subscriber_name,
         "display_name": display_name,  # V268b
         "coach_id": pub_coach_id,      # V272b : isolation multi-tenant
+        # V279b : auteur (avatar cliquable). author_id vide = non cliquable.
+        "author_id": author_id,
+        "author_photo": author_photo,
+        "author_name": display_name,
         "media_url": media_url,
         "media_type": media_type,
         # V261b: DERIVE de l'URL, jamais recu du client — voir

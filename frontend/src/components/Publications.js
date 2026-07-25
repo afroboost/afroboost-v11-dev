@@ -299,12 +299,18 @@ const V268PublicationCard = ({ pub, onOpen }) => {
       <div style={{ padding: '6px 2px 0' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-            {/* V279 : avatar de l'auteur a cote du nom (36px). Les publications ne
-                stockent pas de photo : on genere un avatar d'initiales lisible. */}
+            {/* V279/V279b : avatar de l'auteur (36px). Vraie photo si dispo, sinon
+                initiales. Cliquable vers le mini-profil quand l'auteur est
+                identifie (author_id) — via un CustomEvent ecoute par le
+                ChatWidget, pour ne pas dependre du parent qui rend la carte. */}
             <img
-              src={pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.display_name || pub.subscriber_name || 'A')}&backgroundColor=D91CD2`}
+              src={pub.author_photo || pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.author_name || pub.display_name || pub.subscriber_name || 'A')}&backgroundColor=D91CD2`}
               alt=""
-              style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1.5px solid rgba(255,255,255,0.25)' }}
+              onClick={pub.author_id ? (e) => {
+                e.stopPropagation();
+                window.dispatchEvent(new CustomEvent('afroboost:open-miniprofile', { detail: { id: pub.author_id, name: pub.author_name || pub.display_name } }));
+              } : undefined}
+              style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1.5px solid rgba(255,255,255,0.25)', cursor: pub.author_id ? 'pointer' : 'default' }}
             />
             <p style={{ color: '#fff', fontSize: '0.7rem', fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {pub.display_name || pub.subscriber_name}
