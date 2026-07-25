@@ -12,25 +12,41 @@ import Cropper from 'react-easy-crop'; // V268c (F1)
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
 
-// V268c — upload d'un fichier OU d'un blob vers Cloudinary, en `fetch`.
-// `fetch` et non axios : l'intercepteur global (App.js) injecterait
-// Authorization / X-User-Email, ce qui declenche un preflight CORS que
-// l'endpoint d'upload refuse — c'est le bug V267. Reutilise pour l'image
-// recadree, la video et la miniature.
-async function v268cUploadToCloudinary(fileOrBlob, kind) {
-  const fd = new FormData();
-  fd.append('file', fileOrBlob);
-  fd.append('upload_preset', 'afroboost');
-  fd.append('folder', 'publications');
-  const endpoint = kind === 'video'
-    ? 'https://api.cloudinary.com/v1_1/dtm0r7hwq/video/upload'
-    : 'https://api.cloudinary.com/v1_1/dtm0r7hwq/image/upload';
-  const resp = await fetch(endpoint, { method: 'POST', body: fd });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok || !data.secure_url) {
-    throw new Error((data.error && data.error.message) || "L'envoi du média a échoué.");
-  }
-  return data.secure_url;
+// V269 — upload vers Cloudinary en XMLHttpRequest, pour exposer la PROGRESSION
+// (`fetch` ne remonte pas la progression d'upload). Ni axios ni fetch :
+//   - axios porterait l'intercepteur global (Authorization / X-User-Email) ->
+//     preflight CORS refuse par Cloudinary = le bug V267 ;
+//   - XHR nu ne porte AUCUN de ces en-tetes -> requete simple, pas de preflight.
+// `onProgress(percent)` est optionnel. Renvoie la reponse Cloudinary complete
+// (on y lit secure_url ET duration pour la limite video).
+function v269UploadToCloudinary(fileOrBlob, kind, onProgress) {
+  return new Promise((resolve, reject) => {
+    const fd = new FormData();
+    fd.append('file', fileOrBlob);
+    fd.append('upload_preset', 'afroboost');
+    fd.append('folder', 'publications');
+    const endpoint = kind === 'video'
+      ? 'https://api.cloudinary.com/v1_1/dtm0r7hwq/video/upload'
+      : 'https://api.cloudinary.com/v1_1/dtm0r7hwq/image/upload';
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', endpoint);
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+    }
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch (e) { /* ignore */ }
+      if (xhr.status >= 200 && xhr.status < 300 && data.secure_url) {
+        resolve(data);
+      } else {
+        reject(new Error((data.error && data.error.message) || "L'envoi du média a échoué."));
+      }
+    };
+    xhr.onerror = () => reject(new Error("L'envoi du média a échoué."));
+    xhr.send(fd);
+  });
 }
 
 // V268c (F1) — genere l'image recadree en blob JPEG depuis le crop en pixels.
@@ -381,6 +397,12 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
   };
   // Recharge a l'ouverture ET apres chaque publication (refreshKey change).
   useEffect(load, [subscriberCode, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // V269 Fix 1 : recharge aussi quand une publication est creee ailleurs (le
+  // formulaire au-dessus dispatche l'evenement a la reussite).
+  useEffect(() => {
+    window.addEventListener('afroboost:publications-changed', load);
+    return () => window.removeEventListener('afroboost:publications-changed', load);
+  }, [subscriberCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startEdit = (p) => {
     setEditing(p.id);
@@ -398,6 +420,8 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
       await axios.put(`${API}/publications/${id}`, body);
       setEditing(null);
       load();
+      // V269 Fix 1 : la vitrine reflete l'edition sans rechargement.
+      try { window.dispatchEvent(new CustomEvent('afroboost:publications-changed')); } catch (e) { /* ignore */ }
     } catch (e) { /* on laisse l'edition ouverte */ }
     setBusy(false);
   };
@@ -412,6 +436,8 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
       await axios.delete(url);
       setConfirmDel(null);
       setItems(list => (list || []).filter(p => p.id !== id)); // retrait immediat
+      // V269 Fix 1 : la vitrine retire aussi la publication sans rechargement.
+      try { window.dispatchEvent(new CustomEvent('afroboost:publications-changed')); } catch (e) { /* ignore */ }
     } catch (e) { /* garde l'element */ }
     setBusy(false);
   };
@@ -530,6 +556,11 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
   const [thumbIdx, setThumbIdx] = useState(0);
   const [thumbLoading, setThumbLoading] = useState(false);
 
+  // V269 — progression d'upload + succes
+  const [uploadPct, setUploadPct] = useState(0);
+  const [uploadName, setUploadName] = useState('');
+  const [success, setSuccess] = useState(false);
+
   const revokeAll = () => {
     if (preview) URL.revokeObjectURL(preview);
     if (rawImageSrc) URL.revokeObjectURL(rawImageSrc);
@@ -553,30 +584,50 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
     setCroppedBlob(null); setThumbs([]); setThumbIdx(0);
 
     if (f.type.startsWith('video/')) {
-      // VIDEO : apercu + generation des miniatures, puis choix.
-      setMediaType('video');
-      setFile(f);
-      setPreview(URL.createObjectURL(f));
-      setShowCrop(false);
-      setThumbLoading(true);
-      v268cGenerateThumbnails(f).then(list => {
-        setThumbs(list);
-        // Defaut : la capture la plus proche d'1 s.
-        let idx = 0, best = Infinity;
-        list.forEach((t, i) => { const d = Math.abs((t.time || 0) - 1); if (d < best) { best = d; idx = i; } });
-        setThumbIdx(idx);
-        setThumbLoading(false);
-      }).catch(() => { setThumbs([]); setThumbLoading(false); });
-    } else {
-      // IMAGE : on passe d'abord par le recadrage.
-      setMediaType('image');
-      setFile(f); // garde en repli si le recadrage echoue
-      const src = URL.createObjectURL(f);
-      setRawImageSrc(src);
-      setPreview(null);
-      setCrop({ x: 0, y: 0 }); setZoom(1); setAspect(1);
-      setShowCrop(true);
+      // V269 Fix 3 — limite 1 min. On lit d'abord la duree via un element video
+      // « metadata only » ; on ne procede QUE si <= 60 s.
+      const probe = document.createElement('video');
+      probe.preload = 'metadata';
+      const probeUrl = URL.createObjectURL(f);
+      probe.src = probeUrl;
+      probe.onloadedmetadata = () => {
+        const dur = probe.duration;
+        URL.revokeObjectURL(probeUrl);
+        if (isFinite(dur) && dur > 60) {
+          setError('La vidéo ne doit pas dépasser 1 minute (60 s). La vôtre fait ' + Math.round(dur) + ' s.');
+          if (fileInputRef.current) fileInputRef.current.value = '';
+          return;
+        }
+        proceedWithVideo(f);
+      };
+      probe.onerror = () => { URL.revokeObjectURL(probeUrl); proceedWithVideo(f); }; // duree illisible : on laisse passer
+      return;
     }
+    // IMAGE : recadrage d'abord.
+    setMediaType('image');
+    setFile(f);
+    const src = URL.createObjectURL(f);
+    setRawImageSrc(src);
+    setPreview(null);
+    setCrop({ x: 0, y: 0 }); setZoom(1); setAspect(1);
+    setShowCrop(true);
+  };
+
+  const proceedWithVideo = (f) => {
+    // VIDEO validee : apercu + generation des miniatures, puis choix.
+    setMediaType('video');
+    setFile(f);
+    setPreview(URL.createObjectURL(f));
+    setShowCrop(false);
+    setThumbLoading(true);
+    v268cGenerateThumbnails(f).then(list => {
+      setThumbs(list);
+      // Defaut : la capture la plus proche d'1 s.
+      let idx = 0, best = Infinity;
+      list.forEach((t, i) => { const d = Math.abs((t.time || 0) - 1); if (d < best) { best = d; idx = i; } });
+      setThumbIdx(idx);
+      setThumbLoading(false);
+    }).catch(() => { setThumbs([]); setThumbLoading(false); });
   };
 
   // V268c (F1) — valide le recadrage : genere le blob et l'utilise comme apercu.
@@ -601,15 +652,24 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
     if (!media || uploading) return;
     setUploading(true);
     setError('');
+    setUploadPct(0);
+    setUploadName(file && file.name ? file.name : (mediaType === 'video' ? 'vidéo' : 'image'));
     try {
-      const mediaUrl = await v268cUploadToCloudinary(media, mediaType);
+      // V269 Fix 2 : progression du media principal (0->100 %).
+      const mediaData = await v269UploadToCloudinary(media, mediaType, setUploadPct);
+      const mediaUrl = mediaData.secure_url;
 
-      // V268c (F1B) : miniature video choisie, uploadee a part. Best-effort —
-      // son echec ne bloque pas la publication (la video s'affichera sans
-      // poster dedie, le navigateur montrera sa premiere frame).
+      // V269 Fix 3 (double garde serveur cote client) : Cloudinary renvoie la
+      // duree ; si > 60 s, on refuse plutot que de publier une video trop
+      // longue passee entre les mailles de la sonde locale.
+      if (mediaType === 'video' && isFinite(mediaData.duration) && mediaData.duration > 60) {
+        throw new Error('La vidéo dépasse 1 minute (60 s).');
+      }
+
+      // Miniature video choisie, uploadee a part. Best-effort.
       let thumbnailUrl = '';
       if (mediaType === 'video' && thumbs[thumbIdx] && thumbs[thumbIdx].blob) {
-        try { thumbnailUrl = await v268cUploadToCloudinary(thumbs[thumbIdx].blob, 'image'); }
+        try { const td = await v269UploadToCloudinary(thumbs[thumbIdx].blob, 'image'); thumbnailUrl = td.secure_url; }
         catch (e) { /* ignore */ }
       }
 
@@ -621,9 +681,16 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
       if (thumbnailUrl) payload.thumbnail_url = thumbnailUrl;
 
       await axios.post(`${API}/publications`, payload);
+
+      // V269 Fix 1 : signale a la vitrine ET a « Mes publications » de se
+      // rafraichir, sans rechargement de page (voir l'ecouteur dans App.js et
+      // V268MyPublications).
+      try { window.dispatchEvent(new CustomEvent('afroboost:publications-changed')); } catch (e) { /* ignore */ }
+
       setUploading(false);
+      setSuccess(true); // « Publication réussie ! » un court instant
       if (onPublished) onPublished();
-      onClose();
+      setTimeout(() => { onClose(); }, 900);
     } catch (err) {
       setUploading(false);
       setError(
@@ -822,17 +889,37 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
         </p>
 
         {error && (
-          <p style={{ color: '#f87171', fontSize: '0.8rem', textAlign: 'center', marginTop: 8 }}>{error}</p>
+          <p style={{ color: '#E53E3E', fontSize: '0.8rem', textAlign: 'center', marginTop: 8 }}>{error}</p>
         )}
 
-        {preview && (
+        {/* V269 Fix 2 : barre de progression pendant l'upload. */}
+        {uploading && (
+          <div style={{ marginTop: 12 }} data-testid="publish-progress">
+            <div style={{ fontSize: '0.78rem', color: '#ccc', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {uploadName}
+            </div>
+            <div style={{ width: '100%', height: 6, background: '#333', borderRadius: 3, overflow: 'hidden' }}>
+              <div style={{ width: uploadPct + '%', height: '100%', background: 'var(--primary-color, #D91CD2)', borderRadius: 3, transition: 'width 0.3s ease' }} />
+            </div>
+            <div style={{ fontSize: '0.7rem', color: '#999', marginTop: 4, textAlign: 'right' }}>{uploadPct}%</div>
+          </div>
+        )}
+
+        {/* V269 : confirmation breve avant fermeture. */}
+        {success && (
+          <p style={{ color: '#4ade80', fontSize: '0.85rem', textAlign: 'center', marginTop: 10, fontWeight: 600 }}>
+            Publication réussie !
+          </p>
+        )}
+
+        {preview && !success && (
           <button
             onClick={handleUploadAndPublish}
             disabled={uploading}
             style={{
               width: '100%', padding: '12px', borderRadius: 25,
               background: uploading ? '#666' : 'var(--primary-color, #D91CD2)',
-              color: '#fff', border: 'none', cursor: uploading ? 'wait' : 'pointer',
+              color: '#fff', border: 'none', cursor: uploading ? 'not-allowed' : 'pointer',
               fontWeight: 700, fontSize: '0.95rem', marginTop: 12
             }}
             data-testid="publish-submit"

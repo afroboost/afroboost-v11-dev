@@ -4231,9 +4231,15 @@ function App() {
   // doit s'afficher meme si cet appel echoue — le carrousel se masque alors.
   const [v261Publications, setV261Publications] = useState([]);
   useEffect(() => {
-    axios.get(`${API}/publications`)
+    const loadPubs = () => axios.get(`${API}/publications`)
       .then(res => setV261Publications(Array.isArray(res.data) ? res.data : []))
       .catch(() => setV261Publications([]));
+    loadPubs();
+    // V269 Fix 1 : le carrousel se rafraichit quand une publication est creee /
+    // editee / supprimee ailleurs (Publications.js dispatche cet evenement),
+    // sans rechargement de page.
+    window.addEventListener('afroboost:publications-changed', loadPubs);
+    return () => window.removeEventListener('afroboost:publications-changed', loadPubs);
   }, []);
   const [v260FormOffer, setV260FormOffer] = useState(null);
   const [discountCodes, setDiscountCodes] = useState([]);
@@ -7357,8 +7363,18 @@ function App() {
           // --- V261: MUR DES ABONNES, juste au-dessus des offres ---
           // Le composant se rend null quand la liste est vide : aucune place
           // occupee sur une vitrine sans publication.
+          // V269 (F6): quand une recherche est active, les publications sont
+          // filtrees par legende ET nom du publicateur. Les offres/sessions/
+          // produits sont deja filtres plus haut (filteredServices...).
+          const v269PubQuery = searchQuery.trim().toLowerCase();
+          const v269FilteredPublications = v269PubQuery
+            ? v261Publications.filter(p =>
+                ((p.caption || '').toLowerCase().indexOf(v269PubQuery) !== -1) ||
+                ((p.display_name || p.subscriber_name || '').toLowerCase().indexOf(v269PubQuery) !== -1)
+              )
+            : v261Publications;
           const publicationsBlock = (
-            <PublicationsCarousel key="publications-block" publications={v261Publications} />
+            <PublicationsCarousel key="publications-block" publications={v269FilteredPublications} />
           );
 
           // --- BLOC OFFRES (v159: flow offer-first — cliquez offre puis horaire apparaît) ---
