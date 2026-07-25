@@ -40,6 +40,7 @@ import MessageSkeleton from './chat/MessageSkeleton';
 import MediaMessage from './chat/MediaMessage';
 import { parseMediaUrl, isMediaUrl } from '../services/MediaParser';
 import { PublishModal } from './Publications'; // V263
+import faqAfroboost, { faqCategories } from '../data/faqAfroboost'; // V274: FAQ chat IA
 
 const API = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
 const SOCKET_URL = process.env.REACT_APP_BACKEND_URL || ''; // URL Socket.IO (même que backend)
@@ -1740,6 +1741,33 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
     }
   }, []);
 
+  // === V274: OUVERTURE DU CHAT depuis une notification push ===
+  // Deux chemins : (1) l'app était FERMÉE — le SW ouvre /?openChat=true et on
+  // lit le paramètre ici ; (2) l'app était OUVERTE — le SW envoie le message
+  // NOTIFICATION_CLICK (voir sw.js) et on ouvre le widget sans recharger.
+  useEffect(() => {
+    // (1) paramètre d'URL au chargement
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('openChat') === 'true') {
+        setIsOpen(true);
+        const cleanUrl = window.location.pathname + window.location.hash;
+        window.history.replaceState({}, '', cleanUrl);
+      }
+    } catch (e) { /* silencieux */ }
+
+    // (2) message envoyé par le service worker au clic sur la notification
+    if (!('serviceWorker' in navigator)) return;
+    const onSwMessage = (event) => {
+      const t = event.data && event.data.type;
+      if (t === 'NOTIFICATION_CLICK' || t === 'OPEN_CHAT') {
+        setIsOpen(true);
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', onSwMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onSwMessage);
+  }, []);
+
   // === v8.9.9: VÉRIFICATION COACH INSCRIT ===
   // v9.3.0: Initialiser depuis localStorage pour persistance après reconnexion
   // v9.3.1: Aussi vérifier côté serveur pour synchronisation
@@ -2349,6 +2377,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
 
   // V197b: Quick replies chargés depuis l'API (avec fallback statique VISITOR_QUICK_REPLIES)
   const [quickRepliesData, setQuickRepliesData] = useState(VISITOR_QUICK_REPLIES);
+  // V274: FAQ Afroboost en mode IA — catégorie active + question ouverte (accordéon)
+  const [faqCategory, setFaqCategory] = useState(null); // null = toutes catégories
+  const [selectedFaq, setSelectedFaq] = useState(null); // id de la question ouverte
+  const [showFaqPanel, setShowFaqPanel] = useState(true); // repli/dépli du panneau FAQ
   // V197b: Liste éditable côté coach (inclut active/inactif)
   const [botRepliesEdit, setBotRepliesEdit] = useState([]);
   const [botRepliesSavingId, setBotRepliesSavingId] = useState(null);
@@ -8828,7 +8860,143 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                       </div>
                     );
                   })}
-                  
+
+                  {/* === V274: FAQ Afroboost — visible pour le VISITEUR quand le
+                       coach a activé le mode IA. Réponses instantanées (aucun
+                       appel API). Le champ de saisie reste utilisable en dessous.
+                       La couleur d'accent suit le coach via --primary-color. === */}
+                  {!isCoachMode && chatMode !== 'group' && sessionData && sessionData.is_ai_active && (
+                    <div style={{ padding: '4px 4px 8px 4px', alignSelf: 'stretch' }} data-testid="faq-ia-panel">
+                      {/* En-tête : intro + repli/dépli */}
+                      <button
+                        onClick={() => setShowFaqPanel(v => !v)}
+                        style={{
+                          width: '100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          padding: '10px 14px',
+                          background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)',
+                          border: 'none',
+                          borderRadius: showFaqPanel ? '12px 12px 0 0' : '12px',
+                          color: '#ddd',
+                          fontSize: '0.82rem',
+                          cursor: 'pointer',
+                          textAlign: 'left'
+                        }}
+                        data-testid="faq-toggle"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary-color, #D91CD2)" strokeWidth="2" style={{ flexShrink: 0 }}>
+                          <circle cx="12" cy="12" r="10" />
+                          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                          <line x1="12" y1="17" x2="12.01" y2="17" />
+                        </svg>
+                        <span style={{ flex: 1 }}>Posez-moi une question ! Cliquez sur un sujet ci-dessous.</span>
+                        <svg
+                          width="16" height="16" viewBox="0 0 24 24" fill="none"
+                          stroke="var(--primary-color, #D91CD2)" strokeWidth="2"
+                          style={{ transform: showFaqPanel ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s', flexShrink: 0 }}
+                        >
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </button>
+
+                      {showFaqPanel && (
+                        <div style={{
+                          background: 'rgba(255,255,255,0.02)',
+                          border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
+                          borderTop: 'none',
+                          borderRadius: '0 0 12px 12px',
+                          padding: '8px'
+                        }}>
+                          {/* Filtres par catégorie */}
+                          <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '8px', marginBottom: '6px' }}>
+                            {faqCategories.map(cat => {
+                              const active = faqCategory === cat.id;
+                              return (
+                                <button
+                                  key={cat.id || 'all'}
+                                  onClick={() => { setFaqCategory(cat.id); setSelectedFaq(null); }}
+                                  style={{
+                                    padding: '4px 12px',
+                                    borderRadius: '16px',
+                                    border: active ? '1px solid var(--primary-color, #D91CD2)' : '1px solid rgba(255,255,255,0.12)',
+                                    fontSize: '0.72rem',
+                                    fontWeight: active ? '600' : '500',
+                                    cursor: 'pointer',
+                                    flexShrink: 0,
+                                    whiteSpace: 'nowrap',
+                                    background: active ? 'var(--primary-color, #D91CD2)' : 'transparent',
+                                    color: active ? '#fff' : '#aaa'
+                                  }}
+                                  data-testid={'faq-cat-' + (cat.id || 'all')}
+                                >
+                                  {cat.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Liste des questions (accordéon) */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            {faqAfroboost
+                              .filter(f => faqCategory === null || f.category === faqCategory)
+                              .map(faq => {
+                                const open = selectedFaq === faq.id;
+                                return (
+                                  <div key={faq.id}>
+                                    <button
+                                      onClick={() => setSelectedFaq(open ? null : faq.id)}
+                                      style={{
+                                        width: '100%',
+                                        textAlign: 'left',
+                                        padding: '10px 14px',
+                                        background: open ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)' : 'rgba(255,255,255,0.04)',
+                                        border: open ? '1px solid var(--primary-color, #D91CD2)' : '1px solid rgba(255,255,255,0.1)',
+                                        borderRadius: open ? '12px 12px 0 0' : '12px',
+                                        color: '#fff',
+                                        fontSize: '0.83rem',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        gap: '8px'
+                                      }}
+                                      data-testid={'faq-q-' + faq.id}
+                                    >
+                                      <span>{faq.question}</span>
+                                      <svg
+                                        width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                        stroke="var(--primary-color, #D91CD2)" strokeWidth="2"
+                                        style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s', flexShrink: 0 }}
+                                      >
+                                        <polyline points="6 9 12 15 18 9" />
+                                      </svg>
+                                    </button>
+                                    {open && (
+                                      <div style={{
+                                        padding: '12px 14px',
+                                        background: 'rgba(0,0,0,0.25)',
+                                        borderRadius: '0 0 12px 12px',
+                                        border: '1px solid var(--primary-color, #D91CD2)',
+                                        borderTop: 'none',
+                                        fontSize: '0.8rem',
+                                        color: '#ccc',
+                                        lineHeight: '1.55',
+                                        whiteSpace: 'pre-wrap'
+                                      }} data-testid={'faq-a-' + faq.id}>
+                                        {faq.answer}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* === INDICATEUR DE SAISIE (Typing Indicator) === */}
                   {typingUser && (
                     <div style={{ alignSelf: 'flex-start', marginTop: '4px' }}>

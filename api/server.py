@@ -15221,7 +15221,17 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
     ).to_list(20)
     if not subs:
         return False
-    payload = json.dumps({"title": title, "body": body, "icon": "/logo192.png", "badge": "/logo192.png", "data": data or {}, "timestamp": datetime.now(timezone.utc).isoformat()})
+    # V274: le Service Worker lit `url` et `session_id` au niveau RACINE du
+    # payload (cf. sw.js). On les y expose : au clic, la notification ouvre le
+    # chat (`/?openChat=true` par defaut) au lieu de la seule page d'accueil.
+    _push_url = (data or {}).get("url") or "/?openChat=true"
+    payload = json.dumps({
+        "title": title, "body": body,
+        "icon": "/logo192.png", "badge": "/logo192.png",
+        "url": _push_url, "session_id": session_id,
+        "data": data or {},
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
     any_sent = False
     for sub in subs:
         subscription_info = sub.get("subscription")
