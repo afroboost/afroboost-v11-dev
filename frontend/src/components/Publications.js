@@ -6,6 +6,7 @@
 // composant `undefined` a l'execution selon l'ordre d'evaluation des modules.
 
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom'; // V268d
 import axios from 'axios';
 import Cropper from 'react-easy-crop'; // V268c (F1)
 
@@ -220,26 +221,29 @@ const V268Lightbox = ({ pub, onClose }) => {
   }, [pub]);
   const toggleMute = v268ToggleSound(videoRef, setMuted); // V268b Fix B2
   return (
+    // V268d : z-index tres eleve pour passer AU-DESSUS de tout (menu inclus).
+    // Combine au portal vers document.body (voir le rendu du carrousel), la
+    // lightbox couvre desormais reellement tout l'ecran.
     <div
       onClick={onClose}
       style={{
-        position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.92)',
+        position: 'fixed', inset: 0, zIndex: 2147483000, background: 'rgba(0,0,0,0.92)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16
       }}
       data-testid="publication-lightbox"
     >
+      {/* V268d : X SANS rond, plus haut (top/right 10), juste l'icone blanche
+          avec un drop-shadow pour la lisibilite. */}
       <button
         onClick={onClose}
         aria-label="Fermer"
         style={{
-          position: 'absolute', top: 14, right: 14, zIndex: 2,
-          width: 40, height: 40, borderRadius: '50%', background: 'rgba(0,0,0,0.6)',
-          border: 'none', color: '#fff', cursor: 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)'
+          position: 'absolute', top: 10, right: 10, zIndex: 2,
+          background: 'transparent', border: 'none', padding: 4, cursor: 'pointer',
+          color: '#fff', filter: 'drop-shadow(0 0 3px rgba(0,0,0,0.9))'
         }}
       >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
           <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
         </svg>
       </button>
@@ -291,15 +295,16 @@ const V268PublicationCard = ({ pub, onOpen }) => {
     // contenu, il debordait sur la section « Choisissez votre offre » juste
     // apres le carrousel. Media a hauteur FIXE + overflow hidden = plus rien
     // ne depasse.
-    <div style={{ flexShrink: 0, width: 160, scrollSnapAlign: 'start' }}>
-      {/* V268c Fix 1 : conteneur a HAUTEUR FIXE + overflow hidden + flexShrink 0,
-          et le media porte height:250px EXPLICITE (pas 100%, pour qu'aucun
-          parent flex ne l'etire). `display:block` supprime l'espace fantome
-          d'un media `inline`. Rien ne peut plus deborder. */}
+    // V268d : largeur VERROUILLEE (min = max = width) pour qu'aucun parent flex
+    // ne l'etire ni ne l'ecrase, et hauteur du media FIXE.
+    <div style={{ flexShrink: 0, width: 240, minWidth: 240, maxWidth: 240, scrollSnapAlign: 'start' }}>
+      {/* Conteneur media a HAUTEUR FIXE + overflow hidden ; le media porte
+          height:250px EXPLICITE. `display:block` supprime l'espace fantome d'un
+          media `inline`. Rien ne peut deborder. */}
       <div
         onClick={() => onOpen(pub)}
         style={{
-          position: 'relative', width: '100%', height: 250, overflow: 'hidden',
+          position: 'relative', width: '100%', height: 250, maxHeight: 250, overflow: 'hidden',
           borderRadius: 12, flexShrink: 0, background: '#000', cursor: 'pointer'
         }}
         data-testid="publication-card"
@@ -370,7 +375,18 @@ export const PublicationsCarousel = ({ publications }) => {
           <V268PublicationCard key={pub.id} pub={pub} onOpen={setLightbox} />
         ))}
       </div>
-      {lightbox && <V268Lightbox pub={lightbox} onClose={() => setLightbox(null)} />}
+      {/* V268d — LE FIX. La lightbox etait rendue ICI, a l'interieur de
+          `.fade-in-section` dont l'animation fadeInUp laisse un `transform:
+          translateY(0)` PERMANENT (fill-mode forwards). Un `transform` non-none
+          fait de cet element le bloc conteneur des descendants `position:
+          fixed` : la lightbox etait donc piegee dans la boite du carrousel au
+          lieu de couvrir l'ecran — d'ou la video geante derriere le menu.
+          Le PORTAL vers document.body la sort de ce contexte d'empilement : son
+          `position: fixed` se cale enfin sur le viewport. */}
+      {lightbox && createPortal(
+        <V268Lightbox pub={lightbox} onClose={() => setLightbox(null)} />,
+        document.body
+      )}
     </div>
   );
 };

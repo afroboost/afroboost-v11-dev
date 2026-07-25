@@ -7182,6 +7182,23 @@ function App() {
 
       {/* v35: SECTION AUDIO déplacée vers le Shop — voir plus bas */}
 
+      {/* V268d — MUR DES ABONNES, place AU-DESSUS de la barre de navigation
+          (Tout/Sessions/Offres/Shop), comme demande. Filtre par la recherche
+          quand elle est active. Le composant se rend null si la liste est vide. */}
+      <div className="max-w-4xl mx-auto px-4">
+        <PublicationsCarousel
+          publications={
+            searchQuery.trim()
+              ? v261Publications.filter(p => {
+                  const q = searchQuery.trim().toLowerCase();
+                  return ((p.caption || '').toLowerCase().indexOf(q) !== -1)
+                    || ((p.display_name || p.subscriber_name || '').toLowerCase().indexOf(q) !== -1);
+                })
+              : v261Publications
+          }
+        />
+      </div>
+
       {/* v15: BARRE DE NAVIGATION STICKY - Sections claires */}
       <div
         className="w-full"
@@ -7360,22 +7377,9 @@ function App() {
             </div>
           );
 
-          // --- V261: MUR DES ABONNES, juste au-dessus des offres ---
-          // Le composant se rend null quand la liste est vide : aucune place
-          // occupee sur une vitrine sans publication.
-          // V269 (F6): quand une recherche est active, les publications sont
-          // filtrees par legende ET nom du publicateur. Les offres/sessions/
-          // produits sont deja filtres plus haut (filteredServices...).
-          const v269PubQuery = searchQuery.trim().toLowerCase();
-          const v269FilteredPublications = v269PubQuery
-            ? v261Publications.filter(p =>
-                ((p.caption || '').toLowerCase().indexOf(v269PubQuery) !== -1) ||
-                ((p.display_name || p.subscriber_name || '').toLowerCase().indexOf(v269PubQuery) !== -1)
-              )
-            : v261Publications;
-          const publicationsBlock = (
-            <PublicationsCarousel key="publications-block" publications={v269FilteredPublications} />
-          );
+          // V268d : le carrousel des publications est desormais rendu
+          // AU-DESSUS de la barre de navigation (voir plus haut), plus ici.
+          const publicationsBlock = null;
 
           // --- BLOC OFFRES (v159: flow offer-first — cliquez offre puis horaire apparaît) ---
           const offersBlock = activeFilter !== 'shop' && filteredServices.length > 0 && (
