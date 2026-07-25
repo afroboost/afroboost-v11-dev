@@ -5607,6 +5607,18 @@ async def create_publication(request: Request):
         raise HTTPException(status_code=400, detail="Média invalide")
     media_type = "video" if body.get("media_type") == "video" else "image"
 
+    # V268: legende optionnelle, plafonnee a 500 caracteres. Elle est affichee
+    # publiquement sur la vitrine : on la coupe cote serveur, on ne se fie pas au
+    # plafond du frontend, contournable.
+    caption = (body.get("caption") or "").strip()[:500]
+
+    # V268: miniature d'une video. Meme garde que media_url — elle finit en
+    # `src` public et servira d'argument a destroy() a la purge : on n'accepte
+    # qu'une URL Cloudinary du dossier publications/. Vide sinon.
+    thumb = (body.get("thumbnail_url") or "").strip()
+    if not (thumb.startswith(V261_MEDIA_PREFIX) and ("/" + V261_FOLDER) in thumb):
+        thumb = ""
+
     active_count = await db.publications.count_documents({
         "subscriber_code": code,
         "expires_at": {"$gt": datetime.now(timezone.utc).isoformat()}
@@ -5628,6 +5640,10 @@ async def create_publication(request: Request):
         # _v261_public_id_from_url. Le `cloudinary_public_id` du corps de la
         # requete est desormais ignore.
         "cloudinary_public_id": _v261_public_id_from_url(media_url),
+        # V268: legende + miniature video (thumbnail). Vides par defaut.
+        "caption": caption,
+        "thumbnail_url": thumb,
+        "thumbnail_public_id": _v261_public_id_from_url(thumb) if thumb else "",
         # ISO en chaine, comme le reste des dates de la base — les comparaisons
         # `$gt` / `$lte` restent exactes, l'ISO UTC etant ordonnable en texte.
         "created_at": now.isoformat(),
@@ -5647,9 +5663,11 @@ async def list_publications():
     """
     await _v261_purge_expired()
     now = datetime.now(timezone.utc)
+    # V268: caption / thumbnail_url sont renvoyes ; les identifiants Cloudinary
+    # et le code abonne restent masques (secrets / internes).
     pubs = await db.publications.find(
         {"expires_at": {"$gt": now.isoformat()}},
-        {"_id": 0, "subscriber_code": 0, "cloudinary_public_id": 0}
+        {"_id": 0, "subscriber_code": 0, "cloudinary_public_id": 0, "thumbnail_public_id": 0}
     ).sort("created_at", -1).to_list(50)
     for p in pubs:
         try:
@@ -5682,9 +5700,50 @@ async def delete_publication(pub_id: str, request: Request):
         pub.get("cloudinary_public_id", ""),
         pub.get("media_type", "image"),
     )
+    # V268: la miniature video (image) vit aussi dans publications/ — on la
+    # supprime avec le media, sinon elle survivrait orpheline.
+    if pub.get("thumbnail_public_id"):
+        await asyncio.to_thread(_v261_cloudinary_destroy, pub["thumbnail_public_id"], "image")
     await db.publications.delete_one({"id": pub_id})
     logger.info(f"[V261] Publication {pub_id} supprimee par {user_email}")
     return {"status": "ok"}
+
+
+@api_router.put("/publications/{pub_id}")
+async def update_publication(pub_id: str, request: Request):
+    """V268: modifier la LEGENDE d'une publication (le media reste fige).
+
+    Deux auteurs legitimes, comme a la creation :
+      - l'ABONNE proprietaire, prouve par son code AFR- (body `subscriber_code`
+        == celui stocke) — il n'a pas de compte coach ;
+      - le COACH / super admin, via l'authentification signee.
+    On ne touche QUE `caption` : le media, l'auteur et l'echeance sont figes.
+    """
+    body = await request.json()
+    pub = await db.publications.find_one({"id": pub_id}, {"_id": 0})
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publication non trouvée")
+
+    # Chemin 1 : l'abonne auteur, identifie par son code.
+    provided_code = (body.get("subscriber_code") or "").strip().upper()
+    is_author = bool(provided_code) and provided_code == (pub.get("subscriber_code") or "").upper()
+
+    if not is_author:
+        # Chemin 2 : coach / admin. require_auth leve 401 si non authentifie.
+        user_email = require_auth(request)
+        if not is_super_admin(user_email):
+            known = await db.coaches.find_one({"email": user_email}, {"_id": 0, "email": 1})
+            if not known:
+                known = await db.coach_auth.find_one({"email": user_email}, {"_id": 0, "email": 1})
+            # Un coach ne modifie que SES publications (celles de ses abonnes /
+            # les siennes) — appariement sur coach_id, comme le reste du dashboard.
+            owns = (pub.get("coach_id") or "") == user_email or (pub.get("subscriber_code") or "") == user_email
+            if not (known or owns):
+                raise HTTPException(status_code=403, detail="Accès refusé")
+
+    caption = (body.get("caption") or "").strip()[:500]
+    await db.publications.update_one({"id": pub_id}, {"$set": {"caption": caption}})
+    return {"status": "ok", "caption": caption}
 
 
 # === ESPACE ABONNÉ — Lookup par code AFR-XXXXXX v11.0 ===

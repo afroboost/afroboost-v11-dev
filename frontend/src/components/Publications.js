@@ -11,7 +11,232 @@ import axios from 'axios';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
 
+// V268: barre de progression 48 h. `remaining_hours` est calcule cote serveur
+// (pas de derive d'horloge client). Vert > 24 h, orange 12-24 h, rouge < 12 h.
+const V268_TTL = 48;
+const v268BarColor = (remaining) =>
+  remaining > 24 ? '#22c55e' : remaining >= 12 ? '#f59e0b' : '#ef4444';
+const v268RemainingLabel = (remaining) => {
+  const h = Math.floor(remaining || 0);
+  return h >= 1 ? h + 'h restantes' : "moins d'1h";
+};
+
+const V268ProgressBar = ({ remaining }) => {
+  const pct = Math.max(0, Math.min(1, 1 - (remaining || 0) / V268_TTL)) * 100;
+  const color = v268BarColor(remaining || 0);
+  return (
+    <div>
+      <div style={{ height: 3, borderRadius: 3, background: 'rgba(255,255,255,0.18)', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: pct + '%', background: color, transition: 'width 0.3s ease' }} />
+      </div>
+      <p style={{ color: color, fontSize: '0.58rem', margin: '3px 0 0' }}>
+        {v268RemainingLabel(remaining || 0)}
+      </p>
+    </div>
+  );
+};
+
+// V268 (F7): bouton son pour les videos, réutilisé sur la carte et en lightbox.
+const V268MuteButton = ({ muted, onToggle, size }) => (
+  <button
+    type="button"
+    onClick={(e) => { e.stopPropagation(); onToggle(); }}
+    aria-label={muted ? 'Activer le son' : 'Couper le son'}
+    title={muted ? 'Activer le son' : 'Couper le son'}
+    style={{
+      background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%',
+      width: size || 30, height: size || 30, cursor: 'pointer',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)'
+    }}
+  >
+    {muted ? (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+        <line x1="23" y1="9" x2="17" y2="15" /><line x1="17" y1="9" x2="23" y2="15" />
+      </svg>
+    ) : (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+        <path d="M15.54 8.46a5 5 0 0 1 0 7.07" /><path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+      </svg>
+    )}
+  </button>
+);
+
+// V268 (F5): légende avec « Lire plus » / « Voir moins » au-delà de 100 car.
+const V268Caption = ({ caption, light }) => {
+  const [open, setOpen] = useState(false);
+  if (!caption) return null;
+  const long = caption.length > 100;
+  const shown = open || !long ? caption : caption.slice(0, 100) + '… ';
+  return (
+    <p style={{ color: light ? '#ddd' : '#ccc', fontSize: light ? '14px' : '0.62rem', margin: light ? '10px 0 0' : '4px 0 0', lineHeight: 1.4, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+      {shown}
+      {long && (
+        <span
+          onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+          style={{ color: 'var(--primary-color, #D91CD2)', cursor: 'pointer', fontWeight: 600 }}
+        >
+          {open ? ' Voir moins' : 'Lire plus'}
+        </span>
+      )}
+    </p>
+  );
+};
+
+// V268 (F2): plein écran d'une publication au clic.
+const V268Lightbox = ({ pub, onClose }) => {
+  const videoRef = useRef(null);
+  // Les vidéos démarrent muettes (autoplay) même en lightbox — le son s'active
+  // au bouton, comme Instagram.
+  const [muted, setMuted] = useState(true);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const toggleMute = () => {
+    setMuted(m => {
+      const nv = !m;
+      if (videoRef.current) videoRef.current.muted = nv;
+      return nv;
+    });
+  };
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.92)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16
+      }}
+      data-testid="publication-lightbox"
+    >
+      <button
+        onClick={onClose}
+        aria-label="Fermer"
+        style={{
+          position: 'absolute', top: 14, right: 14, zIndex: 2,
+          width: 40, height: 40, borderRadius: '50%', background: 'rgba(0,0,0,0.6)',
+          border: 'none', color: '#fff', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)'
+        }}
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ position: 'relative', maxWidth: 'min(92vw, 480px)', width: '100%', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }}
+      >
+        <div style={{ position: 'relative', display: 'flex', justifyContent: 'center' }}>
+          {pub.media_type === 'video' ? (
+            <>
+              <video
+                ref={videoRef}
+                src={pub.media_url}
+                autoPlay loop playsInline muted={muted}
+                style={{ maxWidth: '100%', maxHeight: '78vh', borderRadius: 12, background: '#000' }}
+              />
+              <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
+                <V268MuteButton muted={muted} onToggle={toggleMute} size={40} />
+              </div>
+            </>
+          ) : (
+            <img
+              src={pub.media_url}
+              alt={`Publication de ${pub.subscriber_name || 'un abonné'}`}
+              style={{ maxWidth: '100%', maxHeight: '78vh', borderRadius: 12, objectFit: 'contain', background: '#000' }}
+            />
+          )}
+        </div>
+        <div style={{ padding: '4px 4px 0' }}>
+          <p style={{ color: '#fff', fontSize: 14, fontWeight: 700, margin: '10px 0 0' }}>{pub.subscriber_name}</p>
+          <V268Caption caption={pub.caption} light />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// V268: une carte du carrousel. Composant séparé pour porter l'état local
+// (son de la vidéo) sans le partager entre cartes.
+const V268PublicationCard = ({ pub, onOpen }) => {
+  const videoRef = useRef(null);
+  const [muted, setMuted] = useState(true);
+  const toggleMute = () => {
+    setMuted(m => {
+      const nv = !m;
+      if (videoRef.current) videoRef.current.muted = nv;
+      return nv;
+    });
+  };
+  return (
+    <div style={{ flexShrink: 0, width: 160, scrollSnapAlign: 'start' }}>
+      <div
+        onClick={() => onOpen(pub)}
+        style={{
+          width: 160, height: 284, borderRadius: 12, overflow: 'hidden',
+          position: 'relative', background: '#000', cursor: 'pointer'
+        }}
+        data-testid="publication-card"
+      >
+        {pub.media_type === 'video' ? (
+          <>
+            {/* `muted` requis avec `autoPlay` (iOS/Chrome). Le bouton son
+                pilote `muted` via le ref. */}
+            <video
+              ref={videoRef}
+              src={pub.media_url}
+              poster={pub.thumbnail_url || undefined}
+              playsInline muted={muted} loop autoPlay
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+            <div style={{ position: 'absolute', bottom: 40, right: 8 }}>
+              <V268MuteButton muted={muted} onToggle={toggleMute} />
+            </div>
+          </>
+        ) : (
+          <img
+            src={pub.media_url}
+            alt={`Publication de ${pub.subscriber_name || 'un abonné'}`}
+            loading="lazy"
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        )}
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0,
+          background: 'linear-gradient(transparent, rgba(0,0,0,0.88))',
+          padding: '22px 8px 8px'
+        }}>
+          <p style={{ color: '#fff', fontSize: '0.7rem', fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {pub.subscriber_name}
+          </p>
+          {/* V268 (F3): barre 48 h a la place du simple « Xh ». */}
+          <div style={{ marginTop: 4 }}>
+            <V268ProgressBar remaining={pub.remaining_hours} />
+          </div>
+        </div>
+      </div>
+      {/* V268 (F5): legende courte sous la carte ; le texte complet + Lire plus
+          vit dans la lightbox, ou il y a la place. */}
+      {pub.caption ? (
+        <p
+          onClick={() => onOpen(pub)}
+          style={{ color: '#bbb', fontSize: '0.62rem', margin: '5px 2px 0', lineHeight: 1.3, cursor: 'pointer', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+        >
+          {pub.caption}
+        </p>
+      ) : null}
+    </div>
+  );
+};
+
 export const PublicationsCarousel = ({ publications }) => {
+  // V268 (F2): publication ouverte en plein ecran, ou null.
+  const [lightbox, setLightbox] = useState(null);
   if (!publications || publications.length === 0) return null;
   return (
     <div className="mb-8 fade-in-section" data-testid="publications-carousel">
@@ -22,62 +247,22 @@ export const PublicationsCarousel = ({ publications }) => {
           <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
           <path d="M16 3.13a4 4 0 0 1 0 7.75" />
         </svg>
-        <span style={{ color: '#fff', fontSize: '18px', fontWeight: 600 }}>
-          Publications ({publications.length})
-        </span>
+        {/* V268 (F4): plus de compteur « (N) » a cote du titre. */}
+        <span style={{ color: '#fff', fontSize: '18px', fontWeight: 600 }}>Publications</span>
       </div>
-      {/* `hide-scrollbar` existe deja dans App.css — pas de nouvelle regle CSS
-          a inventer pour masquer la barre de defilement. */}
       <div
         className="hide-scrollbar"
         style={{
           display: 'flex', overflowX: 'auto', gap: 10, paddingBottom: 4,
+          alignItems: 'flex-start',
           scrollSnapType: 'x mandatory', WebkitOverflowScrolling: 'touch'
         }}
       >
         {publications.map(pub => (
-          <div
-            key={pub.id}
-            style={{
-              flexShrink: 0, width: 160, height: 284, borderRadius: 12,
-              overflow: 'hidden', position: 'relative',
-              scrollSnapAlign: 'start', background: '#000'
-            }}
-          >
-            {pub.media_type === 'video' ? (
-              // `muted` est INDISPENSABLE avec `autoPlay` : sans lui, iOS et
-              // Chrome refusent la lecture automatique et la vignette reste noire.
-              <video
-                src={pub.media_url}
-                playsInline muted loop autoPlay
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              />
-            ) : (
-              <img
-                src={pub.media_url}
-                alt={`Publication de ${pub.subscriber_name || 'un abonné'}`}
-                loading="lazy"
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              />
-            )}
-            <div style={{
-              position: 'absolute', bottom: 0, left: 0, right: 0,
-              background: 'linear-gradient(transparent, rgba(0,0,0,0.85))',
-              padding: '20px 8px 8px'
-            }}>
-              <p style={{ color: '#fff', fontSize: '0.7rem', fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {pub.subscriber_name}
-              </p>
-              <p style={{ color: '#bbb', fontSize: '0.6rem', margin: '2px 0 0', display: 'flex', alignItems: 'center', gap: 3 }}>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
-                  <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
-                </svg>
-                {pub.remaining_hours >= 1 ? Math.floor(pub.remaining_hours) + 'h' : '< 1h'}
-              </p>
-            </div>
-          </div>
+          <V268PublicationCard key={pub.id} pub={pub} onOpen={setLightbox} />
         ))}
       </div>
+      {lightbox && <V268Lightbox pub={lightbox} onClose={() => setLightbox(null)} />}
     </div>
   );
 };
@@ -91,6 +276,8 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
   const [mediaType, setMediaType] = useState('image');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+  // V268 (F5): legende optionnelle, plafonnee a 500 (le serveur recoupe aussi).
+  const [caption, setCaption] = useState('');
   const fileInputRef = useRef(null);
 
   // L'URL d'objet est liberee au demontage ET a chaque remplacement : sans
@@ -158,6 +345,8 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
       // BESOIN de X-User-Email (auth coach) — l'intercepteur global le pose.
       var payload = { media_url: cloudData.secure_url, media_type: mediaType };
       if (subscriberCode) payload.subscriber_code = subscriberCode;
+      if (caption.trim()) payload.caption = caption.trim().slice(0, 500); // V268
+
       await axios.post(`${API}/publications`, payload);
       setUploading(false);
       if (onPublished) onPublished();
@@ -242,7 +431,25 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
           style={{ display: 'none' }}
         />
 
-        <p style={{ color: '#666', fontSize: '0.7rem', marginTop: 12, display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
+        {/* V268 (F5): legende. Optionnelle, 500 max, compteur discret. */}
+        <textarea
+          value={caption}
+          onChange={(e) => setCaption(e.target.value.slice(0, 500))}
+          placeholder="Ajoutez une légende..."
+          maxLength={500}
+          rows={2}
+          style={{
+            width: '100%', marginTop: 12, padding: '10px 12px', borderRadius: 8,
+            border: '1px solid #333', background: '#0a0a1a', color: '#fff',
+            fontSize: '0.85rem', resize: 'vertical', boxSizing: 'border-box'
+          }}
+          data-testid="publish-caption"
+        />
+        <p style={{ color: '#555', fontSize: '0.62rem', textAlign: 'right', margin: '2px 2px 0' }}>
+          {caption.length}/500
+        </p>
+
+        <p style={{ color: '#666', fontSize: '0.7rem', marginTop: 8, display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
             <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
           </svg>
