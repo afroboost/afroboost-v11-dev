@@ -15,8 +15,12 @@ import SvgIcon from "./SvgIcon";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
 
-// v9.5.3: Vidéo par défaut Afroboost - Afrobeat Dance Workout (vidéo populaire 2025)
-const DEFAULT_VIDEO_URL = "https://www.youtube.com/watch?v=9ZvW8wnWcxE";
+// V272d: la vidéo YouTube « Afrodance Workout » par défaut est SUPPRIMÉE — elle
+// s'affichait sur la vitrine de tout partenaire sans média (le « fantôme »). Vide,
+// le repli bascule sur le placeholder de marque (avatar + nom + CTA « Voir le
+// profil ») déjà géré plus bas quand hasValidMedia est faux. Ne PAS y remettre
+// une URL vidéo tierce : ce serait réintroduire le fantôme.
+const DEFAULT_VIDEO_URL = "";
 
 // Logo Afroboost SVG compact
 const AfroboostLogo = () => (
