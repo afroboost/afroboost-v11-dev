@@ -890,7 +890,7 @@ const LanguageSelector = ({ lang, setLang }) => {
   const languages = [
     { code: 'fr', label: 'FR' }, { code: 'en', label: 'EN' }, { code: 'de', label: 'DE' },
     { code: 'ln', label: 'LN' }, { code: 'wo', label: 'WO' }, { code: 'sw', label: 'SW' },
-    { code: 'bm', label: 'BM' }, { code: 'bas', label: 'BA' }
+    { code: 'bm', label: 'BM' }, { code: 'bas', label: 'BA' }, { code: 'ht', label: 'CR' }
   ];
 
   return (

@@ -11,6 +11,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
 import SvgIcon from "./SvgIcon";
+import { t } from "../utils/i18n"; // V275d: traductions interface visiteur
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -178,7 +179,7 @@ const getMediaInfo = (videoUrl) => {
 // === COMPOSANT VIDEO CARD v9.5.7 avec mode maintenance ===
 // v11.7: Ajout isSuperAdminVideo pour désactiver double-clic
 // v34: Ajout preview 30s + overlay achat pour vidéos premium
-const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onNavigate, isPaused, onTogglePause, isVisible, maintenanceMode = false, isSuperAdmin = false, onBuyVideo, socialCommentsCount = 0, onShowComments, pageLikesCount = 0, likeAnimating = false, currentVitrineEmail = null }) => {
+const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onNavigate, isPaused, onTogglePause, isVisible, maintenanceMode = false, isSuperAdmin = false, onBuyVideo, socialCommentsCount = 0, onShowComments, pageLikesCount = 0, likeAnimating = false, currentVitrineEmail = null, lang = 'fr' }) => {
   const videoRef = useRef(null);
   const [hasError, setHasError] = useState(false);
   const [ytPlaying, setYtPlaying] = useState(false);
@@ -990,7 +991,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                     </h2>
                     {/* Bio ou accroche */}
                     <p className="text-white/70 text-sm max-w-xs">
-                      {bio || 'Découvrez nos cours et réservez votre prochaine session'}
+                      {bio || t('discoverCta', lang)}
                     </p>
                     {/* Bouton CTA */}
                     <button
@@ -1004,7 +1005,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                         boxShadow: '0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.4)'
                       }}
                     >
-                      Voir le profil
+                      {t('seeProfile', lang)}
                     </button>
                   </div>
                 </div>
@@ -1150,7 +1151,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                 <CalendarIcon />
               </div>
               <span className="text-white text-xs mt-1" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}>
-                Réserver
+                {t('bookBtn', lang)}
               </span>
             </button>
           )}
@@ -1583,7 +1584,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Rechercher..."
+                  placeholder={t('searchPlaceholder', lang)}
                   className="w-full px-2 py-1 rounded-full text-xs text-white placeholder-white/50"
                   style={{
                     background: 'rgba(255,255,255,0.15)',
@@ -1648,7 +1649,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
                   {[
                     { code: 'fr', label: 'FR' }, { code: 'en', label: 'EN' }, { code: 'de', label: 'DE' },
                     { code: 'ln', label: 'LN' }, { code: 'wo', label: 'WO' }, { code: 'sw', label: 'SW' },
-                    { code: 'bm', label: 'BM' }, { code: 'bas', label: 'BA' }
+                    { code: 'bm', label: 'BM' }, { code: 'bas', label: 'BA' }, { code: 'ht', label: 'CR' }
                   ].map(l => (
                     <button
                       key={l.code}
@@ -1813,6 +1814,7 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
                   socialCommentsCount={socialCommentsCount}
                   onShowComments={onShowComments}
                   currentVitrineEmail={currentVitrineEmail}
+                  lang={lang}
                 />
               </div>
             );

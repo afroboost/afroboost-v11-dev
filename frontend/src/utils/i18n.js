@@ -358,13 +358,52 @@ export const translations = {
     searchPlaceholder: "Sônga ni ina, email...", all: "Hiki jam",
     sessions: "Bihéga", offersFilter: "Mahɔl", shopFilter: "Makɛ",
     bookBtn: "Tila", viewVisitor: "Ɓéga yak njômbi", faq: "Mambadga"
+  },
+  ht: { // V275d: Créole (haïtien/antillais)
+    loading: "Chajman...", error: "Erè", success: "Siksè",
+    cancel: "Anile", save: "Anrejistre", edit: "Modifye", delete: "Efase",
+    confirm: "Konfime", home: "Lakay", shop: "Boutik",
+    selectOffer: "Chwazi òf ou", bookNow: "Rezève", email: "Imèl",
+    login: "Konekte", logout: "Dekonekte", offers: "Òf yo", price: "Pri",
+    searchPlaceholder: "Chèche pa non, imèl...", all: "Tout",
+    sessions: "Sesyon yo", offersFilter: "Òf yo", shopFilter: "Boutik",
+    bookBtn: "Rezève", viewVisitor: "Vi vizitè", faq: "Kesyon yo"
   }
 };
+
+// V275d: quelques clés visiteur supplementaires, injectees dans TOUTES les
+// langues (repli fr automatique via t() si une langue manque). On les ajoute ici
+// plutot que dans chaque bloc pour eviter la repetition.
+const _V275D_EXTRA = {
+  seeProfile: { fr: 'Voir le profil', en: 'View profile', de: 'Profil ansehen',
+    ln: 'Talá profil', wo: 'Xool profil bi', sw: 'Ona wasifu', bm: 'Profili lajɛ',
+    bas: 'Ɓéga profil', ht: 'Wè pwofil la' },
+  discoverCta: { fr: 'Découvrez nos cours et réservez votre prochaine session',
+    en: 'Discover our classes and book your next session',
+    de: 'Entdecke unsere Kurse und buche deine nächste Session',
+    ln: 'Talá masolo na biso mpe komisa session na yo ya sima',
+    wo: 'Xoolal say cours te réservé sa ndajé bu next',
+    sw: 'Gundua madarasa yetu na uweke nafasi kipindi chako kijacho',
+    bm: 'An ka kalanw lajɛ ka i ka waati nata mara',
+    bas: 'Ɓéga bihéga biɛs ni tila hihéga hi nsôni',
+    ht: 'Dekouvri kou nou yo epi rezève pwochen sesyon ou' }
+};
+Object.keys(_V275D_EXTRA).forEach((k) => {
+  const vals = _V275D_EXTRA[k];
+  Object.keys(vals).forEach((l) => {
+    if (translations[l]) translations[l][k] = vals[l];
+  });
+});
 
 // Hook de traduction
 export const useTranslation = (lang = 'fr') => {
   const t = (key) => translations[lang]?.[key] || translations.fr[key] || key;
   return { t, translations: translations[lang] || translations.fr };
 };
+
+// V275d: helper autonome — permet `import { t } from '../utils/i18n'` puis
+// `t('cle', lang)` dans n'importe quel composant visiteur. Repli sur le français
+// si la clé manque dans la langue choisie, puis sur la clé brute en dernier recours.
+export const t = (key, lang = 'fr') => (translations[lang] && translations[lang][key]) || translations.fr[key] || key;
 
 export default translations;

@@ -428,18 +428,51 @@ const faqAfroboost = [
   }
 ];
 
-// Catégories pour le filtre (id null = tout afficher). Labels multilingues (V275).
+// V275d : traductions Créole (haïtien/antillais) des 20 Q&R, injectees dans la
+// structure existante (question.ht / answer.ht). Table separee pour ne pas
+// gonfler chaque objet ci-dessus.
+const _HT_FAQ = {
+  1: { q: "Kisa Afroboost ye?", a: "Afroboost se yon konsèp fitness imèsif ki melanje dans afrobeat, kadyo entans ak enèji kolektif. Chak sesyon se yon eksperyans konplè : ou swe, ou danse epi ou amize an menm tan. Ou pa bezwen konn danse, jis vle bouje!" },
+  2: { q: "Èske mwen dwe konn danse?", a: "Non menm! Afroboost aksesib pou tout nivo. Mouvman yo senp epi yo repete, objektif la se bouje ak swe, se pa fè espektak. Kòch ou ap gide ou etap pa etap." },
+  3: { q: "Ki byenfè yon sesyon Afroboost genyen?", a: "Yon sesyon Afroboost pèmèt boule ant 400 ak 800 kalori, amelyore kadyo ou, ranfòse misk ou, diminye estrès epi ogmante konfyans ou. Tout sa nan yon anbyans fèt ak motivan!" },
+  4: { q: "Konbyen tan yon sesyon dire?", a: "Yon sesyon dire jeneralman ant 45 minit ak 1 èdtan, ak echofman ak retou nan kalm. Li entans men tan an pase vit gras ak mizik la ak enèji gwoup la!" },
+  5: { q: "Kijan mwen enskri?", a: "Se senp : chwazi yon òf sou vitrin kòch ou, klike sou 'Rezève', antre enfòmasyon ou epi konfime. W ap resevwa yon kòd AFR- ki ba ou aksè a tout fonksyonalite yo." },
+  6: { q: "Kisa kòd AFR- a ye?", a: "Kòd AFR- a se idantifyan inik ou kòm abòne Afroboost. Li jenere otomatikman lè ou enskri. Kenbe l byen : li pèmèt ou jwenn aksè a sesyon ou yo, pibliye kontni epi pwofite tout fonksyonalite platfòm la." },
+  7: { q: "Ki òf ki disponib?", a: "Òf yo varye selon kòch ou. Ou ka jwenn sesyon inik, pakè sesyon, abònman chak mwa ak kou esè gratis. Gade vitrin kòch ou pou wè pri yo ak detay yo." },
+  8: { q: "Èske gen yon esè gratis?", a: "Wi! Kèk kòch ofri kou esè gratis. Gade òf yo sou vitrin lan pou wè si gen yon esè disponib. Se pi bon fason pou dekouvri Afroboost san angajman." },
+  9: { q: "Ki mwayen peman yo aksepte?", a: "Afroboost aksepte peman ak kat bankè (Visa, Mastercard) atravè Stripe, ak lajan mobil pou kèk rejyon. Peman an sekirize epi w ap resevwa yon konfimasyon pa imèl." },
+  10: { q: "Èske mwen ka anile rezèvasyon mwen?", a: "Kondisyon anilasyon yo depann de chak kòch ak chak òf. Kontakte kòch ou dirèkteman nan chat la pou konnen politik anilasyon li." },
+  11: { q: "Kote sesyon yo fèt?", a: "Kote yo varye selon kòch ou. Gade detay chak òf pou konnen adrès egzak la. Sesyon yo ka fèt nan yon sal, deyò oswa menm anliy." },
+  12: { q: "Kisa mwen dwe pote nan yon sesyon?", a: "Prepare yon rad espò konfòtab, soulye espò, yon sèvyèt ak yon boutèy dlo. Ou pral swe, kidonk bwè dlo byen anvan, pandan ak apre sesyon an!" },
+  13: { q: "Èske sesyon yo an gwoup oswa endividyèl?", a: "Sesyon Afroboost yo prensipalman an gwoup — se enèji kolektif la ki fè maji a! Men kèk kòch ofri tou sesyon prive. Gade òf yo pou plis detay." },
+  14: { q: "Kijan mwen pibliye kontni?", a: "Klike sou bouton 'Pibliye +' nan chat la. Ou ka pataje foto ak videyo (maksimòm 1 minit). Koupe imaj ou, chwazi miniyati videyo ou epi ajoute yon lejand. Piblikasyon ou ap vizib pandan 48 èdtan." },
+  15: { q: "Poukisa piblikasyon mwen disparèt apre 48è?", a: "Piblikasyon yo gen yon dire lavi 48 èdtan pou kenbe kontni an fre ak dinamik, tankou istwa Instagram yo. Sa ankouraje tout moun pataje regilyèman epi kenbe enèji kominote a!" },
+  16: { q: "Èske mwen ka modifye oswa efase piblikasyon mwen?", a: "Wi! Ale nan 'Piblikasyon mwen' depi nan chat la, w ap jwenn tout piblikasyon ou yo ak opsyon pou modifye ak efase." },
+  17: { q: "Kijan mwen kontakte kòch mwen?", a: "Sèvi ak chat entegre a sou sit kòch ou. Ou ka voye yon mesaj dirèkteman ba li. Si mòd IA a aktive, ou ka poze kesyon ou yo isit la tou epi jwenn repons imedyat." },
+  18: { q: "Èske mwen ka enstale aplikasyon an sou telefòn mwen?", a: "Wi! Afroboost se yon aplikasyon web pwogresif (PWA). Sou telefòn ou, ouvri sit la nan Chrome oswa Safari, epi klike sou 'Ajoute nan ekran akèy la'. W ap resevwa notifikasyon tankou yon vrè aplikasyon!" },
+  19: { q: "Kijan pou vin kòch patnè Afroboost?", a: "Si ou se yon kòch fitness oswa dans epi ou vle rejwenn platfòm Afroboost la, kontakte nou nan chat la oswa pa imèl. W ap gen pwòp vitrin pèsonalize ou, zouti jesyon ou ak kominote ou." },
+  20: { q: "Èske done mwen yo an sekirite?", a: "Wi, done ou yo pwoteje. Peman yo pase atravè Stripe (sètifye PCI DSS), enfòmasyon pèsonèl ou yo pa janm pataje ak lòt moun, epi chak kòch gen yon espas izole." }
+};
+faqAfroboost.forEach((item) => {
+  const h = _HT_FAQ[item.id];
+  if (h) {
+    if (item.question && typeof item.question === 'object') item.question.ht = h.q;
+    if (item.answer && typeof item.answer === 'object') item.answer.ht = h.a;
+  }
+});
+
+// Catégories pour le filtre (id null = tout afficher). Labels multilingues (V275/V275d).
 export const faqCategories = [
-  { id: null, label: { fr: 'Tout', ln: 'Nyonso', wo: 'Yépp', sw: 'Yote', bm: 'Bɛɛ', bas: 'Hiki jam' } },
-  { id: 'concept', label: { fr: 'Concept', ln: 'Likanisi', wo: 'Xam-xam', sw: 'Dhana', bm: 'Hakili', bas: 'Nyambe' } },
-  { id: 'inscription', label: { fr: 'Inscription', ln: 'Bokomi', wo: 'Bindu', sw: 'Usajili', bm: 'Tɔgɔda', bas: 'Tila tôi' } },
-  { id: 'paiement', label: { fr: 'Paiement', ln: 'Kofuta', wo: 'Fey', sw: 'Malipo', bm: 'Sara', bas: 'Bédga' } },
-  { id: 'sessions', label: { fr: 'Sessions', ln: 'Masolo', wo: 'Ndajé yi', sw: 'Vipindi', bm: 'Kalanso', bas: 'Bihéga' } },
-  { id: 'communaute', label: { fr: 'Communauté', ln: 'Lisangá', wo: 'Mbool', sw: 'Jamii', bm: 'Jɛkulu', bas: 'Likɔŋ' } },
-  { id: 'plateforme', label: { fr: 'Plateforme', ln: 'Esika', wo: 'Plateforme', sw: 'Jukwaa', bm: 'Yɔrɔ', bas: 'Homa' } }
+  { id: null, label: { fr: 'Tout', ln: 'Nyonso', wo: 'Yépp', sw: 'Yote', bm: 'Bɛɛ', bas: 'Hiki jam', ht: 'Tout' } },
+  { id: 'concept', label: { fr: 'Concept', ln: 'Likanisi', wo: 'Xam-xam', sw: 'Dhana', bm: 'Hakili', bas: 'Nyambe', ht: 'Konsèp' } },
+  { id: 'inscription', label: { fr: 'Inscription', ln: 'Bokomi', wo: 'Bindu', sw: 'Usajili', bm: 'Tɔgɔda', bas: 'Tila tôi', ht: 'Enskripsyon' } },
+  { id: 'paiement', label: { fr: 'Paiement', ln: 'Kofuta', wo: 'Fey', sw: 'Malipo', bm: 'Sara', bas: 'Bédga', ht: 'Peman' } },
+  { id: 'sessions', label: { fr: 'Sessions', ln: 'Masolo', wo: 'Ndajé yi', sw: 'Vipindi', bm: 'Kalanso', bas: 'Bihéga', ht: 'Sesyon' } },
+  { id: 'communaute', label: { fr: 'Communauté', ln: 'Lisangá', wo: 'Mbool', sw: 'Jamii', bm: 'Jɛkulu', bas: 'Likɔŋ', ht: 'Kominote' } },
+  { id: 'plateforme', label: { fr: 'Plateforme', ln: 'Esika', wo: 'Plateforme', sw: 'Jukwaa', bm: 'Yɔrɔ', bas: 'Homa', ht: 'Platfòm' } }
 ];
 
-// Intro + libellés du panneau FAQ, multilingues (V275).
+// Intro + libellés du panneau FAQ, multilingues (V275/V275d).
 export const faqUiText = {
   intro: {
     fr: "Posez-moi une question ! Cliquez sur un sujet ci-dessous.",
@@ -447,7 +480,8 @@ export const faqUiText = {
     wo: "Laaj ma! Bësal ci benn sujet ci suuf.",
     sw: "Niulize swali! Bofya mada hapa chini.",
     bm: "Ne ɲininka! Digi kuma dɔ kan duguma.",
-    bas: "Nôlôl me! Tôp njômbi hana i si."
+    bas: "Nôlôl me! Tôp njômbi hana i si.",
+    ht: "Poze m yon kesyon! Klike sou yon sijè anba a."
   }
 };
 
