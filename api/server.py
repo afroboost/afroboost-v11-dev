@@ -5519,6 +5519,17 @@ async def _v261_purge_expired() -> int:
     48 h. Les suppressions Cloudinary partent dans un thread pour ne pas
     bloquer la boucle asyncio.
     """
+    # V272c : filet paresseux — si le hook startup n'a pas migre les publications
+    # legacy (redemarrage a froid), on le fait a la premiere lecture (publique OU
+    # dashboard, les deux passent ici). Ainsi le fantome devient visible ET
+    # supprimable dans « Mes publications ».
+    global _V272C_MIGRATED
+    if not _V272C_MIGRATED:
+        try:
+            await _v272c_migrate_legacy_publications()
+        except Exception as e:
+            _V272C_MIGRATED = True  # une panne ne doit pas rebalayer a chaque lecture
+            logger.warning(f"[V272c] Migration paresseuse ignoree: {e}")
     now_iso = datetime.now(timezone.utc).isoformat()
     expired = await db.publications.find(
         {"expires_at": {"$lte": now_iso}}, {"_id": 0}
@@ -5537,6 +5548,84 @@ async def _v261_purge_expired() -> int:
     await db.publications.delete_many({"id": {"$in": [p["id"] for p in expired]}})
     logger.info(f"[V261] {len(expired)} publication(s) expiree(s) supprimee(s)")
     return len(expired)
+
+
+# V272c: garde « migration deja jouee » — evite de rebalayer la collection a
+# chaque lecture. Le startup la remet a False une fois, la lecture publique la
+# declenche paresseusement si le hook startup n'a pas tourne (filet serverless).
+_V272C_MIGRATED = False
+
+
+async def _v272c_resolve_coach_for_pub(pub: dict) -> str:
+    """V272c: a quel coach appartient une publication legacy (sans coach_id) ?
+
+    `subscriber_code` porte, selon le chemin de creation :
+      - un code AFR- (chemin abonne) -> on remonte au coach de l'abonnement ;
+      - un EMAIL de coach (chemin coach, cf. create_publication) -> ce coach ;
+      - rien d'exploitable -> repli sur l'admin (DEFAULT_COACH_ID), seul coach
+        reel, ce qui evite qu'une publication reste orpheline et invisible.
+    Ne LEVE jamais : une resolution ratee retombe sur l'admin.
+    """
+    sc = (pub.get("subscriber_code") or "").strip()
+    if not sc:
+        return DEFAULT_COACH_ID
+    if sc.upper().startswith("AFR-"):
+        try:
+            ok, _n, cid = await _v261_resolve_subscriber(sc)
+            if ok and cid:
+                return cid
+        except Exception:
+            pass
+        return DEFAULT_COACH_ID
+    if "@" in sc:
+        # Chemin coach : l'email etait stocke tel quel dans subscriber_code.
+        if is_super_admin(sc):
+            return sc
+        try:
+            known = await db.coaches.find_one({"email": sc}, {"_id": 1})
+            if not known:
+                known = await db.coach_auth.find_one({"email": sc}, {"_id": 1})
+            if known:
+                return sc
+        except Exception:
+            pass
+    return DEFAULT_COACH_ID
+
+
+async def _v272c_migrate_legacy_publications() -> int:
+    """V272c: rattache un coach_id a TOUTES les publications legacy.
+
+    Le « fantome » (Afrodance Workout, cree avant V272b) n'avait pas de
+    coach_id : il echappait au dashboard du coach (donc impossible a supprimer)
+    tout en fuitant sur la vitrine. Cette migration IDEMPOTENTE lui attribue un
+    proprietaire. Elle NE SUPPRIME RIEN — elle repare seulement le champ manquant
+    (et un `expires_at` absent, sinon la publication reste un fantome indelogeable
+    de l'ecran « Mes publications »).
+    """
+    global _V272C_MIGRATED
+    orphans = await db.publications.find(
+        {"$or": [{"coach_id": {"$exists": False}}, {"coach_id": None}, {"coach_id": ""}]},
+        {"subscriber_code": 1, "created_at": 1, "expires_at": 1, "id": 1}
+    ).to_list(2000)
+    migrated = 0
+    for pub in orphans:
+        set_fields = {"coach_id": await _v272c_resolve_coach_for_pub(pub)}
+        # Repare un expires_at absent : la publication redevient une publication
+        # normale (visible au dashboard, purgee a echeance) au lieu d'un fantome.
+        if not pub.get("expires_at"):
+            base = pub.get("created_at")
+            try:
+                base_dt = datetime.fromisoformat(base) if base else datetime.now(timezone.utc)
+            except Exception:
+                base_dt = datetime.now(timezone.utc)
+            set_fields["expires_at"] = (base_dt + timedelta(hours=V261_TTL_HOURS)).isoformat()
+        await db.publications.update_one({"_id": pub["_id"]}, {"$set": set_fields})
+        logger.info(f"[V272c] Publication legacy {pub.get('id', pub['_id'])} -> coach_id={set_fields['coach_id']}")
+        migrated += 1
+    _V272C_MIGRATED = True
+    if migrated:
+        logger.info(f"[V272c] {migrated} publication(s) legacy migree(s)")
+    return migrated
 
 
 async def _v263_authenticated_coach(request: Request) -> str:
@@ -5692,15 +5781,11 @@ async def list_publications(coach_id: str = ""):
     now = datetime.now(timezone.utc)
     target = (coach_id or "").strip().lower() or DEFAULT_COACH_ID
     time_q = {"expires_at": {"$gt": now.isoformat()}}
-    if is_super_admin(target) or target == DEFAULT_COACH_ID:
-        # Vitrine admin : ses publications ET les anciennes sans coach_id.
-        query = {"$and": [time_q, {"$or": [
-            {"coach_id": target},
-            {"coach_id": None},
-            {"coach_id": {"$exists": False}},
-        ]}]}
-    else:
-        query = {"$and": [time_q, {"coach_id": target}]}
+    # V272c : SECURITE — une publication SANS coach_id ne s'affiche JAMAIS
+    # publiquement (c'etait la faille du « fantome »). La migration ci-dessus les
+    # rattache toutes ; ce filtre reste comme garde-fou si l'une passe entre les
+    # mailles. La vitrine par defaut (admin) ne recupere plus les orphelins.
+    query = {"$and": [time_q, {"coach_id": target}]}
     pubs = await db.publications.find(
         query,
         {"_id": 0, "subscriber_code": 0, "cloudinary_public_id": 0, "thumbnail_public_id": 0}
@@ -17737,6 +17822,13 @@ async def startup_db():
             logger.info(f"[V197b] Quick replies seeded ({inserted} docs)")
     except Exception as e:
         logger.warning(f"[V197b] startup seed skipped: {e}")
+
+    # V272c: migration des publications legacy (backfill coach_id). Idempotente —
+    # ne touche que les documents sans coach_id, ne supprime rien.
+    try:
+        await _v272c_migrate_legacy_publications()
+    except Exception as e:
+        logger.warning(f"[V272c] Migration publications legacy ignoree: {e}")
 
     logger.info("[SYSTEM] Database indexes initialized")
 
