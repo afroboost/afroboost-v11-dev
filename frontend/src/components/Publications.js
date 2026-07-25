@@ -7,9 +7,94 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import Cropper from 'react-easy-crop'; // V268c (F1)
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
+
+// V268c — upload d'un fichier OU d'un blob vers Cloudinary, en `fetch`.
+// `fetch` et non axios : l'intercepteur global (App.js) injecterait
+// Authorization / X-User-Email, ce qui declenche un preflight CORS que
+// l'endpoint d'upload refuse — c'est le bug V267. Reutilise pour l'image
+// recadree, la video et la miniature.
+async function v268cUploadToCloudinary(fileOrBlob, kind) {
+  const fd = new FormData();
+  fd.append('file', fileOrBlob);
+  fd.append('upload_preset', 'afroboost');
+  fd.append('folder', 'publications');
+  const endpoint = kind === 'video'
+    ? 'https://api.cloudinary.com/v1_1/dtm0r7hwq/video/upload'
+    : 'https://api.cloudinary.com/v1_1/dtm0r7hwq/image/upload';
+  const resp = await fetch(endpoint, { method: 'POST', body: fd });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || !data.secure_url) {
+    throw new Error((data.error && data.error.message) || "L'envoi du média a échoué.");
+  }
+  return data.secure_url;
+}
+
+// V268c (F1) — genere l'image recadree en blob JPEG depuis le crop en pixels.
+function v268cGetCroppedImg(imageSrc, pixelCrop) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(pixelCrop.width));
+        canvas.height = Math.max(1, Math.round(pixelCrop.height));
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(
+          image,
+          pixelCrop.x, pixelCrop.y, pixelCrop.width, pixelCrop.height,
+          0, 0, pixelCrop.width, pixelCrop.height
+        );
+        canvas.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error('canvas vide'))),
+          'image/jpeg', 0.9
+        );
+      } catch (e) { reject(e); }
+    };
+    image.onerror = reject;
+    image.src = imageSrc;
+  });
+}
+
+// V268c (F1) — 4 captures d'une video, en best-effort. Certains codecs/
+// navigateurs echouent au seek : on renvoie ce qu'on a pu extraire (peut etre
+// vide) sans jamais bloquer la publication.
+async function v268cGenerateThumbnails(videoFile, count = 4) {
+  const video = document.createElement('video');
+  video.muted = true;
+  video.playsInline = true;
+  video.src = URL.createObjectURL(videoFile);
+  const out = [];
+  try {
+    await new Promise((res, rej) => {
+      video.onloadedmetadata = res;
+      video.onerror = rej;
+    });
+    const duration = isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+    for (let i = 0; i < count; i++) {
+      const time = duration ? Math.min(duration - 0.05, (duration / count) * i + 0.5) : 0;
+      try {
+        await new Promise((res, rej) => {
+          video.onseeked = res;
+          video.onerror = rej;
+          video.currentTime = time;
+        });
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth || 320;
+        canvas.height = video.videoHeight || 320;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.8));
+        if (blob) out.push({ time, blob, url: URL.createObjectURL(blob) });
+      } catch (e) { /* on saute cette capture */ }
+    }
+  } catch (e) { /* metadata illisible : aucune miniature */ }
+  finally { URL.revokeObjectURL(video.src); }
+  return out;
+}
 
 // V268b — Fix C : plus de barre visuelle ni du mot « restantes ». Juste « 47h »,
 // dans la couleur DYNAMIQUE du coach (var(--primary-color), pilotee par le
@@ -180,9 +265,9 @@ const V268Lightbox = ({ pub, onClose }) => {
 // V268: une carte du carrousel. Composant séparé pour porter l'état local
 // (son de la vidéo) sans le partager entre cartes.
 const V268PublicationCard = ({ pub, onOpen }) => {
-  const videoRef = useRef(null);
-  const [muted, setMuted] = useState(true);
-  const toggleMute = v268ToggleSound(videoRef, setMuted); // V268b Fix B2
+  // V268c Fix 2 : plus de bouton son sur la carte — la video du carrousel est
+  // TOUJOURS muette (autoplay silencieux). Le son n'existe qu'en lightbox.
+  // Plus besoin de ref ni d'etat muet ici.
   return (
     // V268b Fix A (revu) : le texte (nom, heures, legende) sort du media et
     // passe DESSOUS, dans un bloc separe. L'ancien texte etait pose EN
@@ -191,35 +276,31 @@ const V268PublicationCard = ({ pub, onOpen }) => {
     // apres le carrousel. Media a hauteur FIXE + overflow hidden = plus rien
     // ne depasse.
     <div style={{ flexShrink: 0, width: 160, scrollSnapAlign: 'start' }}>
+      {/* V268c Fix 1 : conteneur a HAUTEUR FIXE + overflow hidden + flexShrink 0,
+          et le media porte height:250px EXPLICITE (pas 100%, pour qu'aucun
+          parent flex ne l'etire). `display:block` supprime l'espace fantome
+          d'un media `inline`. Rien ne peut plus deborder. */}
       <div
         onClick={() => onOpen(pub)}
         style={{
-          width: '100%', height: 250, borderRadius: 12, overflow: 'hidden',
-          position: 'relative', background: '#000', cursor: 'pointer'
+          position: 'relative', width: '100%', height: 250, overflow: 'hidden',
+          borderRadius: 12, flexShrink: 0, background: '#000', cursor: 'pointer'
         }}
         data-testid="publication-card"
       >
         {pub.media_type === 'video' ? (
-          <>
-            {/* `muted` requis avec `autoPlay` (iOS/Chrome). Le bouton son
-                pilote `muted` via le ref. */}
-            <video
-              ref={videoRef}
-              src={pub.media_url}
-              poster={pub.thumbnail_url || undefined}
-              playsInline muted={muted} loop autoPlay
-              style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }}
-            />
-            <div style={{ position: 'absolute', bottom: 6, right: 6 }}>
-              <V268MuteButton muted={muted} onToggle={toggleMute} size={18} />
-            </div>
-          </>
+          <video
+            src={pub.media_url}
+            poster={pub.thumbnail_url || undefined}
+            muted autoPlay loop playsInline
+            style={{ display: 'block', width: '100%', height: '250px', objectFit: 'cover', borderRadius: 12 }}
+          />
         ) : (
           <img
             src={pub.media_url}
             alt={`Publication de ${pub.display_name || pub.subscriber_name || 'un abonné'}`}
             loading="lazy"
-            style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }}
+            style={{ display: 'block', width: '100%', height: '250px', objectFit: 'cover', borderRadius: 12 }}
           />
         )}
       </div>
@@ -427,81 +508,117 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
 // `subscriberCode` absent = mode COACH (V263) : le serveur identifie alors le
 // coach par sa session authentifiee, jamais par une valeur envoyee d'ici.
 export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
-  const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState(null);
+  const [file, setFile] = useState(null);           // fichier brut selectionne
+  const [preview, setPreview] = useState(null);      // apercu affiche
   const [mediaType, setMediaType] = useState('image');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
-  // V268 (F5): legende optionnelle, plafonnee a 500 (le serveur recoupe aussi).
   const [caption, setCaption] = useState('');
   const fileInputRef = useRef(null);
 
-  // L'URL d'objet est liberee au demontage ET a chaque remplacement : sans
-  // cela, choisir cinq fichiers de suite laisse cinq blobs en memoire.
-  useEffect(() => {
-    return () => { if (preview) URL.revokeObjectURL(preview); };
-  }, [preview]);
+  // V268c (F1) — recadrage image
+  const [rawImageSrc, setRawImageSrc] = useState(null); // URL objet de l'original
+  const [showCrop, setShowCrop] = useState(false);
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [aspect, setAspect] = useState(1);              // 1 / (4/5) / (16/9)
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
+  const [croppedBlob, setCroppedBlob] = useState(null); // image finale a uploader
+
+  // V268c (F1) — miniatures video
+  const [thumbs, setThumbs] = useState([]);
+  const [thumbIdx, setThumbIdx] = useState(0);
+  const [thumbLoading, setThumbLoading] = useState(false);
+
+  const revokeAll = () => {
+    if (preview) URL.revokeObjectURL(preview);
+    if (rawImageSrc) URL.revokeObjectURL(rawImageSrc);
+    thumbs.forEach(t => t.url && URL.revokeObjectURL(t.url));
+  };
+  // Nettoyage memoire au demontage.
+  useEffect(() => () => revokeAll(), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const clearFile = () => {
+    revokeAll();
+    setFile(null); setPreview(null);
+    setRawImageSrc(null); setShowCrop(false); setCroppedBlob(null);
+    setThumbs([]); setThumbIdx(0); setThumbLoading(false);
+  };
 
   const handleFileSelect = (e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
     setError('');
-    if (preview) URL.revokeObjectURL(preview);
-    setMediaType(f.type.startsWith('video/') ? 'video' : 'image');
-    setFile(f);
-    setPreview(URL.createObjectURL(f));
+    revokeAll();
+    setCroppedBlob(null); setThumbs([]); setThumbIdx(0);
+
+    if (f.type.startsWith('video/')) {
+      // VIDEO : apercu + generation des miniatures, puis choix.
+      setMediaType('video');
+      setFile(f);
+      setPreview(URL.createObjectURL(f));
+      setShowCrop(false);
+      setThumbLoading(true);
+      v268cGenerateThumbnails(f).then(list => {
+        setThumbs(list);
+        // Defaut : la capture la plus proche d'1 s.
+        let idx = 0, best = Infinity;
+        list.forEach((t, i) => { const d = Math.abs((t.time || 0) - 1); if (d < best) { best = d; idx = i; } });
+        setThumbIdx(idx);
+        setThumbLoading(false);
+      }).catch(() => { setThumbs([]); setThumbLoading(false); });
+    } else {
+      // IMAGE : on passe d'abord par le recadrage.
+      setMediaType('image');
+      setFile(f); // garde en repli si le recadrage echoue
+      const src = URL.createObjectURL(f);
+      setRawImageSrc(src);
+      setPreview(null);
+      setCrop({ x: 0, y: 0 }); setZoom(1); setAspect(1);
+      setShowCrop(true);
+    }
   };
 
-  const clearFile = () => {
-    if (preview) URL.revokeObjectURL(preview);
-    setFile(null);
-    setPreview(null);
+  // V268c (F1) — valide le recadrage : genere le blob et l'utilise comme apercu.
+  const applyCrop = async () => {
+    try {
+      const blob = await v268cGetCroppedImg(rawImageSrc, croppedAreaPixels);
+      setCroppedBlob(blob);
+      if (preview) URL.revokeObjectURL(preview);
+      setPreview(URL.createObjectURL(blob));
+      setShowCrop(false);
+    } catch (e) {
+      // Repli : on garde l'original (file) et on affiche son apercu.
+      setCroppedBlob(null);
+      setPreview(rawImageSrc);
+      setShowCrop(false);
+    }
   };
 
   const handleUploadAndPublish = async () => {
-    if (!file || uploading) return;
+    // Image -> blob recadre si dispo, sinon original. Video -> le fichier.
+    const media = mediaType === 'image' ? (croppedBlob || file) : file;
+    if (!media || uploading) return;
     setUploading(true);
     setError('');
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('upload_preset', 'afroboost');
-      formData.append('folder', 'publications');
-      const endpoint = mediaType === 'video'
-        ? 'https://api.cloudinary.com/v1_1/dtm0r7hwq/video/upload'
-        : 'https://api.cloudinary.com/v1_1/dtm0r7hwq/image/upload';
-      // PAS de `transformation` dans le formulaire : un preset UNSIGNED la
-      // refuse (Cloudinary renvoie « Transformation parameter is not allowed
-      // when using unsigned upload »). Le cadrage 9:16 est fait a l'affichage
-      // par `objectFit: cover`, ce qui evite aussi de deteriorer l'original.
-      //
-      // V267 — LE BUG QUI CASSAIT TOUTE PUBLICATION. On utilisait `axios.post`,
-      // or l'intercepteur global (App.js) ajoute `Authorization` et
-      // `X-User-Email` a CHAQUE requete axios — y compris cet upload
-      // cross-origin vers Cloudinary. Ces en-tetes personnalises font passer la
-      // requete en preflight CORS, que l'endpoint d'upload Cloudinary refuse :
-      // le navigateur la BLOQUE, axios n'a aucune reponse, et la modale affiche
-      // le message de repli « La publication a échoué ». Cela cassait aussi bien
-      // avec que sans JWT (l'en-tete X-User-Email est injecte dans les deux cas).
-      // `fetch` n'est PAS soumis a l'intercepteur -> requete simple, pas de
-      // preflight, pas d'en-tete parasite. C'est exactement ce que fait deja le
-      // CloudinaryUploadButton qui fonctionne en production.
-      const cloudResp = await fetch(endpoint, { method: 'POST', body: formData });
-      const cloudData = await cloudResp.json().catch(function () { return {}; });
-      if (!cloudResp.ok || !cloudData.secure_url) {
-        throw new Error((cloudData.error && cloudData.error.message) || "L'envoi du média a échoué.");
+      const mediaUrl = await v268cUploadToCloudinary(media, mediaType);
+
+      // V268c (F1B) : miniature video choisie, uploadee a part. Best-effort —
+      // son echec ne bloque pas la publication (la video s'affichera sans
+      // poster dedie, le navigateur montrera sa premiere frame).
+      let thumbnailUrl = '';
+      if (mediaType === 'video' && thumbs[thumbIdx] && thumbs[thumbIdx].blob) {
+        try { thumbnailUrl = await v268cUploadToCloudinary(thumbs[thumbIdx].blob, 'image'); }
+        catch (e) { /* ignore */ }
       }
-      // V261b: `cloudinary_public_id` n'est PLUS envoye — le serveur le derive
-      // lui-meme de l'URL. Il finissait en argument de `destroy()` : un client
-      // pouvait y designer le media d'un autre et le faire effacer.
-      // V263: sans code abonne, on n'envoie RIEN qui designe l'auteur — le
-      // serveur le deduit de la session (JWT ou en-tete). Envoyer un
-      // `coach_email` ici rouvrirait la falsification corrigee en V262.
-      // Le POST /publications, LUI, reste en axios : il est same-origin et a
-      // BESOIN de X-User-Email (auth coach) — l'intercepteur global le pose.
-      var payload = { media_url: cloudData.secure_url, media_type: mediaType };
+
+      // Le POST /publications reste en axios : same-origin, il a besoin de
+      // X-User-Email (auth), pose par l'intercepteur global.
+      var payload = { media_url: mediaUrl, media_type: mediaType };
       if (subscriberCode) payload.subscriber_code = subscriberCode;
-      if (caption.trim()) payload.caption = caption.trim().slice(0, 500); // V268
+      if (caption.trim()) payload.caption = caption.trim().slice(0, 500);
+      if (thumbnailUrl) payload.thumbnail_url = thumbnailUrl;
 
       await axios.post(`${API}/publications`, payload);
       setUploading(false);
@@ -538,6 +655,68 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
             </svg>
           </button>
         </div>
+
+        {/* V268c (F1A) — ecran de recadrage image, en overlay plein ecran.
+            react-easy-crop exige un conteneur POSITIONNE et dimensionne. */}
+        {showCrop && rawImageSrc && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 10000, background: '#000',
+              display: 'flex', flexDirection: 'column'
+            }}
+            data-testid="publish-cropper"
+          >
+            <div style={{ position: 'relative', flex: 1 }}>
+              <Cropper
+                image={rawImageSrc}
+                crop={crop}
+                zoom={zoom}
+                aspect={aspect}
+                onCropChange={setCrop}
+                onZoomChange={setZoom}
+                onCropComplete={(_, px) => setCroppedAreaPixels(px)}
+              />
+            </div>
+            <div style={{ padding: 14, background: '#0a0a1a' }}>
+              {/* Formats */}
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 12 }}>
+                {[{ a: 1, l: 'Carré' }, { a: 4 / 5, l: 'Portrait' }, { a: 16 / 9, l: 'Paysage' }].map(o => (
+                  <button
+                    key={o.l}
+                    type="button"
+                    onClick={() => setAspect(o.a)}
+                    style={{
+                      padding: '7px 14px', borderRadius: 20, cursor: 'pointer', fontSize: '0.8rem',
+                      border: '1px solid ' + (Math.abs(aspect - o.a) < 0.01 ? 'var(--primary-color, #D91CD2)' : '#333'),
+                      background: Math.abs(aspect - o.a) < 0.01 ? 'var(--primary-color, #D91CD2)' : 'transparent',
+                      color: '#fff', fontWeight: 600
+                    }}
+                  >
+                    {o.l}
+                  </button>
+                ))}
+              </div>
+              {/* Zoom */}
+              <input
+                type="range" min={1} max={3} step={0.01} value={zoom}
+                onChange={(e) => setZoom(Number(e.target.value))}
+                style={{ width: '100%', accentColor: 'var(--primary-color, #D91CD2)' }}
+                aria-label="Zoom"
+              />
+              <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+                <button type="button" onClick={clearFile}
+                  style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid #333', background: 'transparent', color: '#999', cursor: 'pointer', fontWeight: 600 }}>
+                  Annuler
+                </button>
+                <button type="button" onClick={applyCrop}
+                  style={{ flex: 1, padding: '11px', borderRadius: 12, border: 'none', background: 'var(--primary-color, #D91CD2)', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>
+                  Valider
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {!preview ? (
           <div
@@ -576,6 +755,36 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
                 <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
               </svg>
             </button>
+          </div>
+        )}
+
+        {/* V268c (F1B) — choix de la miniature video. Best-effort : si la
+            generation n'a rien donne (codec, navigateur), on n'affiche rien et
+            la video part sans poster dedie. */}
+        {mediaType === 'video' && preview && (thumbLoading || thumbs.length > 0) && (
+          <div style={{ marginTop: 12 }}>
+            <p style={{ color: '#999', fontSize: '0.75rem', margin: '0 0 6px' }}>
+              {thumbLoading ? 'Génération des miniatures…' : 'Choisir la miniature'}
+            </p>
+            {!thumbLoading && (
+              <div style={{ display: 'flex', gap: 6 }}>
+                {thumbs.map((t, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setThumbIdx(i)}
+                    style={{
+                      flex: 1, padding: 0, borderRadius: 8, overflow: 'hidden', cursor: 'pointer',
+                      border: '2px solid ' + (thumbIdx === i ? 'var(--primary-color, #D91CD2)' : 'transparent'),
+                      background: '#000', lineHeight: 0
+                    }}
+                    aria-label={`Miniature ${i + 1}`}
+                  >
+                    <img src={t.url} alt="" style={{ display: 'block', width: '100%', height: 64, objectFit: 'cover' }} />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
