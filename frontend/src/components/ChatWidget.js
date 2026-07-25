@@ -41,6 +41,7 @@ import MediaMessage from './chat/MediaMessage';
 import { parseMediaUrl, isMediaUrl } from '../services/MediaParser';
 import { PublishModal } from './Publications'; // V263
 import faqAfroboost, { faqCategories, faqText, faqUiText } from '../data/faqAfroboost'; // V274/V275: FAQ chat IA multilingue
+import Cropper from 'react-easy-crop'; // V279: recadrage circulaire de la photo de profil
 
 const API = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
 const SOCKET_URL = process.env.REACT_APP_BACKEND_URL || ''; // URL Socket.IO (même que backend)
@@ -2272,8 +2273,64 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       return;
     }
 
-    // v75: Upload direct sans crop modal — le backend auto-centre à 200x200
-    handleDirectUpload(file);
+    // V279 : au lieu d'un upload direct auto-centré, on ouvre un recadrage
+    // circulaire manuel (react-easy-crop). Le coach cadre/zoome, puis on envoie
+    // le blob recadré à handleDirectUpload (qui reste le seul chemin d'upload).
+    setV279CropSrc(URL.createObjectURL(file));
+    setV279Crop({ x: 0, y: 0 });
+    setV279Zoom(1);
+    setShowV279Crop(true);
+  };
+
+  // === V279 : recadrage circulaire de la photo de profil ===
+  const [showV279Crop, setShowV279Crop] = useState(false);
+  const [v279CropSrc, setV279CropSrc] = useState(null);
+  const [v279Crop, setV279Crop] = useState({ x: 0, y: 0 });
+  const [v279Zoom, setV279Zoom] = useState(1);
+  const [v279CroppedArea, setV279CroppedArea] = useState(null);
+
+  // Extrait la zone recadree en blob carre (le masquage circulaire + le
+  // redimensionnement 200x200 sont ensuite appliques par handleDirectUpload).
+  const v279GetCroppedBlob = (src, area) => new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = area.width;
+      canvas.height = area.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(image, area.x, area.y, area.width, area.height, 0, 0, area.width, area.height);
+      canvas.toBlob((b) => b ? resolve(b) : reject(new Error('crop failed')), 'image/jpeg', 0.9);
+    };
+    image.onerror = reject;
+    image.src = src;
+  });
+
+  const v279ConfirmCrop = async () => {
+    try {
+      if (v279CropSrc && v279CroppedArea) {
+        const blob = await v279GetCroppedBlob(v279CropSrc, v279CroppedArea);
+        const file = new File([blob], 'profile.jpg', { type: 'image/jpeg' });
+        setShowV279Crop(false);
+        await handleDirectUpload(file);
+      } else {
+        setShowV279Crop(false);
+      }
+    } catch (err) {
+      console.error('[V279] Recadrage échoué:', err);
+      setShowV279Crop(false);
+    }
+  };
+
+  // === V279 : mini-profil (clic sur une photo de profil) ===
+  const [miniProfile, setMiniProfile] = useState(null);
+  const openMiniProfile = async (pid, fallbackName) => {
+    if (!pid) return;
+    try {
+      const res = await axios.get(`${API}/users/${encodeURIComponent(pid)}/profile`);
+      setMiniProfile({ ...(res.data || {}), participant_id: pid, name: (res.data && res.data.name) || fallbackName });
+    } catch (e) {
+      setMiniProfile({ participant_id: pid, name: fallbackName || 'Utilisateur' });
+    }
   };
 
   // === v75: UPLOAD DIRECT SANS CROP — Auto-centrage côté backend ===
@@ -5818,19 +5875,36 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
             }}
           >
             <div className="flex items-center gap-3">
-              <div 
-                style={{
-                  width: '40px',
-                  height: '40px',
-                  borderRadius: '50%',
-                  background: 'rgba(255,255,255,0.2)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-              >
-                {isCommunityMode ? <GroupIcon /> : <ChatBubbleIcon />} {/* v9.4.2 */}
-              </div>
+              {/* V279 : photo de profil AGRANDIE (48px). Si une photo existe, on
+                  l'affiche (cliquable -> mini-profil) au lieu de l'icone. */}
+              {(!isCommunityMode && profilePhoto) ? (
+                <img
+                  src={profilePhoto}
+                  alt=""
+                  onClick={(e) => { e.stopPropagation(); openMiniProfile(participantId, leadData.firstName || afroboostProfile?.name); }}
+                  style={{
+                    width: '48px', height: '48px', borderRadius: '50%',
+                    objectFit: 'cover', cursor: 'pointer',
+                    border: '2px solid rgba(255,255,255,0.6)', flexShrink: 0
+                  }}
+                  data-testid="chat-header-avatar"
+                />
+              ) : (
+                <div
+                  style={{
+                    width: '48px',
+                    height: '48px',
+                    borderRadius: '50%',
+                    background: 'rgba(255,255,255,0.2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0
+                  }}
+                >
+                  {isCommunityMode ? <GroupIcon /> : <ChatBubbleIcon />} {/* v9.4.2 */}
+                </div>
+              )}
               <div>
                 <div className="text-white font-semibold text-sm">
                   {isCommunityMode ? 'Communauté Afroboost' : 'Afroboost'}
@@ -6012,7 +6086,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                             src={profilePhoto}
                             alt=""
                             onClick={(e) => { e.stopPropagation(); e.preventDefault(); setZoomedChatPhoto(profilePhoto); }}
-                            style={{ width: '20px', height: '20px', borderRadius: '50%', marginLeft: 'auto', cursor: 'pointer', padding: '10px', margin: '-10px', marginLeft: 'auto', boxSizing: 'content-box' }}
+                            style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover', marginLeft: 'auto', cursor: 'pointer', border: '2px solid rgba(255,255,255,0.4)' }}
                           />
                         )}
                       </label>
@@ -9472,6 +9546,100 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         isMainChatOpen={isOpen}
       />
       
+      {/* === V279 : RECADRAGE CIRCULAIRE de la photo de profil (react-easy-crop) === */}
+      {showV279Crop && v279CropSrc && ReactDOM.createPortal(
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.92)', zIndex: 10000001, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: 1, position: 'relative' }}>
+            <Cropper
+              image={v279CropSrc}
+              crop={v279Crop}
+              zoom={v279Zoom}
+              aspect={1}
+              cropShape="round"
+              showGrid={false}
+              onCropChange={setV279Crop}
+              onZoomChange={setV279Zoom}
+              onCropComplete={(_, areaPixels) => setV279CroppedArea(areaPixels)}
+            />
+          </div>
+          <div style={{ padding: '16px', textAlign: 'center', background: '#0a0a0a' }}>
+            <input
+              type="range" min={1} max={3} step={0.05}
+              value={v279Zoom}
+              onChange={(e) => setV279Zoom(Number(e.target.value))}
+              style={{ width: '80%', height: '4px', accentColor: 'var(--primary-color, #D91CD2)' }}
+              aria-label="Zoom"
+            />
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', marginTop: '14px' }}>
+              <button
+                onClick={() => setShowV279Crop(false)}
+                style={{ padding: '9px 22px', background: '#333', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '14px' }}
+              >
+                Annuler
+              </button>
+              <button
+                onClick={v279ConfirmCrop}
+                disabled={uploadingPhoto}
+                style={{ padding: '9px 22px', background: 'var(--primary-color, #D91CD2)', color: '#fff', border: 'none', borderRadius: '8px', cursor: uploadingPhoto ? 'wait' : 'pointer', fontSize: '14px', fontWeight: 600 }}
+              >
+                {uploadingPhoto ? 'Envoi...' : 'Valider'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* === V279 : MINI-PROFIL (clic sur une photo de profil) === */}
+      {miniProfile && ReactDOM.createPortal(
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000001, padding: '16px' }}
+          onClick={() => setMiniProfile(null)}
+        >
+          <div
+            style={{ background: '#1a1a1a', borderRadius: '16px', padding: '24px', width: '280px', maxWidth: '90vw', textAlign: 'center' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={miniProfile.photo_url || miniProfile.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(miniProfile.name || 'A')}`}
+              alt=""
+              style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid var(--primary-color, #D91CD2)', marginBottom: '12px' }}
+            />
+            <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#fff', marginBottom: '4px' }}>
+              {miniProfile.name || 'Utilisateur'}
+            </div>
+            {miniProfile.age ? (
+              <div style={{ fontSize: '0.8rem', color: '#aaa', marginBottom: '8px' }}>{miniProfile.age} ans</div>
+            ) : null}
+            {miniProfile.bio ? (
+              <div style={{ fontSize: '0.85rem', color: '#ccc', marginBottom: '10px', lineHeight: '1.4', padding: '0 8px' }}>{miniProfile.bio}</div>
+            ) : null}
+            {miniProfile.passions ? (
+              <div style={{ marginTop: '8px' }}>
+                <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '6px' }}>Passions</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'center' }}>
+                  {String(miniProfile.passions).split(',').filter(p => p.trim()).map((passion, i) => (
+                    <span key={i} style={{ padding: '3px 10px', borderRadius: '12px', background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)', color: 'var(--primary-color, #D91CD2)', fontSize: '0.75rem', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }}>
+                      {passion.trim()}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {!miniProfile.bio && !miniProfile.age && !miniProfile.passions && (
+              <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '4px' }}>Profil non renseigné</div>
+            )}
+            <button
+              onClick={() => setMiniProfile(null)}
+              style={{ marginTop: '16px', padding: '6px 20px', background: '#333', color: '#aaa', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem' }}
+            >
+              Fermer
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* === v85: MODAL ZOOM PHOTO — Portal sur document.body + z-index 10000000 === */}
       {zoomedChatPhoto && ReactDOM.createPortal(
         <div

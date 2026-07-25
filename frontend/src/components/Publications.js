@@ -298,9 +298,18 @@ const V268PublicationCard = ({ pub, onOpen }) => {
       {/* Bloc d'infos SOUS le media, jamais en superposition. */}
       <div style={{ padding: '6px 2px 0' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-          <p style={{ color: '#fff', fontSize: '0.7rem', fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {pub.display_name || pub.subscriber_name}
-          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            {/* V279 : avatar de l'auteur a cote du nom (36px). Les publications ne
+                stockent pas de photo : on genere un avatar d'initiales lisible. */}
+            <img
+              src={pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.display_name || pub.subscriber_name || 'A')}&backgroundColor=D91CD2`}
+              alt=""
+              style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1.5px solid rgba(255,255,255,0.25)' }}
+            />
+            <p style={{ color: '#fff', fontSize: '0.7rem', fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {pub.display_name || pub.subscriber_name}
+            </p>
+          </div>
           {/* V268b Fix C : « 47h » seul, couleur dynamique du coach. */}
           <V268Remaining remaining={pub.remaining_hours} />
         </div>

@@ -2481,7 +2481,11 @@ async def get_user_profile(participant_id: str):
             "participant_id": participant_id,
             "name": user.get("name") or user.get("username"),
             "email": user.get("email"),
-            "photo_url": photo_url
+            "photo_url": photo_url,
+            # V279 : champs mini-profil (optionnels).
+            "bio": user.get("bio") or "",
+            "age": user.get("age"),
+            "passions": user.get("passions") or "",
         }
     
     # 2. Fallback: chercher dans 'chat_participants'
@@ -2498,7 +2502,11 @@ async def get_user_profile(participant_id: str):
             "participant_id": participant_id,
             "name": participant.get("name") or participant.get("username"),
             "email": participant.get("email"),
-            "photo_url": photo_url
+            "photo_url": photo_url,
+            # V279 : champs mini-profil (optionnels).
+            "bio": participant.get("bio") or "",
+            "age": participant.get("age"),
+            "passions": participant.get("passions") or "",
         }
     
     # 3. Aucun profil trouvé
@@ -2506,8 +2514,45 @@ async def get_user_profile(participant_id: str):
         "success": False,
         "participant_id": participant_id,
         "photo_url": None,
+        "bio": "",
+        "age": None,
+        "passions": "",
         "message": "Profil non trouvé"
     }
+
+
+@api_router.patch("/users/{participant_id}/profile")
+async def update_user_mini_profile(participant_id: str, request: Request):
+    """V279 : met a jour les champs du mini-profil (bio, age, passions).
+
+    Champs OPTIONNELS et libres. `bio` plafonnee a 200 caracteres, `passions` a
+    200 aussi. `age` doit etre un entier plausible (0-120) sinon ignore. On ecrit
+    dans `users` (upsert par participant_id) — la meme collection que le GET lit
+    en priorite. Aucune donnee supprimee.
+    """
+    body = await request.json()
+    update = {}
+    if "bio" in body:
+        update["bio"] = (str(body.get("bio") or "")).strip()[:200]
+    if "passions" in body:
+        update["passions"] = (str(body.get("passions") or "")).strip()[:200]
+    if "age" in body:
+        try:
+            _age = int(body.get("age"))
+            if 0 <= _age <= 120:
+                update["age"] = _age
+        except (TypeError, ValueError):
+            pass
+    if "display_name" in body:
+        update["name"] = (str(body.get("display_name") or "")).strip()[:60]
+    if not update:
+        return {"status": "ok", "updated": {}}
+    await db.users.update_one(
+        {"$or": [{"id": participant_id}, {"participant_id": participant_id}]},
+        {"$set": {**update, "participant_id": participant_id}},
+        upsert=True,
+    )
+    return {"status": "ok", "updated": update}
 
 # === COACH NOTIFICATIONS ===
 
