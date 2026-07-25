@@ -90,14 +90,33 @@ const V268Caption = ({ caption, light }) => {
 // V268 (F2): plein écran d'une publication au clic.
 const V268Lightbox = ({ pub, onClose }) => {
   const videoRef = useRef(null);
-  // Les vidéos démarrent muettes (autoplay) même en lightbox — le son s'active
-  // au bouton, comme Instagram.
-  const [muted, setMuted] = useState(true);
+  // V268b Fix B3 : en plein ecran, la video demarre AVEC le son. La lightbox
+  // s'ouvre sur un clic (geste utilisateur), ce qui autorise la lecture non
+  // muette. Le bouton reste dispo pour couper. La carte, elle, garde son propre
+  // etat muet (element video distinct) — rien a restaurer a la fermeture.
+  const [muted, setMuted] = useState(pub.media_type !== 'video' ? true : false);
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+  useEffect(() => {
+    if (pub.media_type !== 'video') return;
+    const v = videoRef.current;
+    if (!v) return;
+    v.muted = false;
+    v.volume = 1.0;
+    const p = v.play();
+    if (p && p.catch) {
+      // Certains navigateurs refusent l'autoplay non muet malgre le geste :
+      // on retombe alors sur une lecture muette plutot qu'une video figee.
+      p.catch(() => {
+        v.muted = true;
+        setMuted(true);
+        try { v.play(); } catch (e) { /* ignore */ }
+      });
+    }
+  }, [pub]);
   const toggleMute = v268ToggleSound(videoRef, setMuted); // V268b Fix B2
   return (
     <div
@@ -165,11 +184,17 @@ const V268PublicationCard = ({ pub, onOpen }) => {
   const [muted, setMuted] = useState(true);
   const toggleMute = v268ToggleSound(videoRef, setMuted); // V268b Fix B2
   return (
+    // V268b Fix A (revu) : le texte (nom, heures, legende) sort du media et
+    // passe DESSOUS, dans un bloc separe. L'ancien texte etait pose EN
+    // SUPERPOSITION sur le media via un degrade ; combine a un media mal
+    // contenu, il debordait sur la section « Choisissez votre offre » juste
+    // apres le carrousel. Media a hauteur FIXE + overflow hidden = plus rien
+    // ne depasse.
     <div style={{ flexShrink: 0, width: 160, scrollSnapAlign: 'start' }}>
       <div
         onClick={() => onOpen(pub)}
         style={{
-          width: 160, height: 284, borderRadius: 12, overflow: 'hidden',
+          width: '100%', height: 250, borderRadius: 12, overflow: 'hidden',
           position: 'relative', background: '#000', cursor: 'pointer'
         }}
         data-testid="publication-card"
@@ -177,8 +202,7 @@ const V268PublicationCard = ({ pub, onOpen }) => {
         {pub.media_type === 'video' ? (
           <>
             {/* `muted` requis avec `autoPlay` (iOS/Chrome). Le bouton son
-                pilote `muted` via le ref. V268b Fix A : `display:block` evite
-                l'espace sous une video/img `inline` qui faisait deborder. */}
+                pilote `muted` via le ref. */}
             <video
               ref={videoRef}
               src={pub.media_url}
@@ -186,7 +210,7 @@ const V268PublicationCard = ({ pub, onOpen }) => {
               playsInline muted={muted} loop autoPlay
               style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }}
             />
-            <div style={{ position: 'absolute', bottom: 40, right: 6 }}>
+            <div style={{ position: 'absolute', bottom: 6, right: 6 }}>
               <V268MuteButton muted={muted} onToggle={toggleMute} size={18} />
             </div>
           </>
@@ -198,30 +222,25 @@ const V268PublicationCard = ({ pub, onOpen }) => {
             style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }}
           />
         )}
-        <div style={{
-          position: 'absolute', bottom: 0, left: 0, right: 0,
-          background: 'linear-gradient(transparent, rgba(0,0,0,0.88))',
-          padding: '22px 8px 8px'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-            <p style={{ color: '#fff', fontSize: '0.7rem', fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {pub.display_name || pub.subscriber_name}
-            </p>
-            {/* V268b Fix C : « 47h » seul, couleur dynamique du coach. */}
-            <V268Remaining remaining={pub.remaining_hours} />
-          </div>
-        </div>
       </div>
-      {/* V268 (F5): legende courte sous la carte ; le texte complet + Lire plus
-          vit dans la lightbox, ou il y a la place. */}
-      {pub.caption ? (
-        <p
-          onClick={() => onOpen(pub)}
-          style={{ color: '#bbb', fontSize: '0.62rem', margin: '5px 2px 0', lineHeight: 1.3, cursor: 'pointer', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
-        >
-          {pub.caption}
-        </p>
-      ) : null}
+      {/* Bloc d'infos SOUS le media, jamais en superposition. */}
+      <div style={{ padding: '6px 2px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+          <p style={{ color: '#fff', fontSize: '0.7rem', fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {pub.display_name || pub.subscriber_name}
+          </p>
+          {/* V268b Fix C : « 47h » seul, couleur dynamique du coach. */}
+          <V268Remaining remaining={pub.remaining_hours} />
+        </div>
+        {pub.caption ? (
+          <p
+            onClick={() => onOpen(pub)}
+            style={{ color: '#bbb', fontSize: '0.62rem', margin: '4px 0 0', lineHeight: 1.3, cursor: 'pointer', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+          >
+            {pub.caption}
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 };
