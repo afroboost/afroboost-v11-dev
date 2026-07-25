@@ -276,19 +276,22 @@ const V268PublicationCard = ({ pub, onOpen }) => {
         }}
         data-testid="publication-card"
       >
+        {/* V271 Fix 2 : `contain` (au lieu de `cover`) — le personnage/l'image
+            est vu EN ENTIER, sans rognage. Fond noir pour les bandes quand le
+            ratio du media ne remplit pas le cadre 240x250. */}
         {pub.media_type === 'video' ? (
           <video
             src={pub.media_url}
             poster={pub.thumbnail_url || undefined}
             muted autoPlay loop playsInline
-            style={{ display: 'block', width: '100%', height: '250px', objectFit: 'cover', borderRadius: 12 }}
+            style={{ display: 'block', width: '100%', height: '250px', objectFit: 'contain', backgroundColor: '#000', borderRadius: 12 }}
           />
         ) : (
           <img
             src={pub.media_url}
             alt={`Publication de ${pub.display_name || pub.subscriber_name || 'un abonné'}`}
             loading="lazy"
-            style={{ display: 'block', width: '100%', height: '250px', objectFit: 'cover', borderRadius: 12 }}
+            style={{ display: 'block', width: '100%', height: '250px', objectFit: 'contain', backgroundColor: '#000', borderRadius: 12 }}
           />
         )}
       </div>
@@ -320,7 +323,8 @@ export const PublicationsCarousel = ({ publications }) => {
   if (!publications || publications.length === 0) return null;
   return (
     <div className="mb-8 fade-in-section" data-testid="publications-carousel">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+      {/* V271 Fix 1 : titre centre. */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--primary-color, #D91CD2)', flexShrink: 0 }} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
           <circle cx="9" cy="7" r="4" />
@@ -330,11 +334,15 @@ export const PublicationsCarousel = ({ publications }) => {
         {/* V268 (F4): plus de compteur « (N) » a cote du titre. */}
         <span style={{ color: '#fff', fontSize: '18px', fontWeight: 600 }}>Publications</span>
       </div>
+      {/* V271 Fix 1 : cartes centrees. `safe center` centre quand elles
+          tiennent, et retombe sur le debut (donc reste ACCESSIBLE au scroll)
+          quand elles debordent — evite le bug classique du `center` qui coupe
+          les premieres cartes hors de portee. */}
       <div
         className="hide-scrollbar"
         style={{
           display: 'flex', overflowX: 'auto', gap: 10, paddingBottom: 4,
-          alignItems: 'flex-start',
+          alignItems: 'flex-start', justifyContent: 'safe center',
           scrollSnapType: 'x mandatory', WebkitOverflowScrolling: 'touch'
         }}
       >
