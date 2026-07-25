@@ -5434,7 +5434,8 @@ def _v261_public_id_from_url(media_url: str) -> str:
 
 
 async def _v261_resolve_subscriber(code: str):
-    """V261: le code AFR- donne-t-il droit de publier ? Renvoie (ok, nom).
+    """V261 / V272b: le code AFR- donne-t-il droit de publier ?
+    Renvoie (ok, nom, coach_id).
 
     ATTENTION a la forme reelle des documents, elle differe d'une collection a
     l'autre : `discount_codes` porte `active: True` (booleen) et N'A PAS de
@@ -5442,27 +5443,34 @@ async def _v261_resolve_subscriber(code: str):
     `discount_codes` sur `status` ne remonterait donc JAMAIS rien.
     Le nom vient de la base, jamais du corps de la requete : c'est ce qui
     empeche un client de publier sous l'identite d'un autre.
+
+    V272b — le `coach_id` propa l'abonnement est desormais renvoye : c'est LUI
+    qui isole la publication au bon partenaire (le mur d'une vitrine ne doit
+    montrer que les publications de ce coach et de ses abonnes).
     """
     code = (code or "").strip().upper()
     if not code.startswith("AFR-"):
-        return False, ""
+        return False, "", None
     sub = await db.subscriptions.find_one(
-        {"code": code, "status": "active"}, {"_id": 0, "name": 1, "email": 1}
+        {"code": code, "status": "active"}, {"_id": 0, "name": 1, "email": 1, "coach_id": 1}
     )
     if sub:
-        return True, (sub.get("name") or (sub.get("email") or "").split("@")[0] or "Abonné")
+        name = sub.get("name") or (sub.get("email") or "").split("@")[0] or "Abonné"
+        return True, name, (sub.get("coach_id") or DEFAULT_COACH_ID)
     dc = await db.discount_codes.find_one(
-        {"code": code, "active": True}, {"_id": 0, "name": 1, "assignedEmail": 1, "maxUses": 1, "used": 1}
+        {"code": code, "active": True},
+        {"_id": 0, "name": 1, "assignedEmail": 1, "maxUses": 1, "used": 1, "coach_id": 1}
     )
     if dc:
         # Un code epuise n'est plus un abonnement actif.
         try:
             if int(dc.get("maxUses") or 0) - int(dc.get("used") or 0) <= 0:
-                return False, ""
+                return False, "", None
         except (TypeError, ValueError):
             pass
-        return True, (dc.get("name") or (dc.get("assignedEmail") or "").split("@")[0] or "Abonné")
-    return False, ""
+        name = dc.get("name") or (dc.get("assignedEmail") or "").split("@")[0] or "Abonné"
+        return True, name, (dc.get("coach_id") or DEFAULT_COACH_ID)
+    return False, "", None
 
 
 def _v261_cloudinary_destroy(public_id: str, media_type: str) -> None:
@@ -5575,10 +5583,11 @@ async def create_publication(request: Request):
 
     code = (body.get("subscriber_code") or "").strip().upper()
     ok, subscriber_name = (False, "")
+    pub_coach_id = DEFAULT_COACH_ID  # V272b : coach proprietaire de la publication
 
     if code:
-        # V261 — chemin abonne, INCHANGE.
-        ok, subscriber_name = await _v261_resolve_subscriber(code)
+        # V261 — chemin abonne. La publication appartient au coach de l'abonne.
+        ok, subscriber_name, pub_coach_id = await _v261_resolve_subscriber(code)
         if not ok:
             raise HTTPException(status_code=403, detail="Code abonné invalide ou inactif")
     else:
@@ -5598,6 +5607,8 @@ async def create_publication(request: Request):
         # l'email du coach, ce qui lui donne son propre quota sans se meler a
         # celui des abonnes.
         code = _coach_email
+        # V272b : une publication postee par le coach lui appartient.
+        pub_coach_id = _coach_email
 
     media_url = (body.get("media_url") or "").strip()
     # V261b: le media doit non seulement venir de Cloudinary, mais vivre dans le
@@ -5641,6 +5652,7 @@ async def create_publication(request: Request):
         "subscriber_code": code,
         "subscriber_name": subscriber_name,
         "display_name": display_name,  # V268b
+        "coach_id": pub_coach_id,      # V272b : isolation multi-tenant
         "media_url": media_url,
         "media_type": media_type,
         # V261b: DERIVE de l'URL, jamais recu du client — voir
@@ -5662,18 +5674,35 @@ async def create_publication(request: Request):
 
 
 @api_router.get("/publications")
-async def list_publications():
-    """V261: publications encore en ligne. Public — c'est le mur de la vitrine.
+async def list_publications(coach_id: str = ""):
+    """V261 / V272b: mur PUBLIC d'UNE vitrine — isole par coach.
 
-    Ne renvoie NI le code de l'abonne NI l'identifiant Cloudinary : la vitrine
-    n'en a pas besoin, et le code AFR- est un secret qui ouvre l'espace abonne.
+    V272b — ISOLATION MULTI-TENANT. Avant, cet endpoint renvoyait TOUTES les
+    publications, si bien que la video d'un coach apparaissait sur la vitrine de
+    tous les autres (le fameux « fantome » qui revenait chez chaque partenaire).
+    On filtre desormais sur `coach_id` :
+      - `?coach_id=<email>` -> la vitrine de ce partenaire ;
+      - absent -> la vitrine par defaut (l'admin). Les publications HISTORIQUES
+        sans `coach_id` (anterieures a ce correctif) sont rattachees a l'admin,
+        pour rester visibles la ou elles l'ont toujours ete.
+
+    Ne renvoie NI le code de l'abonne NI les identifiants Cloudinary internes.
     """
     await _v261_purge_expired()
     now = datetime.now(timezone.utc)
-    # V268: caption / thumbnail_url sont renvoyes ; les identifiants Cloudinary
-    # et le code abonne restent masques (secrets / internes).
+    target = (coach_id or "").strip().lower() or DEFAULT_COACH_ID
+    time_q = {"expires_at": {"$gt": now.isoformat()}}
+    if is_super_admin(target) or target == DEFAULT_COACH_ID:
+        # Vitrine admin : ses publications ET les anciennes sans coach_id.
+        query = {"$and": [time_q, {"$or": [
+            {"coach_id": target},
+            {"coach_id": None},
+            {"coach_id": {"$exists": False}},
+        ]}]}
+    else:
+        query = {"$and": [time_q, {"coach_id": target}]}
     pubs = await db.publications.find(
-        {"expires_at": {"$gt": now.isoformat()}},
+        query,
         {"_id": 0, "subscriber_code": 0, "cloudinary_public_id": 0, "thumbnail_public_id": 0}
     ).sort("created_at", -1).to_list(50)
     for p in pubs:
@@ -5700,7 +5729,7 @@ async def list_my_publications(request: Request, subscriber_code: str = ""):
     await _v261_purge_expired()
     code = (subscriber_code or "").strip().upper()
     if code:
-        ok, _name = await _v261_resolve_subscriber(code)
+        ok, _name, _cid = await _v261_resolve_subscriber(code)
         if not ok:
             raise HTTPException(status_code=403, detail="Code abonné invalide ou inactif")
         query = {"subscriber_code": code}

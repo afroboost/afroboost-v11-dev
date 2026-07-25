@@ -924,7 +924,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   const loadV261Pubs = async () => {
     try {
-      const res = await axios.get(`${API}/publications`);
+      // V272b : `/publications/mine` (authentifie, isole par coach) et NON
+      // `/publications` — ce dernier renvoie desormais la vitrine PAR DEFAUT
+      // (l'admin), ce qui montrait a un partenaire les publications de l'admin.
+      // `/mine` renvoie : super admin -> tout ; coach -> les siennes et celles
+      // de ses abonnes.
+      const res = await axios.get(`${API}/publications/mine`, getCoachHeaders());
       setV261Pubs(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       console.error('[V261] Chargement des publications echoue:', err);

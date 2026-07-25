@@ -509,27 +509,36 @@ const OffersManager = ({
             position: 'absolute', top: '8px', right: '12px',
             background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)',
             fontSize: '18px', cursor: 'pointer'
-          }}>\u2715</button>
-          <h3 style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '14px', fontWeight: 'bold', marginBottom: '10px' }}>
-            \ud83d\udca1 Bienvenue dans votre espace Offres !
+          }} aria-label="Fermer">
+            {/* V272b : \u2715 (texte JSX litteral, jamais rendu comme un vrai
+                caractere) remplace par un SVG, conformement a la regle icones. */}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+          {/* V272b : les sequences \uXXXX etaient en TEXTE JSX (pas des chaines),
+              donc affichees telles quelles. Remplacees par les vrais caracteres,
+              et les emojis par des SvgIcon (regle CLAUDE.md). */}
+          <h3 style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '14px', fontWeight: 'bold', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <SvgIcon name="lightbulb" size={16} /> Bienvenue dans votre espace Offres !
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-              <span style={{ fontSize: '16px' }}>\ud83c\udfaf</span>
+              <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex', flexShrink: 0 }}><SvgIcon name="target" size={16} /></span>
               <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', margin: 0 }}>
-                <strong style={{ color: '#fff' }}>Cr\u00e9ez vos offres</strong> \u2014 Ajoutez vos services, cours ou produits avec prix, description et images.
+                <strong style={{ color: '#fff' }}>Créez vos offres</strong> — Ajoutez vos services, cours ou produits avec prix, description et images.
               </p>
             </div>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-              <span style={{ fontSize: '16px' }}>\ud83d\udd12</span>
+              <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex', flexShrink: 0 }}><SvgIcon name="lock" size={16} /></span>
               <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', margin: 0 }}>
-                <strong style={{ color: '#fff' }}>S\u00e9curit\u00e9</strong> \u2014 Vous ne pouvez modifier ou supprimer que vos propres offres.
+                <strong style={{ color: '#fff' }}>Sécurité</strong> — Vous ne pouvez modifier ou supprimer que vos propres offres.
               </p>
             </div>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-              <span style={{ fontSize: '16px' }}>\ud83d\udcb3</span>
+              <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex', flexShrink: 0 }}><SvgIcon name="creditCard" size={16} /></span>
               <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', margin: 0 }}>
-                <strong style={{ color: '#fff' }}>Cr\u00e9dits</strong> \u2014 Chaque activation de service consomme des cr\u00e9dits. Rechargez dans la Boutique.
+                <strong style={{ color: '#fff' }}>Crédits</strong> — Chaque activation de service consomme des crédits. Rechargez dans la Boutique.
               </p>
             </div>
           </div>
