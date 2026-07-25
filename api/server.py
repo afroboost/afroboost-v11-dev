@@ -8950,6 +8950,77 @@ async def get_og_meta(username: str, request: Request):
 </html>"""
     return HTMLResponse(html)
 
+@api_router.get("/share/offer/{offer_id}")
+async def share_offer_page(offer_id: str):
+    """V278 : page de partage d'une offre avec balises Open Graph.
+
+    Quand un visiteur partage une offre (WhatsApp, Facebook...), le crawler du
+    reseau charge CETTE page et lit les balises og:* pour composer l'apercu
+    (image de l'offre + titre + prix). Un vrai navigateur, lui, est redirige
+    aussitot vers le site. Tout est ECHAPPE (html.escape) : le nom et la
+    description viennent de la base, on ne les injecte jamais bruts dans le HTML.
+    """
+    from starlette.responses import HTMLResponse
+    import html as _html
+
+    FRONT = "https://afroboost.com"
+    offer = await db.offers.find_one({"id": offer_id}, {"_id": 0})
+    if not offer:
+        from starlette.responses import RedirectResponse as RR
+        return RR(url=FRONT, status_code=302)
+
+    def _abs(u):
+        u = (u or "").strip()
+        if not u:
+            return f"{FRONT}/logo192.png"
+        if u.startswith("http://") or u.startswith("https://"):
+            return u
+        if u.startswith("/"):
+            return FRONT + u
+        return f"{FRONT}/logo192.png"
+
+    name = offer.get("name") or "Offre Afroboost"
+    price = offer.get("price")
+    title = f"{name} - {price} CHF" if price not in (None, "", 0) else name
+    description = (offer.get("description") or "Découvrez cette offre sur Afroboost")[:200]
+    # Image : miniature, sinon 1re image du tableau, sinon logo.
+    img_src = offer.get("thumbnail") or ""
+    if not img_src and isinstance(offer.get("images"), list) and offer["images"]:
+        img_src = offer["images"][0]
+    image = _abs(img_src)
+
+    # Echappement pour usage en attribut HTML (quote=True protege " et ').
+    e_title = _html.escape(title, quote=True)
+    e_desc = _html.escape(description, quote=True)
+    e_image = _html.escape(image, quote=True)
+    e_url = _html.escape(f"{FRONT}/share/offer/{offer_id}", quote=True)
+
+    html_page = f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8"/>
+    <title>{e_title}</title>
+    <meta name="description" content="{e_desc}"/>
+    <meta property="og:type" content="product"/>
+    <meta property="og:title" content="{e_title}"/>
+    <meta property="og:description" content="{e_desc}"/>
+    <meta property="og:image" content="{e_image}"/>
+    <meta property="og:url" content="{e_url}"/>
+    <meta property="og:site_name" content="Afroboost"/>
+    <meta name="twitter:card" content="summary_large_image"/>
+    <meta name="twitter:title" content="{e_title}"/>
+    <meta name="twitter:description" content="{e_desc}"/>
+    <meta name="twitter:image" content="{e_image}"/>
+    <meta http-equiv="refresh" content="0;url={FRONT}"/>
+</head>
+<body>
+    <h1>{e_title}</h1>
+    <p>{e_desc}</p>
+    <a href="{FRONT}">Voir sur Afroboost</a>
+</body>
+</html>"""
+    return HTMLResponse(html_page)
+
 @api_router.get("/sitemap.xml")
 async def get_sitemap():
     """v17.1: Sitemap XML dynamique"""

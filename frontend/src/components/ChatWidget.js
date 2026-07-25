@@ -7729,7 +7729,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                             <span style={{ color: color, fontWeight: '600', fontSize: '13px' }}>
                               {label} <span style={{ color: '#888', fontWeight: '400' }}>{count}</span>
                             </span>
-                            <span style={{ color: '#888', fontSize: '11px' }}>{isOpen ? '▼' : '▶'}</span>
+                            {/* V278 : chevron SVG (remplace ▼/▶ — icônes en SVG only) */}
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.2s' }}>
+                              <polyline points="6 9 12 15 18 9" />
+                            </svg>
                           </div>
                         );
                       };
@@ -7747,21 +7750,21 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           ) : (
                             <>
                               {/* V198: Abonnés */}
-                              {sectionHeader('⭐ Abonnés', subscriberSessions.length, 'var(--primary-color, #D91CD2)', 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)', showSubscribers, function() { setShowSubscribers(!showSubscribers); }, 'sessions-section-subscribers')}
+                              {sectionHeader('Abonnés', subscriberSessions.length, 'var(--primary-color, #D91CD2)', 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)', showSubscribers, function() { setShowSubscribers(!showSubscribers); }, 'sessions-section-subscribers')}
                               {showSubscribers && subscriberSessions.length === 0 && (
                                 <div style={{ color: '#666', fontSize: '11px', padding: '6px 12px 10px' }}>Aucun abonné en conversation</div>
                               )}
                               {showSubscribers && subscriberSessions.map(renderSessionCard)}
 
                               {/* V198: Visiteurs du site */}
-                              {sectionHeader('💬 Visiteurs du site', visitorSessions.length, '#8B5CF6', 'rgba(139, 92, 246, 0.1)', showVisitors, function() { setShowVisitors(!showVisitors); }, 'sessions-section-visitors')}
+                              {sectionHeader('Visiteurs du site', visitorSessions.length, '#8B5CF6', 'rgba(139, 92, 246, 0.1)', showVisitors, function() { setShowVisitors(!showVisitors); }, 'sessions-section-visitors')}
                               {showVisitors && visitorSessions.length === 0 && (
                                 <div style={{ color: '#666', fontSize: '11px', padding: '6px 12px 10px' }}>Aucun visiteur en conversation</div>
                               )}
                               {showVisitors && visitorSessions.map(renderSessionCard)}
 
                               {/* V198: Liens Intelligents */}
-                              {sectionHeader('🔗 Liens Intelligents', smartLinkSessions.length, '#FF2DAA', 'rgba(255, 45, 170, 0.1)', showSmartLinks, function() { setShowSmartLinks(!showSmartLinks); }, 'sessions-section-smartlinks')}
+                              {sectionHeader('Liens Intelligents', smartLinkSessions.length, '#FF2DAA', 'rgba(255, 45, 170, 0.1)', showSmartLinks, function() { setShowSmartLinks(!showSmartLinks); }, 'sessions-section-smartlinks')}
                               {showSmartLinks && smartLinkSessions.length === 0 && (
                                 <div style={{ color: '#666', fontSize: '11px', padding: '6px 12px 10px' }}>Aucun lead venant d'un Lien Intelligent</div>
                               )}

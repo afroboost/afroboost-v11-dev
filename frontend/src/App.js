@@ -1457,6 +1457,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   const [showDescription, setShowDescription] = useState(false);
   const [showZoom, setShowZoom] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  // V278 : retour visuel « lien copié » du partage (repli desktop de navigator.share).
+  const [shareCopied, setShareCopied] = useState(false);
   // V224: repli si le fichier video est illisible (404, codec non supporte).
   const [videoError, setVideoError] = useState(false);
   // V225: quantite choisie sur la carte, relayee a startProgressiveCheckout.
@@ -1591,6 +1593,26 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
     setShowZoom(!showZoom);
   };
   
+  // V278 : partage d'une offre. URL vers la page /share/offer/{id} du backend,
+  // qui porte les balises Open Graph (titre + image + prix) pour un bel apercu
+  // WhatsApp/Facebook. Sur mobile -> feuille de partage native (navigator.share)
+  // qui propose WhatsApp/Facebook/etc. Sur desktop -> copie du lien + confirmation.
+  const shareOffer = (e) => {
+    e.stopPropagation();
+    const base = (typeof window !== 'undefined' && window.location && window.location.origin) || 'https://afroboost.com';
+    const shareUrl = `${base}/api/share/offer/${offer.id}`;
+    const priceTxt = offer.price ? `${offer.price} CHF` : '';
+    const shareText = `${offer.name || 'Offre Afroboost'}${priceTxt ? ' - ' + priceTxt : ''}\nRéserve ta place sur Afroboost !`;
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      navigator.share({ title: offer.name || 'Offre Afroboost', text: shareText, url: shareUrl }).catch(() => {});
+    } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(shareUrl + '\n' + shareText).then(() => {
+        setShareCopied(true);
+        setTimeout(() => setShareCopied(false), 2000);
+      }).catch(() => {});
+    }
+  };
+
   const prevImage = (e) => {
     e.stopPropagation();
     setCurrentImageIndex(prev => prev > 0 ? prev - 1 : images.length - 1);
@@ -1646,6 +1668,20 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
     v.muted = true;
     v.controls = false;
   }, [currentImageIndex, offer.id]);
+
+  // V278 : carrousel AUTOMATIQUE des medias de l'offre. Ne s'active que s'il y a
+  // plusieurs medias, et avance toutes les 4 s (les videos sont muettes/en
+  // boucle : une coupure a 4 s est acceptable pour un apercu, et ca evite de
+  // rester coince sur un media video). En pause quand zoom/description sont
+  // ouverts, pour ne pas changer le media sous les yeux du visiteur.
+  useEffect(() => {
+    if (!hasMultipleImages) return;
+    if (showZoom || showDescription) return;
+    const timer = setInterval(() => {
+      setCurrentImageIndex(prev => (prev + 1) % images.length);
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [hasMultipleImages, showZoom, showDescription, images.length]);
 
   // V225: la quantite repart a 1 des que la carte change d'offre. Sans cela, un
   // slider qui recycle la meme instance de composant ferait heriter la nouvelle
@@ -2174,6 +2210,34 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                   </svg>
                 </div>
                 )}
+
+                {/* V278 : icone de PARTAGE — coin haut-droit, sans cadre, juste un
+                    leger fond semi-transparent pour la lisibilite sur l'image. */}
+                <button
+                  type="button"
+                  onClick={shareOffer}
+                  title={shareCopied ? 'Lien copié !' : 'Partager cette offre'}
+                  aria-label="Partager cette offre"
+                  className="absolute top-3 right-3 flex items-center justify-center cursor-pointer transition-all hover:scale-110"
+                  style={{
+                    width: 32, height: 32, borderRadius: '50%',
+                    background: 'rgba(0,0,0,0.5)', border: 'none', zIndex: 16
+                  }}
+                >
+                  {shareCopied ? (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="18" cy="5" r="3" />
+                      <circle cx="6" cy="12" r="3" />
+                      <circle cx="18" cy="19" r="3" />
+                      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                      <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                    </svg>
+                  )}
+                </button>
 
                 {/* Selected indicator */}
                 {selected && (
