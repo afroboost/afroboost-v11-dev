@@ -77,41 +77,8 @@ function v268cGetCroppedImg(imageSrc, pixelCrop) {
   });
 }
 
-// V268c (F1) — 4 captures d'une video, en best-effort. Certains codecs/
-// navigateurs echouent au seek : on renvoie ce qu'on a pu extraire (peut etre
-// vide) sans jamais bloquer la publication.
-async function v268cGenerateThumbnails(videoFile, count = 4) {
-  const video = document.createElement('video');
-  video.muted = true;
-  video.playsInline = true;
-  video.src = URL.createObjectURL(videoFile);
-  const out = [];
-  try {
-    await new Promise((res, rej) => {
-      video.onloadedmetadata = res;
-      video.onerror = rej;
-    });
-    const duration = isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
-    for (let i = 0; i < count; i++) {
-      const time = duration ? Math.min(duration - 0.05, (duration / count) * i + 0.5) : 0;
-      try {
-        await new Promise((res, rej) => {
-          video.onseeked = res;
-          video.onerror = rej;
-          video.currentTime = time;
-        });
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth || 320;
-        canvas.height = video.videoHeight || 320;
-        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-        const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.8));
-        if (blob) out.push({ time, blob, url: URL.createObjectURL(blob) });
-      } catch (e) { /* on saute cette capture */ }
-    }
-  } catch (e) { /* metadata illisible : aucune miniature */ }
-  finally { URL.revokeObjectURL(video.src); }
-  return out;
-}
+// V270 : la generation des 4 miniatures imposees est SUPPRIMEE — le choix de
+// la miniature est desormais LIBRE (scrubber + capture, dans PublishModal).
 
 // V268b — Fix C : plus de barre visuelle ni du mot « restantes ». Juste « 47h »,
 // dans la couleur DYNAMIQUE du coach (var(--primary-color), pilotee par le
@@ -558,19 +525,24 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
   const [caption, setCaption] = useState('');
   const fileInputRef = useRef(null);
 
-  // V268c (F1) — recadrage image
-  const [rawImageSrc, setRawImageSrc] = useState(null); // URL objet de l'original
+  // V268c/V270 — recadrage GENERIQUE : sert l'image publiee ET la miniature
+  // video. `cropTarget` dit lequel ; `cropSrc` est la source a recadrer.
   const [showCrop, setShowCrop] = useState(false);
+  const [cropSrc, setCropSrc] = useState(null);
+  const [cropTarget, setCropTarget] = useState('image'); // 'image' | 'thumb'
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [aspect, setAspect] = useState(1);              // 1 / (4/5) / (16/9)
   const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
-  const [croppedBlob, setCroppedBlob] = useState(null); // image finale a uploader
+  const [croppedBlob, setCroppedBlob] = useState(null); // image publiee finale
 
-  // V268c (F1) — miniatures video
-  const [thumbs, setThumbs] = useState([]);
-  const [thumbIdx, setThumbIdx] = useState(0);
-  const [thumbLoading, setThumbLoading] = useState(false);
+  // V270 (F1) — choix LIBRE de la miniature video : scrubber + capture.
+  const [videoUrl, setVideoUrl] = useState(null);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [thumbnailBlob, setThumbnailBlob] = useState(null);
+  const [thumbnailPreview, setThumbnailPreview] = useState(null);
+  const videoPreviewRef = useRef(null);
 
   // V269 — progression d'upload + succes
   const [uploadPct, setUploadPct] = useState(0);
@@ -578,9 +550,7 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
   const [success, setSuccess] = useState(false);
 
   const revokeAll = () => {
-    if (preview) URL.revokeObjectURL(preview);
-    if (rawImageSrc) URL.revokeObjectURL(rawImageSrc);
-    thumbs.forEach(t => t.url && URL.revokeObjectURL(t.url));
+    [preview, cropSrc, videoUrl, thumbnailPreview].forEach(u => u && URL.revokeObjectURL(u));
   };
   // Nettoyage memoire au demontage.
   useEffect(() => () => revokeAll(), []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -588,8 +558,16 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
   const clearFile = () => {
     revokeAll();
     setFile(null); setPreview(null);
-    setRawImageSrc(null); setShowCrop(false); setCroppedBlob(null);
-    setThumbs([]); setThumbIdx(0); setThumbLoading(false);
+    setShowCrop(false); setCropSrc(null); setCroppedBlob(null);
+    setVideoUrl(null); setDuration(0); setCurrentTime(0);
+    setThumbnailBlob(null); setThumbnailPreview(null);
+  };
+
+  const openCropper = (src, target) => {
+    setCropSrc(src);
+    setCropTarget(target);
+    setCrop({ x: 0, y: 0 }); setZoom(1); setAspect(1);
+    setShowCrop(true);
   };
 
   const handleFileSelect = (e) => {
@@ -597,7 +575,7 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
     if (!f) return;
     setError('');
     revokeAll();
-    setCroppedBlob(null); setThumbs([]); setThumbIdx(0);
+    setCroppedBlob(null); setThumbnailBlob(null); setThumbnailPreview(null);
 
     if (f.type.startsWith('video/')) {
       // V269 Fix 3 — limite 1 min. On lit d'abord la duree via un element video
@@ -622,42 +600,88 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
     // IMAGE : recadrage d'abord.
     setMediaType('image');
     setFile(f);
-    const src = URL.createObjectURL(f);
-    setRawImageSrc(src);
     setPreview(null);
-    setCrop({ x: 0, y: 0 }); setZoom(1); setAspect(1);
-    setShowCrop(true);
+    openCropper(URL.createObjectURL(f), 'image');
   };
 
   const proceedWithVideo = (f) => {
-    // VIDEO validee : apercu + generation des miniatures, puis choix.
+    // VIDEO validee : on affiche un apercu + un scrubber pour choisir LIBREMENT
+    // le moment de la miniature (V270 F1). Plus de 4 captures imposees.
     setMediaType('video');
     setFile(f);
-    setPreview(URL.createObjectURL(f));
+    setPreview(null);
     setShowCrop(false);
-    setThumbLoading(true);
-    v268cGenerateThumbnails(f).then(list => {
-      setThumbs(list);
-      // Defaut : la capture la plus proche d'1 s.
-      let idx = 0, best = Infinity;
-      list.forEach((t, i) => { const d = Math.abs((t.time || 0) - 1); if (d < best) { best = d; idx = i; } });
-      setThumbIdx(idx);
-      setThumbLoading(false);
-    }).catch(() => { setThumbs([]); setThumbLoading(false); });
+    setVideoUrl(URL.createObjectURL(f));
+    setThumbnailBlob(null);
+    setThumbnailPreview(null);
   };
 
-  // V268c (F1) — valide le recadrage : genere le blob et l'utilise comme apercu.
+  // V270 (F1) — capture le frame courant de l'apercu video, en blob.
+  const captureCurrentFrame = () => {
+    const video = videoPreviewRef.current;
+    if (!video || !video.videoWidth) return Promise.resolve(null);
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    return new Promise((res) => canvas.toBlob(b => res(b), 'image/jpeg', 0.9));
+  };
+
+  // Capture par defaut a 1 s, des que la video est prete (si l'utilisateur ne
+  // capture rien lui-meme, on a toujours une miniature).
+  const handleVideoLoaded = async (e) => {
+    const v = e.target;
+    setDuration(v.duration || 0);
+    try {
+      v.currentTime = Math.min(1, (v.duration || 1) - 0.05);
+      await new Promise((res) => { v.onseeked = res; });
+      setCurrentTime(v.currentTime);
+      const blob = await captureCurrentFrame();
+      if (blob) {
+        if (thumbnailPreview) URL.revokeObjectURL(thumbnailPreview);
+        setThumbnailBlob(blob);
+        setThumbnailPreview(URL.createObjectURL(blob));
+      }
+    } catch (err) { /* pas de miniature par defaut : non bloquant */ }
+  };
+
+  const handleSliderChange = (e) => {
+    const t = parseFloat(e.target.value);
+    setCurrentTime(t);
+    if (videoPreviewRef.current) videoPreviewRef.current.currentTime = t;
+  };
+
+  // V270 (F3) — « Capturer » ouvre le recadrage sur le frame choisi.
+  const captureAndCrop = async () => {
+    const blob = await captureCurrentFrame();
+    if (!blob) return;
+    openCropper(URL.createObjectURL(blob), 'thumb');
+  };
+
+  // V268c/V270 — valide le recadrage. Selon la cible : image publiee ou
+  // miniature video.
   const applyCrop = async () => {
     try {
-      const blob = await v268cGetCroppedImg(rawImageSrc, croppedAreaPixels);
-      setCroppedBlob(blob);
-      if (preview) URL.revokeObjectURL(preview);
-      setPreview(URL.createObjectURL(blob));
+      const blob = await v268cGetCroppedImg(cropSrc, croppedAreaPixels);
+      if (cropTarget === 'thumb') {
+        // Miniature video recadree.
+        if (thumbnailPreview) URL.revokeObjectURL(thumbnailPreview);
+        setThumbnailBlob(blob);
+        setThumbnailPreview(URL.createObjectURL(blob));
+      } else {
+        // Image publiee recadree.
+        setCroppedBlob(blob);
+        if (preview) URL.revokeObjectURL(preview);
+        setPreview(URL.createObjectURL(blob));
+      }
       setShowCrop(false);
     } catch (e) {
-      // Repli : on garde l'original (file) et on affiche son apercu.
-      setCroppedBlob(null);
-      setPreview(rawImageSrc);
+      if (cropTarget === 'image') {
+        // Repli image : on garde l'original et on affiche son apercu.
+        setCroppedBlob(null);
+        setPreview(cropSrc);
+      }
+      // Repli miniature : on garde la capture par defaut deja en place.
       setShowCrop(false);
     }
   };
@@ -682,10 +706,11 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
         throw new Error('La vidéo dépasse 1 minute (60 s).');
       }
 
-      // Miniature video choisie, uploadee a part. Best-effort.
+      // V270 : miniature video CHOISIE (capture libre eventuellement recadree),
+      // uploadee a part. Best-effort — son echec ne bloque pas la publication.
       let thumbnailUrl = '';
-      if (mediaType === 'video' && thumbs[thumbIdx] && thumbs[thumbIdx].blob) {
-        try { const td = await v269UploadToCloudinary(thumbs[thumbIdx].blob, 'image'); thumbnailUrl = td.secure_url; }
+      if (mediaType === 'video' && thumbnailBlob) {
+        try { const td = await v269UploadToCloudinary(thumbnailBlob, 'image'); thumbnailUrl = td.secure_url; }
         catch (e) { /* ignore */ }
       }
 
@@ -741,7 +766,7 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
 
         {/* V268c (F1A) — ecran de recadrage image, en overlay plein ecran.
             react-easy-crop exige un conteneur POSITIONNE et dimensionne. */}
-        {showCrop && rawImageSrc && (
+        {showCrop && cropSrc && (
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
@@ -752,7 +777,7 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
           >
             <div style={{ position: 'relative', flex: 1 }}>
               <Cropper
-                image={rawImageSrc}
+                image={cropSrc}
                 crop={crop}
                 zoom={zoom}
                 aspect={aspect}
@@ -780,15 +805,17 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
                   </button>
                 ))}
               </div>
-              {/* Zoom */}
+              {/* V270 Fix 2 — slider de zoom FIN (piste 4px, pouce custom via
+                  la classe v270-range definie plus bas). */}
               <input
+                className="v270-range"
                 type="range" min={1} max={3} step={0.01} value={zoom}
                 onChange={(e) => setZoom(Number(e.target.value))}
-                style={{ width: '100%', accentColor: 'var(--primary-color, #D91CD2)' }}
                 aria-label="Zoom"
               />
               <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-                <button type="button" onClick={clearFile}
+                <button type="button"
+                  onClick={() => { if (cropTarget === 'thumb') { setShowCrop(false); } else { clearFile(); } }}
                   style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid #333', background: 'transparent', color: '#999', cursor: 'pointer', fontWeight: 600 }}>
                   Annuler
                 </button>
@@ -801,7 +828,19 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
           </div>
         )}
 
-        {!preview ? (
+        {/* V270 Fix 2 : slider FIN reutilise par le zoom du recadrage ET le
+            scrubber video. Piste 4px, pouce rond #D91CD2. */}
+        <style>{`
+          .v270-range { width: 100%; height: 4px; -webkit-appearance: none; appearance: none;
+            background: #555; border-radius: 2px; outline: none; margin-top: 8px; }
+          .v270-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
+            width: 16px; height: 16px; border-radius: 50%; background: var(--primary-color, #D91CD2);
+            cursor: pointer; border: none; }
+          .v270-range::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%;
+            background: var(--primary-color, #D91CD2); cursor: pointer; border: none; }
+        `}</style>
+
+        {(!preview && !videoUrl) ? (
           <div
             onClick={() => fileInputRef.current && fileInputRef.current.click()}
             style={{
@@ -818,54 +857,52 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
             <p style={{ color: '#999', fontSize: '0.85rem', margin: 0 }}>Appuyez pour choisir</p>
             <p style={{ color: '#666', fontSize: '0.7rem', margin: 0 }}>Image ou vidéo (format 9:16)</p>
           </div>
-        ) : (
+        ) : preview ? (
+          /* Apercu image (recadree). */
           <div style={{ position: 'relative', width: '100%', borderRadius: 12, overflow: 'hidden', background: '#000' }}>
-            {mediaType === 'video' ? (
-              <video src={preview} controls playsInline style={{ width: '100%', maxHeight: 380, objectFit: 'contain', display: 'block' }} />
-            ) : (
-              <img src={preview} alt="Aperçu" style={{ width: '100%', maxHeight: 380, objectFit: 'contain', display: 'block' }} />
-            )}
-            <button
-              onClick={clearFile}
-              aria-label="Changer de média"
-              style={{
-                position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.6)',
-                border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center'
-              }}
-            >
+            <img src={preview} alt="Aperçu" style={{ width: '100%', maxHeight: 380, objectFit: 'contain', display: 'block' }} />
+            <button onClick={clearFile} aria-label="Changer de média"
+              style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round">
                 <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
               </svg>
             </button>
           </div>
-        )}
-
-        {/* V268c (F1B) — choix de la miniature video. Best-effort : si la
-            generation n'a rien donne (codec, navigateur), on n'affiche rien et
-            la video part sans poster dedie. */}
-        {mediaType === 'video' && preview && (thumbLoading || thumbs.length > 0) && (
-          <div style={{ marginTop: 12 }}>
-            <p style={{ color: '#999', fontSize: '0.75rem', margin: '0 0 6px' }}>
-              {thumbLoading ? 'Génération des miniatures…' : 'Choisir la miniature'}
-            </p>
-            {!thumbLoading && (
-              <div style={{ display: 'flex', gap: 6 }}>
-                {thumbs.map((t, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => setThumbIdx(i)}
-                    style={{
-                      flex: 1, padding: 0, borderRadius: 8, overflow: 'hidden', cursor: 'pointer',
-                      border: '2px solid ' + (thumbIdx === i ? 'var(--primary-color, #D91CD2)' : 'transparent'),
-                      background: '#000', lineHeight: 0
-                    }}
-                    aria-label={`Miniature ${i + 1}`}
-                  >
-                    <img src={t.url} alt="" style={{ display: 'block', width: '100%', height: 64, objectFit: 'cover' }} />
-                  </button>
-                ))}
+        ) : (
+          /* V270 (F1) — apercu video + scrubber pour choisir LIBREMENT la miniature. */
+          <div>
+            <div style={{ position: 'relative', width: '100%', borderRadius: 12, overflow: 'hidden', background: '#000' }}>
+              <video
+                ref={videoPreviewRef}
+                src={videoUrl}
+                muted playsInline
+                onLoadedMetadata={handleVideoLoaded}
+                style={{ display: 'block', width: '100%', maxHeight: 240, objectFit: 'contain' }}
+              />
+              <button onClick={clearFile} aria-label="Changer de média"
+                style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <input
+              className="v270-range"
+              type="range" min={0} max={duration || 0} step={0.1} value={currentTime}
+              onChange={handleSliderChange}
+              aria-label="Position dans la vidéo"
+            />
+            <div style={{ fontSize: '0.7rem', color: '#999', textAlign: 'center', marginTop: 2 }}>
+              {Math.floor(currentTime)}s / {Math.floor(duration)}s
+            </div>
+            <button type="button" onClick={captureAndCrop}
+              style={{ width: '100%', padding: '9px', marginTop: 8, background: 'var(--primary-color, #D91CD2)', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>
+              Capturer cette image comme miniature
+            </button>
+            {thumbnailPreview && (
+              <div style={{ marginTop: 8, textAlign: 'center' }}>
+                <img src={thumbnailPreview} alt="Miniature" style={{ width: 120, height: 80, objectFit: 'cover', borderRadius: 6, border: '2px solid var(--primary-color, #D91CD2)' }} />
+                <div style={{ fontSize: '0.7rem', color: '#999', marginTop: 4 }}>Miniature sélectionnée</div>
               </div>
             )}
           </div>
@@ -928,7 +965,9 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
           </p>
         )}
 
-        {preview && !success && (
+        {/* V270 : bouton actif pour une image recadree (preview) OU une video
+            selectionnee (videoUrl), hors ecran de recadrage. */}
+        {(preview || videoUrl) && !success && !showCrop && (
           <button
             onClick={handleUploadAndPublish}
             disabled={uploading}
