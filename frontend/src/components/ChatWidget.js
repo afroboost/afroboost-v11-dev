@@ -40,7 +40,7 @@ import MessageSkeleton from './chat/MessageSkeleton';
 import MediaMessage from './chat/MediaMessage';
 import { parseMediaUrl, isMediaUrl } from '../services/MediaParser';
 import { PublishModal } from './Publications'; // V263
-import faqAfroboost, { faqCategories } from '../data/faqAfroboost'; // V274: FAQ chat IA
+import faqAfroboost, { faqCategories, faqText, faqUiText } from '../data/faqAfroboost'; // V274/V275: FAQ chat IA multilingue
 
 const API = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
 const SOCKET_URL = process.env.REACT_APP_BACKEND_URL || ''; // URL Socket.IO (même que backend)
@@ -1277,7 +1277,7 @@ const VISITOR_QUICK_REPLIES = [
  * Widget de chat IA flottant avec reconnaissance automatique et historique
  * Utilise l'API /api/chat/smart-entry pour identifier les utilisateurs
  */
-export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null } = {}) => {
+export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, lang = 'fr' } = {}) => {
   // === VÉRIFICATION DU PROFIL ABONNÉ (afroboost_profile) ===
   const getStoredProfile = () => {
     try {
@@ -8891,7 +8891,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                           <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
                           <line x1="12" y1="17" x2="12.01" y2="17" />
                         </svg>
-                        <span style={{ flex: 1 }}>Posez-moi une question ! Cliquez sur un sujet ci-dessous.</span>
+                        <span style={{ flex: 1 }}>{faqText(faqUiText.intro, lang)}</span>
                         <svg
                           width="16" height="16" viewBox="0 0 24 24" fill="none"
                           stroke="var(--primary-color, #D91CD2)" strokeWidth="2"
@@ -8931,7 +8931,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                                   }}
                                   data-testid={'faq-cat-' + (cat.id || 'all')}
                                 >
-                                  {cat.label}
+                                  {faqText(cat.label, lang)}
                                 </button>
                               );
                             })}
@@ -8964,7 +8964,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                                       }}
                                       data-testid={'faq-q-' + faq.id}
                                     >
-                                      <span>{faq.question}</span>
+                                      <span>{faqText(faq.question, lang)}</span>
                                       <svg
                                         width="14" height="14" viewBox="0 0 24 24" fill="none"
                                         stroke="var(--primary-color, #D91CD2)" strokeWidth="2"
@@ -8985,7 +8985,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null }
                                         lineHeight: '1.55',
                                         whiteSpace: 'pre-wrap'
                                       }} data-testid={'faq-a-' + faq.id}>
-                                        {faq.answer}
+                                        {faqText(faq.answer, lang)}
                                       </div>
                                     )}
                                   </div>

@@ -886,7 +886,12 @@ const SplashScreen = ({ logoUrl }) => {
 // Language Selector - Clean without background
 const LanguageSelector = ({ lang, setLang }) => {
   const [open, setOpen] = useState(false);
-  const languages = [{ code: 'fr', label: 'FR' }, { code: 'en', label: 'EN' }, { code: 'de', label: 'DE' }];
+  // V275: ajout des 5 langues africaines (interface visiteur uniquement)
+  const languages = [
+    { code: 'fr', label: 'FR' }, { code: 'en', label: 'EN' }, { code: 'de', label: 'DE' },
+    { code: 'ln', label: 'LN' }, { code: 'wo', label: 'WO' }, { code: 'sw', label: 'SW' },
+    { code: 'bm', label: 'BM' }, { code: 'bas', label: 'BA' }
+  ];
 
   return (
     <div className="lang-selector" onClick={() => setOpen(!open)} data-testid="lang-selector">
@@ -4821,7 +4826,10 @@ function App() {
     fetchSocialComments();
   }, []);
 
-  const t = useCallback((key) => translations[lang][key] || key, [lang]);
+  // V275: repli sur le français si la clé manque dans la langue choisie (les
+  // langues africaines ne traduisent qu'un sous-ensemble visiteur). Évite
+  // d'afficher le nom brut de la clé. `?.` protège aussi d'une langue inconnue.
+  const t = useCallback((key) => (translations[lang]?.[key]) || translations.fr[key] || key, [lang]);
 
   useEffect(() => { localStorage.setItem("af_lang", lang); }, [lang]);
 
@@ -8418,7 +8426,7 @@ function App() {
         
         {/* Widget Chat IA flottant */}
         {/* v160.7: Passage de l'email ET du nom du coach de la vitrine pour contextualiser le chat */}
-        <ChatWidget vitrineCoachEmail={currentCoachVitrineEmail} vitrineCoachName={currentCoachVitrineName} />
+        <ChatWidget vitrineCoachEmail={currentCoachVitrineEmail} vitrineCoachName={currentCoachVitrineName} lang={lang} />
         
         {/* v8.9.4: Modal recherche coach (déclenchée par l'icône dans NavigationBar) */}
         <CoachSearchModal

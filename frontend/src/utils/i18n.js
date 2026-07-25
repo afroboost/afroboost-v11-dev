@@ -301,6 +301,63 @@ export const translations = {
     shareBtn: "Teilen",
     credits: "Guthaben",
     unlimited: "Unbegrenzt"
+  },
+
+  // ===================================================================
+  // V275 : langues africaines (interface visiteur/abonné uniquement).
+  // Seules les clés visiteur les plus visibles sont traduites ; toute clé
+  // absente retombe sur le français (cf. `t` App.js + useTranslation).
+  // ⚠️ Traductions à faire relire par des locuteurs natifs.
+  // ===================================================================
+  ln: { // Lingala
+    loading: "Ezali kokende...", error: "Libunga", success: "Elongi",
+    cancel: "Kotika", save: "Kobomba", edit: "Kobongola", delete: "Kolongola",
+    confirm: "Kondima", home: "Ndako", shop: "Magazini",
+    selectOffer: "Poná mabonza na yo", bookNow: "Komisa", email: "Email",
+    login: "Kokɔta", logout: "Kobima", offers: "Mabonza", price: "Ntalo",
+    searchPlaceholder: "Luká na nkombo, email...", all: "Nyonso",
+    sessions: "Masolo", offersFilter: "Mabonza", shopFilter: "Magazini",
+    bookBtn: "Komisa", viewVisitor: "Komona ya moye", faq: "Mituna"
+  },
+  wo: { // Wolof
+    loading: "Di àgg...", error: "Njuumte", success: "Baax na",
+    cancel: "Bàyyi", save: "Denc", edit: "Soppi", delete: "Far",
+    confirm: "Nangu", home: "Kër", shop: "Bitik",
+    selectOffer: "Tànn sa tànn", bookNow: "Réservé", email: "Email",
+    login: "Dugg", logout: "Génn", offers: "Tànn yi", price: "Njëg",
+    searchPlaceholder: "Seet ci tur, email...", all: "Yépp",
+    sessions: "Ndajé yi", offersFilter: "Tànn yi", shopFilter: "Bitik",
+    bookBtn: "Réservé", viewVisitor: "Xool bu mooy", faq: "Laaj yu bari"
+  },
+  sw: { // Swahili
+    loading: "Inapakia...", error: "Kosa", success: "Imefanikiwa",
+    cancel: "Ghairi", save: "Hifadhi", edit: "Hariri", delete: "Futa",
+    confirm: "Thibitisha", home: "Nyumbani", shop: "Duka",
+    selectOffer: "Chagua ofa yako", bookNow: "Weka nafasi", email: "Barua pepe",
+    login: "Ingia", logout: "Ondoka", offers: "Ofa", price: "Bei",
+    searchPlaceholder: "Tafuta kwa jina, barua pepe...", all: "Yote",
+    sessions: "Vipindi", offersFilter: "Ofa", shopFilter: "Duka",
+    bookBtn: "Weka nafasi", viewVisitor: "Mtazamo wa mgeni", faq: "Maswali yanayoulizwa"
+  },
+  bm: { // Bambara
+    loading: "A bɛ nana...", error: "Fili", success: "A kɛra",
+    cancel: "A dabila", save: "A mara", edit: "A yɛlɛma", delete: "A bɔ",
+    confirm: "A dafa", home: "So", shop: "Jagaso",
+    selectOffer: "I ka sɔrɔyɔrɔ sugandi", bookNow: "A mara", email: "Email",
+    login: "Don", logout: "Bɔ", offers: "Sɔrɔyɔrɔ", price: "Sɔngɔ",
+    searchPlaceholder: "Ɲini tɔgɔ, email fɛ...", all: "Bɛɛ",
+    sessions: "Kalanso", offersFilter: "Sɔrɔyɔrɔ", shopFilter: "Jagaso",
+    bookBtn: "A mara", viewVisitor: "Jɛnkulu ka ye", faq: "Ɲininkali caman"
+  },
+  bas: { // Bassa (Cameroun)
+    loading: "I ŋgɛ lona...", error: "Béba", success: "I mal nyen",
+    cancel: "Tômbôl", save: "Bɔmba", edit: "Kôbla", delete: "Hɛɛ",
+    confirm: "Kônda", home: "Ndap", shop: "Makɛ",
+    selectOffer: "Sɔ mahɔl moŋ", bookNow: "Tila", email: "Email",
+    login: "Kɛ bisu", logout: "So", offers: "Mahɔl", price: "Njel",
+    searchPlaceholder: "Sônga ni ina, email...", all: "Hiki jam",
+    sessions: "Bihéga", offersFilter: "Mahɔl", shopFilter: "Makɛ",
+    bookBtn: "Tila", viewVisitor: "Ɓéga yak njômbi", faq: "Mambadga"
   }
 };
 
