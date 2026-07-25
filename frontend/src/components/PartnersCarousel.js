@@ -1632,29 +1632,37 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
                 <GlobeIcon />
               </button>
               {showLangMenu && (
-                <div 
+                <div
                   className="absolute top-full right-0 mt-1 py-1 rounded-lg overflow-hidden"
                   style={{
                     background: 'rgba(0,0,0,0.95)',
                     border: '1px solid rgba(139, 92, 246, 0.4)',
                     minWidth: '60px',
+                    maxHeight: '300px',   // V275c: assez pour 8 langues
+                    overflowY: 'auto',    // V275c: scroll si besoin
                     zIndex: 50
                   }}
                 >
-                  {['FR', 'EN', 'DE'].map(code => (
+                  {/* V275c: 3 langues d'origine + 5 langues africaines. Le code
+                       diffère du label pour le Bassa (label BA, code 'bas'). */}
+                  {[
+                    { code: 'fr', label: 'FR' }, { code: 'en', label: 'EN' }, { code: 'de', label: 'DE' },
+                    { code: 'ln', label: 'LN' }, { code: 'wo', label: 'WO' }, { code: 'sw', label: 'SW' },
+                    { code: 'bm', label: 'BM' }, { code: 'bas', label: 'BA' }
+                  ].map(l => (
                     <button
-                      key={code}
+                      key={l.code}
                       onClick={() => {
-                        if (onLangChange) onLangChange(code.toLowerCase());
+                        if (onLangChange) onLangChange(l.code);
                         setShowLangMenu(false);
                       }}
                       className="w-full px-3 py-1.5 text-white text-xs text-center hover:bg-purple-500/30"
-                      style={{ 
-                        background: lang?.toUpperCase() === code ? 'rgba(139, 92, 246, 0.3)' : 'transparent' 
+                      style={{
+                        background: lang === l.code ? 'rgba(139, 92, 246, 0.3)' : 'transparent'
                       }}
-                      data-testid={`lang-${code.toLowerCase()}`}
+                      data-testid={`lang-${l.code}`}
                     >
-                      {code}
+                      {l.label}
                     </button>
                   ))}
                 </div>
