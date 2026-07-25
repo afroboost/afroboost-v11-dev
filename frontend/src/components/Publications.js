@@ -276,22 +276,22 @@ const V268PublicationCard = ({ pub, onOpen }) => {
         }}
         data-testid="publication-card"
       >
-        {/* V271 Fix 2 : `contain` (au lieu de `cover`) — le personnage/l'image
-            est vu EN ENTIER, sans rognage. Fond noir pour les bandes quand le
-            ratio du media ne remplit pas le cadre 240x250. */}
+        {/* V272 : retour a `cover` (V271 Fix 2 annule) — le rendu plein cadre
+            etait prefere aux bandes noires du `contain`. La lightbox, elle,
+            garde `contain` pour voir le media en entier en plein ecran. */}
         {pub.media_type === 'video' ? (
           <video
             src={pub.media_url}
             poster={pub.thumbnail_url || undefined}
             muted autoPlay loop playsInline
-            style={{ display: 'block', width: '100%', height: '250px', objectFit: 'contain', backgroundColor: '#000', borderRadius: 12 }}
+            style={{ display: 'block', width: '100%', height: '250px', objectFit: 'cover', borderRadius: 12 }}
           />
         ) : (
           <img
             src={pub.media_url}
             alt={`Publication de ${pub.display_name || pub.subscriber_name || 'un abonné'}`}
             loading="lazy"
-            style={{ display: 'block', width: '100%', height: '250px', objectFit: 'contain', backgroundColor: '#000', borderRadius: 12 }}
+            style={{ display: 'block', width: '100%', height: '250px', objectFit: 'cover', borderRadius: 12 }}
           />
         )}
       </div>
