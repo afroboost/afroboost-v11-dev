@@ -11,58 +11,60 @@ import axios from 'axios';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
 
-// V268: barre de progression 48 h. `remaining_hours` est calcule cote serveur
-// (pas de derive d'horloge client). Vert > 24 h, orange 12-24 h, rouge < 12 h.
-const V268_TTL = 48;
-const v268BarColor = (remaining) =>
-  remaining > 24 ? '#22c55e' : remaining >= 12 ? '#f59e0b' : '#ef4444';
-const v268RemainingLabel = (remaining) => {
+// V268b — Fix C : plus de barre visuelle ni du mot « restantes ». Juste « 47h »,
+// dans la couleur DYNAMIQUE du coach (var(--primary-color), pilotee par le
+// concept, V259) — jamais une couleur fixe.
+const V268Remaining = ({ remaining }) => {
   const h = Math.floor(remaining || 0);
-  return h >= 1 ? h + 'h restantes' : "moins d'1h";
-};
-
-const V268ProgressBar = ({ remaining }) => {
-  const pct = Math.max(0, Math.min(1, 1 - (remaining || 0) / V268_TTL)) * 100;
-  const color = v268BarColor(remaining || 0);
   return (
-    <div>
-      <div style={{ height: 3, borderRadius: 3, background: 'rgba(255,255,255,0.18)', overflow: 'hidden' }}>
-        <div style={{ height: '100%', width: pct + '%', background: color, transition: 'width 0.3s ease' }} />
-      </div>
-      <p style={{ color: color, fontSize: '0.58rem', margin: '3px 0 0' }}>
-        {v268RemainingLabel(remaining || 0)}
-      </p>
-    </div>
+    <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '0.7rem', fontWeight: 600 }}>
+      {h >= 1 ? h + 'h' : '< 1h'}
+    </span>
   );
 };
 
-// V268 (F7): bouton son pour les videos, réutilisé sur la carte et en lightbox.
+// V268 (F7) / V268b Fix B1 : bouton son SANS rond — juste l'icone SVG, avec un
+// leger drop-shadow pour rester lisible sur n'importe quelle image.
+// `onToggle` recoit l'evenement pour que l'appelant fasse l'action AUDIO
+// directement dans le handler du clic (exigence des navigateurs mobiles).
 const V268MuteButton = ({ muted, onToggle, size }) => (
   <button
     type="button"
-    onClick={(e) => { e.stopPropagation(); onToggle(); }}
+    onClick={onToggle}
     aria-label={muted ? 'Activer le son' : 'Couper le son'}
     title={muted ? 'Activer le son' : 'Couper le son'}
     style={{
-      background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%',
-      width: size || 30, height: size || 30, cursor: 'pointer',
+      background: 'transparent', border: 'none', padding: 4, cursor: 'pointer',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)'
+      filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.7))'
     }}
   >
     {muted ? (
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg width={size || 20} height={size || 20} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
         <line x1="23" y1="9" x2="17" y2="15" /><line x1="17" y1="9" x2="23" y2="15" />
       </svg>
     ) : (
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg width={size || 20} height={size || 20} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
         <path d="M15.54 8.46a5 5 0 0 1 0 7.07" /><path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
       </svg>
     )}
   </button>
 );
+
+// V268b Fix B2 : coupe/active le son EN DIRECT dans le handler du clic. Les
+// navigateurs mobiles bloquent le son s'il n'est pas active par un geste
+// utilisateur synchrone — donc pas de setState-updater a effet de bord, pas de
+// Promise : on touche `video.muted` / `.volume` tout de suite.
+const v268ToggleSound = (videoRef, setMuted) => (e) => {
+  if (e) e.stopPropagation();
+  const video = videoRef.current;
+  if (!video) return;
+  video.muted = !video.muted;
+  if (!video.muted) video.volume = 1.0;
+  setMuted(video.muted);
+};
 
 // V268 (F5): légende avec « Lire plus » / « Voir moins » au-delà de 100 car.
 const V268Caption = ({ caption, light }) => {
@@ -96,13 +98,7 @@ const V268Lightbox = ({ pub, onClose }) => {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
-  const toggleMute = () => {
-    setMuted(m => {
-      const nv = !m;
-      if (videoRef.current) videoRef.current.muted = nv;
-      return nv;
-    });
-  };
+  const toggleMute = v268ToggleSound(videoRef, setMuted); // V268b Fix B2
   return (
     <div
       onClick={onClose}
@@ -138,22 +134,23 @@ const V268Lightbox = ({ pub, onClose }) => {
                 ref={videoRef}
                 src={pub.media_url}
                 autoPlay loop playsInline muted={muted}
-                style={{ maxWidth: '100%', maxHeight: '78vh', borderRadius: 12, background: '#000' }}
+                style={{ display: 'block', maxWidth: '100%', maxHeight: '78vh', borderRadius: 12, background: '#000' }}
               />
               <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
-                <V268MuteButton muted={muted} onToggle={toggleMute} size={40} />
+                <V268MuteButton muted={muted} onToggle={toggleMute} size={26} />
               </div>
             </>
           ) : (
             <img
               src={pub.media_url}
-              alt={`Publication de ${pub.subscriber_name || 'un abonné'}`}
-              style={{ maxWidth: '100%', maxHeight: '78vh', borderRadius: 12, objectFit: 'contain', background: '#000' }}
+              alt={`Publication de ${pub.display_name || pub.subscriber_name || 'un abonné'}`}
+              style={{ display: 'block', maxWidth: '100%', maxHeight: '78vh', borderRadius: 12, objectFit: 'contain', background: '#000' }}
             />
           )}
         </div>
         <div style={{ padding: '4px 4px 0' }}>
-          <p style={{ color: '#fff', fontSize: 14, fontWeight: 700, margin: '10px 0 0' }}>{pub.subscriber_name}</p>
+          {/* V268b: nom AFFICHE (display_name), repli sur l'ancien champ. */}
+          <p style={{ color: '#fff', fontSize: 14, fontWeight: 700, margin: '10px 0 0' }}>{pub.display_name || pub.subscriber_name}</p>
           <V268Caption caption={pub.caption} light />
         </div>
       </div>
@@ -166,13 +163,7 @@ const V268Lightbox = ({ pub, onClose }) => {
 const V268PublicationCard = ({ pub, onOpen }) => {
   const videoRef = useRef(null);
   const [muted, setMuted] = useState(true);
-  const toggleMute = () => {
-    setMuted(m => {
-      const nv = !m;
-      if (videoRef.current) videoRef.current.muted = nv;
-      return nv;
-    });
-  };
+  const toggleMute = v268ToggleSound(videoRef, setMuted); // V268b Fix B2
   return (
     <div style={{ flexShrink: 0, width: 160, scrollSnapAlign: 'start' }}>
       <div
@@ -186,24 +177,25 @@ const V268PublicationCard = ({ pub, onOpen }) => {
         {pub.media_type === 'video' ? (
           <>
             {/* `muted` requis avec `autoPlay` (iOS/Chrome). Le bouton son
-                pilote `muted` via le ref. */}
+                pilote `muted` via le ref. V268b Fix A : `display:block` evite
+                l'espace sous une video/img `inline` qui faisait deborder. */}
             <video
               ref={videoRef}
               src={pub.media_url}
               poster={pub.thumbnail_url || undefined}
               playsInline muted={muted} loop autoPlay
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }}
             />
-            <div style={{ position: 'absolute', bottom: 40, right: 8 }}>
-              <V268MuteButton muted={muted} onToggle={toggleMute} />
+            <div style={{ position: 'absolute', bottom: 40, right: 6 }}>
+              <V268MuteButton muted={muted} onToggle={toggleMute} size={18} />
             </div>
           </>
         ) : (
           <img
             src={pub.media_url}
-            alt={`Publication de ${pub.subscriber_name || 'un abonné'}`}
+            alt={`Publication de ${pub.display_name || pub.subscriber_name || 'un abonné'}`}
             loading="lazy"
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }}
           />
         )}
         <div style={{
@@ -211,12 +203,12 @@ const V268PublicationCard = ({ pub, onOpen }) => {
           background: 'linear-gradient(transparent, rgba(0,0,0,0.88))',
           padding: '22px 8px 8px'
         }}>
-          <p style={{ color: '#fff', fontSize: '0.7rem', fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {pub.subscriber_name}
-          </p>
-          {/* V268 (F3): barre 48 h a la place du simple « Xh ». */}
-          <div style={{ marginTop: 4 }}>
-            <V268ProgressBar remaining={pub.remaining_hours} />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <p style={{ color: '#fff', fontSize: '0.7rem', fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {pub.display_name || pub.subscriber_name}
+            </p>
+            {/* V268b Fix C : « 47h » seul, couleur dynamique du coach. */}
+            <V268Remaining remaining={pub.remaining_hours} />
           </div>
         </div>
       </div>
@@ -263,6 +255,151 @@ export const PublicationsCarousel = ({ publications }) => {
         ))}
       </div>
       {lightbox && <V268Lightbox pub={lightbox} onClose={() => setLightbox(null)} />}
+    </div>
+  );
+};
+
+// V268b (F8) — « Mes publications » : liste des posts de l'utilisateur, avec
+// edition (legende + nom affiche) et suppression. Rendu sous le formulaire de
+// la modale. `subscriberCode` vide = coach (auth par en-tete/JWT via
+// l'intercepteur) ; sinon abonne (code passe explicitement).
+const V268MyPublications = ({ subscriberCode, refreshKey }) => {
+  const [items, setItems] = useState(null); // null = chargement
+  const [editing, setEditing] = useState(null); // id en cours d'edition
+  const [editCaption, setEditCaption] = useState('');
+  const [editName, setEditName] = useState('');
+  const [confirmDel, setConfirmDel] = useState(null); // id a confirmer
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    const url = subscriberCode
+      ? `${API}/publications/mine?subscriber_code=${encodeURIComponent(subscriberCode)}`
+      : `${API}/publications/mine`;
+    axios.get(url)
+      .then(res => setItems(Array.isArray(res.data) ? res.data : []))
+      .catch(() => setItems([]));
+  };
+  // Recharge a l'ouverture ET apres chaque publication (refreshKey change).
+  useEffect(load, [subscriberCode, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const startEdit = (p) => {
+    setEditing(p.id);
+    setEditCaption(p.caption || '');
+    setEditName(p.display_name || p.subscriber_name || '');
+    setConfirmDel(null);
+  };
+
+  const saveEdit = async (id) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const body = { caption: editCaption.slice(0, 500), display_name: editName.slice(0, 60) };
+      if (subscriberCode) body.subscriber_code = subscriberCode;
+      await axios.put(`${API}/publications/${id}`, body);
+      setEditing(null);
+      load();
+    } catch (e) { /* on laisse l'edition ouverte */ }
+    setBusy(false);
+  };
+
+  const doDelete = async (id) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const url = subscriberCode
+        ? `${API}/publications/${id}?subscriber_code=${encodeURIComponent(subscriberCode)}`
+        : `${API}/publications/${id}`;
+      await axios.delete(url);
+      setConfirmDel(null);
+      setItems(list => (list || []).filter(p => p.id !== id)); // retrait immediat
+    } catch (e) { /* garde l'element */ }
+    setBusy(false);
+  };
+
+  if (items === null) return null;
+  if (items.length === 0) return null;
+
+  const inputStyle = { width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #333', background: '#0a0a1a', color: '#fff', fontSize: '0.85rem', boxSizing: 'border-box' };
+
+  return (
+    <div style={{ marginTop: 20, borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 16 }}>
+      <h4 style={{ color: '#fff', fontSize: '0.9rem', margin: '0 0 12px' }}>Mes publications</h4>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {items.map(p => (
+          <div key={p.id} style={{ display: 'flex', gap: 10, background: '#0f0f1e', borderRadius: 10, padding: 8 }}>
+            <div style={{ width: 54, height: 72, borderRadius: 6, overflow: 'hidden', background: '#000', flexShrink: 0 }}>
+              {p.media_type === 'video' ? (
+                <video src={p.media_url} poster={p.thumbnail_url || undefined} muted playsInline preload="metadata" style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                <img src={p.media_url} alt="" style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }} />
+              )}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {editing === p.id ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <input value={editName} onChange={e => setEditName(e.target.value.slice(0, 60))} placeholder="Nom affiché" style={inputStyle} />
+                  <textarea value={editCaption} onChange={e => setEditCaption(e.target.value.slice(0, 500))} placeholder="Légende" rows={2} style={{ ...inputStyle, resize: 'vertical' }} />
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" onClick={() => saveEdit(p.id)} disabled={busy}
+                      style={{ flex: 1, padding: '7px', borderRadius: 8, border: 'none', background: 'var(--primary-color, #D91CD2)', color: '#fff', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
+                      Enregistrer
+                    </button>
+                    <button type="button" onClick={() => setEditing(null)}
+                      style={{ padding: '7px 12px', borderRadius: 8, border: '1px solid #333', background: 'transparent', color: '#999', fontSize: '0.8rem', cursor: 'pointer' }}>
+                      Annuler
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <p style={{ color: '#fff', fontSize: '0.8rem', fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {p.display_name || p.subscriber_name}
+                    </p>
+                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                      <button type="button" onClick={() => startEdit(p)} title="Modifier" aria-label="Modifier"
+                        style={{ background: 'none', border: 'none', padding: 4, cursor: 'pointer', color: 'var(--primary-color, #D91CD2)' }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                        </svg>
+                      </button>
+                      <button type="button" onClick={() => { setConfirmDel(p.id); setEditing(null); }} title="Supprimer" aria-label="Supprimer"
+                        style={{ background: 'none', border: 'none', padding: 4, cursor: 'pointer', color: '#f87171' }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  {p.caption ? (
+                    <p style={{ color: '#999', fontSize: '0.7rem', margin: '3px 0 0', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                      {p.caption}
+                    </p>
+                  ) : null}
+                  <p style={{ margin: '4px 0 0' }}><V268Remaining remaining={p.remaining_hours} /></p>
+                  {confirmDel === p.id && (
+                    <div style={{ marginTop: 6, background: 'rgba(229,62,62,0.1)', borderRadius: 8, padding: 8 }}>
+                      <p style={{ color: '#fca5a5', fontSize: '0.75rem', margin: '0 0 6px' }}>Supprimer cette publication ?</p>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button type="button" onClick={() => doDelete(p.id)} disabled={busy}
+                          style={{ flex: 1, padding: '6px', borderRadius: 8, border: 'none', background: '#E53E3E', color: '#fff', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}>
+                          Supprimer
+                        </button>
+                        <button type="button" onClick={() => setConfirmDel(null)}
+                          style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #333', background: 'transparent', color: '#999', fontSize: '0.75rem', cursor: 'pointer' }}>
+                          Annuler
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
@@ -475,6 +612,9 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
             {uploading ? 'Publication en cours…' : 'Publier'}
           </button>
         )}
+
+        {/* V268b (F8): mes publications, sous le formulaire — edition + suppression. */}
+        <V268MyPublications subscriberCode={subscriberCode} refreshKey={0} />
       </div>
     </div>
   );

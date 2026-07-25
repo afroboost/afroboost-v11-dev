@@ -5619,6 +5619,12 @@ async def create_publication(request: Request):
     if not (thumb.startswith(V261_MEDIA_PREFIX) and ("/" + V261_FOLDER) in thumb):
         thumb = ""
 
+    # V268b: nom affiche sur le post public, editable par l'auteur. Defaut = le
+    # nom deja resolu depuis la base (subscriber_name), jamais une valeur brute
+    # du corps sans repli. Plafonne, pour ne pas laisser un nom demesure casser
+    # la carte.
+    display_name = (body.get("display_name") or "").strip()[:60] or subscriber_name
+
     active_count = await db.publications.count_documents({
         "subscriber_code": code,
         "expires_at": {"$gt": datetime.now(timezone.utc).isoformat()}
@@ -5634,6 +5640,7 @@ async def create_publication(request: Request):
         "id": str(uuid.uuid4()),
         "subscriber_code": code,
         "subscriber_name": subscriber_name,
+        "display_name": display_name,  # V268b
         "media_url": media_url,
         "media_type": media_type,
         # V261b: DERIVE de l'URL, jamais recu du client — voir
@@ -5678,27 +5685,74 @@ async def list_publications():
     return pubs
 
 
+@api_router.get("/publications/mine")
+async def list_my_publications(request: Request, subscriber_code: str = ""):
+    """V268b: les publications de l'utilisateur, pour l'ecran « Mes publications ».
+
+    Deux appelants, comme partout ailleurs sur les publications :
+      - l'ABONNE, identifie par son code AFR- passe en query (il n'a pas de
+        compte). On renvoie ses posts, et on inclut `id` pour l'edition.
+      - le COACH / admin, via l'auth signee. Super admin -> tous ses posts et
+        ceux de ses abonnes ; coach -> `coach_id == lui`.
+    `subscriber_code` reste masque dans la reponse — l'auteur n'a pas besoin
+    qu'on le lui renvoie, et c'est un secret.
+    """
+    await _v261_purge_expired()
+    code = (subscriber_code or "").strip().upper()
+    if code:
+        ok, _name = await _v261_resolve_subscriber(code)
+        if not ok:
+            raise HTTPException(status_code=403, detail="Code abonné invalide ou inactif")
+        query = {"subscriber_code": code}
+    else:
+        user_email = require_auth(request)
+        if is_super_admin(user_email):
+            # Le super admin gere l'ensemble du mur.
+            query = {}
+        else:
+            query = {"$or": [{"coach_id": user_email}, {"subscriber_code": user_email}]}
+
+    now = datetime.now(timezone.utc)
+    query["expires_at"] = {"$gt": now.isoformat()}
+    pubs = await db.publications.find(
+        query,
+        {"_id": 0, "subscriber_code": 0, "cloudinary_public_id": 0, "thumbnail_public_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    for p in pubs:
+        try:
+            remaining = (datetime.fromisoformat(p["expires_at"]) - now).total_seconds()
+            p["remaining_hours"] = max(0, round(remaining / 3600, 1))
+        except Exception:
+            p["remaining_hours"] = 0
+    return pubs
+
+
 @api_router.delete("/publications/{pub_id}")
-async def delete_publication(pub_id: str, request: Request):
+async def delete_publication(pub_id: str, request: Request, subscriber_code: str = ""):
     """V261 / V268b: retirer une publication.
 
-    Super admin -> modere tout. Coach non-admin -> uniquement SES publications
-    (les siennes ou celles de ses abonnes, appariees sur coach_id).
+    Trois auteurs legitimes :
+      - l'ABONNE proprietaire, prouve par son code AFR- (query `subscriber_code`
+        == celui stocke) — il n'a pas de compte coach ;
+      - le super admin -> modere tout ;
+      - le coach non-admin -> uniquement SES publications (coach_id / son email).
     """
-    # V262: identification signee (JWT si JWT_SECRET est pose, repli en-tete sinon)
-    user_email = require_auth(request)
-
     pub = await db.publications.find_one({"id": pub_id}, {"_id": 0})
     if not pub:
         raise HTTPException(status_code=404, detail="Publication non trouvée")
 
-    # V268b (fix IDOR) : l'ancien controle exigeait seulement d'ETRE un coach du
-    # repertoire, donc n'importe quel coach pouvait supprimer la publication d'un
-    # autre. On exige desormais la PROPRIETE pour les non-admins.
-    if not is_super_admin(user_email):
-        owns = (pub.get("coach_id") or "") == user_email or (pub.get("subscriber_code") or "") == user_email
-        if not owns:
-            raise HTTPException(status_code=403, detail="Accès refusé")
+    # Chemin abonne auteur, identifie par son code.
+    provided_code = (subscriber_code or "").strip().upper()
+    is_author = bool(provided_code) and provided_code == (pub.get("subscriber_code") or "").upper()
+
+    if not is_author:
+        # V262: identification signee (JWT si pose, repli en-tete sinon).
+        user_email = require_auth(request)
+        # V268b (fix IDOR) : PROPRIETE exigee pour les non-admins.
+        if not is_super_admin(user_email):
+            owns = (pub.get("coach_id") or "") == user_email or (pub.get("subscriber_code") or "") == user_email
+            if not owns:
+                raise HTTPException(status_code=403, detail="Accès refusé")
     await asyncio.to_thread(
         _v261_cloudinary_destroy,
         pub.get("cloudinary_public_id", ""),
@@ -5745,9 +5799,13 @@ async def update_publication(pub_id: str, request: Request):
             if not owns:
                 raise HTTPException(status_code=403, detail="Accès refusé")
 
-    caption = (body.get("caption") or "").strip()[:500]
-    await db.publications.update_one({"id": pub_id}, {"$set": {"caption": caption}})
-    return {"status": "ok", "caption": caption}
+    # V268b: on edite la legende ET le nom affiche — le media reste fige.
+    update = {"caption": (body.get("caption") or "").strip()[:500]}
+    if "display_name" in body:
+        # Un nom vide retombe sur le nom d'origine plutot que d'afficher un blanc.
+        update["display_name"] = (body.get("display_name") or "").strip()[:60] or (pub.get("subscriber_name") or "Abonné")
+    await db.publications.update_one({"id": pub_id}, {"$set": update})
+    return {"status": "ok", **update}
 
 
 # === ESPACE ABONNÉ — Lookup par code AFR-XXXXXX v11.0 ===
