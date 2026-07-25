@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import "@/App.css";
 import axios from "axios";
+// V277 : langues supplementaires (africaines + creole) + contexte de langue.
+import { translations as _extraLangs } from "./utils/i18n";
+import { LanguageContext } from "./contexts/LanguageContext";
 
 // V133: Intercepteur global — JWT prioritaire + fallback X-User-Email
 axios.interceptors.request.use((config) => {
@@ -658,6 +661,17 @@ const translations = {
     unlimited: "Unbegrenzt",
   }
 };
+
+// V277 — LE fix « aucune langue ne marche » : App.js avait son PROPRE objet
+// `translations` (fr/en/de seulement) et n'importait pas utils/i18n.js, où
+// vivent les 5 langues africaines + le créole. On les injecte donc ici pour que
+// le t() d'App.js (nav, filtres, recherche, boutons...) les serve enfin. Les
+// clés communes (all, sessions, offersFilter, shopFilter, searchPlaceholder,
+// bookNow, price, email, login, cancel, loading, delete...) sont traduites ;
+// toute clé absente retombe sur le français (cf. définition de t() plus bas).
+['ln', 'wo', 'sw', 'bm', 'bas', 'ht'].forEach((_l) => {
+  if (_extraLangs[_l]) translations[_l] = _extraLangs[_l];
+});
 
 const WEEKDAYS_MAP = {
   fr: ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"],
@@ -6696,6 +6710,9 @@ function App() {
   var hasActiveCountdown = offers.some(function(o) { return o.countdown_enabled && o.countdown_date; });
 
   return (
+    // V277 : Provider alimenté par l'état d'App (source unique). Permet à tout
+    // composant visiteur descendant d'utiliser useLanguage()/t().
+    <LanguageContext.Provider value={{ language: lang, setLanguage: setLang, t }}>
     <div className="w-full min-h-screen relative section-gradient" style={{ fontFamily: 'system-ui, sans-serif', paddingTop: hasActiveCountdown ? '56px' : '0px' }}>
       {/* V145: Sticky Countdown Bar — top of page */}
       <StickyCountdownBar offers={offers} />
@@ -8681,6 +8698,7 @@ function App() {
         }
       `}</style>
     </div>
+    </LanguageContext.Provider>
   );
 }
 
