@@ -5680,21 +5680,25 @@ async def list_publications():
 
 @api_router.delete("/publications/{pub_id}")
 async def delete_publication(pub_id: str, request: Request):
-    """V261: le coach retire une publication."""
+    """V261 / V268b: retirer une publication.
+
+    Super admin -> modere tout. Coach non-admin -> uniquement SES publications
+    (les siennes ou celles de ses abonnes, appariees sur coach_id).
+    """
     # V262: identification signee (JWT si JWT_SECRET est pose, repli en-tete sinon)
     user_email = require_auth(request)
-    # Reserve aux comptes coach : sans cette garde, l'endpoint laisserait
-    # n'importe qui vider le mur de la vitrine.
-    if not is_super_admin(user_email):
-        known = await db.coaches.find_one({"email": user_email}, {"_id": 0, "email": 1})
-        if not known:
-            known = await db.coach_auth.find_one({"email": user_email}, {"_id": 0, "email": 1})
-        if not known:
-            raise HTTPException(status_code=403, detail="Accès refusé")
 
     pub = await db.publications.find_one({"id": pub_id}, {"_id": 0})
     if not pub:
         raise HTTPException(status_code=404, detail="Publication non trouvée")
+
+    # V268b (fix IDOR) : l'ancien controle exigeait seulement d'ETRE un coach du
+    # repertoire, donc n'importe quel coach pouvait supprimer la publication d'un
+    # autre. On exige desormais la PROPRIETE pour les non-admins.
+    if not is_super_admin(user_email):
+        owns = (pub.get("coach_id") or "") == user_email or (pub.get("subscriber_code") or "") == user_email
+        if not owns:
+            raise HTTPException(status_code=403, detail="Accès refusé")
     await asyncio.to_thread(
         _v261_cloudinary_destroy,
         pub.get("cloudinary_public_id", ""),
@@ -5731,14 +5735,14 @@ async def update_publication(pub_id: str, request: Request):
     if not is_author:
         # Chemin 2 : coach / admin. require_auth leve 401 si non authentifie.
         user_email = require_auth(request)
+        # V268b (fix IDOR) : le super admin modere tout ; un coach non-admin ne
+        # touche QU'A SES publications. L'ancien `known or owns` laissait
+        # n'importe quel coach du repertoire editer la publication d'un AUTRE
+        # (escalade horizontale) — la simple appartenance au repertoire n'est
+        # PAS une preuve de propriete.
         if not is_super_admin(user_email):
-            known = await db.coaches.find_one({"email": user_email}, {"_id": 0, "email": 1})
-            if not known:
-                known = await db.coach_auth.find_one({"email": user_email}, {"_id": 0, "email": 1})
-            # Un coach ne modifie que SES publications (celles de ses abonnes /
-            # les siennes) — appariement sur coach_id, comme le reste du dashboard.
             owns = (pub.get("coach_id") or "") == user_email or (pub.get("subscriber_code") or "") == user_email
-            if not (known or owns):
+            if not owns:
                 raise HTTPException(status_code=403, detail="Accès refusé")
 
     caption = (body.get("caption") or "").strip()[:500]
