@@ -5854,7 +5854,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       <div className="flex flex-col">
                         <span className="flex items-center gap-1">
                           <span style={{ fontSize: '12px' }}>🤖</span>
-                          <span className="font-bold" style={{ color: 'var(--primary-color, #D91CD2)' }}>{sessionData.title}</span>
+                          {/* V276 : titre en BLANC — il etait en var(--primary-color)
+                              (magenta) sur le header magenta, donc illisible. */}
+                          <span className="font-bold" style={{ color: '#fff' }}>{sessionData.title}</span>
                         </span>
                         <span className="text-xs opacity-70" style={{ fontSize: '9px' }}>
                           ✓ Session Active

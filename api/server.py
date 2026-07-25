@@ -5543,11 +5543,37 @@ async def _v261_purge_expired() -> int:
                 pub.get("cloudinary_public_id", ""),
                 pub.get("media_type", "image"),
             )
+            # V276 : la miniature video vit aussi dans publications/ — la purge
+            # lazy la laissait orpheline (seul le delete manuel la retirait). On
+            # la detruit desormais AUSSI a l'expiration, sinon elle s'accumule.
+            if pub.get("thumbnail_public_id"):
+                await asyncio.to_thread(
+                    _v261_cloudinary_destroy, pub["thumbnail_public_id"], "image"
+                )
         except Exception as e:
             logger.warning(f"[V261] Purge Cloudinary partielle: {e}")
     await db.publications.delete_many({"id": {"$in": [p["id"] for p in expired]}})
     logger.info(f"[V261] {len(expired)} publication(s) expiree(s) supprimee(s)")
     return len(expired)
+
+
+async def _v276_periodic_purge():
+    """V276 (Option B) : purge de fond, toutes les heures.
+
+    La purge lazy (`_v261_purge_expired` a chaque lecture) suffit tant que la
+    vitrine est consultee. Mais si personne ne lit les publications pendant un
+    long moment, les documents expires — et leurs fichiers Cloudinary — restent.
+    Cette boucle garantit qu'ils partent au plus tard 1 h apres l'echeance, meme
+    sans trafic. Non bloquante, protegee : une erreur n'arrete jamais la boucle.
+    """
+    while True:
+        try:
+            n = await _v261_purge_expired()
+            if n:
+                logger.info(f"[V276] Purge periodique : {n} publication(s) supprimee(s)")
+        except Exception as e:
+            logger.warning(f"[V276] Purge periodique ignoree : {e}")
+        await asyncio.sleep(3600)  # toutes les heures
 
 
 # V272c: garde « migration deja jouee » — evite de rebalayer la collection a
@@ -5785,7 +5811,10 @@ async def list_publications(coach_id: str = ""):
     # publiquement (c'etait la faille du « fantome »). La migration ci-dessus les
     # rattache toutes ; ce filtre reste comme garde-fou si l'une passe entre les
     # mailles. La vitrine par defaut (admin) ne recupere plus les orphelins.
-    query = {"$and": [time_q, {"coach_id": target}]}
+    # V276 : `paused: true` = publication mise en pause par l'admin -> invisible
+    # sur toutes les vitrines, mais son compte a rebours 48 h continue (elle sera
+    # purgee normalement). `$ne: True` inclut les docs sans le champ.
+    query = {"$and": [time_q, {"coach_id": target}, {"paused": {"$ne": True}}]}
     pubs = await db.publications.find(
         query,
         {"_id": 0, "subscriber_code": 0, "cloudinary_public_id": 0, "thumbnail_public_id": 0}
@@ -5920,6 +5949,41 @@ async def update_publication(pub_id: str, request: Request):
         update["display_name"] = (body.get("display_name") or "").strip()[:60] or (pub.get("subscriber_name") or "Abonné")
     await db.publications.update_one({"id": pub_id}, {"$set": update})
     return {"status": "ok", **update}
+
+
+@api_router.patch("/publications/{pub_id}/pause")
+async def toggle_pause_publication(pub_id: str, request: Request):
+    """V276 : mettre en pause / reactiver une publication — ADMIN UNIQUEMENT.
+
+    Une publication en pause disparait de toutes les vitrines publiques
+    (cf. filtre `paused` dans list_publications) MAIS son compte a rebours 48 h
+    continue : elle sera purgee normalement a l'echeance, media Cloudinary inclus.
+    Reserve au super admin — ni les coachs partenaires ni les abonnes n'y ont
+    acces (moderation centralisee du mur).
+    """
+    user_email = require_auth(request)
+    if not is_super_admin(user_email):
+        raise HTTPException(status_code=403, detail="Réservé à l'admin")
+
+    pub = await db.publications.find_one({"id": pub_id}, {"_id": 0, "paused": 1})
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publication non trouvée")
+
+    now_paused = not bool(pub.get("paused", False))
+    await db.publications.update_one(
+        {"id": pub_id},
+        {"$set": {
+            "paused": now_paused,
+            "paused_by": user_email if now_paused else None,
+            "paused_at": datetime.now(timezone.utc).isoformat() if now_paused else None,
+        }}
+    )
+    logger.info(f"[V276] Publication {pub_id} {'mise en pause' if now_paused else 'reactivee'} par {user_email}")
+    return {
+        "status": "ok",
+        "paused": now_paused,
+        "message": "Publication mise en pause" if now_paused else "Publication réactivée",
+    }
 
 
 # === ESPACE ABONNÉ — Lookup par code AFR-XXXXXX v11.0 ===
@@ -17839,6 +17903,15 @@ async def startup_db():
         await _v272c_migrate_legacy_publications()
     except Exception as e:
         logger.warning(f"[V272c] Migration publications legacy ignoree: {e}")
+
+    # V276 (Option B): purge de fond des publications expirees (MongoDB +
+    # Cloudinary), toutes les heures, meme sans trafic. Le premier passage nettoie
+    # aussi tout ce qui traine deja au-dela de 48 h.
+    try:
+        asyncio.create_task(_v276_periodic_purge())
+        logger.info("[V276] Tache de purge periodique demarree")
+    except Exception as e:
+        logger.warning(f"[V276] Demarrage purge periodique ignore: {e}")
 
     logger.info("[SYSTEM] Database indexes initialized")
 
