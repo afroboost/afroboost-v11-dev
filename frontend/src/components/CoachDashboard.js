@@ -1076,6 +1076,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   
   // === v9.2.7: QUICK CONTROL - Interrupteurs minimalistes Super Admin ===
   const [showQuickControl, setShowQuickControl] = useState(false);
+  // V273: les actions Quick / Admin / Partager passent en petites icones inline
+  // a cote de l'email, revelees au clic sur la photo de profil (plus de cartes).
+  const [showHeaderActions, setShowHeaderActions] = useState(false);
   const [platformSettings, setPlatformSettings] = useState({
     partner_access_enabled: true,
     maintenance_mode: false
@@ -6042,17 +6045,187 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             {/* Affichage de l'utilisateur connecté via Google OAuth */}
             {coachUser && (
               <div className="flex items-center gap-2 mt-2 flex-wrap">
-                {coachUser.picture && (
-                  <img 
-                    src={coachUser.picture} 
-                    alt={coachUser.name} 
-                    className="w-6 h-6 rounded-full"
-                    style={{ border: '2px solid var(--primary-color, #D91CD2)' }}
+                {/* V273: photo de profil = bouton qui revele les actions Quick /
+                    Admin / Partager (petites icones inline, plus de cartes). Un
+                    repli cliquable s'affiche si le coach n'a pas de photo Google,
+                    pour que les actions restent toujours accessibles. */}
+                {coachUser.picture ? (
+                  <img
+                    src={coachUser.picture}
+                    alt={coachUser.name}
+                    className="w-7 h-7 rounded-full cursor-pointer transition-transform hover:scale-110"
+                    style={{ border: '2px solid var(--primary-color, #D91CD2)', flexShrink: 0 }}
+                    onClick={() => setShowHeaderActions(v => !v)}
+                    title="Actions du compte"
+                    data-testid="header-profile-toggle"
                   />
+                ) : (
+                  <button
+                    onClick={() => setShowHeaderActions(v => !v)}
+                    className="w-7 h-7 rounded-full cursor-pointer flex items-center justify-center transition-transform hover:scale-110"
+                    style={{ border: '2px solid var(--primary-color, #D91CD2)', background: 'rgba(255,255,255,0.06)', flexShrink: 0 }}
+                    title="Actions du compte"
+                    data-testid="header-profile-toggle"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                      <circle cx="12" cy="7" r="4" />
+                    </svg>
+                  </button>
                 )}
                 <span className="text-white/60 text-sm">
                   Connecté en tant que <span className="text-purple-400">{coachUser.email}</span>
                 </span>
+
+                {/* V273: rangée d'actions inline (Quick / Admin / Stripe / Partager)
+                    — petites icones SVG sans cadre, revelees au clic sur la photo.
+                    Les handlers onClick d'origine sont CONSERVES a l'identique ;
+                    seule la presentation change (plus de cartes rectangulaires). */}
+                {showHeaderActions && (
+                  <div className="flex items-center gap-3" style={{ flexShrink: 0 }}>
+                    {/* Quick Control — super admin (avec son menu deroulant) */}
+                    {isSuperAdmin && (
+                      <div className="relative" ref={quickControlRef}>
+                        <button
+                          onClick={() => setShowQuickControl(!showQuickControl)}
+                          title="Quick Control"
+                          className="p-1.5 flex items-center justify-center transition-transform hover:scale-110"
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
+                          data-testid="quick-control-btn"
+                        >
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                            <circle cx="12" cy="5" r="1.5" fill="white" />
+                            <circle cx="12" cy="12" r="1.5" fill="white" />
+                            <circle cx="12" cy="19" r="1.5" fill="white" />
+                          </svg>
+                        </button>
+                        {/* Menu Quick Control — inchange (responsive mobile) */}
+                        {showQuickControl && (
+                          <div
+                            className="fixed sm:absolute left-4 right-4 sm:left-1/2 sm:right-auto sm:transform sm:-translate-x-1/2 mt-2 sm:w-64 rounded-xl overflow-hidden z-50"
+                            style={{
+                              background: 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(10,5,20,0.99) 100%)',
+                              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
+                              boxShadow: '0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
+                            }}
+                            data-testid="quick-control-menu"
+                          >
+                            <div className="px-4 py-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+                              <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">Quick Control</span>
+                            </div>
+                            {/* Toggle: Accès Partenaires */}
+                            <div className="px-4 py-3 flex items-center justify-between hover:bg-white/5 transition-colors">
+                              <div className="flex items-center gap-3">
+                                <span className={`inline-block w-2 h-2 rounded-full ${platformSettings.partner_access_enabled ? 'bg-green-500' : 'bg-red-500'}`} />
+                                <div>
+                                  <p className="text-sm text-white font-medium">Accès Partenaires</p>
+                                  <p className="text-xs text-white/40">Inscription & connexion</p>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => togglePlatformSetting('partner_access_enabled')}
+                                className="w-11 h-6 rounded-full relative transition-all duration-300"
+                                style={{
+                                  background: platformSettings.partner_access_enabled
+                                    ? 'linear-gradient(90deg, #22c55e, #16a34a)'
+                                    : 'rgba(255,255,255,0.15)'
+                                }}
+                                data-testid="toggle-partner-access"
+                              >
+                                <span
+                                  className="absolute top-1 w-4 h-4 rounded-full bg-white shadow-md transition-all duration-300"
+                                  style={{ left: platformSettings.partner_access_enabled ? '24px' : '4px' }}
+                                />
+                              </button>
+                            </div>
+                            {/* Toggle: Mode Maintenance */}
+                            <div className="px-4 py-3 flex items-center justify-between hover:bg-white/5 transition-colors">
+                              <div className="flex items-center gap-3">
+                                <span className={`inline-block w-2 h-2 rounded-full ${platformSettings.maintenance_mode ? 'bg-red-500' : 'bg-green-500'}`} />
+                                <div>
+                                  <p className="text-sm text-white font-medium">Mode Maintenance</p>
+                                  <p className="text-xs text-white/40">Bloquer tout accès</p>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => togglePlatformSetting('maintenance_mode')}
+                                className="w-11 h-6 rounded-full relative transition-all duration-300"
+                                style={{
+                                  background: platformSettings.maintenance_mode
+                                    ? 'linear-gradient(90deg, var(--primary-color, #D91CD2), #8b5cf6)'
+                                    : 'rgba(255,255,255,0.15)',
+                                  boxShadow: platformSettings.maintenance_mode
+                                    ? '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.6)'
+                                    : 'none'
+                                }}
+                                data-testid="toggle-maintenance"
+                              >
+                                <span
+                                  className="absolute top-1 w-4 h-4 rounded-full bg-white shadow-md transition-all duration-300"
+                                  style={{ left: platformSettings.maintenance_mode ? '24px' : '4px' }}
+                                />
+                              </button>
+                            </div>
+                            {/* Info */}
+                            <div className="px-4 py-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+                              <p className="text-[10px] text-white/30 text-center">Super Admin</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Admin — super admin uniquement */}
+                    {isSuperAdmin && (
+                      <button
+                        onClick={() => setShowAdminPanel(true)}
+                        title="Panneau Super Admin"
+                        className="p-1.5 flex items-center justify-center transition-transform hover:scale-110"
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
+                        data-testid="super-admin-btn"
+                      >
+                        <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 2L9 9l-7 2 5 5-1 7 6-3 6 3-1-7 5-5-7-2-3-7z" />
+                        </svg>
+                      </button>
+                    )}
+
+                    {/* Stripe — coachs (non super admin) uniquement */}
+                    {!isSuperAdmin && (
+                      <button
+                        onClick={handleStripeConnect}
+                        disabled={stripeConnectLoading}
+                        title={stripeConnectStatus?.connected ? "Compte Stripe connecté" : "Connecter votre Stripe"}
+                        className="p-1.5 flex items-center justify-center transition-transform hover:scale-110"
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', opacity: stripeConnectLoading ? 0.7 : 1 }}
+                        data-testid="stripe-connect-btn"
+                      >
+                        <span className="inline-flex" style={{ color: stripeConnectStatus?.connected ? '#22c55e' : '#fff' }}>
+                          {stripeConnectStatus?.connected ? <SvgIcon name="check" size={18} /> : <SvgIcon name="creditCard" size={18} />}
+                        </span>
+                      </button>
+                    )}
+
+                    {/* Partager — tous */}
+                    <button
+                      onClick={handleCoachShareLink}
+                      title={linkCopied ? "Lien copié !" : "Partager le site"}
+                      className="p-1.5 flex items-center justify-center transition-transform hover:scale-110"
+                      style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
+                      data-testid="coach-share"
+                    >
+                      {linkCopied ? (
+                        <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                )}
                 {/* === v9.5.9: JAUGE DE CRÉDITS VISUELLE - Barre de progression élégante === */}
                 {!isSuperAdmin && (
                   <div className="flex items-center gap-2 flex-wrap">
@@ -6130,182 +6303,6 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 )}
               </div>
             )}
-          </div>
-          {/* v10.6: GRILLE D'ACTIONS MINIMALISTE - 2 colonnes sur mobile */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 w-full sm:w-auto">
-            {/* === QUICK CONTROL - Super Admin === */}
-            {isSuperAdmin && (
-              <div className="relative" ref={quickControlRef}>
-                <button 
-                  onClick={() => setShowQuickControl(!showQuickControl)}
-                  title="Quick Control"
-                  className="w-full h-20 rounded-2xl flex flex-col items-center justify-center gap-2 transition-all duration-200 hover:scale-105"
-                  style={{ 
-                    background: showQuickControl 
-                      ? 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.3), rgba(139,92,246,0.3))' 
-                      : 'rgba(255,255,255,0.05)',
-                    border: showQuickControl ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)' : '1px solid rgba(255,255,255,0.1)',
-                    boxShadow: showQuickControl ? '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.3)' : 'none'
-                  }}
-                  data-testid="quick-control-btn"
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                    <circle cx="12" cy="5" r="1.5" fill="white" />
-                    <circle cx="12" cy="12" r="1.5" fill="white" />
-                    <circle cx="12" cy="19" r="1.5" fill="white" />
-                  </svg>
-                  <span className="text-white/80 text-xs">Quick</span>
-                </button>
-                
-                {/* Menu Quick Control - V156.4: Responsive mobile */}
-                {showQuickControl && (
-                  <div
-                    className="fixed sm:absolute left-4 right-4 sm:left-1/2 sm:right-auto sm:transform sm:-translate-x-1/2 mt-2 sm:w-64 rounded-xl overflow-hidden z-50"
-                    style={{
-                      background: 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(10,5,20,0.99) 100%)',
-                      border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
-                      boxShadow: '0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
-                    }}
-                    data-testid="quick-control-menu"
-                  >
-                    <div className="px-4 py-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-                      <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">Quick Control</span>
-                    </div>
-                    
-                    {/* Toggle: Accès Partenaires */}
-                    <div className="px-4 py-3 flex items-center justify-between hover:bg-white/5 transition-colors">
-                      <div className="flex items-center gap-3">
-                        <span className={`inline-block w-2 h-2 rounded-full ${platformSettings.partner_access_enabled ? 'bg-green-500' : 'bg-red-500'}`} />
-                        <div>
-                          <p className="text-sm text-white font-medium">Accès Partenaires</p>
-                          <p className="text-xs text-white/40">Inscription & connexion</p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => togglePlatformSetting('partner_access_enabled')}
-                        className="w-11 h-6 rounded-full relative transition-all duration-300"
-                        style={{ 
-                          background: platformSettings.partner_access_enabled 
-                            ? 'linear-gradient(90deg, #22c55e, #16a34a)' 
-                            : 'rgba(255,255,255,0.15)'
-                        }}
-                        data-testid="toggle-partner-access"
-                      >
-                        <span 
-                          className="absolute top-1 w-4 h-4 rounded-full bg-white shadow-md transition-all duration-300"
-                          style={{ left: platformSettings.partner_access_enabled ? '24px' : '4px' }}
-                        />
-                      </button>
-                    </div>
-                    
-                    {/* Toggle: Mode Maintenance */}
-                    <div className="px-4 py-3 flex items-center justify-between hover:bg-white/5 transition-colors">
-                      <div className="flex items-center gap-3">
-                        <span className={`inline-block w-2 h-2 rounded-full ${platformSettings.maintenance_mode ? 'bg-red-500' : 'bg-green-500'}`} />
-                        <div>
-                          <p className="text-sm text-white font-medium">Mode Maintenance</p>
-                          <p className="text-xs text-white/40">Bloquer tout accès</p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => togglePlatformSetting('maintenance_mode')}
-                        className="w-11 h-6 rounded-full relative transition-all duration-300"
-                        style={{ 
-                          background: platformSettings.maintenance_mode 
-                            ? 'linear-gradient(90deg, var(--primary-color, #D91CD2), #8b5cf6)' 
-                            : 'rgba(255,255,255,0.15)',
-                          boxShadow: platformSettings.maintenance_mode 
-                            ? '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.6)' 
-                            : 'none'
-                        }}
-                        data-testid="toggle-maintenance"
-                      >
-                        <span 
-                          className="absolute top-1 w-4 h-4 rounded-full bg-white shadow-md transition-all duration-300"
-                          style={{ left: platformSettings.maintenance_mode ? '24px' : '4px' }}
-                        />
-                      </button>
-                    </div>
-                    
-                    {/* Info */}
-                    <div className="px-4 py-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-                      <p className="text-[10px] text-white/30 text-center">Super Admin</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            
-            {/* === CARTE ADMIN (Super Admin uniquement) === */}
-            {isSuperAdmin && (
-              <button 
-                onClick={() => setShowAdminPanel(true)}
-                title="Panneau Super Admin"
-                className="h-20 rounded-2xl flex flex-col items-center justify-center gap-2 transition-all duration-200 hover:scale-105"
-                style={{ 
-                  background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.2), rgba(139,92,246,0.2))',
-                  border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)',
-                  boxShadow: '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.2)'
-                }}
-                data-testid="super-admin-btn"
-              >
-                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 2L9 9l-7 2 5 5-1 7 6-3 6 3-1-7 5-5-7-2-3-7z" />
-                </svg>
-                <span className="text-white/80 text-xs">Admin</span>
-              </button>
-            )}
-            
-            {/* === CARTE STRIPE (Coachs uniquement) === */}
-            {!isSuperAdmin && (
-              <button 
-                onClick={handleStripeConnect}
-                disabled={stripeConnectLoading}
-                title={stripeConnectStatus?.connected ? "Compte Stripe connecté" : "Connecter votre Stripe"}
-                className="h-20 rounded-2xl flex flex-col items-center justify-center gap-2 transition-all duration-200 hover:scale-105"
-                style={{ 
-                  background: stripeConnectStatus?.connected 
-                    ? 'rgba(34, 197, 94, 0.2)' 
-                    : 'linear-gradient(135deg, rgba(99,91,255,0.2), rgba(139,92,246,0.2))',
-                  border: stripeConnectStatus?.connected 
-                    ? '1px solid rgba(34, 197, 94, 0.4)' 
-                    : '1px solid rgba(99,91,255,0.3)',
-                  opacity: stripeConnectLoading ? 0.7 : 1
-                }}
-                data-testid="stripe-connect-btn"
-              >
-                <span className="inline-flex">{stripeConnectStatus?.connected ? <SvgIcon name="check" size={18} /> : <SvgIcon name="creditCard" size={18} />}</span>
-                <span className="text-white/80 text-xs">{stripeConnectLoading ? '...' : 'Stripe'}</span>
-              </button>
-            )}
-            
-            {/* === CARTE PARTAGER === */}
-            <button 
-              onClick={handleCoachShareLink}
-              title={linkCopied ? "Lien copié !" : "Partager le site"}
-              className="h-20 rounded-2xl flex flex-col items-center justify-center gap-2 transition-all duration-200 hover:scale-105"
-              style={{ 
-                background: linkCopied 
-                  ? 'rgba(34, 197, 94, 0.2)' 
-                  : 'rgba(255,255,255,0.05)',
-                border: linkCopied 
-                  ? '1px solid rgba(34, 197, 94, 0.4)' 
-                  : '1px solid rgba(255,255,255,0.1)',
-                boxShadow: linkCopied ? '0 0 15px rgba(34, 197, 94, 0.3)' : 'none'
-              }}
-              data-testid="coach-share"
-            >
-              {linkCopied ? (
-                <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              ) : (
-                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-                </svg>
-              )}
-              <span className="text-white/80 text-xs">{linkCopied ? 'Copié!' : 'Partager'}</span>
-            </button>
           </div>
         </div>
 
