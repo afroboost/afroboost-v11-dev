@@ -6113,6 +6113,35 @@ async def update_publication(pub_id: str, request: Request):
     return {"status": "ok", **update}
 
 
+@api_router.patch("/publications/{pub_id}/renew")
+async def renew_publication(pub_id: str, request: Request, subscriber_code: str = ""):
+    """V286 : renouveler une publication — prolonge de 48 h a partir de MAINTENANT.
+
+    Memes regles d'autorisation que la modification/suppression :
+      - l'abonne auteur (code AFR- en query) ;
+      - le super admin ;
+      - le coach non-admin, uniquement SES publications.
+    """
+    pub = await db.publications.find_one({"id": pub_id}, {"_id": 0})
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publication non trouvée")
+
+    provided_code = (subscriber_code or "").strip().upper()
+    is_author = bool(provided_code) and provided_code == (pub.get("subscriber_code") or "").upper()
+    if not is_author:
+        user_email = require_auth(request)
+        if not is_super_admin(user_email):
+            owns = (pub.get("coach_id") or "") == user_email or (pub.get("subscriber_code") or "") == user_email
+            if not owns:
+                raise HTTPException(status_code=403, detail="Accès refusé")
+
+    now = datetime.now(timezone.utc)
+    new_expires = (now + timedelta(hours=V261_TTL_HOURS)).isoformat()
+    await db.publications.update_one({"id": pub_id}, {"$set": {"expires_at": new_expires}})
+    logger.info(f"[V286] Publication {pub_id} renouvelée (+{V261_TTL_HOURS}h)")
+    return {"status": "ok", "expires_at": new_expires, "remaining_hours": V261_TTL_HOURS}
+
+
 @api_router.patch("/publications/{pub_id}/pause")
 async def toggle_pause_publication(pub_id: str, request: Request):
     """V276 : mettre en pause / reactiver une publication — ADMIN UNIQUEMENT.
@@ -6146,6 +6175,57 @@ async def toggle_pause_publication(pub_id: str, request: Request):
         "paused": now_paused,
         "message": "Publication mise en pause" if now_paused else "Publication réactivée",
     }
+
+
+# === V286 : préférences de notifications (remontées au backend pour filtrer les push) ===
+@api_router.put("/notification-preferences")
+async def save_notification_preferences(request: Request):
+    """V286 : enregistre les préférences push d'un utilisateur (abonné ou coach).
+    Body: { preferences: {clé: bool}, role: "subscriber"|"coach" }.
+    """
+    body = await request.json()
+    prefs = body.get("preferences", {})
+    role = "coach" if body.get("role") == "coach" else "subscriber"
+    if not isinstance(prefs, dict):
+        raise HTTPException(status_code=400, detail="preferences doit être un objet")
+    # Ne garder que des booléens (defense).
+    prefs = {str(k): bool(v) for k, v in prefs.items()}
+    user_email = require_auth(request)
+    await db.notification_preferences.update_one(
+        {"email": user_email, "role": role},
+        {"$set": {"email": user_email, "role": role, "preferences": prefs,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    logger.info(f"[V286] Préférences notif sauvegardées: {user_email} ({role})")
+    return {"success": True}
+
+
+@api_router.get("/notification-preferences")
+async def get_notification_preferences(request: Request, role: str = "subscriber"):
+    """V286 : récupère les préférences push de l'appelant."""
+    role = "coach" if role == "coach" else "subscriber"
+    user_email = require_auth(request)
+    doc = await db.notification_preferences.find_one(
+        {"email": user_email, "role": role}, {"_id": 0, "preferences": 1}
+    )
+    return {"preferences": (doc.get("preferences") if doc else {}) or {}}
+
+
+async def _v286_should_send_notification(email: str, role: str, notif_type: str) -> bool:
+    """V286 : l'utilisateur veut-il ce type de push ? OPT-OUT — vrai par defaut
+    (aucune préférence enregistrée = tout actif ; erreur = on envoie quand meme)."""
+    if not email:
+        return True
+    try:
+        doc = await db.notification_preferences.find_one(
+            {"email": email.lower().strip(), "role": role}, {"_id": 0, "preferences": 1}
+        )
+        if not doc or not doc.get("preferences"):
+            return True
+        return bool(doc["preferences"].get(notif_type, True))
+    except Exception:
+        return True
 
 
 # =====================================================================
@@ -7882,7 +7962,8 @@ async def join_subscriber_space(access_code: str, request: Request):
     # V209: Notification push au coach — nouveau membre inscrit
     try:
         coach_email_for_push = (discount.get("coach_id") or discount.get("assignedEmail") or "").lower().strip()
-        if coach_email_for_push:
+        # V286 : respecter la préférence coach "subscriber_login" (opt-out).
+        if coach_email_for_push and await _v286_should_send_notification(coach_email_for_push, "coach", "subscriber_login"):
             await send_push_by_email(
                 coach_email_for_push,
                 "Nouveau membre inscrit",
@@ -8219,7 +8300,8 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         coach_email_push = (coach_id if coach_id and "@" in coach_id else "").lower().strip()
         if not coach_email_push:
             coach_email_push = (subscription.get("coach_id") or "").lower().strip()
-        if coach_email_push:
+        # V286 : respecter la préférence coach "new_reservation" (opt-out).
+        if coach_email_push and await _v286_should_send_notification(coach_email_push, "coach", "new_reservation"):
             # Formater la date pour la notif
             notif_date = occurrence_iso[:10] if occurrence_iso else ""
             notif_time = course.get("time") or ""

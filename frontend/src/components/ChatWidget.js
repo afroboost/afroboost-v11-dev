@@ -1567,6 +1567,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     setNotifPrefs(prev => {
       const updated = Object.assign({}, prev, { [key]: !prev[key] });
       try { localStorage.setItem('afroboost_notif_prefs', JSON.stringify(updated)); } catch (e) { /* silencieux */ }
+      // V286 : remonter au backend (filtrage push côté serveur). Silencieux.
+      try { axios.put(API + '/notification-preferences', { preferences: updated, role: 'subscriber' }).catch(function () {}); } catch (e) {}
       return updated;
     });
   };
@@ -1584,9 +1586,32 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     setCoachNotifPrefs(prev => {
       const updated = Object.assign({}, prev, { [key]: !prev[key] });
       try { localStorage.setItem('afroboost_coach_notif_prefs', JSON.stringify(updated)); } catch (e) { /* silencieux */ }
+      // V286 : remonter au backend (filtrage push côté serveur). Silencieux.
+      try { axios.put(API + '/notification-preferences', { preferences: updated, role: 'coach' }).catch(function () {}); } catch (e) {}
       return updated;
     });
   };
+
+  // V286 : au montage, charger les préférences depuis le backend (si présentes).
+  // Silencieux : sans réponse/prefs, le localStorage existant fait foi.
+  useEffect(() => {
+    const role = isCoachMode ? 'coach' : 'subscriber';
+    axios.get(API + '/notification-preferences?role=' + role)
+      .then((res) => {
+        const p = res && res.data && res.data.preferences;
+        if (p && Object.keys(p).length > 0) {
+          if (isCoachMode) {
+            setCoachNotifPrefs(p);
+            try { localStorage.setItem('afroboost_coach_notif_prefs', JSON.stringify(p)); } catch (e) {}
+          } else {
+            setNotifPrefs(p);
+            try { localStorage.setItem('afroboost_notif_prefs', JSON.stringify(p)); } catch (e) {}
+          }
+        }
+      })
+      .catch(() => { /* silencieux — repli localStorage */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCoachMode]);
   const [unreadCount, setUnreadCount] = useState(0); // v9.4.0: Compteur de messages non lus pour badge
   const [hasNewMessage, setHasNewMessage] = useState(false); // v9.4.0: Indicateur de nouveau message
   const [isCoachMode, setIsCoachMode] = useState(() => {
@@ -3045,7 +3070,22 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       
       localStorage.setItem(AFROBOOST_PROFILE_KEY, JSON.stringify(profile));
       setAfroboostProfile(profile);
-      
+
+      // V286 : pousser la date de naissance au backend AUSSI à la connexion
+      // (pas seulement à la réservation). Best-effort, silencieux, non bloquant.
+      try {
+        var _bp = (subscriberFormData.birthday || '').split('-'); // YYYY-MM-DD
+        var _mmdd = _bp.length === 3 ? (_bp[1] + '-' + _bp[2]) : '';
+        if (!_mmdd) {
+          var _pf = JSON.parse(localStorage.getItem(AFROBOOST_PROFILE_KEY) || '{}');
+          if (_pf.birthday) _mmdd = _pf.birthday; // déjà en MM-DD (SubscriberForm V285)
+        }
+        if (_mmdd && participantId) {
+          axios.put(API + '/chat/participants/' + encodeURIComponent(participantId) + '/birthday', { birthday: _mmdd })
+            .catch(function () {});
+        }
+      } catch (e) { /* silencieux */ }
+
       // Sauvegarder aussi dans subscriber_data pour compatibilité
       saveSubscriberData(profile.code, profile.name, 'abonné');
       
@@ -7335,6 +7375,17 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                     </span>
                   </div>
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }} className="coach-icons-menu">
+                    {/* V286 : accès « Mon profil » (bio/âge/passions) depuis le dashboard coach */}
+                    <button
+                      onClick={openProfileForm}
+                      title="Mon profil"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.7 }}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary-color, #D91CD2)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                        <circle cx="12" cy="7" r="4" />
+                      </svg>
+                    </button>
                     {/* V285 : cloche de préférences notifications COACH */}
                     <div style={{ position: 'relative' }} data-notif-panel="coach">
                       <button

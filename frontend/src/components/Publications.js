@@ -461,6 +461,21 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
     setBusy(false);
   };
 
+  // V286 : renouveler — prolonge la publication de 48 h avant sa suppression.
+  const doRenew = async (id) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const url = subscriberCode
+        ? `${API}/publications/${id}/renew?subscriber_code=${encodeURIComponent(subscriberCode)}`
+        : `${API}/publications/${id}/renew`;
+      await axios.patch(url);
+      load(); // recharge avec le nouveau TTL (remaining_hours à jour)
+      try { window.dispatchEvent(new CustomEvent('afroboost:publications-changed')); } catch (e) { /* ignore */ }
+    } catch (e) { /* ignore */ }
+    setBusy(false);
+  };
+
   if (items === null) return null;
   if (items.length === 0) return null;
 
@@ -507,6 +522,14 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                           <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                        </svg>
+                      </button>
+                      {/* V286 : renouveler (+48 h) — flèche circulaire verte */}
+                      <button type="button" onClick={() => doRenew(p.id)} disabled={busy} title="Renouveler 48h" aria-label="Renouveler"
+                        style={{ background: 'none', border: 'none', padding: 4, cursor: busy ? 'wait' : 'pointer', color: '#22c55e' }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="23 4 23 10 17 10" />
+                          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                         </svg>
                       </button>
                       <button type="button" onClick={() => { setConfirmDel(p.id); setEditing(null); }} title="Supprimer" aria-label="Supprimer"

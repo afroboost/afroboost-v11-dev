@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v285'; // V285: date naissance obligatoire + anniversaires + préférences notif
+var CACHE_NAME = 'afroboost-v286'; // V286: renouveler publications + profil coach + prefs notif backend
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [
