@@ -42,13 +42,25 @@ SUPER_ADMIN_EMAILS = [e.strip().lower() for e in _admin_emails_env.split(',') if
 AUTHORIZED_COACH_EMAIL = SUPER_ADMIN_EMAILS[0] if SUPER_ADMIN_EMAILS else "contact.artboost@gmail.com"
 
 # V133: JWT configuration
+# V311 : NE PAS figer le secret ici. Coolify n'injecte PAS JWT_SECRET ; il est
+# résolu au DÉMARRAGE depuis MongoDB (app_secrets) par _v307_resolve_jwt_secret(),
+# donc APRÈS l'import de ce module. Une copie prise à l'import resterait vide pour
+# toute la vie du processus -> generate_jwt_token renvoyait "" -> /auth/login
+# renvoyait un jeton VIDE -> tableau de bord vide. On garde la variable pour la
+# rétrocompat, mais tout le code lit désormais _v311_jwt_secret() À CHAQUE APPEL.
 JWT_SECRET = os.environ.get('JWT_SECRET', '')
 JWT_ALGORITHM = 'HS256'
 JWT_EXPIRATION_DAYS = 7
 
+def _v311_jwt_secret() -> str:
+    """V311 : lit le secret en direct depuis os.environ à CHAQUE appel (jamais figé
+    à l'import) — même comportement que shared.py et server.py côté vérification."""
+    return os.environ.get('JWT_SECRET', '')
+
 def generate_jwt_token(email: str, role: str = "user") -> str:
     """Génère un JWT signé."""
-    if not JWT_SECRET:
+    secret = _v311_jwt_secret()
+    if not secret:
         # V262: cet echec etait SILENCIEUX — la connexion reussissait, le jeton
         # partait vide, et le frontend retombait sans bruit sur l'en-tete
         # `X-User-Email`, falsifiable. On le trace desormais : c'est le signal
@@ -64,7 +76,7 @@ def generate_jwt_token(email: str, role: str = "user") -> str:
         "iat": datetime.now(timezone.utc),
         "exp": datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRATION_DAYS),
     }
-    return pyjwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return pyjwt.encode(payload, secret, algorithm=JWT_ALGORITHM)
 
 def is_super_admin_email(email: str) -> bool:
     """Vérifie si l'email est celui d'un Super Admin"""
