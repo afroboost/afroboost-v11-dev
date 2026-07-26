@@ -6071,6 +6071,194 @@ async def toggle_pause_publication(pub_id: str, request: Request):
     }
 
 
+# =====================================================================
+# BoostTribe — sessions live (musique + video) reservees aux abonnes avec
+# credit. afroboost et BoostTribe ont des BASES DISTINCTES : ils communiquent
+# par un JWT HS256 signe avec un SECRET PARTAGE (AFRO_BT_SHARED_SECRET, pose
+# dans Coolify des DEUX cotes, jamais dans le bundle React).
+#
+# Flux :
+#   1. GET  /api/boosttribe/access  -> verifie abonne + credit>0, emet un jeton
+#      court (15 min) et l'URL d'embed. NE DEBITE PAS ici.
+#   2. BoostTribe ouvre l'iframe, et quand une session DEMARRE reellement, son
+#      backend appelle POST /api/boosttribe/consume avec ce jeton -> on debite
+#      1 credit, de facon IDEMPOTENTE sur `jti` (pas de double debit / rejeu).
+#
+# Le `jti` et le CODE de l'abonne sont lies cote serveur (collection
+# boosttribe_usage) : le code AFR- n'est JAMAIS mis dans le jeton (il serait
+# lisible dans l'URL d'embed et reutilisable).
+# =====================================================================
+BOOSTTRIBE_EMBED_BASE = os.environ.get("BOOSTTRIBE_EMBED_URL", "https://boosttribe.pro/embed")
+
+
+async def _bt_subscriber_credit(code: str):
+    """Renvoie {code,name,email,remaining} pour un code AFR- actif, sinon None.
+
+    Credit = `remaining_sessions` (collection subscriptions) OU `maxUses - used`
+    (collection discount_codes), exactement comme _v261_resolve_subscriber.
+    """
+    code = (code or "").strip().upper()
+    if not code.startswith("AFR-"):
+        return None
+    sub = await db.subscriptions.find_one(
+        {"code": code, "status": "active"},
+        {"_id": 0, "name": 1, "email": 1, "remaining_sessions": 1}
+    )
+    if sub:
+        return {
+            "code": code,
+            "name": sub.get("name") or (sub.get("email") or "").split("@")[0] or "Abonné",
+            "email": sub.get("email") or "",
+            "remaining": int(sub.get("remaining_sessions") or 0),
+        }
+    dc = await db.discount_codes.find_one(
+        {"code": code, "active": True},
+        {"_id": 0, "name": 1, "assignedEmail": 1, "maxUses": 1, "used": 1}
+    )
+    if dc:
+        rem = int(dc.get("maxUses") or 0) - int(dc.get("used") or 0)
+        return {
+            "code": code,
+            "name": dc.get("name") or (dc.get("assignedEmail") or "").split("@")[0] or "Abonné",
+            "email": dc.get("assignedEmail") or "",
+            "remaining": rem,
+        }
+    return None
+
+
+async def _bt_debit_subscriber(code: str):
+    """Debite 1 credit a l'abonne, ATOMIQUEMENT. Renvoie le reste, ou None si
+    aucun credit debitable (0 restant / code inconnu)."""
+    from pymongo import ReturnDocument
+    code = (code or "").strip().upper()
+    sub = await db.subscriptions.find_one_and_update(
+        {"code": code, "status": "active", "remaining_sessions": {"$gt": 0}},
+        {"$inc": {"remaining_sessions": -1}},
+        projection={"_id": 0, "remaining_sessions": 1},
+        return_document=ReturnDocument.AFTER,
+    )
+    if sub is not None:
+        return int(sub.get("remaining_sessions") or 0)
+    dc = await db.discount_codes.find_one_and_update(
+        {"code": code, "active": True,
+         "$expr": {"$gt": [{"$subtract": [{"$ifNull": ["$maxUses", 0]}, {"$ifNull": ["$used", 0]}]}, 0]}},
+        {"$inc": {"used": 1}},
+        projection={"_id": 0, "maxUses": 1, "used": 1},
+        return_document=ReturnDocument.AFTER,
+    )
+    if dc is not None:
+        return int(dc.get("maxUses") or 0) - int(dc.get("used") or 0)
+    return None
+
+
+@api_router.get("/boosttribe/access")
+async def boosttribe_access(request: Request, subscriber_code: str = ""):
+    """Emet un jeton d'acces BoostTribe si l'abonne a du credit. Ne debite pas.
+
+    Identite : l'abonne est reconnu par son code AFR- (query `subscriber_code`),
+    sa capacite deja utilisee partout dans l'espace abonne. Le super admin est
+    aussi autorise (acces illimite, aucun debit).
+    """
+    secret = os.environ.get("AFRO_BT_SHARED_SECRET", "")
+    if not secret:
+        raise HTTPException(status_code=503, detail="BoostTribe non configuré (secret manquant)")
+
+    import jwt as _pyjwt
+    now = datetime.now(timezone.utc)
+    now_ts = int(now.timestamp())
+    jti = str(uuid.uuid4())
+
+    code = (subscriber_code or "").strip().upper()
+    usage = {"_id": jti, "status": "issued", "created_at": now.isoformat()}
+
+    if code:
+        info = await _bt_subscriber_credit(code)
+        if not info:
+            return JSONResponse(status_code=403, content={"reason": "subscription_required"})
+        if info["remaining"] <= 0:
+            return JSONResponse(status_code=403, content={"reason": "no_credit"})
+        sub_id = info["email"] or code
+        payload = {"iss": "afroboost", "aud": "boosttribe", "sub": sub_id,
+                   "email": info["email"], "name": info["name"], "free": True,
+                   "iat": now_ts, "exp": now_ts + 900, "jti": jti}
+        usage.update({"kind": "subscriber", "code": code, "email": info["email"]})
+    else:
+        # Chemin coach/admin : seul le super admin (credits illimites) est admis.
+        email = await _v263_authenticated_coach(request)
+        if not email or not is_super_admin(email):
+            return JSONResponse(status_code=403, content={"reason": "subscription_required"})
+        payload = {"iss": "afroboost", "aud": "boosttribe", "sub": email,
+                   "email": email, "name": email.split("@")[0], "free": True,
+                   "iat": now_ts, "exp": now_ts + 900, "jti": jti}
+        usage.update({"kind": "admin", "code": "", "email": email})
+
+    token = _pyjwt.encode(payload, secret, algorithm="HS256")
+    if isinstance(token, bytes):  # PyJWT < 2 renvoyait des bytes
+        token = token.decode("utf-8")
+    await db.boosttribe_usage.insert_one(usage)
+    return {"token": token, "embedUrl": f"{BOOSTTRIBE_EMBED_BASE}?bt_token={token}"}
+
+
+@api_router.post("/boosttribe/consume")
+async def boosttribe_consume(request: Request):
+    """Callback serveur->serveur de BoostTribe au DEMARRAGE d'une session.
+    Debite 1 credit, IDEMPOTENT sur `jti` (transition atomique issued->debiting
+    => un seul debit meme en cas d'appels concurrents ou de rejeu)."""
+    secret = os.environ.get("AFRO_BT_SHARED_SECRET", "")
+    if not secret:
+        raise HTTPException(status_code=503, detail="BoostTribe non configuré (secret manquant)")
+    body = await request.json()
+    token = (body.get("token") or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="token manquant")
+
+    import jwt as _pyjwt
+    try:
+        payload = _pyjwt.decode(token, secret, algorithms=["HS256"], audience="boosttribe", issuer="afroboost")
+    except Exception:
+        raise HTTPException(status_code=401, detail="token invalide")
+    jti = payload.get("jti")
+    if not jti:
+        raise HTTPException(status_code=400, detail="jti manquant")
+
+    from pymongo import ReturnDocument
+    # Claim ATOMIQUE : seule la transition "issued" -> "debiting" reussit. Deux
+    # appels concurrents ne peuvent donc pas debiter deux fois le meme jti.
+    claim = await db.boosttribe_usage.find_one_and_update(
+        {"_id": jti, "status": "issued"},
+        {"$set": {"status": "debiting"}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if claim is None:
+        rec = await db.boosttribe_usage.find_one({"_id": jti}, {"_id": 0, "status": 1, "remaining": 1})
+        if rec and rec.get("status") == "debited":
+            # Deja consomme : reponse idempotente, aucun nouveau debit.
+            return {"ok": True, "remaining_credits": rec.get("remaining", 0)}
+        if rec and rec.get("status") == "debiting":
+            # Un autre appel est en cours : on ne redebite pas.
+            return {"ok": True, "remaining_credits": rec.get("remaining", 0)}
+        if rec and rec.get("status") == "no_credit":
+            return {"ok": False, "reason": "no_credit"}
+        # Jeton valide mais aucune emission connue (jti non emis par nous).
+        raise HTTPException(status_code=404, detail="session inconnue")
+
+    # Chemin admin : acces illimite, pas de debit.
+    if claim.get("kind") == "admin":
+        await db.boosttribe_usage.update_one({"_id": jti}, {"$set": {"status": "debited", "remaining": -1, "debited_at": datetime.now(timezone.utc).isoformat()}})
+        return {"ok": True, "remaining_credits": -1}
+
+    new_rem = await _bt_debit_subscriber(claim.get("code") or "")
+    if new_rem is None:
+        await db.boosttribe_usage.update_one({"_id": jti}, {"$set": {"status": "no_credit"}})
+        return {"ok": False, "reason": "no_credit"}
+    await db.boosttribe_usage.update_one(
+        {"_id": jti},
+        {"$set": {"status": "debited", "remaining": new_rem, "debited_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    logger.info(f"[BOOSTTRIBE] 1 crédit débité (jti={jti}, reste={new_rem})")
+    return {"ok": True, "remaining_credits": new_rem}
+
+
 # === ESPACE ABONNÉ — Lookup par code AFR-XXXXXX v11.0 ===
 @api_router.get("/subscriber/{code}")
 async def get_subscriber_by_code(code: str):

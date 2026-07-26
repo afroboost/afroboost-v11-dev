@@ -539,6 +539,129 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
 // Modale de publication, ouverte depuis l'espace abonne.
 // `subscriberCode` absent = mode COACH (V263) : le serveur identifie alors le
 // coach par sa session authentifiee, jamais par une valeur envoyee d'ici.
+// =====================================================================
+// V280 — BoostTribe : sessions live (musique + video) reservees aux abonnes
+// avec credit, GRATUITES pour eux. afroboost et BoostTribe ont des comptes
+// distincts : la communication passe par un jeton signe cote backend
+// (GET /api/boosttribe/access). Le secret n'est JAMAIS dans ce bundle.
+//
+// L'iframe exige `allow="camera; microphone; ..."` sinon la visio ne marche pas.
+// On ecoute les postMessage de BoostTribe en FILTRANT strictement l'origine.
+// =====================================================================
+const BT_ORIGIN = 'https://boosttribe.pro';
+
+export const BoostTribeSection = ({ subscriberCode }) => {
+  const [state, setState] = useState('idle');   // idle | loading | denied | live
+  const [reason, setReason] = useState('');       // subscription_required | no_credit
+  const [embedUrl, setEmbedUrl] = useState('');
+
+  // postMessage : n'accepter QUE l'origine BoostTribe (securite).
+  useEffect(() => {
+    const onMsg = (event) => {
+      if (event.origin !== BT_ORIGIN) return;
+      const t = event.data && event.data.type;
+      if (t === 'bt:session-started') {
+        // Le credit vient d'etre debite cote serveur : on demande a l'app de
+        // rafraichir l'affichage du credit (ecoute ailleurs si besoin).
+        window.dispatchEvent(new CustomEvent('afroboost:credit-refresh'));
+      } else if (t === 'bt:session-ended') {
+        setState('idle');
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  const openLive = async () => {
+    setState('loading');
+    setReason('');
+    try {
+      const params = {};
+      if (subscriberCode && subscriberCode.indexOf('@') === -1) params.subscriber_code = subscriberCode;
+      const res = await axios.get(`${API}/boosttribe/access`, { params });
+      setEmbedUrl(res.data.embedUrl);
+      setState('live');
+    } catch (err) {
+      const r = err && err.response;
+      setReason((r && r.data && r.data.reason) || 'subscription_required');
+      setState('denied');
+    }
+  };
+
+  const iconLive = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="23 7 16 12 23 17 23 7" />
+      <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+    </svg>
+  );
+
+  // Overlay plein ecran avec l'iframe (camera/micro autorises).
+  if (state === 'live' && embedUrl) {
+    return createPortal(
+      <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 2147483000, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: '#0a0a0a' }}>
+          <span style={{ color: '#fff', fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 8 }}>{iconLive} BoostTribe live</span>
+          <button onClick={() => setState('idle')} style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 6 }} aria-label="Fermer" title="Fermer">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+          </button>
+        </div>
+        <iframe
+          src={embedUrl}
+          allow="camera; microphone; autoplay; fullscreen; display-capture; clipboard-write"
+          style={{ flex: 1, width: '100%', border: 0 }}
+          title="BoostTribe live"
+        />
+      </div>,
+      document.body
+    );
+  }
+
+  return (
+    <div style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', borderRadius: 12, padding: 14, marginBottom: 16, background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex' }}>{iconLive}</span>
+        <span style={{ color: '#fff', fontSize: 14, fontWeight: 700 }}>Sessions live (BoostTribe)</span>
+      </div>
+      {state === 'denied' ? (
+        <div>
+          <p style={{ color: '#ccc', fontSize: 12, margin: '0 0 10px', lineHeight: 1.4 }}>
+            {reason === 'no_credit'
+              ? 'Tu es abonné(e) mais il ne te reste plus de crédit. Recharge pour accéder aux sessions live.'
+              : "Réservé aux abonné(e)s avec du crédit. Abonne-toi pour débloquer les sessions live gratuites."}
+          </p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              onClick={() => { window.location.href = '/'; }}
+              style={{ padding: '8px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--primary-color, #D91CD2)', color: '#fff', fontSize: 12, fontWeight: 600 }}
+            >
+              {reason === 'no_credit' ? 'Recharger du crédit' : "S'abonner"}
+            </button>
+            <button
+              onClick={() => setState('idle')}
+              style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #444', cursor: 'pointer', background: 'transparent', color: '#aaa', fontSize: 12 }}
+            >
+              Plus tard
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <p style={{ color: '#aaa', fontSize: 12, margin: '0 0 10px', lineHeight: 1.4 }}>
+            Rejoins une session live musique + vidéo. Gratuit pour les abonné(e)s avec crédit.
+          </p>
+          <button
+            onClick={openLive}
+            disabled={state === 'loading'}
+            style={{ padding: '9px 16px', borderRadius: 8, border: 'none', cursor: state === 'loading' ? 'wait' : 'pointer', background: 'var(--primary-color, #D91CD2)', color: '#fff', fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 8 }}
+          >
+            {iconLive} {state === 'loading' ? 'Ouverture…' : 'Rejoindre le live'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
   const [file, setFile] = useState(null);           // fichier brut selectionne
   const [preview, setPreview] = useState(null);      // apercu affiche
@@ -786,6 +909,9 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
             </svg>
           </button>
         </div>
+
+        {/* V280 — Sessions live BoostTribe (réservé abonnés avec crédit) */}
+        <BoostTribeSection subscriberCode={subscriberCode} />
 
         {/* V268c (F1A) — ecran de recadrage image, en overlay plein ecran.
             react-easy-crop exige un conteneur POSITIONNE et dimensionne. */}
