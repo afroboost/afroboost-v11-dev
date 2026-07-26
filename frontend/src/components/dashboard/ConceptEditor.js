@@ -18,6 +18,155 @@ import SvgIcon from '../SvgIcon';
 import CloudinaryUploadButton, { uploadToCloudinary, isCloudinaryConfigured } from '../CloudinaryUploadButton';
 import { applyPrimaryColor } from '../../utils/themeColor'; // V259
 
+// V291 — Color picker avancé style Canva (React pur + Canvas, aucune dépendance).
+const AfroColorPicker = ({ value, onChange, label }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [hexInput, setHexInput] = useState(value || '#000000');
+  const canvasRef = React.useRef(null);
+  const [hue, setHue] = useState(0);
+  const [sat, setSat] = useState(100);
+  const [lightness, setLightness] = useState(50);
+
+  React.useEffect(() => { setHexInput(value || '#000000'); }, [value]);
+
+  React.useEffect(() => {
+    if (!isOpen || !value) return;
+    const hex = value.replace('#', '');
+    if (hex.length < 6) return;
+    const r = parseInt(hex.substr(0, 2), 16) / 255;
+    const g = parseInt(hex.substr(2, 2), 16) / 255;
+    const b = parseInt(hex.substr(4, 2), 16) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h = 0, s = 0, l = (max + min) / 2;
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+      else if (max === g) h = ((b - r) / d + 2) / 6;
+      else h = ((r - g) / d + 4) / 6;
+    }
+    setHue(Math.round(h * 360));
+    setSat(Math.round(s * 100));
+    setLightness(Math.round(l * 100));
+  }, [isOpen, value]);
+
+  React.useEffect(() => {
+    if (!isOpen || !canvasRef.current) return;
+    const ctx = canvasRef.current.getContext('2d');
+    const w = canvasRef.current.width, h = canvasRef.current.height;
+    const gradH = ctx.createLinearGradient(0, 0, w, 0);
+    gradH.addColorStop(0, '#fff');
+    gradH.addColorStop(1, `hsl(${hue},100%,50%)`);
+    ctx.fillStyle = gradH;
+    ctx.fillRect(0, 0, w, h);
+    const gradV = ctx.createLinearGradient(0, 0, 0, h);
+    gradV.addColorStop(0, 'rgba(0,0,0,0)');
+    gradV.addColorStop(1, '#000');
+    ctx.fillStyle = gradV;
+    ctx.fillRect(0, 0, w, h);
+  }, [isOpen, hue]);
+
+  const hslToHex = (h, s, l) => {
+    s /= 100; l /= 100;
+    const a = s * Math.min(l, 1 - l);
+    const f = n => { const k = (n + h / 30) % 12; return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
+    return '#' + [f(0), f(8), f(4)].map(x => x.toString(16).padStart(2, '0')).join('');
+  };
+
+  const pickFromCanvas = (e) => {
+    if (!canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+    const y = Math.max(0, Math.min(e.clientY - rect.top, rect.height));
+    const ctx = canvasRef.current.getContext('2d');
+    const px = ctx.getImageData(x * (canvasRef.current.width / rect.width), y * (canvasRef.current.height / rect.height), 1, 1).data;
+    const hex = '#' + [px[0], px[1], px[2]].map(c => c.toString(16).padStart(2, '0')).join('');
+    setHexInput(hex);
+    onChange(hex);
+  };
+
+  const handleCanvasInteraction = (e) => {
+    e.preventDefault();
+    pickFromCanvas(e.touches ? e.touches[0] : e);
+    const move = (ev) => { ev.preventDefault(); pickFromCanvas(ev.touches ? ev.touches[0] : ev); };
+    const up = () => {
+      document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+      document.removeEventListener('touchmove', move); document.removeEventListener('touchend', up);
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+    document.addEventListener('touchmove', move, { passive: false });
+    document.addEventListener('touchend', up);
+  };
+
+  const handleHueChange = (e) => {
+    const newHue = parseInt(e.target.value);
+    setHue(newHue);
+    const hex = hslToHex(newHue, sat, lightness);
+    setHexInput(hex);
+    onChange(hex);
+  };
+
+  const handleHexSubmit = (val) => {
+    if (/^#[0-9A-Fa-f]{6}$/.test(val)) onChange(val);
+  };
+
+  return (
+    <div style={{ position: 'relative', display: 'inline-block' }}>
+      <div
+        onClick={() => setIsOpen(!isOpen)}
+        style={{
+          width: 48, height: 48, borderRadius: 12, cursor: 'pointer',
+          background: value || '#000', border: '2px solid rgba(255,255,255,0.2)',
+          boxShadow: isOpen ? `0 0 12px ${value}66` : 'none', transition: 'box-shadow 0.2s'
+        }}
+        title={label || 'Choisir une couleur'}
+        data-testid="afro-color-picker"
+      />
+      {isOpen && (
+        <div style={{
+          position: 'absolute', top: 56, left: 0, zIndex: 500,
+          background: '#1a1a2e', borderRadius: 16, padding: 16,
+          boxShadow: '0 8px 32px rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.1)', width: 260
+        }}>
+          <canvas
+            ref={canvasRef}
+            width={228} height={140}
+            style={{ borderRadius: 8, cursor: 'crosshair', width: '100%', height: 140, display: 'block' }}
+            onMouseDown={handleCanvasInteraction}
+            onTouchStart={handleCanvasInteraction}
+          />
+          <input
+            type="range" min="0" max="360" value={hue}
+            onChange={handleHueChange}
+            style={{
+              width: '100%', marginTop: 12, height: 10, borderRadius: 5,
+              appearance: 'none', WebkitAppearance: 'none',
+              background: 'linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%)',
+              outline: 'none', cursor: 'pointer'
+            }}
+            aria-label="Teinte"
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+            <div style={{ width: 32, height: 32, borderRadius: '50%', background: hexInput, border: '2px solid rgba(255,255,255,0.2)', flexShrink: 0 }} />
+            <input
+              type="text" value={hexInput}
+              onChange={(e) => { setHexInput(e.target.value); handleHexSubmit(e.target.value); }}
+              onBlur={() => handleHexSubmit(hexInput)}
+              style={{ flex: 1, background: '#0a0a1a', border: '1px solid #333', borderRadius: 8, color: '#fff', padding: '6px 10px', fontSize: 14, fontFamily: 'monospace', textTransform: 'uppercase' }}
+              maxLength={7}
+            />
+          </div>
+          <button
+            onClick={() => setIsOpen(false)}
+            style={{ marginTop: 10, width: '100%', padding: '6px 0', borderRadius: 8, background: 'rgba(255,255,255,0.08)', border: 'none', color: '#fff', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}
+          >OK</button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ConceptEditor = ({
   concept,
   setConcept,
@@ -260,11 +409,11 @@ const ConceptEditor = ({
             <div>
               <label className="flex items-center gap-1.5 mb-2 text-white text-sm"><SvgIcon name="sparkles" size={16} />Couleur principale (Boutons/Titres)</label>
               <div className="flex items-center gap-3">
-                <input 
-                  type="color" 
-                  value={concept.primaryColor || '#D91CD2'} 
-                  onChange={(e) => {
-                    const newColor = e.target.value;
+                {/* V291 : color picker avancé (spectre + teinte + hex) */}
+                <AfroColorPicker
+                  value={concept.primaryColor || '#8B5CF6'}
+                  label="Couleur principale"
+                  onChange={(newColor) => {
                     setConcept({ ...concept, primaryColor: newColor });
                     applyPrimaryColor(newColor); // V259: pose aussi --primary-rgb
                     if (!concept.glowColor) {
@@ -272,9 +421,6 @@ const ConceptEditor = ({
                       document.documentElement.style.setProperty('--glow-color-strong', `${newColor}99`);
                     }
                   }}
-                  className="w-12 h-12 rounded-lg cursor-pointer border-2 border-white/20"
-                  style={{ background: 'transparent' }}
-                  data-testid="color-picker-primary"
                 />
                 <div>
                   <input 
@@ -302,17 +448,14 @@ const ConceptEditor = ({
             <div>
               <label className="flex items-center gap-1.5 mb-2 text-white text-sm"><SvgIcon name="heart" size={16} />Couleur secondaire (Accents)</label>
               <div className="flex items-center gap-3">
-                <input 
-                  type="color" 
-                  value={concept.secondaryColor || '#8b5cf6'} 
-                  onChange={(e) => {
-                    const newColor = e.target.value;
+                {/* V291 : color picker avancé */}
+                <AfroColorPicker
+                  value={concept.secondaryColor || '#8b5cf6'}
+                  label="Couleur secondaire"
+                  onChange={(newColor) => {
                     setConcept({ ...concept, secondaryColor: newColor });
                     document.documentElement.style.setProperty('--secondary-color', newColor);
                   }}
-                  className="w-12 h-12 rounded-lg cursor-pointer border-2 border-white/20"
-                  style={{ background: 'transparent' }}
-                  data-testid="color-picker-secondary"
                 />
                 <div>
                   <input 
@@ -337,18 +480,15 @@ const ConceptEditor = ({
             <div>
               <label className="flex items-center gap-1.5 mb-2 text-white text-sm"><SvgIcon name="moon" size={14} />Couleur de fond (Background)</label>
               <div className="flex items-center gap-3">
-                <input 
-                  type="color" 
-                  value={concept.backgroundColor || '#000000'} 
-                  onChange={(e) => {
-                    const newColor = e.target.value;
+                {/* V291 : color picker avancé */}
+                <AfroColorPicker
+                  value={concept.backgroundColor || '#000000'}
+                  label="Couleur de fond"
+                  onChange={(newColor) => {
                     setConcept({ ...concept, backgroundColor: newColor });
                     document.documentElement.style.setProperty('--background-color', newColor);
                     document.body.style.backgroundColor = newColor;
                   }}
-                  className="w-12 h-12 rounded-lg cursor-pointer border-2 border-white/20"
-                  style={{ background: 'transparent' }}
-                  data-testid="color-picker-background"
                 />
                 <div>
                   <input 

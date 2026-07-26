@@ -2501,8 +2501,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
 
   const openProfileForm = async () => {
     setShowUserMenu(false);
+    // V291 : le coach est identifié par son EMAIL (profil unifié PC + mobile).
+    // Un abonné garde son participantId (identité chat locale).
+    var profileKey = isCoachMode ? getCoachEmail() : participantId;
+    if (!profileKey) { setProfileData({ display_name: leadData.firstName || '', bio: '', age: '', passions: '' }); setShowProfileForm(true); return; }
     try {
-      const res = await axios.get(`${API}/users/${encodeURIComponent(participantId)}/profile`);
+      const res = await axios.get(`${API}/users/${encodeURIComponent(profileKey)}/profile`);
       const d = res.data || {};
       setProfileData({
         display_name: d.name || leadData.firstName || '',
@@ -2517,10 +2521,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   };
 
   const saveProfile = async () => {
-    if (!participantId) { setShowProfileForm(false); return; }
+    // V291 : coach -> email (unifié PC+mobile) ; abonné -> participantId.
+    var profileKey = isCoachMode ? getCoachEmail() : participantId;
+    if (!profileKey) { setShowProfileForm(false); return; }
     setSavingProfile(true);
     try {
-      await axios.patch(`${API}/users/${encodeURIComponent(participantId)}/profile`, {
+      await axios.patch(`${API}/users/${encodeURIComponent(profileKey)}/profile`, {
         display_name: profileData.display_name,
         bio: profileData.bio,
         age: profileData.age ? parseInt(profileData.age, 10) : null,

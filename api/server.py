@@ -2576,8 +2576,10 @@ async def update_user_mini_profile(participant_id: str, request: Request):
         update["name"] = (str(body.get("display_name") or "")).strip()[:60]
     if not update:
         return {"status": "ok", "updated": {}}
+    # V291 : matcher aussi par email -> profil coach UNIFIÉ PC + mobile (le coach
+    # passe son email comme identifiant au lieu d'un participantId propre à l'appareil).
     await db.users.update_one(
-        {"$or": [{"id": participant_id}, {"participant_id": participant_id}]},
+        {"$or": [{"id": participant_id}, {"participant_id": participant_id}, {"email": participant_id}]},
         {"$set": {**update, "participant_id": participant_id}},
         upsert=True,
     )
@@ -6450,7 +6452,13 @@ async def boosttribe_access(request: Request):
     # -> l'index TTL MongoDB peut expirer ces documents apres 7 j automatiquement.
     usage = {"_id": jti, "status": "issued", "created_at": now.isoformat(), "created_dt": now}
 
-    if code:
+    # V291 : un super admin authentifié a TOUJOURS l'accès gratuit/illimité, même
+    # s'il ouvre le live depuis l'espace abonné (avec un subscriber_code) — cas
+    # rencontré sur mobile. On teste l'identité AVANT le chemin abonné.
+    _caller_email = await _v263_authenticated_coach(request)
+    _is_admin = bool(_caller_email) and is_super_admin(_caller_email)
+
+    if code and not _is_admin:
         info = await _bt_subscriber_credit(code)
         if not info:
             return JSONResponse(status_code=403, content={"reason": "subscription_required"})
@@ -6461,15 +6469,14 @@ async def boosttribe_access(request: Request):
                    "email": info["email"], "name": info["name"], "free": True,
                    "iat": now_ts, "exp": now_ts + 900, "jti": jti}
         usage.update({"kind": "subscriber", "code": code, "email": info["email"]})
-    else:
-        # Chemin coach/admin : seul le super admin (credits illimites) est admis.
-        email = await _v263_authenticated_coach(request)
-        if not email or not is_super_admin(email):
-            return JSONResponse(status_code=403, content={"reason": "subscription_required"})
-        payload = {"iss": "afroboost", "aud": "boosttribe", "sub": email,
-                   "email": email, "name": email.split("@")[0], "free": True,
+    elif _is_admin:
+        # Chemin admin — gratuit/illimité (même si un subscriber_code était présent).
+        payload = {"iss": "afroboost", "aud": "boosttribe", "sub": _caller_email,
+                   "email": _caller_email, "name": _caller_email.split("@")[0], "free": True,
                    "iat": now_ts, "exp": now_ts + 900, "jti": jti}
-        usage.update({"kind": "admin", "code": "", "email": email})
+        usage.update({"kind": "admin", "code": code or "", "email": _caller_email})
+    else:
+        return JSONResponse(status_code=403, content={"reason": "subscription_required"})
 
     token = _pyjwt.encode(payload, secret, algorithm="HS256")
     if isinstance(token, bytes):  # PyJWT < 2 renvoyait des bytes

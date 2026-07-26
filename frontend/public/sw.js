@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v290'; // V290: photos profil + DiceBear 8B5CF6 + publications mobile
+var CACHE_NAME = 'afroboost-v291'; // V291: profil coach unifié + live admin gratuit + color picker
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [
