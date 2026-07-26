@@ -279,29 +279,65 @@ def t15_contacts_coach():
         record(15, "Contacts coach", False, str(e))
 
 
+TEST_CAPTION_MARK = "TEST non-régression"
+
+
+def _delete_pub(pub_id, code=None):
+    try:
+        if code:
+            requests.delete(_url(f"/api/publications/{pub_id}"), params={"subscriber_code": code}, timeout=TIMEOUT)
+        else:
+            requests.delete(_url(f"/api/publications/{pub_id}"), headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
+    except Exception:
+        pass
+
+
 def cleanup():
     """Supprime les publications de TEST créées (best-effort). Ne touche à rien d'autre."""
     for pub_id, code in _created_pub_ids:
-        if not pub_id:
-            continue
-        try:
-            if code:
-                requests.delete(_url(f"/api/publications/{pub_id}"), params={"subscriber_code": code}, timeout=TIMEOUT)
-            else:
-                requests.delete(_url(f"/api/publications/{pub_id}"), headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
-        except Exception:
-            pass
+        if pub_id:
+            _delete_pub(pub_id, code)
+
+
+def sweep_leftovers():
+    """Nettoyage PRÉVENTIF : supprime toute publication dont la légende contient la
+    marque de test — au cas où un run précédent aurait été interrompu et aurait laissé
+    des déchets visibles sur la vitrine. Best-effort, ne touche qu'aux publications
+    portant explicitement cette marque."""
+    try:
+        r = requests.get(_url("/api/publications"), timeout=TIMEOUT)
+        pubs = r.json() if r.status_code == 200 else []
+        if isinstance(pubs, dict):
+            pubs = pubs.get("publications", [])
+        removed = 0
+        for p in (pubs or []):
+            cap = (p.get("caption") or "")
+            pid = p.get("id")
+            if pid and TEST_CAPTION_MARK in cap:
+                _delete_pub(pid, None)                 # tentative admin
+                if SUB_CODE:
+                    _delete_pub(pid, SUB_CODE)          # tentative code abonné
+                removed += 1
+        if removed:
+            print(f"(nettoyage préventif : {removed} publication(s) de test résiduelle(s) supprimée(s))")
+    except Exception:
+        pass
 
 
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
-    for fn in (t01_publish_subscriber, t02_publish_coach, t03_mine_subscriber, t04_mine_coach,
-               t05_live_subscriber, t06_live_admin_nocode, t07_live_admin_withcode,
-               t08_subscriptions_by_email, t09_profile_no_base64, t10_translate_fr_en,
-               t11_translate_bassa_lexicon, t12_bot_cours, t13_bot_partner,
-               t14_chips_have_icon, t15_contacts_coach):
-        fn()
-    cleanup()
+    sweep_leftovers()  # V307 : purge préventive des déchets d'un run interrompu
+    try:
+        for fn in (t01_publish_subscriber, t02_publish_coach, t03_mine_subscriber, t04_mine_coach,
+                   t05_live_subscriber, t06_live_admin_nocode, t07_live_admin_withcode,
+                   t08_subscriptions_by_email, t09_profile_no_base64, t10_translate_fr_en,
+                   t11_translate_bassa_lexicon, t12_bot_cours, t13_bot_partner,
+                   t14_chips_have_icon, t15_contacts_coach):
+            fn()
+    finally:
+        # V307 : nettoyage GARANTI, même si un test échoue ou si le script est interrompu.
+        cleanup()
+        sweep_leftovers()
     passed = sum(1 for _, _, st, _ in results if st == "pass")
     failed = sum(1 for _, _, st, _ in results if st == "fail")
     skipped = sum(1 for _, _, st, _ in results if st == "skip")

@@ -389,6 +389,14 @@ async def debug_config():
         # l'exterieur si l'authentification signee est active, sans divulguer
         # le secret qui la fonde.
         "jwt_secret_set": bool(os.environ.get('JWT_SECRET')),
+        # V307 : DIAGNOSTIC injection JWT_SECRET (JAMAIS la valeur).
+        "jwt_secret_len": len(os.environ.get('JWT_SECRET', '') or ''),
+        # Révèle une clé mal orthographiée / avec espace (ex. 'JWT_SECRET ') sans exposer la valeur.
+        "env_keys_jwt": sorted([repr(k) for k in os.environ if 'JWT' in k.upper()]),
+        "env_total": len(os.environ),
+        "dotenv_present_api": os.path.exists(str(ROOT_DIR / '.env')),
+        "dotenv_present_root": os.path.exists(str(ROOT_DIR.parent / '.env')),
+        "cwd": os.getcwd(),
     })
 
 @fastapi_app.get("/api/debug/network")
