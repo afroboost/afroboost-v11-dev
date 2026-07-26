@@ -217,7 +217,17 @@ def t11_translate_bassa_lexicon():
         record(11, "Traduction bassa lexique", False, str(e))
 
 
+def _ia_enabled():
+    try:
+        r = requests.get(_url("/api/ai-config"), timeout=TIMEOUT)
+        return r.status_code == 200 and r.json().get("enabled") is True
+    except Exception:
+        return False
+
+
 def t12_bot_cours():
+    if not _ia_enabled():
+        return skip(12, "Bot IA — cours", "IA désactivée (ai_config.enabled=false) — activez-la pour tester le bot")
     try:
         r = requests.post(_url("/api/chat/ai-response"), json={
             "message": "Quels sont vos cours ?", "session_id": "nonreg-test", "participant_id": "nonreg-test"
@@ -233,6 +243,8 @@ def t12_bot_cours():
 
 
 def t13_bot_partner():
+    if not _ia_enabled():
+        return skip(13, "Bot IA — partenaire", "IA désactivée (ai_config.enabled=false) — activez-la pour tester le bot")
     try:
         r = requests.post(_url("/api/chat/ai-response"), json={
             "message": "C'est quoi devenir partenaire ?", "session_id": "nonreg-test2", "participant_id": "nonreg-test2"
