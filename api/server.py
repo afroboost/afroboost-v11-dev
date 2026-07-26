@@ -18131,6 +18131,19 @@ async def check_review(request: Request):
 async def reservations_ended_for_review(request: Request):
     email = (request.query_params.get("email", "") or "").strip().lower()
     code = (request.query_params.get("code", "") or "").strip().upper()
+    # V305 (sécu) : ANTI-ÉNUMÉRATION. On ne renseigne l'appelant que s'il PROUVE son
+    # droit — code abonné VALIDE (le secret, modèle « capability » du site) OU identité
+    # coach/admin. Sinon réponse neutre {has_ended_session:false} (JSON valide, aucune
+    # fuite, pas de boucle). Empêche de sonder un email sans posséder de code valide.
+    _authorized = False
+    _coach_id = await _v263_authenticated_coach(request)
+    if _coach_id:
+        _authorized = True
+    elif code:
+        _ok, _n, _cid = await _v261_resolve_subscriber(code)
+        _authorized = bool(_ok)
+    if not _authorized:
+        return {"has_ended_session": False, "session_name": None}
     if not email and not code:
         return {"has_ended_session": False, "session_name": None}
     try:

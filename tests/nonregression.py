@@ -8,11 +8,16 @@ MODE D'EMPLOI
     BASE_URL=https://afroboost.com python tests/nonregression.py
     ADMIN_EMAIL=... SUB_CODE=... python tests/nonregression.py
 
-Variables d'environnement (avec valeurs par défaut de production) :
+Variables d'environnement :
     BASE_URL     (défaut https://afroboost.com)
-    ADMIN_EMAIL  (défaut contact.artboost@gmail.com)  -> super admin
-    SUB_CODE     (défaut BASSBOOSTX-11)               -> code abonné actif avec crédit
-    SUB_EMAIL    (défaut bassicustomshoes@gmail.com)  -> email de cet abonné
+    ADMIN_EMAIL  (défaut contact.artboost@gmail.com)  -> super admin (email public)
+    SUB_CODE     (AUCUN défaut — code abonné réel = SECRET, à fournir par env)
+    SUB_EMAIL    (AUCUN défaut — email abonné, à fournir par env)
+
+    Les codes/emails abonnés NE sont PAS codés en dur dans ce fichier versionné
+    (ce sont des identifiants clients). Sans SUB_CODE/SUB_EMAIL, les parcours qui
+    en dépendent sont marqués SKIP (ni PASS ni FAIL). Pour une exécution complète :
+        SUB_CODE=... SUB_EMAIL=... python tests/nonregression.py
 
 RÈGLES
     - Ne modifie AUCUNE donnée client. Les publications de TEST créées sont
@@ -34,14 +39,15 @@ except ImportError:
 
 BASE = os.environ.get("BASE_URL", "https://afroboost.com").rstrip("/")
 ADMIN = os.environ.get("ADMIN_EMAIL", "contact.artboost@gmail.com")
-SUB_CODE = os.environ.get("SUB_CODE", "BASSBOOSTX-11")
-SUB_EMAIL = os.environ.get("SUB_EMAIL", "bassicustomshoes@gmail.com")
+# SÉCURITÉ : pas de code/email abonné réel codé en dur dans ce fichier versionné.
+SUB_CODE = os.environ.get("SUB_CODE", "").strip()
+SUB_EMAIL = os.environ.get("SUB_EMAIL", "").strip()
 TIMEOUT = 40
 
 # Média Cloudinary de test (dossier publications/ imposé par le backend V261).
 TEST_MEDIA = "https://res.cloudinary.com/dtm0r7hwq/image/upload/publications/nonregression_test.jpg"
 
-results = []          # (num, titre, ok, detail)
+results = []          # (num, titre, statut, detail) — statut: 'pass'|'fail'|'skip'
 _created_pub_ids = [] # publications de test à nettoyer
 
 
@@ -50,11 +56,20 @@ def _url(p):
 
 
 def record(num, title, ok, detail=""):
-    results.append((num, title, ok, detail))
+    status = "pass" if ok else "fail"
+    results.append((num, title, status, detail))
     icon = "✅ PASS" if ok else "❌ FAIL"
     line = f"{icon}  #{num:<2} {title}"
     if not ok and detail:
         line += f"\n         → {detail[:300]}"
+    print(line)
+
+
+def skip(num, title, reason=""):
+    results.append((num, title, "skip", reason))
+    line = f"⏭️  SKIP  #{num:<2} {title}"
+    if reason:
+        line += f"\n         → {reason}"
     print(line)
 
 
@@ -67,6 +82,8 @@ def _short(resp):
 
 # ---------------------------------------------------------------------------
 def t01_publish_subscriber():
+    if not SUB_CODE:
+        return skip(1, 'Publication ABONNÉ (subscriber_code)', 'SUB_CODE non fourni')
     try:
         r = requests.post(_url("/api/publications"), json={
             "subscriber_code": SUB_CODE, "media_url": TEST_MEDIA,
@@ -95,6 +112,8 @@ def t02_publish_coach():
 
 
 def t03_mine_subscriber():
+    if not SUB_CODE:
+        return skip(3, 'Mes publications ABONNÉ', 'SUB_CODE non fourni')
     try:
         r = requests.get(_url("/api/publications/mine"), params={"subscriber_code": SUB_CODE}, timeout=TIMEOUT)
         ok = r.status_code == 200 and isinstance(r.json(), (list, dict))
@@ -113,6 +132,8 @@ def t04_mine_coach():
 
 
 def t05_live_subscriber():
+    if not SUB_CODE:
+        return skip(5, 'Live BoostTribe ABONNÉ avec crédit', 'SUB_CODE non fourni')
     try:
         r = requests.post(_url("/api/boosttribe/access"), json={"subscriber_code": SUB_CODE}, timeout=TIMEOUT)
         ok = r.status_code == 200 and bool((r.json() or {}).get("token"))
@@ -131,6 +152,8 @@ def t06_live_admin_nocode():
 
 
 def t07_live_admin_withcode():
+    if not SUB_CODE:
+        return skip(7, 'Live BoostTribe ADMIN AVEC code (ne paie jamais)', 'SUB_CODE non fourni')
     try:
         r = requests.post(_url("/api/boosttribe/access"), headers={"X-User-Email": ADMIN},
                           json={"subscriber_code": SUB_CODE}, timeout=TIMEOUT)
@@ -143,6 +166,8 @@ def t07_live_admin_withcode():
 
 
 def t08_subscriptions_by_email():
+    if not SUB_EMAIL:
+        return skip(8, 'Abonnements par email', 'SUB_EMAIL non fourni')
     try:
         r = requests.get(_url("/api/discount-codes/subscriptions/status"), params={"email": SUB_EMAIL}, timeout=TIMEOUT)
         d = r.json() if r.status_code == 200 else {}
@@ -153,6 +178,8 @@ def t08_subscriptions_by_email():
 
 
 def t09_profile_no_base64():
+    if not SUB_EMAIL:
+        return skip(9, 'Profil utilisateur (photo_url PAS data:)', 'SUB_EMAIL non fourni')
     try:
         r = requests.get(_url(f"/api/users/{SUB_EMAIL}/profile"), timeout=TIMEOUT)
         d = r.json() if r.status_code == 200 else {}
@@ -264,10 +291,12 @@ def main():
                t14_chips_have_icon, t15_contacts_coach):
         fn()
     cleanup()
-    passed = sum(1 for _, _, ok, _ in results if ok)
+    passed = sum(1 for _, _, st, _ in results if st == "pass")
+    failed = sum(1 for _, _, st, _ in results if st == "fail")
+    skipped = sum(1 for _, _, st, _ in results if st == "skip")
     total = len(results)
-    print(f"\n=== RÉSULTAT : {passed}/{total} au vert ===")
-    sys.exit(0 if passed == total else 1)
+    print(f"\n=== RÉSULTAT : {passed} PASS / {failed} FAIL / {skipped} SKIP (sur {total}) ===")
+    sys.exit(1 if failed > 0 else 0)
 
 
 if __name__ == "__main__":
