@@ -13513,6 +13513,19 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
         # Si la requête échoue, on continue sans catégorisation abonné
         pass
 
+    # V300 : infos abonné (WhatsApp + date de naissance + code) pour la fiche CRM,
+    # depuis subscriber_infos (V294), indexées par email. LECTURE SEULE.
+    _si_by_email = {}
+    try:
+        async for _info in db.subscriber_infos.find(
+            {}, {"_id": 0, "email": 1, "whatsapp": 1, "birthday": 1, "code": 1}
+        ):
+            _em = (_info.get("email") or "").lower().strip()
+            if _em and _em not in _si_by_email:
+                _si_by_email[_em] = _info
+    except Exception:
+        pass
+
     for session in sessions:
         participant_name = ""
         participant_email = ""
@@ -13555,11 +13568,16 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
         else:
             category = "visitor"
 
+        # V300 : joindre les infos abonné (date de naissance + code + WhatsApp de repli).
+        _pinfo = _si_by_email.get((participant_email or "").lower().strip()) if participant_email else None
+
         enriched_sessions.append({
             **session,
             "participantName": participant_name,
             "participantEmail": participant_email,
-            "participantWhatsapp": participant_whatsapp,
+            "participantWhatsapp": participant_whatsapp or ((_pinfo or {}).get("whatsapp") or ""),
+            "participantBirthday": (_pinfo or {}).get("birthday") or "",  # V300 (lecture seule)
+            "participantCode": (_pinfo or {}).get("code") or "",          # V300 (lecture seule)
             "lastMessage": last_message.get("content", "")[:100] if last_message else "Nouvelle conversation",
             "messageCount": message_count,
             "category": category,  # V198

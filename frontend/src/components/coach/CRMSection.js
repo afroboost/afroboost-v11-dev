@@ -12,6 +12,16 @@ import { renderTextWithLinks } from '../chat/ChatBubbles'; // V156.3: Liens cliq
 import AfricanEmojiPicker from '../chat/AfricanEmojiPicker'; // V143: Emoji picker for coach
 import SvgIcon from '../SvgIcon'; // V228: icones vectorielles en remplacement des emoji d'interface
 
+// V300 : date de naissance -> JJ/MM/AAAA (accepte YYYY-MM-DD) ou JJ/MM (MM-DD).
+const formatBirthdayFR = (b) => {
+  if (!b) return '';
+  const s = String(b).trim();
+  const p = s.split('-');
+  if (p.length === 3) return `${(p[2] || '').padStart(2, '0')}/${(p[1] || '').padStart(2, '0')}/${p[0]}`;
+  if (p.length === 2) return `${(p[1] || '').padStart(2, '0')}/${(p[0] || '').padStart(2, '0')}`;
+  return s;
+};
+
 // ====== STYLES PREMIUM PARTAGÉS ======
 const GLOW = {
   violet: '0 0 12px rgba(var(--primary-rgb, 217, 28, 210), 0.5), 0 0 24px rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
@@ -743,6 +753,20 @@ const ConversationItem = memo(({
             {session.participantEmail && session.participantEmail !== session.participantName && (
               <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '150px' }}>
                 {session.participantEmail}
+              </span>
+            )}
+            {/* V300 : code abonné + date de naissance (LECTURE SEULE, depuis subscriber_infos) */}
+            {session.participantCode && (
+              <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '10px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                {session.participantCode}
+              </span>
+            )}
+            {session.participantBirthday && (
+              <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px', whiteSpace: 'nowrap' }}>
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 21v-8a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8" /><path d="M4 16s.5-1 2-1 2.5 2 4 2 2.5-2 4-2 2.5 2 4 2 2-1 2-1" /><path d="M2 21h20" /><path d="M7 8v3" /><path d="M12 8v3" /><path d="M17 8v3" /><path d="M7 4h.01" /><path d="M12 4h.01" /><path d="M17 4h.01" />
+                </svg>
+                {formatBirthdayFR(session.participantBirthday)}
               </span>
             )}
           </div>
