@@ -276,7 +276,10 @@ def t15_contacts_coach():
     """V311h — GROUPE 1 : les lectures d'administration exigent un JWT SIGNÉ.
     X-User-Email seul (usurpable) ne donne plus aucun droit -> 403 sur les 3 routes.
     Si ADMIN_JWT est fourni, on vérifie aussi que le vrai jeton -> 200."""
-    routes = ["/api/users", "/api/chat/sessions", "/api/contacts/all"]
+    # V312b : /chat/sessions repassé en auth de transition (JWT ou X-User-Email) pour
+    # ne pas casser le mode coach du ChatWidget -> retiré de la liste JWT-strict.
+    # (Les anonymes restent bloqués : couvert par le test #23.)
+    routes = ["/api/users", "/api/contacts/all"]
     try:
         spoof = {rt: requests.get(_url(rt), headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code
                  for rt in routes}

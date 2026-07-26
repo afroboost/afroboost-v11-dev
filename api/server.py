@@ -14072,7 +14072,18 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
     """
     # V309 (FUITE 3 fermée) : les conversations (email, whatsapp, date de naissance,
     # code, notes du coach) étaient PUBLIQUES. Désormais RÉSERVÉES au coach/admin (403).
-    caller_email = await _v309_require_coach_or_admin(request) if request else ""
+    #
+    # V312b — RETOUR ARRIÈRE CIBLÉ. Le verrou JWT-strict (Groupe 1) a cassé le mode
+    # coach du ChatWidget : il peut être activé par repli identité (afroboost_identity /
+    # af_chat_client) SANS jeton signé -> 403 -> « 0 conversation » (32 conversations
+    # disparues côté propriétaire). On rétablit ICI l'auth de TRANSITION : JWT signé OU
+    # repli X-User-Email, à condition d'être coach/admin. Les ANONYMES restent bloqués
+    # (403, fuite V309 toujours fermée). /api/users et /contacts/all conservent le
+    # JWT-strict (validés fonctionnels). À re-durcir quand le mode coach du ChatWidget
+    # portera un vrai jeton.
+    caller_email = await _v263_authenticated_coach(request) if request else ""
+    if request and (not caller_email or not await _v309_is_coach_or_admin(caller_email)):
+        raise HTTPException(status_code=403, detail="Accès réservé au coach/administrateur")
 
     # Base query
     query = {} if include_deleted else {"is_deleted": {"$ne": True}}
