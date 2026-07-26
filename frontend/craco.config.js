@@ -65,6 +65,26 @@ const webpackConfig = {
       if (config.enableHealthCheck && healthPluginInstance) {
         webpackConfig.plugins.push(healthPluginInstance);
       }
+
+      // V309b : limiter la minification (Terser) à UN SEUL processus.
+      // Par défaut Terser en lance « cœurs - 1 » (=3 ici), chacun chargeant en
+      // mémoire l'arbre syntaxique complet d'un gros fichier. Or ChatWidget.js
+      // (~10 000 lignes) + CoachDashboard.js (~7 200) + App.js (~8 000) minifiés
+      // EN MÊME TEMPS = pic mémoire fatal -> le noyau tue le build (OOM-kill,
+      // exit 255 sans message) sur ce serveur 7,6 Go partagé entre plusieurs
+      // conteneurs. En série, le build est un peu plus lent mais ne meurt plus.
+      try {
+        if (webpackConfig.optimization && Array.isArray(webpackConfig.optimization.minimizer)) {
+          webpackConfig.optimization.minimizer.forEach((m) => {
+            if (m && m.options && typeof m.options === 'object') {
+              m.options.parallel = 1;
+            }
+          });
+        }
+      } catch (e) {
+        // Ne jamais casser le build si la structure interne change.
+      }
+
       return webpackConfig;
     },
   },

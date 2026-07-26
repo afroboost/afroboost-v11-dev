@@ -64,6 +64,14 @@ quelque chose. Pour que cela n'arrive plus :
 4. Tout nouveau correctif ajoute son test — la couverture ne recule jamais.
 5. Un échec sur un parcours non lié au correctif = RÉGRESSION : corriger avant de livrer.
 
+## 🚦 RÈGLE ABSOLUE — « ÉCRIT » NE VEUT PAS DIRE « LIVRÉ »
+
+Aucun correctif n'est annoncé comme livré tant que : (1) le déploiement Coolify
+affiche `Finished` (le build peut échouer — OOM Terser, cf. V309b — sans que le code
+soit en faute), (2) le cache Cloudflare est purgé, (3) la réponse RÉELLE de la
+production déployée est collée dans le rapport. Un `git push` réussi ne prouve RIEN.
+Toujours re-tester l'endpoint déployé (curl) avant d'annoncer un résultat.
+
 ## 🔐 RÈGLE ABSOLUE — AUCUNE DONNÉE PERSONNELLE SANS AUTHENTIFICATION
 
 Toute route renvoyant `email`, `whatsapp`, `phone`, `birthday`, un code d'abonnement,
