@@ -2557,6 +2557,16 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     }
   }, [afroboostProfile?.code, afroboostProfile?.email]);
 
+  // V280c : quand un live BoostTribe démarre, 1 crédit est débité côté serveur ;
+  // BoostTribeSection émet `afroboost:credit-refresh`. On recharge alors le solde
+  // (MÊME fonction que le chargement initial) pour que l'affichage « (N cours) »
+  // reflète le nouveau solde sans recharger la page.
+  useEffect(() => {
+    const onCreditRefresh = () => { checkReservationEligibility(); };
+    window.addEventListener('afroboost:credit-refresh', onCreditRefresh);
+    return () => window.removeEventListener('afroboost:credit-refresh', onCreditRefresh);
+  }, [checkReservationEligibility]);
+
   // v7.2: Charger l'eligibilite au montage pour afficher le compteur de cours
   useEffect(() => {
     if (afroboostProfile?.code && afroboostProfile?.email) {

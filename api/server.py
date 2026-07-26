@@ -6181,7 +6181,9 @@ async def boosttribe_access(request: Request):
     jti = str(uuid.uuid4())
 
     code = (subscriber_code or "").strip().upper()
-    usage = {"_id": jti, "status": "issued", "created_at": now.isoformat()}
+    # V280c : `created_dt` est un vrai Date BSON (pas la chaine ISO `created_at`)
+    # -> l'index TTL MongoDB peut expirer ces documents apres 7 j automatiquement.
+    usage = {"_id": jti, "status": "issued", "created_at": now.isoformat(), "created_dt": now}
 
     if code:
         info = await _bt_subscriber_credit(code)
@@ -18242,6 +18244,16 @@ async def startup_db():
     try:
         await db.push_subscriptions.create_index("endpoint", unique=True, sparse=True)
         logger.info("[INDEX] push_subscriptions.endpoint unique OK")
+    except Exception:
+        pass  # Index existe deja
+
+    # V280c : index TTL sur boosttribe_usage — MongoDB supprime seul les
+    # enregistrements d'idempotence apres 7 jours (les jetons expirent en 15 min,
+    # 7 j est une marge tres large). Les documents recents restent -> idempotence
+    # sur `jti` intacte. Expire sur `created_dt` (Date BSON), pas sur la chaine ISO.
+    try:
+        await db.boosttribe_usage.create_index("created_dt", expireAfterSeconds=7 * 24 * 3600)
+        logger.info("[INDEX] boosttribe_usage.created_dt TTL 7j OK")
     except Exception:
         pass  # Index existe deja
 
