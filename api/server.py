@@ -3139,10 +3139,17 @@ def _v302_lexicon_prompt(code: str, limit: int = 30) -> str:
     return "\n".join(lines)
 
 
+# V302b : le contrôle anti-mots-français ne s'applique qu'aux langues qui FUIENT
+# réellement le français (faibles ressources). On EXCLUT le créole haïtien et le
+# kiswahili : bien couverts, et leur vocabulaire partage des mots avec le français
+# (ex. créole « dans » = danse) -> le détecteur y produisait des FAUX POSITIFS.
+_V302_FR_CHECK_LANGS = {"bas", "bm", "wo", "ln"}
+
+
 def _v302_french_leftovers(target_code: str, translation: str):
     """Renvoie la liste des mots français distinctifs restés dans la traduction
-    (mots entiers). Vide pour le français lui-même."""
-    if target_code == "fr":
+    (mots entiers). Vide hors des langues à faibles ressources ciblées."""
+    if target_code not in _V302_FR_CHECK_LANGS:
         return []
     words = set(_v302_norm(translation).split())
     return sorted(words & _V302_FR_MARKERS)
