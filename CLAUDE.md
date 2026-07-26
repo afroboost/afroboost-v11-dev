@@ -72,6 +72,22 @@ soit en faute), (2) le cache Cloudflare est purgé, (3) la réponse RÉELLE de l
 production déployée est collée dans le rapport. Un `git push` réussi ne prouve RIEN.
 Toujours re-tester l'endpoint déployé (curl) avant d'annoncer un résultat.
 
+## 🔑 RÈGLE ABSOLUE — NE JAMAIS DURCIR UNE AUTH SANS PROUVER QUE LE CHEMIN LÉGITIME MARCHE (V310c)
+
+Avant d'exiger un jeton (JWT) sur une route, PROUVER par un appel réel que le
+propriétaire garde l'accès. Sa parole « je me suis reconnecté » NE SUFFIT PAS.
+Preuve obligatoire, sur LA MÊME route, AVANT de livrer :
+- `200` **avec** le jeton légitime, ET `403` **sans**.
+
+Contexte de l'incident (V310 FIX 1, revert `0e12578`) : le dashboard du
+propriétaire s'authentifie via le **repli super-admin X-User-Email** du ChatWidget
+(`afroboost_identity` / `afroboost_admin_persist`) — ce chemin **n'appelle jamais
+`/auth/login`, donc n'émet AUCUN JWT**. Passer les routes de lecture en JWT-strict a
+renvoyé 403 → tableau de bord VIDE. Tests #15/#32 étaient en SKIP faute de jeton :
+un SKIP sur le parcours légitime d'un durcissement = interdiction de livrer.
+Corollaire : pour sécuriser vraiment ces routes, il faut D'ABORD garantir que
+l'entrée coach du dashboard émet un JWT (via `/auth/login`), le vérifier, PUIS durcir.
+
 ## 🔐 RÈGLE ABSOLUE — AUCUNE DONNÉE PERSONNELLE SANS AUTHENTIFICATION
 
 Toute route renvoyant `email`, `whatsapp`, `phone`, `birthday`, un code d'abonnement,
