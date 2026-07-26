@@ -895,6 +895,56 @@ const V261PublicationsPanel = ({ publications, onLoad, onDelete, onTogglePause, 
   );
 };
 
+// V311g : indicateur de SESSION SÉCURISÉE. Appelle GET /auth/whoami (le jeton est
+// ajouté automatiquement par l'intercepteur axios) et affiche si la session possède
+// un VRAI jeton signé. C'est la PREUVE visible, sur le compte réel, exigée avant tout
+// verrouillage JWT-strict. Vert = jeton valide ; orange = session non signée.
+function SessionSecureBadge() {
+  const [state, setState] = useState({ status: 'checking' });
+  const check = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/auth/whoami`);
+      const d = res.data || {};
+      if (d.valid) {
+        const exp = d.exp ? new Date(d.exp * 1000) : null;
+        setState({ status: 'valid', role: d.role, isAdmin: d.is_super_admin, exp });
+      } else {
+        setState({ status: 'invalid', reason: d.reason || '' });
+      }
+    } catch (e) {
+      setState({ status: 'invalid', reason: 'appel échoué' });
+    }
+  }, []);
+  useEffect(() => {
+    check();
+    const id = setInterval(check, 60000);
+    return () => clearInterval(id);
+  }, [check]);
+
+  if (state.status === 'checking') return null;
+  const ok = state.status === 'valid';
+  const color = ok ? '#22c55e' : '#f59e0b';
+  const label = ok
+    ? `Session sécurisée${state.exp ? ' · expire le ' + state.exp.toLocaleDateString('fr-FR') : ''}`
+    : 'Session non signée — reconnecte-toi avec ton mot de passe';
+  return (
+    <span
+      title={ok ? 'Jeton signé valide' : (state.reason || 'Aucun jeton valide')}
+      className="ml-2 px-2 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1"
+      style={{ background: 'rgba(255,255,255,0.06)', color, border: `1px solid ${color}66` }}
+      data-testid="session-secure-badge"
+    >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+        {ok
+          ? <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          : <path d="M7 11V7a5 5 0 0 1 9.9-1" />}
+      </svg>
+      {label}
+    </span>
+  );
+}
+
 const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // v9.2.5: Protection ABSOLUE contre les erreurs - Valeurs par défaut GARANTIES
   const safeCoachUser = coachUser || {};
@@ -6129,6 +6179,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 <span className="text-white/60 text-sm">
                   Connecté en tant que <span className="text-purple-400">{coachUser.email}</span>
                 </span>
+                {/* V311g : preuve visible que la session possède un vrai jeton signé */}
+                <SessionSecureBadge />
 
                 {/* V273: rangée d'actions inline (Quick / Admin / Stripe / Partager)
                     — petites icones SVG sans cadre, revelees au clic sur la photo.
