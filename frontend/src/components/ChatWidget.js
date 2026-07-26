@@ -2279,6 +2279,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     // V279 : au lieu d'un upload direct auto-centré, on ouvre un recadrage
     // circulaire manuel (react-easy-crop). Le coach cadre/zoome, puis on envoie
     // le blob recadré à handleDirectUpload (qui reste le seul chemin d'upload).
+    setV279IsCoachUpload(false); // V284 : chemin VISITEUR explicite
     setV279CropSrc(URL.createObjectURL(file));
     setV279Crop({ x: 0, y: 0 });
     setV279Zoom(1);
@@ -2302,6 +2303,25 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   const [v279Crop, setV279Crop] = useState({ x: 0, y: 0 });
   const [v279Zoom, setV279Zoom] = useState(1);
   const [v279CroppedArea, setV279CroppedArea] = useState(null);
+  // V284 : le recadrage V279 sert AUSSI la photo COACH (step 'coach'). Ce drapeau
+  // distingue le chemin coach (upload Cloudinary + PUT /coach-profile) du chemin
+  // visiteur (handleDirectUpload). Le flux VISITEUR reste strictement inchangé.
+  const [v279IsCoachUpload, setV279IsCoachUpload] = useState(false);
+
+  // V284 : ouvre le recadrage V279 en mode COACH (remplace l'ancien upload base64
+  // auto-centre sans recadrage). Le blob recadre part ensuite sur Cloudinary.
+  const coachPhotoSelectForCrop = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { alert('Veuillez sélectionner une image'); return; }
+    if (file.size > 2 * 1024 * 1024) { alert('Image trop grande (max 2 Mo)'); return; }
+    setV279IsCoachUpload(true);
+    setV279CropSrc(URL.createObjectURL(file));
+    setV279Crop({ x: 0, y: 0 });
+    setV279Zoom(1);
+    setShowV279Crop(true);
+    e.target.value = '';
+  };
 
   // Extrait la zone recadree en blob carre (le masquage circulaire + le
   // redimensionnement 200x200 sont ensuite appliques par handleDirectUpload).
@@ -2325,13 +2345,50 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         const blob = await v279GetCroppedBlob(v279CropSrc, v279CroppedArea);
         const file = new File([blob], 'profile.jpg', { type: 'image/jpeg' });
         setShowV279Crop(false);
-        await handleDirectUpload(file);
+
+        if (v279IsCoachUpload) {
+          // V284 : chemin COACH — upload Cloudinary (XMLHttpRequest, JAMAIS axios
+          // pour ne pas porter l'intercepteur -> preflight CORS refuse), puis
+          // sauvegarde de l'URL via PUT /coach-profile (endpoint existant).
+          setV279IsCoachUpload(false);
+          setUploadingPhoto(true);
+          try {
+            const fd = new FormData();
+            fd.append('file', file);
+            fd.append('upload_preset', 'afroboost');
+            const photoUrl = await new Promise((resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+              xhr.open('POST', 'https://api.cloudinary.com/v1_1/dtm0r7hwq/image/upload');
+              xhr.onload = () => {
+                if (xhr.status === 200) {
+                  try { resolve(JSON.parse(xhr.responseText).secure_url); }
+                  catch (e) { reject(new Error('Réponse Cloudinary invalide')); }
+                } else { reject(new Error('Upload Cloudinary échoué')); }
+              };
+              xhr.onerror = () => reject(new Error('Erreur réseau'));
+              xhr.send(fd);
+            });
+            await axios.put(API + '/coach-profile', { photo_url: photoUrl }, {
+              headers: { 'X-User-Email': getCoachEmail() }
+            });
+            setCoachProfile(prev => Object.assign({}, prev, { photo_url: photoUrl }));
+          } catch (err) {
+            console.error('[V284] Erreur upload photo coach:', err);
+            alert("L'upload de la photo a échoué.");
+          } finally {
+            setUploadingPhoto(false);
+          }
+        } else {
+          // Chemin VISITEUR — inchangé.
+          await handleDirectUpload(file);
+        }
       } else {
         setShowV279Crop(false);
       }
     } catch (err) {
       console.error('[V279] Recadrage échoué:', err);
       setShowV279Crop(false);
+      setV279IsCoachUpload(false);
     }
   };
 
@@ -7157,42 +7214,21 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           }} />
                       ) : (
                         <label style={{ cursor: 'pointer' }}>
+                          {/* V284 : icône SVG (plus d'emoji) + recadrage V279 (crop/zoom) */}
                           <div style={{
                             width: '30px', height: '30px', borderRadius: '50%',
                             background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: '13px', color: '#fff'
-                          }}>📷</div>
-                          <input type="file" accept="image/*" style={{ display: 'none' }} id="coach-photo-input"
-                            onChange={function(e) {
-                              var file = e.target.files && e.target.files[0];
-                              if (!file || file.size > 2 * 1024 * 1024) {
-                                if (file) alert('Image trop grande (max 2 Mo)');
-                                return;
-                              }
-                              var reader = new FileReader();
-                              reader.onload = function(ev) {
-                                var base64 = ev.target.result;
-                                var img = new Image();
-                                img.onload = function() {
-                                  var canvas = document.createElement('canvas');
-                                  var size = Math.min(img.width, img.height, 200);
-                                  canvas.width = size; canvas.height = size;
-                                  var ctx = canvas.getContext('2d');
-                                  var sx = (img.width - size) / 2, sy = (img.height - size) / 2;
-                                  ctx.drawImage(img, sx, sy, size, size, 0, 0, size, size);
-                                  var resized = canvas.toDataURL('image/jpeg', 0.8);
-                                  axios.put(API + '/coach-profile', { photo_url: resized }, {
-                                    headers: { 'X-User-Email': getCoachEmail() }
-                                  }).then(function() {
-                                    setCoachProfile(function(prev) { return Object.assign({}, prev, { photo_url: resized }); });
-                                  }).catch(function() { alert('Erreur upload photo'); });
-                                };
-                                img.src = base64;
-                              };
-                              reader.readAsDataURL(file);
-                              e.target.value = '';
-                            }}
+                            color: '#fff'
+                          }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                              <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                              <polyline points="21 15 16 10 5 21"></polyline>
+                            </svg>
+                          </div>
+                          <input type="file" accept="image/*" style={{ display: 'none' }} id="coach-photo-input-v284"
+                            onChange={coachPhotoSelectForCrop}
                           />
                         </label>
                       )}
@@ -7204,37 +7240,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           background: 'var(--primary-color, #D91CD2)', display: 'flex', alignItems: 'center', justifyContent: 'center',
                           cursor: 'pointer', border: '1px solid #1a1a2e'
                         }}>
-                          <span style={{ fontSize: '8px', color: '#fff', lineHeight: 1 }}>✎</span>
+                          {/* V284 : crayon SVG (plus d'emoji) + recadrage V279 (crop/zoom) */}
+                          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M12 20h9" />
+                            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                          </svg>
                           <input type="file" accept="image/*" style={{ display: 'none' }}
-                            onChange={function(e) {
-                              var file = e.target.files && e.target.files[0];
-                              if (!file || file.size > 2 * 1024 * 1024) {
-                                if (file) alert('Image trop grande (max 2 Mo)');
-                                return;
-                              }
-                              var reader = new FileReader();
-                              reader.onload = function(ev) {
-                                var base64 = ev.target.result;
-                                var img = new Image();
-                                img.onload = function() {
-                                  var canvas = document.createElement('canvas');
-                                  var size = Math.min(img.width, img.height, 200);
-                                  canvas.width = size; canvas.height = size;
-                                  var ctx = canvas.getContext('2d');
-                                  var sx = (img.width - size) / 2, sy = (img.height - size) / 2;
-                                  ctx.drawImage(img, sx, sy, size, size, 0, 0, size, size);
-                                  var resized = canvas.toDataURL('image/jpeg', 0.8);
-                                  axios.put(API + '/coach-profile', { photo_url: resized }, {
-                                    headers: { 'X-User-Email': getCoachEmail() }
-                                  }).then(function() {
-                                    setCoachProfile(function(prev) { return Object.assign({}, prev, { photo_url: resized }); });
-                                  }).catch(function() { alert('Erreur upload photo'); });
-                                };
-                                img.src = base64;
-                              };
-                              reader.readAsDataURL(file);
-                              e.target.value = '';
-                            }}
+                            onChange={coachPhotoSelectForCrop}
                           />
                         </label>
                       )}

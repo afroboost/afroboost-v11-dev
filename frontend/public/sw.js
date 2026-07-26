@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v283'; // V283: agrandissement photo profil + avatars toujours cliquables
+var CACHE_NAME = 'afroboost-v284'; // V284: photo coach recadrage/zoom (crop V279) + SVG
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [
