@@ -7477,8 +7477,13 @@ def _v184_public_origin():
 
 
 @api_router.get("/debug/discount/{access_code}")
-async def debug_discount_code(access_code: str, fix: Optional[float] = None):
+async def debug_discount_code(access_code: str, request: Request, fix: Optional[float] = None):
     """V207e: Diagnostic + fix stripe_amount via ?fix=70"""
+    # V311k — GROUPE 3 : réservé au SUPER-ADMIN (JWT signé). Cette route lit un code
+    # ET peut ÉCRIRE stripe_amount (?fix=) -> elle était accessible à TOUS.
+    caller = _v311_coach_email_from_jwt(request)
+    if not caller or not is_super_admin(caller):
+        raise HTTPException(status_code=403, detail="Super-admin requis")
     code_upper = (access_code or "").strip().upper()
     discount = await db.discount_codes.find_one(
         {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}
@@ -8824,8 +8829,13 @@ async def join_subscriber_space(access_code: str, request: Request):
 
 # V208b: Admin — lister et purger les membres d'un code groupe
 @api_router.get("/admin/code-members/{access_code}")
-async def admin_list_code_members(access_code: str):
+async def admin_list_code_members(access_code: str, request: Request):
     """Liste tous les membres inscrits pour un code groupe."""
+    # V311k — GROUPE 3 : JWT-strict. Cette route « admin » n'avait AUCUNE auth ->
+    # les membres (données perso) d'un code étaient exposés à n'importe qui.
+    caller = _v311_coach_email_from_jwt(request)
+    if not caller or not await _v309_is_coach_or_admin(caller):
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
     code_upper = (access_code or "").strip().upper()
     members = await db.code_members.find(
         {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
@@ -8834,8 +8844,13 @@ async def admin_list_code_members(access_code: str):
 
 
 @api_router.delete("/admin/code-members/{access_code}")
-async def admin_purge_code_members(access_code: str):
+async def admin_purge_code_members(access_code: str, request: Request):
     """Supprime TOUS les membres d'un code groupe (pour réinitialiser)."""
+    # V311k — GROUPE 3 : JWT-strict. Route DESTRUCTIVE qui était SANS auth ->
+    # n'importe qui pouvait effacer les membres d'un code.
+    caller = _v311_coach_email_from_jwt(request)
+    if not caller or not await _v309_is_coach_or_admin(caller):
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
     code_upper = (access_code or "").strip().upper()
     result = await db.code_members.delete_many(
         {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}

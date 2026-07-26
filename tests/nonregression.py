@@ -449,6 +449,24 @@ def t25_transactions_jwt_strict():
         record(25, "Paiements JWT-strict", False, str(e))
 
 
+def t26_codes_jwt_strict():
+    """V311k — GROUPE 3 : codes d'abonnement en JWT-strict + routes code auparavant
+    SANS auth (code-members, debug/discount) fermées. Usurpation/anonyme -> 403."""
+    try:
+        spoof = requests.get(_url("/api/discount-codes"), headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code
+        cm = requests.get(_url("/api/admin/code-members/ZZTESTCODE00"), timeout=TIMEOUT).status_code
+        dd = requests.get(_url("/api/debug/discount/ZZTESTCODE00"), timeout=TIMEOUT).status_code
+        checks = {"discount-codes(X-User-Email)": spoof, "code-members(anon)": cm, "debug-discount(anon)": dd}
+        base_ok = spoof == 403 and cm == 403 and dd == 403
+        if ADMIN_JWT:
+            jw = requests.get(_url("/api/discount-codes"), headers={"Authorization": "Bearer " + ADMIN_JWT}, timeout=TIMEOUT).status_code
+            record(26, "Codes JWT-strict (usurpation/anonyme 403 / JWT 200)", base_ok and jw == 200, f"{checks} jwt={jw}")
+        else:
+            record(26, "Codes JWT-strict (usurpation/anonyme -> 403)", base_ok, f"{checks}")
+    except Exception as e:
+        record(26, "Codes JWT-strict", False, str(e))
+
+
 def t18_no_recognition_by_name_only():
     """V308 : smart-entry par NOM SEUL ne doit PLUS reconnaître un compte existant."""
     try:
@@ -621,7 +639,7 @@ def main():
                    t18_no_recognition_by_name_only, t19_device_token_endpoint, t20_new_visitor_ok,
                    t21_users_requires_auth, t22_codes_requires_auth, t23_sessions_requires_auth,
                    t24_smart_entry_no_pii, t35_security_headers, t36_cors_foreign_origin,
-                   t25_transactions_jwt_strict,
+                   t25_transactions_jwt_strict, t26_codes_jwt_strict,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

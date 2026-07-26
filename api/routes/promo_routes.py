@@ -307,18 +307,20 @@ async def get_discount_codes(request: Request):
     Ces documents contiennent `code` et `assignedEmail` (données payantes/perso).
     Ils étaient PUBLICS : un anonyme récupérait les 38 codes. On exige désormais
     une identité coach/admin (403 sinon)."""
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
+    # V311k — GROUPE 3 : JWT-strict. Le rôle vient d'un JWT SIGNÉ (X-User-Email,
+    # usurpable, n'accorde plus aucun droit sur les codes = données payantes/perso).
+    from api.routes.shared import coach_jwt_email
+    user_email = (coach_jwt_email(request) or "").lower().strip()
     is_super_admin = user_email == SUPER_ADMIN_EMAIL.lower()
 
-    # V309 (FUITE 2 fermée) : anti-anonyme. L'appelant doit être admin OU un coach
-    # enregistré (coaches / coach_auth).
+    # anti-anonyme + anti-usurpation : admin OU coach enregistré, via jeton signé.
     _authorized = is_super_admin
     if not _authorized and user_email:
         if await _db.coaches.find_one({"email": user_email}, {"_id": 1}) or \
            await _db.coach_auth.find_one({"email": user_email}, {"_id": 1}):
             _authorized = True
     if not _authorized:
-        raise HTTPException(status_code=403, detail="Accès réservé au coach/administrateur")
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
 
     # Super Admin voit tous les codes, coach voit seulement les siens
     query = {} if is_super_admin else {"$or": [
