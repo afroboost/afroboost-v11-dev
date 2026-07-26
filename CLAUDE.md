@@ -64,6 +64,15 @@ quelque chose. Pour que cela n'arrive plus :
 4. Tout nouveau correctif ajoute son test — la couverture ne recule jamais.
 5. Un échec sur un parcours non lié au correctif = RÉGRESSION : corriger avant de livrer.
 
+## 🔐 RÈGLE ABSOLUE — AUCUNE DONNÉE PERSONNELLE SANS AUTHENTIFICATION
+
+Toute route renvoyant `email`, `whatsapp`, `phone`, `birthday`, un code d'abonnement,
+des notes ou un historique doit vérifier une identité serveur (JWT) et renvoyer 403
+sinon. Le rôle coach/admin ne se décide JAMAIS côté navigateur. Toute liste est
+paginée (50 max) et limitée en débit. Aucune entrée utilisateur n'entre dans une
+regex MongoDB (utiliser `re.escape` ou une égalité stricte). Toute nouvelle route est
+testée SANS authentification avant livraison (parcours 21-24 de tests/nonregression.py).
+
 ## ⚡ RÈGLE ABSOLUE — JAMAIS DE BOUCLE D'APPELS API
 
 Un `setState` avec un objet NEUF alors que les données sont identiques relance tous

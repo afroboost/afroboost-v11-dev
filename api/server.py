@@ -372,31 +372,17 @@ async def api_health_check():
 
 @fastapi_app.get("/api/debug/config")
 async def debug_config():
-    """Debug endpoint to check environment configuration (no secrets exposed)"""
-    mongo = os.environ.get('MONGO_URL', '')
-    import re
-    masked_mongo = re.sub(r'://([^:]+):([^@]+)@', r'://\1:****@', mongo) if mongo else 'NOT SET'
-
+    """V309 : diagnostic RÉDUIT — uniquement des booléens « configuré/non »,
+    JAMAIS de valeur, d'hôte, de chemin ni de détail d'environnement (ne rien
+    révéler d'utile à un attaquant). Les champs de diagnostic V307 (env_keys_jwt,
+    cwd, dotenv, hôte Mongo…) ont été retirés une fois la cause identifiée."""
     return JSONResponse(content={
-        "mongo_url_masked": masked_mongo,
-        "db_name": os.environ.get('DB_NAME', 'NOT SET'),
-        "frontend_url": os.environ.get('FRONTEND_URL', 'NOT SET'),
-        "cors_origins": os.environ.get('CORS_ORIGINS', 'NOT SET'),
         "stripe_key_set": bool(os.environ.get('STRIPE_SECRET_KEY')),
         "openai_key_set": bool(os.environ.get('OPENAI_API_KEY')),
         "resend_key_set": bool(os.environ.get('RESEND_API_KEY')),
-        # V262: booleen SEUL, jamais la valeur — permet de verifier depuis
-        # l'exterieur si l'authentification signee est active, sans divulguer
-        # le secret qui la fonde.
+        # Booleen SEUL — permet de vérifier que l'authentification signée est active,
+        # sans divulguer le secret qui la fonde ni aucun détail exploitable.
         "jwt_secret_set": bool(os.environ.get('JWT_SECRET')),
-        # V307 : DIAGNOSTIC injection JWT_SECRET (JAMAIS la valeur).
-        "jwt_secret_len": len(os.environ.get('JWT_SECRET', '') or ''),
-        # Révèle une clé mal orthographiée / avec espace (ex. 'JWT_SECRET ') sans exposer la valeur.
-        "env_keys_jwt": sorted([repr(k) for k in os.environ if 'JWT' in k.upper()]),
-        "env_total": len(os.environ),
-        "dotenv_present_api": os.path.exists(str(ROOT_DIR / '.env')),
-        "dotenv_present_root": os.path.exists(str(ROOT_DIR.parent / '.env')),
-        "cwd": os.getcwd(),
     })
 
 
@@ -1707,8 +1693,10 @@ async def create_category(category: dict):
 # --- Users ---
 @api_router.get("/users", response_model=List[User])
 async def get_users(request: Request):
-    # Filtrage par coach_id si un coach est connecté (super_admin voit tout)
-    coach_email = request.headers.get("X-User-Email", "").lower().strip()
+    # V309 (FUITE 1 fermée) : la liste des clients (name/email/whatsapp) était
+    # PUBLIQUE — un anonyme (X-User-Email vide) passait le filtre et récupérait
+    # les 109 fiches. Désormais RÉSERVÉE au coach/admin authentifié (403 sinon).
+    coach_email = await _v309_require_coach_or_admin(request)
     # V289 : exclure les documents incomplets (créés par d'anciens upserts
     # birthday/photo qui n'avaient ni name ni email — ils cassaient la validation
     # Pydantic et renvoyaient une 500 qui plantait tout le dashboard admin).
@@ -6583,6 +6571,33 @@ async def _v263_authenticated_coach(request: Request) -> str:
     if _hdr and secret:
         logger.warning("[V265] publication via repli X-User-Email (non signe) pour %s", _hdr)
     return _hdr
+
+
+async def _v309_is_coach_or_admin(email: str) -> bool:
+    """V309 : l'email correspond-il à un COACH enregistré ou à un SUPER ADMIN ?
+    Sert à fermer aux ANONYMES les endpoints qui listent des données personnelles
+    (clients, codes, conversations). Un appelant sans identité coach/admin -> 403."""
+    email = (email or "").lower().strip()
+    if not email:
+        return False
+    if is_super_admin(email):
+        return True
+    try:
+        if await db.coaches.find_one({"email": email}, {"_id": 1}):
+            return True
+        if await db.coach_auth.find_one({"email": email}, {"_id": 1}):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+async def _v309_require_coach_or_admin(request: Request) -> str:
+    """V309 : exige une identité coach/admin, sinon 403. Renvoie l'email."""
+    email = await _v263_authenticated_coach(request)
+    if not await _v309_is_coach_or_admin(email):
+        raise HTTPException(status_code=403, detail="Accès réservé au coach/administrateur")
+    return email
 
 
 @api_router.post("/publications")
@@ -14006,11 +14021,10 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
     v14.0: Enrichit avec participantName et participantEmail pour l'affichage CRM
     v14.7: Filtrage par coach_id pour l'étanchéité (Super Admin voit tout)
     """
-    # v14.7: Récupérer l'email du caller pour le filtrage
-    caller_email = ""
-    if request:
-        caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    
+    # V309 (FUITE 3 fermée) : les conversations (email, whatsapp, date de naissance,
+    # code, notes du coach) étaient PUBLIQUES. Désormais RÉSERVÉES au coach/admin (403).
+    caller_email = await _v309_require_coach_or_admin(request) if request else ""
+
     # Base query
     query = {} if include_deleted else {"is_deleted": {"$ne": True}}
     
@@ -15628,7 +15642,7 @@ async def smart_chat_entry(request: Request):
     if email:
         email_session = await db.chat_sessions.find_one(
             {
-                "participantEmail": {"$regex": f"^{email}$", "$options": "i"},
+                "participantEmail": {"$regex": f"^{re.escape(email)}$", "$options": "i"},  # V309 : re.escape anti-injection
                 "is_deleted": {"$ne": True}
             },
             {"_id": 0}
@@ -15728,17 +15742,47 @@ async def smart_chat_entry(request: Request):
             {"$set": {"tunnel_answers": tunnel_answers, "lead_id": lead_doc["id"]}}
         )
 
-    # Récupérer l'historique des messages si participant existant
+    # V309 (FUITE 4 fermée) : à un appelant SANS preuve d'identité forte (coach/admin
+    # OU jeton d'appareil abonné correspondant), on ne renvoie AUCUNE donnée
+    # personnelle (whatsapp, phone, email, categories, tags, coach_id, participant_ids,
+    # link_token, custom_prompt) ni AUCUN historique. Seuls le prénom saisi et les
+    # identifiants opaques (participant.id, session.id) nécessaires au chat sont exposés.
+    from api.routes.shared import subscriber_from_request
+    _full_access = False
+    try:
+        _caller = await _v263_authenticated_coach(request)
+        if _caller and await _v309_is_coach_or_admin(_caller):
+            _full_access = True
+        else:
+            _tok = subscriber_from_request(request)
+            _pemail = (participant.get("email") or "").lower()
+            if _tok and _pemail and (_tok.get("email") or "").lower() == _pemail:
+                _full_access = True  # l'abonné accède à SA propre fiche (jeton valide)
+    except Exception:
+        _full_access = False
+
     chat_history = []
-    if is_returning:
+    if _full_access and is_returning:
         chat_history = await db.chat_messages.find(
             {"session_id": session["id"], "is_deleted": {"$ne": True}},
             {"_id": 0}
         ).sort("created_at", 1).to_list(50)
 
+    if _full_access:
+        safe_participant = participant
+        safe_session = session
+    else:
+        # Version MINIMALE : identifiants opaques + prénom uniquement.
+        safe_participant = {"id": participant.get("id"), "name": participant.get("name")}
+        safe_session = {
+            "id": session.get("id"),
+            "mode": session.get("mode"),
+            "is_ai_active": session.get("is_ai_active"),
+        }
+
     return {
-        "participant": participant,
-        "session": session,
+        "participant": safe_participant,
+        "session": safe_session,
         "is_returning": is_returning,
         "chat_history": chat_history,
         "message": f"Ravi de te revoir, {name} !" if is_returning else f"Bienvenue, {name} !",
@@ -19486,19 +19530,41 @@ init_checkout_db(db)
 fastapi_app.include_router(category_router, prefix="/api")
 init_category_db(db)
 
+# V309 (FIX 4.4) : CORS resserré. `*` autorisait N'IMPORTE QUEL site à appeler l'API
+# depuis un navigateur. On n'autorise que le domaine du site (+ localhost dev). Si
+# CORS_ORIGINS est posé et différent de « * », on l'utilise ; sinon on force la liste sûre.
+_v309_cors_env = (os.environ.get('CORS_ORIGINS', '') or '').strip()
+if _v309_cors_env and _v309_cors_env != '*':
+    _v309_allowed_origins = [o.strip() for o in _v309_cors_env.split(',') if o.strip()]
+else:
+    _v309_allowed_origins = ['https://afroboost.com', 'https://www.afroboost.com']
+_v309_allowed_origins += ['http://localhost:3000']
+
 fastapi_app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(',') + ['http://localhost:3000'],
+    allow_origins=_v309_allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
     # V262: sans cette ligne, le navigateur MASQUE `X-Auth-Reason` au code JS
     # en cross-origin — seule une poignee d'en-tetes est exposee par defaut.
-    # En production front et API partagent l'origine, mais pas en developpement
-    # (localhost:3000 -> API distante) : l'intercepteur de reponse d'App.js y
-    # serait aveugle et le coach resterait bloque sur des 401 muets.
     expose_headers=["X-Auth-Reason"],
 )
+
+
+# V309 (FIX 4.4) : en-têtes de sécurité HTTP sur TOUTES les réponses. Pas de CSP
+# stricte ici (risquerait de casser le SPA / ressources externes : Cloudinary,
+# DiceBear, PostHog…) — à calibrer et tester séparément. Les autres en-têtes sont
+# sûrs et à bénéfice immédiat (clickjacking, sniffing, HTTPS forcé, fuite de referrer).
+@fastapi_app.middleware("http")
+async def _v309_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=(self)"
+    return response
 
 # Dynamic manifest.json endpoint for PWA
 @fastapi_app.get("/api/manifest.json")

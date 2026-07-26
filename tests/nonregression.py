@@ -327,6 +327,70 @@ def t17_device_token_unmasks():
         record(17, "Jeton d'appareil -> code en clair", False, str(e))
 
 
+def t21_users_requires_auth():
+    try:
+        r = requests.get(_url("/api/users"), timeout=TIMEOUT)
+        record(21, "GET /api/users sans auth -> 403", r.status_code == 403, f"HTTP {r.status_code}")
+    except Exception as e:
+        record(21, "GET /api/users sans auth", False, str(e))
+
+
+def t22_codes_requires_auth():
+    try:
+        r = requests.get(_url("/api/discount-codes"), timeout=TIMEOUT)
+        record(22, "GET /api/discount-codes sans auth -> 403", r.status_code == 403, f"HTTP {r.status_code}")
+    except Exception as e:
+        record(22, "GET /api/discount-codes sans auth", False, str(e))
+
+
+def t23_sessions_requires_auth():
+    try:
+        r = requests.get(_url("/api/chat/sessions"), timeout=TIMEOUT)
+        record(23, "GET /api/chat/sessions sans auth -> 403", r.status_code == 403, f"HTTP {r.status_code}")
+    except Exception as e:
+        record(23, "GET /api/chat/sessions sans auth", False, str(e))
+
+
+def t24_smart_entry_no_pii():
+    """smart-entry sans jeton NE doit PAS renvoyer whatsapp/phone/email/chat_history."""
+    if not SUB_EMAIL:
+        return skip(24, "smart-entry sans PII", "SUB_EMAIL non fourni")
+    try:
+        r = requests.post(_url("/api/chat/smart-entry"), json={"name": "Bassi", "email": SUB_EMAIL}, timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        blob = json.dumps(d).lower()
+        p = d.get("participant") or {}
+        leak = any(k in p for k in ("whatsapp", "phone", "email")) or bool(d.get("chat_history"))
+        # sécurité complémentaire : le numéro connu ne doit pas apparaître
+        leak = leak or ("076520" in blob)
+        ok = r.status_code == 200 and not leak
+        record(24, "smart-entry sans jeton -> aucune donnée personnelle", ok, f"HTTP {r.status_code} keys(participant)={list(p.keys())}")
+    except Exception as e:
+        record(24, "smart-entry sans PII", False, str(e))
+
+
+def t35_security_headers():
+    try:
+        r = requests.get(_url("/"), timeout=TIMEOUT)
+        h = {k.lower(): v for k, v in r.headers.items()}
+        needed = ["x-content-type-options", "x-frame-options", "referrer-policy", "strict-transport-security"]
+        missing = [n for n in needed if n not in h]
+        record(35, "En-têtes de sécurité présents sur /", not missing, f"manquants={missing}")
+    except Exception as e:
+        record(35, "En-têtes de sécurité", False, str(e))
+
+
+def t36_cors_foreign_origin():
+    try:
+        r = requests.get(_url("/api/courses"), headers={"Origin": "https://evil-scraper.example"}, timeout=TIMEOUT)
+        acao = r.headers.get("access-control-allow-origin", "")
+        # Ne doit PAS autoriser un domaine étranger (ni écho de l'origine, ni *).
+        ok = acao not in ("*", "https://evil-scraper.example")
+        record(36, "CORS refuse un domaine étranger", ok, f"ACAO={acao!r}")
+    except Exception as e:
+        record(36, "CORS domaine étranger", False, str(e))
+
+
 def t18_no_recognition_by_name_only():
     """V308 : smart-entry par NOM SEUL ne doit PLUS reconnaître un compte existant."""
     try:
@@ -421,7 +485,9 @@ def main():
                    t11_translate_bassa_lexicon, t12_bot_cours, t13_bot_partner,
                    t14_chips_have_icon, t15_contacts_coach,
                    t16_masking_active, t17_device_token_unmasks,
-                   t18_no_recognition_by_name_only, t19_device_token_endpoint, t20_new_visitor_ok):
+                   t18_no_recognition_by_name_only, t19_device_token_endpoint, t20_new_visitor_ok,
+                   t21_users_requires_auth, t22_codes_requires_auth, t23_sessions_requires_auth,
+                   t24_smart_entry_no_pii, t35_security_headers, t36_cors_foreign_origin):
             fn()
     finally:
         # V307 : nettoyage GARANTI, même si un test échoue ou si le script est interrompu.

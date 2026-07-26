@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v308'; // V308: fix ReferenceError dashboard + throttle check-partner + smart-entry sans reconnaissance par nom
+var CACHE_NAME = 'afroboost-v309'; // V309: securite — fermeture des fuites publiques + en-tetes + CORS + smart-entry sans PII
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

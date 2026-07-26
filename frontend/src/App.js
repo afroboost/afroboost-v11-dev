@@ -5334,11 +5334,16 @@ function App() {
         requests.push(axios.get(`${API}/concept`));
       }
 
-      // Toujours récupérer users et discount codes (données dynamiques)
-      requestMap.users = requests.length;
-      requests.push(axios.get(`${API}/users`));
-      requestMap.codes = requests.length;
-      requests.push(axios.get(`${API}/discount-codes`));
+      // V309 (sécurité) : /users et /discount-codes contiennent des DONNÉES
+      // PERSONNELLES (emails, WhatsApp, codes) et sont désormais RÉSERVÉS au
+      // coach/admin (403 côté serveur). Le visiteur public ne les charge plus —
+      // sinon le 403 ferait échouer tout le batch Promise.all et casserait la vitrine.
+      if (coachUser?.email) {
+        requestMap.users = requests.length;
+        requests.push(axios.get(`${API}/users`));
+        requestMap.codes = requests.length;
+        requests.push(axios.get(`${API}/discount-codes`));
+      }
 
       const responses = await Promise.all(requests);
 
