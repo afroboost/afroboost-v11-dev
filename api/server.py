@@ -3061,13 +3061,27 @@ async def translate_text(request: Request):
         logger.error(f"[V301] Traduction TIMEOUT lang={target} durée={_dur}s")
         raise HTTPException(status_code=504, detail="Le service de traduction ne répond pas (timeout). Réessayez.")
     except Exception as e:
-        # V301 : remonter l'erreur RÉELLE (type + message tronqué), plus de message
-        # opaque « La traduction a échoué » qui a fait perdre plusieurs versions.
+        # V301 : diagnostic UTILE mais SÛR. Le message brut d'OpenAI peut contenir un
+        # fragment de clé API (AuthenticationError = « Incorrect API key sk-…abc ») ou
+        # d'autres détails internes -> on ne le renvoie JAMAIS au client. On mappe le
+        # TYPE d'exception vers une raison claire (la vraie cause pour le diagnostic),
+        # et on garde le message complet UNIQUEMENT dans les logs serveur.
         _dur = round(_time.monotonic() - _t0, 2)
         _etype = type(e).__name__
         _emsg = str(e)
         logger.error(f"[V301] Traduction ÉCHEC lang={target} durée={_dur}s type={_etype} msg={_emsg}")
-        raise HTTPException(status_code=502, detail=f"Traduction échouée ({_etype}): {_emsg[:300]}")
+        _low = (_etype + " " + _emsg).lower()
+        if "authenticationerror" in _low or "invalid api key" in _low or "incorrect api key" in _low or "401" in _low:
+            _reason = "clé OpenAI invalide ou révoquée (à corriger dans Coolify)"
+        elif "ratelimit" in _low or "insufficient_quota" in _low or "quota" in _low or "429" in _low:
+            _reason = "quota/crédit OpenAI épuisé"
+        elif "model_not_found" in _low or "does not exist" in _low or "notfound" in _low:
+            _reason = "modèle IA non autorisé par la clé"
+        elif "timeout" in _low or "timed out" in _low or "connection" in _low or "apiconnection" in _low:
+            _reason = "service de traduction injoignable (réseau)"
+        else:
+            _reason = "erreur du service de traduction"
+        raise HTTPException(status_code=502, detail=f"Traduction indisponible — {_reason} [{_etype}]")
 
 
 # === COACH NOTIFICATIONS ===
