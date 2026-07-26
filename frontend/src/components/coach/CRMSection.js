@@ -980,6 +980,9 @@ const SystemPromptBlock = memo(({ API, coachEmail }) => {
   const [generating, setGenerating] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  // V303 : état réel de l'interrupteur « Assistant IA du bot visiteur ».
+  const [aiEnabled, setAiEnabled] = useState(null); // null = inconnu (chargement)
+  const [aiToggleBusy, setAiToggleBusy] = useState(false);
 
   // Charger le prompt existant
   useEffect(() => {
@@ -989,11 +992,27 @@ const SystemPromptBlock = memo(({ API, coachEmail }) => {
         const prompt = res.data?.systemPrompt || '';
         setSystemPrompt(prompt);
         setSavedPrompt(prompt);
+        setAiEnabled(res.data?.enabled === true); // V303 : état réel de l'IA
       } catch (e) { console.warn('[V107.5] Load prompt:', e); }
       setLoading(false);
     };
     if (API) load();
   }, [API]);
+
+  // V303 : activer / désactiver l'IA du bot visiteur (PUT /ai-config, réservé coach/admin).
+  const toggleAiEnabled = async () => {
+    if (aiToggleBusy || aiEnabled === null) return;
+    const next = !aiEnabled;
+    setAiToggleBusy(true);
+    try {
+      await axios.put(`${API}/ai-config`, { enabled: next }, { headers: { 'X-User-Email': coachEmail } });
+      setAiEnabled(next);
+    } catch (e) {
+      console.error('[V303] toggle IA:', e);
+      alert("Impossible de modifier l'état de l'IA. Réessayez.");
+    }
+    setAiToggleBusy(false);
+  };
 
   // Sauvegarder le prompt
   const handleSave = async () => {
@@ -1069,6 +1088,42 @@ const SystemPromptBlock = memo(({ API, coachEmail }) => {
       {/* Body */}
       {expanded && (
         <div style={{ padding: '0 20px 20px' }}>
+          {/* V303 : interrupteur « Assistant IA du bot visiteur » (activer / désactiver). */}
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
+            padding: '12px 14px', margin: '0 0 14px', borderRadius: '12px',
+            background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: '#fff', fontSize: '13px', fontWeight: 600 }}>Assistant IA du bot visiteur</div>
+              <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: '11px', marginTop: '2px', lineHeight: 1.4 }}>
+                Quand l'IA est activée, le bot répond automatiquement aux visiteurs. Chaque réponse consomme du crédit OpenAI.
+              </div>
+            </div>
+            {/* Switch */}
+            <button
+              type="button"
+              onClick={toggleAiEnabled}
+              disabled={aiToggleBusy || aiEnabled === null}
+              title={aiEnabled ? 'Désactiver l\'IA' : 'Activer l\'IA'}
+              aria-label="Activer ou désactiver l'assistant IA"
+              style={{
+                position: 'relative', width: '48px', height: '26px', borderRadius: '13px', flexShrink: 0,
+                border: 'none', padding: 0,
+                cursor: (aiToggleBusy || aiEnabled === null) ? 'wait' : 'pointer',
+                background: aiEnabled ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.2)',
+                transition: 'background 0.2s', opacity: aiEnabled === null ? 0.5 : 1,
+              }}
+              data-testid="ai-enabled-toggle"
+            >
+              <span style={{
+                position: 'absolute', top: '3px', left: aiEnabled ? '25px' : '3px',
+                width: '20px', height: '20px', borderRadius: '50%', background: '#fff',
+                transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+              }} />
+            </button>
+          </div>
+
           <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: '0 0 12px', lineHeight: '1.5' }}>
             Ce prompt définit le comportement de l'IA dans toutes les conversations. Cliquez sur "Générer Prompt Maître" pour créer automatiquement un prompt basé sur vos cours, offres, articles et infos de la plateforme.
           </p>

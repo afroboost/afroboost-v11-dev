@@ -11425,7 +11425,13 @@ async def get_ai_config():
     return config
 
 @api_router.put("/ai-config")
-async def update_ai_config(config: AIConfigUpdate):
+async def update_ai_config(config: AIConfigUpdate, request: Request):
+    # V303 : réglage RÉSERVÉ au coach/admin authentifié (activer/désactiver l'IA,
+    # prompt système…). Avant, l'endpoint était ouvert -> un visiteur anonyme aurait
+    # pu couper l'IA ou modifier le prompt. Repli X-User-Email accepté (transition V265).
+    _caller = await _v263_authenticated_coach(request)
+    if not _caller:
+        raise HTTPException(status_code=403, detail="Authentification requise")
     updates = {k: v for k, v in config.model_dump().items() if v is not None}
     await db.ai_config.update_one({"id": "ai_config"}, {"$set": updates}, upsert=True)
     return await db.ai_config.find_one({"id": "ai_config"}, {"_id": 0})
@@ -12927,6 +12933,91 @@ Contexte:
             "error": str(e)
         }
 
+# === V303 : contexte SITE À JOUR pour le bot visiteur ===
+async def build_site_context(coach_email: str = "") -> str:
+    """V303 : sections du site que le bot IGNORAIT — page « Devenir Partenaire »,
+    articles/blog, publications récentes. Requêté à CHAQUE message -> toute
+    sauvegarde (wizard, article, publication) est visible INSTANTANÉMENT par le bot,
+    sans bouton. Complète le contexte offres/cours/promos/concept déjà en place.
+
+    Perf : projections MongoDB minimales + limites strictes (nb + longueur), car
+    exécuté à chaque message. Ne LÈVE jamais (chaque section a son try/except)."""
+    parts = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Page « Devenir Partenaire » (partner_pages, par coach si connu, sinon la 1re).
+    try:
+        partner = None
+        if coach_email:
+            partner = await db.partner_pages.find_one(
+                {"coach_email": coach_email},
+                {"_id": 0, "title": 1, "subtitle": 1, "description": 1, "features": 1},
+            )
+        if not partner:
+            partner = await db.partner_pages.find_one(
+                {}, {"_id": 0, "title": 1, "subtitle": 1, "description": 1, "features": 1}
+            )
+        if partner:
+            pt = "\n\n🤝 DEVENIR PARTENAIRE:\n"
+            if partner.get("title"):
+                pt += f"  {partner['title']}\n"
+            if partner.get("subtitle"):
+                pt += f"  {partner['subtitle']}\n"
+            if partner.get("description"):
+                pt += f"  {str(partner['description'])[:500]}\n"
+            feats = partner.get("features") or []
+            if isinstance(feats, list) and feats:
+                pt += "  Avantages: " + ", ".join(str(f) for f in feats[:6]) + "\n"
+            parts.append(pt)
+    except Exception as e:
+        logger.warning(f"[V303] contexte partner_pages ignoré: {e}")
+
+    # Articles / blog (10 max, résumé 200 car.).
+    try:
+        articles = await db.articles.find(
+            {"visible": {"$ne": False}}, {"_id": 0, "title": 1, "summary": 1, "content": 1}
+        ).sort("created_at", -1).to_list(10)
+        if articles:
+            at = "\n\n📰 ARTICLES / BLOG:\n"
+            for a in articles[:10]:
+                line = f"  • {a.get('title', 'Article')}"
+                s = a.get("summary") or a.get("content") or ""
+                if s:
+                    line += f": {str(s)[:200]}"
+                at += line + "\n"
+            parts.append(at)
+    except Exception as e:
+        logger.warning(f"[V303] contexte articles ignoré: {e}")
+
+    # Publications récentes NON expirées (TTL 48h respecté), 10 max, texte 150 car.
+    try:
+        pubs = await db.publications.find(
+            {"expires_at": {"$gt": now_iso}},
+            {"_id": 0, "display_name": 1, "author_name": 1, "subscriber_name": 1, "caption": 1, "created_at": 1},
+        ).sort("created_at", -1).to_list(10)
+        if pubs:
+            pt = "\n\n📸 PUBLICATIONS RÉCENTES (mur de la communauté, moins de 48h):\n"
+            for p in pubs[:10]:
+                author = p.get("display_name") or p.get("author_name") or p.get("subscriber_name") or "Membre"
+                cap = (p.get("caption") or "").strip()
+                pt += f"  • {author}"
+                if cap:
+                    pt += f": {cap[:150]}"
+                pt += "\n"
+            parts.append(pt)
+    except Exception as e:
+        logger.warning(f"[V303] contexte publications ignoré: {e}")
+
+    if not parts:
+        return ""
+    header = (
+        "\n\n========== INFOS SITE À JOUR ==========\n"
+        "Les données ci-dessous sont les informations À JOUR du site ; elles priment "
+        "sur toute donnée figée du prompt système.\n"
+    )
+    return header + "".join(parts)
+
+
 # --- Chat IA Widget ---
 @api_router.post("/chat")
 async def chat_with_ai(data: ChatMessage):
@@ -13044,7 +13135,7 @@ async def chat_with_ai(data: ChatMessage):
         try:
             concept = await db.concept.find_one({"id": "concept"}, {"_id": 0})
             if concept and concept.get('description'):
-                context += f"\n📌 À PROPOS D'AFROBOOST:\n{concept.get('description', '')[:500]}\n"
+                context += f"\n📌 À PROPOS D'AFROBOOST:\n{concept.get('description', '')[:1500]}\n"  # V303 : 500 -> 1500
         except Exception as e:
             logger.warning(f"[CHAT-IA] Erreur récupération concept: {e}")
     
@@ -13181,6 +13272,13 @@ async def chat_with_ai(data: ChatMessage):
             context += f"\n\n💳 LIEN DE PAIEMENT TWINT:\n"
             context += f"  URL: {twint_payment_url}\n"
             context += "  → Quand un client confirme vouloir acheter, propose-lui ce lien de paiement sécurisé Twint.\n"
+
+        # V303 : contexte SITE À JOUR (partenaire, articles, publications) — le bot
+        # connaît désormais TOUT le site, mis à jour instantanément à chaque message.
+        try:
+            context += await build_site_context()
+        except Exception as _e_ctx:
+            logger.warning(f"[V303] build_site_context (chat) ignoré: {_e_ctx}")
     # === FIN DES SECTIONS VENTE (uniquement en mode STANDARD) ===
     
     # === RÈGLES STRICTES POUR L'IA ===
@@ -15679,7 +15777,7 @@ async def get_ai_response_with_session(request: Request):
         try:
             concept = await db.concept.find_one({"id": "concept"}, {"_id": 0})
             if concept and concept.get('description'):
-                context += f"\n📌 À PROPOS D'AFROBOOST:\n{concept.get('description', '')[:500]}\n"
+                context += f"\n📌 À PROPOS D'AFROBOOST:\n{concept.get('description', '')[:1500]}\n"  # V303 : 500 -> 1500
         except Exception as e:
             logger.warning(f"[CHAT-AI-RESPONSE] Erreur récupération concept: {e}")
     
@@ -15819,7 +15917,14 @@ async def get_ai_response_with_session(request: Request):
             logger.info(f"[CHAT-AI-RESPONSE] ✅ Lien Twint injecté: {twint_payment_url[:50]}...")
         else:
             logger.info(f"[CHAT-AI-RESPONSE] ⚠️ Pas de lien Twint configuré")
-        
+
+        # V303 : contexte SITE À JOUR (partenaire, articles, publications). Même
+        # helper que /api/chat -> le bot connaît TOUT le site en temps réel.
+        try:
+            context += await build_site_context()
+        except Exception as _e_ctx:
+            logger.warning(f"[V303] build_site_context (ai-response) ignoré: {_e_ctx}")
+
         # === HISTORIQUE DE CONVERSATION ===
         try:
             recent_messages = await db.chat_messages.find(
