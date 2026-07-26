@@ -17977,6 +17977,12 @@ async def update_coach_profile(request: Request):
         update["birthday"] = data["birthday"]
     if "display_name" in data:
         update["display_name"] = data["display_name"]
+    # V294 : préférences coach synchronisées PC/mobile (source de vérité backend).
+    # Merge CLÉ PAR CLÉ (chemin pointé) -> une mise à jour partielle n'écrase jamais
+    # les autres préférences déjà stockées (son, silence auto, langue de traduction…).
+    if isinstance(data.get("preferences"), dict):
+        for k, v in data["preferences"].items():
+            update["preferences." + str(k)] = v
     await db.coach_profiles.update_one({"email": email}, {"$set": update}, upsert=True)
     # V289 : refléter la photo dans db.users SI un doc existe déjà (upsert=False
     # pour NE PAS recréer de doc fantôme sans name — cf. fix 500 /users). La
@@ -17989,6 +17995,65 @@ async def update_coach_profile(request: Request):
         )
     profile = await db.coach_profiles.find_one({"email": email}, {"_id": 0})
     return {"success": True, "profile": profile}
+
+
+# === V294 : infos abonné persistées au BACKEND (source de vérité PC/mobile) ===
+# Le localStorage du navigateur est PAR APPAREIL et volatile : whatsapp / date de
+# naissance étaient « redemandés » à chaque nouvel appareil ou vidage de cache.
+# Ces deux endpoints font du backend la source de vérité, indexée par le CODE
+# abonné (tous formats acceptés depuis V293, cf. _v261_resolve_subscriber).
+@api_router.get("/subscriber-info/{code}")
+async def v294_get_subscriber_info(code: str):
+    """V294 : renvoie { exists, name, whatsapp, email, birthday } pour un code abonné.
+
+    Le code EST déjà le justificatif d'accès de l'abonné (comme /subscriber/{code}),
+    donc pas d'auth supplémentaire. Si aucune info n'a encore été enregistrée, on
+    tente au moins de renvoyer le nom connu via l'abonnement (jamais redemandé).
+    """
+    code_norm = (code or "").strip().upper()
+    if not code_norm or len(code_norm) < 3:
+        return {"exists": False, "name": "", "whatsapp": "", "email": "", "birthday": ""}
+    doc = await db.subscriber_infos.find_one({"code": code_norm}, {"_id": 0})
+    if doc:
+        return {
+            "exists": True,
+            "name": doc.get("name", ""),
+            "whatsapp": doc.get("whatsapp", ""),
+            "email": doc.get("email", ""),
+            "birthday": doc.get("birthday", ""),
+        }
+    # Repli : nom déjà connu via l'abonnement actif (le formulaire pré-remplit le nom)
+    ok, name, _cid = await _v261_resolve_subscriber(code_norm)
+    return {"exists": bool(ok), "name": (name or "") if ok else "", "whatsapp": "", "email": "", "birthday": ""}
+
+
+@api_router.put("/subscriber-info/{code}")
+async def v294_put_subscriber_info(code: str, request: Request):
+    """V294 : enregistre les infos d'un abonné { name, whatsapp, email, birthday }.
+
+    Le code doit correspondre à un abonnement ACTIF (via _v261_resolve_subscriber,
+    V293 — tous formats de codes clients). Champs AJOUTÉS uniquement : on ne pose un
+    champ QUE s'il est fourni ET non vide, donc jamais d'écrasement par du vide.
+    """
+    code_norm = (code or "").strip().upper()
+    ok, _name, coach_id = await _v261_resolve_subscriber(code_norm)
+    if not ok:
+        raise HTTPException(status_code=403, detail="Code abonné invalide ou inactif")
+    data = await request.json()
+    update = {
+        "code": code_norm,
+        "coach_id": coach_id or DEFAULT_COACH_ID,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    for field in ("name", "whatsapp", "email", "birthday"):
+        raw = data.get(field)
+        val = raw.strip() if isinstance(raw, str) else raw
+        if val:
+            update[field] = val
+    await db.subscriber_infos.update_one({"code": code_norm}, {"$set": update}, upsert=True)
+    doc = await db.subscriber_infos.find_one({"code": code_norm}, {"_id": 0})
+    return {"success": True, "info": doc}
+
 
 # === STAFF ACCESS: Code d'accès pour scanner uniquement ===
 @api_router.post("/staff/login")

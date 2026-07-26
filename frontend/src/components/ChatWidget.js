@@ -1356,6 +1356,44 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     return null;
   };
 
+  // === V294 : BACKEND = source de vérité pour les infos abonné (identique PC/mobile) ===
+  // Fusionne un correctif dans afroboost_profile SANS jamais écraser un champ
+  // existant par une valeur vide. C'est LE correctif des « redemandés » : avant,
+  // une réécriture du profil sans whatsapp/birthday les effaçait du cache local.
+  const v294MergeProfile = (patch) => {
+    try {
+      const cur = JSON.parse(localStorage.getItem(AFROBOOST_PROFILE_KEY) || '{}') || {};
+      const merged = Object.assign({}, cur);
+      Object.keys(patch || {}).forEach((k) => {
+        const v = patch[k];
+        if (v !== undefined && v !== null && v !== '') merged[k] = v;
+      });
+      localStorage.setItem(AFROBOOST_PROFILE_KEY, JSON.stringify(merged));
+      return merged;
+    } catch (e) { return null; }
+  };
+
+  // V294 : rafraîchit le cache local afroboost_subscriber_info (pré-remplissage
+  // du formulaire) à partir d'infos backend, en préservant l'existant.
+  const v294CacheSubscriberInfo = (info) => {
+    try {
+      const cur = JSON.parse(localStorage.getItem('afroboost_subscriber_info') || '{}') || {};
+      const merged = Object.assign({}, cur);
+      ['name', 'whatsapp', 'email', 'birthday'].forEach((k) => { if (info && info[k]) merged[k] = info[k]; });
+      localStorage.setItem('afroboost_subscriber_info', JSON.stringify(merged));
+    } catch (e) { /* silencieux */ }
+  };
+
+  // V294 : lit les infos abonné depuis le BACKEND (source de vérité). Best-effort.
+  const v294FetchSubscriberInfo = async (code) => {
+    const c = (code || '').trim();
+    if (!c) return null;
+    try {
+      const res = await axios.get(API + '/subscriber-info/' + encodeURIComponent(c));
+      return res.data || null;
+    } catch (e) { return null; }
+  };
+
   // === CACHE HYBRIDE v9.4.0: Chargement instantané via localStorage (persistant) + sessionStorage ===
   // Stocke les 20 derniers messages pour affichage immédiat (0ms)
   const getCachedMessages = () => {
@@ -1846,15 +1884,56 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   // === v11.0: AUTO-CONNEXION QR CODE ABONNÉ ===
   useEffect(() => {
     const qrCode = localStorage.getItem('afroboost_qr_subscriber');
-    if (qrCode) {
-      localStorage.removeItem('afroboost_qr_subscriber');
-      console.log('[CHATWIDGET] 📱 QR Code abonné détecté:', qrCode);
-      // Auto-remplir le code et ouvrir le formulaire abonné
-      setSubscriberFormData(prev => ({ ...prev, code: qrCode }));
+    if (!qrCode) return;
+    localStorage.removeItem('afroboost_qr_subscriber');
+    console.log('[CHATWIDGET] 📱 QR Code abonné détecté:', qrCode);
+    setIsFullscreen(true);
+    setIsOpen(true);
+    // V294 : demander d'ABORD les infos au backend (source de vérité). Si tout est
+    // connu (nom + whatsapp + email + anniversaire), connexion directe sans formulaire.
+    (async () => {
+      const info = await v294FetchSubscriberInfo(qrCode);
+      if (info) v294CacheSubscriberInfo(info);
+      if (info && info.exists && info.name && info.whatsapp && info.email && info.birthday) {
+        const ok = await connectSubscriberWithData({ name: info.name, whatsapp: info.whatsapp, email: info.email, code: qrCode, birthday: info.birthday });
+        if (ok) return;
+      }
+      // Repli : pré-remplir avec ce qu'on connaît + afficher le formulaire (ne
+      // redemande QUE les champs manquants).
+      setSubscriberFormData(prev => ({
+        ...prev,
+        code: qrCode,
+        name: (info && info.name) || prev.name,
+        whatsapp: (info && info.whatsapp) || prev.whatsapp,
+        email: (info && info.email) || prev.email,
+        birthday: (info && info.birthday) || prev.birthday
+      }));
       setShowSubscriberForm(true);
-      setIsFullscreen(true);
-      setIsOpen(true);
-    }
+    })();
+  }, []);
+
+  // === V294 : synchro backend au montage pour un abonné DÉJÀ connecté ===
+  // Rend les infos identiques PC/mobile et « backfill » les abonnés d'avant V294 :
+  // 1) backend -> cache local (fusion sans écraser par du vide) ;
+  // 2) cache local -> backend si le backend ignore encore un champ connu localement.
+  useEffect(() => {
+    try {
+      const prof = getStoredProfile();
+      if (!prof || !prof.code) return;
+      (async () => {
+        const info = await v294FetchSubscriberInfo(prof.code);
+        if (info && info.exists) {
+          v294MergeProfile({ name: info.name, whatsapp: info.whatsapp, email: info.email, birthday: info.birthday });
+          v294CacheSubscriberInfo(info);
+        }
+        const needsPush = !info || !info.exists || !info.name || !info.whatsapp || !info.birthday;
+        if (needsPush) {
+          axios.put(API + '/subscriber-info/' + encodeURIComponent(prof.code), {
+            name: prof.name || '', whatsapp: prof.whatsapp || '', email: prof.email || '', birthday: prof.birthday || ''
+          }).catch(function () {});
+        }
+      })();
+    } catch (e) { /* silencieux */ }
   }, []);
 
   // === v159: AUTO-OUVERTURE FORMULAIRE ABONNÉ via URL ?code=AFRO-XXXX ===
@@ -1865,16 +1944,33 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       const codeFromUrl = urlParams.get('code');
       if (codeFromUrl && codeFromUrl.toUpperCase().startsWith('AFRO-')) {
         console.log('[CHATWIDGET] 🎟️ Code AFRO détecté dans URL:', codeFromUrl);
+        const urlCode = codeFromUrl.toUpperCase();
         // Forcer sortie du mode admin si connecté
         setIsCoachMode(false);
-        // Pré-remplir et ouvrir le formulaire abonné
-        setSubscriberFormData(prev => ({ ...prev, code: codeFromUrl.toUpperCase() }));
-        setShowSubscriberForm(true);
         setIsFullscreen(true);
         setIsOpen(true);
         // Nettoyer l'URL pour pas ré-ouvrir le form en cas de refresh
         const cleanUrl = window.location.pathname + window.location.hash;
         window.history.replaceState({}, '', cleanUrl);
+        // V294 : backend d'abord -> connexion directe si tout est connu, sinon
+        // formulaire pré-rempli (rien redemandé de superflu).
+        (async () => {
+          const info = await v294FetchSubscriberInfo(urlCode);
+          if (info) v294CacheSubscriberInfo(info);
+          if (info && info.exists && info.name && info.whatsapp && info.email && info.birthday) {
+            const ok = await connectSubscriberWithData({ name: info.name, whatsapp: info.whatsapp, email: info.email, code: urlCode, birthday: info.birthday });
+            if (ok) return;
+          }
+          setSubscriberFormData(prev => ({
+            ...prev,
+            code: urlCode,
+            name: (info && info.name) || prev.name,
+            whatsapp: (info && info.whatsapp) || prev.whatsapp,
+            email: (info && info.email) || prev.email,
+            birthday: (info && info.birthday) || prev.birthday
+          }));
+          setShowSubscriberForm(true);
+        })();
       }
     } catch (e) {
       console.warn('[CHATWIDGET] Erreur lecture URL code:', e);
@@ -2040,14 +2136,18 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     const newValue = !silenceAutoEnabled;
     setSilenceAutoEnabledState(newValue);
     localStorage.setItem('afroboost_silence_auto', String(newValue));
+    // V294 : persister au backend pour une préférence IDENTIQUE PC/mobile.
+    v294SaveCoachPref('silence_auto', newValue);
     console.log('[SILENCE AUTO] 🌙', newValue ? `Activé (${getSilenceHoursLabel()})` : 'Désactivé');
   };
-  
+
   // Toggle les sons (utilise SoundManager)
   const toggleSound = () => {
     const newValue = !soundEnabled;
     setSoundEnabledState(newValue);
     localStorage.setItem('afroboost_sound_enabled', String(newValue));
+    // V294 : persister au backend pour une préférence IDENTIQUE PC/mobile.
+    v294SaveCoachPref('sound_enabled', newValue);
     console.log('[SOUND] 🔊', newValue ? 'Activé' : 'Désactivé');
   };
 
@@ -3108,56 +3208,58 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   }, []);
   
   // === VALIDATION DU CODE PROMO ET ENREGISTREMENT PROFIL ABONNÉ ===
-  const handleSubscriberFormSubmit = async (e) => {
-    e.preventDefault();
+  // V294 : logique de connexion abonné FACTORISÉE.
+  // Utilisée par le formulaire ET par l'auto-connexion (QR / lien ?code=) quand le
+  // backend a déjà toutes les infos -> plus besoin de réafficher le formulaire.
+  // birthday attendu au format complet YYYY-MM-DD (celui du formulaire/backend).
+  const connectSubscriberWithData = async ({ name, whatsapp, email, code, birthday }) => {
     setError('');
-    
-    const { name, whatsapp, email, code } = subscriberFormData;
-    
-    // Validation des champs
-    if (!name?.trim() || !whatsapp?.trim() || !email?.trim() || !code?.trim()) {
+    const nm = (name || '').trim();
+    const wa = (whatsapp || '').trim();
+    const em = (email || '').trim();
+    const cd = (code || '').trim();
+    if (!nm || !wa || !em || !cd) {
       setError('Tous les champs sont obligatoires');
-      return;
+      return false;
     }
-    
     setValidatingCode(true);
-    
     try {
       // Valider le code promo via l'API
       const res = await axios.post(`${API}/discount-codes/validate`, {
-        code: code.trim(),
-        email: email.trim()
+        code: cd,
+        email: em
       });
-      
+
       if (!res.data?.valid) {
         setError(res.data?.message || 'Code promo invalide');
         setValidatingCode(false);
-        return;
+        return false;
       }
-      
-      // Code valide ! Sauvegarder le profil abonné avec infos d'abonnement v11.4
+
+      // Code valide ! Construire le profil abonné avec infos d'abonnement v11.4
       const subscriptionInfo = res.data.subscription || {};
+      const bday = (birthday || '').trim();
       const profile = {
-        name: name.trim(),
-        whatsapp: whatsapp.trim(),
-        email: email.trim(),
-        code: code.trim().toUpperCase(),
-        // V292 : mémoriser la date de naissance dans afroboost_profile aussi
-        // (sinon, au rechargement via le repli profil, birthday était vide et
-        // le formulaire la redemandait).
-        birthday: (subscriberFormData.birthday || '').trim(),
+        name: nm,
+        whatsapp: wa,
+        email: em,
+        code: cd.toUpperCase(),
+        // V292/V294 : mémoriser la date de naissance dans afroboost_profile aussi.
+        birthday: bday,
         codeDetails: res.data.code, // Détails du code (type, valeur, etc.)
         subscription: subscriptionInfo, // v11.4: Infos d'abonnement
         savedAt: new Date().toISOString()
       };
-      
-      localStorage.setItem(AFROBOOST_PROFILE_KEY, JSON.stringify(profile));
+
+      // V294 : fusion (jamais d'écrasement par du vide) au lieu d'un remplacement
+      // brut -> whatsapp/birthday déjà présents ne sont plus perdus.
+      v294MergeProfile(profile);
       setAfroboostProfile(profile);
 
       // V286 : pousser la date de naissance au backend AUSSI à la connexion
       // (pas seulement à la réservation). Best-effort, silencieux, non bloquant.
       try {
-        var _bp = (subscriberFormData.birthday || '').split('-'); // YYYY-MM-DD
+        var _bp = bday.split('-'); // YYYY-MM-DD
         var _mmdd = _bp.length === 3 ? (_bp[1] + '-' + _bp[2]) : '';
         if (!_mmdd) {
           var _pf = JSON.parse(localStorage.getItem(AFROBOOST_PROFILE_KEY) || '{}');
@@ -3169,31 +3271,50 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         }
       } catch (e) { /* silencieux */ }
 
+      // V294 : PERSISTER les infos au BACKEND (source de vérité, identique PC/mobile).
+      // Best-effort, non bloquant. C'est ce qui évite le « redemandé » sur un autre appareil.
+      try {
+        axios.put(API + '/subscriber-info/' + encodeURIComponent(profile.code), {
+          name: profile.name,
+          whatsapp: profile.whatsapp,
+          email: profile.email,
+          birthday: bday
+        }).catch(function () {});
+        v294CacheSubscriberInfo(profile);
+      } catch (e) { /* silencieux */ }
+
       // Sauvegarder aussi dans subscriber_data pour compatibilité
       saveSubscriberData(profile.code, profile.name, 'abonné');
-      
+
       // Mettre à jour leadData pour le chat
       setLeadData({ firstName: profile.name, whatsapp: profile.whatsapp, email: profile.email });
-      
+
       console.log('[SUBSCRIBER] Profil abonné validé et sauvegardé:', profile.name);
-      
+
       // Activer le mode plein écran et passer au chat
       setIsFullscreen(true);
       setShowSubscriberForm(false);
-      
+
       // Démarrer le chat avec smart-entry
-      await handleSmartEntry({ 
-        firstName: profile.name, 
-        whatsapp: profile.whatsapp, 
-        email: profile.email 
+      await handleSmartEntry({
+        firstName: profile.name,
+        whatsapp: profile.whatsapp,
+        email: profile.email
       });
-      
+      return true;
     } catch (err) {
       console.error('[SUBSCRIBER] Erreur validation:', err);
       setError(err.response?.data?.message || 'Erreur lors de la validation du code');
+      return false;
     } finally {
       setValidatingCode(false);
     }
+  };
+
+  const handleSubscriberFormSubmit = async (e) => {
+    e.preventDefault();
+    const { name, whatsapp, email, code } = subscriberFormData;
+    await connectSubscriberWithData({ name, whatsapp, email, code, birthday: subscriberFormData.birthday });
   };
   
   // === v11.6: RÉCUPÉRATION D'ACCÈS ABONNÉ ===
@@ -3249,12 +3370,26 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       if (res.data && res.data.found && res.data.code) {
         // Abonné trouvé → pré-remplir le formulaire abonné
         setIsKnownSubscriber(true);
+        // V294 : compléter avec les infos BACKEND (source de vérité) — surtout la
+        // date de naissance, sinon le formulaire la redemandait sur chaque appareil.
+        var info294 = await v294FetchSubscriberInfo(res.data.code);
+        if (info294) v294CacheSubscriberInfo(info294);
+        // Si le backend a déjà TOUT : connexion directe, aucun formulaire.
+        if (info294 && info294.exists && info294.name && info294.whatsapp && info294.birthday) {
+          var okDirect = await connectSubscriberWithData({
+            name: info294.name, whatsapp: info294.whatsapp, email: emailVal,
+            code: res.data.code, birthday: info294.birthday
+          });
+          if (okDirect) { setEmailChecking(false); return; }
+        }
         setSubscriberFormData(function(prev) {
           return {
-            name: res.data.name || prev.name || '',
-            whatsapp: res.data.whatsapp || prev.whatsapp || '',
+            name: (info294 && info294.name) || res.data.name || prev.name || '',
+            whatsapp: (info294 && info294.whatsapp) || res.data.whatsapp || prev.whatsapp || '',
             email: emailVal,
-            code: res.data.code
+            code: res.data.code,
+            // V294 : préserver / restaurer l'anniversaire (backend puis état courant)
+            birthday: (info294 && info294.birthday) || prev.birthday || ''
           };
         });
         setEmailCheckDone(true);
@@ -4992,13 +5127,53 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       });
   };
 
+  // V294 : persiste UNE préférence coach au backend (source de vérité PC/mobile).
+  // Réservé au mode coach (l'endpoint /coach-profile est indexé par email coach).
+  var v294SaveCoachPref = function(key, value) {
+    if (!isCoachMode) return;
+    try {
+      var patch = {};
+      patch[key] = value;
+      axios.put(API + '/coach-profile', { preferences: patch }, {
+        headers: { 'X-User-Email': getCoachEmail() }
+      }).catch(function () {});
+    } catch (e) { /* silencieux */ }
+  };
+
   // v162f: Load coach profile on mount (for photo)
+  // V294 : applique aussi les préférences coach du backend (identiques PC/mobile).
   var loadCoachProfile = function() {
     var email = getCoachEmail();
     axios.get(API + '/coach-profile', {
       headers: { 'X-User-Email': email }
     }).then(function(res) {
       setCoachProfile(res.data || null);
+      var prefs = res.data && res.data.preferences;
+      if (prefs && typeof prefs === 'object') {
+        // Backend -> état + cache local
+        if (typeof prefs.sound_enabled === 'boolean') {
+          setSoundEnabledState(prefs.sound_enabled);
+          try { localStorage.setItem('afroboost_sound_enabled', String(prefs.sound_enabled)); } catch (e) {}
+        }
+        if (typeof prefs.silence_auto === 'boolean') {
+          setSilenceAutoEnabledState(prefs.silence_auto);
+          try { localStorage.setItem('afroboost_silence_auto', String(prefs.silence_auto)); } catch (e) {}
+        }
+        if (prefs.translate_lang) {
+          try { localStorage.setItem('afroboost_translate_lang', prefs.translate_lang); } catch (e) {}
+        }
+      } else {
+        // Backend vierge -> initialiser depuis le localStorage (1re synchro).
+        try {
+          axios.put(API + '/coach-profile', {
+            preferences: {
+              sound_enabled: localStorage.getItem('afroboost_sound_enabled') !== 'false',
+              silence_auto: localStorage.getItem('afroboost_silence_auto') === 'true',
+              translate_lang: localStorage.getItem('afroboost_translate_lang') || ''
+            }
+          }, { headers: { 'X-User-Email': email } }).catch(function () {});
+        } catch (e) { /* silencieux */ }
+      }
     }).catch(function() {});
   };
 
