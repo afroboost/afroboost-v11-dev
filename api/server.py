@@ -2703,10 +2703,13 @@ async def v290_fix_publication_photos():
 
     Public à dessein : c'est un enrichissement IDEMPOTENT et sans entrée
     utilisateur (aucune injection, borné à 500 docs), pour pouvoir être lancé au
-    curl sans buter sur l'auth admin. SÉCURITÉ : on n'attribue la photo qu'a
-    l'AUTEUR RÉEL — `author_id` (chemin coach), ou `subscriber_code` s'il est un
-    email de coach. On NE colle JAMAIS la photo du coach sur la publication d'un
-    abonné (là où subscriber_code est un code AFR-).
+    curl sans buter sur l'auth admin.
+
+    SÉCURITÉ : on n'attribue la photo qu'a l'AUTEUR RÉEL. V297 corrige le trou :
+    pour une publication d'ABONNÉ (subscriber_code = un CODE), on résout l'email de
+    CET abonné (subscriptions/discount_codes) puis SA propre photo — jamais celle du
+    coach propriétaire. Chemin coach : `author_id`, ou `subscriber_code` s'il est un
+    email de coach. (Avant V297 ces publications abonné étaient sautées -> initiales.)
     """
     pubs = await db.publications.find(
         {"$or": [{"author_photo": {"$exists": False}}, {"author_photo": ""}, {"author_photo": None}]},
@@ -2714,14 +2717,28 @@ async def v290_fix_publication_photos():
     ).to_list(500)
     fixed = 0
     for pub in pubs:
-        # E-mail de l'AUTEUR (pas du coach propriétaire) : chemin coach uniquement.
+        # E-mail de l'AUTEUR (jamais du coach propriétaire).
+        _had_author_id = bool((pub.get("author_id") or "").strip())
         author_email = (pub.get("author_id") or "").strip()
         if not author_email:
             _sc = (pub.get("subscriber_code") or "").strip()
             if "@" in _sc:  # le chemin coach stocke l'email dans subscriber_code
                 author_email = _sc
+            elif _sc:
+                # V297 : chemin ABONNÉ (subscriber_code = un CODE, pas un email).
+                # On résout l'email de CET abonné (sa PROPRE identité), depuis
+                # subscriptions/discount_codes -> sa propre photo. On ne colle JAMAIS
+                # la photo du coach : author_email est celle de l'abonné, pas du coach.
+                _code = _sc.strip().upper()
+                _s = await db.subscriptions.find_one({"code": _code, "status": "active"}, {"_id": 0, "email": 1})
+                _em = (_s or {}).get("email") or ""
+                if not _em:
+                    _d = await db.discount_codes.find_one({"code": _code, "active": True}, {"_id": 0, "assignedEmail": 1})
+                    _em = (_d or {}).get("assignedEmail") or ""
+                author_email = (_em or "").strip()
         if not author_email:
-            continue  # publication d'abonné -> pas de photo profil fiable, on saute
+            continue  # aucun email résoluble -> initiales, on saute (pas de plantage)
+        author_email = author_email.lower()  # emails stockés en minuscules
         photo = ""
         _u = await db.users.find_one({"email": author_email}, {"_id": 0, "photo_url": 1, "photoUrl": 1})
         photo = (_u or {}).get("photo_url") or (_u or {}).get("photoUrl") or ""
@@ -2732,7 +2749,12 @@ async def v290_fix_publication_photos():
             _ch = await db.chat_participants.find_one({"email": author_email}, {"_id": 0, "photo_url": 1, "photoUrl": 1})
             photo = (_ch or {}).get("photo_url") or (_ch or {}).get("photoUrl") or ""
         if photo:
-            await db.publications.update_one({"_id": pub["_id"]}, {"$set": {"author_photo": photo}})
+            _upd = {"author_photo": photo}
+            # V297 : rendre AUSSI l'avatar cliquable (author_id résoluble par
+            # GET /users/{id}/profile) quand il manquait — cas des publications abonné.
+            if not _had_author_id:
+                _upd["author_id"] = author_email
+            await db.publications.update_one({"_id": pub["_id"]}, {"$set": _upd})
             fixed += 1
     return {"status": "ok", "fixed": fixed, "total_checked": len(pubs)}
 
@@ -6123,7 +6145,9 @@ async def create_publication(request: Request):
             if _d:
                 _sub_email = (_d.get("assignedEmail") or "").strip()
         if _sub_email:
-            author_id = _sub_email
+            # emails stockés en minuscules (users/coach_profiles) -> normaliser pour
+            # que la recherche de photo ci-dessous matche à coup sûr.
+            author_id = _sub_email.lower()
     author_photo = ""
     if author_id:
         # V289 : chercher la photo dans users, PUIS coach_profiles (la photo coach
