@@ -467,6 +467,25 @@ def t26_codes_jwt_strict():
         record(26, "Codes JWT-strict", False, str(e))
 
 
+def t57_no_identity_overwrite():
+    """V312 — ANTI-FALSIFICATION : un appelant SANS jeton d'appareil peut être reconnu
+    (is_returning) mais ne doit JAMAIS réécrire le nom d'une fiche existante."""
+    fixed = "v312-falsif-test@example.com"
+    try:
+        # 1) fiche « légitime » : créée au 1er run, simplement reconnue ensuite
+        requests.post(_url("/api/chat/smart-entry"), json={"name": "V312 Legit", "email": fixed}, timeout=TIMEOUT)
+        # 2) intrus : même email, nom DIFFÉRENT, AUCUN jeton d'appareil
+        r2 = requests.post(_url("/api/chat/smart-entry"), json={"name": "V312 INTRUS", "email": fixed}, timeout=TIMEOUT)
+        d2 = r2.json() or {}
+        n2 = (d2.get("participant") or {}).get("name")
+        # reconnu, mais le nom en base ne doit PAS être devenu "V312 INTRUS"
+        ok = d2.get("is_returning") is True and n2 != "V312 INTRUS"
+        record(57, "Anti-falsification : un anonyme ne réécrit pas la fiche", ok,
+               f"is_returning={d2.get('is_returning')} name={n2!r}")
+    except Exception as e:
+        record(57, "Anti-falsification (smart-entry)", False, str(e))
+
+
 def t18_no_recognition_by_name_only():
     """V308 : smart-entry par NOM SEUL ne doit PLUS reconnaître un compte existant."""
     try:
@@ -640,6 +659,7 @@ def main():
                    t21_users_requires_auth, t22_codes_requires_auth, t23_sessions_requires_auth,
                    t24_smart_entry_no_pii, t35_security_headers, t36_cors_foreign_origin,
                    t25_transactions_jwt_strict, t26_codes_jwt_strict,
+                   t57_no_identity_overwrite,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

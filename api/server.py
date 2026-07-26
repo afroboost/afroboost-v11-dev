@@ -15632,25 +15632,48 @@ async def smart_chat_entry(request: Request):
         # Participant reconnu - mettre à jour last_seen
         participant_id = existing_participant["id"]
         update_fields = {"last_seen_at": datetime.now(timezone.utc).isoformat()}
-        
-        # v104: Mettre à jour les infos si nouvelles ou manquantes
-        if email and not existing_participant.get("email"):
-            update_fields["email"] = email
-        if whatsapp and not existing_participant.get("whatsapp"):
-            update_fields["whatsapp"] = whatsapp
-        if name and name != existing_participant.get("name"):
-            update_fields["name"] = name
+
+        # V312 : ANTI-FALSIFICATION. Un appelant peut être RECONNU sans preuve, mais
+        # ne doit JAMAIS écrire dans la fiche d'autrui. Avant, quiconque connaissait
+        # l'email d'un client pouvait écraser son nom et injecter email/WhatsApp
+        # (falsification des données clients). On n'autorise l'écriture des champs
+        # d'IDENTITÉ que si l'appelant PROUVE être ce même abonné (jeton d'appareil
+        # dont l'email correspond) ou est coach/admin.
+        from api.routes.shared import subscriber_from_request as _sub_from_req
+        _may_write = False
+        try:
+            _c = await _v263_authenticated_coach(request)
+            if _c and await _v309_is_coach_or_admin(_c):
+                _may_write = True
+            else:
+                _t = _sub_from_req(request)
+                _pe = (existing_participant.get("email") or "").lower()
+                if _t and _pe and (_t.get("email") or "").lower() == _pe:
+                    _may_write = True
+        except Exception:
+            _may_write = False
+
+        # coach_id manquant : correctif SYSTÈME (pas une donnée fournie par l'appelant) -> toujours OK
         if not existing_participant.get("coach_id"):
             update_fields["coach_id"] = DEFAULT_COACH_ID
-        
+        # Champs d'IDENTITÉ (fournis par l'appelant) : UNIQUEMENT avec preuve d'identité.
+        if _may_write:
+            if email and not existing_participant.get("email"):
+                update_fields["email"] = email
+            if whatsapp and not existing_participant.get("whatsapp"):
+                update_fields["whatsapp"] = whatsapp
+            if name and name != existing_participant.get("name"):
+                update_fields["name"] = name
+
         await db.chat_participants.update_one(
             {"id": participant_id},
             {"$set": update_fields}
         )
-        
+
         participant = await db.chat_participants.find_one({"id": participant_id}, {"_id": 0})
         is_returning = True
     else:
+        _may_write = True  # nouveau visiteur : sa propre fiche/session, écriture normale
         # Nouveau participant — v104: ajouter coach_id pour unification contacts
         participant_obj = ChatParticipant(
             name=name,
@@ -15762,7 +15785,9 @@ async def smart_chat_entry(request: Request):
             session = await db.chat_sessions.find_one({"id": session["id"]}, {"_id": 0})
     
     # v15.0: Mettre à jour le participantName de la session pour l'affichage CRM
-    if session and name:
+    # V312 : même garde-fou anti-falsification — un anonyme ne renomme pas la session
+    # d'autrui. `_may_write` = nouveau visiteur, ou preuve d'identité (jeton/coach).
+    if session and name and _may_write:
         await db.chat_sessions.update_one(
             {"id": session["id"]},
             {"$set": {
