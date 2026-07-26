@@ -279,6 +279,54 @@ def t15_contacts_coach():
         record(15, "Contacts coach", False, str(e))
 
 
+def _jwt_active():
+    try:
+        r = requests.get(_url("/api/debug/config"), timeout=TIMEOUT)
+        return r.status_code == 200 and r.json().get("jwt_secret_set") is True
+    except Exception:
+        return False
+
+
+def t16_masking_active():
+    """Masquage actif : subscriptions/status PAR EMAIL sans jeton -> code masqué."""
+    if not SUB_EMAIL:
+        return skip(16, "Masquage des codes (email sans jeton)", "SUB_EMAIL non fourni")
+    if not _jwt_active():
+        return skip(16, "Masquage des codes (email sans jeton)", "JWT_SECRET non actif -> masquage inactif")
+    try:
+        r = requests.get(_url("/api/discount-codes/subscriptions/status"), params={"email": SUB_EMAIL}, timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        subs = d.get("subscriptions") or ([d["subscription"]] if d.get("subscription") else [])
+        codes_masked = d.get("codes_masked") is True
+        no_clear_code = all(not (s.get("code")) for s in subs) if subs else True
+        ok = r.status_code == 200 and codes_masked and no_clear_code
+        record(16, "Masquage des codes (email sans jeton -> masqué)", ok, f"HTTP {r.status_code} codes_masked={d.get('codes_masked')}")
+    except Exception as e:
+        record(16, "Masquage des codes", False, str(e))
+
+
+def t17_device_token_unmasks():
+    """L'abonné légitime (jeton d'appareil) récupère son code EN CLAIR malgré le masquage."""
+    if not (SUB_CODE and SUB_EMAIL):
+        return skip(17, "Jeton d'appareil -> code en clair", "SUB_CODE/SUB_EMAIL non fournis")
+    if not _jwt_active():
+        return skip(17, "Jeton d'appareil -> code en clair", "JWT_SECRET non actif")
+    try:
+        tk = requests.post(_url("/api/subscriber/token"), json={"code": SUB_CODE, "email": SUB_EMAIL}, timeout=TIMEOUT)
+        token = (tk.json() or {}).get("token") if tk.status_code == 200 else ""
+        if not token:
+            return record(17, "Jeton d'appareil -> code en clair", False, f"token HTTP {tk.status_code} {_short(tk)}")
+        r = requests.get(_url("/api/discount-codes/subscriptions/status"), params={"email": SUB_EMAIL},
+                         headers={"X-Subscriber-Token": token}, timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        subs = d.get("subscriptions") or ([d["subscription"]] if d.get("subscription") else [])
+        has_clear = any((s.get("code") or "") for s in subs)
+        ok = r.status_code == 200 and (d.get("codes_masked") in (False, None)) and has_clear
+        record(17, "Jeton d'appareil -> code en clair (abonné légitime)", ok, f"HTTP {r.status_code} codes_masked={d.get('codes_masked')}")
+    except Exception as e:
+        record(17, "Jeton d'appareil -> code en clair", False, str(e))
+
+
 TEST_CAPTION_MARK = "TEST non-régression"
 
 
@@ -332,7 +380,8 @@ def main():
                    t05_live_subscriber, t06_live_admin_nocode, t07_live_admin_withcode,
                    t08_subscriptions_by_email, t09_profile_no_base64, t10_translate_fr_en,
                    t11_translate_bassa_lexicon, t12_bot_cours, t13_bot_partner,
-                   t14_chips_have_icon, t15_contacts_coach):
+                   t14_chips_have_icon, t15_contacts_coach,
+                   t16_masking_active, t17_device_token_unmasks):
             fn()
     finally:
         # V307 : nettoyage GARANTI, même si un test échoue ou si le script est interrompu.

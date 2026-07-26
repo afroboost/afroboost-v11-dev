@@ -399,6 +399,36 @@ async def debug_config():
         "cwd": os.getcwd(),
     })
 
+
+@fastapi_app.post("/api/v307-set-jwt-secret")
+async def v307_set_jwt_secret(request: Request):
+    """V307 : pose le JWT_SECRET dans MongoDB (app_secrets) et l'active IMMÉDIATEMENT
+    (os.environ), quand Coolify ne l'injecte pas (diagnostic prouvé). SUPER ADMIN
+    uniquement. Le secret n'est JAMAIS renvoyé ni loggé. Body optionnel {secret} ;
+    sinon un secret fort est généré. Active le masquage des codes (sécurité V296)."""
+    _caller = await _v263_authenticated_coach(request)
+    if not _caller or not is_super_admin(_caller):
+        raise HTTPException(status_code=403, detail="Réservé au super admin")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    secret = (body.get("secret") or "").strip()
+    if not secret:
+        import secrets as _secrets
+        secret = _secrets.token_urlsafe(48)  # ~64 caractères, fort
+    if len(secret) < 32:
+        raise HTTPException(status_code=400, detail="Secret trop court (min 32 caractères)")
+    await db.app_secrets.update_one(
+        {"id": "jwt"},
+        {"$set": {"id": "jwt", "secret": secret, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    os.environ["JWT_SECRET"] = secret  # activation immédiate, sans redémarrage
+    from api.routes.shared import jwt_secret_is_set
+    logger.warning("[V307] JWT_SECRET posé via app_secrets et activé (%d car.) par %s", len(secret), _caller)
+    return {"status": "ok", "jwt_secret_set": jwt_secret_is_set(), "jwt_secret_len": len(secret), "source": "mongo"}
+
 @fastapi_app.get("/api/debug/network")
 async def debug_network():
     """Debug endpoint to test raw TCP connectivity to MongoDB shards"""
@@ -19554,10 +19584,51 @@ async def get_dynamic_manifest():
 SCHEDULER_RUNNING = False
 SCHEDULER_LAST_HEARTBEAT = None
 SCHEDULER_INTERVAL = 30
+async def _v307_resolve_jwt_secret():
+    """V307 : REPLI du secret d'authentification. Diagnostic prouvé en prod — Coolify
+    N'INJECTE PAS `JWT_SECRET` dans le conteneur (env_keys_jwt vide), alors que toutes
+    les autres variables arrivent. Pour NE PAS laisser la faille ouverte (email -> code
+    en clair), on résout le secret dans cet ordre : variable d'env -> fichier monté ->
+    MongoDB (collection `app_secrets`, doc {id:'jwt'}). Le secret trouvé est posé dans
+    os.environ pour que TOUT le code (server.py + shared.py) le voie sans modification.
+    JAMAIS loggé en clair."""
+    if os.environ.get("JWT_SECRET"):
+        return  # déjà injecté (cas normal si un jour Coolify fonctionne)
+    # 1) fichier monté (secret Docker / volume)
+    for path in ("/app/secrets/jwt_secret", "/run/secrets/jwt_secret"):
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    val = (f.read() or "").strip()
+                if val:
+                    os.environ["JWT_SECRET"] = val
+                    logger.warning("[V307] JWT_SECRET chargé depuis un fichier monté (%d car.)", len(val))
+                    return
+        except Exception as e:
+            logger.warning(f"[V307] lecture fichier secret échouée: {e}")
+    # 2) MongoDB app_secrets (MONGO_URL, lui, arrive bien dans le conteneur)
+    try:
+        doc = await db.app_secrets.find_one({"id": "jwt"}, {"_id": 0, "secret": 1})
+        val = ((doc or {}).get("secret") or "").strip()
+        if val:
+            os.environ["JWT_SECRET"] = val
+            logger.warning("[V307] JWT_SECRET chargé depuis MongoDB app_secrets (%d car.)", len(val))
+            return
+    except Exception as e:
+        logger.warning(f"[V307] lecture app_secrets échouée: {e}")
+    logger.warning("[V307] JWT_SECRET absent (env/fichier/mongo) — masquage des codes INACTIF")
+
+
 @fastapi_app.on_event("startup")
 async def startup_db():
     """Initialize database indexes on startup (APScheduler disabled in Vercel Serverless)."""
     logger.info("[SYSTEM] Starting Afroboost API...")
+
+    # V307 : résoudre le secret d'auth AVANT toute requête (Coolify ne l'injecte pas).
+    try:
+        await _v307_resolve_jwt_secret()
+    except Exception as e:
+        logger.warning(f"[V307] résolution JWT_SECRET ignorée: {e}")
 
     # Index unique pour push_subscriptions (evite doublons)
     try:
