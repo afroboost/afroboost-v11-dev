@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v295'; // V295: boutons ?/calendrier harmonisés + toggle questions + anti-FOUC couleur + dates Europe/Zurich + effacement dates passées
+var CACHE_NAME = 'afroboost-v296'; // V296: sécurité connexion abonné — jeton d'appareil (code=secret), codes masqués par email sans jeton, transition douce
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

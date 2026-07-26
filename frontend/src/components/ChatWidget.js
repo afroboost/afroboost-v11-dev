@@ -1395,6 +1395,23 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     } catch (e) { return null; }
   };
 
+  // V296 : obtient (et mémorise) le JETON D'APPAREIL abonné à partir du code.
+  // Silencieux, non bloquant. Utilisé à la connexion ET pour l'échange automatique
+  // des appareils déjà connectés (code localStorage -> jeton), sans rien redemander.
+  const v296EnsureSubscriberToken = async (code, email) => {
+    const c = (code || '').trim();
+    if (!c) return null;
+    try {
+      const res = await axios.post(API + '/subscriber/token', { code: c, email: (email || '').trim() });
+      const tok = res && res.data && res.data.token;
+      if (tok) {
+        try { localStorage.setItem('afroboost_subscriber_token', tok); } catch (e) { /* silencieux */ }
+        return tok;
+      }
+    } catch (e) { /* silencieux */ }
+    return null;
+  };
+
   // === CACHE HYBRIDE v9.4.0: Chargement instantané via localStorage (persistant) + sessionStorage ===
   // Stocke les 20 derniers messages pour affichage immédiat (0ms)
   const getCachedMessages = () => {
@@ -1923,6 +1940,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     try {
       const prof = getStoredProfile();
       if (!prof || !prof.code) return;
+      // V296 : échange SILENCIEUX pour les appareils déjà connectés — leur code
+      // localStorage devient un jeton d'appareil, sans que l'abonné refasse rien.
+      if (!localStorage.getItem('afroboost_subscriber_token')) {
+        v296EnsureSubscriberToken(prof.code, prof.email);
+      }
       (async () => {
         const info = await v294FetchSubscriberInfo(prof.code);
         if (info && info.exists) {
@@ -2902,6 +2924,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         });
 
         if (res.data?.success) {
+          // V296 : si le backend a MASQUÉ les codes (pas encore de jeton d'appareil
+          // sur cette visite), NE PAS écraser le profil local — son vrai code est
+          // déjà en localStorage et le jeton arrive en arrière-plan. Prochain cycle
+          // (30 s) ou après l'échange silencieux, la réponse sera complète.
+          if (res.data.codes_masked) return;
           const rawSubs = res.data?.subscriptions || (res.data?.subscription ? [res.data.subscription] : []);
           // v151: Déduplication par code (filet de sécurité côté frontend)
           const seen = new Set();
@@ -3044,6 +3071,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       axios.get(`${API}/discount-codes/subscriptions/status`, {
         params: { email: afroboostProfile.email }
       }).then(res => {
+        // V296 : codes masqués (jeton pas encore présent) -> ne pas peupler avec des
+        // codes nuls. La réservation retombe de toute façon sur afroboostProfile.code.
+        if (res.data && res.data.codes_masked) return;
         const rawSubs = res.data?.subscriptions || (res.data?.subscription ? [res.data.subscription] : []);
         // v151: Déduplication frontend par code (filet de sécurité)
         const seen = new Set();
@@ -3271,6 +3301,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           birthday: bday
         }).catch(function () {});
         v294CacheSubscriberInfo(profile);
+        // V296 : mémoriser le jeton d'appareil -> connexions suivantes instantanées
+        // ET vision complète (codes non masqués) pour cet abonné légitime.
+        v296EnsureSubscriberToken(profile.code, profile.email);
       } catch (e) { /* silencieux */ }
 
       // Sauvegarder aussi dans subscriber_data pour compatibilité
@@ -9054,7 +9087,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                               });
                               var resolved = (actives[0] && actives[0].code) || '';
                               if (!resolved) {
-                                alert('Aucun abonnement actif trouvé pour votre email.');
+                                // V296 : codes masqués (jeton d'appareil pas encore présent) ->
+                                // message clair au lieu du « aucun abonnement » trompeur.
+                                if (r.data && r.data.codes_masked) {
+                                  alert('Pour publier, reconnecte-toi une fois avec ton code (formulaire Abonné). Ensuite ce sera automatique.');
+                                } else {
+                                  alert('Aucun abonnement actif trouvé pour votre email.');
+                                }
                                 return;
                               }
                               // Mémoriser (merge) -> les prochains clics sont instantanés.

@@ -6019,6 +6019,14 @@ async def create_publication(request: Request):
     body = await request.json()
 
     code = (body.get("subscriber_code") or "").strip().upper()
+    # V296 : accepter AUSSI le jeton d'appareil abonné. Si le corps ne porte pas de
+    # code en clair mais qu'un jeton abonné valide est présent, on en extrait le
+    # code côté serveur. Additif : le chemin `subscriber_code` reste accepté.
+    if not code:
+        from api.routes.shared import subscriber_from_request
+        _sub_tok = subscriber_from_request(request)
+        if _sub_tok and _sub_tok.get("code"):
+            code = _sub_tok["code"].strip().upper()
     ok, subscriber_name = (False, "")
     pub_coach_id = DEFAULT_COACH_ID  # V272b : coach proprietaire de la publication
 
@@ -18053,6 +18061,36 @@ async def v294_put_subscriber_info(code: str, request: Request):
     await db.subscriber_infos.update_one({"code": code_norm}, {"$set": update}, upsert=True)
     doc = await db.subscriber_infos.find_one({"code": code_norm}, {"_id": 0})
     return {"success": True, "info": doc}
+
+
+# === V296 : JETON D'APPAREIL ABONNÉ (connexion rapide ET sécurisée) ===
+# L'abonné entre son code UNE fois par appareil : on lui rend un jeton signé
+# (type "subscriber") qui prouve ensuite qu'il détient un code valide, sans avoir
+# à réexposer le code. Sert aussi à l'échange SILENCIEUX pour les appareils déjà
+# connectés (leur code localStorage -> jeton, sans que l'abonné refasse quoi que
+# ce soit). Si JWT_SECRET n'est pas posé, `token` est vide et tous les chemins
+# existants continuent tels quels (aucune régression).
+@api_router.post("/subscriber/token")
+async def v296_subscriber_token(request: Request):
+    """Délivre un jeton d'appareil pour un abonné dont le CODE est valide et actif.
+
+    Le code est lu dans le CORPS (POST), pas en query string, pour ne pas finir
+    dans les journaux/Referer. L'email éventuel n'est qu'un attribut du jeton :
+    c'est la POSSESSION du code valide qui fait foi (modèle « capability »,
+    identique à tout l'espace abonné)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    code = (body.get("code") or "").strip().upper()
+    email = (body.get("email") or "").strip().lower()
+    ok, name, _cid = await _v261_resolve_subscriber(code)
+    if not ok:
+        raise HTTPException(status_code=403, detail="Code abonné invalide ou inactif")
+    from api.routes.shared import make_subscriber_token, jwt_secret_is_set
+    token = make_subscriber_token(code, email)
+    # secret absent -> token '' : le frontend garde le chemin actuel, rien ne casse.
+    return {"success": True, "token": token, "name": name, "secret_set": jwt_secret_is_set()}
 
 
 # === STAFF ACCESS: Code d'accès pour scanner uniquement ===

@@ -674,8 +674,20 @@ async def use_discount_code(code_id: str):
 
 # === v11.4: ENDPOINTS SUBSCRIPTIONS (ABONNEMENTS) ===
 @promo_router.get("/subscriptions/status")
-async def get_subscription_status(email: str = "", code: str = ""):
-    """Récupère le statut d'abonnement d'un utilisateur v11.4 — v95/v151: retourne UNIQUEMENT les abonnements dont le code promo est encore actif et assigné"""
+async def get_subscription_status(request: Request, email: str = "", code: str = ""):
+    """Récupère le statut d'abonnement d'un utilisateur v11.4 — v95/v151: retourne UNIQUEMENT les abonnements dont le code promo est encore actif et assigné
+
+    V296 (sécurité) : la requête PAR EMAIL ne révèle plus le CODE ABONNÉ complet à
+    un simple connaisseur de l'email (faille : quiconque avait l'email récupérait le
+    code et se faisait passer pour l'abonné). Le code n'est renvoyé en clair que si
+    l'appelant PROUVE son droit :
+      - il fournit déjà le `code` exact en paramètre (il le connaît donc) ; OU
+      - il présente un JETON D'APPAREIL abonné valide (X-Subscriber-Token) dont
+        l'email/le code correspond ; OU
+      - il est coach/admin authentifié par JWT signé (dashboard).
+    Sinon, le code est MASQUÉ (`code_masked`, `code` = null). GARDE-FOU : ce
+    masquage ne s'active que si JWT_SECRET est posé (sinon aucun jeton ne peut
+    exister et on garde le comportement d'avant — zéro régression, cf. transition V265)."""
     if not email and not code:
         return {"success": False, "message": "Email ou code requis"}
 
@@ -739,12 +751,41 @@ async def get_subscription_status(email: str = "", code: str = ""):
             "message": "Aucun abonnement actif"
         }
 
+    # === V296 : décider si on montre les CODES en clair ===
+    from api.routes.shared import subscriber_from_request, coach_jwt_email, jwt_secret_is_set
+    secret_set = jwt_secret_is_set()
+    result_codes = {(s.get("code") or "").upper() for s in verified_subs}
+    full_access = True  # défaut permissif -> comportement d'avant tant que rien ne prouve un abus
+    if secret_set:
+        # Le masquage ne concerne QUE la requête par email (le vecteur de fuite).
+        # Une requête par `code` exact ne révèle rien de neuf (l'appelant l'a déjà).
+        if code:
+            full_access = True
+        else:
+            full_access = False
+            sub_tok = subscriber_from_request(request)
+            if sub_tok:
+                if user_email and sub_tok.get("email") == user_email:
+                    full_access = True
+                elif sub_tok.get("code") in result_codes:
+                    full_access = True
+            if not full_access:
+                cem = coach_jwt_email(request)  # JWT signé uniquement (pas X-User-Email)
+                if cem:  # coach/admin authentifié -> vision complète (dashboard)
+                    full_access = True
+
+    def _mask_code(c):
+        c = c or ""
+        if len(c) <= 6:
+            return "•••••"
+        return c[:4] + "•••••" + c[-2:]
+
     def format_sub(s):
-        return {
+        raw_code = s.get("code")
+        out = {
             "id": s.get("id"),
             "email": s.get("email"),
             "name": s.get("name"),
-            "code": s.get("code"),
             "offer_name": s.get("offer_name"),
             "offer_price": s.get("offer_price"),
             "total_sessions": s.get("total_sessions"),
@@ -753,11 +794,19 @@ async def get_subscription_status(email: str = "", code: str = ""):
             "expires_at": s.get("expires_at"),
             "status": s.get("status")
         }
+        if full_access:
+            out["code"] = raw_code
+        else:
+            # V296 : code masqué -> inutilisable pour usurper (publier/réserver).
+            out["code"] = None
+            out["code_masked"] = _mask_code(raw_code)
+        return out
 
     # Rétro-compatible : "subscription" = premier résultat
     return {
         "success": True,
         "hasSubscription": True,
+        "codes_masked": (not full_access),  # indice pour le frontend (ne pas écraser un vrai code)
         "subscription": format_sub(verified_subs[0]),
         "subscriptions": [format_sub(s) for s in verified_subs]
     }

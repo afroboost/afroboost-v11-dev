@@ -23,6 +23,15 @@ axios.interceptors.request.use((config) => {
         }
       }
     }
+    // 3. V296 : jeton d'appareil ABONNÉ (en-tête distinct, ne touche pas au JWT coach).
+    //    Prouve la possession d'un code valide -> évite d'exposer le code en clair
+    //    et débloque la vision complète (codes non masqués) pour l'abonné légitime.
+    if (!config.headers['X-Subscriber-Token']) {
+      const subTok = localStorage.getItem('afroboost_subscriber_token');
+      if (subTok) {
+        config.headers['X-Subscriber-Token'] = subTok;
+      }
+    }
   } catch (e) { /* ignore */ }
   return config;
 });
