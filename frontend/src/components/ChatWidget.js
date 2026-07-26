@@ -1787,6 +1787,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   // V263: modale de publication (abonne ou coach) et menu de navigation replie.
   var _v263Pub = useState(false); var v263ShowPublish = _v263Pub[0]; var setV263ShowPublish = _v263Pub[1];
   var _v263PubCode = useState(''); var v263PublishCode = _v263PubCode[0]; var setV263PublishCode = _v263PubCode[1];
+  // V294 (Partie C) : état bref de chargement pendant la résolution du code par email.
+  var _v294PubResolving = useState(false); var v294PublishResolving = _v294PubResolving[0]; var setV294PublishResolving = _v294PubResolving[1];
   var _v263Menu = useState(false); var v263MenuOpen = _v263Menu[0]; var setV263MenuOpen = _v263Menu[1];
   // v162f: Coach profile photo
   var _cpro = useState(null); var coachProfile = _cpro[0]; var setCoachProfile = _cpro[1];
@@ -9036,7 +9038,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                             saisie : c'est lui que le serveur revalide. */}
                         <button
                           type="button"
-                          onClick={function(e) {
+                          disabled={v294PublishResolving}
+                          onClick={async function(e) {
                             e.stopPropagation();
                             var sub = afroboostProfile.subscription || {};
                             var subs = afroboostProfile.allSubscriptions || [];
@@ -9044,22 +9047,63 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                             // connexion), pas seulement dans subscription.code -> repli ajouté,
                             // sinon PublishModal envoyait subscriber_code='' (chemin coach) et échouait.
                             var code = sub.code || (subs[0] && subs[0].code) || afroboostProfile.code || '';
-                            setV263PublishCode(code);
-                            setV263ShowPublish(true);
+                            if (code) {
+                              setV263PublishCode(code);
+                              setV263ShowPublish(true);
+                              return;
+                            }
+                            // V294 (Partie C) : profil ancien (d'avant V292) SANS code local.
+                            // On résout le code via l'API PAR EMAIL — le MÊME endpoint que la
+                            // réservation (qui, elle, affiche bien le code). Diagnostic prouvé
+                            // en prod : le backend accepte, seul le code manquait côté front.
+                            var email = (afroboostProfile.email || '').trim();
+                            if (!email) {
+                              alert('Aucun abonnement actif trouvé pour votre email.');
+                              return;
+                            }
+                            setV294PublishResolving(true);
+                            try {
+                              var r = await axios.get(API + '/discount-codes/subscriptions/status', { params: { email: email } });
+                              var rawSubs = (r.data && (r.data.subscriptions || (r.data.subscription ? [r.data.subscription] : []))) || [];
+                              // Même déduplication par code que la réservation (v151).
+                              var seen = {}; var actives = [];
+                              rawSubs.forEach(function(s) {
+                                var k = ((s && s.code) || '').toUpperCase();
+                                if (!k || seen[k]) return;
+                                seen[k] = true; actives.push(s);
+                              });
+                              var resolved = (actives[0] && actives[0].code) || '';
+                              if (!resolved) {
+                                alert('Aucun abonnement actif trouvé pour votre email.');
+                                return;
+                              }
+                              // Mémoriser (merge) -> les prochains clics sont instantanés.
+                              v294MergeProfile({ code: resolved, subscription: actives[0], allSubscriptions: actives });
+                              setAfroboostProfile(function(prev) {
+                                return Object.assign({}, prev, { code: resolved, subscription: actives[0], allSubscriptions: actives });
+                              });
+                              setV263PublishCode(resolved);
+                              setV263ShowPublish(true);
+                            } catch (err) {
+                              alert('Impossible de vérifier votre abonnement. Réessayez.');
+                            } finally {
+                              setV294PublishResolving(false);
+                            }
                           }}
                           title="Publier une photo ou une vidéo"
                           aria-label="Publier une photo ou une vidéo"
                           style={{
                             height: '28px', borderRadius: '14px', padding: '0 12px',
                             background: 'var(--primary-color, #D91CD2)', color: '#fff',
-                            border: 'none', cursor: 'pointer', flexShrink: 0,
+                            border: 'none', cursor: v294PublishResolving ? 'wait' : 'pointer', flexShrink: 0,
+                            opacity: v294PublishResolving ? 0.7 : 1,
                             display: 'flex', alignItems: 'center', gap: '5px',
                             fontSize: '12px', fontWeight: 700
                           }}
                           data-testid="chat-publish-subscriber"
                         >
                           {/* V267: « Publier + » au lieu du rond « + » seul */}
-                          Publier
+                          {v294PublishResolving ? 'Publier…' : 'Publier'}
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ flexShrink: 0 }}>
                             <line x1="12" y1="5" x2="12" y2="19"></line>
                             <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -9981,8 +10025,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         title="Aide / questions fréquentes"
                         data-testid="help-btn"
                       >
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <circle cx="12" cy="12" r="10"></circle>
+                        {/* V294 (Partie D) : cercle SVG retiré — le fond rond du bouton suffit
+                            (évitait un double rond). On garde juste le point d'interrogation. */}
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
                           <line x1="12" y1="17" x2="12.01" y2="17"></line>
                         </svg>
