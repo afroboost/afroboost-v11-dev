@@ -46,7 +46,9 @@ const PaymentConfigTab = ({ paymentConfig, setPaymentConfig, coachEmail }) => {
     }
   };
 
-  const isConfigured = paymentConfig?.stripe_enabled || paymentConfig?.paypal_enabled || paymentConfig?.mobile_money_enabled;
+  // V311j : un lien TWINT direct renseigné compte comme « configuré » (le bandeau
+  // l'ignorait, affichant « Non configuré » alors que TWINT est proposé aux clients).
+  const isConfigured = paymentConfig?.stripe_enabled || paymentConfig?.paypal_enabled || paymentConfig?.mobile_money_enabled || !!(paymentConfig?.twint_direct_url && paymentConfig.twint_direct_url.trim());
 
   const sectionStyle = {
     background: 'rgba(255,255,255,0.03)',

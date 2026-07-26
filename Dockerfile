@@ -30,7 +30,7 @@ ENV REACT_APP_CLOUDINARY_UPLOAD_PRESET=$REACT_APP_CLOUDINARY_UPLOAD_PRESET
 # Changer la valeur de cet ARG modifie l'instruction Docker qui suit : le cache
 # de `craco build` est invalide et le frontend est TOUJOURS reconstruit a neuf.
 # -> BUMPER cette valeur a chaque fois qu'un changement frontend doit partir.
-ARG FRONTEND_CACHEBUST=v311g-20260727
+ARG FRONTEND_CACHEBUST=v311j-20260727
 
 # V308b : la limite mémoire Node de 512 Mo était trop juste pour des fichiers de
 # 10 000+ lignes (ChatWidget.js, App.js, CoachDashboard.js) -> build tué par OOM

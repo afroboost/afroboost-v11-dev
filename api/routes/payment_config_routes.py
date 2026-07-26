@@ -59,6 +59,11 @@ def compute_is_configured(config: dict) -> bool:
         return True
     if config.get("mobile_money_enabled") and config.get("cinetpay_api_key"):
         return True
+    # V311j : un lien TWINT direct renseigné compte comme méthode configurée
+    # (bug : le bandeau « Non configuré » l'ignorait alors que le paiement TWINT
+    # est bel et bien proposé aux clients).
+    if (config.get("twint_direct_url") or "").strip():
+        return True
     return False
 
 
