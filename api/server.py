@@ -2782,6 +2782,11 @@ async def get_today_birthdays():
 _V292_LANGS = {
     "fr": "français", "en": "anglais", "de": "allemand",
     "it": "italien", "es": "espagnol", "pt": "portugais",
+    # V297 : les 9 langues du sélecteur du site (App.js ~ligne 913). Les langues
+    # africaines manquaient -> la traduction du chat les rejetait (400). Nom COMPLET
+    # pour que gpt-4o-mini traduise correctement.
+    "ln": "lingala", "wo": "wolof", "sw": "swahili",
+    "bm": "bambara", "bas": "bassa (langue du Cameroun)", "ht": "créole haïtien",
 }
 
 
@@ -5917,14 +5922,6 @@ async def _v272c_resolve_coach_for_pub(pub: dict) -> str:
     sc = (pub.get("subscriber_code") or "").strip()
     if not sc:
         return DEFAULT_COACH_ID
-    if sc.upper().startswith("AFR-"):
-        try:
-            ok, _n, cid = await _v261_resolve_subscriber(sc)
-            if ok and cid:
-                return cid
-        except Exception:
-            pass
-        return DEFAULT_COACH_ID
     if "@" in sc:
         # Chemin coach : l'email etait stocke tel quel dans subscriber_code.
         if is_super_admin(sc):
@@ -5937,6 +5934,17 @@ async def _v272c_resolve_coach_for_pub(pub: dict) -> str:
                 return sc
         except Exception:
             pass
+        return DEFAULT_COACH_ID
+    # V297 : chemin abonne — NE PLUS exiger le prefixe « AFR- ». Un code d'un autre
+    # format (ex. BASSBOOSTX-11) tombait avant sur DEFAULT_COACH_ID : sa publication
+    # etait rattachee a l'admin au lieu du vrai coach de l'abonne. On resout donc
+    # tout code non-email via _v261_resolve_subscriber (meme correction que V293).
+    try:
+        ok, _n, cid = await _v261_resolve_subscriber(sc)
+        if ok and cid:
+            return cid
+    except Exception:
+        pass
     return DEFAULT_COACH_ID
 
 
@@ -6098,6 +6106,24 @@ async def create_publication(request: Request):
     # author_id vide, l'avatar reste en initiales non cliquable. Comme les
     # publications expirent en 48 h, aucune migration n'est utile.
     author_id = code if ("@" in code) else ""
+    # V297 (fix photo publication abonné) : quand on publie avec un CODE (pas un
+    # email), résoudre l'EMAIL de l'abonné depuis la base. Avant, author_id restait
+    # vide -> le bloc de recherche de photo ci-dessous ne s'exécutait pas ->
+    # author_photo vide -> avatar en initiales, alors que la photo existe. En posant
+    # l'email comme author_id, la photo est retrouvée ET l'avatar devient cliquable
+    # (GET /users/{id}/profile résout un email). Si aucun email : on garde le
+    # comportement actuel (author_id vide, initiales) — pas de plantage.
+    if not author_id and code:
+        _sub_email = ""
+        _s = await db.subscriptions.find_one({"code": code, "status": "active"}, {"_id": 0, "email": 1})
+        if _s:
+            _sub_email = (_s.get("email") or "").strip()
+        if not _sub_email:
+            _d = await db.discount_codes.find_one({"code": code, "active": True}, {"_id": 0, "assignedEmail": 1})
+            if _d:
+                _sub_email = (_d.get("assignedEmail") or "").strip()
+        if _sub_email:
+            author_id = _sub_email
     author_photo = ""
     if author_id:
         # V289 : chercher la photo dans users, PUIS coach_profiles (la photo coach
@@ -6450,7 +6476,13 @@ async def _bt_subscriber_credit(code: str):
     (collection discount_codes), exactement comme _v261_resolve_subscriber.
     """
     code = (code or "").strip().upper()
-    if not code.startswith("AFR-"):
+    # V297 : NE PLUS exiger le préfixe « AFR- ». Des clients ont des codes d'un autre
+    # format (ex. BASSBOOSTX-11) qui étaient refusés à tort -> live BoostTribe
+    # inaccessible malgré des séances restantes. La VRAIE validation est la présence
+    # du code, ACTIF et avec crédit, dans subscriptions/discount_codes (ci-dessous).
+    # Un email de coach n'est pas un `code` : il n'y matchera jamais, aucune régression de sécu.
+    # (Même correction que V293 sur _v261_resolve_subscriber, publication.)
+    if not code or len(code) < 3:
         return None
     sub = await db.subscriptions.find_one(
         {"code": code, "status": "active"},

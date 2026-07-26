@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v296'; // V296: sécurité connexion abonné — jeton d'appareil (code=secret), codes masqués par email sans jeton, transition douce
+var CACHE_NAME = 'afroboost-v297'; // V297: live BoostTribe codes sans AFR- + photo auteur par email + globe traduction visible (9 langues) + horodatage repare
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

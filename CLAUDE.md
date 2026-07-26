@@ -29,6 +29,29 @@ Afroboost is a SaaS fitness platform built on FastAPI + React, deployed on Cooli
 - All API routes start with `/api/` or are under router prefixes
 - **ALL icons must be SVG inline** — never use emoji Unicode characters (🕐, 📍, 👥, ⏱, etc.) as icons in the UI. Use inline `<svg>` elements with `stroke="currentColor"` instead. This applies to ALL components (App.js, CoachVitrine.js, OfferCard.js, CoachDashboard.js, OfferWizard.js, etc.).
 
+## 🎨 RÈGLE ABSOLUE — COULEURS PERSONNALISÉES DU COACH (erreur récurrente, signalée plusieurs fois)
+
+> **Quand le coach/admin personnalise ses couleurs (page « Ma Vitrine »), ces couleurs doivent s'appliquer PARTOUT sur sa vitrine — sans exception.**
+
+C'est l'erreur la plus répétée du projet. À vérifier SYSTÉMATIQUEMENT avant chaque commit touchant l'UI :
+
+1. **JAMAIS de couleur codée en dur** dans un composant. Interdit : `#a855f7`, `#8B5CF6`, `#9333ea`, `#D91CD2` écrits directement dans un `style` ou un `className`.
+   **Toujours** : `var(--primary-color, #D91CD2)`, `var(--secondary-color, …)`, `rgba(var(--primary-rgb, 217, 28, 210), …)`.
+   Le `#D91CD2` n'est qu'une VALEUR DE SECOURS dans le `var()`, jamais une valeur directe.
+
+2. **Portée = TOUTE la vitrine**, y compris les zones souvent oubliées :
+   - ChatWidget dans ses TROIS espaces : visiteur, abonné, coach partenaire / coach-admin
+   - Tous les boutons ronds de la barre de saisie (emoji, calendrier, « ? », globe) — **même couleur, même taille, même opacité dans les trois espaces**
+   - Modales (publication, réservation, profil, staff), panneaux, badges, compteurs
+   - Publications, offres, boutique, page « Devenir partenaire », sélecteurs de langue
+   - États : survol, focus, actif, désactivé, chargement
+
+3. **Cohérence inter-espaces** : un même composant (ex. le bouton calendrier) doit être VISUELLEMENT IDENTIQUE côté abonné et côté coach. Pas de variante isolée.
+
+4. **Pas de FOUC** : au chargement, la couleur personnalisée doit être appliquée dès la première milliseconde (lecture depuis le localStorage dans un script inline en `<head>`), jamais après un flash de la couleur par défaut.
+
+5. **Avant chaque commit UI** : rechercher les hex codés en dur (`#[0-9a-fA-F]{6}`) dans les fichiers modifiés et vérifier que chacun est bien une valeur de secours dans un `var()`, et non une couleur imposée.
+
 ## Known Gotchas
 1. WhatsApp template variables CANNOT contain: emojis, full URLs (https://...), Unicode bold chars. Domain names without protocol are OK.
 2. MongoDB queries on large groups (800+ members) must use batch `$in` queries, NOT individual `find_one()` calls

@@ -43,6 +43,7 @@ import { PublishModal } from './Publications'; // V263
 import faqAfroboost, { faqCategories, faqText, faqUiText } from '../data/faqAfroboost'; // V274/V275: FAQ chat IA multilingue
 import Cropper from 'react-easy-crop'; // V279: recadrage circulaire de la photo de profil
 import { courseOccurrenceDate } from '../utils/zurichTime'; // V295: date d'occurrence fiable (Europe/Zurich)
+import { TRANSLATE_LANGS } from '../config/translateLangs'; // V297: 9 langues du site + it/es/pt
 
 const API = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
 const SOCKET_URL = process.env.REACT_APP_BACKEND_URL || ''; // URL Socket.IO (même que backend)
@@ -153,6 +154,12 @@ const formatMessageTime = (dateStr) => {
     } else {
       const day = String(date.getDate()).padStart(2, '0');
       const month = String(date.getMonth() + 1).padStart(2, '0');
+      // V297 : au-delà de 7 jours, afficher AUSSI l'année (JJ/MM/AAAA) pour que la
+      // date reste claire dans les vieilles conversations.
+      const diffDays = Math.floor((now.getTime() - date.getTime()) / 86400000);
+      if (diffDays > 7) {
+        return `${day}/${month}/${date.getFullYear()}, ${timeStr}`;
+      }
       return `${day}/${month}, ${timeStr}`;
     }
   } catch (e) {
@@ -609,15 +616,16 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
   const messageText = msg.content || msg.text || msg.body || '';
   const htmlContent = parseMessageContent(messageText);
   const isOtherUser = isCommunity && msg.type === 'user' && msg.senderId && msg.senderId !== currentUserId;
+  // V297 : certains messages (système/bot) posent `timestamp` au lieu de `created_at`
+  // -> l'horodatage ne s'affichait pas. On tolère les deux (et createdAt).
+  const msgDate = msg.created_at || msg.timestamp || msg.createdAt || '';
 
   // V292 : traduction À LA DEMANDE, bulle par bulle (pas d'auto-traduction).
   const [v292Menu, setV292Menu] = useState(false);
   const [v292Translation, setV292Translation] = useState('');
   const [v292Busy, setV292Busy] = useState(false);
-  const V292_LANGS = [
-    { code: 'fr', label: 'FR' }, { code: 'en', label: 'EN' }, { code: 'de', label: 'DE' },
-    { code: 'it', label: 'IT' }, { code: 'es', label: 'ES' }, { code: 'pt', label: 'PT' }
-  ];
+  // V297 : mêmes langues que le sélecteur du site (9 langues + it/es/pt), liste partagée.
+  const V292_LANGS = TRANSLATE_LANGS;
   const v292Translate = async (lang) => {
     setV292Menu(false);
     setV292Busy(true);
@@ -1204,24 +1212,39 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             <span style={{ position: 'relative', display: 'inline-flex', verticalAlign: 'middle', marginLeft: 6 }}>
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); if (v292Translation) { setV292Translation(''); } else { setV292Menu(m => !m); } }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (v292Translation) { setV292Translation(''); return; }
+                  // V297 : si une langue préférée est déjà choisie (bouton globe de la
+                  // barre de saisie), on traduit DIRECTEMENT dans cette langue en 1 clic.
+                  var _pref = '';
+                  try { _pref = localStorage.getItem('afroboost_translate_lang') || ''; } catch (e2) {}
+                  if (_pref) { v292Translate(_pref); } else { setV292Menu(m => !m); }
+                }}
                 title="Traduire"
                 aria-label="Traduire ce message"
-                style={{ background: 'none', border: 'none', padding: 0, cursor: v292Busy ? 'wait' : 'pointer', opacity: 0.55, display: 'inline-flex' }}
+                style={{ background: 'none', border: 'none', padding: 0, cursor: v292Busy ? 'wait' : 'pointer', opacity: 0.9, display: 'inline-flex' }}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                {/* V297 : globe plus visible (16px, opacité 0.9) */}
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
                   <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
                 </svg>
               </button>
               {v292Menu && (
-                <span style={{ position: 'absolute', bottom: '120%', left: 0, zIndex: 50, background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, padding: 4, display: 'flex', gap: 2, boxShadow: '0 4px 16px rgba(0,0,0,0.5)' }}>
-                  {V292_LANGS.map(l => (
-                    <button key={l.code} type="button" onClick={(e) => { e.stopPropagation(); v292Translate(l.code); }}
-                      style={{ background: 'none', border: 'none', color: '#fff', fontSize: 11, fontWeight: 600, padding: '3px 6px', borderRadius: 5, cursor: 'pointer' }}>
-                      {l.label}
-                    </button>
-                  ))}
+                // V297 : même style que le sélecteur de langue du site (fond sombre,
+                // bordure violette translucide, arrondi 8) + flex-wrap pour 12 langues.
+                <span style={{ position: 'absolute', bottom: '120%', left: 0, zIndex: 50, background: 'rgba(0,0,0,0.95)', border: '1px solid rgba(139,92,246,0.4)', borderRadius: 8, padding: 5, display: 'flex', flexWrap: 'wrap', gap: 3, maxWidth: 190, boxShadow: '0 4px 16px rgba(0,0,0,0.5)' }}>
+                  {V292_LANGS.map(l => {
+                    let _active = false;
+                    try { _active = (localStorage.getItem('afroboost_translate_lang') || '') === l.code; } catch (e) {}
+                    return (
+                      <button key={l.code} type="button" onClick={(e) => { e.stopPropagation(); v292Translate(l.code); }}
+                        style={{ background: _active ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.08)', border: 'none', color: '#fff', fontSize: 11, fontWeight: 600, padding: '4px 7px', borderRadius: 5, cursor: 'pointer' }}>
+                        {l.label}
+                      </button>
+                    );
+                  })}
                 </span>
               )}
             </span>
@@ -1255,15 +1278,16 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
         )}
         
         {/* Horodatage sous la bulle - visible et clair */}
-        {msg.created_at && (
+        {/* V297 : msgDate = created_at OU timestamp OU createdAt (voir plus haut). */}
+        {msgDate && (
           <div style={{
             fontSize: '10px',
-            color: '#999',
+            color: 'rgba(255,255,255,0.55)', // texte secondaire neutre (pas la couleur de marque)
             marginTop: '4px',
             textAlign: isUser ? 'right' : 'left',
             fontWeight: '400'
           }}>
-            {formatMessageTime(msg.created_at)}
+            {formatMessageTime(msgDate)}
           </div>
         )}
       </div>
@@ -1807,6 +1831,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   var _v263PubCode = useState(''); var v263PublishCode = _v263PubCode[0]; var setV263PublishCode = _v263PubCode[1];
   // V294 (Partie C) : état bref de chargement pendant la résolution du code par email.
   var _v294PubResolving = useState(false); var v294PublishResolving = _v294PubResolving[0]; var setV294PublishResolving = _v294PubResolving[1];
+  // V297 : langue de traduction préférée + ouverture du menu du bouton globe (barres de saisie).
+  var _v297Lang = useState(function () { try { return localStorage.getItem('afroboost_translate_lang') || ''; } catch (e) { return ''; } });
+  var v297PreferredLang = _v297Lang[0]; var setV297PreferredLangState = _v297Lang[1];
+  var _v297LangMenu = useState(false); var v297LangMenuOpen = _v297LangMenu[0]; var setV297LangMenuOpen = _v297LangMenu[1];
   var _v263Menu = useState(false); var v263MenuOpen = _v263Menu[0]; var setV263MenuOpen = _v263Menu[1];
   // v162f: Coach profile photo
   var _cpro = useState(null); var coachProfile = _cpro[0]; var setCoachProfile = _cpro[1];
@@ -3054,7 +3082,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         id: `sys_reserve_${Date.now()}`,
         type: 'ai',
         text: '📋 Pour réserver un cours, vous devez d\'abord souscrire à un pack. Consultez nos offres pour commencer !',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(), created_at: new Date().toISOString() /* V297 */
       }]);
       return;
     }
@@ -5596,6 +5624,57 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     });
   };
 
+  // V297 : mémorise la langue de traduction préférée (localStorage + synchro backend
+  // coach V294). Une fois choisie, les mini-globes des bulles traduisent en 1 clic.
+  const setPreferredTranslateLang = (code) => {
+    try { localStorage.setItem('afroboost_translate_lang', code); } catch (e) { /* silencieux */ }
+    setV297PreferredLangState(code);
+    try { v294SaveCoachPref('translate_lang', code); } catch (e) { /* no-op hors mode coach */ }
+  };
+
+  // V297 : bouton GLOBE de traduction pour la barre de saisie (abonné ET coach).
+  // Rendu unique -> visuellement IDENTIQUE dans les deux espaces. Couleurs = thème
+  // (var(--primary-color)/--primary-rgb), jamais de violet codé en dur. `size`
+  // s'adapte aux boutons voisins de chaque barre (40 abonné, 32 coach).
+  const renderTranslateGlobe = (size) => {
+    const d = size || 40;
+    const icon = Math.round(d * 0.5);
+    return (
+      <div style={{ position: 'relative', flexShrink: 0 }}>
+        <button
+          type="button"
+          onClick={() => setV297LangMenuOpen(o => !o)}
+          title="Langue de traduction"
+          data-testid="translate-globe-btn"
+          style={{
+            width: d, height: d, borderRadius: '50%',
+            background: v297LangMenuOpen ? 'var(--primary-color, #D91CD2)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)',
+            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0
+          }}
+        >
+          <svg width={icon} height={icon} viewBox="0 0 24 24" fill="none" stroke={v297LangMenuOpen ? '#fff' : 'var(--primary-color, #D91CD2)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+          </svg>
+        </button>
+        {v297LangMenuOpen && (
+          // Même style que le sélecteur de langue du site (fond sombre, bordure violette
+          // translucide, arrondi 8) + flex-wrap pour 12 langues. Langue active surlignée.
+          <div style={{ position: 'absolute', bottom: '120%', left: 0, zIndex: 10000, background: 'rgba(0,0,0,0.95)', border: '1px solid rgba(139,92,246,0.4)', borderRadius: 8, padding: 5, display: 'flex', flexWrap: 'wrap', gap: 3, width: 180, boxShadow: '0 4px 16px rgba(0,0,0,0.5)' }}>
+            {TRANSLATE_LANGS.map(l => (
+              <button key={l.code} type="button"
+                onClick={() => { setPreferredTranslateLang(l.code); setV297LangMenuOpen(false); }}
+                style={{ background: v297PreferredLang === l.code ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.08)', border: 'none', color: '#fff', fontSize: 11, fontWeight: 600, padding: '4px 7px', borderRadius: 5, cursor: 'pointer' }}>
+                {l.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // V197b: Handler clic "Parler à Coach Bassi" — ouvre WhatsApp avec message pré-rempli
   const handleContactCoachBassi = () => {
     const url = 'https://wa.me/' + COACH_BASSI_WHATSAPP + '?text=' + encodeURIComponent(COACH_BASSI_WHATSAPP_MESSAGE);
@@ -5676,7 +5755,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           id: `review_confirm_${Date.now()}`,
           type: 'bot',
           text: '✅ Merci pour ton avis ! Il est maintenant visible sur la page Afroboost 💜',
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(), created_at: new Date().toISOString() /* V297 */
         }]);
         console.log('[V88] Avis soumis avec succès');
       } else {
@@ -5697,7 +5776,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           text: isDuplicate
             ? '⭐ Tu as déjà laissé un avis — merci pour ton retour !'
             : `⚠️ Erreur lors de l'envoi (${res.status}). Réessaie dans quelques secondes.`,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(), created_at: new Date().toISOString() /* V297 */
         }]);
       }
     } catch (e) {
@@ -5706,7 +5785,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         id: `review_error_${Date.now()}`,
         type: 'bot',
         text: '⚠️ Problème de connexion. Vérifie ta connexion internet et réessaie.',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(), created_at: new Date().toISOString() /* V297 */
       }]);
     }
     setReviewSubmitting(false);
@@ -8893,6 +8972,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '16px'
                         }}
                       >✨</button>
+                      {/* V297 : bouton GLOBE de traduction — même composant que côté abonné
+                          (identique visuellement), dimensionné 32 pour la barre coach. */}
+                      {renderTranslateGlobe(32)}
                       {/* Text input */}
                       <input
                         type="text"
@@ -10034,8 +10116,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           width: '40px',
                           height: '40px',
                           borderRadius: '50%',
-                          background: (messages && messages.some(m => m.type === 'quick_replies')) ? '#9333ea' : 'rgba(147, 51, 234, 0.3)',
-                          border: '1px solid rgba(147, 51, 234, 0.5)',
+                          /* V297 : couleurs du THÈME (plus de violet codé en dur) — cohérent avec globe/calendrier */
+                          background: (messages && messages.some(m => m.type === 'quick_replies')) ? 'var(--primary-color, #D91CD2)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)',
+                          border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
                           cursor: 'pointer',
                           display: 'flex',
                           alignItems: 'center',
@@ -10047,12 +10130,15 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         data-testid="help-btn"
                       >
                         {/* V294 (Partie D) : cercle SVG retiré — le fond rond du bouton suffit. */}
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={(messages && messages.some(m => m.type === 'quick_replies')) ? '#fff' : '#a855f7'} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={(messages && messages.some(m => m.type === 'quick_replies')) ? '#fff' : 'var(--primary-color, #D91CD2)'} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
                           <line x1="12" y1="17" x2="12.01" y2="17"></line>
                         </svg>
                       </button>
                     )}
+
+                    {/* V297 : bouton GLOBE de traduction (visible), même style/taille que « ? » et calendrier */}
+                    {renderTranslateGlobe(40)}
 
                     {/* v9.3.7: Icône Calendrier (Réservation) - TOUJOURS VISIBLE pour tous les utilisateurs */}
                     <button
@@ -10062,8 +10148,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         width: '40px',
                         height: '40px',
                         borderRadius: '50%',
-                        background: showReservationPanel ? '#9333ea' : 'rgba(147, 51, 234, 0.3)',
-                        border: '1px solid rgba(147, 51, 234, 0.5)',
+                        /* V297 : couleurs du THÈME (plus de violet codé en dur) */
+                        background: showReservationPanel ? 'var(--primary-color, #D91CD2)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)',
+                        border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
@@ -10073,7 +10160,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       title="Réserver un cours"
                       data-testid="calendar-btn"
                     >
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={showReservationPanel ? '#fff' : '#a855f7'} strokeWidth="2">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={showReservationPanel ? '#fff' : 'var(--primary-color, #D91CD2)'} strokeWidth="2">
                         <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
                         <line x1="16" y1="2" x2="16" y2="6"></line>
                         <line x1="8" y1="2" x2="8" y2="6"></line>
