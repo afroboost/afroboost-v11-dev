@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v291'; // V291: profil coach unifié + live admin gratuit + color picker
+var CACHE_NAME = 'afroboost-v292'; // V292: profil coach client + birthday mémorisé + publication abonné + traduction
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

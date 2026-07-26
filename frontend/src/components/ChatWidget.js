@@ -609,6 +609,29 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
   const htmlContent = parseMessageContent(messageText);
   const isOtherUser = isCommunity && msg.type === 'user' && msg.senderId && msg.senderId !== currentUserId;
 
+  // V292 : traduction À LA DEMANDE, bulle par bulle (pas d'auto-traduction).
+  const [v292Menu, setV292Menu] = useState(false);
+  const [v292Translation, setV292Translation] = useState('');
+  const [v292Busy, setV292Busy] = useState(false);
+  const V292_LANGS = [
+    { code: 'fr', label: 'FR' }, { code: 'en', label: 'EN' }, { code: 'de', label: 'DE' },
+    { code: 'it', label: 'IT' }, { code: 'es', label: 'ES' }, { code: 'pt', label: 'PT' }
+  ];
+  const v292Translate = async (lang) => {
+    setV292Menu(false);
+    setV292Busy(true);
+    try { localStorage.setItem('afroboost_translate_lang', lang); } catch (e) {}
+    try {
+      const r = await fetch(API + '/translate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: messageText, target_lang: lang })
+      });
+      const d = await r.json();
+      setV292Translation((d && d.translation) || '');
+    } catch (e) { /* silencieux */ }
+    setV292Busy(false);
+  };
+
   // v153: État pour afficher le bouton supprimer (long press mobile + hover desktop)
   const [showDelete, setShowDelete] = React.useState(false);
   const longPressTimer = React.useRef(null);
@@ -1170,10 +1193,48 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
           }}
         >
           {/* Rendu du texte avec liens cliquables */}
-          <span 
+          <span
             dangerouslySetInnerHTML={{ __html: htmlContent }}
             style={{ wordBreak: 'break-word' }}
           />
+
+          {/* V292 : traduction à la demande — petit globe + choix de langue */}
+          {messageText && messageText.trim().length > 1 && (
+            <span style={{ position: 'relative', display: 'inline-flex', verticalAlign: 'middle', marginLeft: 6 }}>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); if (v292Translation) { setV292Translation(''); } else { setV292Menu(m => !m); } }}
+                title="Traduire"
+                aria-label="Traduire ce message"
+                style={{ background: 'none', border: 'none', padding: 0, cursor: v292Busy ? 'wait' : 'pointer', opacity: 0.55, display: 'inline-flex' }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                </svg>
+              </button>
+              {v292Menu && (
+                <span style={{ position: 'absolute', bottom: '120%', left: 0, zIndex: 50, background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, padding: 4, display: 'flex', gap: 2, boxShadow: '0 4px 16px rgba(0,0,0,0.5)' }}>
+                  {V292_LANGS.map(l => (
+                    <button key={l.code} type="button" onClick={(e) => { e.stopPropagation(); v292Translate(l.code); }}
+                      style={{ background: 'none', border: 'none', color: '#fff', fontSize: 11, fontWeight: 600, padding: '3px 6px', borderRadius: 5, cursor: 'pointer' }}>
+                      {l.label}
+                    </button>
+                  ))}
+                </span>
+              )}
+            </span>
+          )}
+
+          {/* Traduction affichée sous le texte original (italique, gris clair) */}
+          {v292Busy && (
+            <div style={{ fontStyle: 'italic', color: '#999', fontSize: '0.8em', marginTop: 4 }}>Traduction…</div>
+          )}
+          {v292Translation && (
+            <div style={{ fontStyle: 'italic', color: '#bbb', fontSize: '0.85em', marginTop: 4, borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 4 }}>
+              {v292Translation}
+            </div>
+          )}
         </div>
         
         {/* === MÉDIA INLINE DÉTECTÉ AUTOMATIQUEMENT === */}
@@ -3081,6 +3142,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         whatsapp: whatsapp.trim(),
         email: email.trim(),
         code: code.trim().toUpperCase(),
+        // V292 : mémoriser la date de naissance dans afroboost_profile aussi
+        // (sinon, au rechargement via le repli profil, birthday était vide et
+        // le formulaire la redemandait).
+        birthday: (subscriberFormData.birthday || '').trim(),
         codeDetails: res.data.code, // Détails du code (type, valeur, etc.)
         subscription: subscriptionInfo, // v11.4: Infos d'abonnement
         savedAt: new Date().toISOString()
@@ -8815,7 +8880,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                             e.stopPropagation();
                             var sub = afroboostProfile.subscription || {};
                             var subs = afroboostProfile.allSubscriptions || [];
-                            var code = sub.code || (subs[0] && subs[0].code) || '';
+                            // V292 : le code abonné est dans afroboostProfile.code (posé à la
+                            // connexion), pas seulement dans subscription.code -> repli ajouté,
+                            // sinon PublishModal envoyait subscriber_code='' (chemin coach) et échouait.
+                            var code = sub.code || (subs[0] && subs[0].code) || afroboostProfile.code || '';
                             setV263PublishCode(code);
                             setV263ShowPublish(true);
                           }}

@@ -50,7 +50,8 @@ const loadSavedInfo = () => {
         const email = (parsed.email || '').trim();
         // Au moins un champ non-vide
         if (name || whatsapp || email) {
-          return { name, whatsapp, email };
+          // V292 : remonter aussi la date de naissance (plus jamais redemandée).
+          return { name, whatsapp, email, birthday: (parsed.birthday || '').trim() };
         }
       }
     }
@@ -63,7 +64,8 @@ const loadSavedInfo = () => {
         const whatsapp = (profile.whatsapp || '').trim();
         const email = (profile.email || '').trim();
         if (name || whatsapp || email) {
-          return { name, whatsapp, email };
+          // V292 : le birthday vit aussi dans afroboost_profile (repli).
+          return { name, whatsapp, email, birthday: (profile.birthday || '').trim() };
         }
       }
     }
@@ -187,18 +189,14 @@ const SubscriberForm = ({
     const saved = loadSavedInfo();
     if (saved) {
       console.log('[SUBSCRIBER-FORM] Auto-fill from localStorage:', JSON.stringify(saved));
-      // V289 : recharger aussi la date de naissance mémorisée.
-      let savedBirthday = '';
-      try {
-        const subInfo = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-        if (subInfo.birthday) savedBirthday = subInfo.birthday;
-      } catch (e) {}
+      // V289/V292 : recharger aussi la date de naissance mémorisée (via
+      // loadSavedInfo, qui la lit depuis afroboost_subscriber_info OU afroboost_profile).
       setFormData(prev => ({
         ...prev,
         name: saved.name || prev.name,
         whatsapp: saved.whatsapp || prev.whatsapp,
         email: saved.email || prev.email,
-        birthday: savedBirthday || prev.birthday || ''
+        birthday: saved.birthday || prev.birthday || ''
       }));
       showFeedback('restored');
     } else {

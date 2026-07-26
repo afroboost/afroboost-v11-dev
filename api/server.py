@@ -2472,6 +2472,14 @@ async def get_user_profile(participant_id: str):
     Récupère le profil utilisateur depuis la DB (PAS localStorage).
     Cherche dans 'users' puis 'chat_participants'.
     """
+    # V292 : si l'identifiant est un email (coach), on prépare la photo du coach
+    # depuis coach_profiles — c'est LÀ que vit sa photo, pas dans `users`. Sans
+    # ça, le mini-profil coach ouvert côté client s'affichait SANS photo.
+    _coach_cp = None
+    if "@" in participant_id:
+        _coach_cp = await db.coach_profiles.find_one({"email": participant_id}, {"_id": 0, "photo_url": 1, "display_name": 1})
+    _coach_photo = (_coach_cp or {}).get("photo_url") or None
+
     # 1. Chercher dans la collection 'users'
     # V279b : on matche AUSSI par email — un profil de coach (identifie par son
     # email) doit etre trouvable pour le mini-profil ouvert depuis une publication.
@@ -2479,20 +2487,35 @@ async def get_user_profile(participant_id: str):
         {"$or": [{"id": participant_id}, {"participant_id": participant_id}, {"email": participant_id}]},
         {"_id": 0}
     )
-    
+
     if user:
-        photo_url = user.get("photo_url") or user.get("photoUrl")
+        photo_url = user.get("photo_url") or user.get("photoUrl") or _coach_photo  # V292 : repli coach_profiles
         return {
             "success": True,
             "source": "users",
             "participant_id": participant_id,
             "name": user.get("name") or user.get("username"),
-            "email": user.get("email"),
+            "email": user.get("email") or (participant_id if "@" in participant_id else None),
             "photo_url": photo_url,
             # V279 : champs mini-profil (optionnels).
             "bio": user.get("bio") or "",
             "age": user.get("age"),
             "passions": user.get("passions") or "",
+        }
+
+    # V292 : coach identifié par email SANS doc `users` (il n'a rempli que sa
+    # photo dans coach_profiles) -> renvoyer au moins photo + nom.
+    if _coach_cp or (_coach_photo and "@" in participant_id):
+        return {
+            "success": True,
+            "source": "coach_profiles",
+            "participant_id": participant_id,
+            "name": (_coach_cp or {}).get("display_name") or participant_id.split("@")[0],
+            "email": participant_id,
+            "photo_url": _coach_photo,
+            "bio": "",
+            "age": None,
+            "passions": "",
         }
     
     # 2. Fallback: chercher dans 'chat_participants'
@@ -2753,6 +2776,50 @@ async def get_today_birthdays():
         })
 
     return {"birthdays": birthdays, "count": len(birthdays)}
+
+
+# === V292 : traduction de messages à la demande (réutilise l'IA OpenAI) ===
+_V292_LANGS = {
+    "fr": "français", "en": "anglais", "de": "allemand",
+    "it": "italien", "es": "espagnol", "pt": "portugais",
+}
+
+
+@api_router.post("/translate")
+async def translate_text(request: Request):
+    """V292 : traduit un texte dans la langue cible (fr/en/de/it/es/pt).
+    À la demande, message par message (pas d'auto-traduction). Réutilise la clé
+    OpenAI déjà en place (comme /api/chat)."""
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    target = (body.get("target_lang") or "").strip().lower()
+    if not text:
+        return {"translation": ""}
+    if target not in _V292_LANGS:
+        raise HTTPException(status_code=400, detail="Langue cible non supportée")
+    if len(text) > 2000:
+        text = text[:2000]
+
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if not openai_key:
+        raise HTTPException(status_code=503, detail="Traduction indisponible (OPENAI_API_KEY manquant)")
+    try:
+        client = OpenAI(api_key=openai_key)
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": f"Tu es un traducteur. Traduis le texte de l'utilisateur en {_V292_LANGS[target]}. Réponds UNIQUEMENT avec la traduction, sans guillemets ni commentaire."},
+                {"role": "user", "content": text},
+            ],
+            max_tokens=800,
+            temperature=0.2,
+        )
+        translation = (response.choices[0].message.content or "").strip()
+        return {"translation": translation, "target_lang": target}
+    except Exception as e:
+        logger.error(f"[V292] Traduction échouée: {e}")
+        raise HTTPException(status_code=502, detail="La traduction a échoué")
 
 
 # === COACH NOTIFICATIONS ===
