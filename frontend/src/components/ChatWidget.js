@@ -1581,6 +1581,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   var _cSec1 = useState(true); var showSubscribers = _cSec1[0]; var setShowSubscribers = _cSec1[1];
   var _cSec2 = useState(true); var showVisitors = _cSec2[0]; var setShowVisitors = _cSec2[1];
   var _cSec3 = useState(false); var showSmartLinks = _cSec3[0]; var setShowSmartLinks = _cSec3[1];
+  // V281: filtre unique (chips) + carte "swipée" ouverte (swipe-to-delete mobile)
+  var _cFilt = useState('all'); var conversationFilter = _cFilt[0]; var setConversationFilter = _cFilt[1];
+  var _cSwipe = useState(null); var swipedConv = _cSwipe[0]; var setSwipedConv = _cSwipe[1];
   var _cres = useState([]); var coachReservations = _cres[0]; var setCoachReservations = _cres[1];
   // V236: ajustements de seances en cours ({ subId: true }). Sert a desactiver
   // les boutons +/- pendant l'appel reseau — sans cela un double clic envoie
@@ -7793,9 +7796,18 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       );
                     })()}
 
-                    {/* Tab: Conversations — V198: catégorisé en 3 sections (Abonnés, Visiteurs, Liens Intelligents) */}
+                    {/* Tab: Conversations — V281: filtres en CHIPS + swipe-to-delete */}
                     {coachDashTab === 'conversations' && (() => {
-                      // V198: Helper pour rendre la carte session (réutilisé dans les 3 sections)
+                      // Suppression d'une conversation (mutualisee swipe + clic droit).
+                      var doDeleteSession = function(session) {
+                        if (!window.confirm('Supprimer cette conversation avec ' + (session.participantName || 'Visiteur anonyme') + ' ?')) return;
+                        axios.delete(API + '/chat/sessions/' + session.id, {
+                          headers: { 'X-User-Email': getCoachEmail() }
+                        }).then(function() { setSwipedConv(null); loadCoachSessions(); })
+                          .catch(function(err) { alert('Erreur: ' + ((err.response && err.response.data && err.response.data.detail) || 'Suppression impossible')); });
+                      };
+
+                      // V281: carte avec swipe-droite (mobile) + clic droit (desktop).
                       var renderSessionCard = function(session) {
                         var categoryBadge = null;
                         if (session.category === 'subscriber') {
@@ -7803,126 +7815,115 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         } else if (session.category === 'smart_link') {
                           categoryBadge = React.createElement('span', { style: { background: '#FF2DAA', color: '#fff', fontSize: '9px', padding: '2px 6px', borderRadius: '8px', marginLeft: '6px', fontWeight: 600 } }, 'Lien');
                         }
+                        var isSwiped = swipedConv === session.id;
                         return (
-                          <div
-                            key={session.id}
-                            onClick={function(e) { if (e.currentTarget._lpFired) { e.currentTarget._lpFired = false; return; } loadCoachSessionMessages(session); }}
-                            onTouchStart={function(e) {
-                              var el = e.currentTarget;
-                              el._lpFired = false;
-                              var t = setTimeout(function() {
-                                el._lpFired = true;
-                                if (window.confirm('Supprimer cette conversation avec ' + (session.participantName || 'Visiteur anonyme') + ' ?')) {
-                                  axios.delete(API + '/chat/sessions/' + session.id, {
-                                    headers: { 'X-User-Email': getCoachEmail() }
-                                  }).then(function() { loadCoachSessions(); })
-                                    .catch(function(err) { alert('Erreur: ' + ((err.response && err.response.data && err.response.data.detail) || 'Suppression impossible')); });
-                                }
-                              }, 800);
-                              el._lpTimer = t;
-                            }}
-                            onTouchEnd={function(e) { var el = e.currentTarget; if (el._lpTimer) clearTimeout(el._lpTimer); }}
-                            onTouchMove={function(e) { var el = e.currentTarget; if (el._lpTimer) clearTimeout(el._lpTimer); el._lpFired = false; }}
-                            onContextMenu={function(e) {
-                              e.preventDefault();
-                              if (window.confirm('Supprimer cette conversation avec ' + (session.participantName || 'Visiteur anonyme') + ' ?')) {
-                                axios.delete(API + '/chat/sessions/' + session.id, {
-                                  headers: { 'X-User-Email': getCoachEmail() }
-                                }).then(function() { loadCoachSessions(); })
-                                  .catch(function(err) { alert('Erreur: ' + ((err.response && err.response.data && err.response.data.detail) || 'Suppression impossible')); });
-                              }
-                            }}
-                            style={{
-                              background: 'rgba(255,255,255,0.05)',
-                              border: '1px solid rgba(255,255,255,0.1)',
-                              borderRadius: '8px',
-                              padding: '10px',
-                              marginBottom: '8px',
-                              cursor: 'pointer',
-                              WebkitUserSelect: 'none',
-                              userSelect: 'none'
-                            }}
-                          >
-                            <div style={{ color: '#fff', fontSize: '13px', fontWeight: '500', display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
-                              <span>{session.participantName || session.title || 'Visiteur anonyme'}</span>
-                              {categoryBadge}
-                            </div>
-                            <div style={{ color: '#888', fontSize: '11px', marginTop: '4px' }}>
-                              {session.participantEmail ? session.participantEmail : (session.mode === 'human' ? 'Mode Humain' : session.mode === 'community' ? 'Communauté' : 'IA')}
-                              {' • '}
-                              {new Date(session.created_at).toLocaleDateString('fr-FR')}
-                            </div>
-                            {session.lastMessage && (
-                              <div style={{ color: '#aaa', fontSize: '11px', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '260px' }}>
-                                {session.lastMessage}
+                          <div key={session.id} style={{ position: 'relative', overflow: 'hidden', borderRadius: '8px', marginBottom: '8px' }}>
+                            {/* Bouton supprimer, revele par le swipe / clic droit */}
+                            <button
+                              onClick={function() { doDeleteSession(session); }}
+                              aria-label="Supprimer la conversation"
+                              style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '70px', background: '#e53e3e', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                            >
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="3 6 5 6 21 6" />
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                              </svg>
+                            </button>
+
+                            {/* Contenu, glisse a gauche quand la carte est "swipee" */}
+                            <div
+                              onClick={function() {
+                                // Si la carte est ouverte, un tap la referme au lieu d'ouvrir la conv.
+                                if (isSwiped) { setSwipedConv(null); return; }
+                                loadCoachSessionMessages(session);
+                              }}
+                              onTouchStart={function(e) { e.currentTarget._swipeX = e.touches[0].clientX; }}
+                              onTouchEnd={function(e) {
+                                var el = e.currentTarget;
+                                var diff = e.changedTouches[0].clientX - (el._swipeX || 0);
+                                if (diff > 70) setSwipedConv(session.id);
+                                else if (diff < -20) setSwipedConv(null);
+                              }}
+                              onContextMenu={function(e) { e.preventDefault(); setSwipedConv(isSwiped ? null : session.id); }}
+                              style={{
+                                position: 'relative',
+                                transform: isSwiped ? 'translateX(-70px)' : 'translateX(0)',
+                                transition: 'transform 0.2s ease',
+                                background: 'rgba(255,255,255,0.05)',
+                                border: '1px solid rgba(255,255,255,0.1)',
+                                borderRadius: '8px', padding: '10px', cursor: 'pointer',
+                                WebkitUserSelect: 'none', userSelect: 'none'
+                              }}
+                            >
+                              <div style={{ color: '#fff', fontSize: '13px', fontWeight: '500', display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
+                                <span>{session.participantName || session.title || 'Visiteur anonyme'}</span>
+                                {categoryBadge}
                               </div>
-                            )}
+                              <div style={{ color: '#888', fontSize: '11px', marginTop: '4px' }}>
+                                {session.participantEmail ? session.participantEmail : (session.mode === 'human' ? 'Mode Humain' : session.mode === 'community' ? 'Communauté' : 'IA')}
+                                {' • '}
+                                {new Date(session.created_at).toLocaleDateString('fr-FR')}
+                              </div>
+                              {session.lastMessage && (
+                                <div style={{ color: '#aaa', fontSize: '11px', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '260px' }}>
+                                  {session.lastMessage}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         );
                       };
 
-                      // V198: Catégorisation côté frontend basée sur le champ `category` retourné par l'API
-                      var subscriberSessions = coachSessions.filter(function(s) { return s.category === 'subscriber'; });
-                      var smartLinkSessions = coachSessions.filter(function(s) { return s.category === 'smart_link'; });
-                      var visitorSessions = coachSessions.filter(function(s) { return s.category === 'visitor' || (!s.category && s.category !== 'subscriber' && s.category !== 'smart_link'); });
-
-                      // V198: Header de catégorie cliquable (style cohérent avec le dashboard sombre)
-                      var sectionHeader = function(label, count, color, bg, isOpen, onToggle, testId) {
-                        return (
-                          <div
-                            onClick={onToggle}
-                            style={{
-                              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                              padding: '10px 12px', cursor: 'pointer',
-                              background: bg, borderRadius: '8px', marginBottom: '4px', marginTop: '4px'
-                            }}
-                            data-testid={testId}
-                          >
-                            <span style={{ color: color, fontWeight: '600', fontSize: '13px' }}>
-                              {label} <span style={{ color: '#888', fontWeight: '400' }}>{count}</span>
-                            </span>
-                            {/* V278 : chevron SVG (remplace ▼/▶ — icônes en SVG only) */}
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.2s' }}>
-                              <polyline points="6 9 12 15 18 9" />
-                            </svg>
-                          </div>
-                        );
+                      // Categorisation (champ `category` renvoye par l'API).
+                      var catOf = function(s) {
+                        if (s.category === 'subscriber') return 'subscribers';
+                        if (s.category === 'smart_link') return 'smart_links';
+                        return 'visitors';
                       };
+                      var FILTERS = [
+                        { key: 'all', label: 'Tout' },
+                        { key: 'subscribers', label: 'Abonnés' },
+                        { key: 'visitors', label: 'Visiteurs' },
+                        { key: 'smart_links', label: 'Liens intelligents' }
+                      ];
+                      var filtered = coachSessions.filter(function(s) {
+                        return conversationFilter === 'all' || catOf(s) === conversationFilter;
+                      });
 
                       return (
-                        <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
-                          <div style={{ color: '#fff', fontSize: '12px', marginBottom: '12px', opacity: 0.7 }}>
-                            Conversations actives ({coachSessions.length})
+                        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+                          {/* Barre de filtres (chips) */}
+                          <div style={{ display: 'flex', gap: '8px', padding: '10px 12px', overflowX: 'auto', borderBottom: '1px solid #222', flexShrink: 0 }}>
+                            {FILTERS.map(function(f) {
+                              var active = conversationFilter === f.key;
+                              return (
+                                <button
+                                  key={f.key}
+                                  onClick={function() { setConversationFilter(f.key); setSwipedConv(null); }}
+                                  style={{ padding: '6px 14px', borderRadius: '20px', border: 'none', cursor: 'pointer', fontSize: '0.8rem', whiteSpace: 'nowrap', flexShrink: 0, background: active ? 'var(--primary-color, #D91CD2)' : '#222', color: active ? '#fff' : '#aaa', fontWeight: active ? 600 : 400 }}
+                                  data-testid={'conv-filter-' + f.key}
+                                >
+                                  {f.label}
+                                </button>
+                              );
+                            })}
                           </div>
 
-                          {coachSessions.length === 0 ? (
-                            <div style={{ color: '#fff', opacity: 0.5, textAlign: 'center', padding: '20px', fontSize: '13px' }}>
-                              Aucune conversation active
+                          <div style={{ padding: '12px' }}>
+                            <div style={{ color: '#fff', fontSize: '12px', marginBottom: '10px', opacity: 0.7 }}>
+                              {filtered.length} conversation{filtered.length !== 1 ? 's' : ''}
                             </div>
-                          ) : (
-                            <>
-                              {/* V198: Abonnés */}
-                              {sectionHeader('Abonnés', subscriberSessions.length, 'var(--primary-color, #D91CD2)', 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)', showSubscribers, function() { setShowSubscribers(!showSubscribers); }, 'sessions-section-subscribers')}
-                              {showSubscribers && subscriberSessions.length === 0 && (
-                                <div style={{ color: '#666', fontSize: '11px', padding: '6px 12px 10px' }}>Aucun abonné en conversation</div>
-                              )}
-                              {showSubscribers && subscriberSessions.map(renderSessionCard)}
-
-                              {/* V198: Visiteurs du site */}
-                              {sectionHeader('Visiteurs du site', visitorSessions.length, '#8B5CF6', 'rgba(139, 92, 246, 0.1)', showVisitors, function() { setShowVisitors(!showVisitors); }, 'sessions-section-visitors')}
-                              {showVisitors && visitorSessions.length === 0 && (
-                                <div style={{ color: '#666', fontSize: '11px', padding: '6px 12px 10px' }}>Aucun visiteur en conversation</div>
-                              )}
-                              {showVisitors && visitorSessions.map(renderSessionCard)}
-
-                              {/* V198: Liens Intelligents */}
-                              {sectionHeader('Liens Intelligents', smartLinkSessions.length, '#FF2DAA', 'rgba(255, 45, 170, 0.1)', showSmartLinks, function() { setShowSmartLinks(!showSmartLinks); }, 'sessions-section-smartlinks')}
-                              {showSmartLinks && smartLinkSessions.length === 0 && (
-                                <div style={{ color: '#666', fontSize: '11px', padding: '6px 12px 10px' }}>Aucun lead venant d'un Lien Intelligent</div>
-                              )}
-                              {showSmartLinks && smartLinkSessions.map(renderSessionCard)}
-                            </>
-                          )}
+                            {filtered.length === 0 ? (
+                              <div style={{ color: '#fff', opacity: 0.5, textAlign: 'center', padding: '20px', fontSize: '13px' }}>
+                                Aucune conversation
+                              </div>
+                            ) : (
+                              filtered.map(renderSessionCard)
+                            )}
+                            <div style={{ color: '#555', fontSize: '10px', textAlign: 'center', marginTop: '10px' }}>
+                              Glisse une conversation vers la droite (ou clic droit) pour la supprimer.
+                            </div>
+                          </div>
                         </div>
                       );
                     })()}

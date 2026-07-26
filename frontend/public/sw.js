@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v277'; // V277: bump — système de traduction (Context + 9 langues)
+var CACHE_NAME = 'afroboost-v281'; // V281: bump — livre profil/recadrage (V279+) + conversations chips/swipe restés en cache
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

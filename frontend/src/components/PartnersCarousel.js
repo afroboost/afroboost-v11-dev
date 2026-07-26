@@ -728,8 +728,14 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                       background: 'linear-gradient(180deg, #0a0a1a 0%, #1a0a2e 50%, #0a0a1a 100%)'
                     }}>
                       <div className="absolute inset-0 flex flex-col items-center justify-center px-8 text-center">
+                        {/* V281 : avatar cliquable -> mini-profil (V279b) via CustomEvent. */}
                         <div className="w-24 h-24 rounded-full flex items-center justify-center text-3xl font-bold mb-4"
-                          style={{ background: 'linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, #8b5cf6 100%)', color: 'white' }}
+                          style={{ background: 'linear-gradient(135deg, var(--primary-color, #D91CD2) 0%, #8b5cf6 100%)', color: 'white', cursor: 'pointer' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const pid = partner.email || partner.id;
+                            if (pid) window.dispatchEvent(new CustomEvent('afroboost:open-miniprofile', { detail: { id: pid, name: displayName } }));
+                          }}
                         >{initial}</div>
                         <h2 className="text-white text-2xl font-bold mb-2">{displayName}</h2>
                       </div>
