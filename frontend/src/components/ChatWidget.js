@@ -2285,6 +2285,17 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     setShowV279Crop(true);
   };
 
+  // === V283 : agrandissement de la photo de profil au clic ===
+  const [showV283Preview, setShowV283Preview] = useState(false);
+  // Ouvre le recadrage (reutilise le flux V279) depuis un fichier choisi.
+  const v283OpenCropFromFile = (file) => {
+    if (!file) return;
+    setV279CropSrc(URL.createObjectURL(file));
+    setV279Crop({ x: 0, y: 0 });
+    setV279Zoom(1);
+    setShowV279Crop(true);
+  };
+
   // === V279 : recadrage circulaire de la photo de profil ===
   const [showV279Crop, setShowV279Crop] = useState(false);
   const [v279CropSrc, setV279CropSrc] = useState(null);
@@ -5948,7 +5959,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                 <img
                   src={profilePhoto}
                   alt=""
-                  onClick={(e) => { e.stopPropagation(); openMiniProfile(participantId, leadData.firstName || afroboostProfile?.name); }}
+                  onClick={(e) => { e.stopPropagation(); setShowV283Preview(true); }}
                   style={{
                     width: '48px', height: '48px', borderRadius: '50%',
                     objectFit: 'cover', cursor: 'pointer',
@@ -5958,6 +5969,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                 />
               ) : (
                 <div
+                  onClick={!isCommunityMode ? (e) => { e.stopPropagation(); setShowV283Preview(true); } : undefined}
                   style={{
                     width: '48px',
                     height: '48px',
@@ -5966,7 +5978,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    flexShrink: 0
+                    flexShrink: 0,
+                    cursor: !isCommunityMode ? 'pointer' : 'default'
                   }}
                 >
                   {isCommunityMode ? <GroupIcon /> : <ChatBubbleIcon />} {/* v9.4.2 */}
@@ -9628,6 +9641,34 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         isMainChatOpen={isOpen}
       />
       
+      {/* === V283 : input dédié + AGRANDISSEMENT de la photo de profil === */}
+      <input
+        id="profile-photo-input-v283"
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) v283OpenCropFromFile(f); }}
+      />
+      {showV283Preview && ReactDOM.createPortal(
+        <div
+          onClick={() => setShowV283Preview(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 10000000, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', padding: '16px' }}
+        >
+          <img
+            src={profilePhoto || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(leadData.firstName || afroboostProfile?.name || 'A')}&backgroundColor=D91CD2`}
+            alt=""
+            style={{ maxWidth: '80vw', maxHeight: '70vh', borderRadius: '12px', objectFit: 'contain' }}
+          />
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowV283Preview(false); var el = document.getElementById('profile-photo-input-v283'); if (el) el.click(); }}
+            style={{ marginTop: '20px', padding: '10px 24px', background: 'var(--primary-color, #D91CD2)', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600 }}
+          >
+            Changer la photo
+          </button>
+        </div>,
+        document.body
+      )}
+
       {/* === V279 : RECADRAGE CIRCULAIRE de la photo de profil (react-easy-crop) === */}
       {showV279Crop && v279CropSrc && ReactDOM.createPortal(
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.92)', zIndex: 10000001, display: 'flex', flexDirection: 'column' }}>

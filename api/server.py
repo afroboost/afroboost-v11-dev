@@ -18311,10 +18311,18 @@ if _os.path.isdir(_STATIC_DIR):
     @fastapi_app.get("/{full_path:path}")
     async def _serve_spa(full_path: str):
         """Serve React SPA — returns index.html for all non-API, non-static paths."""
-        file_path = _os.path.join(_STATIC_DIR, full_path)
-        if full_path and _os.path.isfile(file_path):
+        # V283 : sw.js et index.html ne doivent JAMAIS etre caches (ni par le
+        # navigateur ni par Cloudflare). Sinon un nouveau deploiement met des
+        # heures a se propager — c'est ce qui faisait croire que « rien ne
+        # changeait ». Les assets /static/* gardent leur cache long (ils sont
+        # hashes, donc immuables). Cloudflare peut avoir sa propre regle : voir
+        # la recommandation de contourner le cache pour /sw.js.
+        _no_cache = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+        if full_path and _os.path.isfile(file_path := _os.path.join(_STATIC_DIR, full_path)):
+            if _os.path.basename(full_path) in ("sw.js", "index.html"):
+                return _FileResponse(file_path, headers=_no_cache)
             return _FileResponse(file_path)
-        return _FileResponse(_os.path.join(_STATIC_DIR, "index.html"))
+        return _FileResponse(_os.path.join(_STATIC_DIR, "index.html"), headers=_no_cache)
 
 # Export for Vercel Serverless
 app = fastapi_app

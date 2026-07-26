@@ -23,6 +23,15 @@ ARG REACT_APP_CLOUDINARY_UPLOAD_PRESET=afroboost
 ENV REACT_APP_CLOUDINARY_CLOUD_NAME=$REACT_APP_CLOUDINARY_CLOUD_NAME
 ENV REACT_APP_CLOUDINARY_UPLOAD_PRESET=$REACT_APP_CLOUDINARY_UPLOAD_PRESET
 
+# V283 — CACHE-BUST du build frontend. Symptome observe : la production servait
+# un frontend PERIME (Service Worker afroboost-v277) alors que le backend, lui,
+# etait a jour — les deux sont pourtant dans la MEME image. Cause : Coolify
+# reutilisait l'etape `frontend-build` en cache et ne relancait pas `craco build`.
+# Changer la valeur de cet ARG modifie l'instruction Docker qui suit : le cache
+# de `craco build` est invalide et le frontend est TOUJOURS reconstruit a neuf.
+# -> BUMPER cette valeur a chaque fois qu'un changement frontend doit partir.
+ARG FRONTEND_CACHEBUST=v283-20260726
+
 RUN rm -rf node_modules/.cache && NODE_OPTIONS="--max-old-space-size=512 --max-semi-space-size=64" GENERATE_SOURCEMAP=false CI=false npx craco build
 
 FROM python:3.11-slim AS production

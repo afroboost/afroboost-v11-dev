@@ -245,11 +245,12 @@ const V268Lightbox = ({ pub, onClose }) => {
             <img
               src={pub.author_photo || pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.author_name || pub.display_name || pub.subscriber_name || 'A')}&backgroundColor=D91CD2`}
               alt=""
-              onClick={pub.author_id ? (e) => {
+              onClick={(e) => {
                 e.stopPropagation();
-                window.dispatchEvent(new CustomEvent('afroboost:open-miniprofile', { detail: { id: pub.author_id, name: pub.author_name || pub.display_name } }));
-              } : undefined}
-              style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1.5px solid rgba(255,255,255,0.25)', cursor: pub.author_id ? 'pointer' : 'default' }}
+                var _pid = pub.author_id || pub.coach_id;
+                if (_pid) window.dispatchEvent(new CustomEvent('afroboost:open-miniprofile', { detail: { id: _pid, name: pub.author_name || pub.display_name || pub.subscriber_name } }));
+              }}
+              style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1.5px solid rgba(255,255,255,0.25)', cursor: 'pointer' }}
             />
             <p style={{ color: '#fff', fontSize: 14, fontWeight: 700, margin: 0 }}>{pub.display_name || pub.subscriber_name}</p>
           </div>
@@ -317,11 +318,12 @@ const V268PublicationCard = ({ pub, onOpen }) => {
             <img
               src={pub.author_photo || pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.author_name || pub.display_name || pub.subscriber_name || 'A')}&backgroundColor=D91CD2`}
               alt=""
-              onClick={pub.author_id ? (e) => {
+              onClick={(e) => {
                 e.stopPropagation();
-                window.dispatchEvent(new CustomEvent('afroboost:open-miniprofile', { detail: { id: pub.author_id, name: pub.author_name || pub.display_name } }));
-              } : undefined}
-              style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1.5px solid rgba(255,255,255,0.25)', cursor: pub.author_id ? 'pointer' : 'default' }}
+                var _pid = pub.author_id || pub.coach_id;
+                if (_pid) window.dispatchEvent(new CustomEvent('afroboost:open-miniprofile', { detail: { id: _pid, name: pub.author_name || pub.display_name || pub.subscriber_name } }));
+              }}
+              style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1.5px solid rgba(255,255,255,0.25)', cursor: 'pointer' }}
             />
             <p style={{ color: '#fff', fontSize: '0.7rem', fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {pub.display_name || pub.subscriber_name}

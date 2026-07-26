@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v282'; // V282: poubelles cachées + avatars carousel cliquables
+var CACHE_NAME = 'afroboost-v283'; // V283: agrandissement photo profil + avatars toujours cliquables
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [
