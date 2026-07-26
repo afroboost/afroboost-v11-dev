@@ -7958,18 +7958,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                 </div>
                 )}
 
-                {/* V263: modale de publication — composant partage avec
-                    l'espace abonne (components/Publications.js). Pas de copie
-                    en ES5 ici : le module vit a part, ChatWidget ne fait que
-                    l'importer, donc aucune syntaxe moderne n'entre dans ce
-                    fichier.
-                    `v263PublishCode` vide = mode coach. */}
-                {v263ShowPublish && (
-                  <PublishModal
-                    subscriberCode={v263PublishCode}
-                    onClose={function() { setV263ShowPublish(false); }}
-                  />
-                )}
+                {/* V295 (Fix 0) : la modale de publication a été DÉPLACÉE hors de la
+                    branche coach (rendue globalement plus bas, près de l'overlay zoom),
+                    car ici elle n'était montée QU'en mode coach -> l'abonné cliquait
+                    « Publier » sans que rien ne s'affiche. */}
 
                 {/* v162l: Staff code modal (enter/unlock/change) */}
                 {showStaffLogin && (
@@ -10308,6 +10300,17 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           </div>
         </div>,
         document.body
+      )}
+
+      {/* V295 (Fix 0) : MODALE DE PUBLICATION rendue GLOBALEMENT (coach ET abonné).
+          Avant, elle vivait dans la branche coach -> jamais montée pour un abonné,
+          donc le clic « Publier » ne montrait rien. PublishModal utilise déjà
+          createPortal(document.body) (V290). `v263PublishCode` vide = mode coach. */}
+      {v263ShowPublish && (
+        <PublishModal
+          subscriberCode={v263PublishCode}
+          onClose={function() { setV263ShowPublish(false); }}
+        />
       )}
 
       {/* === v85: MODAL ZOOM PHOTO — Portal sur document.body + z-index 10000000 === */}
