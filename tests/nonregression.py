@@ -229,15 +229,16 @@ def t12_bot_cours():
     if not _ia_enabled():
         return skip(12, "Bot IA — cours", "IA désactivée (ai_config.enabled=false) — activez-la pour tester le bot")
     try:
-        r = requests.post(_url("/api/chat/ai-response"), json={
-            "message": "Quels sont vos cours ?", "session_id": "nonreg-test", "participant_id": "nonreg-test"
+        # /api/chat (chat_with_ai) : pas besoin de session existante.
+        r = requests.post(_url("/api/chat"), json={
+            "message": "Quels sont vos cours ?", "firstName": "Test", "sessionId": "nonreg-cours"
         }, timeout=TIMEOUT)
         d = r.json() if r.status_code == 200 else {}
-        txt = (d.get("text") or d.get("response") or "").lower()
+        txt = (d.get("response") or d.get("text") or "").lower()
         disabled = "désactivé" in txt or "desactive" in txt
-        ok = r.status_code == 200 and not disabled and len(txt) > 0
-        note = "(IA désactivée)" if disabled else ""
-        record(12, "Bot IA — cours " + note, ok, f"HTTP {r.status_code} -> {txt[:120]}")
+        # Un vrai contenu (cours/séance/silent…) attendu, pas un refus.
+        ok = r.status_code == 200 and not disabled and len(txt) > 20
+        record(12, "Bot IA — cours", ok, f"HTTP {r.status_code} -> {txt[:120]}")
     except Exception as e:
         record(12, "Bot IA — cours", False, str(e))
 
@@ -246,16 +247,14 @@ def t13_bot_partner():
     if not _ia_enabled():
         return skip(13, "Bot IA — partenaire", "IA désactivée (ai_config.enabled=false) — activez-la pour tester le bot")
     try:
-        r = requests.post(_url("/api/chat/ai-response"), json={
-            "message": "C'est quoi devenir partenaire ?", "session_id": "nonreg-test2", "participant_id": "nonreg-test2"
+        r = requests.post(_url("/api/chat"), json={
+            "message": "C'est quoi devenir partenaire ?", "firstName": "Test", "sessionId": "nonreg-part"
         }, timeout=TIMEOUT)
         d = r.json() if r.status_code == 200 else {}
-        txt = (d.get("text") or d.get("response") or "").lower()
-        disabled = "désactivé" in txt or "desactive" in txt
+        txt = (d.get("response") or d.get("text") or "").lower()
         refused = "uniquement programmé" in txt or "uniquement programme" in txt
-        ok = r.status_code == 200 and not refused
-        note = "(IA désactivée — non concluant)" if disabled else ""
-        record(13, "Bot IA — partenaire (pas de refus) " + note, ok, f"HTTP {r.status_code} -> {txt[:120]}")
+        ok = r.status_code == 200 and not refused and len(txt) > 20
+        record(13, "Bot IA — partenaire (pas de refus)", ok, f"HTTP {r.status_code} -> {txt[:140]}")
     except Exception as e:
         record(13, "Bot IA — partenaire", False, str(e))
 
