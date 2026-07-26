@@ -681,6 +681,93 @@ async def whoami(request: Request):
         return {"valid": False, "reason": "jeton invalide ou expiré"}
 
 
+@auth_router.post("/super-admin-setup")
+async def super_admin_setup(request: Request):
+    """V311f : BOOTSTRAP sécurisé du mot de passe super-admin. Le propriétaire n'avait
+    jamais de mot de passe (il entrait par reconnaissance auto, donc sans jeton signé).
+    Cet endpoint N'ACCEPTE QUE les emails super-admin CODÉS EN DUR (sinon 403) : un
+    inconnu qui l'appelle ne fait qu'envoyer un email au VRAI propriétaire — aucun gain.
+    Il crée la fiche de connexion si absente, puis envoie un lien « définir mon mot de
+    passe » à cette adresse (que seul le propriétaire reçoit). La preuve d'identité est
+    la possession de la boîte email. Ensuite : mot de passe -> connexion -> vrai jeton."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    email = (body.get("email") or "").lower().strip()
+    if not is_super_admin_email(email):
+        raise HTTPException(status_code=403, detail="Réservé aux comptes super-admin")
+
+    # 1) créer la fiche de connexion si absente (mot de passe aléatoire inutilisable)
+    user = await _db.users_auth.find_one({"email": email})
+    if not user:
+        new_uid = f"coach_{uuid.uuid4().hex[:12]}"
+        await _db.users_auth.insert_one({
+            "user_id": new_uid,
+            "email": email,
+            "name": "Administrateur Afroboost",
+            "password_hash": hash_password(secrets.token_urlsafe(32)),  # inutilisable tant que non défini
+            "auth_method": "email_password",
+            "is_coach": True,
+            "pending_validation": False,   # super-admin -> jamais en attente
+            "picture": "",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        user = await _db.users_auth.find_one({"email": email})
+        logger.warning(f"[V311f] fiche de connexion super-admin créée pour {email}")
+
+    # 2) token de définition de mot de passe (réutilise le mécanisme reset, 1 h)
+    setup_token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    await _db.password_resets.insert_one({
+        "token": setup_token,
+        "email": email,
+        "user_id": user.get("user_id"),
+        "expires_at": expires_at.isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "used": False,
+    })
+    # Lien en dur sur le domaine de production (évite le résidu Vercel de FRONTEND_URL)
+    setup_link = f"https://afroboost.com/#reset-password?token={setup_token}"
+
+    sent = False
+    if RESEND_AVAILABLE and RESEND_API_KEY:
+        try:
+            html_content = f"""
+            <div style="background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); padding: 40px 20px; font-family: -apple-system, sans-serif; border-radius: 12px 12px 0 0;">
+                <h1 style="color:#fff;margin:0;font-size:24px;">Définir votre mot de passe administrateur</h1>
+            </div>
+            <div style="background:#1f2937;padding:40px 20px;font-family:-apple-system,sans-serif;color:#fff;">
+                <p style="margin:0 0 16px 0;">Bonjour,</p>
+                <p style="margin:0 0 24px 0;color:#d1d5db;">Pour sécuriser votre accès administrateur Afroboost, définissez votre mot de passe en cliquant ci-dessous. Vous n'aurez à le faire qu'une fois par appareil.</p>
+                <div style="text-align:center;margin:32px 0;">
+                    <a href="{setup_link}" style="display:inline-block;background:linear-gradient(135deg,#a855f7 0%,#ec4899 100%);color:#fff;padding:12px 32px;border-radius:6px;text-decoration:none;font-weight:600;">Définir mon mot de passe</a>
+                </div>
+                <p style="margin:24px 0 8px 0;color:#9ca3af;font-size:13px;">Ou copiez ce lien :</p>
+                <p style="margin:0 0 24px 0;word-break:break-all;color:#60a5fa;font-size:12px;">{setup_link}</p>
+                <p style="margin:0 0 12px 0;color:#9ca3af;font-size:12px;">Ce lien expire dans 1 heure.</p>
+                <p style="margin:0;color:#9ca3af;font-size:12px;">Si vous n'êtes pas à l'origine de cette demande, ignorez cet email : personne d'autre ne peut l'utiliser.</p>
+            </div>
+            """
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": "Afroboost <notifications@afroboost.com>",
+                "to": [email],
+                "subject": "Définir votre mot de passe administrateur Afroboost",
+                "html": html_content,
+            })
+            sent = True
+            logger.warning(f"[V311f] email de définition de mot de passe envoyé à {email}")
+        except Exception as e:
+            logger.warning(f"[V311f] envoi email échoué: {e}")
+
+    return {
+        "success": True,
+        "email_envoye": sent,
+        "message": "Un lien pour définir votre mot de passe a été envoyé à votre adresse email.",
+    }
+
+
 @auth_router.post("/forgot-password")
 async def forgot_password(user_data: ForgotPasswordRequest):
     """
