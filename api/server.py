@@ -4971,12 +4971,16 @@ async def stripe_webhook(request: Request):
                         logger.info(f"[PAYMENT] Coach notifie: souscription {customer_email} - {product_name}")
                         # V180: Notif push au coach pour nouvelle vente
                         try:
-                            await send_push_by_email(
-                                SUPER_ADMIN_EMAIL,
-                                f"💰 Nouvelle vente !",
-                                f"{customer_name} - {product_name}",
-                                {"type": "new_sale", "customer": customer_name, "product": product_name}
-                            )
+                            # V287 : respecter la préférence coach "new_sale" (opt-out).
+                            if await _v286_should_send_notification(SUPER_ADMIN_EMAIL, "coach", "new_sale"):
+                                await send_push_by_email(
+                                    SUPER_ADMIN_EMAIL,
+                                    f"💰 Nouvelle vente !",
+                                    f"{customer_name} - {product_name}",
+                                    {"type": "new_sale", "customer": customer_name, "product": product_name}
+                                )
+                            else:
+                                logger.debug(f"[V287] Push new_sale désactivé pour {SUPER_ADMIN_EMAIL}")
                         except Exception as _pe:
                             logger.warning(f"[PUSH-V180] notif vente coach échec: {_pe}")
                     except Exception as notify_err:
@@ -15934,6 +15938,10 @@ async def cron_reservation_reminders():
         course_name = r.get("courseName") or r.get("offerName") or "ton cours"
         course_time = r.get("courseTime") or ""
         try:
+            # V287 : respecter la préférence abonné "before_class" (opt-out).
+            if not await _v286_should_send_notification(email, "subscriber", "before_class"):
+                logger.debug(f"[V287] Push before_class désactivé pour {email}")
+                continue
             ok = await send_push_by_email(
                 email,
                 "📅 Ton cours commence dans 1h",
