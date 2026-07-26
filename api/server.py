@@ -2578,9 +2578,14 @@ async def update_user_mini_profile(participant_id: str, request: Request):
         return {"status": "ok", "updated": {}}
     # V291 : matcher aussi par email -> profil coach UNIFIÉ PC + mobile (le coach
     # passe son email comme identifiant au lieu d'un participantId propre à l'appareil).
+    # L'autorisation est vérifiée plus haut (fix IDOR V279b) : un profil rattaché à
+    # un email/admin n'est éditable QUE par ce compte ou un super admin.
+    # V291b (revue sécu) : `participant_id` n'est plus écrasé sur un doc existant
+    # (il partait en $set) — on ne l'écrit qu'à la CRÉATION ($setOnInsert), pour ne
+    # pas remplacer le participant_id réel d'un utilisateur retrouvé par email.
     await db.users.update_one(
         {"$or": [{"id": participant_id}, {"participant_id": participant_id}, {"email": participant_id}]},
-        {"$set": {**update, "participant_id": participant_id}},
+        {"$set": update, "$setOnInsert": {"participant_id": participant_id}},
         upsert=True,
     )
     return {"status": "ok", "updated": update}
