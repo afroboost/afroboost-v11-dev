@@ -460,50 +460,125 @@ TEST_CAPTION_MARK = "TEST non-régression"
 
 
 def _delete_pub(pub_id, code=None):
+    """Supprime UNE publication et VÉRIFIE le résultat (V311b). Renvoie True si la
+    suppression est confirmée (HTTP 200 ou 404 = déjà absente). Réessaie une fois."""
+    for _essai in range(2):
+        try:
+            if code:
+                r = requests.delete(_url(f"/api/publications/{pub_id}"),
+                                    params={"subscriber_code": code}, timeout=TIMEOUT)
+            else:
+                r = requests.delete(_url(f"/api/publications/{pub_id}"),
+                                    headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
+            if r.status_code in (200, 204, 404):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _fetch_publications(retries=5):
+    """Récupère la liste des publications avec RÉESSAIS (V311b). Renvoie la liste, ou
+    None si l'API n'a JAMAIS répondu 200 (429 rate-limit / 502 déploiement). None ≠
+    « liste vide » : un balayage ne doit pas conclure « rien à nettoyer » sur un échec
+    réseau — c'est précisément ce qui a laissé des déchets en ligne (cf. V311b)."""
+    import time as _t
+    for essai in range(retries):
+        try:
+            r = requests.get(_url("/api/publications"), timeout=TIMEOUT)
+            if r.status_code == 200:
+                pubs = r.json()
+                if isinstance(pubs, dict):
+                    pubs = pubs.get("publications", pubs.get("items", []))
+                return pubs or []
+            # 429 (rate-limit Cloudflare) / 502 (déploiement) : on attend et on réessaie
+        except Exception:
+            pass
+        _t.sleep(2 * (essai + 1))
+    return None  # échec réseau persistant — on le SIGNALE, on ne suppose pas « vide »
+
+
+def _is_test_pub(p):
+    """Une publication est « de test » si la marque apparaît dans sa légende — ou, par
+    prudence, dans n'importe quel champ texte (au cas où l'API renommerait `caption`)."""
+    if TEST_CAPTION_MARK in (p.get("caption") or ""):
+        return True
     try:
-        if code:
-            requests.delete(_url(f"/api/publications/{pub_id}"), params={"subscriber_code": code}, timeout=TIMEOUT)
-        else:
-            requests.delete(_url(f"/api/publications/{pub_id}"), headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
+        return TEST_CAPTION_MARK in json.dumps(p, ensure_ascii=False)
     except Exception:
-        pass
+        return False
 
 
 def cleanup():
-    """Supprime les publications de TEST créées (best-effort). Ne touche à rien d'autre."""
+    """Supprime les publications de TEST créées pendant CE run (best-effort, vérifié)."""
     for pub_id, code in _created_pub_ids:
         if pub_id:
             _delete_pub(pub_id, code)
 
 
-def sweep_leftovers():
-    """Nettoyage PRÉVENTIF : supprime toute publication dont la légende contient la
-    marque de test — au cas où un run précédent aurait été interrompu et aurait laissé
-    des déchets visibles sur la vitrine. Best-effort, ne touche qu'aux publications
-    portant explicitement cette marque."""
-    try:
-        r = requests.get(_url("/api/publications"), timeout=TIMEOUT)
-        pubs = r.json() if r.status_code == 200 else []
-        if isinstance(pubs, dict):
-            pubs = pubs.get("publications", [])
-        removed = 0
-        for p in (pubs or []):
-            cap = (p.get("caption") or "")
+def sweep_leftovers(context=""):
+    """Nettoyage PRÉVENTIF et GARANTI (V311b) : supprime TOUTE publication marquée
+    « TEST non-régression », résidu d'un run précédent interrompu (SIGKILL → le
+    `finally` ne s'exécute pas). Ne touche QU'aux publications portant la marque.
+
+    Robuste, contrairement à la version précédente qui se taisait sur un échec :
+    - la liste est récupérée avec réessais ; un échec réseau est SIGNALÉ (pas assimilé
+      à « liste vide »), sinon on croit à tort que la vitrine est propre ;
+    - chaque suppression est VÉRIFIÉE ; on reboucle tant qu'il reste des résidus
+      (jusqu'à 4 passes) ; ce qui résiste est affiché en clair pour qu'un humain le voie."""
+    for _passe in range(4):
+        pubs = _fetch_publications()
+        if pubs is None:
+            print(f"⚠️  nettoyage préventif{(' ' + context) if context else ''} : "
+                  f"l'API /publications n'a pas répondu (429/502 ?) — résidus NON vérifiés, à recontrôler")
+            return
+        restes = [p for p in pubs if p.get("id") and _is_test_pub(p)]
+        if not restes:
+            return  # vitrine propre
+        for p in restes:
             pid = p.get("id")
-            if pid and TEST_CAPTION_MARK in cap:
-                _delete_pub(pid, None)                 # tentative admin
-                if SUB_CODE:
-                    _delete_pub(pid, SUB_CODE)          # tentative code abonné
-                removed += 1
-        if removed:
-            print(f"(nettoyage préventif : {removed} publication(s) de test résiduelle(s) supprimée(s))")
-    except Exception:
-        pass
+            done = _delete_pub(pid, None)                       # tentative admin
+            if not done and SUB_CODE:
+                done = _delete_pub(pid, SUB_CODE)               # repli code abonné
+            if done:
+                print(f"(nettoyage préventif : publication de test {pid} supprimée)")
+            else:
+                print(f"⚠️  publication de test {pid} IMPOSSIBLE à supprimer "
+                      f"(caption={p.get('caption')!r}) — à retirer à la main")
+    # après 4 passes il peut rester des irréductibles : dernier contrôle bruyant
+    pubs = _fetch_publications()
+    if pubs:
+        irreductibles = [p.get("id") for p in pubs if p.get("id") and _is_test_pub(p)]
+        if irreductibles:
+            print(f"⚠️  RÉSIDUS DE TEST TOUJOURS EN LIGNE après nettoyage : {irreductibles}")
+
+
+def _install_signal_cleanup():
+    """V311b : sur interruption (Ctrl-C = SIGINT, kill = SIGTERM), lancer le nettoyage
+    AVANT de quitter. Le `finally` ne couvre pas ces signaux ; on comble le trou.
+    (SIGKILL/-9 reste inévitable — c'est le sweep préventif du run SUIVANT qui rattrape.)"""
+    import signal
+
+    def _handler(signum, frame):
+        print(f"\n(interruption reçue — nettoyage des publications de test avant de quitter)")
+        try:
+            cleanup()
+            sweep_leftovers("(interruption)")
+        finally:
+            sys.exit(130)
+
+    for _sig in (getattr(signal, "SIGINT", None), getattr(signal, "SIGTERM", None)):
+        if _sig is not None:
+            try:
+                signal.signal(_sig, _handler)
+            except Exception:
+                pass
 
 
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
-    sweep_leftovers()  # V307 : purge préventive des déchets d'un run interrompu
+    _install_signal_cleanup()          # V311b : nettoyage même en cas d'interruption
+    sweep_leftovers("(démarrage)")     # purge préventive des déchets d'un run précédent
     try:
         for fn in (t01_publish_subscriber, t02_publish_coach, t03_mine_subscriber, t04_mine_coach,
                    t05_live_subscriber, t06_live_admin_nocode, t07_live_admin_withcode,
