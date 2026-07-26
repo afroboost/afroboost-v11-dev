@@ -642,6 +642,28 @@ const FlagIcon = ({ code, size }) => {
   );
 };
 
+// V299 : icônes SVG des questions rapides (remplacent les emoji). Héritent de
+// currentColor -> aucune couleur codée en dur (couleur du thème via le parent).
+const QuickReplyIcon = ({ name }) => {
+  const common = { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' };
+  switch (name) {
+    case 'calendar':
+      return (<svg {...common}><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>);
+    case 'price':
+      return (<svg {...common}><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" /><line x1="7" y1="7" x2="7.01" y2="7" /></svg>);
+    case 'gift':
+      return (<svg {...common}><polyline points="20 12 20 22 4 22 4 12" /><rect x="2" y="7" width="20" height="5" /><line x1="12" y1="22" x2="12" y2="7" /><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z" /><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" /></svg>);
+    case 'phone':
+      return (<svg {...common}><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" /></svg>);
+    case 'coach': // haltère
+      return (<svg {...common}><path d="M6.5 6.5l11 11" /><path d="M21 21l-1-1" /><path d="M3 3l1 1" /><path d="M18 22l4-4" /><path d="M2 6l4-4" /><path d="M3 10l7-7" /><path d="M14 21l7-7" /></svg>);
+    case 'handshake':
+      return (<svg {...common}><path d="M11 17l2 2a1 1 0 0 0 1.41 0l1.09-1.09" /><path d="M20.42 4.58a5.4 5.4 0 0 0-7.65 0l-.77.78-.77-.78a5.4 5.4 0 0 0-7.65 0C1.46 6.7 1.33 10.28 4 13l8 8 8-8c2.67-2.72 2.54-6.3.42-8.42z" /></svg>);
+    default:
+      return (<svg {...common}><circle cx="12" cy="12" r="9" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>);
+  }
+};
+
 /**
  * Composant pour afficher un message avec liens cliquables et emojis
  * Affiche le nom de l'expéditeur au-dessus de chaque bulle
@@ -667,14 +689,25 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
     setV292Menu(false);
     setV292Busy(true);
     try { localStorage.setItem('afroboost_translate_lang', lang); } catch (e) {}
+    // V299 : `lang` est TOUJOURS un code (l.code). On joint le nom complet (aiName)
+    // pour guider l'IA sur les langues africaines.
+    var _lm = null;
+    try { _lm = (TRANSLATE_LANGS || []).find(function (x) { return x.code === lang; }); } catch (e) {}
     try {
       const r = await fetch(API + '/translate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: messageText, target_lang: lang })
+        body: JSON.stringify({ text: messageText, target_lang: lang, target_name: _lm ? _lm.aiName : '' })
       });
-      const d = await r.json();
-      setV292Translation((d && d.translation) || '');
-    } catch (e) { /* silencieux */ }
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        // V299 : afficher la vraie raison (langue non supportée, clé OpenAI absente…)
+        setV292Translation('⚠️ ' + ((d && d.detail) || ('Erreur ' + r.status)));
+      } else {
+        setV292Translation((d && d.translation) || '');
+      }
+    } catch (e) {
+      setV292Translation('⚠️ Traduction indisponible');
+    }
     setV292Busy(false);
   };
 
@@ -1362,36 +1395,42 @@ const VISITOR_QUICK_REPLIES = [
   {
     id: 'cours_horaires',
     emoji: '📅',
+    icon: 'calendar', // V299
     label: 'Cours & horaires',
     response: "Voici nos cours actuels :\n\n🔥 **Afroboost Silent – Sunday Vibes**\nDimanche à 18h30\nRue des Vallangines 97, Neuchâtel\n\n🌅 **Afroboost Silent – Session Cardio**\nMercredi à 18h30\nRue des Vallangines 97, Neuchâtel\n\nLes séances durent environ 1h. Ambiance garantie ! 💃🎧\n\nTu veux réserver une séance ?"
   },
   {
     id: 'prix_abonnements',
     emoji: '💰',
+    icon: 'price', // V299
     label: 'Prix & abonnements',
     response: "Nos formules :\n\n🎟️ **Cours à l'unité** : 30 CHF\n📦 **Pack 5 séances** : 125 CHF (25 CHF/séance)\n📦 **Pack 10 séances** : 200 CHF (20 CHF/séance)\n🔄 **Abonnement mensuel** : sur demande\n\nPaiement par carte ou TWINT accepté !\n\nTu veux acheter un pack ?"
   },
   {
     id: 'essai_gratuit',
     emoji: '🎁',
+    icon: 'gift', // V299
     label: 'Essai gratuit',
     response: "Bonne nouvelle ! Ta première séance découverte est possible ! 🎉\n\nContacte directement Coach Bassi pour organiser ton essai. Il te trouvera la meilleure séance selon ton niveau.\n\nTu veux qu'on te mette en contact ?"
   },
   {
     id: 'contact',
     emoji: '📞',
+    icon: 'phone', // V299
     label: 'Contact',
     response: "Tu peux nous joindre de plusieurs façons :\n\n📱 **WhatsApp** : +41 76 520 33 63\n📧 **Email** : contact.artboost@gmail.com\n📍 **Cours** : Rue des Vallangines 97, 2000 Neuchâtel\n📸 **Instagram** : @afroboost\n\nOu clique sur le bouton ci-dessous pour parler directement à Coach Bassi !"
   },
   {
     id: 'devenir_coach',
     emoji: '🏋️',
+    icon: 'coach', // V299
     label: 'Devenir coach',
     response: "Tu veux devenir coach partenaire Afroboost ? 💪\n\nAfroboost recherche des coachs passionnés pour animer des séances dans d'autres villes de Suisse et d'Europe.\n\n**Ce qu'on propose :**\n- Formation au concept Afroboost\n- Matériel (casques silent disco)\n- Support marketing\n- Communauté de coachs\n\nContacte Coach Bassi pour en discuter !"
   },
   {
     id: 'devenir_partenaire',
     emoji: '🤝',
+    icon: 'handshake', // V299
     label: 'Devenir partenaire',
     response: "Tu représentes une salle de sport, un événement, ou une marque ? 🤝\n\nAfroboost collabore avec des partenaires pour :\n- Organiser des événements spéciaux\n- Proposer des séances dans vos locaux\n- Des collaborations marketing\n\nContacte Coach Bassi pour explorer les possibilités !"
   }
@@ -1875,6 +1914,14 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   // V298 : traduction du texte SAISI avant envoi (état de chargement + message d'erreur).
   var _v298Translating = useState(false); var v298Translating = _v298Translating[0]; var setV298Translating = _v298Translating[1];
   var _v298TransErr = useState(''); var v298TransErr = _v298TransErr[0]; var setV298TransErr = _v298TransErr[1];
+  // V299 : détection mobile (masquage du bandeau « Mode Humain » sur petit écran).
+  var _v299Mobile = useState(function () { try { return window.innerWidth < 768; } catch (e) { return false; } });
+  var isMobileView = _v299Mobile[0]; var setIsMobileView = _v299Mobile[1];
+  useEffect(function () {
+    var onR = function () { try { setIsMobileView(window.innerWidth < 768); } catch (e) {} };
+    window.addEventListener('resize', onR);
+    return function () { window.removeEventListener('resize', onR); };
+  }, []);
   var _v263Menu = useState(false); var v263MenuOpen = _v263Menu[0]; var setV263MenuOpen = _v263Menu[1];
   // v162f: Coach profile photo
   var _cpro = useState(null); var coachProfile = _cpro[0]; var setCoachProfile = _cpro[1];
@@ -2753,11 +2800,20 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileData, setProfileData] = useState({ display_name: '', bio: '', age: '', passions: '' });
 
+  // V299 : clé de profil = EMAIL pour TOUS les rôles (coach ET abonné) -> profil
+  // UNIQUE et identique PC/mobile. Avant, l'abonné était indexé par participantId
+  // (stocké en localStorage, différent sur chaque appareil) -> profil rempli sur
+  // mobile mais vide sur PC. participantId ne reste qu'un dernier repli (visiteur
+  // anonyme sans email).
+  const getProfileKey = () => {
+    return (isCoachMode ? getCoachEmail() : '')
+        || (afroboostProfile && afroboostProfile.email)
+        || participantId;
+  };
+
   const openProfileForm = async () => {
     setShowUserMenu(false);
-    // V291 : le coach est identifié par son EMAIL (profil unifié PC + mobile).
-    // Un abonné garde son participantId (identité chat locale).
-    var profileKey = isCoachMode ? getCoachEmail() : participantId;
+    var profileKey = getProfileKey();
     if (!profileKey) { setProfileData({ display_name: leadData.firstName || '', bio: '', age: '', passions: '' }); setShowProfileForm(true); return; }
     try {
       const res = await axios.get(`${API}/users/${encodeURIComponent(profileKey)}/profile`);
@@ -2775,17 +2831,20 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   };
 
   const saveProfile = async () => {
-    // V291 : coach -> email (unifié PC+mobile) ; abonné -> participantId.
-    var profileKey = isCoachMode ? getCoachEmail() : participantId;
+    // V299 : clé = email pour tous les rôles (cf. getProfileKey).
+    var profileKey = getProfileKey();
     if (!profileKey) { setShowProfileForm(false); return; }
     setSavingProfile(true);
     try {
+      // En-tête d'identité : email du coach OU de l'abonné (pour la garde IDOR V279b
+      // du backend, qui exige que l'appelant corresponde au profil édité).
+      var _identity = getCoachEmail() || (afroboostProfile && afroboostProfile.email) || '';
       await axios.patch(`${API}/users/${encodeURIComponent(profileKey)}/profile`, {
         display_name: profileData.display_name,
         bio: profileData.bio,
         age: profileData.age ? parseInt(profileData.age, 10) : null,
         passions: profileData.passions
-      }, { headers: { 'X-User-Email': getCoachEmail() } });
+      }, { headers: { 'X-User-Email': _identity } });
       setShowProfileForm(false);
     } catch (e) {
       alert(e?.response?.data?.detail || "L'enregistrement a échoué.");
@@ -5691,26 +5750,37 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: original, target_lang: l.code, target_name: l.aiName })
       });
-      if (!r.ok) throw new Error('http');
-      const d = await r.json();
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        // V299 : afficher la VRAIE raison renvoyée par le serveur (langue non
+        // supportée, OPENAI_API_KEY manquant…), au lieu d'un message générique.
+        throw new Error((d && d.detail) || ('Erreur ' + r.status));
+      }
       if (d && d.translation) {
         setInputMessage(d.translation); // remplace le texte -> l'utilisateur relit et envoie
         setV297LangMenuOpen(false);
       } else {
-        throw new Error('empty');
+        throw new Error('Traduction vide');
       }
     } catch (e) {
-      // Ne JAMAIS perdre le texte saisi.
-      setV298TransErr('Traduction indisponible, réessayez');
-      setTimeout(() => setV298TransErr(''), 3000);
+      // Ne JAMAIS perdre le texte saisi. Message = raison réelle si connue.
+      setV298TransErr((e && e.message) ? e.message : 'Traduction indisponible, réessayez');
+      setTimeout(() => setV298TransErr(''), 4000);
     } finally {
       setV298Translating(false);
     }
   };
 
-  // V298 : bouton GLOBE + ROUE de langues (drapeau + nom), placé à GAUCHE du bouton
-  // d'envoi. Rendu unique -> IDENTIQUE dans les deux espaces (abonné/coach). Couleurs
-  // du THÈME. La roue défile (tactile + souris) avec scroll-snap façon picker iOS.
+  // V299 (Fix 2) : hauteur auto du textarea de saisie (1 -> ~4 lignes puis défile).
+  const autoGrowTextarea = (el) => {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 112) + 'px';
+  };
+
+  // V298 : bouton GLOBE + ROUE de langues (drapeau + nom). Rendu unique -> IDENTIQUE
+  // dans les deux espaces (abonné/coach). Couleurs du THÈME. La roue défile
+  // (tactile + souris) avec scroll-snap façon picker iOS.
   const renderTranslateGlobe = (size) => {
     const d = size || 40;
     const icon = Math.round(d * 0.5);
@@ -9062,79 +9132,87 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       </div>
                     )}
 
-                    {/* Input coach with emoji + AI buttons */}
-                    <div style={{ padding: '8px 12px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', gap: '6px', alignItems: 'center' }}>
-                      {/* Emoji button */}
-                      <button
-                        type="button"
-                        onClick={function() { setShowCoachEmojiPicker(!showCoachEmojiPicker); }}
-                        title="Émojis"
-                        style={{
-                          width: '32px', height: '32px', borderRadius: '50%', border: 'none',
-                          background: showCoachEmojiPicker ? 'var(--primary-color, #D91CD2)' : 'transparent',
-                          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          flexShrink: 0, fontSize: '16px'
-                        }}
-                      >😊</button>
-                      {/* AI suggestion button */}
-                      <button
-                        type="button"
-                        onClick={getAiSuggestion}
-                        disabled={aiSuggestionLoading}
-                        title="Suggestion IA"
-                        style={{
-                          width: '32px', height: '32px', borderRadius: '50%', border: 'none',
-                          background: aiSuggestionLoading ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)' : 'transparent',
-                          cursor: aiSuggestionLoading ? 'wait' : 'pointer', display: 'flex',
-                          alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '16px'
-                        }}
-                      >✨</button>
-                      {/* Text input */}
-                      <input
-                        type="text"
-                        value={inputMessage}
-                        onChange={function(e) { setInputMessage(e.target.value); }}
-                        onKeyPress={function(e) { if (e.key === 'Enter') sendCoachResponse(); }}
-                        placeholder="Votre réponse..."
-                        style={{
-                          flex: 1,
-                          background: 'rgba(255,255,255,0.1)',
-                          border: '1px solid rgba(255,255,255,0.2)',
-                          borderRadius: '20px',
-                          padding: '8px 16px',
-                          color: '#fff',
-                          fontSize: '13px',
-                          outline: 'none'
-                        }}
-                      />
-                      {/* V298 : GLOBE de traduction — à gauche du bouton d'envoi (barre coach) */}
-                      {renderTranslateGlobe(36)}
-                      {/* Send button */}
-                      <button
-                        type="button"
-                        onClick={function(e) {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          sendCoachResponse();
-                        }}
-                        disabled={isLoading || v298Translating || !inputMessage.trim()}
-                        style={{
-                          background: inputMessage.trim() ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)' : 'rgba(255,255,255,0.1)',
-                          border: 'none',
-                          borderRadius: '50%',
-                          width: '36px',
-                          height: '36px',
-                          cursor: (inputMessage.trim() && !v298Translating) ? 'pointer' : 'not-allowed',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          opacity: inputMessage.trim() ? 1 : 0.5,
-                          flexShrink: 0
-                        }}
-                        data-testid="coach-widget-send-btn"
-                      >
-                        <span style={{ pointerEvents: 'none' }}><SendIcon /></span>
-                      </button>
+                    {/* V299 (Fix 2) : barre coach sur DEUX lignes — icônes en haut, champ large en bas.
+                        Fix 6 : tous les boutons ronds à 40px. */}
+                    <div style={{ padding: '8px 12px', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {/* LIGNE DU HAUT : emoji, suggestion IA, globe */}
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <button
+                          type="button"
+                          onClick={function() { setShowCoachEmojiPicker(!showCoachEmojiPicker); }}
+                          title="Émojis"
+                          style={{
+                            width: '40px', height: '40px', borderRadius: '50%', border: 'none',
+                            background: showCoachEmojiPicker ? 'var(--primary-color, #D91CD2)' : 'transparent',
+                            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            flexShrink: 0, fontSize: '18px'
+                          }}
+                        >😊</button>
+                        <button
+                          type="button"
+                          onClick={getAiSuggestion}
+                          disabled={aiSuggestionLoading}
+                          title="Suggestion IA"
+                          style={{
+                            width: '40px', height: '40px', borderRadius: '50%', border: 'none',
+                            background: aiSuggestionLoading ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)' : 'transparent',
+                            cursor: aiSuggestionLoading ? 'wait' : 'pointer', display: 'flex',
+                            alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '18px'
+                          }}
+                        >✨</button>
+                        {/* Globe de traduction (identique à l'espace abonné, 40px) */}
+                        {renderTranslateGlobe(40)}
+                      </div>
+                      {/* LIGNE DU BAS : champ large (textarea auto-extensible) + envoi */}
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+                        <textarea
+                          rows={1}
+                          value={inputMessage}
+                          onChange={function(e) { setInputMessage(e.target.value); autoGrowTextarea(e.target); }}
+                          onKeyDown={function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendCoachResponse(); } }}
+                          placeholder="Votre réponse..."
+                          style={{
+                            flex: 1,
+                            background: 'rgba(255,255,255,0.1)',
+                            border: '1px solid rgba(255,255,255,0.2)',
+                            borderRadius: '18px',
+                            padding: '9px 16px',
+                            color: '#fff',
+                            fontSize: '15px',
+                            lineHeight: '1.35',
+                            outline: 'none',
+                            resize: 'none',
+                            maxHeight: '112px',
+                            overflowY: 'auto',
+                            fontFamily: 'inherit'
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={function(e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            sendCoachResponse();
+                          }}
+                          disabled={isLoading || v298Translating || !inputMessage.trim()}
+                          style={{
+                            background: inputMessage.trim() ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)' : 'rgba(255,255,255,0.1)',
+                            border: 'none',
+                            borderRadius: '50%',
+                            width: '40px',
+                            height: '40px',
+                            cursor: (inputMessage.trim() && !v298Translating) ? 'pointer' : 'not-allowed',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            opacity: inputMessage.trim() ? 1 : 0.5,
+                            flexShrink: 0
+                          }}
+                          data-testid="coach-widget-send-btn"
+                        >
+                          <span style={{ pointerEvents: 'none' }}><SendIcon /></span>
+                        </button>
+                      </div>
                     </div>
                   </>
                 )}
@@ -9144,8 +9222,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
             {/* Zone de chat */}
             {step === 'chat' && (
               <>
-                {/* v85: Indicateur mode non-IA — sans bordure */}
-                {sessionData && !sessionData.is_ai_active && (
+                {/* v85: Indicateur mode non-IA — sans bordure.
+                    V299 : le bandeau JAUNE « Mode Humain » est masqué sur mobile
+                    (< 768px). On CONSERVE « Mode Communauté » et « Discussion privée »
+                    (vraies infos), y compris sur mobile. */}
+                {sessionData && !sessionData.is_ai_active
+                  && !(isMobileView && !isCommunityMode && !privateChatTarget) && (
                   <div
                     style={{
                       background: isCommunityMode ? 'rgba(139, 92, 246, 0.2)' : 'rgba(234, 179, 8, 0.2)',
@@ -9155,10 +9237,16 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       color: isCommunityMode ? '#a78bfa' : '#fbbf24'
                     }}
                   >
-                    {isCommunityMode 
-                      ? 'Mode Communauté - Plusieurs participants' 
+                    {isCommunityMode
+                      ? 'Mode Communauté - Plusieurs participants'
                       : privateChatTarget
-                      ? `💬 Discussion privée avec ${privateChatTarget.name}`
+                      ? (<span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                          {/* V299 : 💬 -> icône SVG inline */}
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                          </svg>
+                          {`Discussion privée avec ${privateChatTarget.name}`}
+                        </span>)
                       : 'Mode Humain - Le coach vous répondra'}
                   </div>
                 )}
@@ -9660,7 +9748,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                                 }}
                                 data-testid={'quick-reply-chip-' + reply.id}
                               >
-                                <span style={{ fontSize: '14px' }}>{reply.emoji}</span>
+                                {/* V299 : icône SVG (héritée du thème via currentColor).
+                                    Repli sur l'emoji si un chip backend n'a pas d'`icon`. */}
+                                <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                                  {reply.icon ? <QuickReplyIcon name={reply.icon} /> : (reply.emoji ? <span style={{ fontSize: '14px' }}>{reply.emoji}</span> : null)}
+                                </span>
                                 <span>{reply.label}</span>
                               </button>
                             );
@@ -10155,14 +10247,15 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                   </div>
                 )}
                 
-                {/* v81: Input message - Borderless moderne, Mobile optimized */}
+                {/* v81 / V299 (Fix 2): barre sur DEUX lignes — icônes en haut, champ large en bas */}
                 <div
                   style={{
                     padding: '10px 12px',
                     paddingBottom: 'max(10px, env(safe-area-inset-bottom, 10px))',
                     borderTop: 'none',
                     display: 'flex',
-                    alignItems: 'center',
+                    flexDirection: 'column',
+                    alignItems: 'stretch',
                     gap: '8px',
                     flexShrink: 0,
                     position: 'sticky',
@@ -10174,8 +10267,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                   }}
                   data-testid="chat-input-bar"
                 >
-                  {/* === GAUCHE: Emoji + Réservations === */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                  {/* === LIGNE DU HAUT : boutons ronds (emoji, ?, globe, calendrier) === */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                     {/* v154: Sélecteur d'emojis unifié (Africain + Coach custom) */}
                     <AfricanEmojiPicker
                       isOpen={showAfricanEmojiPicker}
@@ -10192,13 +10285,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       customEmojis={coachCustomEmojis}
                     />
 
-                    {/* v154: Un seul bouton emoji — personnage noir souriant */}
+                    {/* v154: Un seul bouton emoji — personnage noir souriant. V299 : 40px (Fix 6) */}
                     <button
                       type="button"
                       onClick={() => setShowAfricanEmojiPicker(!showAfricanEmojiPicker)}
                       style={{
-                        width: '36px',
-                        height: '36px',
+                        width: '40px',
+                        height: '40px',
                         borderRadius: '50%',
                         background: showAfricanEmojiPicker ? 'var(--primary-color, #D91CD2)' : 'transparent',
                         border: 'none',
@@ -10280,68 +10373,73 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         <line x1="3" y1="10" x2="21" y2="10"></line>
                       </svg>
                     </button>
-                  </div>
-                  
-                  {/* === MILIEU: Input texte (flex-grow: 1) === */}
-                  <input
-                    type="text"
-                    value={inputMessage}
-                    onChange={handleInputChangeWithTyping}
-                    onKeyPress={(e) => {
-                      if (e.key === 'Enter') {
-                        emitTyping(false);
-                        handleSendMessage();
-                      }
-                    }}
-                    onBlur={handleInputBlur}
-                    placeholder="Écrivez votre message..."
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      background: 'rgba(255,255,255,0.08)',
-                      border: 'none',
-                      borderRadius: '24px',
-                      color: '#fff',
-                      outline: 'none',
-                      fontSize: '16px',
-                      padding: '10px 16px',
-                      lineHeight: '1.2'
-                    }}
-                    data-testid="chat-input"
-                  />
-                  
-                  {/* V298 : GLOBE de traduction — collé à gauche du bouton d'envoi.
-                      marginLeft auto ici -> le groupe (globe + envoi) est poussé à droite. */}
-                  <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
-                    {renderTranslateGlobe(44)}
+
+                    {/* V299 (Fix 2) : globe de traduction dans la rangée d'icônes du HAUT */}
+                    {renderTranslateGlobe(40)}
                   </div>
 
-                  {/* === DROITE: Bouton Envoyer (toujours à l'extrême droite) === */}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      handleSendMessage();
-                    }}
-                    disabled={isLoading || v298Translating || !inputMessage.trim()}
-                    style={{
-                      width: '44px',
-                      height: '44px',
-                      borderRadius: '50%',
-                      background: 'var(--primary-color, #D91CD2)', /* v9.4.2: Violet Afroboost */
-                      border: 'none',
-                      cursor: (isLoading || v298Translating || !inputMessage.trim()) ? 'not-allowed' : 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      opacity: (isLoading || v298Translating || !inputMessage.trim()) ? 0.5 : 1,
-                      flexShrink: 0
-                    }}
-                    data-testid="chat-send-btn"
-                  >
-                    <span style={{ pointerEvents: 'none' }}><SendIcon /></span>
-                  </button>
+                  {/* === LIGNE DU BAS : champ large (textarea auto-extensible) + envoi === */}
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', width: '100%' }}>
+                    {/* V299 : textarea 1 -> ~4 lignes puis défile. Entrée envoie, Maj+Entrée = nouvelle ligne. */}
+                    <textarea
+                      rows={1}
+                      value={inputMessage}
+                      onChange={(e) => { handleInputChangeWithTyping(e); autoGrowTextarea(e.target); }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          emitTyping(false);
+                          handleSendMessage();
+                        }
+                      }}
+                      onBlur={handleInputBlur}
+                      placeholder="Écrivez votre message..."
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        background: 'rgba(255,255,255,0.08)',
+                        border: 'none',
+                        borderRadius: '20px',
+                        color: '#fff',
+                        outline: 'none',
+                        fontSize: '16px',
+                        padding: '10px 16px',
+                        lineHeight: '1.35',
+                        resize: 'none',
+                        maxHeight: '112px',
+                        overflowY: 'auto',
+                        fontFamily: 'inherit'
+                      }}
+                      data-testid="chat-input"
+                    />
+
+                    {/* === Bouton Envoyer (40px, aligné avec les autres) === */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleSendMessage();
+                      }}
+                      disabled={isLoading || v298Translating || !inputMessage.trim()}
+                      style={{
+                        width: '40px',
+                        height: '40px',
+                        borderRadius: '50%',
+                        background: 'var(--primary-color, #D91CD2)',
+                        border: 'none',
+                        cursor: (isLoading || v298Translating || !inputMessage.trim()) ? 'not-allowed' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        opacity: (isLoading || v298Translating || !inputMessage.trim()) ? 0.5 : 1,
+                        flexShrink: 0
+                      }}
+                      data-testid="chat-send-btn"
+                    >
+                      <span style={{ pointerEvents: 'none' }}><SendIcon /></span>
+                    </button>
+                  </div>
                 </div>
               </>
             )}
@@ -10532,9 +10630,29 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                 </div>
               </div>
             ) : null}
-            {!miniProfile.bio && !miniProfile.age && !miniProfile.passions && (
-              <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '4px' }}>Profil non renseigné</div>
-            )}
+            {/* V299 : « Profil non renseigné » seulement si bio ET passions vraiment
+                vides. Si c'est SON propre profil -> proposer « Compléter mon profil ». */}
+            {(() => {
+              const _empty = !miniProfile.bio && !miniProfile.passions;
+              if (!_empty) return null;
+              const _mpKey = miniProfile.participant_id || miniProfile.email || miniProfile.id || '';
+              const _isOwn = _mpKey && (
+                _mpKey === participantId ||
+                _mpKey === ((afroboostProfile && afroboostProfile.email) || '') ||
+                _mpKey === getCoachEmail()
+              );
+              if (_isOwn) {
+                return (
+                  <button
+                    onClick={() => { setMiniProfile(null); openProfileForm(); }}
+                    style={{ marginTop: '8px', padding: '6px 14px', background: 'var(--primary-color, #D91CD2)', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
+                  >
+                    Compléter mon profil
+                  </button>
+                );
+              }
+              return (<div style={{ fontSize: '0.8rem', color: '#666', marginTop: '4px' }}>Profil non renseigné</div>);
+            })()}
             <button
               onClick={() => setMiniProfile(null)}
               style={{ marginTop: '16px', padding: '6px 20px', background: '#333', color: '#aaa', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem' }}

@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v297'; // V297: live BoostTribe codes sans AFR- + photo auteur par email + globe traduction visible (9 langues) + horodatage repare
+var CACHE_NAME = 'afroboost-v299'; // V299: traduction reparee + saisie 2 lignes + profil par email + chips SVG + Mode Humain masque mobile + boutons 40px
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

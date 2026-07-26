@@ -2477,7 +2477,7 @@ async def get_user_profile(participant_id: str):
     # ça, le mini-profil coach ouvert côté client s'affichait SANS photo.
     _coach_cp = None
     if "@" in participant_id:
-        _coach_cp = await db.coach_profiles.find_one({"email": participant_id}, {"_id": 0, "photo_url": 1, "display_name": 1})
+        _coach_cp = await db.coach_profiles.find_one({"email": participant_id}, {"_id": 0, "photo_url": 1, "display_name": 1, "bio": 1, "passions": 1})
     _coach_photo = (_coach_cp or {}).get("photo_url") or None
 
     # 1. Chercher dans la collection 'users'
@@ -2489,7 +2489,44 @@ async def get_user_profile(participant_id: str):
     )
 
     if user:
+        _email_l = ((user.get("email") or (participant_id if "@" in participant_id else "")) or "").lower().strip()
         photo_url = user.get("photo_url") or user.get("photoUrl") or _coach_photo  # V292 : repli coach_profiles
+        bio = user.get("bio") or ""
+        age = user.get("age")
+        passions = user.get("passions") or ""
+
+        # V299 : TOUJOURS préférer une photo Cloudinary à une photo data:base64
+        # (vestige lourd et périmé). Vrai pour tout le monde, pas que les coachs.
+        if _email_l and ((not photo_url) or str(photo_url).startswith("data:")):
+            if _coach_photo and not str(_coach_photo).startswith("data:"):
+                photo_url = _coach_photo
+            else:
+                _cand = await db.chat_participants.find_one(
+                    {"email": _email_l, "photo_url": {"$regex": "^https?://"}},
+                    {"_id": 0, "photo_url": 1}
+                )
+                if _cand and _cand.get("photo_url"):
+                    photo_url = _cand.get("photo_url")
+
+        # V299 : compléter bio/passions manquants depuis le profil coach UNIQUEMENT
+        # si l'email est un compte coach/admin CONNU (jamais de fusion entre
+        # personnes différentes). On n'écrase jamais une valeur déjà présente.
+        if _email_l and (not bio or not passions):
+            _cp = _coach_cp
+            if _cp is None:
+                _cp = await db.coach_profiles.find_one({"email": _email_l}, {"_id": 0, "bio": 1, "passions": 1})
+            _known = (_email_l in [e.lower() for e in SUPER_ADMIN_EMAILS]) or bool(_cp)
+            if not _known:
+                _ck = await db.coaches.find_one({"email": _email_l}, {"_id": 1})
+                if not _ck:
+                    _ck = await db.coach_auth.find_one({"email": _email_l}, {"_id": 1})
+                _known = bool(_ck)
+            if _known and _cp:
+                if not bio and _cp.get("bio"):
+                    bio = _cp.get("bio")
+                if not passions and _cp.get("passions"):
+                    passions = _cp.get("passions")
+
         return {
             "success": True,
             "source": "users",
@@ -2498,9 +2535,9 @@ async def get_user_profile(participant_id: str):
             "email": user.get("email") or (participant_id if "@" in participant_id else None),
             "photo_url": photo_url,
             # V279 : champs mini-profil (optionnels).
-            "bio": user.get("bio") or "",
-            "age": user.get("age"),
-            "passions": user.get("passions") or "",
+            "bio": bio,
+            "age": age,
+            "passions": passions,
         }
 
     # V292 : coach identifié par email SANS doc `users` (il n'a rempli que sa
@@ -2759,6 +2796,58 @@ async def v290_fix_publication_photos():
     return {"status": "ok", "fixed": fixed, "total_checked": len(pubs)}
 
 
+@api_router.post("/v299-fix-legacy-profile-photos")
+async def v299_fix_legacy_profile_photos():
+    """V299 : migration PUBLIQUE (one-shot, idempotente) — remplace les photos de
+    profil `data:image/...;base64,...` (vestiges lourds/périmés) par une photo
+    Cloudinary trouvée pour le MÊME email (coach_profiles / users / chat_participants),
+    et complète bio/passions si vides. NE SUPPRIME RIEN, ne fusionne JAMAIS deux
+    personnes (recherche par email exact uniquement). Bornée à 500 docs.
+
+    Publique à dessein (aucune entrée utilisateur, idempotente), lançable au curl.
+    """
+    users = await db.users.find(
+        {"photo_url": {"$regex": "^data:"}},
+        {"_id": 1, "email": 1, "bio": 1, "passions": 1}
+    ).to_list(500)
+    fixed = 0
+    for u in users:
+        email = (u.get("email") or "").lower().strip()
+        if not email:
+            continue
+        # Chercher une VRAIE photo (http/https) pour cet email.
+        cloud = ""
+        _cp = await db.coach_profiles.find_one(
+            {"email": email, "photo_url": {"$regex": "^https?://"}}, {"_id": 0, "photo_url": 1, "bio": 1, "passions": 1}
+        )
+        if _cp:
+            cloud = _cp.get("photo_url") or ""
+        if not cloud:
+            _ou = await db.users.find_one(
+                {"email": email, "photo_url": {"$regex": "^https?://"}}, {"_id": 0, "photo_url": 1}
+            )
+            cloud = (_ou or {}).get("photo_url") or ""
+        if not cloud:
+            _ch = await db.chat_participants.find_one(
+                {"email": email, "photo_url": {"$regex": "^https?://"}}, {"_id": 0, "photo_url": 1}
+            )
+            cloud = (_ch or {}).get("photo_url") or ""
+        set_fields = {}
+        if cloud:
+            set_fields["photo_url"] = cloud
+            set_fields["photoUrl"] = cloud
+        # Compléter bio/passions vides depuis coach_profiles (même personne).
+        if _cp:
+            if not (u.get("bio") or "") and _cp.get("bio"):
+                set_fields["bio"] = _cp.get("bio")
+            if not (u.get("passions") or "") and _cp.get("passions"):
+                set_fields["passions"] = _cp.get("passions")
+        if set_fields:
+            await db.users.update_one({"_id": u["_id"]}, {"$set": set_fields})
+            fixed += 1
+    return {"status": "ok", "fixed": fixed, "total_checked": len(users)}
+
+
 @api_router.get("/birthdays/today")
 async def get_today_birthdays():
     """V160/V285 : participants dont c'est l'anniversaire aujourd'hui (par MM-DD)."""
@@ -2812,22 +2901,65 @@ _V292_LANGS = {
 }
 
 
+def _v299_norm_lang(s: str) -> str:
+    """V299 : normalise une chaîne de langue (minuscules, sans accents, compacte)
+    pour comparer indifféremment « Wolof », « wolof », « wo », « Kiswahili »…"""
+    import unicodedata
+    s = (s or "").strip().lower()
+    s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+    return s
+
+
+# V299 : index inverse NOM -> code (en plus des codes eux-mêmes) + quelques
+# endonymes/alias envoyés par le frontend (name affiché) que _V292_LANGS ne liste
+# pas tel quel. Toute valeur reconnue ici renvoie un code valide -> plus de 400
+# pour une langue de la liste du site.
+_V299_LANG_INDEX = {}
+for _c, _n in _V292_LANGS.items():
+    _V299_LANG_INDEX[_v299_norm_lang(_c)] = _c
+    _V299_LANG_INDEX[_v299_norm_lang(_n)] = _c
+for _alias, _c in {
+    "english": "en", "deutsch": "de", "kiswahili": "sw", "swahili": "sw",
+    "kreyol": "ht", "creole": "ht", "creole haitien": "ht", "haitien": "ht",
+    "bassa": "bas", "bassa (cameroun)": "bas", "italiano": "it", "espanol": "es",
+    "espanol ": "es", "portugues": "pt", "francais": "fr",
+}.items():
+    _V299_LANG_INDEX[_v299_norm_lang(_alias)] = _c
+
+
+def _v299_resolve_lang(raw: str):
+    """Renvoie (code, nom_complet) pour un code OU un nom de langue, sinon (None, None)."""
+    key = _v299_norm_lang(raw)
+    code = _V299_LANG_INDEX.get(key)
+    if not code:
+        return None, None
+    return code, _V292_LANGS[code]
+
+
 @api_router.post("/translate")
 async def translate_text(request: Request):
-    """V292 : traduit un texte dans la langue cible (fr/en/de/it/es/pt).
-    À la demande, message par message (pas d'auto-traduction). Réutilise la clé
-    OpenAI déjà en place (comme /api/chat)."""
+    """V292/V299 : traduit un texte dans la langue cible.
+    V299 : accepte comme `target_lang` un CODE (« wo ») OU un NOM (« wolof »,
+    « Wolof », « Kiswahili »…), comparaison insensible à la casse/aux accents.
+    Réutilise la clé OpenAI déjà en place (comme /api/chat)."""
     body = await request.json()
     text = (body.get("text") or "").strip()
-    target = (body.get("target_lang") or "").strip().lower()
     if not text:
         return {"translation": ""}
-    if target not in _V292_LANGS:
-        raise HTTPException(status_code=400, detail="Langue cible non supportée")
-    # V298 : le frontend peut envoyer le NOM COMPLET de la langue (target_name) pour
-    # guider l'IA sur les langues africaines. On le préfère au mapping interne s'il
-    # est fourni ; sinon on garde le nom du dictionnaire _V292_LANGS.
-    target_name = (body.get("target_name") or "").strip() or _V292_LANGS[target]
+    # V299 : résolution tolérante — target_lang (code ou nom) puis, en repli, target_name.
+    code, target_name = _v299_resolve_lang(body.get("target_lang") or "")
+    if not code:
+        code, target_name = _v299_resolve_lang(body.get("target_name") or "")
+    if not code:
+        raise HTTPException(
+            status_code=400,
+            detail="Langue cible non supportée. Codes acceptés : " + ", ".join(sorted(_V292_LANGS.keys())),
+        )
+    # Un target_name explicite du frontend (nom complet) prime pour guider l'IA.
+    _explicit_name = (body.get("target_name") or "").strip()
+    if _explicit_name:
+        target_name = _explicit_name
+    target = code
     if len(text) > 2000:
         text = text[:2000]
 
