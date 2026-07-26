@@ -391,6 +391,32 @@ def t36_cors_foreign_origin():
         record(36, "CORS domaine étranger", False, str(e))
 
 
+def t39_redos_input():
+    """Un nom contenant une regex catastrophique ne doit ni saturer ni faire planter."""
+    import time as _t
+    try:
+        t0 = _t.time()
+        r = requests.post(_url("/api/chat/smart-entry"), json={"name": "(a+)+$" * 5, "email": "redos@example.com"}, timeout=TIMEOUT)
+        dur = _t.time() - t0
+        ok = r.status_code in (200, 400) and dur < 8
+        record(39, "Entrée regex catastrophique -> pas de saturation", ok, f"HTTP {r.status_code} en {dur:.2f}s")
+    except Exception as e:
+        record(39, "Entrée regex catastrophique", False, str(e))
+
+
+def t40_nosql_injection():
+    """Un champ objet {\"$ne\": null} ne doit pas être injecté ni provoquer un 500."""
+    try:
+        r = requests.post(_url("/api/chat/smart-entry"), json={"name": "Test", "email": {"$ne": None}}, timeout=TIMEOUT)
+        d = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        blob = json.dumps(d).lower() if d else (r.text or "")[:200]
+        # Ni 500, ni fuite (pas de whatsapp/phone d'un autre compte).
+        ok = r.status_code != 500 and "076520" not in blob
+        record(40, "Injection NoSQL {$ne:null} rejetée (pas de 500/fuite)", ok, f"HTTP {r.status_code}")
+    except Exception as e:
+        record(40, "Injection NoSQL", False, str(e))
+
+
 def t18_no_recognition_by_name_only():
     """V308 : smart-entry par NOM SEUL ne doit PLUS reconnaître un compte existant."""
     try:
@@ -487,7 +513,8 @@ def main():
                    t16_masking_active, t17_device_token_unmasks,
                    t18_no_recognition_by_name_only, t19_device_token_endpoint, t20_new_visitor_ok,
                    t21_users_requires_auth, t22_codes_requires_auth, t23_sessions_requires_auth,
-                   t24_smart_entry_no_pii, t35_security_headers, t36_cors_foreign_origin):
+                   t24_smart_entry_no_pii, t35_security_headers, t36_cors_foreign_origin,
+                   t39_redos_input, t40_nosql_injection):
             fn()
     finally:
         # V307 : nettoyage GARANTI, même si un test échoue ou si le script est interrompu.

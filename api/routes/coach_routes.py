@@ -1,4 +1,5 @@
 # coach_routes.py - Routes coach et admin v9.5.6
+import re  # V310 : disponible au niveau module pour re.escape (anti-injection regex)
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -469,8 +470,8 @@ async def get_coach_vitrine(username: str):
         username_as_name = username.replace("-", " ")
         username_email_local = username.split("@")[0].lower()
         coach = await db.coaches.find_one({"$or": [
-            {"name": {"$regex": f"^{username}$", "$options": "i"}},
-            {"name": {"$regex": f"^{username_as_name}$", "$options": "i"}},
+            {"name": {"$regex": f"^{re.escape(username)}$", "$options": "i"}},
+            {"name": {"$regex": f"^{re.escape(username_as_name)}$", "$options": "i"}},
             {"email": username.lower()},
             {"email": {"$regex": f"^{username_email_local}@", "$options": "i"}},
             {"email": {"$regex": f"^{username_as_name.replace(' ', '.')}@", "$options": "i"}},

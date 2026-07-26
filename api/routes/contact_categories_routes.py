@@ -1,5 +1,6 @@
 # contact_categories_routes.py - Routes catégories de contacts V154
 # Gestion des catégories pour organiser les contacts (Étudiants, Associations, Entreprises, etc.)
+import re  # V310 : disponible au niveau module pour re.escape (anti-injection regex)
 from fastapi import APIRouter, HTTPException, Request
 from datetime import datetime, timezone
 import uuid
@@ -91,7 +92,7 @@ async def create_contact_category(request: Request):
 
     # Vérifier doublon
     existing = await db.contact_categories.find_one(
-        {"coach_id": coach_id, "name": {"$regex": f"^{name}$", "$options": "i"}},
+        {"coach_id": coach_id, "name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}},
         {"_id": 0}
     )
     if existing:

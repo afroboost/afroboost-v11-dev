@@ -1,4 +1,5 @@
 # VERSION 7.0 - PRODUCTION READY - NE PAS MODIFIER login/tri/sync
+import re  # V310 : disponible au niveau module pour re.escape (anti-injection regex)
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
@@ -7428,7 +7429,7 @@ async def _v184_find_coach_for_code(code_upper):
     if not code_upper:
         return None
     discount = await db.discount_codes.find_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}},
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}},
         {"_id": 0, "coach_id": 1}
     )
     coach_id = (discount or {}).get("coach_id")
@@ -7451,7 +7452,7 @@ async def debug_discount_code(access_code: str, fix: Optional[float] = None):
     """V207e: Diagnostic + fix stripe_amount via ?fix=70"""
     code_upper = (access_code or "").strip().upper()
     discount = await db.discount_codes.find_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}
     )
     if not discount:
         return {"code": code_upper, "error": "Code introuvable"}
@@ -8103,7 +8104,7 @@ async def fix_stripe_amount(access_code: str, request: Request):
         raise HTTPException(status_code=400, detail="stripe_amount requis")
     code_upper = (access_code or "").strip().upper()
     result = await db.discount_codes.update_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}},
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}},
         {"$set": {"stripe_amount": float(amount)}}
     )
     if result.matched_count == 0:
@@ -8163,7 +8164,7 @@ async def fix_all_stripe_amounts():
         # Fallback: subscription offer_price
         if not best_amount:
             sub = await db.subscriptions.find_one(
-                {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "offer_price": {"$ne": None}},
+                {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "offer_price": {"$ne": None}},
                 {"_id": 0, "offer_price": 1}
             )
             if sub and sub.get("offer_price"):
@@ -8175,7 +8176,7 @@ async def fix_all_stripe_amounts():
         if best_amount and best_amount > 0:
             # Propager à TOUS les documents de ce code
             r = await db.discount_codes.update_many(
-                {"code": {"$regex": f"^{code_upper}$", "$options": "i"}},
+                {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}},
                 {"$set": {"stripe_amount": best_amount}}
             )
             needs_fix = sum(1 for d in docs if not d.get("stripe_amount") or float(d.get("stripe_amount", 0) or 0) <= 0)
@@ -8204,12 +8205,12 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
 
     # V201: Lookup case-insensitive + fallback sans filtre status
     subscription = await db.subscriptions.find_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "status": "active"}, {"_id": 0}
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "status": "active"}, {"_id": 0}
     )
     # V201: Si pas trouvé avec status active, chercher sans filtre status
     if not subscription:
         sub_any = await db.subscriptions.find_one(
-            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
         )
         if sub_any:
             logger.warning(f"[V201] Code {code_upper}: subscription trouvée mais status='{sub_any.get('status')}' (pas 'active')")
@@ -8219,7 +8220,7 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     # Fallback historique : un code peut exister dans discount_codes sans subscription créée
     # V207j: Trier par stripe_amount DESC pour prendre le document avec prix en priorité (cas doublons)
     _discount_list = await db.discount_codes.find(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
     ).sort("stripe_amount", -1).to_list(1)
     discount = _discount_list[0] if _discount_list else None
 
@@ -8243,7 +8244,7 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     # V207h: Si stripe_amount absent (duplicat ou ancien code), chercher dans un autre document
     if not stripe_amount:
         alt_doc = await db.discount_codes.find_one(
-            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "stripe_amount": {"$gt": 0}},
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "stripe_amount": {"$gt": 0}},
             {"_id": 0, "stripe_amount": 1}
         )
         if alt_doc:
@@ -8251,7 +8252,7 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     # V207h: Dernier fallback — chercher le prix dans la subscription ou l'offre liée
     if not stripe_amount:
         sub_price = await db.subscriptions.find_one(
-            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "offer_price": {"$ne": None}},
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "offer_price": {"$ne": None}},
             {"_id": 0, "offer_price": 1}
         )
         if sub_price and sub_price.get("offer_price"):
@@ -8266,7 +8267,7 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     member = None
     if m:
         member = await db.code_members.find_one(
-            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "slug": m},
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "slug": m},
             {"_id": 0}
         )
         if not member:
@@ -8290,7 +8291,7 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     # V202: Si multi-membre et PAS de ?m= → retourner l'écran d'inscription
     if is_multi and not member:
         members_list = await db.code_members.find(
-            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}},
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}},
             {"_id": 0, "slug": 1, "name": 1}
         ).to_list(200)
         # Infos basiques du code pour l'écran d'inscription
@@ -8555,8 +8556,8 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
                 seen_ids = {r["id"] for r in reservations_raw if r.get("id")}
                 old_reservations = await db.reservations.find(
                     {
-                        "userEmail": {"$regex": f"^{member_email_escaped}$", "$options": "i"},
-                        "discountCode": {"$regex": f"^{code_upper}$", "$options": "i"},
+                        "userEmail": {"$regex": f"^{re.escape(member_email_escaped)}$", "$options": "i"},
+                        "discountCode": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"},
                         "$or": [{"member_slug": {"$exists": False}}, {"member_slug": ""}, {"member_slug": None}],
                     },
                     res_projection
@@ -8566,7 +8567,7 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
                         reservations_raw.append(old_r)
         elif user_email:
             reservations_raw = await db.reservations.find(
-                {"userEmail": {"$regex": f"^{user_email_escaped}$", "$options": "i"}},
+                {"userEmail": {"$regex": f"^{re.escape(user_email_escaped)}$", "$options": "i"}},
                 res_projection
             ).sort("createdAt", -1).to_list(50)
     except Exception as e:
@@ -8626,7 +8627,7 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     if is_multi and is_payer:
         try:
             all_members = await db.code_members.find(
-                {"code": {"$regex": f"^{code_upper}$", "$options": "i"}},
+                {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}},
                 {"_id": 0, "id": 1, "slug": 1, "name": 1, "email": 1, "whatsapp": 1, "blocked": 1, "created_at": 1}
             ).to_list(200)
             response_data["group_members"] = all_members
@@ -8646,14 +8647,14 @@ async def toggle_block_member(access_code: str, member_slug: str, request: Reque
 
     # Vérifier que le code existe et que c'est un groupe
     discount = await db.discount_codes.find_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
     )
     if not discount or not discount.get("multi_member"):
         raise HTTPException(status_code=404, detail="Code groupe introuvable")
 
     # Vérifier que le membre existe
     member = await db.code_members.find_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "slug": member_slug},
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "slug": member_slug},
         {"_id": 0}
     )
     if not member:
@@ -8661,7 +8662,7 @@ async def toggle_block_member(access_code: str, member_slug: str, request: Reque
 
     # Mettre à jour le statut
     await db.code_members.update_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "slug": member_slug},
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "slug": member_slug},
         {"$set": {"blocked": blocked}}
     )
 
@@ -8695,7 +8696,7 @@ async def join_subscriber_space(access_code: str, request: Request):
 
     # Vérifier que le code existe
     discount = await db.discount_codes.find_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
     )
     if not discount:
         raise HTTPException(status_code=404, detail="Code introuvable")
@@ -8705,13 +8706,13 @@ async def join_subscriber_space(access_code: str, request: Request):
     existing = None
     if email:
         existing = await db.code_members.find_one(
-            {"code": {"$regex": f"^{code_upper}$", "$options": "i"},
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"},
              "email": {"$regex": f"^{_re_mod.escape(email)}$", "$options": "i"}},
             {"_id": 0}
         )
     if not existing and whatsapp:
         existing = await db.code_members.find_one(
-            {"code": {"$regex": f"^{code_upper}$", "$options": "i"},
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"},
              "whatsapp": whatsapp},
             {"_id": 0}
         )
@@ -8798,7 +8799,7 @@ async def admin_list_code_members(access_code: str):
     """Liste tous les membres inscrits pour un code groupe."""
     code_upper = (access_code or "").strip().upper()
     members = await db.code_members.find(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
     ).to_list(100)
     return {"code": code_upper, "count": len(members), "members": members}
 
@@ -8808,7 +8809,7 @@ async def admin_purge_code_members(access_code: str):
     """Supprime TOUS les membres d'un code groupe (pour réinitialiser)."""
     code_upper = (access_code or "").strip().upper()
     result = await db.code_members.delete_many(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}
     )
     logger.info(f"[V208b] Purged {result.deleted_count} members from code {code_upper}")
     return {"success": True, "code": code_upper, "deleted": result.deleted_count}
@@ -8821,7 +8822,7 @@ async def subscriber_stripe_checkout(access_code: str, request: Request):
     code_upper = (access_code or "").strip().upper()
 
     discount = await db.discount_codes.find_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
     )
     if not discount:
         raise HTTPException(status_code=404, detail="Code introuvable")
@@ -8930,7 +8931,7 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     member = None
     if member_slug:
         member = await db.code_members.find_one(
-            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "slug": member_slug},
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "slug": member_slug},
             {"_id": 0}
         )
 
@@ -8940,17 +8941,17 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
 
     # V202: Chercher subscription (fallback case-insensitive)
     subscription = await db.subscriptions.find_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "status": "active"}, {"_id": 0}
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "status": "active"}, {"_id": 0}
     )
     if not subscription:
         # V202: Fallback — subscription avec n'importe quel status
         subscription = await db.subscriptions.find_one(
-            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
         )
     if not subscription:
         # V202: Dernier fallback — utiliser discount_codes pour les infos de session
         dc = await db.discount_codes.find_one(
-            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
         )
         if not dc:
             raise HTTPException(status_code=404, detail="Abonnement introuvable")
@@ -8969,7 +8970,7 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
 
     # V202: Déterminer les séances disponibles (partagées ou individuelles)
     discount_for_mode = await db.discount_codes.find_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0, "shared_sessions": 1}
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0, "shared_sessions": 1}
     )
     shared_mode = (discount_for_mode or {}).get("shared_sessions", True)
 
@@ -9014,7 +9015,7 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
             if not existing_reservation and user_email:
                 user_email_safe = _re_mod.escape(user_email)
                 old_dup_query = {
-                    "userEmail": {"$regex": f"^{user_email_safe}$", "$options": "i"},
+                    "userEmail": {"$regex": f"^{re.escape(user_email_safe)}$", "$options": "i"},
                     "courseId": course_id,
                     "$or": [{"member_slug": {"$exists": False}}, {"member_slug": ""}, {"member_slug": None}],
                 }
@@ -9031,7 +9032,7 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         else:
             user_email_safe = _re_mod.escape(user_email)
             dup_query = {
-                "userEmail": {"$regex": f"^{user_email_safe}$", "$options": "i"},
+                "userEmail": {"$regex": f"^{re.escape(user_email_safe)}$", "$options": "i"},
                 "courseId": course_id,
             }
             if occurrence_iso:
@@ -9051,7 +9052,7 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         member_used = member.get("used_sessions", 0) + quantity
         member_remaining = new_remaining
         await db.code_members.update_one(
-            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "slug": member_slug},
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "slug": member_slug},
             {"$set": {
                 "used_sessions": member_used,
                 "remaining_sessions": member_remaining,
@@ -9073,7 +9074,7 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
 
     # V186: Incrément discount_codes.used du nombre de places
     await db.discount_codes.update_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}},
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}},
         {"$inc": {"used": quantity}}
     )
 
@@ -9558,15 +9559,15 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
 
     # V215b: Aligner sur /reserve — case-insensitive + fallback statuts + fallback discount_codes
     subscription = await db.subscriptions.find_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "status": "active"}, {"_id": 0}
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "status": "active"}, {"_id": 0}
     )
     if not subscription:
         subscription = await db.subscriptions.find_one(
-            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
         )
     if not subscription:
         dc = await db.discount_codes.find_one(
-            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0}
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
         )
         if not dc:
             raise HTTPException(status_code=404, detail="Abonnement introuvable")
@@ -9634,7 +9635,7 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
 
     # V186: Décrémenter discount_codes.used du nombre de places (sans descendre sous 0)
     await db.discount_codes.update_one(
-        {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "used": {"$gte": qty_to_refund}},
+        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "used": {"$gte": qty_to_refund}},
         {"$inc": {"used": -qty_to_refund}}
     )
 
@@ -9642,11 +9643,11 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
     res_member_slug = reservation.get("member_slug")
     if res_member_slug:
         discount = await db.discount_codes.find_one(
-            {"code": {"$regex": f"^{code_upper}$", "$options": "i"}}, {"_id": 0, "shared_sessions": 1}
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0, "shared_sessions": 1}
         )
         if discount and not discount.get("shared_sessions", True):
             await db.code_members.update_one(
-                {"code": {"$regex": f"^{code_upper}$", "$options": "i"}, "slug": res_member_slug},
+                {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "slug": res_member_slug},
                 {"$inc": {"used_sessions": -qty_to_refund, "remaining_sessions": qty_to_refund}}
             )
             logger.info(f"[V208c CANCEL] Member {res_member_slug} recredited +{qty_to_refund}")
@@ -10164,7 +10165,7 @@ async def get_og_meta(username: str, request: Request):
         coach = await db.coaches.find_one(
             {"$or": [
                 {"username": username.lower()},
-                {"name": {"$regex": f"^{username}$", "$options": "i"}},
+                {"name": {"$regex": f"^{re.escape(username)}$", "$options": "i"}},
                 {"email": username.lower()},
                 {"id": username}
             ]},
@@ -10782,7 +10783,7 @@ async def bulk_import_contacts(request: Request):
             # Check duplicate
             dup_query = {"$or": []}
             if email:
-                dup_query["$or"].append({"email": {"$regex": f"^{email}$", "$options": "i"}})
+                dup_query["$or"].append({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
             if phone:
                 import re as re_dup
                 clean = phone.replace(" ", "").replace("-", "")
@@ -11034,7 +11035,7 @@ async def sync_google_contacts(request: Request):
 
             dup_query = {"$or": []}
             if email:
-                dup_query["$or"].append({"email": {"$regex": f"^{email}$", "$options": "i"}})
+                dup_query["$or"].append({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
             if phone:
                 clean = (phone or "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
                 if clean:
@@ -13637,7 +13638,7 @@ async def create_chat_participant(participant: ChatParticipantCreate, request: R
     # v104: Recherche doublon par email ou phone
     dup_query = {"$or": []}
     if email:
-        dup_query["$or"].append({"email": {"$regex": f"^{email}$", "$options": "i"}})
+        dup_query["$or"].append({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
     if phone:
         dup_query["$or"].append({"whatsapp": {"$regex": phone}})
         dup_query["$or"].append({"phone": {"$regex": phone}})
@@ -13694,7 +13695,7 @@ async def find_participant(
     if name:
         query["$or"].append({"name": {"$regex": name, "$options": "i"}})
     if email:
-        query["$or"].append({"email": {"$regex": f"^{email}$", "$options": "i"}})
+        query["$or"].append({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
     if whatsapp:
         # Nettoyer le numéro WhatsApp pour la recherche
         clean_whatsapp = whatsapp.replace(" ", "").replace("-", "").replace("+", "")
@@ -14507,7 +14508,7 @@ async def get_session_messages(session_id: str, include_deleted: bool = False):
         # Si on a un email, chercher le participant_id correspondant
         if participant_email:
             participant = await db.chat_participants.find_one(
-                {"email": {"$regex": f"^{participant_email}$", "$options": "i"}},
+                {"email": {"$regex": f"^{re.escape(participant_email)}$", "$options": "i"}},
                 {"_id": 0, "id": 1}
             )
             if participant:
@@ -14521,7 +14522,7 @@ async def get_session_messages(session_id: str, include_deleted: bool = False):
                     resolved_email = resolved_email or p["email"]
                     # Chercher d'autres participants avec le même email
                     same_email_ps = await db.chat_participants.find(
-                        {"email": {"$regex": f"^{p['email']}$", "$options": "i"}},
+                        {"email": {"$regex": f"^{re.escape(p['email'])}$", "$options": "i"}},
                         {"_id": 0, "id": 1}
                     ).to_list(10)
                     for sp in same_email_ps:
@@ -14530,7 +14531,7 @@ async def get_session_messages(session_id: str, include_deleted: bool = False):
         # Construire les requêtes de recherche de sessions dupliquées
         merge_queries = []
         if resolved_email:
-            merge_queries.append({"participantEmail": {"$regex": f"^{resolved_email}$", "$options": "i"}})
+            merge_queries.append({"participantEmail": {"$regex": f"^{re.escape(resolved_email)}$", "$options": "i"}})
         if all_pids:
             merge_queries.append({"participant_ids": {"$in": list(all_pids)}})
 
@@ -15543,9 +15544,13 @@ async def smart_chat_entry(request: Request):
     }
     """
     body = await request.json()
-    name = body.get("name", "").strip()
-    email = body.get("email", "").strip()
-    whatsapp = body.get("whatsapp", "").strip()
+    # V310 (anti-injection NoSQL) : coercition STRICTE en str. Sans elle, un corps
+    # {"email": {"$ne": null}} arrivait tel quel dans la requête Mongo (injection) et
+    # faisait planter `.strip()` (500). En str, une telle valeur devient une chaîne
+    # inoffensive qui ne matche rien. Longueur bornée (anti-corps surdimensionné).
+    name = str(body.get("name") or "").strip()[:120]
+    email = str(body.get("email") or "").strip()[:200]
+    whatsapp = str(body.get("whatsapp") or "").strip()[:40]
     link_token = body.get("link_token")
     tunnel_answers = body.get("tunnel_answers")  # v100: réponses tunnel
 

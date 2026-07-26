@@ -1,4 +1,5 @@
 # reservation_routes.py - Routes réservations v9.5.8 → v96: Email confirmation → v158: AFRO-XXXX + WhatsApp + i18n
+import re  # V310 : disponible au niveau module pour re.escape (anti-injection regex)
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -670,7 +671,7 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
                     logger.warning(f"[PUSH-V180] notif 0 séances échec: {_e}")
 
     if promo_code:
-        discount = await db.discount_codes.find_one({"code": {"$regex": f"^{promo_code}$", "$options": "i"}, "active": True}, {"_id": 0})
+        discount = await db.discount_codes.find_one({"code": {"$regex": f"^{re.escape(promo_code)}$", "$options": "i"}, "active": True}, {"_id": 0})
         if discount:
             # v95: Incrémenter le compteur d'utilisation du code promo
             await db.discount_codes.update_one(
@@ -1067,7 +1068,7 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
     if is_multi and member_slug:
         # V213: slug peut arriver en majuscules depuis le QR → cherche insensible à la casse
         member = await db.code_members.find_one(
-            {"slug": {"$regex": f"^{member_slug}$", "$options": "i"}}, {"_id": 0}
+            {"slug": {"$regex": f"^{re.escape(member_slug)}$", "$options": "i"}}, {"_id": 0}
         )
         if member:
             member_name = member.get("name", "Membre")
@@ -1080,7 +1081,7 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
         swiss_tz2 = timezone(_td2(hours=2))
         today_str2 = datetime.now(swiss_tz2).strftime("%Y-%m-%d")
         today_reservations = await db.reservations.find(
-            {"discountCode": {"$regex": f"^{code}$", "$options": "i"}, "datetime": {"$regex": today_str2}, "validated": {"$ne": True}},
+            {"discountCode": {"$regex": f"^{re.escape(code)}$", "$options": "i"}, "datetime": {"$regex": today_str2}, "validated": {"$ne": True}},
             {"_id": 0}
         ).to_list(50)
         if today_reservations:
@@ -1099,7 +1100,7 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
                     "subscriber": {"name": f"Groupe {code}", "remaining": discount.get("remaining_sessions", 0), "total": discount.get("total_sessions", 0)}}
         # Vérifier s'il y a des réservations déjà validées
         already_validated = await db.reservations.count_documents(
-            {"discountCode": {"$regex": f"^{code}$", "$options": "i"}, "datetime": {"$regex": today_str2}, "validated": True}
+            {"discountCode": {"$regex": f"^{re.escape(code)}$", "$options": "i"}, "datetime": {"$regex": today_str2}, "validated": True}
         )
         if already_validated > 0:
             return {"success": True, "type": "subscription", "message": f"Déjà validé ({already_validated} présence(s))",
@@ -1111,11 +1112,11 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
         member_email = discount.get("email", "")
 
     # Chercher une réservation pour aujourd'hui
-    res_query = {"discountCode": {"$regex": f"^{code}$", "$options": "i"}, "datetime": {"$regex": today_str}}
+    res_query = {"discountCode": {"$regex": f"^{re.escape(code)}$", "$options": "i"}, "datetime": {"$regex": today_str}}
     if member_slug:
-        res_query["member_slug"] = {"$regex": f"^{member_slug}$", "$options": "i"}
+        res_query["member_slug"] = {"$regex": f"^{re.escape(member_slug)}$", "$options": "i"}
     elif member_email:
-        res_query["userEmail"] = {"$regex": f"^{member_email.replace('.', '[.]')}$", "$options": "i"}
+        res_query["userEmail"] = {"$regex": f"^{re.escape(member_email)}$", "$options": "i"}
 
     reservation = await db.reservations.find_one(res_query, {"_id": 0})
 
@@ -1170,7 +1171,7 @@ async def _validate_user_access_code(code: str, user: dict, forced_course_id: st
 
     # Chercher une réservation pour aujourd'hui
     res_query = {
-        "userEmail": {"$regex": f"^{user_email.replace('.', '[.]')}$", "$options": "i"},
+        "userEmail": {"$regex": f"^{re.escape(user_email)}$", "$options": "i"},
         "datetime": {"$regex": today_str}
     }
     reservation = await db.reservations.find_one(res_query, {"_id": 0})
@@ -1193,7 +1194,7 @@ async def _validate_user_access_code(code: str, user: dict, forced_course_id: st
 
     # Pas de réservation — chercher un abonnement actif pour déduire une séance
     sub = await db.subscriptions.find_one(
-        {"email": {"$regex": f"^{user_email.replace('.', '[.]')}$", "$options": "i"}, "status": "active"}, {"_id": 0}
+        {"email": {"$regex": f"^{re.escape(user_email)}$", "$options": "i"}, "status": "active"}, {"_id": 0}
     )
     if sub:
         # Rediriger vers le flux CAS B en passant le code subscription
@@ -1264,7 +1265,7 @@ async def _qr_scan_validate_inner(request: Request):
         # CAS C (V213): Code promo / groupe — cherche dans discount_codes
         logger.info(f"[QR-V213] CAS B échoué, recherche CAS C (discount_codes) pour code='{code}'")
         discount = await db.discount_codes.find_one(
-            {"code": {"$regex": f"^{code}$", "$options": "i"}, "active": True}, {"_id": 0}
+            {"code": {"$regex": f"^{re.escape(code)}$", "$options": "i"}, "active": True}, {"_id": 0}
         )
         if discount:
             logger.info(f"[QR-V213] CAS C trouvé: discount code '{code}', multi_member={discount.get('multi_member')}, slug={member_slug_from_qr}")
@@ -1272,7 +1273,7 @@ async def _qr_scan_validate_inner(request: Request):
 
         # CAS C bis: discount_code inactif ?
         discount_any = await db.discount_codes.find_one(
-            {"code": {"$regex": f"^{code}$", "$options": "i"}}, {"_id": 0}
+            {"code": {"$regex": f"^{re.escape(code)}$", "$options": "i"}}, {"_id": 0}
         )
         if discount_any:
             logger.warning(f"[QR-V213] Discount code '{code}' trouvé mais inactif (active={discount_any.get('active')})")
@@ -1283,7 +1284,7 @@ async def _qr_scan_validate_inner(request: Request):
         if member_slug_from_qr:
             logger.info(f"[QR-V213] Recherche directe par slug '{member_slug_from_qr}' dans code_members")
             member_by_slug = await db.code_members.find_one(
-                {"slug": {"$regex": f"^{member_slug_from_qr}$", "$options": "i"}}, {"_id": 0}
+                {"slug": {"$regex": f"^{re.escape(member_slug_from_qr)}$", "$options": "i"}}, {"_id": 0}
             )
             if member_by_slug:
                 member_code = (member_by_slug.get("code") or "").upper()
@@ -1291,7 +1292,7 @@ async def _qr_scan_validate_inner(request: Request):
                 # Chercher le discount_code avec le vrai code du membre
                 if member_code:
                     real_discount = await db.discount_codes.find_one(
-                        {"code": {"$regex": f"^{member_code}$", "$options": "i"}, "active": True}, {"_id": 0}
+                        {"code": {"$regex": f"^{re.escape(member_code)}$", "$options": "i"}, "active": True}, {"_id": 0}
                     )
                     if real_discount:
                         return await _validate_discount_code_presence(member_code, real_discount, member_slug_from_qr, forced_course_id)
@@ -1299,7 +1300,7 @@ async def _qr_scan_validate_inner(request: Request):
         # CAS D (V213): Code d'accès utilisateur AFRO-XXXX — cherche dans users
         logger.info(f"[QR-V213] CAS C échoué, recherche CAS D (users.accessCode) pour code='{code}'")
         user_by_access = await db.users.find_one(
-            {"accessCode": {"$regex": f"^{code}$", "$options": "i"}}, {"_id": 0}
+            {"accessCode": {"$regex": f"^{re.escape(code)}$", "$options": "i"}}, {"_id": 0}
         )
         if user_by_access:
             return await _validate_user_access_code(code, user_by_access, forced_course_id)
@@ -1312,8 +1313,8 @@ async def _qr_scan_validate_inner(request: Request):
         _today = datetime.now(_swiss).strftime("%Y-%m-%d")
         direct_res = await db.reservations.find_one({
             "$or": [
-                {"discountCode": {"$regex": f"^{code}$", "$options": "i"}},
-                {"promoCode": {"$regex": f"^{code}$", "$options": "i"}}
+                {"discountCode": {"$regex": f"^{re.escape(code)}$", "$options": "i"}},
+                {"promoCode": {"$regex": f"^{re.escape(code)}$", "$options": "i"}}
             ],
             "datetime": {"$regex": _today}
         }, {"_id": 0})
@@ -1481,12 +1482,12 @@ async def check_reservation_eligibility(request: Request):
         return {"eligible": False, "reason": "Email ou code requis"}
     # Chercher par code
     if code:
-        discount = await db.discount_codes.find_one({"code": {"$regex": f"^{code}$", "$options": "i"}, "active": True}, {"_id": 0})
+        discount = await db.discount_codes.find_one({"code": {"$regex": f"^{re.escape(code)}$", "$options": "i"}, "active": True}, {"_id": 0})
         if discount:
             return {"eligible": True, "discount": discount, "type": "discount_code"}
     # Chercher par email (abonné actif)
     if email:
-        subscriber = await db.chat_participants.find_one({"email": {"$regex": f"^{email}$", "$options": "i"}}, {"_id": 0})
+        subscriber = await db.chat_participants.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0})
         if subscriber and subscriber.get("isSubscriber"):
             return {"eligible": True, "subscriber": {"name": subscriber.get("name"), "email": subscriber.get("email")}, "type": "subscriber"}
     return {"eligible": False, "reason": "Aucun abonnement ou code valide trouvé"}

@@ -3,6 +3,7 @@
 # v9.3.0: Ajout isolation par coach_id
 # v96: Email bienvenue + renforcement unicité
 
+import re  # V310 : disponible au niveau module pour re.escape (anti-injection regex)
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
@@ -357,7 +358,7 @@ async def create_discount_code(code: DiscountCodeCreate, request: Request):
         # Vérifier qu'il n'y a pas déjà un abonnement actif pour ce code + email
         existing = await _db.subscriptions.find_one({
             "email": assigned_email,
-            "code": {"$regex": f"^{code_str}$", "$options": "i"},
+            "code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"},
             "status": "active"
         })
         if not existing:
@@ -414,7 +415,7 @@ async def update_discount_code(code_id: str, updates: dict):
     # V200c: Try by id first, then by code (case-insensitive), then by _id string
     existing = await _db.discount_codes.find_one({"id": code_id})
     if not existing:
-        existing = await _db.discount_codes.find_one({"code": {"$regex": f"^{code_id}$", "$options": "i"}})
+        existing = await _db.discount_codes.find_one({"code": {"$regex": f"^{re.escape(code_id)}$", "$options": "i"}})
     if not existing:
         # V200c: Essayer aussi par _id converti en ObjectId
         try:
@@ -441,7 +442,7 @@ async def update_discount_code(code_id: str, updates: dict):
             new_remaining = max(0, total - new_used)
             new_status = "active" if new_remaining > 0 else "completed"
             result = await _db.subscriptions.update_many(
-                {"code": {"$regex": f"^{code_str}$", "$options": "i"}},
+                {"code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"}},
                 {"$set": {
                     "used_sessions": new_used,
                     "remaining_sessions": new_remaining,
@@ -463,7 +464,7 @@ async def update_discount_code(code_id: str, updates: dict):
             code_str = (existing.get("code") or updated.get("code") or "").strip()
             if code_str:
                 subs = await _db.subscriptions.find(
-                    {"code": {"$regex": f"^{code_str}$", "$options": "i"}},
+                    {"code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"}},
                     {"_id": 0, "id": 1, "used_sessions": 1, "remaining_sessions": 1, "status": 1}
                 ).to_list(500)
                 propagated = 0
@@ -507,7 +508,7 @@ async def update_discount_code(code_id: str, updates: dict):
                     expiry_for_sub = str(new_expires)
 
             result = await _db.subscriptions.update_many(
-                {"code": {"$regex": f"^{code_str}$", "$options": "i"}},
+                {"code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"}},
                 {"$set": {
                     "expires_at": expiry_for_sub,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -537,7 +538,7 @@ async def validate_discount_code(data: dict):
 
         # Case-insensitive search using regex
         code = await _db.discount_codes.find_one({
-            "code": {"$regex": f"^{code_str}$", "$options": "i"},  # Case insensitive match
+            "code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"},  # Case insensitive match
             "active": True
         }, {"_id": 0})
 
@@ -583,7 +584,7 @@ async def validate_discount_code(data: dict):
         # v96: Si le code n'est assigné à personne, le verrouiller au premier utilisateur
         if (not assigned or (isinstance(assigned, str) and not assigned.strip())) and user_email:
             await _db.discount_codes.update_one(
-                {"code": {"$regex": f"^{code_str}$", "$options": "i"}},
+                {"code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"}},
                 {"$set": {"assignedEmail": user_email}}
             )
             logger.info(f"[PROMO] Code {code_str} verrouillé pour {user_email} (premier utilisateur)")
@@ -739,7 +740,7 @@ async def get_subscription_status(request: Request, email: str = "", code: str =
 
         # Vérifier que le discount_code existe et est encore actif
         discount = await _db.discount_codes.find_one({
-            "code": {"$regex": f"^{sub_code}$", "$options": "i"},
+            "code": {"$regex": f"^{re.escape(sub_code)}$", "$options": "i"},
             "active": True
         }, {"_id": 0, "assignedEmail": 1, "active": 1})
 
@@ -889,7 +890,7 @@ async def sync_subscriptions_for_email(data: dict):
 
     # Trouver tous les codes assignés à cet email
     codes = await _db.discount_codes.find(
-        {"assignedEmail": {"$regex": f"^{email}$", "$options": "i"}, "active": True},
+        {"assignedEmail": {"$regex": f"^{re.escape(email)}$", "$options": "i"}, "active": True},
         {"_id": 0}
     ).to_list(50)
 
@@ -899,7 +900,7 @@ async def sync_subscriptions_for_email(data: dict):
         code_str = code.get("code", "").upper().strip()
         # Vérifier si une subscription existe déjà
         existing = await _db.subscriptions.find_one(
-            {"email": email, "code": {"$regex": f"^{code_str}$", "$options": "i"}, "status": "active"},
+            {"email": email, "code": {"$regex": f"^{re.escape(code_str)}$", "$options": "i"}, "status": "active"},
             {"_id": 0}
         )
         if existing:
