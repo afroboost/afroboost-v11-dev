@@ -163,6 +163,47 @@ async def delete_coach(coach_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Coach non trouvé")
     return {"success": True, "deleted_id": coach_id}
 
+@coach_router.post("/admin/purge-test-auth")
+async def purge_test_auth(request: Request):
+    """V311c : supprime les COMPTES D'AUTHENTIFICATION de test (users_auth + coaches +
+    coach_auth + coach_sessions) dont l'email trahit un test. Super Admin uniquement.
+    `partner-cleanup` ne touchait pas `users_auth` ; ceci comble le trou et renvoie
+    une PREUVE (ce qui a été supprimé + les comptes de test résiduels = doit être vide).
+    Filtrage en Python (pas de regex MongoDB) -> aucune injection possible."""
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Super Admin requis")
+
+    MARQUEURS = ("example.com", "v311-jeton-test", "v311test", "nonregression", ".test", ".local")
+
+    def _is_test(em):
+        em = (em or "").lower()
+        return any(m in em for m in MARQUEURS)
+
+    # 1) recenser les emails de test présents dans users_auth
+    docs = await db.users_auth.find({}, {"_id": 0, "email": 1}).to_list(5000)
+    cibles = sorted({(d.get("email") or "").lower() for d in docs if _is_test(d.get("email"))})
+
+    # 2) supprimer par ÉGALITÉ STRICTE (jamais de regex) dans toutes les collections d'auth
+    supprime = {}
+    for coll in ("users_auth", "coaches", "coach_auth", "coach_sessions"):
+        n = 0
+        for em in cibles:
+            r = await db[coll].delete_many({"email": em})
+            n += r.deleted_count
+        supprime[coll] = n
+
+    # 3) re-vérifier : plus aucun compte de test ne doit subsister
+    docs2 = await db.users_auth.find({}, {"_id": 0, "email": 1}).to_list(5000)
+    restants = sorted({(d.get("email") or "").lower() for d in docs2 if _is_test(d.get("email"))})
+
+    return {
+        "cibles": cibles,
+        "supprime": supprime,
+        "comptes_test_restants": restants,     # doit être [] pour prouver le nettoyage
+        "total_users_auth": len(docs2),
+    }
+
 @coach_router.delete("/admin/partner-cleanup/{email}")
 async def cleanup_partner_data(email: str, request: Request):
     """Supprime TOUTES les données d'un partenaire : concept, branding, fichiers, etc. (Super Admin)"""

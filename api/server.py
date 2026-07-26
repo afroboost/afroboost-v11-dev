@@ -1703,11 +1703,13 @@ async def get_users(request: Request):
     # Pydantic et renvoyaient une 500 qui plantait tout le dashboard admin).
     base_filter = {"name": {"$exists": True, "$ne": ""}, "email": {"$exists": True, "$ne": ""}}
     if coach_email and not is_super_admin(coach_email):
-        # Un coach ne voit que ses propres utilisateurs (inscrits via son lien)
-        query = {"$and": [base_filter, {"$or": [
-            {"coach_id": coach_email},
-            {"coach_id": {"$exists": False}}  # Utilisateurs sans coach assigné (legacy)
-        ]}]}
+        # V311c : FUITE CORRIGÉE. Un coach ne voit QUE ses propres utilisateurs
+        # (coach_id == son email). Les fiches HÉRITÉES (sans coach_id, données
+        # pré-multi-coach) ne sont PLUS incluses ici : elles fuyaient vers
+        # n'importe quel compte coach (l'inscription étant ouverte, un inconnu
+        # pouvait s'enregistrer coach et lire 101 fiches clients). Ces fiches
+        # héritées restent visibles UNIQUEMENT du super-admin (branche else).
+        query = {"$and": [base_filter, {"coach_id": coach_email}]}
     else:
         query = base_filter
     users = await db.users.find(query, {"_id": 0}).to_list(1000)
