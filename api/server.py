@@ -651,8 +651,8 @@ class OfferCreate(BaseModel):
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: str
-    email: str
+    name: str = ""          # V289: défaut vide — certains docs n'ont pas de name (upserts birthday/photo)
+    email: str = ""         # V289: défaut vide — certains docs n'ont pas d'email (upserts birthday/photo)
     whatsapp: Optional[str] = ""
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -1671,13 +1671,18 @@ async def create_category(category: dict):
 async def get_users(request: Request):
     # Filtrage par coach_id si un coach est connecté (super_admin voit tout)
     coach_email = request.headers.get("X-User-Email", "").lower().strip()
-    query = {}
+    # V289 : exclure les documents incomplets (créés par d'anciens upserts
+    # birthday/photo qui n'avaient ni name ni email — ils cassaient la validation
+    # Pydantic et renvoyaient une 500 qui plantait tout le dashboard admin).
+    base_filter = {"name": {"$exists": True, "$ne": ""}, "email": {"$exists": True, "$ne": ""}}
     if coach_email and not is_super_admin(coach_email):
         # Un coach ne voit que ses propres utilisateurs (inscrits via son lien)
-        query = {"$or": [
+        query = {"$and": [base_filter, {"$or": [
             {"coach_id": coach_email},
             {"coach_id": {"$exists": False}}  # Utilisateurs sans coach assigné (legacy)
-        ]}
+        ]}]}
+    else:
+        query = base_filter
     users = await db.users.find(query, {"_id": 0}).to_list(1000)
     for user in users:
         if isinstance(user.get('createdAt'), str):
@@ -2604,14 +2609,60 @@ async def save_participant_birthday(participant_id: str, request: Request):
         {"$set": update}
     )
     if res.matched_count == 0:
-        # Aucun participant chat : on cree/complete le doc users par participant_id.
+        # V289 : NE PLUS faire d'upsert dans db.users — ça créait des documents
+        # sans name/email qui cassaient GET /users (erreur 500 -> dashboard mort).
+        # Update simple : on complète si le doc existe, sinon on ne crée rien
+        # (l'anniversaire reste dans chat_participants).
         await db.users.update_one(
             {"participant_id": participant_id},
-            {"$set": {**update, "participant_id": participant_id}},
-            upsert=True
+            {"$set": {**update, "participant_id": participant_id}}
         )
     logger.info(f"[V285] Anniversaire enregistre: {participant_id} -> {birthday}")
     return {"success": True, "birthday": birthday}
+
+
+@api_router.post("/admin/cleanup-ghost-users")
+async def cleanup_ghost_users(request: Request):
+    """V289 : supprime les documents `users` fantômes (sans name NI email) créés
+    par d'anciens upserts birthday/photo. À appeler une seule fois après déploiement."""
+    user_email = require_auth(request)
+    if not is_super_admin(user_email):
+        raise HTTPException(status_code=403, detail="Admin only")
+    result = await db.users.delete_many({
+        "$and": [
+            {"$or": [{"name": {"$exists": False}}, {"name": ""}, {"name": None}]},
+            {"$or": [{"email": {"$exists": False}}, {"email": ""}, {"email": None}]},
+        ]
+    })
+    logger.info(f"[V289] Nettoyage: {result.deleted_count} documents fantômes supprimés de db.users")
+    return {"status": "ok", "deleted": result.deleted_count}
+
+
+@api_router.post("/admin/fix-publication-photos")
+async def fix_publication_photos(request: Request):
+    """V289 : migration — remplit `author_photo` des publications existantes en
+    cherchant la photo dans users puis coach_profiles."""
+    user_email = require_auth(request)
+    if not is_super_admin(user_email):
+        raise HTTPException(status_code=403, detail="Admin only")
+    pubs = await db.publications.find(
+        {"author_id": {"$ne": ""},
+         "$or": [{"author_photo": ""}, {"author_photo": None}, {"author_photo": {"$exists": False}}]}
+    ).to_list(length=500)
+    fixed = 0
+    for pub in pubs:
+        aid = pub.get("author_id", "")
+        if not aid:
+            continue
+        _au = await db.users.find_one({"email": aid}, {"_id": 0, "photo_url": 1, "photoUrl": 1})
+        photo = (_au or {}).get("photo_url") or (_au or {}).get("photoUrl") or ""
+        if not photo:
+            _cp = await db.coach_profiles.find_one({"email": aid}, {"_id": 0, "photo_url": 1})
+            photo = (_cp or {}).get("photo_url") or ""
+        if photo:
+            await db.publications.update_one({"id": pub["id"]}, {"$set": {"author_photo": photo}})
+            fixed += 1
+    return {"status": "ok", "fixed": fixed, "total_checked": len(pubs)}
 
 
 @api_router.get("/birthdays/today")
@@ -5920,8 +5971,19 @@ async def create_publication(request: Request):
     author_id = code if ("@" in code) else ""
     author_photo = ""
     if author_id:
+        # V289 : chercher la photo dans users, PUIS coach_profiles (la photo coach
+        # y vit), PUIS chat_participants — sinon l'avatar retombait sur les initiales.
         _au = await db.users.find_one({"email": author_id}, {"_id": 0, "photo_url": 1, "photoUrl": 1})
         author_photo = (_au or {}).get("photo_url") or (_au or {}).get("photoUrl") or ""
+        if not author_photo:
+            _cp = await db.coach_profiles.find_one({"email": author_id}, {"_id": 0, "photo_url": 1})
+            author_photo = (_cp or {}).get("photo_url") or ""
+        if not author_photo:
+            _part = await db.chat_participants.find_one(
+                {"$or": [{"email": author_id}, {"id": author_id}]},
+                {"_id": 0, "photo_url": 1, "photoUrl": 1}
+            )
+            author_photo = (_part or {}).get("photo_url") or (_part or {}).get("photoUrl") or ""
 
     now = datetime.now(timezone.utc)
     pub = {
@@ -17790,6 +17852,15 @@ async def update_coach_profile(request: Request):
     if "display_name" in data:
         update["display_name"] = data["display_name"]
     await db.coach_profiles.update_one({"email": email}, {"$set": update}, upsert=True)
+    # V289 : refléter la photo dans db.users SI un doc existe déjà (upsert=False
+    # pour NE PAS recréer de doc fantôme sans name — cf. fix 500 /users). La
+    # recherche photo des publications interroge de toute façon coach_profiles.
+    if "photo_url" in update:
+        await db.users.update_one(
+            {"email": email},
+            {"$set": {"photo_url": update["photo_url"], "photoUrl": update["photo_url"]}},
+            upsert=False
+        )
     profile = await db.coach_profiles.find_one({"email": email}, {"_id": 0})
     return {"success": True, "profile": profile}
 

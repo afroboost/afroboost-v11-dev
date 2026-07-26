@@ -262,7 +262,7 @@ const ConceptEditor = ({
               <div className="flex items-center gap-3">
                 <input 
                   type="color" 
-                  value={concept.primaryColor || 'var(--primary-color, #D91CD2)'} 
+                  value={concept.primaryColor || '#D91CD2'} 
                   onChange={(e) => {
                     const newColor = e.target.value;
                     setConcept({ ...concept, primaryColor: newColor });
@@ -279,7 +279,7 @@ const ConceptEditor = ({
                 <div>
                   <input 
                     type="text" 
-                    value={concept.primaryColor || 'var(--primary-color, #D91CD2)'} 
+                    value={concept.primaryColor || '#D91CD2'} 
                     onChange={(e) => {
                       const newColor = e.target.value;
                       if (/^#[0-9A-Fa-f]{6}$/.test(newColor)) {
@@ -291,7 +291,7 @@ const ConceptEditor = ({
                       }
                     }}
                     className="px-3 py-2 rounded-lg neon-input text-sm uppercase w-28"
-                    placeholder="var(--primary-color, #D91CD2)"
+                    placeholder="#D91CD2"
                   />
                   <p className="text-xs mt-1 text-white/40">Rose par défaut</p>
                 </div>

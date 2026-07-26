@@ -1715,7 +1715,17 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
 
   // === FORMULAIRE ABONNÉ (4 champs: Nom, WhatsApp, Email, Code Promo) ===
   const [showSubscriberForm, setShowSubscriberForm] = useState(false); // Afficher le formulaire abonné
-  const [subscriberFormData, setSubscriberFormData] = useState({ name: '', whatsapp: '', email: '', code: '' });
+  // V289 : pré-remplir nom/WhatsApp/email/anniversaire depuis les infos mémorisées.
+  const [subscriberFormData, setSubscriberFormData] = useState(() => {
+    try {
+      const saved = localStorage.getItem('afroboost_subscriber_info');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return { name: parsed.name || '', whatsapp: parsed.whatsapp || '', email: parsed.email || '', code: '', birthday: parsed.birthday || '' };
+      }
+    } catch (e) {}
+    return { name: '', whatsapp: '', email: '', code: '', birthday: '' };
+  });
   // v160: Formulaire de connexion coach simple dans le chat
   const [showCoachLoginForm, setShowCoachLoginForm] = useState(false);
   const [coachLoginData, setCoachLoginData] = useState({ email: '', password: '' });
@@ -7383,7 +7393,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       title="Mon profil"
                       style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.7 }}
                     >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary-color, #D91CD2)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      {/* V289 : icône profil coach en BLANC (comme la cloche) */}
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                         <circle cx="12" cy="7" r="4" />
                       </svg>
@@ -10086,9 +10097,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       {todayBirthdays && todayBirthdays.length > 0 && (
         <div style={{
           position: 'fixed', top: '60px', left: '50%', transform: 'translateX(-50%)',
-          background: 'linear-gradient(135deg, #7c3aed, #a855f7)',
+          background: 'linear-gradient(135deg, #8b5cf6, #a855f7)',
           color: '#fff', padding: '12px 24px', borderRadius: '16px',
-          boxShadow: '0 4px 20px rgba(124,58,237,0.4)',
+          boxShadow: '0 4px 20px rgba(139,92,246,0.4)',
           zIndex: 10000, display: 'flex', alignItems: 'center', gap: '10px',
           maxWidth: '90vw', animation: 'birthdaySlide 0.5s ease-out'
         }}>
@@ -10119,8 +10130,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           <div style={{
             background: 'linear-gradient(135deg, #1a1a2e, #2d1b4e)',
             borderRadius: '20px', padding: '28px', width: '320px',
-            boxShadow: '0 8px 32px rgba(124,58,237,0.3)',
-            border: '1px solid rgba(124,58,237,0.3)'
+            boxShadow: '0 8px 32px rgba(139,92,246,0.3)',
+            border: '1px solid rgba(139,92,246,0.3)'
           }} onClick={function(e) { e.stopPropagation(); }}>
             <div style={{ textAlign: 'center', marginBottom: '20px' }}>
               {/* V285 : gâteau SVG (plus d'emoji) */}
@@ -10143,7 +10154,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                   onChange={function(e) { setBirthdayMonth(e.target.value); }}
                   style={{
                     width: '100%', padding: '10px', borderRadius: '10px',
-                    background: 'rgba(124,58,237,0.2)', border: '1px solid rgba(124,58,237,0.4)',
+                    background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.4)',
                     color: '#fff', fontSize: '14px', outline: 'none'
                   }}
                 >
@@ -10169,7 +10180,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                   onChange={function(e) { setBirthdayDay(e.target.value); }}
                   style={{
                     width: '100%', padding: '10px', borderRadius: '10px',
-                    background: 'rgba(124,58,237,0.2)', border: '1px solid rgba(124,58,237,0.4)',
+                    background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.4)',
                     color: '#fff', fontSize: '14px', outline: 'none'
                   }}
                 >
@@ -10194,7 +10205,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                 disabled={!birthdayMonth || !birthdayDay}
                 style={{
                   width: '100%', padding: '12px', borderRadius: '12px',
-                  background: birthdayMonth && birthdayDay ? 'linear-gradient(135deg, #7c3aed, #a855f7)' : 'rgba(124,58,237,0.3)',
+                  background: birthdayMonth && birthdayDay ? 'linear-gradient(135deg, #8b5cf6, #a855f7)' : 'rgba(139,92,246,0.3)',
                   border: 'none', color: '#fff', fontSize: '15px',
                   fontWeight: 'bold', cursor: birthdayMonth && birthdayDay ? 'pointer' : 'not-allowed',
                   transition: 'all 0.3s'

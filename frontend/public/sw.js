@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v288'; // V288: fix ReferenceError TDZ isCoachMode
+var CACHE_NAME = 'afroboost-v289'; // V289: fix 500 users + photos publications + birthday
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

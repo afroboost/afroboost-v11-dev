@@ -101,7 +101,8 @@ const saveInfo = (formData) => {
     if (!name && !whatsapp && !email) {
       return true; // Pas d'erreur, juste rien à sauvegarder
     }
-    const toSave = { name, whatsapp, email };
+    // V289 : mémoriser aussi la date de naissance (pré-remplissage à la prochaine visite).
+    const toSave = { name, whatsapp, email, birthday: (formData.birthday || '').trim() };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
     // Vérification immédiate : relire pour confirmer
     const verify = localStorage.getItem(STORAGE_KEY);
@@ -186,11 +187,18 @@ const SubscriberForm = ({
     const saved = loadSavedInfo();
     if (saved) {
       console.log('[SUBSCRIBER-FORM] Auto-fill from localStorage:', JSON.stringify(saved));
+      // V289 : recharger aussi la date de naissance mémorisée.
+      let savedBirthday = '';
+      try {
+        const subInfo = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+        if (subInfo.birthday) savedBirthday = subInfo.birthday;
+      } catch (e) {}
       setFormData(prev => ({
         ...prev,
         name: saved.name || prev.name,
         whatsapp: saved.whatsapp || prev.whatsapp,
-        email: saved.email || prev.email
+        email: saved.email || prev.email,
+        birthday: savedBirthday || prev.birthday || ''
       }));
       showFeedback('restored');
     } else {
@@ -220,10 +228,11 @@ const SubscriberForm = ({
   // Wrapper soumission
   const handleSubmit = useCallback((e) => {
     e.preventDefault();
-    // V285 : la date de naissance est OBLIGATOIRE à la connexion abonné.
+    // V285/V289 : la date de naissance est OBLIGATOIRE et complète (jour+mois+année).
     const bday = (formData.birthday || '').trim();
-    if (!bday) {
-      alert('La date de naissance est obligatoire.');
+    const bdayParts = bday.split('-');
+    if (bdayParts.length !== 3 || !bdayParts[0] || !bdayParts[1] || !bdayParts[2]) {
+      alert('La date de naissance est obligatoire (jour, mois et année).');
       return;
     }
     if (rememberMe) {
@@ -374,27 +383,41 @@ const SubscriberForm = ({
         />
       </div>
 
-      {/* V285 : Date de naissance — OBLIGATOIRE. L'âge n'est pas public. */}
+      {/* V289 : Date de naissance — 3 selects (Jour / Mois / Année), plus fiable
+          que le calendrier natif. Stocké en YYYY-MM-DD dans formData.birthday. */}
       <div>
         <label className="block text-white text-xs mb-1" style={{ opacity: 0.7 }}>Date de naissance *</label>
-        <input
-          type="date"
-          value={formData.birthday || ''}
-          onChange={(e) => handleFieldChange('birthday', e.target.value)}
-          max={new Date().toISOString().split('T')[0]}
-          className="w-full px-3 py-2 rounded-lg text-sm"
-          style={{
-            background: 'rgba(255,255,255,0.1)',
-            border: '1px solid rgba(255,255,255,0.2)',
-            color: '#fff',
-            outline: 'none',
-            colorScheme: 'dark'
-          }}
-          data-testid="subscriber-birthday"
-        />
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <select
+            value={(() => { const b = formData.birthday || ''; const p = b.split('-'); return p.length === 3 && p[2] ? String(parseInt(p[2], 10)) : ''; })()}
+            onChange={(e) => { const p = (formData.birthday || '--').split('-'); handleFieldChange('birthday', (p[0] || '') + '-' + (p[1] || '') + '-' + (e.target.value ? e.target.value.padStart(2, '0') : '')); }}
+            style={{ flex: 1, padding: '10px 6px', borderRadius: '10px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', fontSize: '14px', outline: 'none' }}
+            data-testid="subscriber-birthday-day"
+          >
+            <option value="" style={{ background: '#1a1a2e' }}>Jour</option>
+            {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (<option key={d} value={String(d)} style={{ background: '#1a1a2e' }}>{d}</option>))}
+          </select>
+          <select
+            value={(() => { const b = formData.birthday || ''; const p = b.split('-'); return p.length === 3 && p[1] ? String(parseInt(p[1], 10)) : ''; })()}
+            onChange={(e) => { const p = (formData.birthday || '--').split('-'); handleFieldChange('birthday', (p[0] || '') + '-' + (e.target.value ? e.target.value.padStart(2, '0') : '') + '-' + (p[2] || '')); }}
+            style={{ flex: 1.3, padding: '10px 6px', borderRadius: '10px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', fontSize: '14px', outline: 'none' }}
+            data-testid="subscriber-birthday-month"
+          >
+            <option value="" style={{ background: '#1a1a2e' }}>Mois</option>
+            {['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'].map((m, i) => (<option key={i + 1} value={String(i + 1)} style={{ background: '#1a1a2e' }}>{m}</option>))}
+          </select>
+          <select
+            value={(() => { const b = formData.birthday || ''; const p = b.split('-'); return p.length === 3 && p[0] ? p[0] : ''; })()}
+            onChange={(e) => { const p = (formData.birthday || '--').split('-'); handleFieldChange('birthday', (e.target.value || '') + '-' + (p[1] || '') + '-' + (p[2] || '')); }}
+            style={{ flex: 1.1, padding: '10px 6px', borderRadius: '10px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', fontSize: '14px', outline: 'none' }}
+            data-testid="subscriber-birthday-year"
+          >
+            <option value="" style={{ background: '#1a1a2e' }}>Année</option>
+            {Array.from({ length: 80 }, (_, i) => new Date().getFullYear() - 10 - i).map(y => (<option key={y} value={String(y)} style={{ background: '#1a1a2e' }}>{y}</option>))}
+          </select>
+        </div>
         <p style={{ fontSize: '10px', color: '#aaa', marginTop: '4px', lineHeight: 1.3 }}>
-          Ton âge ne sera pas affiché publiquement sauf si tu le souhaites.
-          Ça nous permet de fêter ton anniversaire avec la communauté !
+          Pour recevoir un message le jour J ! Ton âge reste privé.
         </p>
       </div>
 
