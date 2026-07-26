@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v306'; // V306: photo profil jamais vide (DiceBear) + bot autorise sur sujets publics
+var CACHE_NAME = 'afroboost-v308'; // V308: fix ReferenceError dashboard + throttle check-partner + smart-entry sans reconnaissance par nom
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

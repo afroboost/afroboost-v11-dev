@@ -1940,7 +1940,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         setUsers(isSuperAdmin ? usr.data : []);
         setPaymentLinks(lnk.data); setConcept(cpt.data);
         // v92: Partners see only their own promo codes
-        setDiscountCodes(isSuperAdmin ? cds.data : cds.data.filter(c => c.createdBy === safeCoachUser_.email || c.coach_id === safeCoachUser_.email));
+        setDiscountCodes(isSuperAdmin ? cds.data : cds.data.filter(c => c.createdBy === safeCoachUser?.email || c.coach_id === safeCoachUser?.email));
 
         // v69: Charger prochaine expiration d'offre
         try {

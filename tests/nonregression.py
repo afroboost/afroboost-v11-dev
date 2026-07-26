@@ -327,6 +327,45 @@ def t17_device_token_unmasks():
         record(17, "Jeton d'appareil -> code en clair", False, str(e))
 
 
+def t18_no_recognition_by_name_only():
+    """V308 : smart-entry par NOM SEUL ne doit PLUS reconnaître un compte existant."""
+    try:
+        uniq = "ZZZ Testeur Inconnu 918273"
+        r = requests.post(_url("/api/chat/smart-entry"), json={"name": uniq}, timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        # Un nom inconnu ne doit jamais tomber sur un compte existant.
+        ok = r.status_code == 200 and (d.get("is_returning") in (False, None))
+        record(18, "Nom seul ne reconnaît pas un compte existant", ok, f"HTTP {r.status_code} is_returning={d.get('is_returning')}")
+    except Exception as e:
+        record(18, "Nom seul ne reconnaît pas un compte", False, str(e))
+
+
+def t19_device_token_endpoint():
+    """V308/V296 : l'abonné légitime peut obtenir un jeton d'appareil avec son code."""
+    if not (SUB_CODE and SUB_EMAIL):
+        return skip(19, "Jeton d'appareil (appareil connu)", "SUB_CODE/SUB_EMAIL non fournis")
+    try:
+        r = requests.post(_url("/api/subscriber/token"), json={"code": SUB_CODE, "email": SUB_EMAIL}, timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        ok = r.status_code == 200 and bool(d.get("token"))
+        record(19, "Jeton d'appareil délivré au code valide", ok, f"HTTP {r.status_code} token={'oui' if d.get('token') else 'non'}")
+    except Exception as e:
+        record(19, "Jeton d'appareil", False, str(e))
+
+
+def t20_new_visitor_ok():
+    """V308 : un nouveau visiteur (nom+email frais) s'inscrit sans friction."""
+    try:
+        r = requests.post(_url("/api/chat/smart-entry"), json={
+            "name": "Nouveau Visiteur 553311", "email": "nouveau553311@example.com"
+        }, timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        ok = r.status_code == 200 and (d.get("participant") is not None or d.get("session") is not None)
+        record(20, "Nouveau visiteur -> inscription OK (sans friction)", ok, f"HTTP {r.status_code}")
+    except Exception as e:
+        record(20, "Nouveau visiteur -> inscription", False, str(e))
+
+
 TEST_CAPTION_MARK = "TEST non-régression"
 
 
@@ -381,7 +420,8 @@ def main():
                    t08_subscriptions_by_email, t09_profile_no_base64, t10_translate_fr_en,
                    t11_translate_bassa_lexicon, t12_bot_cours, t13_bot_partner,
                    t14_chips_have_icon, t15_contacts_coach,
-                   t16_masking_active, t17_device_token_unmasks):
+                   t16_masking_active, t17_device_token_unmasks,
+                   t18_no_recognition_by_name_only, t19_device_token_endpoint, t20_new_visitor_ok):
             fn()
     finally:
         # V307 : nettoyage GARANTI, même si un test échoue ou si le script est interrompu.

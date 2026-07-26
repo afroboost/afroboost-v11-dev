@@ -15539,19 +15539,22 @@ async def smart_chat_entry(request: Request):
         raise HTTPException(status_code=400, detail="Le nom est requis")
     
     # Rechercher un participant existant
+    import re  # re n'est pas importé au niveau module
     existing_participant = None
     search_query = {"$or": []}
-    
+
     if email:
-        search_query["$or"].append({"email": {"$regex": f"^{email}$", "$options": "i"}})
+        search_query["$or"].append({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
     if whatsapp:
         clean_whatsapp = whatsapp.replace(" ", "").replace("-", "").replace("+", "")
         if clean_whatsapp:
-            search_query["$or"].append({"whatsapp": {"$regex": clean_whatsapp}})
-    
-    # Recherche aussi par nom exact
-    search_query["$or"].append({"name": {"$regex": f"^{name}$", "$options": "i"}})
-    
+            search_query["$or"].append({"whatsapp": {"$regex": re.escape(clean_whatsapp)}})
+
+    # V308 (sécurité) : NE PLUS reconnaître un compte existant sur le seul NOM —
+    # c'était le vecteur le plus faible (des dizaines de personnes partagent un nom,
+    # trivialement devinable). L'identité ne se résout QUE par email ou WhatsApp
+    # (des informations que la personne a elle-même fournies). Un visiteur qui ne
+    # donne qu'un nom -> nouveau participant, aucune reconnaissance d'un autre compte.
     if search_query["$or"]:
         existing_participant = await db.chat_participants.find_one(search_query, {"_id": 0})
     

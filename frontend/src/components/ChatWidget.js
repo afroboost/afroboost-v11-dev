@@ -2214,13 +2214,19 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       
       if (email) {
         try {
-          const res = await axios.get(`${API}/check-partner/${encodeURIComponent(email)}`);
+          // V308 : throttlé (max 1 appel/5 s par email) — filet anti-boucle si le
+          // composant se remonte en rafale (cf. règle CLAUDE.md « JAMAIS DE BOUCLE »).
+          const res = await v305ThrottledGet('checkpartner:' + email, function () {
+            return axios.get(`${API}/check-partner/${encodeURIComponent(email)}`);
+          }, 5000);
           if (res.data?.is_partner) {
             setIsRegisteredCoach(true);
-            // Synchroniser le localStorage
-            localStorage.setItem('afroboost_coach_mode', 'true');
-            localStorage.setItem('afroboost_partner_verified', 'true');
-            console.log('[CHAT] ✅ Partenaire vérifié côté serveur:', email);
+            // Synchroniser le localStorage SEULEMENT si nécessaire (évite les écritures répétées).
+            if (localStorage.getItem('afroboost_coach_mode') !== 'true') localStorage.setItem('afroboost_coach_mode', 'true');
+            if (localStorage.getItem('afroboost_partner_verified') !== 'true') {
+              localStorage.setItem('afroboost_partner_verified', 'true');
+              console.log('[CHAT] ✅ Partenaire vérifié côté serveur:', email);
+            }
           } else {
             // Nettoyer si pas partenaire
             localStorage.removeItem('afroboost_partner_verified');
