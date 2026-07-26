@@ -269,14 +269,27 @@ def t14_chips_have_icon():
         record(14, "Chips du bot", False, str(e))
 
 
+ADMIN_JWT = os.environ.get("ADMIN_JWT", "").strip()
+
+
 def t15_contacts_coach():
+    """V311h — GROUPE 1 : les lectures d'administration exigent un JWT SIGNÉ.
+    X-User-Email seul (usurpable) ne donne plus aucun droit -> 403 sur les 3 routes.
+    Si ADMIN_JWT est fourni, on vérifie aussi que le vrai jeton -> 200."""
+    routes = ["/api/users", "/api/chat/sessions", "/api/contacts/all"]
     try:
-        r = requests.get(_url("/api/contacts/all"), headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
-        d = r.json() if r.status_code == 200 else {}
-        ok = r.status_code == 200 and isinstance(d.get("contacts"), list)
-        record(15, "Contacts coach", ok, f"HTTP {r.status_code} total={d.get('total')}")
+        spoof = {rt: requests.get(_url(rt), headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code
+                 for rt in routes}
+        spoof_ok = all(c == 403 for c in spoof.values())
+        if ADMIN_JWT:
+            jw = {rt: requests.get(_url(rt), headers={"Authorization": "Bearer " + ADMIN_JWT}, timeout=TIMEOUT).status_code
+                  for rt in routes}
+            ok = spoof_ok and all(c == 200 for c in jw.values())
+            record(15, "Lectures admin JWT-strict (spoof 403 / JWT 200)", ok, f"spoof={spoof} jwt={jw}")
+        else:
+            record(15, "Lectures admin JWT-strict (usurpation X-User-Email -> 403)", spoof_ok, f"spoof={spoof}")
     except Exception as e:
-        record(15, "Contacts coach", False, str(e))
+        record(15, "Lectures admin JWT-strict", False, str(e))
 
 
 def _jwt_active():

@@ -6595,11 +6595,38 @@ async def _v309_is_coach_or_admin(email: str) -> bool:
     return False
 
 
+def _v311_coach_email_from_jwt(request: Request) -> str:
+    """V311h (Groupe 1) : email issu d'un JWT SIGNÉ vérifié UNIQUEMENT — JAMAIS
+    X-User-Email (falsifiable). Rejette les jetons abonné (type == subscriber).
+    Renvoie '' si aucun jeton coach valide. Lecture du secret en direct (os.environ)."""
+    secret = os.environ.get("JWT_SECRET", "")
+    if not secret:
+        return ""
+    auth = request.headers.get("Authorization", "") or ""
+    if not auth.lower().startswith("bearer "):
+        return ""
+    token = auth.split(" ", 1)[1].strip()
+    if not token:
+        return ""
+    try:
+        import jwt as _pyjwt
+        payload = _pyjwt.decode(token, secret, algorithms=["HS256"])
+        if payload.get("type") == "subscriber":
+            return ""
+        return (payload.get("email") or "").lower().strip()
+    except Exception:
+        return ""
+
+
 async def _v309_require_coach_or_admin(request: Request) -> str:
-    """V309 : exige une identité coach/admin, sinon 403. Renvoie l'email."""
-    email = await _v263_authenticated_coach(request)
-    if not await _v309_is_coach_or_admin(email):
-        raise HTTPException(status_code=403, detail="Accès réservé au coach/administrateur")
+    """V311h — GROUPE 1 : le rôle coach/admin est désormais porté par un JWT SIGNÉ
+    (fin de l'usurpation par X-User-Email sur les routes de LECTURE : /api/users,
+    /api/chat/sessions, /api/contacts/all). 403 sinon. Le propriétaire a un jeton
+    signé (badge « Session sécurisée » vert) -> son dashboard reste plein ;
+    le cloisonnement par coach_id est conservé en aval, désormais sûr."""
+    email = _v311_coach_email_from_jwt(request)
+    if not email or not await _v309_is_coach_or_admin(email):
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
     return email
 
 
@@ -10593,9 +10620,10 @@ async def get_all_contacts_unified(request: Request):
     pour la sélection de destinataires dans les campagnes.
     Dédupliqué par email/phone. Retourne groupes + contacts individuels.
     """
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    # V311h — GROUPE 1 : JWT-strict. X-User-Email n'accorde plus aucun droit ici.
+    caller_email = _v311_coach_email_from_jwt(request)
+    if not caller_email or not await _v309_is_coach_or_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
 
     try:
         contacts = []
