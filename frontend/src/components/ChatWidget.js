@@ -5382,6 +5382,22 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     }, 800);
   };
 
+  // V293 (Fix 6): bouton « ? » flottant — ré-affiche les questions rapides (quick-replies)
+  // du bot dans le flux, sans dupliquer si elles sont déjà présentes. Réutilise le
+  // même rendu/flux que V197b (type 'quick_replies' + handleQuickReply).
+  const showQuickRepliesHelp = () => {
+    const now = Date.now();
+    setMessages(prev => {
+      // Retirer les anciens chips pour les remonter en bas du flux
+      const cleaned = prev.filter(m => m.type !== 'quick_replies');
+      return cleaned.concat([{
+        id: 'qr_help_' + now,
+        type: 'quick_replies',
+        replies: quickRepliesData
+      }]);
+    });
+  };
+
   // V197b: Handler clic "Parler à Coach Bassi" — ouvre WhatsApp avec message pré-rempli
   const handleContactCoachBassi = () => {
     const url = 'https://wa.me/' + COACH_BASSI_WHATSAPP + '?text=' + encodeURIComponent(COACH_BASSI_WHATSAPP_MESSAGE);
@@ -7405,54 +7421,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                   alignItems: 'center'
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {/* Coach avatar — click to zoom, small edit icon to change photo */}
-                    <div style={{ position: 'relative', cursor: 'pointer' }}>
-                      {coachProfile && coachProfile.photo_url ? (
-                        <img src={coachProfile.photo_url} alt="Coach"
-                          onClick={function() { setZoomedChatPhoto(coachProfile.photo_url); }}
-                          style={{
-                            width: '30px', height: '30px', borderRadius: '50%', objectFit: 'cover',
-                            border: '2px solid var(--primary-color, #D91CD2)', cursor: 'pointer'
-                          }} />
-                      ) : (
-                        <label style={{ cursor: 'pointer' }}>
-                          {/* V284 : icône SVG (plus d'emoji) + recadrage V279 (crop/zoom) */}
-                          <div style={{
-                            width: '30px', height: '30px', borderRadius: '50%',
-                            background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            color: '#fff'
-                          }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                              <circle cx="8.5" cy="8.5" r="1.5"></circle>
-                              <polyline points="21 15 16 10 5 21"></polyline>
-                            </svg>
-                          </div>
-                          <input type="file" accept="image/*" style={{ display: 'none' }} id="coach-photo-input-v284"
-                            onChange={coachPhotoSelectForCrop}
-                          />
-                        </label>
-                      )}
-                      {/* Small edit pencil overlay when photo exists */}
-                      {coachProfile && coachProfile.photo_url && (
-                        <label style={{
-                          position: 'absolute', bottom: '-2px', right: '-2px',
-                          width: '14px', height: '14px', borderRadius: '50%',
-                          background: 'var(--primary-color, #D91CD2)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          cursor: 'pointer', border: '1px solid #1a1a2e'
-                        }}>
-                          {/* V284 : crayon SVG (plus d'emoji) + recadrage V279 (crop/zoom) */}
-                          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M12 20h9" />
-                            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-                          </svg>
-                          <input type="file" accept="image/*" style={{ display: 'none' }}
-                            onChange={coachPhotoSelectForCrop}
-                          />
-                        </label>
-                      )}
-                    </div>
+                    {/* V293 : avatar coach 30px SUPPRIMÉ (doublon avec la photo du header).
+                        Le changement de photo reste possible via l'icône appareil photo
+                        dans le menu d'icônes à droite (input caché conservé ci-dessous). */}
+                    <input type="file" accept="image/*" style={{ display: 'none' }} id="coach-photo-input-v284"
+                      onChange={coachPhotoSelectForCrop}
+                    />
                     <span style={{ color: isStaffMode ? '#f59e0b' : 'var(--primary-color, #D91CD2)', fontSize: '12px', fontWeight: 'bold' }}>
                       {isStaffMode ? 'Mode Staff' : 'Mode Coach'}
                     </span>
@@ -7468,6 +7442,17 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                         <circle cx="12" cy="7" r="4" />
+                      </svg>
+                    </button>
+                    {/* V293 : changer la photo (remplace l'avatar-crayon supprimé) -> input caché */}
+                    <button
+                      onClick={function() { var el = document.getElementById('coach-photo-input-v284'); if (el) el.click(); }}
+                      title="Changer la photo"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.7 }}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                        <circle cx="12" cy="13" r="4" />
                       </svg>
                     </button>
                     {/* V285 : cloche de préférences notifications COACH */}
@@ -9798,6 +9783,36 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         <path d="M11 22 C14 27, 22 27, 25 22" stroke="#1a1a1a" strokeWidth="2" strokeLinecap="round" fill="none"/>
                       </svg>
                     </button>
+
+                    {/* V293 (Fix 6): bouton « ? » aide — ré-affiche les questions rapides du bot.
+                        Masqué en mode coach/staff (réservé abonné + visiteur). */}
+                    {!isCoachMode && (
+                      <button
+                        type="button"
+                        onClick={showQuickRepliesHelp}
+                        style={{
+                          width: '36px',
+                          height: '36px',
+                          borderRadius: '50%',
+                          background: 'rgba(147, 51, 234, 0.15)',
+                          border: '1px solid rgba(147, 51, 234, 0.4)',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                          padding: 0
+                        }}
+                        title="Aide / questions fréquentes"
+                        data-testid="help-btn"
+                      >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="10"></circle>
+                          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                          <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                        </svg>
+                      </button>
+                    )}
 
                     {/* v9.3.7: Icône Calendrier (Réservation) - TOUJOURS VISIBLE pour tous les utilisateurs */}
                     <button

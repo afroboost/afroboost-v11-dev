@@ -5766,7 +5766,12 @@ async def _v261_resolve_subscriber(code: str):
     montrer que les publications de ce coach et de ses abonnes).
     """
     code = (code or "").strip().upper()
-    if not code.startswith("AFR-"):
+    # V293 (fix Fix 7) : NE PLUS exiger le préfixe « AFR- ». Des clients ont des
+    # codes d'un autre format (ex. BASSBOOSTX-11) qui étaient refusés à tort ->
+    # impossible de publier. La VRAIE validation est la présence du code, ACTIF et
+    # avec crédit, dans subscriptions/discount_codes (ci-dessous). Un email de coach
+    # n'est pas un `code` : il n'y matchera jamais, donc aucune régression de sécu.
+    if not code or len(code) < 3:
         return False, "", None
     sub = await db.subscriptions.find_one(
         {"code": code, "status": "active"}, {"_id": 0, "name": 1, "email": 1, "coach_id": 1}

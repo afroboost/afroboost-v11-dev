@@ -6,8 +6,8 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v215';
-var SW_VERSION = 215;
+var CACHE_NAME = 'afroboost-v293'; // V293: avatar doublon retiré + icône ? aide + publication abonné réparée (gate AFR- retiré)
+var SW_VERSION = 265;
 
 var PRECACHE_URLS = [
   '/',
@@ -209,8 +209,15 @@ self.addEventListener('push', function(event) {
       vibrate: [200, 100, 200],
       tag: data.tag || 'afroboost-push',
       renotify: true,
+      // V274: message riche cliquable (façon WhatsApp/Instagram) — deux actions
+      requireInteraction: false,
+      actions: [
+        { action: 'open', title: 'Voir' },
+        { action: 'close', title: 'Fermer' }
+      ],
       data: {
-        url: data.url || '/',
+        // V274: url par defaut ouvre le chat ; le backend peut la surcharger.
+        url: data.url || '/?openChat=true',
         session_id: data.session_id || null
       }
     };
@@ -230,7 +237,12 @@ self.addEventListener('notificationclick', function(event) {
   try {
     event.notification.close();
 
-    var targetUrl = '/';
+    // V274: bouton "Fermer" — on ferme simplement, sans ouvrir le site.
+    if (event.action === 'close') {
+      return;
+    }
+
+    var targetUrl = '/?openChat=true';
     if (event.notification.data && event.notification.data.url) {
       targetUrl = event.notification.data.url;
     }

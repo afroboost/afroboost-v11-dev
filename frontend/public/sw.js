@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v292'; // V292: profil coach client + birthday mémorisé + publication abonné + traduction
+var CACHE_NAME = 'afroboost-v293'; // V293: avatar doublon retiré + icône ? aide + publication abonné réparée (gate AFR- retiré)
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [
