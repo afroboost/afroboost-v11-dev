@@ -2502,11 +2502,18 @@ async def get_user_profile(participant_id: str):
                 photo_url = _coach_photo
             else:
                 _cand = await db.chat_participants.find_one(
-                    {"email": _email_l, "photo_url": {"$regex": "^https?://"}},
-                    {"_id": 0, "photo_url": 1}
+                    {"email": _email_l, "$or": [{"photo_url": {"$regex": "^https?://"}}, {"photoUrl": {"$regex": "^https?://"}}]},
+                    {"_id": 0, "photo_url": 1, "photoUrl": 1}
                 )
-                if _cand and _cand.get("photo_url"):
-                    photo_url = _cand.get("photo_url")
+                if _cand and (_cand.get("photo_url") or _cand.get("photoUrl")):
+                    photo_url = _cand.get("photo_url") or _cand.get("photoUrl")
+
+        # V301 : ne JAMAIS renvoyer une photo data:base64 (vestige lourd/périmé).
+        # Si aucune photo Cloudinary n'a été trouvée pour cet email, on renvoie ""
+        # -> le frontend affiche l'avatar généré (DiceBear, couleur du thème) au lieu
+        # de la vieille base64. Vrai pour un ABONNÉ comme pour un coach.
+        if photo_url and str(photo_url).startswith("data:"):
+            photo_url = ""
 
         # V299 : compléter bio/passions manquants depuis le profil coach UNIQUEMENT
         # si l'email est un compte coach/admin CONNU (jamais de fusion entre
@@ -2848,6 +2855,55 @@ async def v299_fix_legacy_profile_photos():
     return {"status": "ok", "fixed": fixed, "total_checked": len(users)}
 
 
+async def _v301_find_cloud_photo(email: str) -> str:
+    """V301 : cherche une photo Cloudinary (http/https) pour un email, dans
+    coach_profiles PUIS users PUIS chat_participants (photo_url ou photoUrl)."""
+    email = (email or "").lower().strip()
+    if not email:
+        return ""
+    for coll in (db.coach_profiles, db.users, db.chat_participants):
+        d = await coll.find_one(
+            {"email": email, "$or": [{"photo_url": {"$regex": "^https?://"}}, {"photoUrl": {"$regex": "^https?://"}}]},
+            {"_id": 0, "photo_url": 1, "photoUrl": 1},
+        )
+        if d:
+            p = d.get("photo_url") or d.get("photoUrl") or ""
+            if p and str(p).startswith("http"):
+                return p
+    return ""
+
+
+@api_router.post("/v301-fix-legacy-profile-photos")
+async def v301_fix_legacy_profile_photos():
+    """V301 : migration PUBLIQUE (idempotente) — corrige la V299 qui ne balayait que
+    `users.photo_url`. Elle balaie maintenant users, chat_participants ET
+    coach_profiles, sur `photo_url` ET `photoUrl` (camelCase — c'est là que vivait
+    souvent la base64). Pour chaque photo `data:` : si une photo Cloudinary existe
+    pour le MÊME email -> on la substitue ; sinon on retire la base64 périmée (mise à
+    "" -> avatar généré côté client). Aucune fusion entre emails DIFFÉRENTS."""
+    total = 0
+    fixed = 0
+    blanked = 0
+    for coll in (db.users, db.chat_participants, db.coach_profiles):
+        docs = await coll.find(
+            {"$or": [{"photo_url": {"$regex": "^data:"}}, {"photoUrl": {"$regex": "^data:"}}]},
+            {"_id": 1, "email": 1},
+        ).to_list(2000)
+        for d in docs:
+            total += 1
+            email = (d.get("email") or "").lower().strip()
+            cloud = await _v301_find_cloud_photo(email) if email else ""
+            if cloud:
+                await coll.update_one({"_id": d["_id"]}, {"$set": {"photo_url": cloud, "photoUrl": cloud}})
+                fixed += 1
+            else:
+                # Pas de Cloudinary pour cet email -> on retire la base64 (jamais
+                # affichée) ; le client génère un avatar. On ne supprime pas le doc.
+                await coll.update_one({"_id": d["_id"]}, {"$set": {"photo_url": "", "photoUrl": ""}})
+                blanked += 1
+    return {"status": "ok", "fixed": fixed, "blanked": blanked, "total_checked": total}
+
+
 @api_router.get("/birthdays/today")
 async def get_today_birthdays():
     """V160/V285 : participants dont c'est l'anniversaire aujourd'hui (par MM-DD)."""
@@ -2966,23 +3022,43 @@ async def translate_text(request: Request):
     openai_key = os.environ.get("OPENAI_API_KEY")
     if not openai_key:
         raise HTTPException(status_code=503, detail="Traduction indisponible (OPENAI_API_KEY manquant)")
+
+    # V301 : TIMEOUT strict — l'endpoint doit TOUJOURS rendre la main. Sans timeout,
+    # un appel OpenAI qui pend faisait dépasser le délai de Cloudflare -> 502 opaque
+    # (cause réelle du blocage traduction). On borne côté client ET via wait_for.
+    import time as _time
+    _t0 = _time.monotonic()
     try:
-        client = OpenAI(api_key=openai_key)
-        response = await asyncio.to_thread(
-            client.chat.completions.create,
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": f"Tu es un traducteur. Traduis le texte de l'utilisateur en {target_name}. Réponds UNIQUEMENT avec la traduction, sans guillemets ni commentaire."},
-                {"role": "user", "content": text},
-            ],
-            max_tokens=800,
-            temperature=0.2,
+        client = OpenAI(api_key=openai_key, timeout=15.0, max_retries=0)
+        response = await asyncio.wait_for(
+            asyncio.to_thread(
+                client.chat.completions.create,
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": f"Tu es un traducteur. Traduis le texte de l'utilisateur en {target_name}. Réponds UNIQUEMENT avec la traduction, sans guillemets ni commentaire."},
+                    {"role": "user", "content": text},
+                ],
+                max_tokens=800,
+                temperature=0.2,
+            ),
+            timeout=18.0,
         )
         translation = (response.choices[0].message.content or "").strip()
+        _dur = round(_time.monotonic() - _t0, 2)
+        logger.info(f"[V301] Traduction OK lang={target} durée={_dur}s")
         return {"translation": translation, "target_lang": target}
+    except asyncio.TimeoutError:
+        _dur = round(_time.monotonic() - _t0, 2)
+        logger.error(f"[V301] Traduction TIMEOUT lang={target} durée={_dur}s")
+        raise HTTPException(status_code=504, detail="Le service de traduction ne répond pas (timeout). Réessayez.")
     except Exception as e:
-        logger.error(f"[V292] Traduction échouée: {e}")
-        raise HTTPException(status_code=502, detail="La traduction a échoué")
+        # V301 : remonter l'erreur RÉELLE (type + message tronqué), plus de message
+        # opaque « La traduction a échoué » qui a fait perdre plusieurs versions.
+        _dur = round(_time.monotonic() - _t0, 2)
+        _etype = type(e).__name__
+        _emsg = str(e)
+        logger.error(f"[V301] Traduction ÉCHEC lang={target} durée={_dur}s type={_etype} msg={_emsg}")
+        raise HTTPException(status_code=502, detail=f"Traduction échouée ({_etype}): {_emsg[:300]}")
 
 
 # === COACH NOTIFICATIONS ===

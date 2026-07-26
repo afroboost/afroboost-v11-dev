@@ -30,7 +30,7 @@ ENV REACT_APP_CLOUDINARY_UPLOAD_PRESET=$REACT_APP_CLOUDINARY_UPLOAD_PRESET
 # Changer la valeur de cet ARG modifie l'instruction Docker qui suit : le cache
 # de `craco build` est invalide et le frontend est TOUJOURS reconstruit a neuf.
 # -> BUMPER cette valeur a chaque fois qu'un changement frontend doit partir.
-ARG FRONTEND_CACHEBUST=v300-20260726
+ARG FRONTEND_CACHEBUST=v301-20260726
 
 RUN rm -rf node_modules/.cache && NODE_OPTIONS="--max-old-space-size=512 --max-semi-space-size=64" GENERATE_SOURCEMAP=false CI=false npx craco build
 

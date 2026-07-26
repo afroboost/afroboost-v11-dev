@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v300'; // V300: fiche contact coach — code + WhatsApp (wa.me) + date de naissance (lecture seule)
+var CACHE_NAME = 'afroboost-v301'; // V301: translate timeout + erreur reelle ; migration photos legacy corrigee ; plus de base64 affichee
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [
