@@ -32,7 +32,11 @@ ENV REACT_APP_CLOUDINARY_UPLOAD_PRESET=$REACT_APP_CLOUDINARY_UPLOAD_PRESET
 # -> BUMPER cette valeur a chaque fois qu'un changement frontend doit partir.
 ARG FRONTEND_CACHEBUST=v308-20260726
 
-RUN rm -rf node_modules/.cache && NODE_OPTIONS="--max-old-space-size=512 --max-semi-space-size=64" GENERATE_SOURCEMAP=false CI=false npx craco build
+# V308b : la limite mémoire Node de 512 Mo était trop juste pour des fichiers de
+# 10 000+ lignes (ChatWidget.js, App.js, CoachDashboard.js) -> build tué par OOM
+# (exit 255, ~10 s après « Creating an optimized production build… »). Portée à
+# 2048 Mo (VPS Hetzner). Si un futur build OOM encore, monter à 3072 selon la RAM.
+RUN rm -rf node_modules/.cache && NODE_OPTIONS="--max-old-space-size=2048" GENERATE_SOURCEMAP=false CI=false npx craco build
 
 FROM python:3.11-slim AS production
 WORKDIR /app
