@@ -447,6 +447,23 @@ async def register(request: Request, response: Response, user_data: RegisterRequ
         if existing_user:
             raise HTTPException(status_code=409, detail="Cet email est déjà enregistré")
 
+        # V311d : FERMETURE de l'inscription ouverte. Prouvé : n'importe qui pouvait
+        # POST /auth/register et obtenir un compte coach actif. Désormais une
+        # auto-inscription est créée EN ATTENTE (pending_validation) et ne peut pas
+        # se connecter tant qu'un super-admin ne l'a pas validée. Seul un super-admin
+        # (identité JWT ou X-User-Email) peut créer un compte directement actif.
+        _caller = (request.headers.get("X-User-Email", "") or "").lower().strip()
+        _auth = request.headers.get("Authorization", "") or ""
+        if _auth.lower().startswith("bearer ") and _v311_jwt_secret():
+            try:
+                import jwt as _pyjwt
+                _p = _pyjwt.decode(_auth.split(" ", 1)[1].strip(), _v311_jwt_secret(), algorithms=["HS256"])
+                _caller = (_p.get("email") or _caller).lower().strip()
+            except Exception:
+                pass
+        caller_is_admin = is_super_admin_email(_caller)
+        pending = not caller_is_admin  # auto-inscription = en attente de validation
+
         # Créer l'utilisateur
         user_id = f"coach_{uuid.uuid4().hex[:12]}"
         hashed_password = hash_password(user_data.password)
@@ -458,12 +475,13 @@ async def register(request: Request, response: Response, user_data: RegisterRequ
             "password_hash": hashed_password,
             "auth_method": "email_password",
             "is_coach": True,
+            "pending_validation": pending,   # V311d : True = connexion bloquée jusqu'à validation
             "picture": "",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat()
         })
 
-        # Auto-créer un profil coach
+        # Auto-créer un profil coach (inactif tant que non validé)
         coach_id = str(uuid.uuid4())
         await _db.coaches.insert_one({
             "id": coach_id,
@@ -477,7 +495,7 @@ async def register(request: Request, response: Response, user_data: RegisterRequ
             "pack_id": None,
             "stripe_customer_id": None,
             "stripe_connect_id": None,
-            "is_active": True,
+            "is_active": (not pending),      # V311d : actif seulement si créé par un admin
             "platform_name": None,
             "logo_url": None,
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -485,7 +503,14 @@ async def register(request: Request, response: Response, user_data: RegisterRequ
             "last_login": datetime.now(timezone.utc).isoformat()
         })
 
-        logger.info(f"[AUTH] New user registered: {email}")
+        logger.info(f"[AUTH] New user registered: {email} (pending={pending})")
+
+        # V311d : auto-inscription -> pas de session, compte en attente de validation.
+        if pending:
+            raise HTTPException(
+                status_code=403,
+                detail="Compte créé. Un administrateur doit le valider avant que vous puissiez vous connecter."
+            )
 
         # Créer la session
         session_token = str(uuid.uuid4())
@@ -551,6 +576,14 @@ async def login(request: Request, response: Response, user_data: LoginRequest):
         # Vérifier le mot de passe
         if not verify_password(user_data.password, user.get("password_hash", "")):
             raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
+
+        # V311d : compte en attente de validation -> connexion refusée. Les comptes
+        # existants (sans ce champ) ne sont PAS concernés (get(...) renvoie None != True).
+        if user.get("pending_validation") is True:
+            raise HTTPException(
+                status_code=403,
+                detail="Compte en attente de validation par l'administrateur."
+            )
 
         user_id = user.get("user_id")
         name = user.get("name", "")

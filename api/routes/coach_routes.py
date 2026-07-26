@@ -163,6 +163,40 @@ async def delete_coach(coach_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Coach non trouvé")
     return {"success": True, "deleted_id": coach_id}
 
+@coach_router.get("/admin/pending-coaches")
+async def list_pending_coaches(request: Request):
+    """V311d : liste les auto-inscriptions EN ATTENTE de validation (Super Admin)."""
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Super Admin requis")
+    docs = await db.users_auth.find(
+        {"pending_validation": True},
+        {"_id": 0, "email": 1, "name": 1, "created_at": 1},
+    ).to_list(200)
+    return {"pending": docs, "count": len(docs)}
+
+
+@coach_router.post("/admin/activate-coach")
+async def activate_coach(request: Request):
+    """V311d : valide une auto-inscription (Super Admin). Corps: {"email": "..."}.
+    Lève le drapeau pending_validation et réactive le profil coach. Égalité stricte."""
+    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    if not is_super_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Super Admin requis")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    email = (body.get("email") or "").lower().strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="email requis")
+    r1 = await db.users_auth.update_one({"email": email}, {"$set": {"pending_validation": False}})
+    await db.coaches.update_many({"email": email}, {"$set": {"is_active": True}})
+    if r1.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Compte introuvable")
+    return {"success": True, "email": email, "validated": True}
+
+
 @coach_router.post("/admin/purge-test-auth")
 async def purge_test_auth(request: Request):
     """V311c : supprime les COMPTES D'AUTHENTIFICATION de test (users_auth + coaches +
