@@ -7818,11 +7818,14 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         var isSwiped = swipedConv === session.id;
                         return (
                           <div key={session.id} style={{ position: 'relative', overflow: 'hidden', borderRadius: '8px', marginBottom: '8px' }}>
-                            {/* Bouton supprimer, revele par le swipe / clic droit */}
+                            {/* V282 : bouton supprimer CACHE par defaut. Il est glisse hors du
+                                cadre (translateX 70px) et clippe par overflow:hidden ; il ne
+                                reapparait qu'au swipe/clic droit. Evite le rouge qui transparaissait
+                                sous le contenu translucide en V281. */}
                             <button
                               onClick={function() { doDeleteSession(session); }}
                               aria-label="Supprimer la conversation"
-                              style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '70px', background: '#e53e3e', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                              style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '70px', background: '#e53e3e', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transform: isSwiped ? 'translateX(0)' : 'translateX(70px)', transition: 'transform 0.25s ease' }}
                             >
                               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <polyline points="3 6 5 6 21 6" />

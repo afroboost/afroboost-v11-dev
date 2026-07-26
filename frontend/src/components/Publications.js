@@ -240,8 +240,19 @@ const V268Lightbox = ({ pub, onClose }) => {
           )}
         </div>
         <div style={{ padding: '4px 4px 0' }}>
-          {/* V268b: nom AFFICHE (display_name), repli sur l'ancien champ. */}
-          <p style={{ color: '#fff', fontSize: 14, fontWeight: 700, margin: '10px 0 0' }}>{pub.display_name || pub.subscriber_name}</p>
+          {/* V282 : avatar auteur (cliquable -> mini-profil si author_id) + nom. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '10px 0 0' }}>
+            <img
+              src={pub.author_photo || pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.author_name || pub.display_name || pub.subscriber_name || 'A')}&backgroundColor=D91CD2`}
+              alt=""
+              onClick={pub.author_id ? (e) => {
+                e.stopPropagation();
+                window.dispatchEvent(new CustomEvent('afroboost:open-miniprofile', { detail: { id: pub.author_id, name: pub.author_name || pub.display_name } }));
+              } : undefined}
+              style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1.5px solid rgba(255,255,255,0.25)', cursor: pub.author_id ? 'pointer' : 'default' }}
+            />
+            <p style={{ color: '#fff', fontSize: 14, fontWeight: 700, margin: 0 }}>{pub.display_name || pub.subscriber_name}</p>
+          </div>
           <V268Caption caption={pub.caption} light />
         </div>
       </div>
