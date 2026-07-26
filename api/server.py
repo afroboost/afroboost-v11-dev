@@ -2955,14 +2955,17 @@ async def get_today_birthdays():
 
 
 # === V292 : traduction de messages à la demande (réutilise l'IA OpenAI) ===
+# V302 : noms de langue PRÉCIS avec code ISO 639-3 -> lèvent l'ambiguïté (« bassa »
+# désigne aussi une langue du Liberia ; sans ISO, l'IA se trompait de langue).
 _V292_LANGS = {
     "fr": "français", "en": "anglais", "de": "allemand",
     "it": "italien", "es": "espagnol", "pt": "portugais",
-    # V297 : les 9 langues du sélecteur du site (App.js ~ligne 913). Les langues
-    # africaines manquaient -> la traduction du chat les rejetait (400). Nom COMPLET
-    # pour que gpt-4o-mini traduise correctement.
-    "ln": "lingala", "wo": "wolof", "sw": "swahili",
-    "bm": "bambara", "bas": "bassa (langue du Cameroun)", "ht": "créole haïtien",
+    "ln": "lingala (lingála), langue bantoue du Congo — ISO 639-3 : lin",
+    "wo": "wolof (wolof làkk), langue du Sénégal — ISO 639-3 : wol",
+    "sw": "kiswahili (swahili standard) — ISO 639-3 : swh",
+    "bm": "bambara (bamanankan), langue mandingue du Mali — ISO 639-3 : bam",
+    "bas": "bàsàa (basaa), langue bantoue A43 du Cameroun, régions du Centre et du Littoral — code ISO 639-3 : bas",
+    "ht": "kreyòl ayisyen (créole haïtien) — ISO 639-3 : hat",
 }
 
 
@@ -3001,6 +3004,150 @@ def _v299_resolve_lang(raw: str):
     return code, _V292_LANGS[code]
 
 
+# ============================================================================
+# V302 — QUALITÉ DES TRADUCTIONS EN LANGUES AFRICAINES
+# ============================================================================
+# Les modèles d'IA ont TRÈS PEU de données sur le bàsàa, le bambara, le wolof ou
+# le lingala. On ne peut pas garantir une qualité de locuteur natif, mais on
+# améliore nettement avec : (1) un LEXIQUE VÉRIFIÉ (recherche web documentée) qui
+# fait AUTORITÉ — correspondance directe SANS IA quand le texte correspond, et
+# injection dans le prompt sinon ; (2) des consignes strictes ; (3) un modèle plus
+# capable (gpt-4o) pour ces langues.
+#
+# ⚠️ ENRICHISSABLE : ce lexique est destiné à être complété par le coach et sa
+# communauté — ce sont EUX les locuteurs, pas l'IA. Une future version exposera
+# une interface d'ajout/correction (cf. FIX 5, non implémenté ici). Clé = français
+# normalisé (minuscules, sans accents ni ponctuation) ; valeur = traduction de
+# référence, orthographe et tons CONSERVÉS TELS QUELS (ɓ, ŋ, ɛ, ɔ, è, é, ô, à…).
+#
+# Orthographe : en cas de divergence entre sources, on privilégie Wikipédia et
+# Resulam (ex. « mɛ̀ ǹyega », « i ŋkɛ laa ? ») au blog « Apprendre le Bassa »
+# (qui reconnaît lui-même une orthographe approximative).
+
+def _v302_norm(s: str) -> str:
+    """Normalise un texte français pour la correspondance de lexique :
+    minuscules, sans accents, sans ponctuation, espaces compactés."""
+    import unicodedata
+    import re as _re
+    s = (s or "").strip().lower()
+    s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+    s = _re.sub(r"[^\w\s]", " ", s)
+    s = _re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+_V302_LEXIQUE = {
+    # --- BÀSÀA (bas) — Cameroun. Sources : Wikipédia, Resulam, Apprendre-le-Bassa, ITAG ---
+    "bas": {
+        "bonjour": "mɛ̀ ǹyega", "merci": "mɛ̀ ǹyega", "merci beaucoup": "mɛ̀ ǹyega ngandak",
+        "bonjour bonne journee": "kel i lam", "bonne journee": "kel i lam",
+        "bonjour matin": "kègla lam", "bonsoir": "kôkôa lam",
+        "bonjour a vous": "Mèyega bé oh !",
+        "comment vas tu": "i ŋkɛ laa ?", "comment ca va": "i ŋkɛ laa ?", "comment allez vous": "i ŋkɛ laa ?",
+        "je vais bien": "mè nke longe", "ca va bien": "mè nke longe",
+        "ca ne va pas": "i nkè bé",
+        "sois le bienvenu": "Malô malam", "bienvenue": "Malô malam",
+        "s il te plait": "sôhô", "s il vous plait": "sôhô",
+        "oui": "èè", "non": "tô",
+        "comment t appelles tu": "Joy jôn lè ndjè ?",
+        "mon ami": "Liwanda djèm", "monsieur": "sango", "madame": "nyàngo",
+        "mademoiselle": "ŋgònda", "jeune homme": "hiloga",
+        "c est bon": "i yé lam", "c est bien": "i yé lam", "ce n est pas bon": "i ta bé lam",
+        "beaucoup": "ngandak", "trop": "ngandak", "c est beaucoup": "i yé ngandak",
+        "viens": "Lô", "viens par ici": "lô hana", "viens devant": "Lô bissu",
+        "viens m aider": "Lô hola mè", "je vais au travail": "Mè nkè i bolo",
+        "ou habites tu": "Hè u yénè ?", "assieds toi": "Yén", "leve toi": "Tèlèp",
+        "marche vite": "Hô liké", "marche doucement": "Kè mbèhèl",
+        "nous sommes forts": "Di gwé nguy !", "j aime ta facon de faire": "Mè ngwés libônôk djôn",
+        "ton habit est joli": "i mbôr yôn i i yé lam", "c est fini": "A mal",
+        "comment": "Lèlaa ?", "pourquoi": "inyuki ?", "ecoutez le": "Hèmblana nyè !",
+    },
+    # --- WOLOF (wo) — Sénégal. Sources : Lepetitjournal Dakar, Seneguide, Targumi ---
+    "wo": {
+        "comment vas tu": "Nanga def ?", "comment ca va": "Nanga def ?", "comment allez vous": "Nanga def ?",
+        "je vais bien": "Maangi fi rekk",
+        "bonjour": "Salamaleikum", "salut": "Salamaleikum",
+        "as tu passe la nuit en paix": "Jamm nga fanaan ?",
+        "merci": "Jërëjëf", "merci beaucoup": "Jërëjëf lool",
+        "oui": "Waaw", "non": "Déedéet",
+        "excuse moi": "Baal ma", "pardon": "Baal ma",
+        "s il te plait": "Nguir yalla", "s il vous plait": "Nguir yalla",
+    },
+    # --- LINGALA (ln) — Congo. Sources : Ekolo242, Wikivoyage, Kevin le Voyageur ---
+    "ln": {
+        "bonjour": "Mbote", "bonsoir": "Mbote", "salut": "Mbote",
+        "bonjour a toi": "Mbote na yo",
+        "comment vas tu": "Sango nini ?", "quoi de neuf": "Sango nini ?", "comment ca va": "Sango nini ?",
+        "ca va bien": "Nazali malamu", "je vais bien": "Nazali malamu",
+        "au revoir": "Kende malamu",
+    },
+    # --- BAMBARA (bm) — Mali. Sources : Cultures maliennes, Afrilangues, Bamacours ---
+    "bm": {
+        "bonjour": "I ni ce", "bonjour a plusieurs": "Aw ni ce",
+        "bonjour le matin": "I ni sɔgɔma", "bonjour matin": "I ni sɔgɔma",
+        "bonjour la journee": "I ni tile",
+        "bonsoir": "I ni wula", "bonsoir le soir": "I ni wula",
+        "bonne nuit": "I ni su",
+    },
+}
+
+# Index normalisé (clé normalisée -> traduction) construit une fois au chargement.
+_V302_LEXIQUE_NORM = {
+    _code: {_v302_norm(_k): _v for _k, _v in _entries.items()}
+    for _code, _entries in _V302_LEXIQUE.items()
+}
+
+# V302 (FIX 3) : modèle plus capable pour les langues à FAIBLES RESSOURCES,
+# gpt-4o-mini (rapide, suffisant) pour les langues bien couvertes.
+_V302_LOW_RESOURCE = {"bas", "bm", "wo", "ln", "ht"}
+
+
+def _v302_model_for(code: str) -> str:
+    return "gpt-4o" if code in _V302_LOW_RESOURCE else "gpt-4o-mini"
+
+
+# V302 (FIX 4) : mots FRANÇAIS distinctifs qui NE doivent pas rester dans une
+# traduction non-française (le cas « la danse » en bassa). Mots ≥3 lettres, peu
+# susceptibles d'exister tels quels dans les langues cibles.
+_V302_FR_MARKERS = {
+    "danse", "est", "une", "avec", "pour", "dans", "cette", "votre", "comment",
+    "beaucoup", "belle", "aujourd", "rendez", "bonjour", "merci", "sont", "mais",
+    "vous", "nous", "tres", "bien",
+}
+
+
+def _v302_lexicon_match(code: str, text: str):
+    """Correspondance directe : renvoie la traduction de référence si le texte
+    (normalisé) correspond exactement à une entrée du lexique, sinon None."""
+    d = _V302_LEXIQUE_NORM.get(code)
+    if not d:
+        return None
+    return d.get(_v302_norm(text))
+
+
+def _v302_lexicon_prompt(code: str, limit: int = 30) -> str:
+    """Bloc « traductions de référence VÉRIFIÉES » à injecter dans le prompt système
+    (limité pour ne pas gonfler le prompt). Vide si pas de lexique pour cette langue."""
+    entries = _V302_LEXIQUE.get(code)
+    if not entries:
+        return ""
+    lines = []
+    for i, (fr, tgt) in enumerate(entries.items()):
+        if i >= limit:
+            break
+        lines.append(f"- « {fr} » → « {tgt} »")
+    return "\n".join(lines)
+
+
+def _v302_french_leftovers(target_code: str, translation: str):
+    """Renvoie la liste des mots français distinctifs restés dans la traduction
+    (mots entiers). Vide pour le français lui-même."""
+    if target_code == "fr":
+        return []
+    words = set(_v302_norm(translation).split())
+    return sorted(words & _V302_FR_MARKERS)
+
+
 @api_router.post("/translate")
 async def translate_text(request: Request):
     """V292/V299 : traduit un texte dans la langue cible.
@@ -3028,52 +3175,101 @@ async def translate_text(request: Request):
     if len(text) > 2000:
         text = text[:2000]
 
+    # V302 : CORRESPONDANCE DIRECTE avec le lexique VÉRIFIÉ -> plus juste,
+    # instantané et gratuit (aucun appel IA). Fait AUTORITÉ sur l'IA.
+    _lex = _v302_lexicon_match(code, text)
+    if _lex is not None:
+        logger.info(f"[V302] Traduction lexique lang={target}")
+        return {"translation": _lex, "target_lang": target, "approximate": False, "source": "lexique"}
+
     openai_key = os.environ.get("OPENAI_API_KEY")
     if not openai_key:
         raise HTTPException(status_code=503, detail="Traduction indisponible (OPENAI_API_KEY manquant)")
 
-    # V301 : TIMEOUT strict — l'endpoint doit TOUJOURS rendre la main. Sans timeout,
-    # un appel OpenAI qui pend faisait dépasser le délai de Cloudflare -> 502 opaque
-    # (cause réelle du blocage traduction). On borne côté client ET via wait_for.
+    # V302 (FIX 2) : consignes STRICTES + (FIX 2bis/2ter) lexique injecté.
+    _sys = (
+        f"Tu es un traducteur professionnel. Traduis le texte de l'utilisateur en {target_name}.\n"
+        "RÈGLES STRICTES :\n"
+        "1. Traduis INTÉGRALEMENT. Aucun mot ne doit rester dans la langue source. Si un terme n'a pas d'équivalent direct, utilise la périphrase la plus proche dans la langue cible — n'écris JAMAIS le mot d'origine.\n"
+        "2. Utilise la langue parlée courante, comme un locuteur natif s'adressant à un ami. Pas de calque mot à mot du français.\n"
+        "3. Respecte l'orthographe usuelle, tons et caractères spéciaux (ɓ, ŋ, ɛ, ɔ, à, é, è, ô…) quand ils sont d'usage. Ne les simplifie JAMAIS.\n"
+        "4. Réponds UNIQUEMENT avec la traduction. Aucun commentaire, aucune explication, aucun guillemet."
+    )
+    _lex_block = _v302_lexicon_prompt(code)
+    if _lex_block:
+        _sys += (
+            "\n\nTraductions de RÉFÉRENCE VÉRIFIÉES dans cette langue (fais autorité). "
+            "Utilise-les telles quelles si le texte correspond ; inspire-toi de leur "
+            "style, orthographe et tons pour le reste :\n" + _lex_block
+        )
+
+    # V301/V302 : timeout strict + import LOCAL de OpenAI (voir historique).
     import time as _time
     _t0 = _time.monotonic()
-    try:
-        # V301 (CAUSE RACINE) : `OpenAI` n'est PAS importé au niveau module — toutes
-        # les autres fonctions OpenAI font cet import LOCAL juste avant l'appel, sauf
-        # celle-ci. Sans lui, `OpenAI(...)` levait NameError à CHAQUE traduction -> 502.
+
+    async def _v302_call(model_name, extra=""):
         from openai import OpenAI
         client = OpenAI(api_key=openai_key, timeout=15.0, max_retries=0)
-        response = await asyncio.wait_for(
+        msgs = [
+            {"role": "system", "content": _sys + (("\n\n" + extra) if extra else "")},
+            {"role": "user", "content": text},
+        ]
+        resp = await asyncio.wait_for(
             asyncio.to_thread(
                 client.chat.completions.create,
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": f"Tu es un traducteur. Traduis le texte de l'utilisateur en {target_name}. Réponds UNIQUEMENT avec la traduction, sans guillemets ni commentaire."},
-                    {"role": "user", "content": text},
-                ],
-                max_tokens=800,
-                temperature=0.2,
+                model=model_name, messages=msgs, max_tokens=800, temperature=0.2,
             ),
             timeout=18.0,
         )
-        translation = (response.choices[0].message.content or "").strip()
+        return (resp.choices[0].message.content or "").strip()
+
+    primary = _v302_model_for(code)  # FIX 3 : gpt-4o pour langues à faibles ressources
+    used_model = primary
+    try:
+        try:
+            translation = await _v302_call(primary)
+        except asyncio.TimeoutError:
+            raise
+        except Exception as e_primary:
+            # FIX 3 : repli une fois sur gpt-4o-mini si le modèle capable échoue.
+            if primary != "gpt-4o-mini":
+                logger.warning(f"[V302] modèle {primary} échoué ({type(e_primary).__name__}) -> repli gpt-4o-mini")
+                used_model = "gpt-4o-mini"
+                translation = await _v302_call("gpt-4o-mini")
+            else:
+                raise
+
+        # FIX 4 : contrôle qualité — si des mots français distinctifs subsistent,
+        # UNE relance renforcée. Puis marquage `approximate` si ça persiste.
+        approximate = False
+        leftovers = _v302_french_leftovers(code, translation)
+        if leftovers:
+            _reinforce = (
+                "La traduction précédente contenait ENCORE des mots français : "
+                + ", ".join(leftovers) + f". Traduis TOUT en {target_name}, sans laisser aucun mot français."
+            )
+            try:
+                retry = await _v302_call(used_model, _reinforce)
+                if retry:
+                    translation = retry
+            except Exception:
+                pass  # on garde la meilleure version
+            if _v302_french_leftovers(code, translation):
+                approximate = True  # FIX 5 : honnêteté envers l'utilisateur
+
         _dur = round(_time.monotonic() - _t0, 2)
-        logger.info(f"[V301] Traduction OK lang={target} durée={_dur}s")
-        return {"translation": translation, "target_lang": target}
+        logger.info(f"[V302] Traduction OK lang={target} modèle={used_model} approx={approximate} durée={_dur}s")
+        return {"translation": translation, "target_lang": target, "approximate": approximate, "source": "ia"}
     except asyncio.TimeoutError:
         _dur = round(_time.monotonic() - _t0, 2)
-        logger.error(f"[V301] Traduction TIMEOUT lang={target} durée={_dur}s")
+        logger.error(f"[V302] Traduction TIMEOUT lang={target} durée={_dur}s")
         raise HTTPException(status_code=504, detail="Le service de traduction ne répond pas (timeout). Réessayez.")
     except Exception as e:
-        # V301 : diagnostic UTILE mais SÛR. Le message brut d'OpenAI peut contenir un
-        # fragment de clé API (AuthenticationError = « Incorrect API key sk-…abc ») ou
-        # d'autres détails internes -> on ne le renvoie JAMAIS au client. On mappe le
-        # TYPE d'exception vers une raison claire (la vraie cause pour le diagnostic),
-        # et on garde le message complet UNIQUEMENT dans les logs serveur.
+        # V301 : erreur SÛRE (type + raison mappée), message brut en logs seulement.
         _dur = round(_time.monotonic() - _t0, 2)
         _etype = type(e).__name__
         _emsg = str(e)
-        logger.error(f"[V301] Traduction ÉCHEC lang={target} durée={_dur}s type={_etype} msg={_emsg}")
+        logger.error(f"[V302] Traduction ÉCHEC lang={target} durée={_dur}s type={_etype} msg={_emsg}")
         _low = (_etype + " " + _emsg).lower()
         if "authenticationerror" in _low or "invalid api key" in _low or "incorrect api key" in _low or "401" in _low:
             _reason = "clé OpenAI invalide ou révoquée (à corriger dans Coolify)"

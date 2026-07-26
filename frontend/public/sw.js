@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v301'; // V301: translate timeout + erreur reelle ; migration photos legacy corrigee ; plus de base64 affichee
+var CACHE_NAME = 'afroboost-v302'; // V302: qualite traductions africaines — lexiques verifies + gpt-4o + mention approximative
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

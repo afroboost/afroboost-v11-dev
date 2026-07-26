@@ -683,6 +683,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
   const [v292Menu, setV292Menu] = useState(false);
   const [v292Translation, setV292Translation] = useState('');
   const [v292Busy, setV292Busy] = useState(false);
+  const [v292Approx, setV292Approx] = useState(false); // V302 : traduction marquée approximative
   // V297 : mêmes langues que le sélecteur du site (9 langues + it/es/pt), liste partagée.
   const V292_LANGS = TRANSLATE_LANGS;
   const v292Translate = async (lang) => {
@@ -701,11 +702,14 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
         // V299 : afficher la vraie raison (langue non supportée, clé OpenAI absente…)
+        setV292Approx(false);
         setV292Translation('⚠️ ' + ((d && d.detail) || ('Erreur ' + r.status)));
       } else {
+        setV292Approx(!!(d && d.approximate)); // V302 : honnêteté (langues peu couvertes)
         setV292Translation((d && d.translation) || '');
       }
     } catch (e) {
+      setV292Approx(false);
       setV292Translation('⚠️ Traduction indisponible');
     }
     setV292Busy(false);
@@ -1327,6 +1331,12 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
           {v292Translation && (
             <div style={{ fontStyle: 'italic', color: '#bbb', fontSize: '0.85em', marginTop: 4, borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 4 }}>
               {v292Translation}
+            </div>
+          )}
+          {/* V302 (FIX 5) : mention honnête, couleur neutre grise (jamais la couleur de marque) */}
+          {v292Approx && v292Translation && (
+            <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.72em', marginTop: 3 }}>
+              Traduction approximative — les langues africaines sont peu couvertes par l'IA.
             </div>
           )}
         </div>
@@ -5759,6 +5769,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       if (d && d.translation) {
         setInputMessage(d.translation); // remplace le texte -> l'utilisateur relit et envoie
         setV297LangMenuOpen(false);
+        // V302 (FIX 5) : prévenir seulement quand c'est effectivement approximatif.
+        if (d.approximate) {
+          setV298TransErr('Traduction approximative (langue peu couverte par l\'IA)');
+          setTimeout(() => setV298TransErr(''), 4000);
+        }
       } else {
         throw new Error('Traduction vide');
       }
