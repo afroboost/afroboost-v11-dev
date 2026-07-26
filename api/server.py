@@ -2466,6 +2466,16 @@ async def api_check_credits(request: Request):
     
     return await check_credits(user_email)
 
+
+def _v306_avatar_url(name: str) -> str:
+    """V306 : avatar GÉNÉRÉ (DiceBear) au nom de la personne. Garantit que
+    `photo_url` n'est JAMAIS vide et n'est JAMAIS une base64 périmée. La couleur de
+    marque (D91CD2) est une valeur de secours portée dans l'URL de l'API externe."""
+    import urllib.parse
+    seed = (name or "Membre").strip() or "Membre"
+    return "https://api.dicebear.com/7.x/initials/svg?seed=" + urllib.parse.quote(seed) + "&backgroundColor=D91CD2"
+
+
 @api_router.get("/users/{participant_id}/profile")
 async def get_user_profile(participant_id: str):
     """
@@ -2508,12 +2518,13 @@ async def get_user_profile(participant_id: str):
                 if _cand and (_cand.get("photo_url") or _cand.get("photoUrl")):
                     photo_url = _cand.get("photo_url") or _cand.get("photoUrl")
 
-        # V301 : ne JAMAIS renvoyer une photo data:base64 (vestige lourd/périmé).
-        # Si aucune photo Cloudinary n'a été trouvée pour cet email, on renvoie ""
-        # -> le frontend affiche l'avatar généré (DiceBear, couleur du thème) au lieu
-        # de la vieille base64. Vrai pour un ABONNÉ comme pour un coach.
+        # V301/V306 : ne JAMAIS renvoyer une photo data:base64 (vestige périmé).
         if photo_url and str(photo_url).startswith("data:"):
             photo_url = ""
+        # V306 (RÈGLE CENTRALE) : photo_url JAMAIS vide. Si aucune photo Cloudinary
+        # -> avatar GÉNÉRÉ au nom réel de la personne (jamais un trou dans l'UI).
+        if not photo_url:
+            photo_url = _v306_avatar_url(user.get("name") or user.get("username") or (_email_l.split("@")[0] if _email_l else "Membre"))
 
         # V299 : compléter bio/passions manquants depuis le profil coach UNIQUEMENT
         # si l'email est un compte coach/admin CONNU (jamais de fusion entre
@@ -2550,31 +2561,42 @@ async def get_user_profile(participant_id: str):
     # V292 : coach identifié par email SANS doc `users` (il n'a rempli que sa
     # photo dans coach_profiles) -> renvoyer au moins photo + nom.
     if _coach_cp or (_coach_photo and "@" in participant_id):
+        _cp_name = (_coach_cp or {}).get("display_name") or participant_id.split("@")[0]
+        _cp_photo = _coach_photo or ""
+        if str(_cp_photo).startswith("data:"):
+            _cp_photo = ""
+        if not _cp_photo:  # V306 : jamais vide
+            _cp_photo = _v306_avatar_url(_cp_name)
         return {
             "success": True,
             "source": "coach_profiles",
             "participant_id": participant_id,
-            "name": (_coach_cp or {}).get("display_name") or participant_id.split("@")[0],
+            "name": _cp_name,
             "email": participant_id,
-            "photo_url": _coach_photo,
+            "photo_url": _cp_photo,
             "bio": "",
             "age": None,
             "passions": "",
         }
-    
+
     # 2. Fallback: chercher dans 'chat_participants'
     participant = await db.chat_participants.find_one(
         {"id": participant_id},
         {"_id": 0}
     )
-    
+
     if participant:
-        photo_url = participant.get("photo_url") or participant.get("photoUrl")
+        _p_name = participant.get("name") or participant.get("username")
+        photo_url = participant.get("photo_url") or participant.get("photoUrl") or ""
+        if str(photo_url).startswith("data:"):
+            photo_url = ""
+        if not photo_url:  # V306 : jamais vide
+            photo_url = _v306_avatar_url(_p_name or "Membre")
         return {
             "success": True,
             "source": "chat_participants",
             "participant_id": participant_id,
-            "name": participant.get("name") or participant.get("username"),
+            "name": _p_name,
             "email": participant.get("email"),
             "photo_url": photo_url,
             # V279 : champs mini-profil (optionnels).
@@ -2582,12 +2604,13 @@ async def get_user_profile(participant_id: str):
             "age": participant.get("age"),
             "passions": participant.get("passions") or "",
         }
-    
-    # 3. Aucun profil trouvé
+
+    # 3. Aucun profil trouvé -> V306 : on renvoie tout de même un avatar affichable.
+    _nf_name = participant_id.split("@")[0] if "@" in participant_id else (participant_id or "Membre")
     return {
         "success": False,
         "participant_id": participant_id,
-        "photo_url": None,
+        "photo_url": _v306_avatar_url(_nf_name),
         "bio": "",
         "age": None,
         "passions": "",
@@ -2911,6 +2934,45 @@ async def v301_fix_legacy_profile_photos(request: Request):
                 await coll.update_one({"_id": d["_id"]}, {"$set": {"photo_url": "", "photoUrl": ""}})
                 blanked += 1
     return {"status": "ok", "fixed": fixed, "blanked": blanked, "total_checked": total}
+
+
+@api_router.post("/v306-fix-empty-profile-photos")
+async def v306_fix_empty_profile_photos(request: Request):
+    """V306 : remplit `photo_url` là où il est VIDE ou `data:` (régression V305 qui
+    blanchissait sans rien remettre). Chaîne de repli STRICTE, toujours non vide :
+    photo Cloudinary du MÊME email (users/coach_profiles/chat_participants,
+    photo_url ET photoUrl) -> sinon avatar GÉNÉRÉ (DiceBear) au nom de la personne.
+    JAMAIS de base64, JAMAIS de vide. Aucune fusion entre emails différents.
+
+    Réservée au SUPER ADMIN (comme la migration v301, elle écrit en base)."""
+    _caller = await _v263_authenticated_coach(request)
+    if not _caller or not is_super_admin(_caller):
+        raise HTTPException(status_code=403, detail="Réservé au super admin")
+    total = 0
+    fixed = 0
+    for coll in (db.users, db.chat_participants, db.coach_profiles):
+        docs = await coll.find(
+            {"$or": [
+                {"photo_url": {"$in": [None, ""]}},
+                {"photo_url": {"$regex": "^data:"}},
+                {"photo_url": {"$exists": False}},
+            ]},
+            {"_id": 1, "email": 1, "name": 1, "username": 1, "display_name": 1, "photo_url": 1, "photoUrl": 1},
+        ).to_list(3000)
+        for d in docs:
+            total += 1
+            # 1) Cloudinary du même email
+            email = (d.get("email") or "").lower().strip()
+            cloud = await _v301_find_cloud_photo(email) if email else ""
+            # 2) sinon avatar généré au nom réel
+            if cloud:
+                new_photo = cloud
+            else:
+                name = d.get("name") or d.get("username") or d.get("display_name") or (email.split("@")[0] if email else "Membre")
+                new_photo = _v306_avatar_url(name)
+            await coll.update_one({"_id": d["_id"]}, {"$set": {"photo_url": new_photo, "photoUrl": new_photo}})
+            fixed += 1
+    return {"status": "ok", "fixed": fixed, "total_checked": total}
 
 
 @api_router.get("/birthdays/today")
@@ -13338,18 +13400,22 @@ Tu ne connais AUCUN prix, AUCUN tarif, AUCUN lien de paiement.
 🎯 IDENTITÉ:
 Tu es le COACH BASSI, coach énergique et passionné d'Afroboost.
 Tu représentes la marque Afroboost et tu guides les clients vers leurs objectifs fitness.
-Tu ne parles QUE du catalogue Afroboost (produits, cours, offres listés ci-dessus).
+Tu parles des contenus Afroboost : produits, cours, offres, concept, ET AUSSI
+« devenir partenaire », « devenir coach », les publications de la communauté et les
+articles/blog (tout ce qui est listé ci-dessus).
 
 💪 SIGNATURE:
 - Présente-toi comme "Coach Bassi" si on te demande ton nom
 - Utilise un ton motivant, bienveillant et énergique
 - Signe parfois tes messages avec "- Coach Bassi 💪" pour les messages importants
 
-✅ CONTENU AUTORISÉ (EXCLUSIVEMENT):
+✅ CONTENU AUTORISÉ:
 - Les PRODUITS de l'INVENTAIRE BOUTIQUE listés ci-dessus
 - Les COURS disponibles listés ci-dessus
 - Les OFFRES et TARIFS listés ci-dessus
 - Le concept Afroboost (cardio + danse afrobeat)
+- DEVENIR PARTENAIRE et DEVENIR COACH (Afroboost recrute — ne refuse jamais ce sujet)
+- Les PUBLICATIONS de la communauté et les ARTICLES/blog (listés ci-dessus)
 
 🎯 TON STYLE:
 - Coach motivant et énergique (TU ES Coach Bassi)
@@ -13370,7 +13436,7 @@ Tu PEUX parler de TOUS les contenus PUBLICS d'Afroboost : cours, offres, produit
 la boutique, « DEVENIR PARTENAIRE », « DEVENIR COACH », les PUBLICATIONS de la
 communauté et les ARTICLES/blog (voir les données du site ci-dessus). Si la question
 ne concerne AUCUN sujet Afroboost (ex. politique, météo, cuisine, président), réponds:
-"Désolé, je suis uniquement programmé pour vous assister sur Afroboost. 🙏"
+"Désolé, je suis uniquement programmé pour vous assister sur Afroboost."
 
 ✅ « DEVENIR PARTENAIRE » et « DEVENIR COACH » SONT des sujets Afroboost AUTORISÉS :
 ne REFUSE JAMAIS ces questions. Explique qu'Afroboost recherche des partenaires et des
@@ -16011,18 +16077,22 @@ Tu ne connais AUCUN prix, AUCUN tarif, AUCUN lien de paiement.
 🎯 IDENTITÉ:
 Tu es le COACH BASSI, coach énergique et passionné d'Afroboost.
 Tu représentes la marque Afroboost et tu guides les clients vers leurs objectifs fitness.
-Tu ne parles QUE du catalogue Afroboost (produits, cours, offres listés ci-dessus).
+Tu parles des contenus Afroboost : produits, cours, offres, concept, ET AUSSI
+« devenir partenaire », « devenir coach », les publications de la communauté et les
+articles/blog (tout ce qui est listé ci-dessus).
 
 💪 SIGNATURE:
 - Présente-toi comme "Coach Bassi" si on te demande ton nom
 - Utilise un ton motivant, bienveillant et énergique
 - Signe parfois tes messages avec "- Coach Bassi 💪" pour les messages importants
 
-✅ CONTENU AUTORISÉ (EXCLUSIVEMENT):
+✅ CONTENU AUTORISÉ:
 - Les PRODUITS de l'INVENTAIRE BOUTIQUE listés ci-dessus
 - Les COURS disponibles listés ci-dessus
 - Les OFFRES et TARIFS listés ci-dessus
 - Le concept Afroboost (cardio + danse afrobeat)
+- DEVENIR PARTENAIRE et DEVENIR COACH (Afroboost recrute — ne refuse jamais ce sujet)
+- Les PUBLICATIONS de la communauté et les ARTICLES/blog (listés ci-dessus)
 
 🎯 TON STYLE:
 - Coach motivant et énergique (TU ES Coach Bassi)
@@ -16043,7 +16113,7 @@ Tu PEUX parler de TOUS les contenus PUBLICS d'Afroboost : cours, offres, produit
 la boutique, « DEVENIR PARTENAIRE », « DEVENIR COACH », les PUBLICATIONS de la
 communauté et les ARTICLES/blog (voir les données du site ci-dessus). Si la question
 ne concerne AUCUN sujet Afroboost (ex. politique, météo, cuisine, président), réponds:
-"Désolé, je suis uniquement programmé pour vous assister sur Afroboost. 🙏"
+"Désolé, je suis uniquement programmé pour vous assister sur Afroboost."
 
 ✅ « DEVENIR PARTENAIRE » et « DEVENIR COACH » SONT des sujets Afroboost AUTORISÉS :
 ne REFUSE JAMAIS ces questions. Explique qu'Afroboost recherche des partenaires et des
