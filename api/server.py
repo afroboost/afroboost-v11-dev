@@ -2824,6 +2824,10 @@ async def translate_text(request: Request):
         return {"translation": ""}
     if target not in _V292_LANGS:
         raise HTTPException(status_code=400, detail="Langue cible non supportée")
+    # V298 : le frontend peut envoyer le NOM COMPLET de la langue (target_name) pour
+    # guider l'IA sur les langues africaines. On le préfère au mapping interne s'il
+    # est fourni ; sinon on garde le nom du dictionnaire _V292_LANGS.
+    target_name = (body.get("target_name") or "").strip() or _V292_LANGS[target]
     if len(text) > 2000:
         text = text[:2000]
 
@@ -2836,7 +2840,7 @@ async def translate_text(request: Request):
             client.chat.completions.create,
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": f"Tu es un traducteur. Traduis le texte de l'utilisateur en {_V292_LANGS[target]}. Réponds UNIQUEMENT avec la traduction, sans guillemets ni commentaire."},
+                {"role": "system", "content": f"Tu es un traducteur. Traduis le texte de l'utilisateur en {target_name}. Réponds UNIQUEMENT avec la traduction, sans guillemets ni commentaire."},
                 {"role": "user", "content": text},
             ],
             max_tokens=800,

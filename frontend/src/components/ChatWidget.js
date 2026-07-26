@@ -605,6 +605,43 @@ const PaymentScreen = ({
   );
 };
 
+// V298 : petits drapeaux SVG inline (les emoji-drapeaux ne s'affichent pas sur
+// Windows et sont interdits par la règle icônes de CLAUDE.md). Simples et
+// reconnaissables (bandes aux bonnes couleurs, disque/étoile quand distinctif).
+// Coins arrondis via un <span> qui rogne (overflow:hidden).
+const FlagIcon = ({ code, size }) => {
+  const w = size || 20;
+  const h = Math.round(w * 0.7);
+  let g = null;
+  switch (code) {
+    case 'fr': // France — 3 bandes verticales
+      g = (<g><rect width="6.66" height="14" x="0" fill="#0055A4" /><rect width="6.66" height="14" x="6.66" fill="#fff" /><rect width="6.66" height="14" x="13.33" fill="#EF4135" /></g>); break;
+    case 'gb': // Royaume-Uni — croix (simplifiée)
+      g = (<g><rect width="20" height="14" fill="#012169" /><rect x="8" width="4" height="14" fill="#fff" /><rect y="5" width="20" height="4" fill="#fff" /><rect x="9" width="2" height="14" fill="#C8102E" /><rect y="6" width="20" height="2" fill="#C8102E" /></g>); break;
+    case 'de': // Allemagne — 3 bandes horizontales
+      g = (<g><rect width="20" height="4.66" y="0" fill="#000" /><rect width="20" height="4.66" y="4.66" fill="#DD0000" /><rect width="20" height="4.66" y="9.33" fill="#FFCE00" /></g>); break;
+    case 'cd': // RD Congo — bleu ciel + diagonale rouge bordée jaune + étoile
+      g = (<g><rect width="20" height="14" fill="#007FFF" /><path d="M0 12 L18 0 L20 0 L20 2 L2 14 L0 14 Z" fill="#F7D618" /><path d="M2 12.5 L18.5 1 L19.5 1 L19.5 1.5 L3 13.5 L2 13.5 Z" fill="#CE1021" /><circle cx="3.5" cy="3" r="1.6" fill="#F7D618" /></g>); break;
+    case 'sn': // Sénégal — vert/jaune/rouge vertical + étoile verte
+      g = (<g><rect width="6.66" height="14" x="0" fill="#00853F" /><rect width="6.66" height="14" x="6.66" fill="#FDEF42" /><rect width="6.66" height="14" x="13.33" fill="#E31B23" /><circle cx="10" cy="7" r="2" fill="#00853F" /></g>); break;
+    case 'ke': // Kenya — noir/rouge/vert horizontal + liserés blancs
+      g = (<g><rect width="20" height="14" fill="#fff" /><rect width="20" height="3.8" y="0" fill="#000" /><rect width="20" height="3.6" y="5.2" fill="#BB0000" /><rect width="20" height="3.8" y="10.2" fill="#006600" /><ellipse cx="10" cy="7" rx="1.5" ry="3" fill="#BB0000" stroke="#fff" strokeWidth="0.5" /></g>); break;
+    case 'ml': // Mali — vert/jaune/rouge vertical
+      g = (<g><rect width="6.66" height="14" x="0" fill="#14B53A" /><rect width="6.66" height="14" x="6.66" fill="#FCD116" /><rect width="6.66" height="14" x="13.33" fill="#CE1126" /></g>); break;
+    case 'cm': // Cameroun — vert/rouge/jaune vertical + étoile jaune
+      g = (<g><rect width="6.66" height="14" x="0" fill="#007A5E" /><rect width="6.66" height="14" x="6.66" fill="#CE1126" /><rect width="6.66" height="14" x="13.33" fill="#FCD116" /><circle cx="10" cy="7" r="1.7" fill="#FCD116" /></g>); break;
+    case 'ht': // Haïti — bleu/rouge horizontal
+      g = (<g><rect width="20" height="7" y="0" fill="#00209F" /><rect width="20" height="7" y="7" fill="#D21034" /></g>); break;
+    default:
+      g = (<rect width="20" height="14" fill="#888" />);
+  }
+  return (
+    <span style={{ display: 'inline-block', width: w, height: h, borderRadius: 2, overflow: 'hidden', flexShrink: 0, boxShadow: '0 0 0 1px rgba(255,255,255,0.18)' }}>
+      <svg width={w} height={h} viewBox="0 0 20 14" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">{g}</svg>
+    </span>
+  );
+};
+
 /**
  * Composant pour afficher un message avec liens cliquables et emojis
  * Affiche le nom de l'expéditeur au-dessus de chaque bulle
@@ -1835,6 +1872,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   var _v297Lang = useState(function () { try { return localStorage.getItem('afroboost_translate_lang') || ''; } catch (e) { return ''; } });
   var v297PreferredLang = _v297Lang[0]; var setV297PreferredLangState = _v297Lang[1];
   var _v297LangMenu = useState(false); var v297LangMenuOpen = _v297LangMenu[0]; var setV297LangMenuOpen = _v297LangMenu[1];
+  // V298 : traduction du texte SAISI avant envoi (état de chargement + message d'erreur).
+  var _v298Translating = useState(false); var v298Translating = _v298Translating[0]; var setV298Translating = _v298Translating[1];
+  var _v298TransErr = useState(''); var v298TransErr = _v298TransErr[0]; var setV298TransErr = _v298TransErr[1];
   var _v263Menu = useState(false); var v263MenuOpen = _v263Menu[0]; var setV263MenuOpen = _v263Menu[1];
   // v162f: Coach profile photo
   var _cpro = useState(null); var coachProfile = _cpro[0]; var setCoachProfile = _cpro[1];
@@ -5632,44 +5672,121 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     try { v294SaveCoachPref('translate_lang', code); } catch (e) { /* no-op hors mode coach */ }
   };
 
-  // V297 : bouton GLOBE de traduction pour la barre de saisie (abonné ET coach).
-  // Rendu unique -> visuellement IDENTIQUE dans les deux espaces. Couleurs = thème
-  // (var(--primary-color)/--primary-rgb), jamais de violet codé en dur. `size`
-  // s'adapte aux boutons voisins de chaque barre (40 abonné, 32 coach).
+  // V298 : traduit le TEXTE SAISI (inputMessage) dans la langue choisie AVANT l'envoi.
+  // Ne l'envoie PAS : l'utilisateur relit puis envoie lui-même. Champ vide -> on
+  // enregistre seulement la langue préférée. Erreur réseau -> texte original conservé.
+  const v298TranslateInput = async (l) => {
+    setPreferredTranslateLang(l.code);
+    const original = inputMessage || '';
+    if (!original.trim()) {
+      setV297LangMenuOpen(false);
+      setV298TransErr('Langue enregistrée : ' + l.name);
+      setTimeout(() => setV298TransErr(''), 2500);
+      return;
+    }
+    setV298Translating(true);
+    setV298TransErr('');
+    try {
+      const r = await fetch(API + '/translate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: original, target_lang: l.code, target_name: l.aiName })
+      });
+      if (!r.ok) throw new Error('http');
+      const d = await r.json();
+      if (d && d.translation) {
+        setInputMessage(d.translation); // remplace le texte -> l'utilisateur relit et envoie
+        setV297LangMenuOpen(false);
+      } else {
+        throw new Error('empty');
+      }
+    } catch (e) {
+      // Ne JAMAIS perdre le texte saisi.
+      setV298TransErr('Traduction indisponible, réessayez');
+      setTimeout(() => setV298TransErr(''), 3000);
+    } finally {
+      setV298Translating(false);
+    }
+  };
+
+  // V298 : bouton GLOBE + ROUE de langues (drapeau + nom), placé à GAUCHE du bouton
+  // d'envoi. Rendu unique -> IDENTIQUE dans les deux espaces (abonné/coach). Couleurs
+  // du THÈME. La roue défile (tactile + souris) avec scroll-snap façon picker iOS.
   const renderTranslateGlobe = (size) => {
     const d = size || 40;
     const icon = Math.round(d * 0.5);
+    const ITEM_H = 40;
     return (
       <div style={{ position: 'relative', flexShrink: 0 }}>
         <button
           type="button"
           onClick={() => setV297LangMenuOpen(o => !o)}
-          title="Langue de traduction"
+          title="Traduire mon message"
           data-testid="translate-globe-btn"
+          disabled={v298Translating}
           style={{
             width: d, height: d, borderRadius: '50%',
             background: v297LangMenuOpen ? 'var(--primary-color, #D91CD2)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)',
             border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
-            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0
+            cursor: v298Translating ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0
           }}
         >
-          <svg width={icon} height={icon} viewBox="0 0 24 24" fill="none" stroke={v297LangMenuOpen ? '#fff' : 'var(--primary-color, #D91CD2)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width={icon} height={icon} viewBox="0 0 24 24" fill="none" stroke={v297LangMenuOpen ? '#fff' : 'var(--primary-color, #D91CD2)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: v298Translating ? 0.5 : 1 }}>
             <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
             <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
           </svg>
         </button>
-        {v297LangMenuOpen && (
-          // Même style que le sélecteur de langue du site (fond sombre, bordure violette
-          // translucide, arrondi 8) + flex-wrap pour 12 langues. Langue active surlignée.
-          <div style={{ position: 'absolute', bottom: '120%', left: 0, zIndex: 10000, background: 'rgba(0,0,0,0.95)', border: '1px solid rgba(139,92,246,0.4)', borderRadius: 8, padding: 5, display: 'flex', flexWrap: 'wrap', gap: 3, width: 180, boxShadow: '0 4px 16px rgba(0,0,0,0.5)' }}>
-            {TRANSLATE_LANGS.map(l => (
-              <button key={l.code} type="button"
-                onClick={() => { setPreferredTranslateLang(l.code); setV297LangMenuOpen(false); }}
-                style={{ background: v297PreferredLang === l.code ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.08)', border: 'none', color: '#fff', fontSize: 11, fontWeight: 600, padding: '4px 7px', borderRadius: 5, cursor: 'pointer' }}>
-                {l.label}
-              </button>
-            ))}
+
+        {/* Message discret (langue enregistrée / erreur) au-dessus du bouton */}
+        {v298TransErr && (
+          <div style={{ position: 'absolute', bottom: '115%', right: 0, whiteSpace: 'nowrap', background: 'rgba(0,0,0,0.92)', color: '#fff', fontSize: 10, padding: '4px 8px', borderRadius: 6, border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)', zIndex: 10001 }}>
+            {v298TransErr}
           </div>
+        )}
+
+        {v297LangMenuOpen && (
+          <>
+            {/* Voile de fermeture au clic extérieur */}
+            <div onClick={() => setV297LangMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 10000 }} />
+            {/* ROUE : liste verticale défilante, scroll-snap centré (effet picker) */}
+            <div style={{ position: 'absolute', bottom: '120%', right: 0, zIndex: 10001, background: 'rgba(0,0,0,0.95)', border: '1px solid rgba(139,92,246,0.4)', borderRadius: 10, width: 190, boxShadow: '0 8px 24px rgba(0,0,0,0.6)', overflow: 'hidden' }}>
+              <div style={{ padding: '6px 10px', fontSize: 10, color: 'rgba(255,255,255,0.6)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                Traduire mon message en…
+              </div>
+              <div
+                style={{
+                  maxHeight: 180, overflowY: 'auto', WebkitOverflowScrolling: 'touch',
+                  scrollSnapType: 'y mandatory', padding: '4px 0', position: 'relative'
+                }}
+              >
+                {/* Bande centrale (repère de la « roue ») */}
+                <div style={{ position: 'sticky', top: '50%', height: 0, pointerEvents: 'none', zIndex: 0 }}>
+                  <div style={{ position: 'absolute', left: 6, right: 6, top: -ITEM_H / 2, height: ITEM_H, borderRadius: 8, background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.10)' }} />
+                </div>
+                {TRANSLATE_LANGS.map(l => {
+                  const active = v297PreferredLang === l.code;
+                  return (
+                    <button key={l.code} type="button"
+                      onClick={() => v298TranslateInput(l)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                        height: ITEM_H, scrollSnapAlign: 'center', padding: '0 12px',
+                        background: active ? 'var(--primary-color, #D91CD2)' : 'transparent',
+                        border: 'none', cursor: 'pointer', color: '#fff', position: 'relative', zIndex: 1
+                      }}
+                    >
+                      <FlagIcon code={l.country} size={22} />
+                      <span style={{ fontSize: 13, fontWeight: active ? 700 : 500, flex: 1, textAlign: 'left' }}>{l.name}</span>
+                      {active && (
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </>
         )}
       </div>
     );
@@ -8972,9 +9089,6 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '16px'
                         }}
                       >✨</button>
-                      {/* V297 : bouton GLOBE de traduction — même composant que côté abonné
-                          (identique visuellement), dimensionné 32 pour la barre coach. */}
-                      {renderTranslateGlobe(32)}
                       {/* Text input */}
                       <input
                         type="text"
@@ -8993,6 +9107,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           outline: 'none'
                         }}
                       />
+                      {/* V298 : GLOBE de traduction — à gauche du bouton d'envoi (barre coach) */}
+                      {renderTranslateGlobe(36)}
                       {/* Send button */}
                       <button
                         type="button"
@@ -9001,14 +9117,14 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           e.stopPropagation();
                           sendCoachResponse();
                         }}
-                        disabled={isLoading || !inputMessage.trim()}
+                        disabled={isLoading || v298Translating || !inputMessage.trim()}
                         style={{
                           background: inputMessage.trim() ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)' : 'rgba(255,255,255,0.1)',
                           border: 'none',
                           borderRadius: '50%',
                           width: '36px',
                           height: '36px',
-                          cursor: inputMessage.trim() ? 'pointer' : 'not-allowed',
+                          cursor: (inputMessage.trim() && !v298Translating) ? 'pointer' : 'not-allowed',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -10137,9 +10253,6 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       </button>
                     )}
 
-                    {/* V297 : bouton GLOBE de traduction (visible), même style/taille que « ? » et calendrier */}
-                    {renderTranslateGlobe(40)}
-
                     {/* v9.3.7: Icône Calendrier (Réservation) - TOUJOURS VISIBLE pour tous les utilisateurs */}
                     <button
                       type="button"
@@ -10197,6 +10310,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                     data-testid="chat-input"
                   />
                   
+                  {/* V298 : GLOBE de traduction — collé à gauche du bouton d'envoi.
+                      marginLeft auto ici -> le groupe (globe + envoi) est poussé à droite. */}
+                  <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
+                    {renderTranslateGlobe(44)}
+                  </div>
+
                   {/* === DROITE: Bouton Envoyer (toujours à l'extrême droite) === */}
                   <button
                     type="button"
@@ -10205,20 +10324,19 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       e.stopPropagation();
                       handleSendMessage();
                     }}
-                    disabled={isLoading || !inputMessage.trim()}
+                    disabled={isLoading || v298Translating || !inputMessage.trim()}
                     style={{
                       width: '44px',
                       height: '44px',
                       borderRadius: '50%',
                       background: 'var(--primary-color, #D91CD2)', /* v9.4.2: Violet Afroboost */
                       border: 'none',
-                      cursor: isLoading || !inputMessage.trim() ? 'not-allowed' : 'pointer',
+                      cursor: (isLoading || v298Translating || !inputMessage.trim()) ? 'not-allowed' : 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      opacity: isLoading || !inputMessage.trim() ? 0.5 : 1,
-                      flexShrink: 0,
-                      marginLeft: 'auto' /* Force à droite */
+                      opacity: (isLoading || v298Translating || !inputMessage.trim()) ? 0.5 : 1,
+                      flexShrink: 0
                     }}
                     data-testid="chat-send-btn"
                   >
