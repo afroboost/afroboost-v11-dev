@@ -6593,12 +6593,44 @@ async def _v309_is_coach_or_admin(email: str) -> bool:
     return False
 
 
-async def _v309_require_coach_or_admin(request: Request) -> str:
-    """V309 : exige une identité coach/admin, sinon 403. Renvoie l'email."""
-    email = await _v263_authenticated_coach(request)
-    if not await _v309_is_coach_or_admin(email):
-        raise HTTPException(status_code=403, detail="Accès réservé au coach/administrateur")
+def _v310_coach_email_from_jwt(request: Request) -> str:
+    """V310 : email issu D'UN JWT SIGNÉ vérifié UNIQUEMENT. JAMAIS X-User-Email —
+    le rôle admin/coach ne se décide plus côté navigateur (fin de l'usurpation :
+    poser « X-User-Email: contact.artboost@gmail.com » n'accorde plus aucun droit).
+    Renvoie '' si pas de jeton signé valide (coach) — un jeton abonné n'est pas un coach."""
+    secret = os.environ.get("JWT_SECRET", "")
+    if not secret:
+        return ""
+    auth = request.headers.get("Authorization", "") or ""
+    if not auth.lower().startswith("bearer "):
+        return ""
+    token = auth.split(" ", 1)[1].strip()
+    if not token:
+        return ""
+    try:
+        import jwt as _pyjwt
+        payload = _pyjwt.decode(token, secret, algorithms=["HS256"])
+        if payload.get("type") == "subscriber":
+            return ""
+        return (payload.get("email") or "").lower().strip()
+    except Exception:
+        return ""
+
+
+async def _v310_require_coach(request: Request) -> str:
+    """V310 (POINT DE CONTRÔLE UNIQUE) : exige un JWT SIGNÉ de coach/admin, sinon 403.
+    Renvoie l'email de confiance. Le cloisonnement par coach_id se fait ensuite dans
+    chaque route (is_super_admin -> tout ; sinon -> ses données)."""
+    email = _v310_coach_email_from_jwt(request)
+    if not email or not await _v309_is_coach_or_admin(email):
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
     return email
+
+
+async def _v309_require_coach_or_admin(request: Request) -> str:
+    """V309/V310 : délègue désormais au contrôle JWT-STRICT (X-User-Email ne donne
+    plus aucun droit). Conservé pour ne pas toucher les appelants existants."""
+    return await _v310_require_coach(request)
 
 
 @api_router.post("/publications")
@@ -10590,10 +10622,9 @@ async def get_all_contacts_unified(request: Request):
     Endpoint unifié qui fusionne chat_participants, users, et groupes
     pour la sélection de destinataires dans les campagnes.
     Dédupliqué par email/phone. Retourne groupes + contacts individuels.
+    V310 : la fiche contact expose emails/WhatsApp/dates de naissance -> JWT-strict.
     """
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    caller_email = await _v310_require_coach(request)
 
     try:
         contacts = []
@@ -18719,14 +18750,12 @@ async def update_platform_settings(request: Request):
 # === v162m: DASHBOARD — Toutes les transactions (reservations + souscriptions + achats) ===
 @api_router.get("/dashboard/all-transactions")
 async def get_all_transactions(request: Request, page: int = 1, limit: int = 50):
-    """Retourne toutes les transactions: reservations, souscriptions Stripe, achats produits"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    # V252b: session desktop authentifiee par JWT seul (afroboost_coach_user
-    # absent) -> X-User-Email manque. On identifie alors le coach via le JWT
-    # signe, toujours envoye par l'intercepteur frontend. Sans ce repli, la liste
-    # renvoyait 0 sur desktop alors qu'elle fonctionnait sur mobile.
-    if not caller_email:
-        caller_email = _email_from_jwt(request)
+    """Retourne toutes les transactions: reservations, souscriptions Stripe, achats produits
+    V310 : données financières -> JWT-strict (X-User-Email n'accorde plus de droit)."""
+    caller_email = await _v310_require_coach(request)
+    # V310 (pagination) : borne dure à 50 éléments par page, même pour un coach
+    # authentifié — un jeton volé ne doit pas aspirer toute la base d'un coup.
+    limit = max(1, min(int(limit or 50), 50))
 
     all_items = []
 

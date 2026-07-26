@@ -269,14 +269,48 @@ def t14_chips_have_icon():
         record(14, "Chips du bot", False, str(e))
 
 
+ADMIN_JWT = os.environ.get("ADMIN_JWT", "").strip()
+
+
 def t15_contacts_coach():
+    # V310 : /contacts/all est JWT-strict. Avec un vrai JWT admin -> 200 ; sinon SKIP.
+    if not ADMIN_JWT:
+        return skip(15, "Contacts coach (avec JWT)", "ADMIN_JWT non fourni (colle ton jeton pour tester)")
     try:
-        r = requests.get(_url("/api/contacts/all"), headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
+        r = requests.get(_url("/api/contacts/all"), headers={"Authorization": "Bearer " + ADMIN_JWT}, timeout=TIMEOUT)
         d = r.json() if r.status_code == 200 else {}
         ok = r.status_code == 200 and isinstance(d.get("contacts"), list)
-        record(15, "Contacts coach", ok, f"HTTP {r.status_code} total={d.get('total')}")
+        record(15, "Contacts coach (JWT valide -> accès)", ok, f"HTTP {r.status_code} total={d.get('total')}")
     except Exception as e:
         record(15, "Contacts coach", False, str(e))
+
+
+def t30_spoofing_blocked():
+    """V310 : usurpation par X-User-Email admin SANS JWT -> 403 sur les routes admin."""
+    routes = ["/api/users", "/api/discount-codes", "/api/chat/sessions",
+              "/api/contacts/all", "/api/dashboard/all-transactions"]
+    fails = []
+    for rt in routes:
+        try:
+            r = requests.get(_url(rt), headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
+            if r.status_code != 403:
+                fails.append(f"{rt}={r.status_code}")
+        except Exception as e:
+            fails.append(f"{rt}:{e}")
+    ok = not fails
+    record(30, "Usurpation X-User-Email admin (sans JWT) -> 403 partout", ok, ("échecs: " + ", ".join(fails)) if fails else "5/5 -> 403")
+
+
+def t32_coach_jwt_access():
+    """V310 : un JWT admin/coach valide accède normalement (preuve non-régression)."""
+    if not ADMIN_JWT:
+        return skip(32, "Accès avec JWT valide", "ADMIN_JWT non fourni")
+    try:
+        r = requests.get(_url("/api/users"), headers={"Authorization": "Bearer " + ADMIN_JWT}, timeout=TIMEOUT)
+        ok = r.status_code == 200
+        record(32, "JWT valide -> accès admin normal (200)", ok, f"HTTP {r.status_code}")
+    except Exception as e:
+        record(32, "JWT valide -> accès", False, str(e))
 
 
 def _jwt_active():
@@ -514,7 +548,8 @@ def main():
                    t18_no_recognition_by_name_only, t19_device_token_endpoint, t20_new_visitor_ok,
                    t21_users_requires_auth, t22_codes_requires_auth, t23_sessions_requires_auth,
                    t24_smart_entry_no_pii, t35_security_headers, t36_cors_foreign_origin,
-                   t39_redos_input, t40_nosql_injection):
+                   t39_redos_input, t40_nosql_injection,
+                   t30_spoofing_blocked, t32_coach_jwt_access):
             fn()
     finally:
         # V307 : nettoyage GARANTI, même si un test échoue ou si le script est interrompu.

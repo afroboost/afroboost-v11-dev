@@ -302,23 +302,22 @@ def _sanitize_mongo_doc(doc):
 # === ROUTES ===
 @promo_router.get("")
 async def get_discount_codes(request: Request):
-    """Récupère les codes promo — V309 : RÉSERVÉ au coach/admin (fuite fermée).
+    """Récupère les codes promo — V309/V310 : RÉSERVÉ au coach/admin, identité
+    portée par un JWT SIGNÉ (X-User-Email n'accorde plus aucun droit).
 
-    Ces documents contiennent `code` et `assignedEmail` (données payantes/perso).
-    Ils étaient PUBLICS : un anonyme récupérait les 38 codes. On exige désormais
-    une identité coach/admin (403 sinon)."""
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
-    is_super_admin = user_email == SUPER_ADMIN_EMAIL.lower()
+    Ces documents contiennent `code` et `assignedEmail` (données payantes/perso)."""
+    # V310 : identité issue du JWT signé uniquement (fin de l'usurpation X-User-Email).
+    from api.routes.shared import coach_jwt_email
+    user_email = coach_jwt_email(request)
+    is_super_admin = user_email == SUPER_ADMIN_EMAIL.lower() or user_email == "afroboost.bassi@gmail.com"
 
-    # V309 (FUITE 2 fermée) : anti-anonyme. L'appelant doit être admin OU un coach
-    # enregistré (coaches / coach_auth).
     _authorized = is_super_admin
     if not _authorized and user_email:
         if await _db.coaches.find_one({"email": user_email}, {"_id": 1}) or \
            await _db.coach_auth.find_one({"email": user_email}, {"_id": 1}):
             _authorized = True
     if not _authorized:
-        raise HTTPException(status_code=403, detail="Accès réservé au coach/administrateur")
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
 
     # Super Admin voit tous les codes, coach voit seulement les siens
     query = {} if is_super_admin else {"$or": [
