@@ -1592,26 +1592,6 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     });
   };
 
-  // V286 : au montage, charger les préférences depuis le backend (si présentes).
-  // Silencieux : sans réponse/prefs, le localStorage existant fait foi.
-  useEffect(() => {
-    const role = isCoachMode ? 'coach' : 'subscriber';
-    axios.get(API + '/notification-preferences?role=' + role)
-      .then((res) => {
-        const p = res && res.data && res.data.preferences;
-        if (p && Object.keys(p).length > 0) {
-          if (isCoachMode) {
-            setCoachNotifPrefs(p);
-            try { localStorage.setItem('afroboost_coach_notif_prefs', JSON.stringify(p)); } catch (e) {}
-          } else {
-            setNotifPrefs(p);
-            try { localStorage.setItem('afroboost_notif_prefs', JSON.stringify(p)); } catch (e) {}
-          }
-        }
-      })
-      .catch(() => { /* silencieux — repli localStorage */ });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCoachMode]);
   const [unreadCount, setUnreadCount] = useState(0); // v9.4.0: Compteur de messages non lus pour badge
   const [hasNewMessage, setHasNewMessage] = useState(false); // v9.4.0: Indicateur de nouveau message
   const [isCoachMode, setIsCoachMode] = useState(() => {
@@ -1636,6 +1616,28 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     } catch (e) {}
     return false;
   });
+
+  // V286 : au montage, charger les préférences depuis le backend (si présentes).
+  // Silencieux : sans réponse/prefs, le localStorage existant fait foi.
+  // V288-FIX : déplacé APRÈS la déclaration de isCoachMode (évite ReferenceError TDZ)
+  useEffect(() => {
+    const role = isCoachMode ? 'coach' : 'subscriber';
+    axios.get(API + '/notification-preferences?role=' + role)
+      .then((res) => {
+        const p = res && res.data && res.data.preferences;
+        if (p && Object.keys(p).length > 0) {
+          if (isCoachMode) {
+            setCoachNotifPrefs(p);
+            try { localStorage.setItem('afroboost_coach_notif_prefs', JSON.stringify(p)); } catch (e) {}
+          } else {
+            setNotifPrefs(p);
+            try { localStorage.setItem('afroboost_notif_prefs', JSON.stringify(p)); } catch (e) {}
+          }
+        }
+      })
+      .catch(() => { /* silencieux — repli localStorage */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCoachMode]);
   const [coachSessions, setCoachSessions] = useState([]); // Liste des sessions pour le coach
   const [selectedCoachSession, setSelectedCoachSession] = useState(null); // Session sélectionnée par le coach
   // v162: Mini-dashboard tabs

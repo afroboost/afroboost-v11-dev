@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v287'; // V287: cloche blanche + gating push complet
+var CACHE_NAME = 'afroboost-v288'; // V288: fix ReferenceError TDZ isCoachMode
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [
