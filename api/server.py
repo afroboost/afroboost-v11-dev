@@ -2874,13 +2874,22 @@ async def _v301_find_cloud_photo(email: str) -> str:
 
 
 @api_router.post("/v301-fix-legacy-profile-photos")
-async def v301_fix_legacy_profile_photos():
-    """V301 : migration PUBLIQUE (idempotente) — corrige la V299 qui ne balayait que
+async def v301_fix_legacy_profile_photos(request: Request):
+    """V301 : migration (idempotente) — corrige la V299 qui ne balayait que
     `users.photo_url`. Elle balaie maintenant users, chat_participants ET
     coach_profiles, sur `photo_url` ET `photoUrl` (camelCase — c'est là que vivait
     souvent la base64). Pour chaque photo `data:` : si une photo Cloudinary existe
     pour le MÊME email -> on la substitue ; sinon on retire la base64 périmée (mise à
-    "" -> avatar généré côté client). Aucune fusion entre emails DIFFÉRENTS."""
+    "" -> avatar généré côté client). Aucune fusion entre emails DIFFÉRENTS.
+
+    SÉCURITÉ (V301) : contrairement aux migrations d'enrichissement (v290/v299, en
+    lecture-écriture idempotente sans perte), celle-ci peut RETIRER des photos
+    (blanchiment des base64). Elle est donc réservée au SUPER ADMIN authentifié
+    (JWT signé ou repli X-User-Email), pour qu'un tiers ne puisse pas la déclencher
+    en boucle. Le propriétaire la lance avec son en-tête d'identité (voir bilan)."""
+    _caller = await _v263_authenticated_coach(request)
+    if not _caller or not is_super_admin(_caller):
+        raise HTTPException(status_code=403, detail="Réservé au super admin")
     total = 0
     fixed = 0
     blanked = 0
