@@ -3038,6 +3038,10 @@ async def translate_text(request: Request):
     import time as _time
     _t0 = _time.monotonic()
     try:
+        # V301 (CAUSE RACINE) : `OpenAI` n'est PAS importé au niveau module — toutes
+        # les autres fonctions OpenAI font cet import LOCAL juste avant l'appel, sauf
+        # celle-ci. Sans lui, `OpenAI(...)` levait NameError à CHAQUE traduction -> 502.
+        from openai import OpenAI
         client = OpenAI(api_key=openai_key, timeout=15.0, max_retries=0)
         response = await asyncio.wait_for(
             asyncio.to_thread(
