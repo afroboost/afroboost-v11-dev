@@ -6491,14 +6491,17 @@ async def create_publication(request: Request):
     body = await request.json()
 
     code = (body.get("subscriber_code") or "").strip().upper()
-    # V296 : accepter AUSSI le jeton d'appareil abonné. Si le corps ne porte pas de
-    # code en clair mais qu'un jeton abonné valide est présent, on en extrait le
-    # code côté serveur. Additif : le chemin `subscriber_code` reste accepté.
+    # V296/V305 : accepter AUSSI le jeton d'appareil abonné SI le corps ne porte pas de
+    # code. MAIS V305 : si une identité COACH valide est présente (JWT/X-User-Email), on
+    # IGNORE le jeton abonné -> la publication du coach ne doit JAMAIS être classée sous
+    # un code abonné (mauvais coach_id). Le coach a la priorité.
     if not code:
-        from api.routes.shared import subscriber_from_request
-        _sub_tok = subscriber_from_request(request)
-        if _sub_tok and _sub_tok.get("code"):
-            code = _sub_tok["code"].strip().upper()
+        _coach_identity_pub = await _v263_authenticated_coach(request)
+        if not _coach_identity_pub:
+            from api.routes.shared import subscriber_from_request
+            _sub_tok = subscriber_from_request(request)
+            if _sub_tok and _sub_tok.get("code"):
+                code = _sub_tok["code"].strip().upper()
     ok, subscriber_name = (False, "")
     pub_coach_id = DEFAULT_COACH_ID  # V272b : coach proprietaire de la publication
 
@@ -13363,8 +13366,11 @@ Tu ne parles QUE du catalogue Afroboost (produits, cours, offres listés ci-dess
 ╚══════════════════════════════════════════════════════════════════╝
 
 ⛔ RÈGLE NON NÉGOCIABLE:
-Si la question ne concerne pas un produit ou un cours Afroboost, réponds:
-"Désolé, je suis uniquement programmé pour vous assister sur nos offres et formations. 🙏"
+Tu PEUX parler de TOUS les contenus PUBLICS d'Afroboost : cours, offres, produits de
+la boutique, « DEVENIR PARTENAIRE », « DEVENIR COACH », les PUBLICATIONS de la
+communauté et les ARTICLES/blog (voir les données du site ci-dessus). Si la question
+ne concerne AUCUN sujet Afroboost (ex. politique, météo, cuisine, président), réponds:
+"Désolé, je suis uniquement programmé pour vous assister sur Afroboost. 🙏"
 
 🚫 N'invente JAMAIS de codes promo. Si une remise existe, dis: "Le code sera appliqué automatiquement au panier."
 
@@ -16026,8 +16032,11 @@ Tu ne parles QUE du catalogue Afroboost (produits, cours, offres listés ci-dess
 ╚══════════════════════════════════════════════════════════════════╝
 
 ⛔ RÈGLE NON NÉGOCIABLE:
-Si la question ne concerne pas un produit ou un cours Afroboost, réponds:
-"Désolé, je suis uniquement programmé pour vous assister sur nos offres et formations. 🙏"
+Tu PEUX parler de TOUS les contenus PUBLICS d'Afroboost : cours, offres, produits de
+la boutique, « DEVENIR PARTENAIRE », « DEVENIR COACH », les PUBLICATIONS de la
+communauté et les ARTICLES/blog (voir les données du site ci-dessus). Si la question
+ne concerne AUCUN sujet Afroboost (ex. politique, météo, cuisine, président), réponds:
+"Désolé, je suis uniquement programmé pour vous assister sur Afroboost. 🙏"
 
 🚫 N'invente JAMAIS de codes promo. Si une remise existe, dis: "Le code sera appliqué automatiquement au panier."
 
@@ -18110,6 +18119,44 @@ async def check_review(request: Request):
     existing = await db.comments.find_one(query)
     return {"has_reviewed": existing is not None}
 
+# === V305 : GET /api/reservations/ended-for-review — ENDPOINT MANQUANT ===
+# Le ChatWidget l'appelait (v107) mais il n'existait pas -> le catch-all SPA
+# renvoyait index.html (HTML) -> `.json()` échouait en BOUCLE
+# (« [V107] Check ended session failed: Unexpected token '<' »), participant au
+# martèlement du serveur. Il renvoie désormais un JSON VALIDE. Logique minimale et
+# sûre : on cherche une réservation de cet abonné dont l'occurrence est passée
+# récemment (dernières 6 h). En cas de doute -> has_ended_session:false (jamais
+# d'erreur, jamais de fausse sollicitation d'avis).
+@api_router.get("/reservations/ended-for-review")
+async def reservations_ended_for_review(request: Request):
+    email = (request.query_params.get("email", "") or "").strip().lower()
+    code = (request.query_params.get("code", "") or "").strip().upper()
+    if not email and not code:
+        return {"has_ended_session": False, "session_name": None}
+    try:
+        import re
+        now = datetime.now(timezone.utc)
+        window_start = (now - timedelta(hours=6)).isoformat()
+        q = {"$or": []}
+        if email:
+            q["$or"].append({"userEmail": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
+        if code:
+            q["$or"].append({"promoCode": code})
+        if not q["$or"]:
+            return {"has_ended_session": False, "session_name": None}
+        # Réservation récente (datetime dans les 6 dernières heures) = séance passée.
+        resa = await db.reservations.find_one(
+            {"$and": [q, {"datetime": {"$gte": window_start, "$lte": now.isoformat()}}]},
+            {"_id": 0, "courseName": 1, "offerName": 1},
+            sort=[("datetime", -1)],
+        )
+        if resa:
+            return {"has_ended_session": True, "session_name": resa.get("courseName") or resa.get("offerName") or "votre séance"}
+    except Exception as e:
+        logger.warning(f"[V305] ended-for-review ignoré: {e}")
+    return {"has_ended_session": False, "session_name": None}
+
+
 # === v88: POST /api/reviews/request — Coach envoie manuellement une demande d'avis ===
 @api_router.post("/reviews/request")
 async def send_review_request(request: Request):
@@ -18954,6 +19001,35 @@ async def _v197b_seed_quick_replies_if_empty():
         return 0
 
 
+# V305 : icône SVG d'un chip déduite de l'id (puis mots-clés du label). JAMAIS d'emoji.
+_V305_QR_ICON_BY_ID = {
+    "cours_horaires": "calendar", "prix_abonnements": "price", "essai_gratuit": "gift",
+    "contact": "phone", "devenir_coach": "coach", "devenir_partenaire": "handshake",
+}
+
+
+def _v305_qr_icon(reply: dict) -> str:
+    if reply.get("icon"):
+        return reply["icon"]
+    rid = reply.get("id", "")
+    if rid in _V305_QR_ICON_BY_ID:
+        return _V305_QR_ICON_BY_ID[rid]
+    lbl = (reply.get("label", "") or "").lower()
+    if any(k in lbl for k in ["cours", "horaire", "planning", "agenda", "séance", "seance"]):
+        return "calendar"
+    if any(k in lbl for k in ["prix", "tarif", "abonnement", "payer"]):
+        return "price"
+    if any(k in lbl for k in ["essai", "gratuit", "découvrir", "decouvrir"]):
+        return "gift"
+    if any(k in lbl for k in ["contact", "joindre", "appeler", "whatsapp"]):
+        return "phone"
+    if "coach" in lbl or "formation" in lbl:
+        return "coach"
+    if "partenaire" in lbl or "partner" in lbl:
+        return "handshake"
+    return "help"
+
+
 @api_router.get("/bot/quick-replies")
 async def v197b_get_quick_replies():
     """V197b: Liste publique des quick replies actifs (chargés par le ChatWidget)."""
@@ -18962,7 +19038,25 @@ async def v197b_get_quick_replies():
     replies = await db.bot_quick_replies.find(
         {"active": True}, {"_id": 0}
     ).sort("order", 1).to_list(None)
+    # V305 : garantir un champ `icon` (SVG) sur CHAQUE chip -> plus d'emoji côté UI.
+    for r in replies:
+        r["icon"] = _v305_qr_icon(r)
     return replies
+
+
+@api_router.post("/v305-fix-quickreply-icons")
+async def v305_fix_quickreply_icons():
+    """V305 : migration idempotente — écrit un champ `icon` (déduit de l'id/label) sur
+    tous les documents bot_quick_replies qui n'en ont pas. Publique et sans entrée
+    (enrichissement, aucune donnée supprimée)."""
+    await _v197b_seed_quick_replies_if_empty()
+    docs = await db.bot_quick_replies.find({}, {"_id": 1, "id": 1, "label": 1, "icon": 1}).to_list(None)
+    fixed = 0
+    for d in docs:
+        if not d.get("icon"):
+            await db.bot_quick_replies.update_one({"_id": d["_id"]}, {"$set": {"icon": _v305_qr_icon(d)}})
+            fixed += 1
+    return {"status": "ok", "fixed": fixed, "total_checked": len(docs)}
 
 
 @api_router.get("/bot/quick-replies/all")

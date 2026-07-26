@@ -23,6 +23,24 @@ axios.interceptors.request.use((config) => {
         }
       }
     }
+    // 2bis. V305 : REPLI SUPER-ADMIN. Le ChatWidget peut activer le mode coach sans
+    // écrire `afroboost_coach_user` (identité posée dans afroboost_identity /
+    // afroboost_admin_persist) -> l'intercepteur n'avait rien à envoyer -> le backend
+    // voyait un anonyme (live refusé, « Mes publications » vide). On retombe sur
+    // l'email s'il correspond à un SUPER ADMIN connu (n'ajoute aucun risque nouveau :
+    // X-User-Email est déjà falsifiable en transition V265).
+    if (!config.headers['X-User-Email']) {
+      try {
+        const SUPER_ADMINS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
+        let em = '';
+        const idRaw = localStorage.getItem('afroboost_identity') || localStorage.getItem('af_chat_client');
+        if (idRaw) { try { em = (JSON.parse(idRaw).email || '').toLowerCase().trim(); } catch (e) {} }
+        if (!em) { em = (localStorage.getItem('afroboost_admin_persist') || '').toLowerCase().trim(); }
+        if (em && SUPER_ADMINS.indexOf(em) !== -1) {
+          config.headers['X-User-Email'] = em;
+        }
+      } catch (e) { /* ignore */ }
+    }
     // 3. V296 : jeton d'appareil ABONNÉ (en-tête distinct, ne touche pas au JWT coach).
     //    Prouve la possession d'un code valide -> évite d'exposer le code en clair
     //    et débloque la vision complète (codes non masqués) pour l'abonné légitime.

@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v303'; // V303: interrupteur IA dashboard + bot au courant de tout le site (build_site_context)
+var CACHE_NAME = 'afroboost-v305'; // V305: fin boucle 502 + non-regression + identite coach + chips SVG + bot partenaire
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

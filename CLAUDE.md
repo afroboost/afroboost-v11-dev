@@ -52,6 +52,25 @@ C'est l'erreur la plus répétée du projet. À vérifier SYSTÉMATIQUEMENT avan
 
 5. **Avant chaque commit UI** : rechercher les hex codés en dur (`#[0-9a-fA-F]{6}`) dans les fichiers modifiés et vérifier que chacun est bien une valeur de secours dans un `var()`, et non une couleur imposée.
 
+## 🛡️ RÈGLE ABSOLUE — TESTS DE NON-RÉGRESSION AVANT TOUTE LIVRAISON
+
+Le site est en PRODUCTION avec de vrais clients. Depuis V291, chaque version a cassé
+quelque chose. Pour que cela n'arrive plus :
+
+1. Après CHAQUE déploiement, lancer `python tests/nonregression.py` contre la
+   production et COLLER le tableau de résultats dans le bilan.
+2. Aucune version n'est « terminée » tant que tous les tests ne sont pas au vert.
+3. Interdit de dire « à vérifier de ton côté » pour un parcours couvert par la suite.
+4. Tout nouveau correctif ajoute son test — la couverture ne recule jamais.
+5. Un échec sur un parcours non lié au correctif = RÉGRESSION : corriger avant de livrer.
+
+## ⚡ RÈGLE ABSOLUE — JAMAIS DE BOUCLE D'APPELS API
+
+Un `setState` avec un objet NEUF alors que les données sont identiques relance tous
+les effets qui en dépendent -> boucle d'appels -> serveur saturé -> 502 en production
+(arrivé en V305). Avant tout `setState` d'objet : comparer et renvoyer `prev` si rien
+n'a changé. Faire dépendre les `useEffect` de valeurs primitives, jamais d'un objet.
+
 ## Known Gotchas
 1. WhatsApp template variables CANNOT contain: emojis, full URLs (https://...), Unicode bold chars. Domain names without protocol are OK.
 2. MongoDB queries on large groups (800+ members) must use batch `$in` queries, NOT individual `find_one()` calls

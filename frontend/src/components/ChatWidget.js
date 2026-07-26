@@ -55,6 +55,23 @@ const AFROBOOST_IDENTITY_KEY = 'afroboost_identity'; // Clé unifiée pour l'ide
 const AFROBOOST_PROFILE_KEY = 'afroboost_profile'; // Profil abonné avec code promo validé
 const MESSAGE_CACHE_KEY = 'afroboost_last_msgs'; // Cache hybride pour chargement instantané
 
+// V305 (garde-fou anti-rafale) : un même GET (identifié par `key`) n'est pas rejoué
+// plus d'une fois toutes les `minMs` ms — on renvoie la promesse mémorisée. Filet
+// de sécurité contre les boucles de rendu qui saturaient le serveur (502).
+const _v305ThrottleCache = {};
+function v305ThrottledGet(key, doRequest, minMs) {
+  var now = Date.now();
+  var entry = _v305ThrottleCache[key];
+  if (entry && (now - entry.ts) < (minMs || 5000)) {
+    return entry.promise;
+  }
+  var p = doRequest();
+  _v305ThrottleCache[key] = { ts: now, promise: p };
+  // En cas d'échec, on n'immortalise pas une promesse rejetée (permet un retry après minMs).
+  try { p.catch(function () { if (_v305ThrottleCache[key] && _v305ThrottleCache[key].promise === p) { _v305ThrottleCache[key].ts = 0; } }); } catch (e) {}
+  return p;
+}
+
 // Icône Plein Écran
 const FullscreenIcon = () => (
   <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
@@ -663,6 +680,27 @@ const QuickReplyIcon = ({ name }) => {
       return (<svg {...common}><circle cx="12" cy="12" r="9" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>);
   }
 };
+
+// V305 : déduit le NOM D'ICÔNE d'un chip. Les chips viennent de la base
+// (GET /api/bot/quick-replies) et n'ont pas toujours de champ `icon` -> on le
+// déduit de l'id, sinon de mots-clés du label, sinon icône générique. JAMAIS d'emoji.
+const V305_QR_ICON_BY_ID = {
+  cours_horaires: 'calendar', prix_abonnements: 'price', essai_gratuit: 'gift',
+  contact: 'phone', devenir_coach: 'coach', devenir_partenaire: 'handshake',
+};
+function v305QuickReplyIconName(reply) {
+  if (!reply) return 'help';
+  if (reply.icon) return reply.icon;
+  if (reply.id && V305_QR_ICON_BY_ID[reply.id]) return V305_QR_ICON_BY_ID[reply.id];
+  var lbl = (reply.label || '').toLowerCase();
+  if (/cours|horaire|planning|agenda|séance|seance/.test(lbl)) return 'calendar';
+  if (/prix|tarif|abonnement|coût|cout|payer/.test(lbl)) return 'price';
+  if (/essai|gratuit|découvrir|decouvrir|offert/.test(lbl)) return 'gift';
+  if (/contact|joindre|appeler|téléphone|telephone|whatsapp/.test(lbl)) return 'phone';
+  if (/coach|devenir coach|formation/.test(lbl)) return 'coach';
+  if (/partenaire|partner|collabor/.test(lbl)) return 'handshake';
+  return 'help';
+}
 
 /**
  * Composant pour afficher un message avec liens cliquables et emojis
@@ -3055,10 +3093,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       if (!afroboostProfile?.email) return;
 
       try {
-        // v95: Charger par email uniquement pour récupérer TOUS les abonnements
-        const res = await axios.get(`${API}/discount-codes/subscriptions/status`, {
-          params: { email: afroboostProfile.email }
-        });
+        // v95 + V305 : throttlé (max 1 appel / 5 s pour ce même email).
+        const _em = afroboostProfile.email;
+        const res = await v305ThrottledGet('substatus:' + _em, function () {
+          return axios.get(`${API}/discount-codes/subscriptions/status`, { params: { email: _em } });
+        }, 5000);
 
         if (res.data?.success) {
           // V296 : si le backend a MASQUÉ les codes (pas encore de jeton d'appareil
@@ -3075,15 +3114,20 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
             seen.add(key);
             return true;
           });
-          // Mettre à jour le profil avec le premier abonnement (rétro-compatible) + liste complète
-          const updatedProfile = {
-            ...afroboostProfile,
-            subscription: allSubs[0] || null,
-            allSubscriptions: allSubs
-          };
-          localStorage.setItem(AFROBOOST_PROFILE_KEY, JSON.stringify(updatedProfile));
-          setAfroboostProfile(updatedProfile);
-          console.log('[SUBSCRIPTION v151] Abonnements vérifiés:', allSubs.length, 'actif(s)');
+          // V305 (URGENCE 502) : ne JAMAIS remplacer le profil par un objet NEUF si
+          // rien n'a changé — sinon tous les effets dépendant de `afroboostProfile`
+          // se relancent en boucle et saturent le serveur (502 en production).
+          setAfroboostProfile(prev => {
+            const next = { ...prev, subscription: allSubs[0] || null, allSubscriptions: allSubs };
+            if (JSON.stringify(prev && prev.subscription) === JSON.stringify(next.subscription) &&
+                JSON.stringify(prev && prev.allSubscriptions) === JSON.stringify(next.allSubscriptions)) {
+              return prev; // référence INCHANGÉE -> aucun re-render, pas de boucle
+            }
+            // On n'écrit dans le localStorage QUE lorsque ça change réellement.
+            try { localStorage.setItem(AFROBOOST_PROFILE_KEY, JSON.stringify(next)); } catch (e) {}
+            console.log('[SUBSCRIPTION v151] Abonnements mis à jour:', allSubs.length, 'actif(s)');
+            return next;
+          });
         }
       } catch (err) {
         console.log('[SUBSCRIPTION v95] Erreur chargement statut:', err.message);
@@ -3203,11 +3247,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     setReservationError('');
     setSelectedSubscription(null);
 
-    // v95/v151: Charger les abonnements actifs de l'utilisateur (filtrés par le backend)
+    // v95/v151 + V305 : throttlé (partage l'appel avec refreshSubscriptionStatus).
     if (afroboostProfile?.email) {
-      axios.get(`${API}/discount-codes/subscriptions/status`, {
-        params: { email: afroboostProfile.email }
-      }).then(res => {
+      const _em2 = afroboostProfile.email;
+      v305ThrottledGet('substatus:' + _em2, function () {
+        return axios.get(`${API}/discount-codes/subscriptions/status`, { params: { email: _em2 } });
+      }, 5000).then(res => {
         // V296 : codes masqués (jeton pas encore présent) -> ne pas peupler avec des
         // codes nuls. La réservation retombe de toute façon sur afroboostProfile.code.
         if (res.data && res.data.codes_masked) return;
@@ -3231,7 +3276,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         setUserSubscriptions([]);
       });
     }
-  }, [showReservationPanel, isVisitorPreview, afroboostProfile]);
+    // V305 : dépendances PRIMITIVES (email/code) — plus l'OBJET afroboostProfile —
+    // sinon chaque nouvelle référence d'objet relançait cet effet en boucle (502).
+  }, [showReservationPanel, isVisitorPreview, afroboostProfile?.email, afroboostProfile?.code]);
 
   // === HANDLER CONFIRMATION RÉSERVATION (extrait pour BookingPanel) ===
   const handleConfirmReservation = useCallback(async () => {
@@ -9292,8 +9339,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                   </button>
                 )}
 
-                {/* === v97: BOUTON ABONNEMENTS — compact & moderne === */}
-                {(afroboostProfile?.allSubscriptions?.length > 0 || afroboostProfile?.subscription) && (
+                {/* === v97: BOUTON ABONNEMENTS — compact & moderne ===
+                    V305 : masqué en mode coach/staff — ce panneau (et son bouton
+                    Publier) est réservé à l'abonné ; en mode coach il poussait un
+                    code abonné et cachait les publications du coach. */}
+                {!isCoachMode && (afroboostProfile?.allSubscriptions?.length > 0 || afroboostProfile?.subscription) && (
                   <div data-testid="subscription-section" style={{ background: '#0a0a0a' }}>
                     {/* Bouton principal — dégradé violet Afroboost */}
                     <button
@@ -9766,7 +9816,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                                 {/* V299 : icône SVG (héritée du thème via currentColor).
                                     Repli sur l'emoji si un chip backend n'a pas d'`icon`. */}
                                 <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                                  {reply.icon ? <QuickReplyIcon name={reply.icon} /> : (reply.emoji ? <span style={{ fontSize: '14px' }}>{reply.emoji}</span> : null)}
+                                  {/* V305 : toujours une icône SVG (déduite de l'id/label), jamais d'emoji */}
+                                  <QuickReplyIcon name={v305QuickReplyIconName(reply)} />
                                 </span>
                                 <span>{reply.label}</span>
                               </button>
