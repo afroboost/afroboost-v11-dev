@@ -4,6 +4,30 @@
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="theme-color" content="#000000" />
+        <!-- V295 : ANTI-FOUC — repose les couleurs du thème mémorisées AVANT tout
+             CSS/JS, pour supprimer le flash de l'ancienne couleur (~1 s) au chargement.
+             Le backend reste la source de vérité et rafraîchit ce cache à chaque visite. -->
+        <script>
+            (function () {
+                try {
+                    var raw = localStorage.getItem('afroboost_theme_colors');
+                    if (!raw) return;
+                    var colors = JSON.parse(raw);
+                    if (!colors || typeof colors !== 'object') return;
+                    var root = document.documentElement;
+                    Object.keys(colors).forEach(function (k) {
+                        if (k && k.indexOf('--') === 0 && colors[k]) {
+                            root.style.setProperty(k, colors[k]);
+                        }
+                    });
+                    if (colors['--background-color']) {
+                        document.addEventListener('DOMContentLoaded', function () {
+                            if (document.body) document.body.style.backgroundColor = colors['--background-color'];
+                        });
+                    }
+                } catch (e) { /* silencieux */ }
+            })();
+        </script>
         <!-- v94: Anti-cache — empêche le navigateur de stocker les pages admin -->
         <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
         <meta http-equiv="Pragma" content="no-cache" />

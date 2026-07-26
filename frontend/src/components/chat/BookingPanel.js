@@ -9,38 +9,13 @@
  * - Fallback de localisation: course.location || "Lieu à confirmer"
  */
 
-import React, { memo, useMemo } from 'react';
+import React, { memo, useMemo, useState } from 'react';
+// V295 : dates fiables en Europe/Zurich (util partagé — plus de split(',') fragile,
+// gère les cours ponctuels ET récurrents, et l'occurrence déjà passée aujourd'hui).
+import { formatCourseDate, isPastCourse } from '../../utils/zurichTime';
 
-// === FORMATTER DE DATE FRANÇAIS SUISSE (Europe/Zurich) ===
-const formatCourseDate = (time, weekday) => {
-  const nowStr = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Zurich',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false
-  }).format(new Date());
-  const [datePart] = nowStr.split(',');
-  const todayInZurich = new Date(datePart + 'T12:00:00');
-  const currentDay = todayInZurich.getDay();
-
-  let daysUntilCourse = weekday - currentDay;
-  if (daysUntilCourse < 0) daysUntilCourse += 7;
-
-  const courseDate = new Date(todayInZurich);
-  courseDate.setDate(todayInZurich.getDate() + daysUntilCourse);
-
-  if (time) {
-    const [hours, minutes] = time.split(':');
-    courseDate.setHours(parseInt(hours) || 18, parseInt(minutes) || 30, 0, 0);
-  }
-
-  const formatter = new Intl.DateTimeFormat('fr-CH', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Zurich'
-  });
-
-  const formatted = formatter.format(courseDate);
-  return formatted.charAt(0).toUpperCase() + formatted.slice(1);
-};
+// V295 : clé localStorage des dates passées masquées PAR CET ABONNÉ (jamais côté serveur).
+const HIDDEN_PAST_KEY = 'afroboost_hidden_past_courses';
 
 const getLocationDisplay = (course) => {
   return course?.location || course?.locationName || 'Lieu à confirmer';
@@ -65,13 +40,33 @@ const BookingPanel = ({
   selectedSubscription = null,
   onSelectSubscription = null
 }) => {
+  // V295 : IDs des dates passées masquées par cet abonné (persistés en localStorage).
+  const [hiddenPastIds, setHiddenPastIds] = useState(() => {
+    try {
+      const r = JSON.parse(localStorage.getItem(HIDDEN_PAST_KEY) || '[]');
+      return Array.isArray(r) ? r : [];
+    } catch (e) { return []; }
+  });
+
+  const hidePastCourse = (id) => {
+    setHiddenPastIds(prev => {
+      if (prev.indexOf(id) !== -1) return prev;
+      const next = prev.concat([id]);
+      try { localStorage.setItem(HIDDEN_PAST_KEY, JSON.stringify(next)); } catch (e) { /* silencieux */ }
+      return next;
+    });
+  };
+
   const formattedCourses = useMemo(() => {
-    return availableCourses.map(course => ({
-      ...course,
-      formattedDate: formatCourseDate(course.time, course.weekday),
-      displayLocation: getLocationDisplay(course)
-    }));
-  }, [availableCourses]);
+    return availableCourses
+      .filter(course => hiddenPastIds.indexOf(course.id) === -1) // masquer ce que l'abonné a effacé
+      .map(course => ({
+        ...course,
+        formattedDate: formatCourseDate(course),
+        displayLocation: getLocationDisplay(course),
+        isPast: isPastCourse(course) // V295 : cours ponctuel déjà passé
+      }));
+  }, [availableCourses, hiddenPastIds]);
 
   const hasMultipleSubs = subscriptions.length > 1;
 
@@ -212,46 +207,75 @@ const BookingPanel = ({
             </div>
           )}
           {formattedCourses.map(course => (
-            <button
-              key={course.id}
-              type="button"
-              onClick={() => setSelectedCourse(course)}
-              style={{
-                padding: '12px',
-                borderRadius: '12px',
-                background: 'linear-gradient(135deg, rgba(147, 51, 234, 0.3), rgba(99, 102, 241, 0.3))',
-                border: '1px solid rgba(147, 51, 234, 0.4)',
-                color: '#fff',
-                textAlign: 'left',
-                cursor: 'pointer',
-                transition: 'all 0.2s'
-              }}
-              data-testid={`course-${course.id}`}
-            >
-              <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
-                {course.name}
-              </div>
-              <div style={{ fontSize: '13px', marginBottom: '4px', color: '#a78bfa' }}>
-                📅 {course.formattedDate}
-              </div>
-              <div style={{
-                fontSize: '12px',
-                opacity: 0.8,
-                color: course.displayLocation === 'Lieu à confirmer' ? '#999' : 'inherit',
-                fontStyle: course.displayLocation === 'Lieu à confirmer' ? 'italic' : 'normal'
-              }}>
-                📍 {course.displayLocation}
-              </div>
-              {course.spotsLeft !== undefined && (
-                <div style={{
-                  fontSize: '11px',
-                  marginTop: '4px',
-                  color: course.spotsLeft <= 3 ? '#f97316' : '#22c55e'
-                }}>
-                  {course.spotsLeft <= 0 ? '❌ Complet' : `✅ ${course.spotsLeft} place(s) restante(s)`}
+            <div key={course.id} style={{ position: 'relative' }}>
+              <button
+                type="button"
+                onClick={() => setSelectedCourse(course)}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  paddingRight: course.isPast ? '40px' : '12px', // place pour la corbeille
+                  borderRadius: '12px',
+                  background: 'linear-gradient(135deg, rgba(147, 51, 234, 0.3), rgba(99, 102, 241, 0.3))',
+                  border: '1px solid rgba(147, 51, 234, 0.4)',
+                  color: '#fff',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  opacity: course.isPast ? 0.55 : 1 // date passée grisée
+                }}
+                data-testid={`course-${course.id}`}
+              >
+                <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+                  {course.name}
                 </div>
+                <div style={{ fontSize: '13px', marginBottom: '4px', color: '#a78bfa' }}>
+                  📅 {course.formattedDate}
+                </div>
+                <div style={{
+                  fontSize: '12px',
+                  opacity: 0.8,
+                  color: course.displayLocation === 'Lieu à confirmer' ? '#999' : 'inherit',
+                  fontStyle: course.displayLocation === 'Lieu à confirmer' ? 'italic' : 'normal'
+                }}>
+                  📍 {course.displayLocation}
+                </div>
+                {course.spotsLeft !== undefined && (
+                  <div style={{
+                    fontSize: '11px',
+                    marginTop: '4px',
+                    color: course.spotsLeft <= 3 ? '#f97316' : '#22c55e'
+                  }}>
+                    {course.spotsLeft <= 0 ? '❌ Complet' : `✅ ${course.spotsLeft} place(s) restante(s)`}
+                  </div>
+                )}
+              </button>
+              {/* V295 : corbeille sur les DATES PASSÉES (cours ponctuels). Masque
+                  l'élément pour CET abonné seulement (localStorage) — jamais côté serveur. */}
+              {course.isPast && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); hidePastCourse(course.id); }}
+                  title="Masquer cette date passée"
+                  aria-label="Masquer cette date passée"
+                  style={{
+                    position: 'absolute', top: '8px', right: '8px',
+                    width: '28px', height: '28px', borderRadius: '8px',
+                    background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.15)',
+                    color: 'rgba(255,255,255,0.75)', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0
+                  }}
+                  data-testid={`hide-past-${course.id}`}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                  </svg>
+                </button>
               )}
-            </button>
+            </div>
           ))}
         </div>
       )}
@@ -275,7 +299,7 @@ const BookingPanel = ({
                 {selectedCourse.name}
               </h4>
               <p style={{ color: '#a78bfa', margin: '0 0 4px 0', fontSize: '13px', fontWeight: '500' }}>
-                📅 {selectedCourse.formattedDate || formatCourseDate(selectedCourse.time, selectedCourse.weekday)}
+                📅 {selectedCourse.formattedDate || formatCourseDate(selectedCourse)}
               </p>
               {(() => {
                 const loc = selectedCourse.displayLocation || getLocationDisplay(selectedCourse);

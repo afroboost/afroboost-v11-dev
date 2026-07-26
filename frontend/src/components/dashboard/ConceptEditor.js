@@ -16,7 +16,7 @@ import SvgIcon from '../SvgIcon';
 // nue, utilisee ici parce que cet ecran a DEJA ses propres boutons d'upload :
 // on change ou va le fichier, pas l'interface.
 import CloudinaryUploadButton, { uploadToCloudinary, isCloudinaryConfigured } from '../CloudinaryUploadButton';
-import { applyPrimaryColor } from '../../utils/themeColor'; // V259
+import { applyPrimaryColor, persistThemeColors } from '../../utils/themeColor'; // V259 + V295 (anti-FOUC)
 
 // V291 — Color picker avancé style Canva (React pur + Canvas, aucune dépendance).
 const AfroColorPicker = ({ value, onChange, label }) => {
@@ -414,12 +414,14 @@ const ConceptEditor = ({
                   value={concept.primaryColor || '#8B5CF6'}
                   label="Couleur principale"
                   onChange={(newColor) => {
-                    setConcept({ ...concept, primaryColor: newColor });
+                    const nextConcept = { ...concept, primaryColor: newColor };
+                    setConcept(nextConcept);
                     applyPrimaryColor(newColor); // V259: pose aussi --primary-rgb
                     if (!concept.glowColor) {
                       document.documentElement.style.setProperty('--glow-color', `${newColor}66`);
                       document.documentElement.style.setProperty('--glow-color-strong', `${newColor}99`);
                     }
+                    persistThemeColors(nextConcept); // V295 : mémorise le thème (anti-FOUC)
                   }}
                 />
                 <div>

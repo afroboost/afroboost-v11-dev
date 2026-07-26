@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v294'; // V294: infos abonné persistées backend (whatsapp+birthday par code) + préférences coach synchronisées PC/mobile
+var CACHE_NAME = 'afroboost-v295'; // V295: boutons ?/calendrier harmonisés + toggle questions + anti-FOUC couleur + dates Europe/Zurich + effacement dates passées
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

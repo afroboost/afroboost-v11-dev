@@ -42,6 +42,7 @@ import { parseMediaUrl, isMediaUrl } from '../services/MediaParser';
 import { PublishModal } from './Publications'; // V263
 import faqAfroboost, { faqCategories, faqText, faqUiText } from '../data/faqAfroboost'; // V274/V275: FAQ chat IA multilingue
 import Cropper from 'react-easy-crop'; // V279: recadrage circulaire de la photo de profil
+import { courseOccurrenceDate } from '../utils/zurichTime'; // V295: date d'occurrence fiable (Europe/Zurich)
 
 const API = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
 const SOCKET_URL = process.env.REACT_APP_BACKEND_URL || ''; // URL Socket.IO (même que backend)
@@ -3138,23 +3139,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         
         // v10.3: Message de confirmation PREMIUM avec récapitulatif
         // v11.5: Ajout de la date et heure précises
-        // v14.8: FIX - Correction décalage +7 jours (permettre réservation le jour même)
-        const formatReservationDate = (time, weekday) => {
-          const today = new Date();
-          const currentDay = today.getDay();
-          let daysUntilCourse = weekday - currentDay;
-          // v14.8: < 0 (pas <= 0) pour permettre réservation le jour même
-          if (daysUntilCourse < 0) daysUntilCourse += 7;
-          const courseDate = new Date(today);
-          courseDate.setDate(today.getDate() + daysUntilCourse);
-          if (time) {
-            const [hours, minutes] = time.split(':');
-            courseDate.setHours(parseInt(hours) || 18, parseInt(minutes) || 30, 0, 0);
-          }
-          return courseDate;
-        };
-        
-        const reservationDate = formatReservationDate(selectedCourse.time, selectedCourse.weekday);
+        // V295 : MÊME référence temporelle que BookingPanel (util Europe/Zurich).
+        // Avant, ce bloc utilisait new Date() (fuseau du navigateur) et ne gérait pas
+        // les cours ponctuels -> date de confirmation parfois incohérente avec le panneau.
+        const reservationDate = courseOccurrenceDate(selectedCourse);
         // v14.8: Format Suisse (fr-CH) avec fuseau Europe/Zurich (Neuchâtel)
         const formattedDateTime = new Intl.DateTimeFormat('fr-CH', {
           weekday: 'long',
@@ -5559,16 +5547,16 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     }, 800);
   };
 
-  // V293 (Fix 6): bouton « ? » flottant — ré-affiche les questions rapides (quick-replies)
-  // du bot dans le flux, sans dupliquer si elles sont déjà présentes. Réutilise le
-  // même rendu/flux que V197b (type 'quick_replies' + handleQuickReply).
-  const showQuickRepliesHelp = () => {
-    const now = Date.now();
+  // V293 (Fix 6) / V295 (Fix 1) : bouton « ? » = TOGGLE des questions rapides du bot.
+  // 1er clic -> les chips s'affichent en bas du flux ; 2e clic -> elles disparaissent.
+  // Réutilise le même rendu/flux que V197b (type 'quick_replies' + handleQuickReply).
+  const toggleQuickRepliesHelp = () => {
     setMessages(prev => {
-      // Retirer les anciens chips pour les remonter en bas du flux
+      const hasQR = prev.some(m => m.type === 'quick_replies');
       const cleaned = prev.filter(m => m.type !== 'quick_replies');
+      if (hasQR) return cleaned; // déjà ouvertes -> on masque
       return cleaned.concat([{
-        id: 'qr_help_' + now,
+        id: 'qr_help_' + Date.now(),
         type: 'quick_replies',
         replies: quickRepliesData
       }]);
@@ -10003,18 +9991,20 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       </svg>
                     </button>
 
-                    {/* V293 (Fix 6): bouton « ? » aide — ré-affiche les questions rapides du bot.
-                        Masqué en mode coach/staff (réservé abonné + visiteur). */}
+                    {/* V293 (Fix 6) / V295 (Fix 1) : bouton « ? » aide = TOGGLE des questions.
+                        Masqué en mode coach/staff (réservé abonné + visiteur).
+                        V295 : MÊME style/taille/couleur que le bouton calendrier ci-dessous ;
+                        l'état « ouvert » (chips affichées) le colore comme le calendrier actif. */}
                     {!isCoachMode && (
                       <button
                         type="button"
-                        onClick={showQuickRepliesHelp}
+                        onClick={toggleQuickRepliesHelp}
                         style={{
-                          width: '36px',
-                          height: '36px',
+                          width: '40px',
+                          height: '40px',
                           borderRadius: '50%',
-                          background: 'rgba(147, 51, 234, 0.15)',
-                          border: '1px solid rgba(147, 51, 234, 0.4)',
+                          background: (messages && messages.some(m => m.type === 'quick_replies')) ? '#9333ea' : 'rgba(147, 51, 234, 0.3)',
+                          border: '1px solid rgba(147, 51, 234, 0.5)',
                           cursor: 'pointer',
                           display: 'flex',
                           alignItems: 'center',
@@ -10025,9 +10015,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         title="Aide / questions fréquentes"
                         data-testid="help-btn"
                       >
-                        {/* V294 (Partie D) : cercle SVG retiré — le fond rond du bouton suffit
-                            (évitait un double rond). On garde juste le point d'interrogation. */}
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        {/* V294 (Partie D) : cercle SVG retiré — le fond rond du bouton suffit. */}
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={(messages && messages.some(m => m.type === 'quick_replies')) ? '#fff' : '#a855f7'} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
                           <line x1="12" y1="17" x2="12.01" y2="17"></line>
                         </svg>

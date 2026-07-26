@@ -98,7 +98,7 @@ import SvgIcon from "./components/SvgIcon";
 // V184: Espace abonné accès rapide (lien public /espace/AFR-XXXXXX)
 import SubscriberSpace from "./components/SubscriberSpace";
 import { useDataCache, invalidateCache } from "./hooks/useDataCache";
-import { applyPrimaryColor } from "./utils/themeColor"; // V259
+import { applyPrimaryColor, persistThemeColors } from "./utils/themeColor"; // V259 + V295 (anti-FOUC)
 import { PublicationsCarousel } from "./components/Publications"; // V261
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
@@ -4815,6 +4815,7 @@ function App() {
           document.documentElement.style.setProperty('--background-color', data.concept.backgroundColor);
           document.body.style.backgroundColor = data.concept.backgroundColor;
         }
+        persistThemeColors(data.concept); // V295 : mémorise le thème (anti-FOUC)
       }
       // v160.5: Charger les commentaires & likes SPECIFIQUES a ce coach (isolation per-coach)
       const coachEmail = (data.coach && data.coach.email ? data.coach.email : '').toLowerCase().trim();
@@ -5359,6 +5360,7 @@ function App() {
           document.documentElement.style.setProperty('--background-color', cachedConcept.backgroundColor);
           document.body.style.backgroundColor = cachedConcept.backgroundColor;
         }
+        persistThemeColors(cachedConcept); // V295 : mémorise le thème (anti-FOUC)
       } else if (requestMap.concept !== undefined) {
         const conceptData = responses[requestMap.concept].data;
         cacheRef.current.concept = { data: conceptData, timestamp: now };
@@ -5379,6 +5381,7 @@ function App() {
           document.documentElement.style.setProperty('--background-color', conceptData.backgroundColor);
           document.body.style.backgroundColor = conceptData.backgroundColor;
         }
+        persistThemeColors(conceptData); // V295 : mémorise le thème (anti-FOUC)
       }
 
       // Données dynamiques (toujours rafraîchies)

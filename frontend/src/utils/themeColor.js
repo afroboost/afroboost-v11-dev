@@ -31,3 +31,30 @@ export function applyPrimaryColor(hex) {
   document.documentElement.style.setProperty('--primary-color', hex);
   document.documentElement.style.setProperty('--primary-rgb', rgb);
 }
+
+// V295 — anti-FOUC (flash de l'ancienne couleur ~1 s au chargement).
+// On memorise les variables CSS du theme dans localStorage a chaque application
+// des couleurs. Un petit script inline dans <head> (index.html) les repose
+// AVANT le premier rendu -> plus de flash. Le backend reste la source de verite
+// et rafraichit ce cache a chaque visite.
+export function persistThemeColors(concept) {
+  if (typeof localStorage === 'undefined' || !concept) return;
+  try {
+    const colors = {};
+    if (concept.primaryColor) {
+      colors['--primary-color'] = concept.primaryColor;
+      const rgb = hexToRgbTriplet(concept.primaryColor);
+      if (rgb) colors['--primary-rgb'] = rgb;
+      const glowBase = concept.glowColor || concept.primaryColor;
+      if (glowBase) {
+        colors['--glow-color'] = glowBase + '66';
+        colors['--glow-color-strong'] = glowBase + '99';
+      }
+    }
+    if (concept.secondaryColor) colors['--secondary-color'] = concept.secondaryColor;
+    if (concept.backgroundColor) colors['--background-color'] = concept.backgroundColor;
+    if (Object.keys(colors).length) {
+      localStorage.setItem('afroboost_theme_colors', JSON.stringify(colors));
+    }
+  } catch (e) { /* silencieux */ }
+}
