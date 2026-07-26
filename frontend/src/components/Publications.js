@@ -576,9 +576,11 @@ export const BoostTribeSection = ({ subscriberCode }) => {
     setState('loading');
     setReason('');
     try {
-      const params = {};
-      if (subscriberCode && subscriberCode.indexOf('@') === -1) params.subscriber_code = subscriberCode;
-      const res = await axios.get(`${API}/boosttribe/access`, { params });
+      // V280 (revue sécurité) : code AFR- dans le CORPS (POST), pas en query
+      // string, pour ne pas exposer ce secret long terme dans les logs/URL.
+      const payload = {};
+      if (subscriberCode && subscriberCode.indexOf('@') === -1) payload.subscriber_code = subscriberCode;
+      const res = await axios.post(`${API}/boosttribe/access`, payload);
       setEmbedUrl(res.data.embedUrl);
       setState('live');
     } catch (err) {

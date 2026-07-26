@@ -6151,17 +6151,29 @@ async def _bt_debit_subscriber(code: str):
     return None
 
 
-@api_router.get("/boosttribe/access")
-async def boosttribe_access(request: Request, subscriber_code: str = ""):
+@api_router.post("/boosttribe/access")
+async def boosttribe_access(request: Request):
     """Emet un jeton d'acces BoostTribe si l'abonne a du credit. Ne debite pas.
 
-    Identite : l'abonne est reconnu par son code AFR- (query `subscriber_code`),
-    sa capacite deja utilisee partout dans l'espace abonne. Le super admin est
-    aussi autorise (acces illimite, aucun debit).
+    Identite : l'abonne est reconnu par son code AFR-, sa capacite deja utilisee
+    partout dans l'espace abonne. Le super admin est aussi autorise (acces
+    illimite, aucun debit).
+
+    SECURITE (revue) : le code AFR- est un secret LONG TERME. On le lit dans le
+    CORPS (POST) et non en query string, pour qu'il n'atterrisse pas dans les
+    journaux d'acces / l'historique / l'en-tete Referer. Le modele reste
+    « capability » : posseder le code = etre l'abonne (comme partout ailleurs) ;
+    la casse est bornee — 1 credit par session REELLE, debit idempotent (jti).
     """
     secret = os.environ.get("AFRO_BT_SHARED_SECRET", "")
     if not secret:
         raise HTTPException(status_code=503, detail="BoostTribe non configuré (secret manquant)")
+
+    try:
+        _body = await request.json()
+    except Exception:
+        _body = {}
+    subscriber_code = (_body.get("subscriber_code") if isinstance(_body, dict) else "") or ""
 
     import jwt as _pyjwt
     now = datetime.now(timezone.utc)
