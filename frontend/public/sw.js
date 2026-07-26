@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v284'; // V284: photo coach recadrage/zoom (crop V279) + SVG
+var CACHE_NAME = 'afroboost-v285'; // V285: date naissance obligatoire + anniversaires + préférences notif
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

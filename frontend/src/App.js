@@ -4415,6 +4415,7 @@ function App() {
   const [userName, setUserName] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [userWhatsapp, setUserWhatsapp] = useState("");
+  const [userBirthday, setUserBirthday] = useState(""); // V285: date de naissance (YYYY-MM-DD)
   const [shippingAddress, setShippingAddress] = useState(""); // Adresse de livraison pour produits physiques
   const [discountCode, setDiscountCode] = useState("");
   const [hasAcceptedTerms, setHasAcceptedTerms] = useState(false);
@@ -6027,6 +6028,12 @@ function App() {
       setTimeout(() => setValidationMessage(""), 4000);
       return;
     }
+    // V285: la date de naissance est obligatoire (anniversaires communautaires).
+    if (!userBirthday?.trim()) {
+      setValidationMessage('La date de naissance est obligatoire');
+      setTimeout(() => setValidationMessage(""), 4000);
+      return;
+    }
     
     // Validation des variantes si le produit en a
     if (selectedOffer?.variants && Object.keys(selectedOffer.variants).length > 0) {
@@ -6074,8 +6081,10 @@ function App() {
     const reservation = {
       userId: `user-${Date.now()}`,
       userName: userName,
-      userEmail: userEmail, 
+      userEmail: userEmail,
       userWhatsapp: userWhatsapp,
+      // V285: date de naissance convertie en MM-DD pour le backend (anniversaires).
+      userBirthday: (function() { const p = (userBirthday || '').split('-'); return p.length === 3 ? p[1] + '-' + p[2] : ''; })(),
       shippingAddress: isPhysicalProduct ? shippingAddress : null, // Adresse si produit physique
       selectedVariants: Object.keys(selectedVariants).length > 0 ? selectedVariants : null, // Variantes choisies
       variantsText: variantsText || null, // Texte formaté des variantes
@@ -8065,7 +8074,19 @@ function App() {
                 <input type="text" required placeholder={t('fullName')} value={userName} onChange={e => setUserName(e.target.value)} className="w-full p-3 rounded-lg neon-input" data-testid="user-name-input" autoComplete="name" />
                 <input type="email" required placeholder={t('emailRequired')} value={userEmail} onChange={e => handleEmailChange(e.target.value)} className="w-full p-3 rounded-lg neon-input" data-testid="user-email-input" autoComplete="email" />
                 <input type="tel" required placeholder={t('whatsappRequired')} value={userWhatsapp} onChange={e => setUserWhatsapp(e.target.value)} className="w-full p-3 rounded-lg neon-input" data-testid="user-whatsapp-input" autoComplete="tel" />
-                
+
+                {/* V285: Date de naissance — obligatoire (anniversaires communautaires) */}
+                <div>
+                  <input type="date" required value={userBirthday} onChange={e => setUserBirthday(e.target.value)}
+                    max={new Date().toISOString().split('T')[0]}
+                    className="w-full p-3 rounded-lg neon-input" data-testid="user-birthday-input"
+                    style={{ colorScheme: 'dark' }} aria-label="Date de naissance" />
+                  <p style={{ fontSize: '10px', color: '#888', marginTop: '4px', lineHeight: 1.3 }}>
+                    Ton âge ne sera pas affiché publiquement sauf si tu le souhaites.
+                    On fête les anniversaires avec toute la communauté Afroboost !
+                  </p>
+                </div>
+
                 {/* Champ Adresse - Affiché uniquement pour les produits physiques */}
                 {(selectedOffer?.isProduct || selectedOffer?.isPhysicalProduct) && (
                   <div className="border border-purple-500/30 rounded-lg p-3 bg-purple-900/20">

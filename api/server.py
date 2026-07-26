@@ -2578,6 +2578,83 @@ async def update_user_mini_profile(participant_id: str, request: Request):
     )
     return {"status": "ok", "updated": update}
 
+
+# === V285 : ANNIVERSAIRES (le frontend V160 appelait ces endpoints, absents) ===
+@api_router.api_route("/chat/participants/{participant_id}/birthday", methods=["PUT", "POST"])
+async def save_participant_birthday(participant_id: str, request: Request):
+    """V160/V285 : enregistre la date de naissance (format MM-DD) d'un participant.
+
+    Le frontend V160 utilise PUT ; le formulaire abonné (V285) utilise POST — on
+    accepte les DEUX. L'age n'est PAS public par defaut (`show_age_public`).
+    """
+    body = await request.json()
+    birthday = (body.get("birthday") or "").strip()  # "MM-DD"
+    if not birthday or len(birthday) != 5 or birthday[2] != "-":
+        raise HTTPException(status_code=400, detail="Format attendu: MM-DD")
+
+    update = {
+        "birthday": birthday,
+        "show_age_public": bool(body.get("show_age_public", False)),
+        "birthday_updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    # chat_participants d'abord (l'identite chat), puis users en repli/complement.
+    res = await db.chat_participants.update_one({"id": participant_id}, {"$set": update})
+    await db.users.update_one(
+        {"$or": [{"id": participant_id}, {"participant_id": participant_id}]},
+        {"$set": update}
+    )
+    if res.matched_count == 0:
+        # Aucun participant chat : on cree/complete le doc users par participant_id.
+        await db.users.update_one(
+            {"participant_id": participant_id},
+            {"$set": {**update, "participant_id": participant_id}},
+            upsert=True
+        )
+    logger.info(f"[V285] Anniversaire enregistre: {participant_id} -> {birthday}")
+    return {"success": True, "birthday": birthday}
+
+
+@api_router.get("/birthdays/today")
+async def get_today_birthdays():
+    """V160/V285 : participants dont c'est l'anniversaire aujourd'hui (par MM-DD)."""
+    today = datetime.now(timezone.utc)
+    today_mm_dd = f"{today.month:02d}-{today.day:02d}"
+    birthdays = []
+    seen = set()
+
+    async for p in db.chat_participants.find(
+        {"birthday": today_mm_dd},
+        {"_id": 0, "id": 1, "name": 1, "username": 1, "photo_url": 1, "photoUrl": 1}
+    ):
+        pid = p.get("id")
+        if pid and pid in seen:
+            continue
+        if pid:
+            seen.add(pid)
+        birthdays.append({
+            "id": pid,
+            "name": p.get("name") or p.get("username") or "Membre",
+            "photo_url": p.get("photo_url") or p.get("photoUrl"),
+        })
+
+    async for u in db.users.find(
+        {"birthday": today_mm_dd},
+        {"_id": 0, "id": 1, "participant_id": 1, "name": 1, "username": 1, "photo_url": 1, "photoUrl": 1}
+    ):
+        uid = u.get("id") or u.get("participant_id")
+        if uid and uid in seen:
+            continue
+        if uid:
+            seen.add(uid)
+        birthdays.append({
+            "id": uid,
+            "name": u.get("name") or u.get("username") or "Membre",
+            "photo_url": u.get("photo_url") or u.get("photoUrl"),
+        })
+
+    return {"birthdays": birthdays, "count": len(birthdays)}
+
+
 # === COACH NOTIFICATIONS ===
 
 class CoachNotificationPayload(BaseModel):

@@ -499,6 +499,7 @@ class ReservationBase(BaseModel):
     userName: str
     userEmail: str
     userWhatsapp: Optional[str] = None
+    userBirthday: Optional[str] = None  # V285: date de naissance format MM-DD (optionnel côté modèle)
     userLanguage: Optional[str] = None  # v158: langue pour email/WhatsApp (fr/en/de)
     courseName: Optional[str] = None
     courseTime: Optional[str] = None
@@ -702,6 +703,24 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
     await db.reservations.insert_one(reservation_data)
     reservation_data.pop("_id", None)
     logger.info(f"[RESERVATION] Créée: {reservation_data.get('reservationCode')} pour {user_email}")
+
+    # V285: enregistrer la date de naissance (MM-DD) dans le profil, pour les
+    # anniversaires. Optionnel — n'echoue jamais la reservation.
+    try:
+        _bday = (reservation.userBirthday or "").strip()
+        if user_email and _bday:
+            await db.users.update_one(
+                {"email": user_email},
+                {"$set": {"birthday": _bday, "birthday_updated_at": datetime.now(timezone.utc).isoformat()}},
+                upsert=False
+            )
+            await db.chat_participants.update_many(
+                {"email": user_email},
+                {"$set": {"birthday": _bday}}
+            )
+            logger.info(f"[V285] Anniversaire depuis réservation: {user_email} -> {_bday}")
+    except Exception as _e:
+        logger.warning(f"[V285] Enregistrement anniversaire ignoré: {_e}")
 
     # v96/v158: Envoyer email + WhatsApp de confirmation avec code AFRO-XXXX
     if user_email:

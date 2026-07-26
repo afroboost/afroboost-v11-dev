@@ -1508,7 +1508,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         .then(function(r) { return r.json(); })
         .then(function(data) {
           if (data.birthdays && data.birthdays.length > 0) {
-            setTodayBirthdays(data.birthdays);
+            // V285 : respecter la préférence de notification anniversaire.
+            var prefs = {};
+            try { prefs = JSON.parse(localStorage.getItem('afroboost_notif_prefs') || '{}'); } catch (e) { prefs = {}; }
+            if (prefs.birthday !== false) {
+              setTodayBirthdays(data.birthdays);
+            }
           }
         })
         .catch(function(err) { console.log('[V160] Birthday check error:', err); });
@@ -1549,6 +1554,39 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   const [privateChatTarget, setPrivateChatTarget] = useState(null);
   const [messageCount, setMessageCount] = useState(0); // Compteur de messages pour prompt notif
   const [pushEnabled, setPushEnabled] = useState(() => isSubscribed()); // V120: init depuis localStorage
+
+  // V285 : préférences de notifications granulaires (abonné).
+  const [notifPrefs, setNotifPrefs] = useState(() => {
+    try {
+      const saved = localStorage.getItem('afroboost_notif_prefs');
+      return saved ? JSON.parse(saved) : { before_class: true, new_offer: true, birthday: true };
+    } catch (e) { return { before_class: true, new_offer: true, birthday: true }; }
+  });
+  const [showNotifPrefs, setShowNotifPrefs] = useState(false);
+  const toggleNotifPref = (key) => {
+    setNotifPrefs(prev => {
+      const updated = Object.assign({}, prev, { [key]: !prev[key] });
+      try { localStorage.setItem('afroboost_notif_prefs', JSON.stringify(updated)); } catch (e) { /* silencieux */ }
+      return updated;
+    });
+  };
+
+  // V285 : préférences de notifications (coach).
+  const [coachNotifPrefs, setCoachNotifPrefs] = useState(() => {
+    const _def = { new_sale: true, subscriber_login: true, new_reservation: true, review_request: true, class_reminder: true, sub_expiring: true, birthday: true };
+    try {
+      const saved = localStorage.getItem('afroboost_coach_notif_prefs');
+      return saved ? JSON.parse(saved) : _def;
+    } catch (e) { return _def; }
+  });
+  const [showCoachNotifPrefs, setShowCoachNotifPrefs] = useState(false);
+  const toggleCoachNotifPref = (key) => {
+    setCoachNotifPrefs(prev => {
+      const updated = Object.assign({}, prev, { [key]: !prev[key] });
+      try { localStorage.setItem('afroboost_coach_notif_prefs', JSON.stringify(updated)); } catch (e) { /* silencieux */ }
+      return updated;
+    });
+  };
   const [unreadCount, setUnreadCount] = useState(0); // v9.4.0: Compteur de messages non lus pour badge
   const [hasNewMessage, setHasNewMessage] = useState(false); // v9.4.0: Indicateur de nouveau message
   const [isCoachMode, setIsCoachMode] = useState(() => {
@@ -6346,7 +6384,14 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         onMouseOver={function(e) { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; }}
                         onMouseOut={function(e) { e.currentTarget.style.background = 'none'; }}
                       >
-                        <span role="img" aria-label="birthday">&#x1F382;</span> Date de naissance
+                        {/* V285 : gâteau en SVG (plus d'emoji) */}
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="2" y="14" width="20" height="8" rx="2"></rect>
+                          <path d="M6 14V8a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v6"></path>
+                          <path d="M12 2v4"></path>
+                          <circle cx="12" cy="4" r="1" fill="currentColor"></circle>
+                        </svg>
+                        Date de naissance
                       </button>
 
 <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
@@ -6437,6 +6482,40 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           </svg>
                           {pushEnabled ? 'Notifications activées' : 'Activer les notifications'}
                         </button>
+                      )}
+
+                      {/* V285 : préférences de notifications granulaires */}
+                      <button
+                        onClick={() => setShowNotifPrefs(!showNotifPrefs)}
+                        style={{ width: '100%', padding: '10px 14px', textAlign: 'left', fontSize: '12px', color: '#fff', background: showNotifPrefs ? 'rgba(255,255,255,0.05)' : 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px' }}
+                        className="hover:bg-white/10"
+                        data-testid="notif-prefs-toggle"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="3"></circle>
+                          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                        </svg>
+                        Préférences notifications
+                      </button>
+                      {showNotifPrefs && (
+                        <div style={{ padding: '4px 14px 10px', background: 'rgba(255,255,255,0.02)' }}>
+                          {[
+                            { key: 'before_class', label: 'Rappel avant le cours' },
+                            { key: 'new_offer', label: 'Nouvelle offre ajoutée' },
+                            { key: 'birthday', label: 'Anniversaires de la communauté' }
+                          ].map(function(item) {
+                            var on = notifPrefs[item.key] !== false;
+                            return (
+                              <button key={item.key} onClick={function() { toggleNotifPref(item.key); }}
+                                style={{ width: '100%', padding: '8px 0', display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: 'none', color: on ? '#22c55e' : '#666', cursor: 'pointer', fontSize: '11px', textAlign: 'left' }}>
+                                <div style={{ width: '28px', height: '16px', borderRadius: '8px', background: on ? '#22c55e' : '#333', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}>
+                                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#fff', position: 'absolute', top: '2px', left: on ? '14px' : '2px', transition: 'left 0.2s' }} />
+                                </div>
+                                {item.label}
+                              </button>
+                            );
+                          })}
+                        </div>
                       )}
 
                       {/* Rafraîchir */}
@@ -7256,6 +7335,44 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                     </span>
                   </div>
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }} className="coach-icons-menu">
+                    {/* V285 : cloche de préférences notifications COACH */}
+                    <div style={{ position: 'relative' }} data-notif-panel="coach">
+                      <button
+                        onClick={function() { setShowCoachNotifPrefs(!showCoachNotifPrefs); }}
+                        title="Préférences notifications"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: showCoachNotifPrefs ? 1 : 0.7 }}
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary-color, #D91CD2)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                          <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                        </svg>
+                      </button>
+                      {showCoachNotifPrefs && (
+                        <div data-notif-panel="coach" style={{ position: 'absolute', top: '35px', right: '0', background: '#1a1a1a', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)', padding: '12px', minWidth: '220px', zIndex: 200, boxShadow: '0 4px 24px rgba(0,0,0,0.6)' }}>
+                          <div style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--primary-color, #D91CD2)', marginBottom: '10px' }}>Notifications Coach</div>
+                          {[
+                            { key: 'new_sale', label: 'Nouvelle vente' },
+                            { key: 'subscriber_login', label: 'Abonné connecté' },
+                            { key: 'new_reservation', label: 'Nouvelle réservation' },
+                            { key: 'review_request', label: "Demande d'avis" },
+                            { key: 'class_reminder', label: 'Rappel cours' },
+                            { key: 'sub_expiring', label: 'Abonnement bientôt terminé' },
+                            { key: 'birthday', label: 'Anniversaires' }
+                          ].map(function(item) {
+                            var on = coachNotifPrefs[item.key] !== false;
+                            return (
+                              <button key={item.key} onClick={function() { toggleCoachNotifPref(item.key); }}
+                                style={{ width: '100%', padding: '7px 0', display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: 'none', color: on ? '#22c55e' : '#666', cursor: 'pointer', fontSize: '11px', textAlign: 'left' }}>
+                                <div style={{ width: '28px', height: '16px', borderRadius: '8px', background: on ? '#22c55e' : '#333', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}>
+                                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#fff', position: 'absolute', top: '2px', left: on ? '14px' : '2px', transition: 'left 0.2s' }} />
+                                </div>
+                                {item.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                     {/* V263: le coach publie lui aussi sur le mur de la vitrine.
                         Aucun code abonne transmis : le serveur l'identifie par
                         sa session (cf. _v263_authenticated_coach). */}
@@ -9952,7 +10069,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
             border: '1px solid rgba(124,58,237,0.3)'
           }} onClick={function(e) { e.stopPropagation(); }}>
             <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-              <span style={{ fontSize: '40px' }}>&#x1F382;</span>
+              {/* V285 : gâteau SVG (plus d'emoji) */}
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--primary-color, #D91CD2)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'inline-block' }}>
+                <rect x="2" y="14" width="20" height="8" rx="2"></rect>
+                <path d="M6 14V8a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v6"></path>
+                <path d="M12 2v4"></path>
+                <circle cx="12" cy="4" r="1" fill="currentColor"></circle>
+              </svg>
               <h3 style={{ color: '#fff', margin: '10px 0 5px', fontSize: '18px' }}>Date de naissance</h3>
               <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px', margin: 0 }}>
                 Pour recevoir un message le jour J !

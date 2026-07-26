@@ -220,11 +220,29 @@ const SubscriberForm = ({
   // Wrapper soumission
   const handleSubmit = useCallback((e) => {
     e.preventDefault();
+    // V285 : la date de naissance est OBLIGATOIRE à la connexion abonné.
+    const bday = (formData.birthday || '').trim();
+    if (!bday) {
+      alert('La date de naissance est obligatoire.');
+      return;
+    }
     if (rememberMe) {
       saveInfo(formData);
     } else {
       clearSavedInfo();
     }
+    // V285 : on persiste l'anniversaire au format MM-DD dans le profil local,
+    // pour que le flux participantId du parent (endpoint birthday) puisse le
+    // synchroniser. Le flux réservation persiste aussi le birthday par email.
+    try {
+      const parts = bday.split('-'); // YYYY-MM-DD
+      if (parts.length === 3) {
+        const mmdd = parts[1] + '-' + parts[2];
+        const prof = JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}');
+        prof.birthday = mmdd;
+        localStorage.setItem(PROFILE_KEY, JSON.stringify(prof));
+      }
+    } catch (err) { /* silencieux */ }
     onSubmit(e);
   }, [rememberMe, formData, onSubmit]);
 
@@ -354,6 +372,30 @@ const SubscriberForm = ({
           }}
           data-testid="subscriber-code"
         />
+      </div>
+
+      {/* V285 : Date de naissance — OBLIGATOIRE. L'âge n'est pas public. */}
+      <div>
+        <label className="block text-white text-xs mb-1" style={{ opacity: 0.7 }}>Date de naissance *</label>
+        <input
+          type="date"
+          value={formData.birthday || ''}
+          onChange={(e) => handleFieldChange('birthday', e.target.value)}
+          max={new Date().toISOString().split('T')[0]}
+          className="w-full px-3 py-2 rounded-lg text-sm"
+          style={{
+            background: 'rgba(255,255,255,0.1)',
+            border: '1px solid rgba(255,255,255,0.2)',
+            color: '#fff',
+            outline: 'none',
+            colorScheme: 'dark'
+          }}
+          data-testid="subscriber-birthday"
+        />
+        <p style={{ fontSize: '10px', color: '#aaa', marginTop: '4px', lineHeight: 1.3 }}>
+          Ton âge ne sera pas affiché publiquement sauf si tu le souhaites.
+          Ça nous permet de fêter ton anniversaire avec la communauté !
+        </p>
       </div>
 
       {/* Toggle "Mémoriser mes informations" */}
