@@ -8616,7 +8616,7 @@ function App() {
                   <div style={{ display: 'flex', gap: '12px' }}>
                     {/* v78: Avatar — photo réelle, DiceBear fallback, ou initiale */}
                     {(() => {
-                      const photoUrl = comment.profile_photo || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(comment.user_name || 'user')}&backgroundColor=D91CD2`;
+                      const photoUrl = comment.profile_photo || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(comment.user_name || 'user')}&backgroundColor=8B5CF6`;
                       return (
                         <div
                           onClick={() => setZoomedPhoto(photoUrl)}

@@ -367,13 +367,17 @@ async def get_active_partners():
         # Fallback: anciens champs legacy
         bassi_video_url = bassi_first_url or (bassi_concept or {}).get("heroVideoUrl") or (bassi_concept or {}).get("heroImageUrl") or ""
         bassi_image_url = (bassi_concept or {}).get("heroImageUrl") or ""
+        # V290 : la photo du Super Admin vit dans coach_profiles — la charger au
+        # lieu de renvoyer None en dur (elle n'apparaissait pas sur la vitrine).
+        _bassi_cp = await db.coach_profiles.find_one({"email": SUPER_ADMIN_EMAIL}, {"_id": 0, "photo_url": 1})
+        _bassi_photo = (_bassi_cp or {}).get("photo_url") or None
         # Toujours ajouter Bassi même sans vidéo (il est le Super Admin)
         bassi_data = {
             "id": "bassi_main",
             "name": "Bassi - Afroboost",
             "email": SUPER_ADMIN_EMAIL,
             "platform_name": "Afroboost",
-            "photo_url": None,
+            "photo_url": _bassi_photo,
             "logo_url": None,
             "bio": "Coach Afroboost - Fitness & Bien-être",
             "video_url": bassi_video_url,
@@ -445,7 +449,10 @@ async def get_coach_vitrine(username: str):
     # v19: Isolation stricte des données par coach_id
     is_admin_vitrine = username.lower() in ["bassi", "afroboost", SUPER_ADMIN_EMAIL.lower()]
     if is_admin_vitrine:
-        coach = {"id": "bassi", "name": "Bassi - Afroboost", "email": SUPER_ADMIN_EMAIL, "photo_url": None, "bio": "Coach Afroboost - Fitness & Bien-être", "platform_name": "Afroboost", "logo_url": None, "is_active": True}
+        # V290 : charger la photo du Super Admin depuis coach_profiles (plus de None en dur).
+        _bassi_cp2 = await db.coach_profiles.find_one({"email": SUPER_ADMIN_EMAIL}, {"_id": 0, "photo_url": 1})
+        _bassi_photo2 = (_bassi_cp2 or {}).get("photo_url") or None
+        coach = {"id": "bassi", "name": "Bassi - Afroboost", "email": SUPER_ADMIN_EMAIL, "photo_url": _bassi_photo2, "bio": "Coach Afroboost - Fitness & Bien-être", "platform_name": "Afroboost", "logo_url": None, "is_active": True}
         # Super Admin: match son coach_id OU les données legacy sans coach_id
         coach_filter = {"$or": [
             {"coach_id": DEFAULT_COACH_ID},

@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v289'; // V289: fix 500 users + photos publications + birthday
+var CACHE_NAME = 'afroboost-v290'; // V290: photos profil + DiceBear 8B5CF6 + publications mobile
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

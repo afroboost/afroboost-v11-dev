@@ -243,7 +243,7 @@ const V268Lightbox = ({ pub, onClose }) => {
           {/* V282 : avatar auteur (cliquable -> mini-profil si author_id) + nom. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '10px 0 0' }}>
             <img
-              src={pub.author_photo || pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.author_name || pub.display_name || pub.subscriber_name || 'A')}&backgroundColor=D91CD2`}
+              src={pub.author_photo || pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.author_name || pub.display_name || pub.subscriber_name || 'A')}&backgroundColor=8B5CF6`}
               alt=""
               onClick={(e) => {
                 e.stopPropagation();
@@ -316,7 +316,7 @@ const V268PublicationCard = ({ pub, onOpen }) => {
                 identifie (author_id) — via un CustomEvent ecoute par le
                 ChatWidget, pour ne pas dependre du parent qui rend la carte. */}
             <img
-              src={pub.author_photo || pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.author_name || pub.display_name || pub.subscriber_name || 'A')}&backgroundColor=D91CD2`}
+              src={pub.author_photo || pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.author_name || pub.display_name || pub.subscriber_name || 'A')}&backgroundColor=8B5CF6`}
               alt=""
               onClick={(e) => {
                 e.stopPropagation();
@@ -926,7 +926,10 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
     }
   };
 
-  return (
+  // V290 : createPortal vers document.body — dans le ChatWidget (plein écran
+  // mobile), un ancêtre avec `transform` crée un containing block qui piégeait le
+  // `position: fixed`, masquant « Mes publications » sous le formulaire sur mobile.
+  return createPortal(
     <div
       onClick={onClose}
       style={{
@@ -1173,6 +1176,7 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
         {/* V268b (F8): mes publications, sous le formulaire — edition + suppression. */}
         <V268MyPublications subscriberCode={subscriberCode} refreshKey={0} />
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

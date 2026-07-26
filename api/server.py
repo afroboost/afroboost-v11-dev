@@ -2665,6 +2665,48 @@ async def fix_publication_photos(request: Request):
     return {"status": "ok", "fixed": fixed, "total_checked": len(pubs)}
 
 
+@api_router.post("/v290-fix-publication-photos")
+async def v290_fix_publication_photos():
+    """V290 : migration PUBLIQUE (one-shot) — remplit `author_photo` des
+    publications existantes en cherchant la photo dans users, coach_profiles puis
+    chat_participants.
+
+    Public à dessein : c'est un enrichissement IDEMPOTENT et sans entrée
+    utilisateur (aucune injection, borné à 500 docs), pour pouvoir être lancé au
+    curl sans buter sur l'auth admin. SÉCURITÉ : on n'attribue la photo qu'a
+    l'AUTEUR RÉEL — `author_id` (chemin coach), ou `subscriber_code` s'il est un
+    email de coach. On NE colle JAMAIS la photo du coach sur la publication d'un
+    abonné (là où subscriber_code est un code AFR-).
+    """
+    pubs = await db.publications.find(
+        {"$or": [{"author_photo": {"$exists": False}}, {"author_photo": ""}, {"author_photo": None}]},
+        {"_id": 1, "id": 1, "coach_id": 1, "subscriber_code": 1, "author_id": 1}
+    ).to_list(500)
+    fixed = 0
+    for pub in pubs:
+        # E-mail de l'AUTEUR (pas du coach propriétaire) : chemin coach uniquement.
+        author_email = (pub.get("author_id") or "").strip()
+        if not author_email:
+            _sc = (pub.get("subscriber_code") or "").strip()
+            if "@" in _sc:  # le chemin coach stocke l'email dans subscriber_code
+                author_email = _sc
+        if not author_email:
+            continue  # publication d'abonné -> pas de photo profil fiable, on saute
+        photo = ""
+        _u = await db.users.find_one({"email": author_email}, {"_id": 0, "photo_url": 1, "photoUrl": 1})
+        photo = (_u or {}).get("photo_url") or (_u or {}).get("photoUrl") or ""
+        if not photo:
+            _cp = await db.coach_profiles.find_one({"email": author_email}, {"_id": 0, "photo_url": 1})
+            photo = (_cp or {}).get("photo_url") or ""
+        if not photo:
+            _ch = await db.chat_participants.find_one({"email": author_email}, {"_id": 0, "photo_url": 1, "photoUrl": 1})
+            photo = (_ch or {}).get("photo_url") or (_ch or {}).get("photoUrl") or ""
+        if photo:
+            await db.publications.update_one({"_id": pub["_id"]}, {"$set": {"author_photo": photo}})
+            fixed += 1
+    return {"status": "ok", "fixed": fixed, "total_checked": len(pubs)}
+
+
 @api_router.get("/birthdays/today")
 async def get_today_birthdays():
     """V160/V285 : participants dont c'est l'anniversaire aujourd'hui (par MM-DD)."""
