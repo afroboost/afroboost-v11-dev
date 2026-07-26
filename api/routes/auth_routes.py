@@ -452,15 +452,19 @@ async def register(request: Request, response: Response, user_data: RegisterRequ
         # auto-inscription est créée EN ATTENTE (pending_validation) et ne peut pas
         # se connecter tant qu'un super-admin ne l'a pas validée. Seul un super-admin
         # (identité JWT ou X-User-Email) peut créer un compte directement actif.
-        _caller = (request.headers.get("X-User-Email", "") or "").lower().strip()
+        # V311d.1 : le statut « admin » vient d'un JWT SIGNÉ vérifié, JAMAIS de
+        # X-User-Email (falsifiable). Sans jeton valide -> non-admin -> compte en
+        # attente. Défaut de sécurité = « en attente » : un X-User-Email usurpé ne
+        # peut donc PAS créer un compte directement actif.
+        _caller = ""
         _auth = request.headers.get("Authorization", "") or ""
         if _auth.lower().startswith("bearer ") and _v311_jwt_secret():
             try:
                 import jwt as _pyjwt
                 _p = _pyjwt.decode(_auth.split(" ", 1)[1].strip(), _v311_jwt_secret(), algorithms=["HS256"])
-                _caller = (_p.get("email") or _caller).lower().strip()
+                _caller = (_p.get("email") or "").lower().strip()
             except Exception:
-                pass
+                _caller = ""
         caller_is_admin = is_super_admin_email(_caller)
         pending = not caller_is_admin  # auto-inscription = en attente de validation
 
@@ -645,6 +649,36 @@ async def login(request: Request, response: Response, user_data: LoginRequest):
     except Exception as e:
         logger.error(f"Login error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@auth_router.get("/whoami")
+async def whoami(request: Request):
+    """V311e : outil de PREUVE. Décode le JWT SIGNÉ de l'appelant et renvoie son
+    identité VÉRIFIÉE. Ne lit JAMAIS X-User-Email. Sert à prouver qu'une session
+    donnée (celle du propriétaire) possède un vrai jeton valide — condition
+    obligatoire AVANT de verrouiller quoi que ce soit en JWT-strict."""
+    secret = _v311_jwt_secret()
+    auth = request.headers.get("Authorization", "") or ""
+    if not secret:
+        return {"valid": False, "reason": "secret serveur absent"}
+    if not auth.lower().startswith("bearer "):
+        return {"valid": False, "reason": "aucun jeton envoyé (Authorization absent)"}
+    token = auth.split(" ", 1)[1].strip()
+    if not token:
+        return {"valid": False, "reason": "jeton vide"}
+    try:
+        import jwt as _pyjwt
+        p = _pyjwt.decode(token, secret, algorithms=["HS256"])
+        email = (p.get("email") or "").lower().strip()
+        return {
+            "valid": True,
+            "email": email,
+            "role": p.get("role"),
+            "exp": p.get("exp"),
+            "is_super_admin": is_super_admin_email(email),
+        }
+    except Exception:
+        return {"valid": False, "reason": "jeton invalide ou expiré"}
 
 
 @auth_router.post("/forgot-password")
