@@ -10042,9 +10042,12 @@ async def get_credit_packs():
 @api_router.get("/credit-transactions")
 async def get_credit_transactions(request: Request):
     """Retourne l'historique des achats de crédits (Admin: tous, Coach: les siens)"""
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
+    # V311i — GROUPE 2 : JWT-strict (données financières).
+    user_email = _v311_coach_email_from_jwt(request)
+    if not user_email or not await _v309_is_coach_or_admin(user_email):
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
     is_admin = is_super_admin(user_email)
-    
+
     query = {} if is_admin else {"coach_email": user_email}
     transactions = await db.credit_transactions.find(
         query,
@@ -18750,13 +18753,13 @@ async def update_platform_settings(request: Request):
 @api_router.get("/dashboard/all-transactions")
 async def get_all_transactions(request: Request, page: int = 1, limit: int = 50):
     """Retourne toutes les transactions: reservations, souscriptions Stripe, achats produits"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    # V252b: session desktop authentifiee par JWT seul (afroboost_coach_user
-    # absent) -> X-User-Email manque. On identifie alors le coach via le JWT
-    # signe, toujours envoye par l'intercepteur frontend. Sans ce repli, la liste
-    # renvoyait 0 sur desktop alors qu'elle fonctionnait sur mobile.
-    if not caller_email:
-        caller_email = _email_from_jwt(request)
+    # V311i — GROUPE 2 : JWT-strict. Les données FINANCIÈRES ne sont plus accessibles
+    # que via un JWT SIGNÉ (X-User-Email, usurpable, n'accorde plus aucun droit).
+    # Le propriétaire a un jeton signé (badge vert) -> l'intercepteur l'envoie sur
+    # cet appel -> sa vue financière reste complète (super-admin = tout).
+    caller_email = _v311_coach_email_from_jwt(request)
+    if not caller_email or not await _v309_is_coach_or_admin(caller_email):
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
 
     all_items = []
 

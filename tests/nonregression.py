@@ -430,6 +430,25 @@ def t40_nosql_injection():
         record(40, "Injection NoSQL", False, str(e))
 
 
+def t25_transactions_jwt_strict():
+    """V311i — GROUPE 2 : les données FINANCIÈRES exigent un JWT signé. X-User-Email
+    seul (usurpable) -> 403. Avec ADMIN_JWT fourni -> 200."""
+    routes = ["/api/dashboard/all-transactions", "/api/credit-transactions"]
+    try:
+        spoof = {rt: requests.get(_url(rt), headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code
+                 for rt in routes}
+        spoof_ok = all(c == 403 for c in spoof.values())
+        if ADMIN_JWT:
+            jw = {rt: requests.get(_url(rt), headers={"Authorization": "Bearer " + ADMIN_JWT}, timeout=TIMEOUT).status_code
+                  for rt in routes}
+            ok = spoof_ok and all(c == 200 for c in jw.values())
+            record(25, "Paiements JWT-strict (spoof 403 / JWT 200)", ok, f"spoof={spoof} jwt={jw}")
+        else:
+            record(25, "Paiements JWT-strict (usurpation X-User-Email -> 403)", spoof_ok, f"spoof={spoof}")
+    except Exception as e:
+        record(25, "Paiements JWT-strict", False, str(e))
+
+
 def t18_no_recognition_by_name_only():
     """V308 : smart-entry par NOM SEUL ne doit PLUS reconnaître un compte existant."""
     try:
@@ -602,6 +621,7 @@ def main():
                    t18_no_recognition_by_name_only, t19_device_token_endpoint, t20_new_visitor_ok,
                    t21_users_requires_auth, t22_codes_requires_auth, t23_sessions_requires_auth,
                    t24_smart_entry_no_pii, t35_security_headers, t36_cors_foreign_origin,
+                   t25_transactions_jwt_strict,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
