@@ -10273,6 +10273,38 @@ async def get_all_contacts_unified(request: Request):
                 "tags": []
             })
 
+        # V300 : enrichir les fiches contact (LECTURE SEULE) avec WhatsApp + date de
+        # naissance + code abonné, depuis subscriber_infos (V294), joint par EMAIL.
+        # Champs AJOUTÉS uniquement ; aucun champ existant modifié. Isolation coach :
+        # un coach partenaire ne voit que ses abonnés (coach_id), l'admin voit tout.
+        try:
+            _si_query = {} if is_super_admin(caller_email) else {"coach_id": caller_email}
+            infos = await db.subscriber_infos.find(
+                _si_query, {"_id": 0, "email": 1, "whatsapp": 1, "birthday": 1, "code": 1}
+            ).to_list(5000)
+            info_by_email = {}
+            for _info in infos:
+                _em = (_info.get("email") or "").strip().lower()
+                if _em and _em not in info_by_email:
+                    info_by_email[_em] = _info
+            for c in contacts:
+                if c.get("type") == "group":
+                    continue
+                _em = (c.get("email") or "").strip().lower()
+                if not _em:
+                    continue
+                _info = info_by_email.get(_em)
+                if not _info:
+                    continue
+                _wa = _info.get("whatsapp") or c.get("phone") or None
+                if not c.get("phone") and _wa:
+                    c["phone"] = _wa
+                c["whatsapp"] = _wa
+                c["birthday"] = _info.get("birthday") or None
+                c["subscriber_code"] = _info.get("code") or None
+        except Exception as _e:
+            logger.warning(f"[V300] enrichissement subscriber_infos ignoré: {_e}")
+
         # Sort: groupes d'abord, puis contacts par nom
         contacts.sort(key=lambda x: (0 if x["type"] == "group" else 1, (x.get("name") or "").lower()))
 

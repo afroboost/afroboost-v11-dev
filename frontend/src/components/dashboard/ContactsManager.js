@@ -63,6 +63,18 @@ export default function ContactsManager({ API, coachEmail }) {
     return cleaned;
   };
 
+  // V300 : date de naissance -> JJ/MM/AAAA (accepte YYYY-MM-DD) ou JJ/MM (MM-DD).
+  const formatBirthday = (b) => {
+    if (!b) return '';
+    const s = String(b).trim();
+    const p = s.split('-');
+    if (p.length === 3) return `${(p[2] || '').padStart(2, '0')}/${(p[1] || '').padStart(2, '0')}/${p[0]}`;
+    if (p.length === 2) return `${(p[1] || '').padStart(2, '0')}/${(p[0] || '').padStart(2, '0')}`;
+    return s;
+  };
+  // V300 : numéro WhatsApp -> lien wa.me (sans +, espaces, tirets…).
+  const waLink = (num) => 'https://wa.me/' + String(num || '').replace(/[\s\-()+]/g, '');
+
   const handleAddContact = useCallback(async () => {
     setAddContactError('');
     const name = (newContact.name || '').trim();
@@ -988,6 +1000,35 @@ export default function ContactsManager({ API, coachEmail }) {
                   <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {isGroup ? `${c.member_count || 0} membres` : [c.email, c.phone].filter(Boolean).join(' • ') || 'Pas de coordonnées'}
                   </div>
+                  {/* V300 : infos abonné en LECTURE SEULE (code, WhatsApp cliquable,
+                      date de naissance) depuis subscriber_infos. Lignes masquées si vides. */}
+                  {!isGroup && (c.subscriber_code || c.whatsapp || c.birthday) && (
+                    <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', marginTop: '3px', display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
+                      {c.subscriber_code && (
+                        <span>Code : <span style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: 600 }}>{c.subscriber_code}</span></span>
+                      )}
+                      {(c.whatsapp || c.phone) && (
+                        <a
+                          href={waLink(c.whatsapp || c.phone)}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ color: '#22c55e', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+                          title="Contacter sur WhatsApp"
+                        >
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" />
+                          </svg>
+                          {c.whatsapp || c.phone}
+                        </a>
+                      )}
+                      {c.birthday && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                          <SvgIcon name="cake" size={10} /> {formatBirthday(c.birthday)}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 {/* V154: Category badges */}
                 {c.categories && c.categories.length > 0 && (
