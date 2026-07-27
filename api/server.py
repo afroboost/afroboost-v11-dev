@@ -372,6 +372,17 @@ async def api_health_check():
     return await health_check()
 
 
+# V320b — DÉTECTEUR DE REDÉMARRAGE. Diagnostic établi : quand afroboost.com renvoie
+# 404, l'ORIGINE elle-même répond 404 alors que les deux autres sites du serveur
+# répondent 200 -> ni Cloudflare, ni le réseau, ni Traefik : c'est CE conteneur qui
+# est momentanément absent. Reste à prouver qu'il REDÉMARRE (et à quelle fréquence),
+# ce qui n'est pas observable de l'extérieur. `_BOOT_ID` est tiré une seule fois au
+# démarrage du processus : s'il change entre deux appels, le conteneur a redémarré.
+# Valeur opaque et aléatoire — elle ne révèle rien d'exploitable (cf. V309).
+_BOOT_ID = str(uuid.uuid4())
+_BOOT_AT = datetime.now(timezone.utc)
+
+
 @fastapi_app.get("/healthz")
 async def healthz():
     """V320 — SONDE DE VIVACITÉ, cible du healthcheck Docker/Coolify.
@@ -386,8 +397,16 @@ async def healthz():
     Sert à la bascule SANS COUPURE : Coolify attend que le NOUVEAU conteneur
     réponde ici avant de retirer l'ANCIEN. Sans elle, Traefik route vers un
     conteneur pas encore prêt -> « 404 page not found » pour les visiteurs.
+
+    V320b : renvoie aussi `boot_id` (change à CHAQUE démarrage du processus) et
+    `uptime_s`. Permet de compter les redémarrages depuis l'extérieur, sans accès
+    au serveur — le healthcheck, lui, ne regarde que le code HTTP 200.
     """
-    return {"ok": True}
+    return {
+        "ok": True,
+        "boot_id": _BOOT_ID,
+        "uptime_s": int((datetime.now(timezone.utc) - _BOOT_AT).total_seconds()),
+    }
 
 @fastapi_app.get("/api/debug/config")
 async def debug_config():

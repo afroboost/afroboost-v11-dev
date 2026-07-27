@@ -173,6 +173,50 @@ couvre pas ce nom, Cloudflare parlant à l'origine en HTTP.)
   Variables. PAS Vercel : y ajouter une variable n'a AUCUN effet.
 - **Vérifier ce qui est en ligne** : `curl -s https://afroboost.com/api/debug/config`
 
+### ⚠️ « 404 page not found » intermittent sur afroboost.com (V320)
+
+Symptôme : le site renvoie quelques secondes un **404 dont le corps est
+`404 page not found`**. Ce corps est la page d'erreur par défaut de **Traefik**
+(le proxy de Coolify) : la réponse ne vient PAS de l'application. Preuve
+structurelle : le catch-all SPA (`api/server.py`, `_serve_spa`) renvoie
+`index.html` **inconditionnellement** — il lui est impossible de produire un 404
+sur `/`. Un 404 sur `/` signifie donc : **aucun conteneur sain pour cette app**.
+
+**Le test qui tranche** (à refaire tel quel, il élimine 3 suspects d'un coup) —
+au moment d'un échec, interroger l'origine EN DIRECT et les autres sites :
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" https://afroboost.com/                      # via Cloudflare
+curl -s -H "Host: afroboost.com" -o /dev/null -w "%{http_code}\n" http://178.105.201.62/   # origine directe
+curl -s -o /dev/null -w "%{http_code}\n" https://afroboosteur.com/                   # autre app, même serveur
+```
+Mesure réelle du 27 juillet 2026 : `viaCF=404 | origine=404 | afroboosteur=200`.
+-> Cloudflare, le réseau et Traefik sont INNOCENTÉS ; seul le conteneur afroboost
+est absent à cet instant. Fréquence observée : ~1 à 2 % des requêtes, **y compris
+hors déploiement** (donc : redémarrages du conteneur, piste OOM).
+
+**Sondes disponibles** :
+- `/healthz` — vivacité PURE, **sans Mongo** (V320). Cible du `HEALTHCHECK`.
+  Renvoie `boot_id` (change à chaque démarrage -> détecte les redémarrages)
+  et `uptime_s` (V320b).
+- `/health` — **ping MongoDB Atlas**, renvoie 503 si la base tarde.
+  **NE JAMAIS s'en servir comme healthcheck** : un hoquet d'Atlas ferait
+  redémarrer en boucle une application saine.
+
+**Deux correctifs, deux pannes différentes — il faut les DEUX** :
+1. *Coupure pendant les déploiements* -> `HEALTHCHECK` (fait : `Dockerfile` +
+   `docker-compose.yml`) **+ réglage Coolify** : activer le Health Check
+   (`/healthz`, port 8080) et l'attente « healthy » avant retrait de l'ancien
+   conteneur. **Le commit seul ne suffit pas** : sans ce réglage d'interface, la
+   sonde existe mais n'est pas la condition de bascule.
+2. *Coupure hors déploiement* -> mémoire. Vérifier `swapon --show` puis, si vide,
+   ajouter 4 Go de swap (`fallocate` / `mkswap` / `swapon` / `/etc/fstab`).
+   Preuve d'OOM à réclamer : `docker inspect ... OOMKilled`, `dmesg -T | grep -i
+   "killed process"`, `RestartCount`.
+
+Mesure de référence avant réglage Coolify (déploiement V320, sonde 1/s) :
+`297 × 200, 0 × 404, 3 × 000` — soit ~13 s d'indisponibilité au remplacement
+du conteneur.
+
 ### afroboosteur.com — site de l'association
 - **Hébergement** : Coolify sur VPS Hetzner — `178.105.201.62` (confirmé par `dig`)
 - **Dépôt** : `sambassi/afroboosteur-site`, branche `main`
