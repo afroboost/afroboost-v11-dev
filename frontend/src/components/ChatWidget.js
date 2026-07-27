@@ -1843,6 +1843,27 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   const [availableGroups, setAvailableGroups] = useState([]); // V107.12: Groupes disponibles
   const [selectedGroup, setSelectedGroup] = useState(null); // V107.12: Groupe sélectionné
   const [groupLoading, setGroupLoading] = useState(false); // V107.12: Chargement groupes
+  // V321 — ÉCHEC HONNÊTE. Avant, le rendu ne testait que `availableGroups.length === 0`
+  // et affichait « Chargement des groupes... » : impossible de distinguer « ça charge »,
+  // « ça a échoué » et « il n'y en a aucun ». Un abonné légitime tombait donc sur un
+  // écran noir muet et un « Chargement... » infini alors que le serveur répondait
+  // simplement 200 avec une liste vide. On sépare les TROIS états.
+  // 'idle' | 'loading' | 'ready' | 'error' | 'auth'
+  var _v321g = useState('idle'); var groupsStatus = _v321g[0]; var setGroupsStatus = _v321g[1];
+  var _v321ge = useState(''); var groupsError = _v321ge[0]; var setGroupsError = _v321ge[1];
+  // Même chose pour les MESSAGES d'un groupe.
+  var _v321m = useState('idle'); var groupMsgStatus = _v321m[0]; var setGroupMsgStatus = _v321m[1];
+  var _v321me = useState(''); var groupMsgError = _v321me[0]; var setGroupMsgError = _v321me[1];
+
+  // V321 : traduit une erreur axios en (statut, message lisible). 401/403 = session
+  // expirée -> on invite à ressaisir le code, jamais un écran vide.
+  var v321Fail = function (err) {
+    var code = err && err.response && err.response.status;
+    if (code === 401 || code === 403) {
+      return { status: 'auth', message: 'Session expirée — saisis à nouveau ton code d\'accès.' };
+    }
+    return { status: 'error', message: 'Impossible de charger tes conversations. Réessaie.' };
+  };
   const [lastMessageCount, setLastMessageCount] = useState(0);
   const [privateChatTarget, setPrivateChatTarget] = useState(null);
   const [messageCount, setMessageCount] = useState(0); // Compteur de messages pour prompt notif
@@ -2493,28 +2514,42 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   
   // v8.6: Charger messages de groupe (legacy broadcast)
   const loadGroupMessages = useCallback(async () => {
+    setGroupMsgStatus('loading'); setGroupMsgError('');
     try {
       const res = await axios.get(`${API}/chat/group/messages?limit=100`);
       setGroupMessages(res.data || []);
+      setGroupMsgStatus('ready');
     } catch (err) {
+      // V321 : ne plus avaler l'erreur en silence (écran noir muet).
+      var f = v321Fail(err);
+      setGroupMsgStatus(f.status); setGroupMsgError(f.message);
       console.warn('[GROUP] Erreur chargement:', err);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // V107.12: Charger la liste des groupes disponibles
   const loadAvailableGroups = useCallback(async () => {
+    setGroupsStatus('loading'); setGroupsError('');
     try {
       const res = await axios.get(`${API}/chat/groups/public`);
       setAvailableGroups(res.data || []);
+      // V321 : 'ready' même si la liste est VIDE — c'est un succès, pas un chargement
+      // sans fin. Le rendu affichera « Aucun groupe pour le moment ».
+      setGroupsStatus('ready');
     } catch (err) {
+      var f = v321Fail(err);
+      setGroupsStatus(f.status); setGroupsError(f.message);
       console.warn('[V107.12] Erreur chargement groupes:', err);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // V108.4: Charger messages d'un groupe spécifique — avec formatage unifié
   const loadGroupSessionMessages = useCallback(async (sessionId) => {
     if (!sessionId) return;
     setGroupLoading(true);
+    setGroupMsgStatus('loading'); setGroupMsgError('');
     try {
       const res = await axios.get(`${API}/chat/sessions/${sessionId}/messages`);
       // V108.4: Formater les messages serveur → format client unifié
@@ -2529,10 +2564,15 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         is_group: true
       }));
       setGroupMessages(formatted);
+      setGroupMsgStatus('ready');
     } catch (err) {
+      // V321 : échec visible (session expirée / erreur réseau), plus de silence.
+      var f = v321Fail(err);
+      setGroupMsgStatus(f.status); setGroupMsgError(f.message);
       console.warn('[V108.4] Erreur chargement messages groupe:', err);
     }
     setGroupLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // V107.12: Sélectionner un groupe et rejoindre
@@ -2548,6 +2588,15 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     // Charger les messages du groupe
     loadGroupSessionMessages(group.session_id);
   }, [participantId, loadGroupSessionMessages]);
+
+  // V321 : charger les groupes DÈS l'entrée en mode groupe. Avant, le chargement
+  // n'était déclenché que par le clic sur l'onglet ; si le mode groupe était activé
+  // autrement, l'état restait 'idle' et l'écran demeurait vide sans explication.
+  // Dépendance sur une PRIMITIVE (`chatMode`) — aucun risque de boucle d'appels.
+  useEffect(() => {
+    if (chatMode === 'group' && groupsStatus === 'idle') { loadAvailableGroups(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatMode]);
 
   // V107.12: Polling messages du groupe sélectionné (toutes les 10s)
   useEffect(() => {
@@ -9832,10 +9881,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       style={{
                         flex: 1,
                         padding: '10px 12px',
-                        background: chatMode === 'group' ? 'rgba(139, 92, 246, 0.1)' : 'transparent',
+                        /* V321 : couleurs du coach (règle projet) — plus de violet codé en dur */
+                        background: chatMode === 'group' ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)' : 'transparent',
                         border: 'none',
-                        borderBottom: chatMode === 'group' ? '2px solid #8b5cf6' : '2px solid rgba(255,255,255,0.08)',
-                        color: chatMode === 'group' ? '#8b5cf6' : 'rgba(255,255,255,0.4)',
+                        borderBottom: chatMode === 'group' ? '2px solid var(--primary-color, #D91CD2)' : '2px solid rgba(255,255,255,0.08)',
+                        color: chatMode === 'group' ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.4)',
                         fontSize: '11px',
                         fontWeight: '600',
                         cursor: 'pointer',
@@ -9869,8 +9919,30 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                     display: 'flex', gap: '6px', overflowX: 'auto', flexShrink: 0,
                     WebkitOverflowScrolling: 'touch',
                   }}>
-                    {availableGroups.length === 0 ? (
+                    {/* V321 : TROIS états distincts. Avant, tout état vide affichait
+                        « Chargement des groupes... » — donc à l'infini quand le serveur
+                        répondait 200 avec une liste vide (cas réel : aucun groupe créé). */}
+                    {availableGroups.length === 0 && (groupsStatus === 'loading' || groupsStatus === 'idle') ? (
                       <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px', padding: '6px 0' }}>Chargement des groupes...</span>
+                    ) : availableGroups.length === 0 && (groupsStatus === 'error' || groupsStatus === 'auth') ? (
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0' }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--primary-color, #D91CD2)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="10"></circle>
+                          <line x1="12" y1="8" x2="12" y2="12"></line>
+                          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                        </svg>
+                        <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '11px' }}>{groupsError}</span>
+                        <button
+                          onClick={() => { setGroupsStatus('idle'); loadAvailableGroups(); }}
+                          style={{
+                            padding: '4px 10px', borderRadius: '12px', border: 'none', cursor: 'pointer',
+                            background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)',
+                            color: 'var(--primary-color, #D91CD2)', fontSize: '11px', fontWeight: 700, whiteSpace: 'nowrap'
+                          }}
+                        >Réessayer</button>
+                      </span>
+                    ) : availableGroups.length === 0 ? (
+                      <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '11px', padding: '6px 0' }}>Aucun groupe pour le moment</span>
                     ) : availableGroups.map(g => (
                       <button
                         key={g.id}
@@ -9878,12 +9950,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         style={{
                           padding: '6px 14px', borderRadius: '16px', border: 'none', cursor: 'pointer',
                           background: selectedGroup?.id === g.id
-                            ? 'linear-gradient(135deg, #8b5cf6, var(--primary-color, #D91CD2))'
+                            ? 'linear-gradient(135deg, var(--secondary-color, #8b5cf6), var(--primary-color, #D91CD2))'
                             : 'rgba(255,255,255,0.06)',
                           color: selectedGroup?.id === g.id ? '#fff' : 'rgba(255,255,255,0.5)',
                           fontSize: '11px', fontWeight: '600', whiteSpace: 'nowrap',
                           transition: 'all 0.2s',
-                          boxShadow: selectedGroup?.id === g.id ? '0 0 10px rgba(139,92,246,0.3)' : 'none',
+                          boxShadow: selectedGroup?.id === g.id ? '0 0 10px rgba(var(--primary-rgb, 217, 28, 210), 0.3)' : 'none',
                         }}
                       >
                         {g.name} {g.is_ai_active ? '🤖' : ''}
@@ -9909,21 +9981,76 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                     <MessageSkeleton count={4} />
                   )}
 
-                  {/* V107.12: Message d'accueil quand aucun groupe sélectionné */}
-                  {chatMode === 'group' && !selectedGroup && availableGroups.length > 0 && groupMessages.length === 0 && (
+                  {/* V107.12 + V321: Message d'accueil quand aucun groupe sélectionné.
+                      V321 — C'EST ICI QUE NAISSAIT L'ÉCRAN NOIR : la condition exigeait
+                      `availableGroups.length > 0`. Avec zéro groupe, PLUS RIEN ne
+                      s'affichait — ni accueil, ni message, ni explication. L'abonné
+                      légitime voyait une zone entièrement vide. On couvre désormais les
+                      trois cas : erreur, liste vide, et groupes disponibles. */}
+                  {chatMode === 'group' && !selectedGroup && groupMessages.length === 0 && (
                     <div style={{ textAlign: 'center', padding: '30px 16px' }}>
-                      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(139,92,246,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto 12px' }}>
+                      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(var(--primary-rgb, 217, 28, 210), 0.35)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto 12px' }}>
                         <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
                         <circle cx="9" cy="7" r="4"></circle>
                         <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
                         <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                       </svg>
-                      <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '13px', margin: '0 0 6px' }}>
-                        Choisissez un groupe ci-dessus
+                      {(groupsStatus === 'error' || groupsStatus === 'auth') ? (
+                        <>
+                          <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px', margin: '0 0 10px' }}>
+                            {groupsError}
+                          </p>
+                          <button
+                            onClick={() => { setGroupsStatus('idle'); loadAvailableGroups(); }}
+                            style={{
+                              padding: '8px 18px', borderRadius: '16px', border: 'none', cursor: 'pointer',
+                              background: 'var(--primary-color, #D91CD2)', color: '#fff',
+                              fontSize: '12px', fontWeight: 700
+                            }}
+                          >Réessayer</button>
+                        </>
+                      ) : (groupsStatus === 'loading' || groupsStatus === 'idle') ? (
+                        <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '13px', margin: 0 }}>
+                          Chargement des groupes...
+                        </p>
+                      ) : availableGroups.length === 0 ? (
+                        <>
+                          <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', margin: '0 0 6px' }}>
+                            Aucun groupe pour le moment
+                          </p>
+                          <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px', margin: 0 }}>
+                            Ton coach n'a pas encore ouvert de groupe. Utilise l'onglet « Privé » pour lui écrire.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '13px', margin: '0 0 6px' }}>
+                            Choisissez un groupe ci-dessus
+                          </p>
+                          <p style={{ color: 'rgba(255,255,255,0.2)', fontSize: '11px', margin: 0 }}>
+                            Posez vos questions et discutez avec les autres membres
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* V321 : un groupe EST sélectionné mais ses messages n'ont pas pu être
+                      chargés -> message clair au lieu d'une zone vide. */}
+                  {chatMode === 'group' && selectedGroup && groupMessages.length === 0 &&
+                   (groupMsgStatus === 'error' || groupMsgStatus === 'auth') && (
+                    <div style={{ textAlign: 'center', padding: '30px 16px' }}>
+                      <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px', margin: '0 0 10px' }}>
+                        {groupMsgError}
                       </p>
-                      <p style={{ color: 'rgba(255,255,255,0.2)', fontSize: '11px', margin: 0 }}>
-                        Posez vos questions et discutez avec les autres membres
-                      </p>
+                      <button
+                        onClick={() => loadGroupSessionMessages(selectedGroup.session_id)}
+                        style={{
+                          padding: '8px 18px', borderRadius: '16px', border: 'none', cursor: 'pointer',
+                          background: 'var(--primary-color, #D91CD2)', color: '#fff',
+                          fontSize: '12px', fontWeight: 700
+                        }}
+                      >Réessayer</button>
                     </div>
                   )}
 
