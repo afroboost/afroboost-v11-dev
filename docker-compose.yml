@@ -40,3 +40,21 @@ services:
       - CINETPAY_API_KEY=${CINETPAY_API_KEY:-}
       - CINETPAY_SITE_ID=${CINETPAY_SITE_ID:-}
     restart: unless-stopped
+    # V320 — SONDE DE SANTÉ = condition de la bascule SANS COUPURE.
+    # Sans elle, Coolify/Traefik ne sait pas quand le nouveau conteneur est prêt :
+    # il route dessus trop tôt (ou retire l'ancien trop tôt) -> le visiteur reçoit
+    # « 404 page not found » (page d'erreur de Traefik) pendant plusieurs secondes.
+    #
+    # Cible : /healthz — sonde PURE, sans MongoDB (cf. api/server.py). Utiliser
+    # /health, qui ping Atlas, ferait passer le conteneur « unhealthy » au moindre
+    # ralentissement de la base et le mettrait en boucle de redémarrage.
+    #
+    # `python -c` et non `curl` : l'image python:3.11-slim ne contient pas curl.
+    # `start_period` : délai de grâce au démarrage (import de server.py + connexion
+    # Mongo) pendant lequel un échec ne compte PAS comme une panne.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 4s
+      retries: 3
+      start_period: 40s

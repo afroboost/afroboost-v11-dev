@@ -371,6 +371,24 @@ async def api_health_check():
     """Health check endpoint via /api prefix for Kubernetes"""
     return await health_check()
 
+
+@fastapi_app.get("/healthz")
+async def healthz():
+    """V320 — SONDE DE VIVACITÉ, cible du healthcheck Docker/Coolify.
+
+    Prouve UNIQUEMENT qu'uvicorn accepte et sert une requête. AUCUN accès à
+    MongoDB, volontairement : `/health` ci-dessus fait un `ping` Atlas et
+    renvoie 503 si la base tarde — s'en servir comme sonde ferait déclarer le
+    conteneur « unhealthy » au premier hoquet réseau d'Atlas, donc redémarrer
+    en boucle une application qui, elle, fonctionne. Une sonde de vivacité
+    répond à « le processus est-il vivant ? », pas à « tout va-t-il bien ? ».
+
+    Sert à la bascule SANS COUPURE : Coolify attend que le NOUVEAU conteneur
+    réponde ici avant de retirer l'ANCIEN. Sans elle, Traefik route vers un
+    conteneur pas encore prêt -> « 404 page not found » pour les visiteurs.
+    """
+    return {"ok": True}
+
 @fastapi_app.get("/api/debug/config")
 async def debug_config():
     """V309 : diagnostic RÉDUIT — uniquement des booléens « configuré/non »,

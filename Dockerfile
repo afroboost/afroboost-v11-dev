@@ -48,4 +48,13 @@ COPY --from=frontend-build /app/frontend/build /app/static
 EXPOSE 8080
 ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
+
+# V320 — meme sonde que docker-compose.yml, portee par l'IMAGE : ainsi le conteneur
+# est « healthy/unhealthy » quel que soit le mode de lancement choisi par Coolify
+# (Dockerfile seul OU docker-compose). C'est cette sonde qui permet la bascule sans
+# coupure : le nouveau conteneur doit repondre AVANT que l'ancien soit retire.
+# Cible /healthz : sonde PURE, sans acces MongoDB (voir api/server.py) — sinon un
+# ralentissement d'Atlas ferait redemarrer en boucle une application qui marche.
+HEALTHCHECK --interval=10s --timeout=4s --start-period=40s --retries=3 \
+  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=3).status==200 else 1)"
 CMD ["uvicorn", "api.server:fastapi_app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1", "--timeout-keep-alive", "65"]
