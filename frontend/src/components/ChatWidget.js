@@ -3524,17 +3524,18 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       setIsFullscreen(true);
       setShowSubscriberForm(false);
 
-      // V315 : POSER le jeton d'appareil AVANT de relancer smart-entry (awaité).
-      // Sans cela, en mode strict, la relance repartirait sans jeton -> proof_required
-      // en boucle. Idempotent et best-effort (n'échoue jamais le parcours).
-      try { await v296EnsureSubscriberToken(profile.code, profile.email); } catch (e) { /* silencieux */ }
+      // V315/V318 : POSER le jeton d'appareil AVANT de relancer smart-entry (awaité) ET
+      // le passer DIRECTEMENT à la relance (V318) -> plus besoin de rafraîchir. Émis sur
+      // profile.email = l'email que smart-entry a matché. Idempotent, best-effort.
+      var _subTok = null;
+      try { _subTok = await v296EnsureSubscriberToken(profile.code, profile.email); } catch (e) { /* silencieux */ }
 
-      // Démarrer le chat avec smart-entry
+      // Démarrer le chat avec smart-entry (jeton transmis directement)
       await handleSmartEntry({
         firstName: profile.name,
         whatsapp: profile.whatsapp,
         email: profile.email
-      });
+      }, null, _subTok);
       return true;
     } catch (err) {
       console.error('[SUBSCRIBER] Erreur validation:', err);
@@ -3597,6 +3598,22 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     e.preventDefault();
     var emailVal = emailCheckValue.trim();
     if (!emailVal) return;
+    // V318 : ANTI « MAUVAIS COMPTE ». Si l'email saisi DIFFÈRE de l'identité mémorisée,
+    // purger toute identité résiduelle (et le jeton d'appareil, lié à un AUTRE code) —
+    // sinon l'intercepteur enverrait le jeton d'un ancien compte / le montage restaurerait
+    // une ancienne identité, et on entrerait dans le compte de quelqu'un d'autre.
+    try {
+      var _prev = getStoredProfile();
+      var _prevEmail = ((_prev && _prev.email) || '').toLowerCase().trim();
+      if (_prevEmail && _prevEmail !== emailVal.toLowerCase()) {
+        localStorage.removeItem(CHAT_CLIENT_KEY);
+        localStorage.removeItem(CHAT_SESSION_KEY);
+        localStorage.removeItem(AFROBOOST_IDENTITY_KEY);
+        localStorage.removeItem(AFROBOOST_PROFILE_KEY);
+        localStorage.removeItem('afroboost_subscriber_token');
+        localStorage.removeItem('afroboost_subscriber_info');
+      }
+    } catch (_e) { /* silencieux */ }
     setEmailChecking(true);
     try {
       // V215: Vérification légère (pas d'envoi d'email, pas de rate-limit)
@@ -5536,15 +5553,22 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   }, []);
 
   // === SMART ENTRY: Point d'entrée intelligent avec reconnaissance ===
-  const handleSmartEntry = async (clientData, linkToken = null) => {
+  const handleSmartEntry = async (clientData, linkToken = null, subscriberToken = null) => {
     try {
+      // V318 : si un jeton d'appareil vient d'être minté, l'envoyer DIRECTEMENT dans
+      // l'en-tête X-Subscriber-Token — sans dépendre du timing d'écriture localStorage
+      // relu par l'intercepteur. C'est ce qui évite « il faut rafraîchir pour que le
+      // code passe » : la relance porte le jeton dès le 1er appel.
+      const _seConfig = subscriberToken
+        ? { headers: { 'X-Subscriber-Token': subscriberToken } }
+        : undefined;
       const response = await axios.post(`${API}/chat/smart-entry`, {
         name: clientData.firstName,
         email: clientData.email,
         whatsapp: clientData.whatsapp,
         link_token: linkToken,
         tunnel_answers: clientData.tunnelAnswers || null
-      });
+      }, _seConfig);
 
       // V315 : PREUVE REQUISE (mode strict, appareil neuf sans jeton d'appareil).
       // On NE traite PAS comme connecté : on bascule sur la saisie du code (formulaire

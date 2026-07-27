@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v317'; // V317: fix entree abonne appareil neuf (code seul requis)
+var CACHE_NAME = 'afroboost-v318'; // V318: fix entree abonne (jeton direct, plus de mauvais compte)
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [
