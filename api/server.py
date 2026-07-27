@@ -11276,6 +11276,15 @@ async def get_feature_flags():
         await db.feature_flags.insert_one(default_flags.copy())  # .copy() pour éviter mutation
         # Retourner sans _id
         return {k: v for k, v in default_flags.items() if k != "_id"}
+    # V319 : un drapeau AJOUTÉ APRÈS la création du document n'existe pas en base — il
+    # était donc ABSENT de la réponse (ni lisible par le dashboard, ni vérifiable par
+    # curl : impossible de prouver qu'une version est bien déployée). On complète à la
+    # lecture avec la valeur par défaut du modèle, SANS jamais écraser ce qui est en base.
+    for _k, _default in (("AUDIO_SERVICE_ENABLED", False), ("VIDEO_SERVICE_ENABLED", False),
+                         ("STREAMING_SERVICE_ENABLED", False), ("SUBSCRIBER_STRICT_ENTRY", False),
+                         ("REQUIRE_COACH_JWT", False)):
+        if _k not in flags:
+            flags[_k] = _default
     return flags
 
 @api_router.put("/feature-flags")
