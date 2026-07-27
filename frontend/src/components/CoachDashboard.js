@@ -1509,6 +1509,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [coachJwtLoading, setCoachJwtLoading] = useState(false);
   const [coachJwtError, setCoachJwtError] = useState("");
 
+  // V322 : quelle explication est ouverte dans l'encart Sécurité compact (null = aucune).
+  // Les longs paragraphes ne s'affichent plus en permanence — ils passent en infobulle,
+  // ouverte au survol ET au clic (le survol n'existe pas sur mobile).
+  const [securityTip, setSecurityTip] = useState(null);
+
   const loadStrictEntry = async () => {
     setStrictError("");
     setCoachJwtError("");
@@ -6751,116 +6756,113 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               ))}
             </div>
 
-            {/* V316 : SÉCURITÉ — Connexion abonné stricte (super-admin uniquement).
-                Activation phase 2 + kill-switch instantané. */}
+            {/* V322 : SÉCURITÉ — encart COMPACT (super-admin uniquement).
+                Remplace les deux pavés pleine largeur de V316/V319 : mêmes drapeaux,
+                mêmes appels, même échec honnête — seule la PRÉSENTATION change.
+                Les longues explications passent en infobulle (icône « i ») pour que
+                la page respire ; on ne voit par défaut que libellé + état + bouton. */}
             {isSuperAdmin && (
               <div style={{
-                marginBottom: '16px', padding: '16px', borderRadius: '12px',
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)'
+                marginBottom: '16px', padding: '10px 12px', borderRadius: '10px',
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.22)'
               }}>
-                <div className="flex items-center gap-2" style={{ marginBottom: '8px' }}>
-                  <SvgIcon name="shield" size={18} color="var(--primary-color, #D91CD2)" />
-                  <h3 className="text-white font-bold" style={{ fontSize: '15px', margin: 0 }}>Sécurité — Connexion abonné</h3>
+                <div className="flex items-center gap-2" style={{ marginBottom: '6px' }}>
+                  <SvgIcon name="shield" size={14} color="var(--primary-color, #D91CD2)" />
+                  <span className="text-white/70" style={{ fontSize: '12px', fontWeight: 700, letterSpacing: '0.02em' }}>Sécurité</span>
                 </div>
-                <p className="text-white/60" style={{ fontSize: '13px', margin: '0 0 12px 0', lineHeight: 1.4 }}>
-                  Quand c'est <strong>activé</strong>, un abonné qui revient sur un <strong>nouvel</strong> appareil
-                  doit saisir son <strong>code d'accès</strong> pour retrouver sa conversation (au lieu de son seul email).
-                  Ses appareils habituels ne sont pas concernés. En cas de souci, désactivez ici — l'effet est immédiat.
-                </p>
-                <div className="flex items-center justify-between" style={{ gap: '12px' }}>
-                  <div className="flex items-center gap-2">
-                    <SvgIcon name="lock" size={14} color="rgba(255,255,255,0.5)" />
-                    {strictEntry === null ? (
-                      <span style={{ fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: 999,
-                        background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)' }}>État inconnu</span>
-                    ) : strictEntry ? (
-                      <span style={{ fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: 999,
-                        background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.4)' }}>Activé</span>
-                    ) : (
-                      <span style={{ fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: 999,
-                        background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)' }}>Désactivé</span>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => toggleStrictEntry(!strictEntry)}
-                    disabled={strictLoading || strictEntry === null}
-                    style={{
-                      position: 'relative', width: '52px', height: '28px', borderRadius: '999px', border: 'none',
-                      cursor: (strictLoading || strictEntry === null) ? 'not-allowed' : 'pointer',
-                      background: strictEntry ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.2)',
-                      opacity: (strictLoading || strictEntry === null) ? 0.5 : 1, transition: 'background 0.2s ease'
-                    }}
-                    title={strictEntry ? 'Désactiver' : 'Activer'}
-                    data-testid="strict-entry-toggle"
-                  >
-                    <span style={{
-                      position: 'absolute', top: '3px', left: strictEntry ? '27px' : '3px',
-                      width: '22px', height: '22px', borderRadius: '50%', background: '#fff', transition: 'left 0.2s ease'
-                    }} />
-                  </button>
-                </div>
-                {strictError ? (
-                  <p style={{ color: '#ef4444', fontSize: '12px', margin: '10px 0 0 0' }}>{strictError}</p>
-                ) : null}
-              </div>
-            )}
 
-            {/* V319 : SÉCURITÉ — Connexion coach/admin (super-admin uniquement).
-                Ferme le trou « email seul = admin ». Activation + kill-switch instantané. */}
-            {isSuperAdmin && (
-              <div style={{
-                marginBottom: '16px', padding: '16px', borderRadius: '12px',
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)'
-              }}>
-                <div className="flex items-center gap-2" style={{ marginBottom: '8px' }}>
-                  <SvgIcon name="shield" size={18} color="var(--primary-color, #D91CD2)" />
-                  <h3 className="text-white font-bold" style={{ fontSize: '15px', margin: 0 }}>Sécurité — Connexion coach</h3>
-                </div>
-                <p className="text-white/60" style={{ fontSize: '13px', margin: '0 0 12px 0', lineHeight: 1.4 }}>
-                  Aujourd'hui, saisir <strong>votre email</strong> dans le chat suffit à ouvrir l'espace coach —
-                  <strong> sans mot de passe</strong>. Quand c'est <strong>activé</strong>, l'espace coach exige
-                  une vraie <strong>connexion par mot de passe</strong> (côté chat comme côté serveur).
-                  <br />
-                  <strong>Avant d'activer</strong> : connectez-vous une fois au chat avec votre mot de passe.
-                  En cas de souci, désactivez ici — l'effet est immédiat, votre tableau de bord n'est pas concerné.
-                </p>
-                <div className="flex items-center justify-between" style={{ gap: '12px' }}>
-                  <div className="flex items-center gap-2">
-                    <SvgIcon name="lock" size={14} color="rgba(255,255,255,0.5)" />
-                    {coachJwt === null ? (
-                      <span style={{ fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: 999,
-                        background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)' }}>État inconnu</span>
-                    ) : coachJwt ? (
-                      <span style={{ fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: 999,
-                        background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.4)' }}>Activé</span>
-                    ) : (
-                      <span style={{ fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: 999,
-                        background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)' }}>Désactivé</span>
+                {[
+                  {
+                    key: 'sub',
+                    label: 'Connexion abonné',
+                    value: strictEntry,
+                    loading: strictLoading,
+                    error: strictError,
+                    onToggle: () => toggleStrictEntry(!strictEntry),
+                    tip: "Quand c'est activé, un abonné qui revient sur un NOUVEL appareil doit saisir son code d'accès pour retrouver sa conversation (au lieu de son seul email). Ses appareils habituels ne sont pas concernés. En cas de souci, désactivez ici — l'effet est immédiat."
+                  },
+                  {
+                    key: 'coach',
+                    label: 'Connexion coach',
+                    value: coachJwt,
+                    loading: coachJwtLoading,
+                    error: coachJwtError,
+                    onToggle: () => toggleCoachJwt(!coachJwt),
+                    tip: "Aujourd'hui, saisir votre email dans le chat suffit à ouvrir l'espace coach, SANS mot de passe. Quand c'est activé, l'espace coach exige une vraie connexion par mot de passe (côté chat comme côté serveur). Avant d'activer : connectez-vous une fois au chat avec votre mot de passe. Votre tableau de bord n'est pas concerné ; l'effet est immédiat."
+                  }
+                ].map((row) => (
+                  <div key={row.key} style={{ position: 'relative' }}>
+                    <div className="flex items-center justify-between" style={{ gap: '8px', padding: '4px 0' }}>
+                      <span className="text-white/80" style={{ fontSize: '12px', flexShrink: 0 }}>{row.label}</span>
+
+                      <div className="flex items-center" style={{ gap: '6px' }}>
+                        {/* État — jamais un faux « désactivé » si la lecture a échoué */}
+                        {row.value === null ? (
+                          <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+                            background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)' }}>Inconnu</span>
+                        ) : row.value ? (
+                          <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+                            background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.35)' }}>Activé</span>
+                        ) : (
+                          <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+                            background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)' }}>Désactivé</span>
+                        )}
+
+                        {/* Infobulle : survol (bureau) + clic (mobile) */}
+                        <button
+                          type="button"
+                          onMouseEnter={() => setSecurityTip(row.key)}
+                          onMouseLeave={() => setSecurityTip(null)}
+                          onClick={() => setSecurityTip(securityTip === row.key ? null : row.key)}
+                          aria-label={'À quoi sert « ' + row.label + ' » ?'}
+                          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                        >
+                          <SvgIcon name="info" size={13} color="rgba(255,255,255,0.4)" />
+                        </button>
+
+                        {/* Interrupteur — compact */}
+                        <button
+                          onClick={row.onToggle}
+                          disabled={row.loading || row.value === null}
+                          style={{
+                            position: 'relative', width: '38px', height: '20px', borderRadius: '999px', border: 'none',
+                            cursor: (row.loading || row.value === null) ? 'not-allowed' : 'pointer',
+                            background: row.value ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.18)',
+                            opacity: (row.loading || row.value === null) ? 0.5 : 1, transition: 'background 0.2s ease',
+                            flexShrink: 0
+                          }}
+                          title={row.value ? 'Désactiver' : 'Activer'}
+                          data-testid={row.key === 'sub' ? 'strict-entry-toggle' : 'coach-jwt-toggle'}
+                        >
+                          <span style={{
+                            position: 'absolute', top: '3px', left: row.value ? '21px' : '3px',
+                            width: '14px', height: '14px', borderRadius: '50%', background: '#fff', transition: 'left 0.2s ease'
+                          }} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Explication — masquée par défaut */}
+                    {securityTip === row.key && (
+                      <div style={{
+                        position: 'absolute', right: 0, top: '100%', zIndex: 40, width: 'min(290px, 80vw)',
+                        marginTop: '2px', padding: '9px 11px', borderRadius: '8px',
+                        background: 'rgba(0,0,0,0.95)',
+                        border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35)',
+                        boxShadow: '0 6px 20px rgba(0,0,0,0.55)',
+                        color: 'rgba(255,255,255,0.75)', fontSize: '11px', lineHeight: 1.45
+                      }}>
+                        {row.tip}
+                      </div>
                     )}
+
+                    {/* Échec d'écriture — reste visible, jamais silencieux */}
+                    {row.error ? (
+                      <p style={{ color: '#ef4444', fontSize: '11px', margin: '0 0 4px 0' }}>{row.error}</p>
+                    ) : null}
                   </div>
-                  <button
-                    onClick={() => toggleCoachJwt(!coachJwt)}
-                    disabled={coachJwtLoading || coachJwt === null}
-                    style={{
-                      position: 'relative', width: '52px', height: '28px', borderRadius: '999px', border: 'none',
-                      cursor: (coachJwtLoading || coachJwt === null) ? 'not-allowed' : 'pointer',
-                      background: coachJwt ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.2)',
-                      opacity: (coachJwtLoading || coachJwt === null) ? 0.5 : 1, transition: 'background 0.2s ease'
-                    }}
-                    title={coachJwt ? 'Désactiver' : 'Activer'}
-                    data-testid="coach-jwt-toggle"
-                  >
-                    <span style={{
-                      position: 'absolute', top: '3px', left: coachJwt ? '27px' : '3px',
-                      width: '22px', height: '22px', borderRadius: '50%', background: '#fff', transition: 'left 0.2s ease'
-                    }} />
-                  </button>
-                </div>
-                {coachJwtError ? (
-                  <p style={{ color: '#ef4444', fontSize: '12px', margin: '10px 0 0 0' }}>{coachJwtError}</p>
-                ) : null}
+                ))}
               </div>
             )}
 
