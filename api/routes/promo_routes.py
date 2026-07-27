@@ -12,7 +12,7 @@ import uuid
 import logging
 import asyncio
 import os
-from api.routes.shared import get_primary_color, hex_to_rgb_triplet  # V259
+from api.routes.shared import get_primary_color, hex_to_rgb_triplet, coach_jwt_email, is_super_admin  # V259 / V313
 
 logger = logging.getLogger(__name__)
 
@@ -523,10 +523,44 @@ async def update_discount_code(code_id: str, updates: dict):
 
 
 @promo_router.delete("/{code_id}")
-async def delete_discount_code(code_id: str):
-    """Supprime un code promo"""
+async def delete_discount_code(code_id: str, request: Request):
+    """V313 : la suppression d'un code devient un DÉPLACEMENT en CORBEILLE
+    (collection `deleted_items`), JAMAIS un effacement physique — règle absolue
+    « ne jamais supprimer les codes clients ». Avant, cette route n'avait AUCUNE
+    authentification : n'importe qui pouvait effacer un code payant.
+    JWT signé obligatoire (coach_jwt_email, non falsifiable) + cloisonnement :
+    super-admin gère tout (y compris legacy sans coach_id), un coach uniquement ses codes."""
+    caller = (coach_jwt_email(request) or "").lower().strip()
+    _authorized = is_super_admin(caller)
+    if not _authorized and caller:
+        if await _db.coaches.find_one({"email": caller}, {"_id": 1}) or \
+           await _db.coach_auth.find_one({"email": caller}, {"_id": 1}):
+            _authorized = True
+    if not _authorized:
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
+
+    doc = await _db.discount_codes.find_one({"id": code_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Code introuvable")
+    # Cloisonnement : un coach ne supprime que SES codes (super-admin = tout).
+    if not is_super_admin(caller):
+        owner = (doc.get("coach_id") or "").lower().strip()
+        if owner and owner != caller:
+            raise HTTPException(status_code=403, detail="Ce code ne vous appartient pas")
+
+    # Déplacement en corbeille (restaurable) — PAS d'effacement physique.
+    await _db.deleted_items.insert_one({
+        "id": str(uuid.uuid4()),
+        "original_collection": "discount_codes",
+        "original_id": code_id,
+        "coach_id": doc.get("coach_id"),
+        "deleted_at": datetime.now(timezone.utc).isoformat(),
+        "deleted_by": caller,
+        "payload": doc,
+        "related": {},
+    })
     await _db.discount_codes.delete_one({"id": code_id})
-    return {"success": True}
+    return {"success": True, "trashed": True, "message": "Code placé dans la corbeille (récupérable)"}
 
 
 @promo_router.post("/validate")

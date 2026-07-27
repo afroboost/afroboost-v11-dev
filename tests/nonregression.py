@@ -489,6 +489,20 @@ def t57_no_identity_overwrite():
         record(57, "Anti-falsification (smart-entry)", False, str(e))
 
 
+def t58_delete_routes_require_auth():
+    """V313 : les DELETE de codes et de fiches clients (auparavant SANS auth) exigent
+    désormais un jeton signé -> 403 sans auth. Ne supprime rien (ids inexistants)."""
+    try:
+        c1 = requests.delete(_url("/api/discount-codes/zz-v313-nonexistent"), timeout=TIMEOUT).status_code
+        c2 = requests.delete(_url("/api/chat/participants/zz-v313-nonexistent"), timeout=TIMEOUT).status_code
+        t = requests.get(_url("/api/trash"), timeout=TIMEOUT).status_code
+        ok = c1 == 403 and c2 == 403 and t == 403
+        record(58, "DELETE codes/fiches + corbeille sans auth -> 403", ok,
+               f"codes={c1} fiches={c2} trash={t}")
+    except Exception as e:
+        record(58, "DELETE codes/fiches sans auth", False, str(e))
+
+
 def t18_no_recognition_by_name_only():
     """V308 : smart-entry par NOM SEUL ne doit PLUS reconnaître un compte existant."""
     try:
@@ -662,7 +676,7 @@ def main():
                    t21_users_requires_auth, t22_codes_requires_auth, t23_sessions_requires_auth,
                    t24_smart_entry_no_pii, t35_security_headers, t36_cors_foreign_origin,
                    t25_transactions_jwt_strict, t26_codes_jwt_strict,
-                   t57_no_identity_overwrite,
+                   t57_no_identity_overwrite, t58_delete_routes_require_auth,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

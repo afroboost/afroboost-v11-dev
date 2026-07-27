@@ -13767,50 +13767,105 @@ async def update_chat_participant(participant_id: str, update_data: dict):
     return updated
 
 @api_router.delete("/chat/participants/{participant_id}")
-async def delete_chat_participant(participant_id: str):
-    """Supprime un participant du CRM avec nettoyage complet des donnees orphelines"""
-    logger.info(f"[DELETE] Suppression participant: {participant_id}")
-    
+async def delete_chat_participant(participant_id: str, request: Request):
+    """V313 : suppression d'une fiche client -> CORBEILLE (`deleted_items`), JAMAIS
+    d'effacement physique. Avant, cette route n'avait AUCUNE authentification et
+    effaçait la fiche + tous ses messages + vidait les sessions : n'importe qui
+    pouvait détruire un client. Désormais : JWT signé obligatoire + cloisonnement.
+    Les MESSAGES sont CONSERVÉS (plus de delete_many) et les sessions privées
+    orphelines ne sont PAS supprimées — tout reste restaurable."""
+    caller = _v311_coach_email_from_jwt(request)
+    if not caller or not await _v309_is_coach_or_admin(caller):
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
+
     participant = await db.chat_participants.find_one({"id": participant_id}, {"_id": 0})
     if not participant:
-        logger.warning(f"[DELETE] Participant non trouve: {participant_id}")
         raise HTTPException(status_code=404, detail="Participant non trouve")
-    
+    # Cloisonnement : un coach ne supprime que SES fiches (super-admin = tout).
+    if not is_super_admin(caller):
+        owner = (participant.get("coach_id") or "").lower().strip()
+        if owner and owner != caller.lower().strip():
+            raise HTTPException(status_code=403, detail="Cette fiche ne vous appartient pas")
+
     participant_name = participant.get('name', 'inconnu')
-    
-    # 1. Supprimer tous les messages envoyes par ce participant
-    messages_result = await db.chat_messages.delete_many({"sender_id": participant_id})
-    logger.info(f"[DELETE] Messages supprimes: {messages_result.deleted_count}")
-    
-    # 2. Retirer le participant de toutes les sessions
+    # Relever les sessions AVANT modification, pour restaurer l'appartenance.
+    sess_docs = await db.chat_sessions.find(
+        {"participant_ids": participant_id}, {"_id": 0, "id": 1}
+    ).to_list(200)
+    session_ids = [s.get("id") for s in sess_docs if s.get("id")]
+
+    # Déplacement en corbeille (restaurable) — PAS d'effacement physique.
+    await db.deleted_items.insert_one({
+        "id": str(uuid.uuid4()),
+        "original_collection": "chat_participants",
+        "original_id": participant_id,
+        "coach_id": participant.get("coach_id"),
+        "deleted_at": datetime.now(timezone.utc).isoformat(),
+        "deleted_by": caller,
+        "payload": participant,
+        "related": {"session_ids": session_ids},
+    })
+    # V313 : on NE supprime PLUS les messages ni les sessions orphelines.
     sessions_update = await db.chat_sessions.update_many(
         {"participant_ids": participant_id},
         {"$pull": {"participant_ids": participant_id}}
     )
-    logger.info(f"[DELETE] Sessions mises a jour: {sessions_update.modified_count}")
-    
-    # 3. Supprimer les sessions privees ou le participant etait seul
-    orphan_sessions = await db.chat_sessions.delete_many({
-        "mode": "private",
-        "participant_ids": {"$size": 0}
-    })
-    logger.info(f"[DELETE] Sessions orphelines supprimees: {orphan_sessions.deleted_count}")
-    
-    # 4. Supprimer le participant
-    result = await db.chat_participants.delete_one({"id": participant_id})
-    logger.info(f"[DELETE] Participant supprime: {result.deleted_count}")
-    
-    logger.info(f"[DELETE] Participant {participant_name} et donnees associees supprimes")
+    await db.chat_participants.delete_one({"id": participant_id})
+    logger.info(f"[V313] Fiche {participant_name} placée en corbeille par {caller}")
     return {
-        "success": True, 
-        "message": f"Contact {participant_name} supprime definitivement",
-        "deleted": {
-            "participant": result.deleted_count,
-            "messages": messages_result.deleted_count,
-            "sessions_updated": sessions_update.modified_count,
-            "orphan_sessions": orphan_sessions.deleted_count
-        }
+        "success": True,
+        "trashed": True,
+        "message": f"Contact {participant_name} placé dans la corbeille (récupérable)",
+        "sessions_updated": sessions_update.modified_count,
     }
+
+
+@api_router.get("/trash")
+async def list_trash(request: Request, page: int = 1, limit: int = 50):
+    """V313 : contenu de la corbeille (`deleted_items`) du caller. JWT strict +
+    cloisonnement (super-admin voit tout ; un coach voit ses éléments)."""
+    caller = _v311_coach_email_from_jwt(request)
+    if not caller or not await _v309_is_coach_or_admin(caller):
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
+    limit = max(1, min(int(limit or 50), 50))
+    skip = max(0, (int(page or 1) - 1) * limit)
+    query = {} if is_super_admin(caller) else {"coach_id": caller.lower().strip()}
+    items = await db.deleted_items.find(query, {"_id": 0}).sort("deleted_at", -1).skip(skip).limit(limit).to_list(limit)
+    total = await db.deleted_items.count_documents(query)
+    return {"items": items, "total": total, "page": page, "limit": limit}
+
+
+@api_router.post("/trash/{trash_id}/restore")
+async def restore_trash(trash_id: str, request: Request):
+    """V313 : restaure un élément de la corbeille dans sa collection d'origine.
+    JWT strict + cloisonnement. Rend la « suppression » réellement réversible."""
+    caller = _v311_coach_email_from_jwt(request)
+    if not caller or not await _v309_is_coach_or_admin(caller):
+        raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
+    entry = await db.deleted_items.find_one({"id": trash_id}, {"_id": 0})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Élément de corbeille introuvable")
+    if not is_super_admin(caller):
+        owner = (entry.get("coach_id") or "").lower().strip()
+        if owner and owner != caller.lower().strip():
+            raise HTTPException(status_code=403, detail="Cet élément ne vous appartient pas")
+    coll = entry.get("original_collection")
+    if coll not in ("discount_codes", "chat_participants"):
+        raise HTTPException(status_code=400, detail="Type non restaurable")
+    payload = dict(entry.get("payload") or {})
+    payload.pop("_id", None)
+    oid = entry.get("original_id")
+    # Éviter le doublon si le document a déjà été réinséré entre-temps.
+    exists = await db[coll].find_one({"id": oid}, {"_id": 1})
+    if not exists:
+        await db[coll].insert_one(payload)
+    # Participant : ré-ajouter son id aux sessions d'origine.
+    if coll == "chat_participants":
+        for sid in (entry.get("related") or {}).get("session_ids", []) or []:
+            await db.chat_sessions.update_one({"id": sid}, {"$addToSet": {"participant_ids": oid}})
+    await db.deleted_items.delete_one({"id": trash_id})
+    logger.info(f"[V313] Restauration corbeille {trash_id} ({coll}/{oid}) par {caller}")
+    return {"success": True, "restored": True, "collection": coll, "id": oid}
 
 # --- Active Conversations for Internal Messaging ---
 @api_router.get("/conversations/active")
