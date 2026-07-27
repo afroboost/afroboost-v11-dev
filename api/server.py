@@ -958,6 +958,12 @@ class FeatureFlags(BaseModel):
     # actuel (zéro friction). True = smart-entry exige une preuve (jeton d'appareil/code
     # ou coach) pour rejoindre une conversation existante. Basculable SANS redéploiement.
     SUBSCRIBER_STRICT_ENTRY: bool = False
+    # V319 : interrupteur du durcissement de l'identité COACH/ADMIN. Défaut FALSE =
+    # comportement actuel (le repli X-User-Email V265 vaut identité coach — donc
+    # falsifiable : un simple `curl -H "X-User-Email: <admin>"` passe pour l'admin).
+    # True = SEUL un JWT SIGNÉ (obtenu par /auth/login, email + MOT DE PASSE) accorde
+    # l'identité coach. Basculable SANS redéploiement (activation ET kill-switch).
+    REQUIRE_COACH_JWT: bool = False
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -966,6 +972,7 @@ class FeatureFlagsUpdate(BaseModel):
     VIDEO_SERVICE_ENABLED: Optional[bool] = None
     STREAMING_SERVICE_ENABLED: Optional[bool] = None
     SUBSCRIBER_STRICT_ENTRY: Optional[bool] = None  # V315
+    REQUIRE_COACH_JWT: Optional[bool] = None  # V319
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -6623,6 +6630,38 @@ def _v311_coach_email_from_jwt(request: Request) -> str:
         return ""
 
 
+async def _v319_coach_identity(request: Request) -> str:
+    """V319 — identité coach/admin pour les décisions d'ACCÈS, derrière un interrupteur.
+
+    LE TROU FERMÉ : jusqu'ici, `X-User-Email: <email d'un admin>` suffisait à se faire
+    passer pour l'admin (repli transitoire V265) — sans mot de passe ni jeton. Cette
+    fonction rend l'identité coach conditionnelle au drapeau `REQUIRE_COACH_JWT`,
+    lu EN DIRECT à chaque requête (bascule et kill-switch sans redéploiement) :
+
+      * drapeau OFF (défaut) -> comportement HISTORIQUE strictement inchangé :
+        JWT signé s'il y en a un, sinon repli `X-User-Email`.
+      * drapeau ON            -> SEUL un JWT SIGNÉ fait foi (`/auth/login`, mot de
+        passe). `X-User-Email` ne prouve plus rien -> identité vide -> 403 / accès
+        minimal selon l'appelant.
+
+    Une panne de lecture du drapeau ne ferme JAMAIS la porte (repli sur OFF) : on ne
+    veut pas qu'un incident base vide le dashboard du propriétaire (leçon V310c).
+    """
+    _jwt_email = _v311_coach_email_from_jwt(request)
+    if _jwt_email:
+        return _jwt_email
+    try:
+        _require_jwt = bool((await get_feature_flags()).get("REQUIRE_COACH_JWT"))
+    except Exception:
+        _require_jwt = False
+    if _require_jwt:
+        _hdr = (request.headers.get("X-User-Email", "") or "").lower().strip()
+        if _hdr:
+            logger.warning("[V319] identite coach REFUSEE (X-User-Email sans JWT) pour %s", _hdr)
+        return ""
+    return await _v263_authenticated_coach(request)
+
+
 async def _v309_require_coach_or_admin(request: Request) -> str:
     """V311h — GROUPE 1 : le rôle coach/admin est désormais porté par un JWT SIGNÉ
     (fin de l'usurpation par X-User-Email sur les routes de LECTURE : /api/users,
@@ -11230,6 +11269,7 @@ async def get_feature_flags():
             "VIDEO_SERVICE_ENABLED": False,
             "STREAMING_SERVICE_ENABLED": False,
             "SUBSCRIBER_STRICT_ENTRY": False,  # V315 : défaut OFF (zéro friction)
+            "REQUIRE_COACH_JWT": False,        # V319 : défaut OFF (comportement actuel)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -14150,7 +14190,14 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
     # (403, fuite V309 toujours fermée). /api/users et /contacts/all conservent le
     # JWT-strict (validés fonctionnels). À re-durcir quand le mode coach du ChatWidget
     # portera un vrai jeton.
-    caller_email = await _v263_authenticated_coach(request) if request else ""
+    #
+    # V319 — RE-VERROUILLAGE CONDITIONNEL. C'est exactement la condition posée par
+    # V312b (« à re-durcir quand le mode coach du ChatWidget portera un vrai jeton ») :
+    # le drapeau REQUIRE_COACH_JWT le garantit côté front (mode coach = jeton exigé).
+    # Drapeau OFF -> auth de transition, inchangé. Drapeau ON -> JWT-strict rétabli
+    # ici, avec le MÊME kill-switch : si les conversations disparaissent, on bascule
+    # le drapeau à OFF et elles reviennent en 5 s, sans redéploiement ni revert.
+    caller_email = await _v319_coach_identity(request) if request else ""
     if request and (not caller_email or not await _v309_is_coach_or_admin(caller_email)):
         raise HTTPException(status_code=403, detail="Accès réservé au coach/administrateur")
 
@@ -15740,7 +15787,9 @@ async def smart_chat_entry(request: Request):
         from api.routes.shared import subscriber_from_request as _sub_from_req
         _may_write = False
         try:
-            _c = await _v263_authenticated_coach(request)
+            # V319 : l'identité coach passe par `_v319_coach_identity` — sous
+            # REQUIRE_COACH_JWT, un `X-User-Email` usurpé n'ouvre plus l'écriture.
+            _c = await _v319_coach_identity(request)
             if _c and await _v309_is_coach_or_admin(_c):
                 _may_write = True
             else:
@@ -15944,7 +15993,9 @@ async def smart_chat_entry(request: Request):
     from api.routes.shared import subscriber_from_request
     _full_access = False
     try:
-        _caller = await _v263_authenticated_coach(request)
+        # V319 : idem — l'accès COMPLET (données personnelles + historique) au titre
+        # du rôle coach/admin exige un JWT signé dès que REQUIRE_COACH_JWT est ON.
+        _caller = await _v319_coach_identity(request)
         if _caller and await _v309_is_coach_or_admin(_caller):
             _full_access = True
         else:

@@ -475,6 +475,12 @@ def t57_no_identity_overwrite():
     (is_returning) mais ne doit JAMAIS réécrire le nom d'une fiche existante."""
     fixed = "v312-falsif-test@example.com"
     try:
+        # V318b : en MODE STRICT, un anonyme (email seul) n'est même plus reconnu
+        # (proof_required) -> le vecteur de falsification est fermé encore plus fort,
+        # et ce test (qui suppose la reconnaissance) n'a plus d'objet -> SKIP.
+        fl = requests.get(_url("/api/feature-flags"), timeout=TIMEOUT).json()
+        if fl.get("SUBSCRIBER_STRICT_ENTRY"):
+            return skip(57, "Anti-falsification (smart-entry)", "mode strict ON : reconnaissance anonyme bloquée")
         # 1) fiche « légitime » : créée au 1er run, simplement reconnue ensuite
         requests.post(_url("/api/chat/smart-entry"), json={"name": "V312 Legit", "email": fixed}, timeout=TIMEOUT)
         # 2) intrus : même email, nom DIFFÉRENT, AUCUN jeton d'appareil
@@ -534,6 +540,85 @@ def t60_strict_entry_proof_required():
         record(60, "Entrée stricte -> proof_required", False, str(e))
 
 
+def _v319_flag():
+    """État EN DIRECT du drapeau REQUIRE_COACH_JWT (None si illisible)."""
+    try:
+        return bool(requests.get(_url("/api/feature-flags"), timeout=TIMEOUT).json().get("REQUIRE_COACH_JWT"))
+    except Exception:
+        return None
+
+
+def t61_coach_jwt_flag_admin_only():
+    """V319 : l'interrupteur REQUIRE_COACH_JWT est lui-même un kill-switch — le basculer
+    exige un JWT super-admin. `X-User-Email` seul (usurpable) -> 403."""
+    try:
+        c = requests.put(_url("/api/feature-flags"), json={"REQUIRE_COACH_JWT": False},
+                         headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code
+        record(61, "PUT REQUIRE_COACH_JWT sans JWT super-admin -> 403", c == 403, f"HTTP {c}")
+    except Exception as e:
+        record(61, "PUT REQUIRE_COACH_JWT sans JWT admin", False, str(e))
+
+
+def t62_coach_spoof_via_email_header():
+    """V319 — LE TROU. `X-User-Email: <admin>` SANS jeton signé ne doit plus valoir
+    identité coach. On mesure sur DEUX routes à la fois, et on adapte l'attente au
+    drapeau (lu en direct) pour que le test soit vrai dans les deux états :
+
+      * drapeau OFF (défaut) -> le repli X-User-Email est encore accepté : on
+        DOCUMENTE le trou (attendu 200 sur /chat/sessions) sans le déclarer conforme.
+      * drapeau ON            -> usurpation refusée : 403 sur /chat/sessions ET aucune
+        donnée personnelle rendue par smart-entry.
+    """
+    flag = _v319_flag()
+    if flag is None:
+        return record(62, "Usurpation coach par X-User-Email", False, "drapeau illisible")
+    hdr = {"X-User-Email": ADMIN}
+    try:
+        sess = requests.get(_url("/api/chat/sessions"), headers=hdr, timeout=TIMEOUT).status_code
+        probe_email = SUB_EMAIL or "v319-probe@example.com"
+        r = requests.post(_url("/api/chat/smart-entry"),
+                          json={"name": "V319 probe", "email": probe_email}, headers=hdr, timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        p = d.get("participant") or {}
+        got_pii = any(k in p for k in ("whatsapp", "phone", "email")) or bool(d.get("chat_history"))
+        if flag:
+            ok = (sess == 403) and not got_pii
+            record(62, "Drapeau ON : usurpation X-User-Email refusée (403, zéro PII)", ok,
+                   f"/chat/sessions={sess} pii={got_pii}")
+        else:
+            ok = (sess == 200)
+            record(62, "Drapeau OFF : repli X-User-Email encore actif (trou connu, non fermé)", ok,
+                   f"/chat/sessions={sess} pii={got_pii} — activer REQUIRE_COACH_JWT pour fermer")
+    except Exception as e:
+        record(62, "Usurpation coach par X-User-Email", False, str(e))
+
+
+def t63_coach_jwt_legit_access():
+    """V319 — PARCOURS LÉGITIME (règle V310c : prouver que le propriétaire garde l'accès
+    AVANT de fermer la porte). Avec le VRAI jeton signé du propriétaire, /chat/sessions
+    et smart-entry doivent répondre 200 avec accès complet — quel que soit le drapeau."""
+    if not ADMIN_JWT:
+        return skip(63, "Coach légitime (JWT) -> accès complet",
+                    "ADMIN_JWT non fourni — OBLIGATOIRE avant d'activer REQUIRE_COACH_JWT")
+    hdr = {"Authorization": "Bearer " + ADMIN_JWT}
+    try:
+        r1 = requests.get(_url("/api/chat/sessions"), headers=hdr, timeout=TIMEOUT)
+        n = len(r1.json()) if r1.status_code == 200 and isinstance(r1.json(), list) else -1
+        probe_email = SUB_EMAIL or "v319-probe@example.com"
+        r2 = requests.post(_url("/api/chat/smart-entry"),
+                           json={"name": "V319 legit", "email": probe_email}, headers=hdr, timeout=TIMEOUT)
+        d = r2.json() if r2.status_code == 200 else {}
+        p = d.get("participant") or {}
+        full = ("email" in p) or ("whatsapp" in p) or ("coach_id" in p)
+        # `n > 0` : un 200 renvoyant une liste VIDE serait exactement la régression V312b
+        # (« 32 conversations disparues ») — on refuse de la compter comme un succès.
+        ok = r1.status_code == 200 and n > 0 and r2.status_code == 200 and full
+        record(63, "Coach légitime (JWT) -> /chat/sessions 200 non vide + smart-entry complet", ok,
+               f"sessions=HTTP {r1.status_code} n={n} smart-entry=HTTP {r2.status_code} full={full}")
+    except Exception as e:
+        record(63, "Coach légitime (JWT) -> accès complet", False, str(e))
+
+
 def t18_no_recognition_by_name_only():
     """V308 : smart-entry par NOM SEUL ne doit PLUS reconnaître un compte existant."""
     try:
@@ -561,10 +646,14 @@ def t19_device_token_endpoint():
 
 
 def t20_new_visitor_ok():
-    """V308 : un nouveau visiteur (nom+email frais) s'inscrit sans friction."""
+    """V308 : un nouveau visiteur (email FRAIS) s'inscrit sans friction. Email UNIQUE à
+    chaque run (V318b) : un email fixe finissait par exister et, en mode strict, renvoyait
+    proof_required -> faux FAIL. Un email vraiment neuf marche quel que soit le drapeau."""
+    import time as _t
+    uniq = f"nouveau-{os.getpid()}-{int(_t.time())}@example.com"
     try:
         r = requests.post(_url("/api/chat/smart-entry"), json={
-            "name": "Nouveau Visiteur 553311", "email": "nouveau553311@example.com"
+            "name": "Nouveau Visiteur", "email": uniq
         }, timeout=TIMEOUT)
         d = r.json() if r.status_code == 200 else {}
         ok = r.status_code == 200 and (d.get("participant") is not None or d.get("session") is not None)
@@ -709,6 +798,8 @@ def main():
                    t25_transactions_jwt_strict, t26_codes_jwt_strict,
                    t57_no_identity_overwrite, t58_delete_routes_require_auth,
                    t59_feature_flags_require_admin, t60_strict_entry_proof_required,
+                   t61_coach_jwt_flag_admin_only, t62_coach_spoof_via_email_header,
+                   t63_coach_jwt_legit_access,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

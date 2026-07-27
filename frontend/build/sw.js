@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v310'; // V310: anti-injection regex (re.escape partout) + coercition str NoSQL
+var CACHE_NAME = 'afroboost-v319'; // V319: mode coach = jeton signe exige (drapeau REQUIRE_COACH_JWT)
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

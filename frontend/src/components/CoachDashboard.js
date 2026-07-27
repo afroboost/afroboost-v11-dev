@@ -1503,16 +1503,45 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [strictLoading, setStrictLoading] = useState(false);
   const [strictError, setStrictError] = useState("");
 
+  // V319 : second interrupteur « Connexion coach » (drapeau REQUIRE_COACH_JWT).
+  // Même principe : activation ET kill-switch instantané, sans redéploiement.
+  const [coachJwt, setCoachJwt] = useState(null);         // null = inconnu (pas encore lu)
+  const [coachJwtLoading, setCoachJwtLoading] = useState(false);
+  const [coachJwtError, setCoachJwtError] = useState("");
+
   const loadStrictEntry = async () => {
     setStrictError("");
+    setCoachJwtError("");
     try {
       const res = await axios.get(`${API}/feature-flags`);
       setStrictEntry(!!res.data?.SUBSCRIBER_STRICT_ENTRY);
+      setCoachJwt(!!res.data?.REQUIRE_COACH_JWT);          // V319
     } catch (e) {
       // Échec honnête : ne PAS afficher un faux « désactivé ».
       setStrictEntry(null);
+      setCoachJwt(null);
       setStrictError("Impossible de lire l'état pour le moment.");
+      setCoachJwtError("Impossible de lire l'état pour le moment.");
     }
+  };
+
+  // V319 : bascule REQUIRE_COACH_JWT. Le PUT exige un JWT super-admin (403 sinon) —
+  // le dashboard en a un (badge « Session sécurisée »), donc le kill-switch reste
+  // toujours actionnable même si le ChatWidget, lui, perd le mode coach.
+  const toggleCoachJwt = async (next) => {
+    setCoachJwtLoading(true); setCoachJwtError("");
+    try {
+      const res = await axios.put(`${API}/feature-flags`, { REQUIRE_COACH_JWT: next }); // JWT via intercepteur
+      setCoachJwt(!!res.data?.REQUIRE_COACH_JWT);
+      // Le ChatWidget lit ce cache avant son premier rendu : on le tient à jour tout de suite.
+      try { localStorage.setItem('afroboost_require_coach_jwt', res.data?.REQUIRE_COACH_JWT ? '1' : '0'); } catch (e) {}
+    } catch (e) {
+      const code = e?.response?.status;
+      setCoachJwtError(code === 403
+        ? "Réservé au super-admin — reconnectez-vous."
+        : "Le changement n'a pas pu être enregistré. Réessayez.");
+      await loadStrictEntry();  // ne jamais laisser l'affichage prétendre que c'est fait
+    } finally { setCoachJwtLoading(false); }
   };
 
   const toggleStrictEntry = async (next) => {
@@ -6773,6 +6802,64 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 </div>
                 {strictError ? (
                   <p style={{ color: '#ef4444', fontSize: '12px', margin: '10px 0 0 0' }}>{strictError}</p>
+                ) : null}
+              </div>
+            )}
+
+            {/* V319 : SÉCURITÉ — Connexion coach/admin (super-admin uniquement).
+                Ferme le trou « email seul = admin ». Activation + kill-switch instantané. */}
+            {isSuperAdmin && (
+              <div style={{
+                marginBottom: '16px', padding: '16px', borderRadius: '12px',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)'
+              }}>
+                <div className="flex items-center gap-2" style={{ marginBottom: '8px' }}>
+                  <SvgIcon name="shield" size={18} color="var(--primary-color, #D91CD2)" />
+                  <h3 className="text-white font-bold" style={{ fontSize: '15px', margin: 0 }}>Sécurité — Connexion coach</h3>
+                </div>
+                <p className="text-white/60" style={{ fontSize: '13px', margin: '0 0 12px 0', lineHeight: 1.4 }}>
+                  Aujourd'hui, saisir <strong>votre email</strong> dans le chat suffit à ouvrir l'espace coach —
+                  <strong> sans mot de passe</strong>. Quand c'est <strong>activé</strong>, l'espace coach exige
+                  une vraie <strong>connexion par mot de passe</strong> (côté chat comme côté serveur).
+                  <br />
+                  <strong>Avant d'activer</strong> : connectez-vous une fois au chat avec votre mot de passe.
+                  En cas de souci, désactivez ici — l'effet est immédiat, votre tableau de bord n'est pas concerné.
+                </p>
+                <div className="flex items-center justify-between" style={{ gap: '12px' }}>
+                  <div className="flex items-center gap-2">
+                    <SvgIcon name="lock" size={14} color="rgba(255,255,255,0.5)" />
+                    {coachJwt === null ? (
+                      <span style={{ fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: 999,
+                        background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)' }}>État inconnu</span>
+                    ) : coachJwt ? (
+                      <span style={{ fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: 999,
+                        background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.4)' }}>Activé</span>
+                    ) : (
+                      <span style={{ fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: 999,
+                        background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)' }}>Désactivé</span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => toggleCoachJwt(!coachJwt)}
+                    disabled={coachJwtLoading || coachJwt === null}
+                    style={{
+                      position: 'relative', width: '52px', height: '28px', borderRadius: '999px', border: 'none',
+                      cursor: (coachJwtLoading || coachJwt === null) ? 'not-allowed' : 'pointer',
+                      background: coachJwt ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.2)',
+                      opacity: (coachJwtLoading || coachJwt === null) ? 0.5 : 1, transition: 'background 0.2s ease'
+                    }}
+                    title={coachJwt ? 'Désactiver' : 'Activer'}
+                    data-testid="coach-jwt-toggle"
+                  >
+                    <span style={{
+                      position: 'absolute', top: '3px', left: coachJwt ? '27px' : '3px',
+                      width: '22px', height: '22px', borderRadius: '50%', background: '#fff', transition: 'left 0.2s ease'
+                    }} />
+                  </button>
+                </div>
+                {coachJwtError ? (
+                  <p style={{ color: '#ef4444', fontSize: '12px', margin: '10px 0 0 0' }}>{coachJwtError}</p>
                 ) : null}
               </div>
             )}

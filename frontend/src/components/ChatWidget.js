@@ -72,6 +72,34 @@ function v305ThrottledGet(key, doRequest, minMs) {
   return p;
 }
 
+// === V319 : LE MODE COACH EXIGE UN JETON SIGNÉ (plus le seul email) ===
+// Jusqu'ici, le mode coach s'activait sur simple correspondance d'email
+// (COACH_EMAILS.includes(...)) — donc SANS mot de passe : n'importe qui saisissant
+// l'email de l'admin obtenait l'interface coach, et le backend suivait via le repli
+// X-User-Email. On exige désormais un `afroboost_jwt` (émis par /auth/login, avec
+// MOT DE PASSE).
+// Prudence : ce durcissement est conditionné au drapeau serveur REQUIRE_COACH_JWT.
+// Tant qu'il est OFF (défaut), le comportement historique est STRICTEMENT inchangé —
+// c'est le propriétaire qui l'activera après avoir vérifié qu'il garde tout.
+// Variable de module (et non un état React) pour rester lisible depuis les callbacks
+// sans risque de valeur périmée (closure obsolète).
+var V319_REQUIRE_COACH_JWT = false;
+// Dernière valeur connue, relue AVANT le premier rendu : évite un éclair d'interface
+// coach chez un visiteur qui aurait juste saisi l'email de l'admin.
+try { V319_REQUIRE_COACH_JWT = localStorage.getItem('afroboost_require_coach_jwt') === '1'; } catch (e) {}
+
+function v319HasCoachJwt() {
+  try {
+    var t = localStorage.getItem('afroboost_jwt');
+    return !!(t && String(t).length > 10);
+  } catch (e) { return false; }
+}
+
+// Le mode coach peut-il être accordé ? OFF -> oui (historique) ; ON -> jeton requis.
+function v319CoachAllowed() {
+  return !V319_REQUIRE_COACH_JWT || v319HasCoachJwt();
+}
+
 // Icône Plein Écran
 const FullscreenIcon = () => (
   <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
@@ -1861,6 +1889,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   const [hasNewMessage, setHasNewMessage] = useState(false); // v9.4.0: Indicateur de nouveau message
   const [isCoachMode, setIsCoachMode] = useState(() => {
     // v9.1.5: Vérifier si c'est un coach connecté (pas seulement Bassi)
+    // V319 : aucune de ces pistes n'est une PREUVE d'identité (drapeau localStorage,
+    // email mémorisé). Sous REQUIRE_COACH_JWT, elles ne suffisent plus : il faut un
+    // jeton signé. Drapeau OFF -> logique historique intacte.
+    if (!v319CoachAllowed()) return false;
     try {
       // 1. Vérifier d'abord le flag de session coach global
       const coachModeFlag = localStorage.getItem('afroboost_coach_mode');
@@ -1868,7 +1900,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       if (coachModeFlag === 'true' && coachUser) {
         return true;
       }
-      
+
       // 2. Fallback: vérifier l'identité du chat
       const savedIdentity = localStorage.getItem(AFROBOOST_IDENTITY_KEY);
       const savedClient = localStorage.getItem(CHAT_CLIENT_KEY);
@@ -2042,6 +2074,49 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       setCoachLoginLoading(false);
     }
   };
+
+  // V319 : lire l'interrupteur serveur REQUIRE_COACH_JWT (GET /feature-flags, route
+  // publique) et, s'il est ACTIF alors qu'aucun jeton signé n'est en poche, RETIRER le
+  // mode coach et proposer la connexion par MOT DE PASSE (seule voie qui émet un jeton).
+  // Drapeau OFF (défaut) -> ce bloc est INERTE, rien ne change pour personne.
+  // Anti-boucle : throttlé, dépendances vides, et aucun setState si la valeur ne change pas.
+  useEffect(() => {
+    v305ThrottledGet('v319:feature-flags', function () {
+      return axios.get(API + '/feature-flags');
+    }, 60000).then(function (res) {
+      var required = !!(res && res.data && res.data.REQUIRE_COACH_JWT);
+      V319_REQUIRE_COACH_JWT = required;
+      try { localStorage.setItem('afroboost_require_coach_jwt', required ? '1' : '0'); } catch (e) {}
+      if (!required || v319HasCoachJwt()) return;   // rien à faire
+      // Ce bloc ne doit toucher QUE quelqu'un qui se présentait comme coach. Un
+      // visiteur ou un abonné n'a pas de jeton non plus : lui montrer un formulaire
+      // de connexion coach serait absurde (et le sortirait de son parcours).
+      var claimsCoach = false;
+      try {
+        if (localStorage.getItem('afroboost_coach_mode') === 'true') claimsCoach = true;
+        if (!claimsCoach) {
+          var raw = localStorage.getItem(AFROBOOST_IDENTITY_KEY) || localStorage.getItem(CHAT_CLIENT_KEY);
+          var em = raw ? (JSON.parse(raw) || {}).email : '';
+          em = (em || '').toLowerCase();
+          if (em === 'contact.artboost@gmail.com' || em === 'afroboost.bassi@gmail.com') claimsCoach = true;
+        }
+      } catch (e) {}
+      if (!claimsCoach) return;
+
+      setIsCoachMode(function (prev) {
+        if (!prev) return prev;                     // déjà pas coach -> aucun re-rendu
+        console.log('[V319] Mode coach retiré : jeton signé absent, connexion par mot de passe requise');
+        return false;
+      });
+      // Rediriger vers le formulaire de connexion coach plutôt qu'un panneau vide.
+      setStep(function (prevStep) { return prevStep === 'coach' ? 'form' : prevStep; });
+      setShowCoachLoginForm(function (prev) { return prev ? prev : true; });
+    }).catch(function () {
+      /* Silencieux : sans réponse du serveur on NE durcit PAS (on garde l'état courant). */
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [validatingCode, setValidatingCode] = useState(false); // Loading pendant validation du code
 
   // === v16.0: TUNNEL D'ONBOARDING (liens personnalisés) ===
@@ -3154,7 +3229,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         // v9.1.5: D'abord vérifier le localStorage de session coach
         const coachModeFlag = localStorage.getItem('afroboost_coach_mode');
         const coachUserStr = localStorage.getItem('afroboost_coach_user');
-        if (coachModeFlag === 'true' && coachUserStr) {
+        // V319 : `afroboost_coach_mode` est un simple drapeau localStorage, pas une
+        // preuve. Sous REQUIRE_COACH_JWT, il ne suffit plus à ouvrir le mode coach —
+        // il faut un jeton signé (mot de passe). Drapeau OFF -> inchangé.
+        if (coachModeFlag === 'true' && coachUserStr && v319CoachAllowed()) {
           try {
             const coachUser = JSON.parse(coachUserStr);
             if (coachUser?.email) {
@@ -5614,8 +5692,20 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       setIsCommunityMode(session.mode === 'community');
       
       // === MISE À JOUR DU MODE COACH APRÈS CONNEXION ===
-      const isCoach = COACH_EMAILS.includes(clientData.email?.toLowerCase());
+      // V319 — LE TROU FERMÉ : l'appartenance à COACH_EMAILS n'est PAS une preuve
+      // d'identité (n'importe qui peut taper l'email de l'admin). Sous
+      // REQUIRE_COACH_JWT, le mode coach exige en plus un JETON SIGNÉ obtenu par
+      // MOT DE PASSE (/auth/login) ; sinon on propose le formulaire de connexion
+      // coach au lieu de donner l'accès. Drapeau OFF (défaut) -> inchangé.
+      const emailIsCoach = COACH_EMAILS.includes(clientData.email?.toLowerCase());
+      const isCoach = emailIsCoach && v319CoachAllowed();
       setIsCoachMode(isCoach);
+      if (emailIsCoach && !isCoach) {
+        console.log('[V319] Email coach reconnu mais aucun jeton signé -> connexion par mot de passe demandée');
+        setShowCoachLoginForm(true);
+        setStep('form');
+        return;   // on n'enchaîne pas sur le parcours visiteur : on demande le mot de passe
+      }
       console.log(`[AUTH] Email: ${clientData.email}, isCoach: ${isCoach}`);
 
       // V197b: Détecter visiteur pur (pas coach, pas abonné) pour injecter les chips quick-replies dans le flux
