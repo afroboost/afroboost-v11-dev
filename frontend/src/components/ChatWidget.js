@@ -3424,14 +3424,30 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   // birthday attendu au format complet YYYY-MM-DD (celui du formulaire/backend).
   const connectSubscriberWithData = async ({ name, whatsapp, email, code, birthday }) => {
     setError('');
-    const nm = (name || '').trim();
-    const wa = (whatsapp || '').trim();
+    var nm = (name || '').trim();
+    var wa = (whatsapp || '').trim();
     const em = (email || '').trim();
     const cd = (code || '').trim();
-    if (!nm || !wa || !em || !cd) {
-      setError('Tous les champs sont obligatoires');
+    // V317 : dans le parcours « appareil neuf » (email d'abord -> preuve par le code),
+    // l'abonné n'a saisi QUE son email + son code : nom et WhatsApp sont vides. On
+    // n'exige donc QUE email + code. Le code (secret possédé) fait foi ; nom/WhatsApp
+    // sont COMPLÉTÉS depuis le backend (source de vérité) au lieu d'être réclamés —
+    // avant, le garde « tous les champs obligatoires » refusait un code pourtant valide.
+    if (!em || !cd) {
+      setError('Entre ton email et ton code d\'accès.');
       return false;
     }
+    if (!nm || !wa) {
+      try {
+        const _info = await v294FetchSubscriberInfo(cd);
+        if (_info && _info.exists) {
+          if (!nm) nm = (_info.name || '').trim();
+          if (!wa) wa = (_info.whatsapp || '').trim();
+        }
+      } catch (e) { /* silencieux : on continue avec ce qu'on a */ }
+    }
+    // Dernier repli : ne JAMAIS bloquer un abonné qui a prouvé son code faute de nom.
+    if (!nm) nm = em.split('@')[0] || 'Abonné';
     setValidatingCode(true);
     try {
       // Valider le code promo via l'API

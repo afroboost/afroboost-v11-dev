@@ -514,6 +514,26 @@ def t59_feature_flags_require_admin():
         record(59, "PUT /feature-flags sans JWT admin", False, str(e))
 
 
+def t60_strict_entry_proof_required():
+    """V317 : quand le mode strict est ACTIF, un email seul (sans jeton d'appareil) sur
+    un compte existant -> proof_required (on demande le code), aucune session livrée.
+    SKIP si le drapeau est OFF (état par défaut)."""
+    if not SUB_EMAIL:
+        return skip(60, "Entrée stricte -> proof_required", "SUB_EMAIL non fourni")
+    try:
+        fl = requests.get(_url("/api/feature-flags"), timeout=TIMEOUT).json()
+        if not fl.get("SUBSCRIBER_STRICT_ENTRY"):
+            return skip(60, "Entrée stricte -> proof_required", "SUBSCRIBER_STRICT_ENTRY OFF")
+        r = requests.post(_url("/api/chat/smart-entry"),
+                          json={"name": "probe strict", "email": SUB_EMAIL}, timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        ok = bool(d.get("proof_required")) and not d.get("session")
+        record(60, "Entrée stricte : email seul -> proof_required", ok,
+               f"proof_required={d.get('proof_required')} session={'oui' if d.get('session') else 'non'}")
+    except Exception as e:
+        record(60, "Entrée stricte -> proof_required", False, str(e))
+
+
 def t18_no_recognition_by_name_only():
     """V308 : smart-entry par NOM SEUL ne doit PLUS reconnaître un compte existant."""
     try:
@@ -688,7 +708,7 @@ def main():
                    t24_smart_entry_no_pii, t35_security_headers, t36_cors_foreign_origin,
                    t25_transactions_jwt_strict, t26_codes_jwt_strict,
                    t57_no_identity_overwrite, t58_delete_routes_require_auth,
-                   t59_feature_flags_require_admin,
+                   t59_feature_flags_require_admin, t60_strict_entry_proof_required,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
