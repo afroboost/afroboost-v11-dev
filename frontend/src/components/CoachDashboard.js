@@ -1455,6 +1455,46 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     return "reservations";
   });
 
+  // V314 : CORBEILLE (deleted_items). Lecture + restauration via les endpoints V313.
+  // ⚠️ Auth : /trash et /trash/{id}/restore REJETTENT X-User-Email — on passe par
+  // axios standard pour que l'intercepteur global (App.js) attache le JWT signé.
+  const [trashItems, setTrashItems] = useState([]);
+  const [trashTotal, setTrashTotal] = useState(0);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [trashError, setTrashError] = useState("");        // message honnête, JAMAIS un faux vide
+  const [trashRestoringId, setTrashRestoringId] = useState(null);
+
+  const loadTrash = async () => {
+    setTrashLoading(true); setTrashError("");
+    try {
+      const res = await axios.get(`${API}/trash`, { params: { page: 1, limit: 50 } }); // JWT via intercepteur
+      setTrashItems(res.data?.items || []);
+      setTrashTotal(res.data?.total || 0);
+    } catch (e) {
+      // RÈGLE : un échec réseau N'EST PAS un « vide » — on le DIT.
+      const code = e?.response?.status;
+      if (code === 401 || code === 403) setTrashError("Session expirée — reconnectez-vous pour voir la corbeille.");
+      else setTrashError("Impossible de charger la corbeille pour le moment. Réessayez.");
+      setTrashItems([]);
+    } finally { setTrashLoading(false); }
+  };
+
+  const restoreFromTrash = async (item) => {
+    setTrashRestoringId(item.id);
+    try {
+      await axios.post(`${API}/trash/${item.id}/restore`); // JWT via intercepteur
+      setTrashItems(prev => prev.filter(t => t.id !== item.id));
+      setTrashTotal(prev => Math.max(0, prev - 1));
+    } catch (e) {
+      const code = e?.response?.status;
+      alert(code === 403 ? "Vous n'avez pas le droit de restaurer cet élément." : "Échec de la restauration. Réessayez.");
+    } finally { setTrashRestoringId(null); }
+  };
+
+  // Chargement quand l'onglet devient actif — dépendance sur la PRIMITIVE `tab`
+  // (jamais un objet) pour éviter toute boucle d'appels (règle anti-boucle).
+  useEffect(() => { if (tab === "corbeille") loadTrash(); }, [tab]);
+
   // v37.2: Sous-onglet du HUB "Gestion" — 4 sections centralisées
   const [offersSubTab, setOffersSubTab] = useState('contenus');
 
@@ -5603,7 +5643,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     { id: "codes", label: t('promoCodes') },
     { id: "contacts", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="users" size={14} /> Contacts</span> },
     { id: "campaigns", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="megaphone" size={14} /> Campagnes</span> },
-    { id: "conversations", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="messageCircle" size={14} /> {unreadCount > 0 ? `Conversations (${unreadCount})` : "Conversations"}</span> }
+    { id: "conversations", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="messageCircle" size={14} /> {unreadCount > 0 ? `Conversations (${unreadCount})` : "Conversations"}</span> },
+    // V314 : corbeille (récupération des suppressions). Visible pour tous — le backend cloisonne.
+    { id: "corbeille", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="trash" size={14} /> Corbeille</span> }
     // V260d: l'onglet « Preuves » a quitte cette barre — il est desormais une
     // carte de la page Gestion, au meme rang que « Offres & Cours » ou
     // « Ma Vitrine ». La barre principale reste ainsi lisible sur mobile.
@@ -7743,6 +7785,91 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             setCoachPlatformName={setCoachPlatformName}
             coachEmail={coachUser?.email}
           />
+        )}
+
+        {/* V314 : CORBEILLE — éléments supprimés (codes, fiches), récupérables. */}
+        {tab === "corbeille" && (
+          <div style={{ maxWidth: 760, margin: '0 auto' }}>
+            <div className="flex items-center gap-2 mb-4">
+              <SvgIcon name="trash" size={20} />
+              <h2 className="text-white font-bold" style={{ fontSize: 20 }}>Corbeille</h2>
+            </div>
+
+            {trashLoading ? (
+              <p className="text-white/60 text-sm">Chargement…</p>
+            ) : trashError ? (
+              <div style={{
+                padding: '12px 16px', borderRadius: 10,
+                background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.4)',
+                color: '#ef4444', fontSize: 14
+              }}>
+                {trashError}
+              </div>
+            ) : trashItems.length === 0 ? (
+              <p className="text-white/60 text-sm">La corbeille est vide.</p>
+            ) : (
+              <>
+                <p className="text-white/60 text-sm mb-3">
+                  Éléments supprimés, récupérables. Rien n'est effacé définitivement.
+                  {trashTotal > trashItems.length ? ` (${trashItems.length} affichés sur ${trashTotal})` : ''}
+                </p>
+                <div className="flex flex-col gap-2">
+                  {trashItems.map((item) => {
+                    const p = item.payload || {};
+                    const isCode = item.original_collection === "discount_codes";
+                    const titre = isCode
+                      ? (p.code || "Code")
+                      : (p.name || "Contact");
+                    const details = isCode
+                      ? [p.value != null ? `${p.value} ${p.type || ''}`.trim() : null, p.expiresAt ? `expire le ${p.expiresAt}` : null].filter(Boolean).join(' · ')
+                      : [p.email, p.whatsapp || p.phone].filter(Boolean).join(' · ');
+                    let quand = item.deleted_at || '';
+                    try { if (item.deleted_at) quand = new Date(item.deleted_at).toLocaleString('fr-FR'); } catch (e) {}
+                    return (
+                      <div key={item.id} style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+                        padding: '12px 16px', borderRadius: 10,
+                        background: 'rgba(255,255,255,0.05)',
+                        border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.25)'
+                      }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div className="flex items-center gap-2">
+                            <span style={{
+                              fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                              background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)',
+                              color: 'var(--primary-color, #D91CD2)'
+                            }}>
+                              {isCode ? 'Code' : 'Contact'}
+                            </span>
+                            <span className="text-white font-semibold" style={{ fontSize: 15 }}>{titre}</span>
+                          </div>
+                          {details ? <div className="text-white/70" style={{ fontSize: 13, marginTop: 2 }}>{details}</div> : null}
+                          <div className="text-white/40" style={{ fontSize: 12, marginTop: 2 }}>
+                            Supprimé le {quand}{item.deleted_by ? ` par ${item.deleted_by}` : ''}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => restoreFromTrash(item)}
+                          disabled={trashRestoringId === item.id}
+                          className="inline-flex items-center gap-1.5 shrink-0"
+                          style={{
+                            padding: '8px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                            color: 'var(--primary-color, #D91CD2)',
+                            background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
+                            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
+                            opacity: trashRestoringId === item.id ? 0.5 : 1
+                          }}
+                        >
+                          <SvgIcon name="undo" size={14} />
+                          {trashRestoringId === item.id ? 'Restauration…' : 'Restaurer'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
         )}
       </div>
     </div>
