@@ -544,8 +544,12 @@ async def delete_discount_code(code_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Code introuvable")
     # Cloisonnement : un coach ne supprime que SES codes (super-admin = tout).
     if not is_super_admin(caller):
+        # V313b : REFUS PAR DÉFAUT sur le legacy. Un code sans coach_id (donnée
+        # partagée/héritée) n'appartient à aucun coach -> seul le super-admin (déjà
+        # court-circuité ci-dessus) peut le supprimer. Sans ce « not owner », un coach
+        # ordinaire aurait pu corbeiller les codes legacy (fail-open).
         owner = (doc.get("coach_id") or "").lower().strip()
-        if owner and owner != caller:
+        if not owner or owner != caller:
             raise HTTPException(status_code=403, detail="Ce code ne vous appartient pas")
 
     # Déplacement en corbeille (restaurable) — PAS d'effacement physique.

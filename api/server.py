@@ -13782,9 +13782,11 @@ async def delete_chat_participant(participant_id: str, request: Request):
     if not participant:
         raise HTTPException(status_code=404, detail="Participant non trouve")
     # Cloisonnement : un coach ne supprime que SES fiches (super-admin = tout).
+    # V313b : REFUS PAR DÉFAUT sur le legacy — une fiche sans coach_id n'appartient à
+    # aucun coach, seul le super-admin peut la corbeiller.
     if not is_super_admin(caller):
         owner = (participant.get("coach_id") or "").lower().strip()
-        if owner and owner != caller.lower().strip():
+        if not owner or owner != caller.lower().strip():
             raise HTTPException(status_code=403, detail="Cette fiche ne vous appartient pas")
 
     participant_name = participant.get('name', 'inconnu')
@@ -13846,8 +13848,9 @@ async def restore_trash(trash_id: str, request: Request):
     if not entry:
         raise HTTPException(status_code=404, detail="Élément de corbeille introuvable")
     if not is_super_admin(caller):
+        # V313b : refus par défaut sur le legacy (élément de corbeille sans coach_id).
         owner = (entry.get("coach_id") or "").lower().strip()
-        if owner and owner != caller.lower().strip():
+        if not owner or owner != caller.lower().strip():
             raise HTTPException(status_code=403, detail="Cet élément ne vous appartient pas")
     coll = entry.get("original_collection")
     if coll not in ("discount_codes", "chat_participants"):
