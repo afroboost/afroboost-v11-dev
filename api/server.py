@@ -1,7 +1,7 @@
 # VERSION 7.0 - PRODUCTION READY - NE PAS MODIFIER login/tri/sync
 import re  # V310 : disponible au niveau module pour re.escape (anti-injection regex)
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, UploadFile, File, Form, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse  # V324 : HTMLResponse pour /confidentialite
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -407,6 +407,35 @@ async def healthz():
         "boot_id": _BOOT_ID,
         "uptime_s": int((datetime.now(timezone.utc) - _BOOT_AT).total_seconds()),
     }
+
+@fastapi_app.get("/confidentialite", response_class=HTMLResponse)
+@fastapi_app.get("/privacy", response_class=HTMLResponse)
+async def v324_politique_confidentialite():
+    """V324 — POLITIQUE DE CONFIDENTIALITÉ, servie en HTML statique.
+
+    Prérequis Google Play : une app qui collecte des données personnelles (ici e-mail,
+    WhatsApp, paiements) DOIT exposer une URL publique de politique de confidentialité,
+    sinon la publication est refusée.
+
+    Pourquoi une route serveur et pas une page React : le catch-all SPA (fin de ce
+    fichier) renvoie `index.html` avec un code 200 pour N'IMPORTE QUELLE adresse. Une
+    page qui « répond 200 » ne prouve donc rien — un examinateur Play, comme un simple
+    curl, recevrait le bundle JavaScript. Enregistrée ICI, très en amont du catch-all,
+    cette route renvoie le VRAI texte, sans dépendre du JavaScript ni du bundle.
+
+    Le fichier est lu à chaque appel (il change rarement, et cela évite de redéployer
+    pour une correction de contenu si le fichier est monté à côté).
+    """
+    _chemin = os.path.join(os.path.dirname(__file__), "static_pages", "confidentialite.html")
+    try:
+        with open(_chemin, "r", encoding="utf-8") as _f:
+            return HTMLResponse(content=_f.read(), status_code=200)
+    except Exception as _e:
+        # Échec HONNÊTE : surtout NE PAS retomber sur le SPA, ce qui ferait croire à
+        # Google que la page existe alors qu'elle est vide de contenu juridique.
+        logger.error("[V324] politique de confidentialite introuvable (%s): %s", _chemin, _e)
+        raise HTTPException(status_code=500, detail="Politique de confidentialité momentanément indisponible")
+
 
 @fastapi_app.get("/api/debug/config")
 async def debug_config():

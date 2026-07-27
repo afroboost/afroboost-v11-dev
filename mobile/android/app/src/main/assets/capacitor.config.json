@@ -1,0 +1,30 @@
+{
+	"appId": "com.afroboost.app",
+	"appName": "Afroboost",
+	"webDir": "www",
+	"server": {
+		"url": "https://afroboost.com",
+		"cleartext": false,
+		"allowNavigation": [
+			"afroboost.com",
+			"*.afroboost.com"
+		]
+	},
+	"android": {
+		"allowMixedContent": false,
+		"webContentsDebuggingEnabled": false
+	},
+	"plugins": {
+		"SplashScreen": {
+			"launchShowDuration": 1200,
+			"backgroundColor": "#000000",
+			"androidScaleType": "CENTER_CROP",
+			"showSpinner": false,
+			"splashImmersive": false
+		},
+		"StatusBar": {
+			"backgroundColor": "#D91CD2",
+			"style": "DARK"
+		}
+	}
+}
