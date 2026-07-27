@@ -6,3 +6,5 @@ frontend/build
 .vercel
 .env
 .env.*
+# V324b : l'app Android n'a rien à faire dans le contexte de build du site.
+mobile/

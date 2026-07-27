@@ -79,3 +79,8 @@ agenthub/agents/youtube/db
 
 # Mobile development
 android-sdk/
+
+# V324b — App Android (Capacitor) : vit sur la branche feature/capacitor-android,
+# JAMAIS sur main. Sans cette règle, un `git add -A` lancé depuis main ramasse tout
+# le dossier de travail (c'est exactement ce qui a fait fuiter keystore.properties).
+mobile/
