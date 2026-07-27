@@ -954,6 +954,10 @@ class FeatureFlags(BaseModel):
     AUDIO_SERVICE_ENABLED: bool = False
     VIDEO_SERVICE_ENABLED: bool = False
     STREAMING_SERVICE_ENABLED: bool = False
+    # V315 : interrupteur du durcissement de l'entrée abonné. Défaut FALSE = comportement
+    # actuel (zéro friction). True = smart-entry exige une preuve (jeton d'appareil/code
+    # ou coach) pour rejoindre une conversation existante. Basculable SANS redéploiement.
+    SUBSCRIBER_STRICT_ENTRY: bool = False
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -961,6 +965,7 @@ class FeatureFlagsUpdate(BaseModel):
     AUDIO_SERVICE_ENABLED: Optional[bool] = None
     VIDEO_SERVICE_ENABLED: Optional[bool] = None
     STREAMING_SERVICE_ENABLED: Optional[bool] = None
+    SUBSCRIBER_STRICT_ENTRY: Optional[bool] = None  # V315
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -11224,6 +11229,7 @@ async def get_feature_flags():
             "AUDIO_SERVICE_ENABLED": False,
             "VIDEO_SERVICE_ENABLED": False,
             "STREAMING_SERVICE_ENABLED": False,
+            "SUBSCRIBER_STRICT_ENTRY": False,  # V315 : défaut OFF (zéro friction)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -11233,15 +11239,20 @@ async def get_feature_flags():
     return flags
 
 @api_router.put("/feature-flags")
-async def update_feature_flags(update: FeatureFlagsUpdate):
+async def update_feature_flags(update: FeatureFlagsUpdate, request: Request):
     """
-    Met à jour les feature flags (Super Admin only)
-    TODO: Ajouter authentification Super Admin
+    Met à jour les feature flags — SUPER ADMIN uniquement.
+    V315 : cette route n'avait AUCUNE auth (n'importe qui basculait un interrupteur).
+    Un kill-switch que tout le monde peut actionner n'est pas un contrôle : on exige
+    désormais un JWT super-admin signé (non falsifiable).
     """
+    caller = _v311_coach_email_from_jwt(request)
+    if not caller or not is_super_admin(caller):
+        raise HTTPException(status_code=403, detail="Super-admin requis")
     update_data = {k: v for k, v in update.model_dump().items() if v is not None}
     update_data["updatedAt"] = datetime.now(timezone.utc).isoformat()
-    update_data["updatedBy"] = "super_admin"  # TODO: Récupérer depuis le token
-    
+    update_data["updatedBy"] = caller
+
     await db.feature_flags.update_one(
         {"id": "feature_flags"}, 
         {"$set": update_data}, 
@@ -15673,7 +15684,25 @@ async def smart_chat_entry(request: Request):
 
     if not name:
         raise HTTPException(status_code=400, detail="Le nom est requis")
-    
+
+    # V315 : LIMITE DE DÉBIT applicative (indépendante de l'interrupteur — une limite
+    # ne casse aucun parcours légitime). Fenêtre généreuse : 30 tentatives / 10 min / IP.
+    # IP réelle via CF-Connecting-IP (Cloudflare), sinon 1er hop X-Forwarded-For, sinon socket.
+    _ip = (request.headers.get("CF-Connecting-IP")
+           or (request.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
+           or (request.client.host if request.client else "")).strip()
+    if _ip:
+        try:
+            _since = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+            _n = await db.smart_entry_attempts.count_documents({"ip": _ip, "at": {"$gte": _since}})
+            if _n >= 30:
+                raise HTTPException(status_code=429, detail="Trop de tentatives, réessayez dans quelques minutes.")
+            await db.smart_entry_attempts.insert_one({"ip": _ip, "at": datetime.now(timezone.utc).isoformat()})
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # une erreur de compteur ne doit JAMAIS bloquer un parcours légitime
+
     # Rechercher un participant existant
     import re  # re n'est pas importé au niveau module
     existing_participant = None
@@ -15721,6 +15750,24 @@ async def smart_chat_entry(request: Request):
                     _may_write = True
         except Exception:
             _may_write = False
+
+        # V315 : ENTRÉE STRICTE (derrière l'interrupteur SUBSCRIBER_STRICT_ENTRY, lu EN
+        # DIRECT à chaque requête). Un participant existe, mais l'appelant n'a PAS prouvé
+        # son identité (ni jeton d'appareil dont l'email correspond, ni coach/admin =
+        # `_may_write` False) : on NE livre PAS sa conversation (ni participant_id, ni
+        # session_id, ni rattachement) — on demande une preuve (code d'accès). Défaut OFF
+        # -> ce bloc reste INERTE tant que le propriétaire n'a pas basculé le drapeau.
+        if not _may_write:
+            try:
+                _strict = bool((await get_feature_flags()).get("SUBSCRIBER_STRICT_ENTRY"))
+            except Exception:
+                _strict = False
+            if _strict:
+                return {
+                    "proof_required": True,
+                    "reason": "subscriber_code",
+                    "message": "Entre ton code d'accès pour retrouver ta conversation.",
+                }
 
         # coach_id manquant : correctif SYSTÈME (pas une donnée fournie par l'appelant) -> toujours OK
         if not existing_participant.get("coach_id"):

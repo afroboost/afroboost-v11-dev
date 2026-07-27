@@ -503,6 +503,17 @@ def t58_delete_routes_require_auth():
         record(58, "DELETE codes/fiches sans auth", False, str(e))
 
 
+def t59_feature_flags_require_admin():
+    """V315 : PUT /feature-flags (l'interrupteur kill-switch) exige un JWT super-admin.
+    X-User-Email seul (usurpable) ne suffit plus -> 403."""
+    try:
+        c = requests.put(_url("/api/feature-flags"), json={"SUBSCRIBER_STRICT_ENTRY": False},
+                         headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code
+        record(59, "PUT /feature-flags sans JWT super-admin -> 403", c == 403, f"HTTP {c}")
+    except Exception as e:
+        record(59, "PUT /feature-flags sans JWT admin", False, str(e))
+
+
 def t18_no_recognition_by_name_only():
     """V308 : smart-entry par NOM SEUL ne doit PLUS reconnaître un compte existant."""
     try:
@@ -677,6 +688,7 @@ def main():
                    t24_smart_entry_no_pii, t35_security_headers, t36_cors_foreign_origin,
                    t25_transactions_jwt_strict, t26_codes_jwt_strict,
                    t57_no_identity_overwrite, t58_delete_routes_require_auth,
+                   t59_feature_flags_require_admin,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

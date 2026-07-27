@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v314'; // V314: onglet Corbeille (deleted_items + restauration)
+var CACHE_NAME = 'afroboost-v315'; // V315: entrée abonné stricte (flag OFF par défaut) + proof_required
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

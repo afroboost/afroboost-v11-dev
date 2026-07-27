@@ -3508,6 +3508,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       setIsFullscreen(true);
       setShowSubscriberForm(false);
 
+      // V315 : POSER le jeton d'appareil AVANT de relancer smart-entry (awaité).
+      // Sans cela, en mode strict, la relance repartirait sans jeton -> proof_required
+      // en boucle. Idempotent et best-effort (n'échoue jamais le parcours).
+      try { await v296EnsureSubscriberToken(profile.code, profile.email); } catch (e) { /* silencieux */ }
+
       // Démarrer le chat avec smart-entry
       await handleSmartEntry({
         firstName: profile.name,
@@ -5524,6 +5529,29 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         link_token: linkToken,
         tunnel_answers: clientData.tunnelAnswers || null
       });
+
+      // V315 : PREUVE REQUISE (mode strict, appareil neuf sans jeton d'appareil).
+      // On NE traite PAS comme connecté : on bascule sur la saisie du code (formulaire
+      // abonné, email pré-rempli). À la validation, connectSubscriberWithData pose le
+      // jeton d'appareil PUIS relance smart-entry -> connexion. Échec HONNÊTE : on
+      // affiche le message, jamais un « 0 conversation » silencieux. (Dormant tant que
+      // le drapeau SUBSCRIBER_STRICT_ENTRY est OFF -> aucun changement pour les abonnés.)
+      if (response.data && response.data.proof_required) {
+        setIsKnownSubscriber(true);
+        setSubscriberFormData(function (prev) {
+          return {
+            name: (clientData.firstName || prev.name || ''),
+            whatsapp: (clientData.whatsapp || prev.whatsapp || ''),
+            email: (clientData.email || prev.email || ''),
+            code: '',
+            birthday: prev.birthday || ''
+          };
+        });
+        setEmailCheckDone(true);
+        setShowSubscriberForm(true);
+        setError(response.data.message || 'Entre ton code d\'accès pour retrouver ta conversation.');
+        return;
+      }
 
       const { participant, session, is_returning, chat_history, message } = response.data;
 
