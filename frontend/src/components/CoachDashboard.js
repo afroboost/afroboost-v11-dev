@@ -1495,6 +1495,43 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // (jamais un objet) pour éviter toute boucle d'appels (règle anti-boucle).
   useEffect(() => { if (tab === "corbeille") loadTrash(); }, [tab]);
 
+  // V316 : interrupteur « Connexion abonné stricte » (drapeau SUBSCRIBER_STRICT_ENTRY).
+  // = activation phase 2 ET kill-switch instantané (basculer coupe/active en direct,
+  // sans redéploiement). Lecture/écriture via axios standard -> JWT signé attaché par
+  // l'intercepteur (PUT exige un super-admin, sinon 403).
+  const [strictEntry, setStrictEntry] = useState(null);   // null = inconnu (pas encore lu)
+  const [strictLoading, setStrictLoading] = useState(false);
+  const [strictError, setStrictError] = useState("");
+
+  const loadStrictEntry = async () => {
+    setStrictError("");
+    try {
+      const res = await axios.get(`${API}/feature-flags`);
+      setStrictEntry(!!res.data?.SUBSCRIBER_STRICT_ENTRY);
+    } catch (e) {
+      // Échec honnête : ne PAS afficher un faux « désactivé ».
+      setStrictEntry(null);
+      setStrictError("Impossible de lire l'état pour le moment.");
+    }
+  };
+
+  const toggleStrictEntry = async (next) => {
+    setStrictLoading(true); setStrictError("");
+    try {
+      const res = await axios.put(`${API}/feature-flags`, { SUBSCRIBER_STRICT_ENTRY: next }); // JWT via intercepteur
+      setStrictEntry(!!res.data?.SUBSCRIBER_STRICT_ENTRY);
+    } catch (e) {
+      const code = e?.response?.status;
+      setStrictError(code === 403
+        ? "Réservé au super-admin — reconnectez-vous."
+        : "Le changement n'a pas pu être enregistré. Réessayez.");
+      await loadStrictEntry();  // ne jamais laisser l'affichage prétendre que c'est fait
+    } finally { setStrictLoading(false); }
+  };
+
+  // Charger l'état à l'ouverture du hub Gestion — dépendance sur des PRIMITIVES (pas de boucle).
+  useEffect(() => { if (tab === "offers" && isSuperAdmin) loadStrictEntry(); }, [tab, isSuperAdmin]);
+
   // v37.2: Sous-onglet du HUB "Gestion" — 4 sections centralisées
   const [offersSubTab, setOffersSubTab] = useState('contenus');
 
@@ -6684,6 +6721,61 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 </button>
               ))}
             </div>
+
+            {/* V316 : SÉCURITÉ — Connexion abonné stricte (super-admin uniquement).
+                Activation phase 2 + kill-switch instantané. */}
+            {isSuperAdmin && (
+              <div style={{
+                marginBottom: '16px', padding: '16px', borderRadius: '12px',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)'
+              }}>
+                <div className="flex items-center gap-2" style={{ marginBottom: '8px' }}>
+                  <SvgIcon name="shield" size={18} color="var(--primary-color, #D91CD2)" />
+                  <h3 className="text-white font-bold" style={{ fontSize: '15px', margin: 0 }}>Sécurité — Connexion abonné</h3>
+                </div>
+                <p className="text-white/60" style={{ fontSize: '13px', margin: '0 0 12px 0', lineHeight: 1.4 }}>
+                  Quand c'est <strong>activé</strong>, un abonné qui revient sur un <strong>nouvel</strong> appareil
+                  doit saisir son <strong>code d'accès</strong> pour retrouver sa conversation (au lieu de son seul email).
+                  Ses appareils habituels ne sont pas concernés. En cas de souci, désactivez ici — l'effet est immédiat.
+                </p>
+                <div className="flex items-center justify-between" style={{ gap: '12px' }}>
+                  <div className="flex items-center gap-2">
+                    <SvgIcon name="lock" size={14} color="rgba(255,255,255,0.5)" />
+                    {strictEntry === null ? (
+                      <span style={{ fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: 999,
+                        background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)' }}>État inconnu</span>
+                    ) : strictEntry ? (
+                      <span style={{ fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: 999,
+                        background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.4)' }}>Activé</span>
+                    ) : (
+                      <span style={{ fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: 999,
+                        background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)' }}>Désactivé</span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => toggleStrictEntry(!strictEntry)}
+                    disabled={strictLoading || strictEntry === null}
+                    style={{
+                      position: 'relative', width: '52px', height: '28px', borderRadius: '999px', border: 'none',
+                      cursor: (strictLoading || strictEntry === null) ? 'not-allowed' : 'pointer',
+                      background: strictEntry ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.2)',
+                      opacity: (strictLoading || strictEntry === null) ? 0.5 : 1, transition: 'background 0.2s ease'
+                    }}
+                    title={strictEntry ? 'Désactiver' : 'Activer'}
+                    data-testid="strict-entry-toggle"
+                  >
+                    <span style={{
+                      position: 'absolute', top: '3px', left: strictEntry ? '27px' : '3px',
+                      width: '22px', height: '22px', borderRadius: '50%', background: '#fff', transition: 'left 0.2s ease'
+                    }} />
+                  </button>
+                </div>
+                {strictError ? (
+                  <p style={{ color: '#ef4444', fontSize: '12px', margin: '10px 0 0 0' }}>{strictError}</p>
+                ) : null}
+              </div>
+            )}
 
             {/* v159: Sous-onglets séparés — Contenus / Audio / Social / Emojis */}
             {['contenus', 'audio', 'social', 'emojis'].includes(offersSubTab) && (
