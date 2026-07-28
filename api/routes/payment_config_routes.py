@@ -38,6 +38,11 @@ class PaymentConfigUpdate(BaseModel):
     cinetpay_site_id: str = ""
     cinetpay_secret_key: str = ""
 
+    # V325: Mobile Money (PawaPay) — prestataire ADDITIONNEL, indépendant de CinetPay
+    pawapay_enabled: bool = False
+    pawapay_api_token: str = ""
+    pawapay_mode: str = "sandbox"  # "sandbox" | "live"
+
     class Config:
         populate_by_name = True
 
@@ -58,6 +63,9 @@ def compute_is_configured(config: dict) -> bool:
     if config.get("paypal_enabled") and config.get("paypal_client_id"):
         return True
     if config.get("mobile_money_enabled") and config.get("cinetpay_api_key"):
+        return True
+    # V325 : PawaPay compte comme méthode configurée au même titre que CinetPay
+    if config.get("pawapay_enabled") and config.get("pawapay_api_token"):
         return True
     # V311j : un lien TWINT direct renseigné compte comme méthode configurée
     # (bug : le bandeau « Non configuré » l'ignorait alors que le paiement TWINT
@@ -94,6 +102,10 @@ async def get_payment_config(request: Request):
             "cinetpay_api_key": "",
             "cinetpay_site_id": "",
             "cinetpay_secret_key": "",
+            # V325
+            "pawapay_enabled": False,
+            "pawapay_api_token": "",
+            "pawapay_mode": "sandbox",
             "is_configured": False,
             "updated_at": None
         }
@@ -113,6 +125,10 @@ async def get_payment_config(request: Request):
         "cinetpay_api_key": mask_key(config.get("cinetpay_api_key", "")),
         "cinetpay_site_id": config.get("cinetpay_site_id", ""),  # Site ID = pas secret
         "cinetpay_secret_key": mask_key(config.get("cinetpay_secret_key", "")),
+        # V325 : le jeton PawaPay est un SECRET -> masqué comme les autres
+        "pawapay_enabled": config.get("pawapay_enabled", False),
+        "pawapay_api_token": mask_key(config.get("pawapay_api_token", "")),
+        "pawapay_mode": config.get("pawapay_mode", "sandbox"),
         "is_configured": config.get("is_configured", False),
         "updated_at": config.get("updated_at")
     }
@@ -132,7 +148,8 @@ async def update_payment_config(request: Request, config: PaymentConfigUpdate):
 
     # Si une clé est masquée (contient ****), garder l'ancienne valeur
     if existing:
-        for key in ["stripe_secret_key", "paypal_client_secret", "cinetpay_api_key", "cinetpay_secret_key"]:
+        for key in ["stripe_secret_key", "paypal_client_secret", "cinetpay_api_key", "cinetpay_secret_key",
+                    "pawapay_api_token"]:  # V325
             if "****" in update_data.get(key, ""):
                 update_data[key] = existing.get(key, "")
 
@@ -179,6 +196,19 @@ async def get_payment_status(coach_email: str):
             methods.append("paypal")
         if config.get("mobile_money_enabled") and config.get("cinetpay_api_key"):
             methods.append("mobile_money")
+
+    # V325 : PawaPay n'est proposé que si le drapeau global PAWAPAY_ENABLED est ON.
+    # Tant qu'il est OFF (défaut), cette liste est strictement celle d'avant V325.
+    try:
+        _flags = await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0}) or {}
+        _pawapay_flag = bool(_flags.get("PAWAPAY_ENABLED", False))
+    except Exception:
+        _pawapay_flag = False
+    if _pawapay_flag:
+        if config and config.get("pawapay_enabled") and config.get("pawapay_api_token"):
+            methods.append("pawapay")
+        elif is_admin and os.environ.get("PAWAPAY_API_TOKEN", ""):
+            methods.append("pawapay")
 
     # Super Admin fallback : si pas de config partenaire, utiliser les env vars
     if is_admin and "card" not in methods:
@@ -294,6 +324,29 @@ async def test_payment_method(method: str, request: Request):
             return {"success": False, "message": f"Erreur CinetPay : {data.get('message', 'Inconnu')}"}
         except Exception as e:
             return {"success": False, "message": f"Erreur CinetPay : {str(e)[:100]}"}
+
+    elif method == "pawapay":
+        # V325 : le jeton PawaPay est validé en interrogeant un dépôt bidon.
+        # Un 401/403 = jeton invalide ; un 200/404 = jeton accepté par PawaPay.
+        token = config.get("pawapay_api_token", "")
+        mode = config.get("pawapay_mode", "sandbox")
+        if not token:
+            return {"success": False, "message": "Jeton PawaPay non configuré"}
+        base_url = "https://api.pawapay.io" if mode == "live" else "https://api.sandbox.pawapay.io"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{base_url}/v2/deposits/00000000-0000-4000-8000-000000000000",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10
+                )
+            if resp.status_code in (200, 404):
+                return {"success": True, "message": f"Connexion PawaPay réussie ({mode}) ✅"}
+            if resp.status_code in (401, 403):
+                return {"success": False, "message": "Jeton PawaPay refusé (401/403)"}
+            return {"success": False, "message": f"Erreur PawaPay : HTTP {resp.status_code}"}
+        except Exception as e:
+            return {"success": False, "message": f"Erreur PawaPay : {str(e)[:100]}"}
 
     else:
         raise HTTPException(status_code=400, detail=f"Méthode inconnue : {method}")

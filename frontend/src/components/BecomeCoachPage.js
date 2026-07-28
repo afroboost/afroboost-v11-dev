@@ -32,7 +32,9 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
   
   
   // v11.0: Méthode de paiement (card = Stripe, mobile_money = CinetPay)
+  // V325: + pawapay = PawaPay (mobile money panafricain), affiché seulement si activé
   const [paymentMethod, setPaymentMethod] = useState('card');
+  const [pawapayEnabled, setPawapayEnabled] = useState(false);
 
   // v11.6: Mot de passe + CGU
   const [showPassword, setShowPassword] = useState(false);
@@ -79,6 +81,18 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
       }
     };
     fetchConcept();
+
+    // V325: PawaPay n'est proposé que si le backend l'annonce disponible
+    // (drapeau PAWAPAY_ENABLED ON + jeton configuré). Toute erreur = option masquée.
+    const fetchPawapay = async () => {
+      try {
+        const res = await axios.get(`${API}/pawapay/available`);
+        setPawapayEnabled(!!res.data?.enabled);
+      } catch (err) {
+        setPawapayEnabled(false);
+      }
+    };
+    fetchPawapay();
   }, []);
 
 
@@ -179,6 +193,41 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
         }
       }
 
+      // === V325: MOBILE MONEY (PawaPay) ===
+      // Même parcours que CinetPay : on crée le paiement, on mémorise les infos du
+      // futur partenaire, puis on redirige vers la page hébergée du prestataire.
+      if (paymentMethod === 'pawapay') {
+        try {
+          const response = await axios.post(`${API}/pawapay/create-coach-checkout`, {
+            pack_id: selectedPack.id,
+            customer_email: email,
+            customer_name: name,
+            customer_phone: formData.phone
+          });
+
+          if (response.data.payment_url) {
+            localStorage.setItem('afroboost_pending_partner', JSON.stringify({
+              email, name, phone: formData.phone, password: formData.password || '',
+              pack_id: selectedPack.id, transaction_id: response.data.transaction_id
+            }));
+            window.location.href = response.data.payment_url;
+            return;
+          } else {
+            setError("Erreur lors de la création du paiement PawaPay");
+          }
+        } catch (ppErr) {
+          console.error('[PAWAPAY] Erreur:', ppErr);
+          const errMsg = ppErr.response?.data?.detail || '';
+          if (ppErr.response?.status === 404 || ppErr.response?.status === 503) {
+            setError('Le paiement PawaPay est temporairement indisponible. Veuillez utiliser une autre méthode.');
+          } else {
+            setError(errMsg || 'Erreur PawaPay. Vérifiez votre connexion et réessayez.');
+          }
+          setSubmitting(false);
+          return;
+        }
+      }
+
       // === CARTE BANCAIRE (Stripe) ===
       if (paymentMethod === 'card') {
         if (!selectedPack.stripe_price_id) {
@@ -211,7 +260,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
       }
 
       // Fallback
-      if (paymentMethod !== 'card' && paymentMethod !== 'mobile_money') {
+      if (paymentMethod !== 'card' && paymentMethod !== 'mobile_money' && paymentMethod !== 'pawapay') {
         setError('Méthode de paiement non reconnue.');
       }
     } catch (err) {
@@ -512,6 +561,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                     priceChf={selectedPack.price}
                     priceXof={selectedPack.price_xof}
                     disabled={submitting}
+                    showPawapay={pawapayEnabled}
                   />
                 )}
 
@@ -528,7 +578,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ color: '#fff', fontSize: '18px' }}>Total:</span>
                     <span style={{ fontSize: '24px', fontWeight: '700', color: 'var(--primary-color, #D91CD2)' }}>
-                      {paymentMethod === 'mobile_money'
+                      {(paymentMethod === 'mobile_money' || paymentMethod === 'pawapay')
                         ? `${(selectedPack.price_xof || Math.round(selectedPack.price * 400)).toLocaleString('fr-FR')} FCFA`
                         : `${selectedPack.price} CHF`
                       }
@@ -551,7 +601,9 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                     opacity: (submitting || !acceptedCGU || !formData.name || !formData.email || !formData.password) ? 0.5 : 1,
                     background: paymentMethod === 'mobile_money'
                       ? 'linear-gradient(135deg, #F59E0B, #D97706)'
-                      : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
+                      : paymentMethod === 'pawapay'
+                        ? 'linear-gradient(135deg, #10B981, #059669)'
+                        : 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)',
                     transition: 'all 0.2s',
                     transform: 'scale(1)'
                   }}
@@ -562,7 +614,9 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                     : selectedPack.price > 0
                       ? paymentMethod === 'mobile_money'
                         ? `Payer via Mobile Money`
-                        : `Payer ${selectedPack.price} CHF`
+                        : paymentMethod === 'pawapay'
+                          ? `Payer via Mobile Money (PawaPay)`
+                          : `Payer ${selectedPack.price} CHF`
                       : 'S\'inscrire gratuitement'
                   }
                 </button>

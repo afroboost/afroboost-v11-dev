@@ -48,7 +48,8 @@ const PaymentConfigTab = ({ paymentConfig, setPaymentConfig, coachEmail }) => {
 
   // V311j : un lien TWINT direct renseigné compte comme « configuré » (le bandeau
   // l'ignorait, affichant « Non configuré » alors que TWINT est proposé aux clients).
-  const isConfigured = paymentConfig?.stripe_enabled || paymentConfig?.paypal_enabled || paymentConfig?.mobile_money_enabled || !!(paymentConfig?.twint_direct_url && paymentConfig.twint_direct_url.trim());
+  // V325 : PawaPay compte lui aussi comme méthode configurée.
+  const isConfigured = paymentConfig?.stripe_enabled || paymentConfig?.paypal_enabled || paymentConfig?.mobile_money_enabled || paymentConfig?.pawapay_enabled || !!(paymentConfig?.twint_direct_url && paymentConfig.twint_direct_url.trim());
 
   const sectionStyle = {
     background: 'rgba(255,255,255,0.03)',
@@ -416,6 +417,88 @@ const PaymentConfigTab = ({ paymentConfig, setPaymentConfig, coachEmail }) => {
         )}
       </div>
 
+      {/* ===== V325: SECTION PAWAPAY (mobile money panafricain) ===== */}
+      <div style={sectionStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <SvgIcon name="phone" size={24} />
+            <div>
+              <h3 style={{ color: 'white', fontSize: '16px', fontWeight: '600', margin: 0 }}>Mobile Money (PawaPay)</h3>
+              <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: '2px 0 0' }}>
+                M-Pesa, MTN MoMo, Orange Money, Airtel — Afrique de l'Ouest, Centrale et de l'Est
+              </p>
+            </div>
+          </div>
+          <button
+            style={toggleStyle(paymentConfig?.pawapay_enabled)}
+            onClick={() => handleChange('pawapay_enabled', !paymentConfig?.pawapay_enabled)}
+            data-testid="pawapay-toggle"
+          >
+            <div style={toggleKnobStyle(paymentConfig?.pawapay_enabled)} />
+          </button>
+        </div>
+
+        {paymentConfig?.pawapay_enabled && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div>
+              <label style={labelStyle}>Jeton API PawaPay</label>
+              <input
+                type="password"
+                value={paymentConfig?.pawapay_api_token || ''}
+                onChange={(e) => handleChange('pawapay_api_token', e.target.value)}
+                placeholder="Votre API token PawaPay"
+                style={inputStyle}
+                data-testid="pawapay-token-input"
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Mode</label>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                {['sandbox', 'live'].map(mode => (
+                  <button key={mode} onClick={() => handleChange('pawapay_mode', mode)}
+                    style={{
+                      padding: '8px 20px',
+                      borderRadius: '8px',
+                      border: `1px solid ${(paymentConfig?.pawapay_mode || 'sandbox') === mode ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.15)'}`,
+                      background: (paymentConfig?.pawapay_mode || 'sandbox') === mode ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)' : 'rgba(255,255,255,0.03)',
+                      color: (paymentConfig?.pawapay_mode || 'sandbox') === mode ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.5)',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: '500',
+                      textTransform: 'capitalize'
+                    }}
+                  >
+                    {mode === 'sandbox' ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <SvgIcon name="flask" size={14} /> Sandbox (Test)
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="inline-block w-2 h-2 rounded-full bg-green-500" /> Live (Production)
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <button style={testBtnStyle} onClick={() => handleTest('pawapay')} disabled={testing.pawapay}>
+                {testing.pawapay ? 'Test...' : 'Tester la connexion'}
+              </button>
+              {testResults.pawapay && (
+                <span style={{ fontSize: '13px', color: testResults.pawapay.success ? '#22c55e' : '#ef4444' }}>
+                  {testResults.pawapay.message}
+                </span>
+              )}
+            </div>
+            <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px', margin: 0 }}>
+              PawaPay doit aussi être activé globalement (drapeau PAWAPAY_ENABLED) pour apparaître
+              chez vos clients. Pensez à déclarer l'URL de callback dans votre tableau de bord PawaPay.
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* Info box */}
       <div style={{
         background: 'rgba(99, 91, 255, 0.08)',
@@ -429,7 +512,7 @@ const PaymentConfigTab = ({ paymentConfig, setPaymentConfig, coachEmail }) => {
         <SvgIcon name="lightbulb" size={16} />
         <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', margin: 0, lineHeight: '1.5' }}>
           Vos clés API sont stockées de manière sécurisée. Les paiements de vos clients seront versés directement sur votre compte.
-          Pour obtenir vos clés : Stripe → dashboard.stripe.com | PayPal → developer.paypal.com | CinetPay → cinetpay.com
+          Pour obtenir vos clés : Stripe → dashboard.stripe.com | PayPal → developer.paypal.com | CinetPay → cinetpay.com | PawaPay → dashboard.pawapay.io
         </p>
       </div>
     </div>

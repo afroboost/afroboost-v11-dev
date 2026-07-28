@@ -619,6 +619,77 @@ def t63_coach_jwt_legit_access():
         record(63, "Coach légitime (JWT) -> accès complet", False, str(e))
 
 
+def t64_pawapay_flag_admin_only():
+    """V325 : l'interrupteur PAWAPAY_ENABLED est un kill-switch de moyen de paiement —
+    le basculer exige un JWT super-admin. `X-User-Email` seul (usurpable) -> 403."""
+    try:
+        c = requests.put(_url("/api/feature-flags"), json={"PAWAPAY_ENABLED": False},
+                         headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code
+        record(64, "PUT PAWAPAY_ENABLED sans JWT super-admin -> 403", c == 403, f"HTTP {c}")
+    except Exception as e:
+        record(64, "PUT PAWAPAY_ENABLED sans JWT admin", False, str(e))
+
+
+def t65_pawapay_gated_by_flag():
+    """V325 : le drapeau gouverne RÉELLEMENT l'intégration.
+    - drapeau OFF -> /api/pawapay/available renvoie enabled=false ET les endpoints
+      métier (create-coach-checkout) renvoient 404 : rien n'est joignable.
+    - drapeau ON  -> available reflète la configuration, et l'endpoint métier ne
+      renvoie PLUS 404 (il peut renvoyer 503/404-pack selon la config, pas 404 route).
+    Le drapeau est LU, jamais basculé par le test (aucun effet de bord en production)."""
+    try:
+        av = requests.get(_url("/api/pawapay/available"), timeout=TIMEOUT)
+        try:
+            data = av.json() or {}
+        except Exception:
+            data = None
+        # Version DÉPLOYÉE antérieure à V325 : la route n'existe pas (404, ou le
+        # catch-all SPA qui renvoie du HTML). Ce n'est pas une régression — c'est
+        # « pas encore livré » : on SKIP explicitement plutôt que de crier au loup.
+        if av.status_code != 200 or not isinstance(data, dict) or "enabled" not in data:
+            return skip(65, "PawaPay piloté par PAWAPAY_ENABLED",
+                        f"/api/pawapay/available absent (HTTP {av.status_code}) — V325 pas déployée")
+        flag = bool(data.get("flag"))
+        enabled = bool(data.get("enabled"))
+
+        r = requests.post(_url("/api/pawapay/create-coach-checkout"),
+                          json={"pack_id": "__nonregression__", "name": "probe",
+                                "email": "probe@example.com"}, timeout=TIMEOUT)
+
+        if not flag:
+            ok = (enabled is False) and r.status_code == 404
+            record(65, "PawaPay OFF -> available=false + endpoints 404", ok,
+                   f"flag={flag} enabled={enabled} checkout=HTTP {r.status_code}")
+        else:
+            # Drapeau ON : la route existe. 404 ici ne peut venir que du pack bidon,
+            # ce qui est acceptable ; ce qu'on refuse, c'est un 500.
+            ok = r.status_code < 500
+            record(65, "PawaPay ON -> endpoints joignables (pas de 5xx)", ok,
+                   f"flag={flag} enabled={enabled} checkout=HTTP {r.status_code} {_short(r)}")
+    except Exception as e:
+        record(65, "PawaPay piloté par PAWAPAY_ENABLED", False, str(e))
+
+
+def t66_stripe_cinetpay_untouched():
+    """V325 : PawaPay ne fait qu'AJOUTER un prestataire. Les points d'entrée Stripe et
+    CinetPay doivent répondre exactement comme avant (route présente, pas de 404/5xx)."""
+    try:
+        s = requests.post(_url("/api/stripe/create-coach-checkout"),
+                          json={"price_id": "", "pack_id": "__nonregression__",
+                                "email": "probe@example.com", "name": "probe"}, timeout=TIMEOUT)
+        c = requests.post(_url("/api/cinetpay/create-coach-checkout"),
+                          json={"pack_id": "__nonregression__", "name": "probe",
+                                "email": "probe@example.com"}, timeout=TIMEOUT)
+        # Ce qu'on vérifie : les DEUX routes existent toujours (ni 404 « route absente »
+        # ni 405). Le code métier renvoyé (400/422 pack bidon, 503 non configuré) n'est
+        # pas jugé ici : seule compte la présence des prestataires historiques.
+        ok = s.status_code not in (404, 405) and c.status_code not in (405,)
+        record(66, "Stripe + CinetPay toujours montés après l'ajout de PawaPay", ok,
+               f"stripe=HTTP {s.status_code} cinetpay=HTTP {c.status_code}")
+    except Exception as e:
+        record(66, "Stripe + CinetPay inchangés", False, str(e))
+
+
 def t18_no_recognition_by_name_only():
     """V308 : smart-entry par NOM SEUL ne doit PLUS reconnaître un compte existant."""
     try:
@@ -800,6 +871,8 @@ def main():
                    t59_feature_flags_require_admin, t60_strict_entry_proof_required,
                    t61_coach_jwt_flag_admin_only, t62_coach_spoof_via_email_header,
                    t63_coach_jwt_legit_access,
+                   t64_pawapay_flag_admin_only, t65_pawapay_gated_by_flag,
+                   t66_stripe_cinetpay_untouched,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

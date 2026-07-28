@@ -43,6 +43,8 @@ from api.routes.promo_routes import promo_router, init_promo_db
 # v13.4: Import routes stripe
 from api.routes.stripe_routes import router as stripe_router, init_db as init_stripe_db
 from api.routes.cinetpay_routes import router as cinetpay_router, init_db as init_cinetpay_db
+# V325: Import routes PawaPay (mobile money, derrière le drapeau PAWAPAY_ENABLED)
+from api.routes.pawapay_routes import router as pawapay_router, init_db as init_pawapay_db
 # v15.0: Import routes paiement multi-vendeurs
 from api.routes.payment_config_routes import router as payment_config_router, init_db as init_payment_config_db
 from api.routes.checkout_routes import router as checkout_router, init_db as init_checkout_db
@@ -1030,6 +1032,11 @@ class FeatureFlags(BaseModel):
     # True = SEUL un JWT SIGNÉ (obtenu par /auth/login, email + MOT DE PASSE) accorde
     # l'identité coach. Basculable SANS redéploiement (activation ET kill-switch).
     REQUIRE_COACH_JWT: bool = False
+    # V325 : interrupteur du moyen de paiement PawaPay (mobile money panafricain).
+    # Défaut FALSE = l'intégration n'existe pas pour l'extérieur (endpoints /api/pawapay
+    # en 404, option masquée côté frontend). Stripe et CinetPay ne sont PAS concernés :
+    # ce drapeau n'ajoute qu'un prestataire supplémentaire. Basculable SANS redéploiement.
+    PAWAPAY_ENABLED: bool = False
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1039,6 +1046,7 @@ class FeatureFlagsUpdate(BaseModel):
     STREAMING_SERVICE_ENABLED: Optional[bool] = None
     SUBSCRIBER_STRICT_ENTRY: Optional[bool] = None  # V315
     REQUIRE_COACH_JWT: Optional[bool] = None  # V319
+    PAWAPAY_ENABLED: Optional[bool] = None  # V325
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -11336,6 +11344,7 @@ async def get_feature_flags():
             "STREAMING_SERVICE_ENABLED": False,
             "SUBSCRIBER_STRICT_ENTRY": False,  # V315 : défaut OFF (zéro friction)
             "REQUIRE_COACH_JWT": False,        # V319 : défaut OFF (comportement actuel)
+            "PAWAPAY_ENABLED": False,          # V325 : défaut OFF (PawaPay invisible)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -11348,7 +11357,7 @@ async def get_feature_flags():
     # lecture avec la valeur par défaut du modèle, SANS jamais écraser ce qui est en base.
     for _k, _default in (("AUDIO_SERVICE_ENABLED", False), ("VIDEO_SERVICE_ENABLED", False),
                          ("STREAMING_SERVICE_ENABLED", False), ("SUBSCRIBER_STRICT_ENTRY", False),
-                         ("REQUIRE_COACH_JWT", False)):
+                         ("REQUIRE_COACH_JWT", False), ("PAWAPAY_ENABLED", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags
@@ -19839,6 +19848,12 @@ init_stripe_db(db)
 # v14.0: Include CinetPay routes (Mobile Money)
 fastapi_app.include_router(cinetpay_router)
 init_cinetpay_db(db)
+
+# V325: Include PawaPay routes (Mobile Money panafricain).
+# Le routeur est TOUJOURS monté, mais chacun de ses endpoints relit le drapeau
+# PAWAPAY_ENABLED (OFF par défaut) et renvoie 404 tant qu'il n'est pas activé.
+fastapi_app.include_router(pawapay_router)
+init_pawapay_db(db)
 
 # v15.0: Include multi-vendor payment routes
 fastapi_app.include_router(payment_config_router)
