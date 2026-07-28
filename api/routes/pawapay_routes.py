@@ -19,6 +19,7 @@ SÉCURITÉ : aucun jeton n'est écrit dans ce fichier. Le jeton est lu d'abord d
 """
 import os
 import re
+import time
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -59,7 +60,9 @@ class PawaPayCheckoutRequest(BaseModel):
     customer_name: str = ""
     customer_email: str = ""
     customer_phone: str = ""
-    country: str = "CIV"  # ISO 3166-1 alpha-3 (PawaPay), défaut Côte d'Ivoire
+    # V325c : vide par défaut — le pays est décidé par la configuration RÉELLE du
+    # compte PawaPay (GET /v2/active-conf), plus par une valeur codée en dur.
+    country: str = ""
     metadata: Optional[dict] = None
     success_url: Optional[str] = None
     cancel_url: Optional[str] = None
@@ -72,7 +75,7 @@ class PawaPayCoachCheckoutRequest(BaseModel):
     customer_email: str = Field(..., alias="email")
     customer_phone: str = Field(default="", alias="phone")
     currency: str = "XOF"
-    country: str = "CIV"
+    country: str = ""   # V325c : voir resoudre_pays()
     success_url: Optional[str] = None
     cancel_url: Optional[str] = None
 
@@ -86,7 +89,7 @@ class PawaPayCreditCheckoutRequest(BaseModel):
     pack_id: str
     coach_email: str
     currency: str = "XOF"
-    country: str = "CIV"
+    country: str = ""   # V325c : voir resoudre_pays()
     success_url: Optional[str] = None
     cancel_url: Optional[str] = None
 
@@ -105,13 +108,151 @@ _ALPHA2_TO_ALPHA3 = {
 
 
 def normalize_country(country: str) -> str:
-    """Renvoie un code pays alpha-3 majuscule (défaut CIV)."""
+    """Renvoie un code pays alpha-3 majuscule, ou '' si l'entrée n'est pas exploitable."""
     c = (country or "").strip().upper()
     if len(c) == 2:
-        return _ALPHA2_TO_ALPHA3.get(c, "CIV")
+        return _ALPHA2_TO_ALPHA3.get(c, "")
     if len(c) == 3:
         return c
-    return "CIV"
+    return ""
+
+
+# === V325c : CONFIGURATION ACTIVE DU COMPTE PAWAPAY ===
+#
+# Leçon du premier test sandbox : le pays était CODÉ EN DUR (« CIV »). PawaPay a
+# répondu 400 / UNSUPPORTED_PARAMETER parce que ce pays n'est pas activé sur le
+# compte. On ne devine plus : on DEMANDE à PawaPay quels pays sont ouverts
+# (GET /v2/active-conf) et on s'y conforme.
+#
+# Petit cache mémoire : cette configuration ne change qu'au rythme des démarches
+# commerciales, inutile d'interroger PawaPay à chaque paiement.
+_ACTIVE_CONF_CACHE = {"cle": None, "pays": None, "ts": 0.0}
+_ACTIVE_CONF_TTL_S = 600  # 10 minutes
+
+
+async def get_supported_countries(token: str, base_url: str) -> dict:
+    """
+    Renvoie {code_pays_alpha3: devise} pour les pays réellement activés en DÉPÔT
+    sur le compte PawaPay. Renvoie {} si la configuration est illisible.
+    """
+    cle = f"{base_url}|{token[-6:] if token else ''}"
+    maintenant = time.monotonic()
+    if (_ACTIVE_CONF_CACHE["cle"] == cle
+            and _ACTIVE_CONF_CACHE["pays"] is not None
+            and (maintenant - _ACTIVE_CONF_CACHE["ts"]) < _ACTIVE_CONF_TTL_S):
+        return _ACTIVE_CONF_CACHE["pays"]
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{base_url}/v2/active-conf",
+                headers={"Authorization": f"Bearer {token}"}
+            )
+    except Exception as e:
+        logger.error(f"[PAWAPAY] active-conf injoignable: {e}")
+        return {}
+
+    if response.status_code != 200:
+        logger.error(f"[PAWAPAY] active-conf HTTP {response.status_code} - {response.text[:200]}")
+        return {}
+
+    try:
+        data = response.json() or {}
+    except Exception:
+        return {}
+
+    pays = {}
+    for entree in (data.get("countries") or []):
+        code = (entree.get("country") or "").strip().upper()
+        if not code:
+            continue
+        # La devise se lit sous le premier fournisseur qui en déclare une :
+        # tous les fournisseurs d'un même pays partagent la devise locale.
+        devise = ""
+        for fournisseur in (entree.get("providers") or []):
+            for dev in (fournisseur.get("currencies") or []):
+                if dev.get("currency"):
+                    devise = dev["currency"].strip().upper()
+                    break
+            if devise:
+                break
+        pays[code] = devise
+
+    _ACTIVE_CONF_CACHE.update({"cle": cle, "pays": pays, "ts": maintenant})
+    logger.info(f"[PAWAPAY] Pays activés sur le compte: {sorted(pays.keys())}")
+    return pays
+
+
+def taux_par_devise() -> dict:
+    """
+    Taux de conversion depuis le CHF, configurables sans redéploiement via
+    PAWAPAY_RATES (ex. « XOF=400,KES=140,GHS=15 »). XOF=400 par défaut, qui est
+    le taux déjà utilisé par le site.
+    """
+    taux = {"XOF": 400.0}
+    brut = (os.environ.get("PAWAPAY_RATES", "") or "").strip()
+    for morceau in brut.split(","):
+        if "=" in morceau:
+            dev, _, val = morceau.partition("=")
+            try:
+                taux[dev.strip().upper()] = float(val)
+            except ValueError:
+                continue
+    return taux
+
+
+async def resoudre_pays(token: str, base_url: str, demande: str) -> tuple:
+    """
+    Choisit le pays à envoyer à PawaPay et renvoie (pays, devise).
+
+    Ordre : PAWAPAY_DEFAULT_COUNTRY -> pays demandé -> unique pays activé.
+    Si rien ne colle, on lève une 400 EXPLICITE qui nomme les pays disponibles,
+    au lieu de laisser PawaPay répondre un « UNSUPPORTED_PARAMETER » opaque.
+    """
+    pays_ok = await get_supported_countries(token, base_url)
+    if not pays_ok:
+        raise HTTPException(
+            status_code=503,
+            detail="Mobile Money indisponible : configuration du compte PawaPay illisible."
+        )
+
+    candidats = [
+        normalize_country(os.environ.get("PAWAPAY_DEFAULT_COUNTRY", "")),
+        normalize_country(demande),
+    ]
+    for c in candidats:
+        if c and c in pays_ok:
+            return c, pays_ok[c]
+
+    if len(pays_ok) == 1:
+        seul = next(iter(pays_ok))
+        return seul, pays_ok[seul]
+
+    raise HTTPException(
+        status_code=400,
+        detail=("Mobile Money indisponible pour ce pays. Pays ouverts sur le compte : "
+                + ", ".join(sorted(pays_ok.keys())))
+    )
+
+
+def montant_dans_devise(prix_chf, prix_xof, devise: str) -> int:
+    """
+    Convertit un prix en unité MAJEURE de la devise du pays choisi.
+
+    Refuse plutôt que de deviner : facturer un montant faux serait pire qu'un
+    échec propre. Le prix `price_xof` du pack n'est utilisé que si la devise
+    est bien le XOF.
+    """
+    if devise == "XOF" and prix_xof:
+        return int(prix_xof)
+    taux = taux_par_devise()
+    if devise not in taux:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Mobile Money indisponible : aucun taux de conversion configuré pour {devise}. "
+                    f"Renseignez PAWAPAY_RATES (ex. « {devise}=140 »).")
+        )
+    return int(round(float(prix_chf or 0) * taux[devise]))
 
 
 def normalize_msisdn(phone: str) -> str:
@@ -330,11 +471,20 @@ async def pawapay_available():
     afficher l'option « Mobile Money (PawaPay) ». Ne divulgue aucune clé.
     """
     enabled = await is_pawapay_configured()
-    return {
+    reponse = {
         "enabled": enabled,
         "flag": await is_pawapay_flag_on(),
         "callback_url": callback_url(),  # à recopier dans le tableau de bord PawaPay
     }
+    # V325c : les pays réellement ouverts sur le compte. Ce n'est pas un secret
+    # (c'est la liste des marchés du compte) et c'est ce qui manquait pour
+    # diagnostiquer le 400 / UNSUPPORTED_PARAMETER du premier test.
+    if enabled:
+        token, base_url = await get_pawapay_config()
+        pays = await get_supported_countries(token, base_url)
+        reponse["countries"] = sorted(pays.keys())
+        reponse["currencies"] = pays
+    return reponse
 
 
 @router.post("/create-checkout")
@@ -345,14 +495,15 @@ async def create_pawapay_checkout(request: PawaPayCheckoutRequest):
     token, base_url = await require_pawapay()
 
     deposit_id = str(uuid.uuid4())
-    country = normalize_country(request.country)
+    # V325c : pays et devise décidés par la configuration RÉELLE du compte
+    country, devise = await resoudre_pays(token, base_url, request.country)
     return_url = request.success_url or f"{frontend_url()}/?payment=success&provider=pawapay&tid={deposit_id}"
 
     # Sauvegarder la transaction en attente AVANT l'appel réseau (recommandation PawaPay)
     await db.pawapay_transactions.insert_one({
         "depositId": deposit_id,
         "amount": request.amount,
-        "currency": request.currency,
+        "currency": devise or request.currency,
         "country": country,
         "description": request.description,
         "customer_name": request.customer_name,
@@ -404,20 +555,20 @@ async def create_pawapay_coach_checkout(request: PawaPayCoachCheckoutRequest):
     if not pack:
         raise HTTPException(status_code=404, detail="Pack non trouvé")
 
-    # Prix en unité majeure (conversion depuis CHF si nécessaire) — même règle que CinetPay
-    price_major = pack.get("price_xof") or int(pack.get("price", 0) * 400)  # ~400 XOF par CHF
+    # V325c : pays/devise réels du compte, puis conversion dans CETTE devise
+    country, devise = await resoudre_pays(token, base_url, request.country)
+    price_major = montant_dans_devise(pack.get("price", 0), pack.get("price_xof"), devise)
     if price_major <= 0:
         raise HTTPException(status_code=400, detail="Prix invalide pour ce pack")
 
     deposit_id = str(uuid.uuid4())
-    country = normalize_country(request.country)
     return_url = request.success_url or f"{frontend_url()}/?payment=success&provider=pawapay&tid={deposit_id}#partner-dashboard"
 
     await db.pawapay_transactions.insert_one({
         "depositId": deposit_id,
         "type": "coach_registration",
         "amount": price_major,
-        "currency": request.currency,
+        "currency": devise,
         "country": country,
         "pack_id": request.pack_id,
         "pack_name": pack.get("name", ""),
@@ -468,19 +619,20 @@ async def create_pawapay_credit_checkout(request: PawaPayCreditCheckoutRequest):
     if not pack:
         raise HTTPException(status_code=404, detail="Pack non trouvé")
 
-    price_major = pack.get("price_xof") or int(pack.get("price", 0) * 400)
+    # V325c : pays/devise réels du compte, puis conversion dans CETTE devise
+    country, devise = await resoudre_pays(token, base_url, request.country)
+    price_major = montant_dans_devise(pack.get("price", 0), pack.get("price_xof"), devise)
     if price_major <= 0:
         raise HTTPException(status_code=400, detail="Prix invalide")
 
     deposit_id = str(uuid.uuid4())
-    country = normalize_country(request.country)
     return_url = request.success_url or f"{frontend_url()}/dashboard?tab=boutique&payment=success&provider=pawapay"
 
     await db.pawapay_transactions.insert_one({
         "depositId": deposit_id,
         "type": "credit_purchase",
         "amount": price_major,
-        "currency": request.currency,
+        "currency": devise,
         "country": country,
         "pack_id": request.pack_id,
         "pack_name": pack.get("name", ""),
