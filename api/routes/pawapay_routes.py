@@ -241,8 +241,22 @@ async def create_pawapay_deposit(
         )
 
     if response.status_code not in (200, 201):
+        # V325b : un « service indisponible » nu était INDIAGNOSTICABLE — impossible de
+        # distinguer un jeton refusé (401) d'un pays non activé (400) sans accès SSH aux
+        # logs du conteneur. On remonte donc le CODE HTTP et le `failureCode` de PawaPay.
+        # Ni le jeton ni aucune donnée client ne transitent : `failureCode` est une
+        # étiquette technique (AUTHENTICATION_ERROR, COUNTRY_NOT_SUPPORTED…).
+        failure_code = ""
+        try:
+            failure_code = ((response.json() or {}).get("failureReason") or {}).get("failureCode", "") or ""
+        except Exception:
+            pass
         logger.error(f"[PAWAPAY] API error: {response.status_code} - {response.text[:300]}")
-        raise HTTPException(status_code=502, detail="Erreur PawaPay: service indisponible")
+        suffixe = f" / {failure_code}" if failure_code else ""
+        raise HTTPException(
+            status_code=502,
+            detail=f"Erreur PawaPay: service indisponible (HTTP {response.status_code}{suffixe})"
+        )
 
     try:
         data = response.json()
