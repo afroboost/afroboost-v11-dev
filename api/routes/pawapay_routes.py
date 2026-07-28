@@ -119,10 +119,11 @@ def normalize_country(country: str) -> str:
 
 # === V325c : CONFIGURATION ACTIVE DU COMPTE PAWAPAY ===
 #
-# Leçon du premier test sandbox : le pays était CODÉ EN DUR (« CIV »). PawaPay a
-# répondu 400 / UNSUPPORTED_PARAMETER parce que ce pays n'est pas activé sur le
-# compte. On ne devine plus : on DEMANDE à PawaPay quels pays sont ouverts
-# (GET /v2/active-conf) et on s'y conforme.
+# Le pays était CODÉ EN DUR (« CIV »). Ce n'était PAS la cause du 400 du premier
+# test sandbox (CIV est bien ouvert sur le compte — c'était le format du montant,
+# cf. V325e), mais deviner le pays d'un compte reste faux par principe, et la
+# devise à mettre dans `amountDetails` ne peut venir que de là. On DEMANDE donc à
+# PawaPay quels pays sont ouverts (GET /v2/active-conf) et avec quelle devise.
 #
 # Petit cache mémoire : cette configuration ne change qu'au rythme des démarches
 # commerciales, inutile d'interroger PawaPay à chaque paiement.
@@ -347,7 +348,8 @@ async def create_pawapay_deposit(
     country: str,
     reason: str,
     return_url: str,
-    msisdn: str = ""
+    msisdn: str = "",
+    currency: str = ""
 ) -> str:
     """
     Ouvre une session « Payment Page » PawaPay et renvoie l'URL de redirection.
@@ -357,19 +359,29 @@ async def create_pawapay_deposit(
     réseau lâche après l'envoi, c'est la seule référence permettant de retrouver le
     dépôt côté PawaPay.
     """
+    # V325e : le schéma RÉEL de l'API v2 (« CreateSession ») n'est PAS celui des
+    # exemples de la page de présentation de la doc, restés en v1. L'API v2 attend :
+    #   - amountDetails: { amount, currency }   (et NON un « amount » en racine :
+    #     c'est ce qui provoquait « UNSUPPORTED_PARAMETER: unsupported parameter
+    #     'amount' » lors du premier test sandbox)
+    #   - phoneNumber                            (et NON « msisdn »)
+    #   - reason : 50 caractères maximum
+    #   - language : EN ou FR
     payload = {
         "depositId": deposit_id,
         "returnUrl": return_url,
+        "language": "FR",
     }
     if reason:
-        # Ce texte est affiché au client sur la page PawaPay — on le garde court.
-        payload["reason"] = reason[:60]
-    if amount and country:
-        # Montant en unité MAJEURE, transmis en chaîne (format attendu par PawaPay).
-        payload["amount"] = str(int(amount))
+        # Ce texte est affiché au client sur la page PawaPay — 50 caractères max.
+        payload["reason"] = reason[:50]
+    if country:
         payload["country"] = country
+    if amount and currency:
+        # Montant en unité MAJEURE, transmis en chaîne (format attendu par PawaPay).
+        payload["amountDetails"] = {"amount": str(int(amount)), "currency": currency}
     if msisdn:
-        payload["msisdn"] = msisdn
+        payload["phoneNumber"] = msisdn
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.post(
@@ -529,7 +541,8 @@ async def create_pawapay_checkout(request: PawaPayCheckoutRequest):
             country=country,
             reason=request.description,
             return_url=return_url,
-            msisdn=normalize_msisdn(request.customer_phone)
+            msisdn=normalize_msisdn(request.customer_phone),
+            currency=devise
         )
 
         logger.info(f"[PAWAPAY] Checkout créé: {deposit_id} pour {request.customer_email}")
@@ -595,7 +608,8 @@ async def create_pawapay_coach_checkout(request: PawaPayCoachCheckoutRequest):
             country=country,
             reason=f"Pack Partenaire - {pack.get('name', '')}",
             return_url=return_url,
-            msisdn=normalize_msisdn(request.customer_phone)
+            msisdn=normalize_msisdn(request.customer_phone),
+            currency=devise
         )
 
         logger.info(f"[PAWAPAY] Coach checkout: {deposit_id} pour {request.customer_email}")
@@ -656,7 +670,8 @@ async def create_pawapay_credit_checkout(request: PawaPayCreditCheckoutRequest):
             amount=price_major,
             country=country,
             reason=f"Pack {pack.get('name', 'Credits')}",
-            return_url=return_url
+            return_url=return_url,
+            currency=devise
         )
 
         return {
