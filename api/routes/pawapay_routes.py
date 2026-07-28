@@ -407,6 +407,34 @@ async def create_pawapay_deposit(
     # l'erreur, qui ressortait plus loin en « pas d'URL de paiement » — un symptôme,
     # pas la cause. La présence de `failureReason` fait foi, quel que soit le statut.
     raison = data.get("failureReason") or {}
+
+    # V325h : un numéro mal saisi ne doit pas faire échouer tout le paiement. PawaPay
+    # ne connaît pas tous les formats locaux ; si c'est SEULEMENT le téléphone qui
+    # coince, on relance sans lui — le client saisira son numéro sur la page PawaPay.
+    # Le MONTANT reste fixé (amountDetails est conservé) : aucun risque de payer autre
+    # chose que le prix. Une seule relance, pour ne pas boucler.
+    if (isinstance(raison, dict)
+            and raison.get("failureCode") == "INVALID_PHONE_NUMBER"
+            and "phoneNumber" in payload):
+        logger.warning(f"[PAWAPAY] Numéro refusé par PawaPay, relance sans téléphone: {deposit_id}")
+        payload.pop("phoneNumber", None)
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                f"{base_url}/v2/paymentpage",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                }
+            )
+        try:
+            data = response.json()
+        except Exception:
+            raise HTTPException(status_code=502, detail="Erreur PawaPay: réponse invalide")
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=502, detail="Erreur PawaPay: réponse invalide")
+        raison = data.get("failureReason") or {}
+
     if raison or response.status_code not in (200, 201):
         # V325b/V325d : on remonte le code HTTP, le `failureCode` ET le `failureMessage`
         # (« UNSUPPORTED_PARAMETER » seul ne dit pas QUEL paramètre est refusé). Ce sont
