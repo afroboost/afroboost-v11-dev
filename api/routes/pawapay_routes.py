@@ -388,15 +388,21 @@ async def create_pawapay_deposit(
         # Ni le jeton ni aucune donnée client ne transitent : `failureCode` est une
         # étiquette technique (AUTHENTICATION_ERROR, COUNTRY_NOT_SUPPORTED…).
         failure_code = ""
+        failure_msg = ""
         try:
-            failure_code = ((response.json() or {}).get("failureReason") or {}).get("failureCode", "") or ""
+            raison = (response.json() or {}).get("failureReason") or {}
+            failure_code = raison.get("failureCode", "") or ""
+            # V325d : le CODE seul ne suffisait pas — « UNSUPPORTED_PARAMETER » ne dit
+            # pas QUEL paramètre. Le message de PawaPay, lui, le nomme. C'est un texte
+            # technique du prestataire : ni jeton, ni donnée client.
+            failure_msg = raison.get("failureMessage", "") or ""
         except Exception:
             pass
         logger.error(f"[PAWAPAY] API error: {response.status_code} - {response.text[:300]}")
-        suffixe = f" / {failure_code}" if failure_code else ""
+        details = " / ".join(x for x in (f"HTTP {response.status_code}", failure_code, failure_msg[:200]) if x)
         raise HTTPException(
             status_code=502,
-            detail=f"Erreur PawaPay: service indisponible (HTTP {response.status_code}{suffixe})"
+            detail=f"Erreur PawaPay: service indisponible ({details})"
         )
 
     try:
