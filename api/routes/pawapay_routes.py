@@ -393,35 +393,33 @@ async def create_pawapay_deposit(
             }
         )
 
-    if response.status_code not in (200, 201):
-        # V325b : un « service indisponible » nu était INDIAGNOSTICABLE — impossible de
-        # distinguer un jeton refusé (401) d'un pays non activé (400) sans accès SSH aux
-        # logs du conteneur. On remonte donc le CODE HTTP et le `failureCode` de PawaPay.
-        # Ni le jeton ni aucune donnée client ne transitent : `failureCode` est une
-        # étiquette technique (AUTHENTICATION_ERROR, COUNTRY_NOT_SUPPORTED…).
-        failure_code = ""
-        failure_msg = ""
-        try:
-            raison = (response.json() or {}).get("failureReason") or {}
-            failure_code = raison.get("failureCode", "") or ""
-            # V325d : le CODE seul ne suffisait pas — « UNSUPPORTED_PARAMETER » ne dit
-            # pas QUEL paramètre. Le message de PawaPay, lui, le nomme. C'est un texte
-            # technique du prestataire : ni jeton, ni donnée client.
-            failure_msg = raison.get("failureMessage", "") or ""
-        except Exception:
-            pass
+    try:
+        data = response.json()
+    except Exception:
+        logger.error(f"[PAWAPAY] Réponse non-JSON ({response.status_code}): {response.text[:300]}")
+        raise HTTPException(status_code=502, detail="Erreur PawaPay: réponse invalide")
+
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="Erreur PawaPay: réponse invalide")
+
+    # V325g : PawaPay signale certains refus avec un code HTTP 200 et un corps ne
+    # contenant QUE `failureReason`. Se fier au seul statut HTTP laissait donc passer
+    # l'erreur, qui ressortait plus loin en « pas d'URL de paiement » — un symptôme,
+    # pas la cause. La présence de `failureReason` fait foi, quel que soit le statut.
+    raison = data.get("failureReason") or {}
+    if raison or response.status_code not in (200, 201):
+        # V325b/V325d : on remonte le code HTTP, le `failureCode` ET le `failureMessage`
+        # (« UNSUPPORTED_PARAMETER » seul ne dit pas QUEL paramètre est refusé). Ce sont
+        # des étiquettes techniques du prestataire : ni jeton, ni donnée client.
+        failure_code = raison.get("failureCode", "") if isinstance(raison, dict) else ""
+        failure_msg = raison.get("failureMessage", "") if isinstance(raison, dict) else ""
         logger.error(f"[PAWAPAY] API error: {response.status_code} - {response.text[:300]}")
-        details = " / ".join(x for x in (f"HTTP {response.status_code}", failure_code, failure_msg[:200]) if x)
+        details = " / ".join(x for x in (f"HTTP {response.status_code}",
+                                         failure_code, (failure_msg or "")[:200]) if x)
         raise HTTPException(
             status_code=502,
             detail=f"Erreur PawaPay: service indisponible ({details})"
         )
-
-    try:
-        data = response.json()
-    except Exception:
-        logger.error(f"[PAWAPAY] Réponse non-JSON: {response.text[:300]}")
-        raise HTTPException(status_code=502, detail="Erreur PawaPay: réponse invalide")
 
     # V325f : le nom du champ d'URL varie selon les versions de l'API/doc. On accepte
     # les variantes connues plutôt que d'échouer sur un simple écart de nommage, et
