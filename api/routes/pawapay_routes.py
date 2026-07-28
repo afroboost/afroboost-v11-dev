@@ -423,10 +423,24 @@ async def create_pawapay_deposit(
         logger.error(f"[PAWAPAY] Réponse non-JSON: {response.text[:300]}")
         raise HTTPException(status_code=502, detail="Erreur PawaPay: réponse invalide")
 
-    redirect_url = data.get("redirectUrl") or ""
+    # V325f : le nom du champ d'URL varie selon les versions de l'API/doc. On accepte
+    # les variantes connues plutôt que d'échouer sur un simple écart de nommage, et
+    # si rien ne correspond, l'erreur DIT quels champs PawaPay a renvoyés (les noms
+    # seulement, jamais les valeurs : une URL de paiement porte un jeton de session).
+    redirect_url = ""
+    for champ in ("redirectUrl", "paymentPageUrl", "paymentUrl", "url", "sessionUrl"):
+        valeur = data.get(champ)
+        if isinstance(valeur, str) and valeur.startswith("http"):
+            redirect_url = valeur
+            break
+
     if not redirect_url:
-        logger.error(f"[PAWAPAY] Pas de redirectUrl dans la réponse: {str(data)[:300]}")
-        raise HTTPException(status_code=400, detail="PawaPay n'a pas renvoyé d'URL de paiement")
+        logger.error(f"[PAWAPAY] Pas d'URL de paiement dans la réponse: {str(data)[:300]}")
+        champs = ", ".join(sorted(data.keys())) if isinstance(data, dict) else type(data).__name__
+        raise HTTPException(
+            status_code=502,
+            detail=f"PawaPay n'a pas renvoyé d'URL de paiement (HTTP {response.status_code}; champs reçus : {champs})"
+        )
 
     return redirect_url
 
