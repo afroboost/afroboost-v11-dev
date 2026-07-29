@@ -7811,9 +7811,14 @@ async def v334_suivi_abonnes_coach(request: Request):
         d = _date(r.get("datetime")) or _date(r.get("createdAt"))
         if not e or not d:
             continue
-        agg = par_email.setdefault(e, {"passees": 0, "a_venir": 0, "premiere": None, "derniere": None})
+        agg = par_email.setdefault(e, {"passees": 0, "a_venir": 0, "premiere": None,
+                                       "derniere": None, "recentes": 0})
         if d <= now:
             agg["passees"] += 1
+            # V337 : séances des 30 derniers jours — c'est la comparaison entre ce
+            # rythme récent et le rythme habituel qui révèle un décrochage.
+            if (now - d).days <= 30:
+                agg["recentes"] += 1
             if agg["premiere"] is None or d < agg["premiere"]:
                 agg["premiere"] = d
             if agg["derniere"] is None or d > agg["derniere"]:
@@ -7836,21 +7841,45 @@ async def v334_suivi_abonnes_coach(request: Request):
         passees = agg.get("passees", 0)
         regularite = round(passees / (anciennete / 7.0), 1) if anciennete >= 7 and passees else None
         mesure = derniere_mesure.get(code)
+
+        # V337 — DÉCROCHAGE : rythme des 30 derniers jours comparé au rythme habituel.
+        # Un décrochage n'a de sens que pour quelqu'un qui VENAIT : il faut un
+        # historique réel (au moins 3 séances et 3 semaines de recul). Sans cela, on
+        # confondrait « il ralentit » avec « il n'a jamais commencé ».
+        recentes = agg.get("recentes", 0)
+        regularite_recente = round(recentes / (30 / 7.0), 1)
+        decrochage = None
+        if regularite is not None and passees >= 3 and anciennete >= 21:
+            decrochage = round(max(0.0, regularite - regularite_recente), 2)
+
         resultat.append({
             "code": code,
             "name": a.get("name") or "",
             "objectifs": a.get("objectifs") or "",
             "seances_suivies": passees,
             "seances_a_venir": agg.get("a_venir", 0),
+            "seances_30j": recentes,
             "anciennete_jours": anciennete,
             "regularite_par_semaine": regularite,
+            "regularite_recente": regularite_recente,
+            # None = pas assez d'historique pour parler de décrochage.
+            "decrochage": decrochage,
             "derniere_seance": derniere.isoformat() if derniere else None,
             "derniere_mesure": ({"entry_date": mesure.get("entry_date"),
                                  "weight_kg": mesure.get("weight_kg")} if mesure else None),
         })
 
-    # Les abonnés les moins réguliers d'abord : c'est eux que le coach doit relancer.
-    resultat.sort(key=lambda x: (x["seances_a_venir"], x["regularite_par_semaine"] or 0))
+    # V337 — Ordre demandé : les ACTIFS QUI DÉCROCHENT d'abord.
+    # Trier sur la seule régularité remontait les abonnés dormants depuis toujours,
+    # sur lesquels le coach ne peut rien. Ceux qui venaient régulièrement et
+    # ralentissent sont, eux, rattrapables — ce sont eux qu'il faut voir en premier.
+    # Ordre : (1) décrochage mesurable, du plus fort au plus faible ;
+    #         (2) le reste (pas assez d'historique), du plus récemment vu au plus ancien.
+    resultat.sort(key=lambda x: (
+        0 if x["decrochage"] is not None else 1,
+        -(x["decrochage"] or 0),
+        -(x["seances_suivies"] or 0),
+    ))
 
     return {"ok": True, "role": "admin" if admin else "coach",
             "count": len(resultat), "subscribers": resultat}

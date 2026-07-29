@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v337'; // V334 etape 3: suivi des abonnes (coach)
+var CACHE_NAME = 'afroboost-v338'; // V337: tri par decrochage dans le suivi coach
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

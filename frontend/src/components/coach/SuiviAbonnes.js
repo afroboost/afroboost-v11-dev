@@ -8,7 +8,10 @@
  * Il ne demande jamais « les abonnés de X » : un coach ne peut pas se désigner
  * lui-même une autre liste.
  *
- * Les abonnés les moins réguliers arrivent en premier : ce sont eux à relancer.
+ * V337 — ordre : les ACTIFS QUI DÉCROCHENT d'abord, c'est-à-dire ceux qui venaient
+ * régulièrement et ont ralenti sur les 30 derniers jours. Trier sur la seule
+ * régularité remontait les abonnés dormants depuis toujours, sur lesquels le coach
+ * ne peut rien ; ceux qui ralentissent, eux, sont rattrapables.
  */
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
@@ -93,7 +96,7 @@ export default function SuiviAbonnes() {
   return (
     <div data-testid="suivi-abonnes">
       <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 11.5, margin: "0 0 12px" }}>
-        {liste.length} abonné{liste.length > 1 ? "s" : ""} — les moins réguliers en premier.
+        {liste.length} abonné{liste.length > 1 ? "s" : ""} — ceux qui décrochent en premier.
       </p>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -116,6 +119,15 @@ export default function SuiviAbonnes() {
                     </div>
                   ) : null}
                 </div>
+                {s.decrochage > 0.3 ? (
+                  <span style={{
+                    flexShrink: 0, padding: "2px 8px", borderRadius: 999, fontSize: 10,
+                    fontWeight: 700, background: "rgba(245,158,11,0.15)", color: "#f59e0b",
+                    border: "1px solid rgba(245,158,11,0.35)",
+                  }} title={`Passé de ${s.regularite_par_semaine}/sem à ${s.regularite_recente}/sem`}>
+                    décroche
+                  </span>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => { setOuvert(deplie ? null : s.code); setPoids(""); setNote(""); setRetour(null); }}
@@ -137,6 +149,9 @@ export default function SuiviAbonnes() {
                 <span><b style={{ color: "#fff" }}>{s.seances_a_venir}</b> à venir</span>
                 <span>régularité <b style={{ color: "#fff" }}>
                   {s.regularite_par_semaine === null ? "—" : `${s.regularite_par_semaine}/sem`}
+                </b></span>
+                <span>30 derniers jours <b style={{ color: s.decrochage > 0.3 ? "#f59e0b" : "#fff" }}>
+                  {s.seances_30j ?? 0} séance{(s.seances_30j ?? 0) > 1 ? "s" : ""}
                 </b></span>
                 <span>dernière séance <b style={{ color: "#fff" }}>{dateCourte(s.derniere_seance)}</b></span>
                 {s.derniere_mesure ? (
