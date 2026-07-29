@@ -239,6 +239,16 @@ export default function SubscriberCockpit({ accessCode }) {
                 </div>
               ) : null}
 
+              {/* V334 : cockpit encore vide -> on invite au premier pas plutot que
+                  d'afficher une page de zeros, qui decourage. */}
+              {(stats.seances_suivies || 0) === 0 && (data.entries || []).length === 0 ? (
+                <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 12.5, lineHeight: 1.5,
+                            margin: "0 0 12px" }}>
+                  Enregistrez votre première mesure pour commencer à suivre vos progrès.
+                  Vos séances viendront s'y ajouter automatiquement.
+                </p>
+              ) : null}
+
               {/* ===== Saisie d'une mesure ===== */}
               <button
                 type="button"

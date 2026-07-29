@@ -7731,6 +7731,131 @@ async def _v334_stats_abonne(code: str, email: str) -> dict:
     }
 
 
+@api_router.get("/progress/coach/subscribers")
+async def v334_suivi_abonnes_coach(request: Request):
+    """
+    V334 étape 3 — « Suivi des abonnés » du dashboard coach.
+
+    Renvoie, pour CHAQUE abonné du coach appelant : son objectif, ses chiffres de
+    pratique et sa dernière mesure. Un coach ne voit QUE ses abonnés ; le super
+    admin voit tout le monde.
+
+    PERFORMANCE — la règle du dépôt interdit les `find_one()` en boucle (elle a déjà
+    saturé le serveur sur de gros groupes). Avec 41 abonnés pour le coach principal,
+    une requête par abonné ferait ~120 allers-retours Mongo. On procède donc en
+    LOTS : une requête pour les abonnements, une pour TOUTES les réservations
+    (`$in`), une pour TOUTES les dernières mesures (`$in`), puis l'agrégation en
+    mémoire. Trois requêtes, quel que soit le nombre d'abonnés.
+    """
+    email = await _v263_authenticated_coach(request)
+    if not email:
+        raise HTTPException(status_code=403, detail="Authentification requise")
+    admin = is_super_admin(email)
+
+    # Comparaison INSENSIBLE À LA CASSE : `_v334_autoriser` compare déjà les e-mails
+    # en minuscules des deux côtés. Un filtre sensible à la casse ici renverrait une
+    # liste VIDE à tout coach dont l'e-mail est stocké avec une majuscule — l'écran
+    # aurait l'air fonctionnel tout en ne montrant personne.
+    filtre = ({"status": "active"} if admin
+              else {"status": "active",
+                    "coach_id": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
+    abonnements = await db.subscriptions.find(
+        filtre, {"_id": 0, "code": 1, "name": 1, "email": 1, "objectifs": 1, "coach_id": 1}
+    ).to_list(1000)
+
+    # Un même code porte PLUSIEURS documents (renouvellements, cf. V333b) : on
+    # regroupe par code, sinon le coach verrait le même abonné quatre fois.
+    par_code = {}
+    for a in abonnements:
+        code = (a.get("code") or "").strip().upper()
+        if not code:
+            continue
+        garde = par_code.get(code)
+        # On garde le document le plus complet (celui qui porte un objectif/nom).
+        if not garde or (not garde.get("objectifs") and a.get("objectifs")):
+            par_code[code] = a
+
+    codes = list(par_code.keys())
+    emails = [(a.get("email") or "").lower() for a in par_code.values() if a.get("email")]
+
+    # --- LOT 1 : toutes les réservations de tous ces abonnés, en une requête.
+    reservations = []
+    if emails:
+        reservations = await db.reservations.find(
+            {"userEmail": {"$in": emails}},
+            {"_id": 0, "userEmail": 1, "datetime": 1, "createdAt": 1}
+        ).to_list(5000)
+
+    # --- LOT 2 : toutes les entrées de progression, en une requête.
+    entrees = []
+    if codes:
+        entrees = await db.progress_entries.find(
+            {"subscriber_code": {"$in": codes}},
+            {"_id": 0, "subscriber_code": 1, "entry_date": 1, "weight_kg": 1}
+        ).sort("entry_date", -1).to_list(5000)
+
+    def _date(v):
+        if isinstance(v, datetime):
+            return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+        try:
+            d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+            return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+
+    now = datetime.now(timezone.utc)
+    # Agrégation en mémoire : par e-mail pour les séances, par code pour les mesures.
+    par_email = {}
+    for r in reservations:
+        e = (r.get("userEmail") or "").lower()
+        d = _date(r.get("datetime")) or _date(r.get("createdAt"))
+        if not e or not d:
+            continue
+        agg = par_email.setdefault(e, {"passees": 0, "a_venir": 0, "premiere": None, "derniere": None})
+        if d <= now:
+            agg["passees"] += 1
+            if agg["premiere"] is None or d < agg["premiere"]:
+                agg["premiere"] = d
+            if agg["derniere"] is None or d > agg["derniere"]:
+                agg["derniere"] = d
+        else:
+            agg["a_venir"] += 1
+
+    derniere_mesure = {}
+    for e in entrees:   # déjà triées du plus récent au plus ancien
+        c = e.get("subscriber_code")
+        if c and c not in derniere_mesure:
+            derniere_mesure[c] = e
+
+    resultat = []
+    for code, a in par_code.items():
+        e = (a.get("email") or "").lower()
+        agg = par_email.get(e, {})
+        premiere, derniere = agg.get("premiere"), agg.get("derniere")
+        anciennete = max(0, (now - premiere).days) if premiere else 0
+        passees = agg.get("passees", 0)
+        regularite = round(passees / (anciennete / 7.0), 1) if anciennete >= 7 and passees else None
+        mesure = derniere_mesure.get(code)
+        resultat.append({
+            "code": code,
+            "name": a.get("name") or "",
+            "objectifs": a.get("objectifs") or "",
+            "seances_suivies": passees,
+            "seances_a_venir": agg.get("a_venir", 0),
+            "anciennete_jours": anciennete,
+            "regularite_par_semaine": regularite,
+            "derniere_seance": derniere.isoformat() if derniere else None,
+            "derniere_mesure": ({"entry_date": mesure.get("entry_date"),
+                                 "weight_kg": mesure.get("weight_kg")} if mesure else None),
+        })
+
+    # Les abonnés les moins réguliers d'abord : c'est eux que le coach doit relancer.
+    resultat.sort(key=lambda x: (x["seances_a_venir"], x["regularite_par_semaine"] or 0))
+
+    return {"ok": True, "role": "admin" if admin else "coach",
+            "count": len(resultat), "subscribers": resultat}
+
+
 @api_router.get("/progress/{subscriber_code}/cockpit")
 async def v334_cockpit_abonne(subscriber_code: str, request: Request, code: str = ""):
     """

@@ -22,6 +22,7 @@ import { playNotificationSound, linkifyText } from "../services/notificationServ
 import { QRScannerModal } from "./QRScanner";
 // ArticleManager supprimé - v8.9 Nettoyage SAAS
 import ReservationTab from "./coach/ReservationTab"; // Import Reservation Tab
+import SuiviAbonnes from "./coach/SuiviAbonnes"; // V334 etape 3
 import CampaignManager from "./coach/CampaignManager"; // Import Campaign Manager
 import CRMSection from "./coach/CRMSection"; // v9.2.0 Import CRM Section
 import SmartLinksSection from "./coach/SmartLinksSection"; // v98: Liens Intelligents
@@ -6702,7 +6703,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   // V260d: « Preuves » quitte la barre de navigation principale pour
                   // rejoindre les autres cartes de Gestion. Le badge compte les demandes
                   // EN ATTENTE — c'est la seule information qui appelle une action.
-                  { id: 'preuves', icon: 'gift', label: 'Preuves', badge: v260PendingCount }
+                  { id: 'preuves', icon: 'gift', label: 'Preuves', badge: v260PendingCount },
+                  // V334 etape 3 : suivi de progression des abonnes du coach.
+                  { id: 'suivi', icon: 'barChart', label: 'Suivi abonnés', badge: 0 }
                 ];
               })().map(sub => (
                 <button
@@ -7510,6 +7513,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             )}
 
             {/* v37.2: Sous-onglet: 🖼️ Ma Vitrine */}
+            {/* V334 etape 3 : « Suivi des abonnes ». L'isolation par coach est
+                faite par le SERVEUR — cet ecran affiche ce qu'il recoit. */}
+            {offersSubTab === 'suivi' && (
+              <div style={{ marginTop: 12 }}>
+                <SuiviAbonnes />
+              </div>
+            )}
+
             {offersSubTab === 'vitrine' && (
               <>
                 <ConceptEditor
