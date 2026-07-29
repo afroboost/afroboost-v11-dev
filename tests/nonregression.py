@@ -619,6 +619,71 @@ def t63_coach_jwt_legit_access():
         record(63, "Coach légitime (JWT) -> accès complet", False, str(e))
 
 
+def t67_publication_programmee():
+    """V327 : une publication PROGRAMMÉE est créée invisible.
+    - POST avec `scheduled_at` futur -> status "scheduled"
+    - elle N'APPARAÎT PAS sur le mur public
+    - elle APPARAÎT dans « Mes publications » avec scheduled:true
+    - elle est supprimable avant l'heure (annulation)
+    SKIP si la version déployée est antérieure à V327 (elle répond "ok")."""
+    pub_id = None
+    try:
+        futur = "2030-01-01T12:00:00+00:00"   # très au-delà : ne sortira jamais pendant le test
+        r = requests.post(_url("/api/publications"),
+                          headers={"X-User-Email": ADMIN},
+                          json={"media_url": TEST_MEDIA, "media_type": "image",
+                                "caption": "TEST non-régression (programmée)",
+                                "scheduled_at": futur}, timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        if r.status_code != 200 or d.get("status") != "scheduled":
+            return skip(67, "Publication programmée invisible avant l'heure",
+                        f"HTTP {r.status_code} status={d.get('status')} — V327 pas déployée")
+        pub_id = d.get("id")
+        _created_pub_ids.append((pub_id, None))   # filet de nettoyage
+
+        mur = requests.get(_url("/api/publications"), timeout=TIMEOUT).json()
+        sur_le_mur = any(p.get("id") == pub_id for p in mur) if isinstance(mur, list) else True
+
+        mine = requests.get(_url("/api/publications/mine"),
+                            headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).json()
+        la_mienne = [p for p in mine if p.get("id") == pub_id] if isinstance(mine, list) else []
+        marquee = bool(la_mienne) and la_mienne[0].get("scheduled") is True
+
+        ok = (not sur_le_mur) and marquee
+        record(67, "Publication programmée : masquée du mur, visible chez l'auteur", ok,
+               f"sur_le_mur={sur_le_mur} marquée_programmée={marquee}")
+    except Exception as e:
+        record(67, "Publication programmée invisible avant l'heure", False, str(e))
+
+
+def t68_suppression_programmee():
+    """V327 : annuler une publication programmée avant l'heure -> elle ne sortira jamais.
+    Couvre aussi le bug corrigé en V327 : la suppression par l'AUTEUR renvoyait 500
+    (variable `user_email` non initialisée) alors que la suppression avait bien eu lieu."""
+    try:
+        futur = "2030-01-01T12:00:00+00:00"
+        r = requests.post(_url("/api/publications"),
+                          headers={"X-User-Email": ADMIN},
+                          json={"media_url": TEST_MEDIA, "media_type": "image",
+                                "caption": "TEST non-régression (annulation)",
+                                "scheduled_at": futur}, timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        if r.status_code != 200 or d.get("status") != "scheduled":
+            return skip(68, "Annulation d'une publication programmée",
+                        f"HTTP {r.status_code} — V327 pas déployée")
+        pid = d.get("id")
+        dele = requests.delete(_url(f"/api/publications/{pid}"),
+                               headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
+        mine = requests.get(_url("/api/publications/mine"),
+                            headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).json()
+        encore = any(p.get("id") == pid for p in mine) if isinstance(mine, list) else True
+        ok = dele.status_code == 200 and not encore
+        record(68, "Annulation d'une publication programmée (DELETE -> 200, disparue)", ok,
+               f"DELETE HTTP {dele.status_code} encore_presente={encore}")
+    except Exception as e:
+        record(68, "Annulation d'une publication programmée", False, str(e))
+
+
 def t64_pawapay_flag_admin_only():
     """V325 : l'interrupteur PAWAPAY_ENABLED est un kill-switch de moyen de paiement —
     le basculer exige un JWT super-admin. `X-User-Email` seul (usurpable) -> 403."""
@@ -873,6 +938,7 @@ def main():
                    t63_coach_jwt_legit_access,
                    t64_pawapay_flag_admin_only, t65_pawapay_gated_by_flag,
                    t66_stripe_cinetpay_untouched,
+                   t67_publication_programmee, t68_suppression_programmee,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

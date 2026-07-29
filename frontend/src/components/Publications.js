@@ -524,7 +524,10 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
                           <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                         </svg>
                       </button>
-                      {/* V286 : renouveler (+48 h) — flèche circulaire verte */}
+                      {/* V286 : renouveler (+48 h) — flèche circulaire verte.
+                          V327 : sans objet sur une publication programmée (elle n'est
+                          pas encore en ligne, son compte à rebours n'a pas démarré). */}
+                      {!p.scheduled && (
                       <button type="button" onClick={() => doRenew(p.id)} disabled={busy} title="Renouveler 48h" aria-label="Renouveler"
                         style={{ background: 'none', border: 'none', padding: 4, cursor: busy ? 'wait' : 'pointer', color: '#22c55e' }}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -532,6 +535,7 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
                           <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                         </svg>
                       </button>
+                      )}
                       <button type="button" onClick={() => { setConfirmDel(p.id); setEditing(null); }} title="Supprimer" aria-label="Supprimer"
                         style={{ background: 'none', border: 'none', padding: 4, cursor: 'pointer', color: '#f87171' }}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -546,7 +550,28 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
                       {p.caption}
                     </p>
                   ) : null}
-                  <p style={{ margin: '4px 0 0' }}><V268Remaining remaining={p.remaining_hours} /></p>
+                  {/* V327 : une publication programmée n'est pas en ligne — on affiche
+                      l'heure de sortie prévue au lieu d'un temps restant trompeur. */}
+                  <p style={{ margin: '4px 0 0' }}>
+                    {p.scheduled ? (
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                        color: 'var(--primary-color, #D91CD2)', fontSize: '0.68rem', fontWeight: 700
+                      }}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                          <line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" />
+                          <line x1="3" y1="10" x2="21" y2="10" />
+                        </svg>
+                        {p.scheduled_at
+                          ? 'Programmée pour le ' + new Date(p.scheduled_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })
+                            + ' à ' + new Date(p.scheduled_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+                          : 'Programmée'}
+                      </span>
+                    ) : (
+                      <V268Remaining remaining={p.remaining_hours} />
+                    )}
+                  </p>
                   {confirmDel === p.id && (
                     <div style={{ marginTop: 6, background: 'rgba(229,62,62,0.1)', borderRadius: 8, padding: 8 }}>
                       <p style={{ color: '#fca5a5', fontSize: '0.75rem', margin: '0 0 6px' }}>Supprimer cette publication ?</p>
@@ -732,6 +757,12 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
   const [uploadPct, setUploadPct] = useState(0);
   const [uploadName, setUploadName] = useState('');
   const [success, setSuccess] = useState(false);
+  // V327 : programmation. `showSchedule` révèle le sélecteur ; `scheduleAt` est la
+  // valeur brute du <input type="datetime-local"> (heure LOCALE de l'utilisateur).
+  // Vide => on publie maintenant, exactement comme avant V327.
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [scheduleAt, setScheduleAt] = useState('');
+  const [scheduledMsg, setScheduledMsg] = useState('');
 
   const revokeAll = () => {
     [preview, cropSrc, videoUrl, thumbnailPreview].forEach(u => u && URL.revokeObjectURL(u));
@@ -905,7 +936,31 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
       if (caption.trim()) payload.caption = caption.trim().slice(0, 500);
       if (thumbnailUrl) payload.thumbnail_url = thumbnailUrl;
 
-      await axios.post(`${API}/publications`, payload);
+      // V327 : si une date/heure FUTURE est choisie, on l'envoie en ISO UTC.
+      // `datetime-local` donne une heure locale sans fuseau ; `new Date(...)` la lit
+      // dans le fuseau du navigateur et `toISOString()` la convertit en UTC — c'est
+      // ce que le backend attend. Une date passée n'est pas envoyée : le serveur la
+      // traiterait comme « maintenant », autant être clair dès ici.
+      if (scheduleAt) {
+        var quand = new Date(scheduleAt);
+        if (!isNaN(quand.getTime()) && quand.getTime() > Date.now()) {
+          payload.scheduled_at = quand.toISOString();
+        }
+      }
+
+      const res = await axios.post(`${API}/publications`, payload);
+
+      // V327 : message de confirmation distinct selon publication immédiate ou différée.
+      if (res && res.data && res.data.status === 'scheduled' && res.data.scheduled_at) {
+        const d = new Date(res.data.scheduled_at);
+        setScheduledMsg(
+          'Publication programmée pour le ' +
+          d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long' }) +
+          ' à ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+        );
+      } else {
+        setScheduledMsg('');
+      }
 
       // V269 Fix 1 : signale a la vitrine ET a « Mes publications » de se
       // rafraichir, sans rechargement de page (voir l'ecouteur dans App.js et
@@ -1148,10 +1203,56 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
           </div>
         )}
 
-        {/* V269 : confirmation breve avant fermeture. */}
+        {/* V327 : option « Programmer ». Repliée par défaut -> le formulaire est
+            identique à avant tant qu'on ne la déplie pas. */}
+        {(preview || videoUrl) && !success && !showCrop && (
+          <div style={{ marginTop: 10 }}>
+            <button
+              type="button"
+              onClick={() => { const n = !showSchedule; setShowSchedule(n); if (!n) setScheduleAt(''); }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                color: showSchedule ? 'var(--primary-color, #D91CD2)' : '#888',
+                fontSize: '0.78rem', fontWeight: 600
+              }}
+              data-testid="publish-schedule-toggle"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                <line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+              </svg>
+              Programmer
+            </button>
+
+            {showSchedule && (
+              <div style={{ marginTop: 8 }}>
+                <input
+                  type="datetime-local"
+                  value={scheduleAt}
+                  onChange={(e) => setScheduleAt(e.target.value)}
+                  style={{
+                    width: '100%', padding: '8px 10px', borderRadius: 8,
+                    border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+                    background: '#0a0a1a', color: '#fff', fontSize: '0.85rem',
+                    boxSizing: 'border-box'
+                  }}
+                  data-testid="publish-schedule-input"
+                />
+                <p style={{ color: '#666', fontSize: '0.68rem', margin: '4px 2px 0' }}>
+                  Laissez vide pour publier tout de suite. Les 48 h de visibilité
+                  démarrent à la sortie, pas à la programmation.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* V269 : confirmation breve avant fermeture. V327 : message distinct si programmée. */}
         {success && (
           <p style={{ color: '#4ade80', fontSize: '0.85rem', textAlign: 'center', marginTop: 10, fontWeight: 600 }}>
-            Publication réussie !
+            {scheduledMsg || 'Publication réussie !'}
           </p>
         )}
 
@@ -1169,7 +1270,7 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
             }}
             data-testid="publish-submit"
           >
-            {uploading ? 'Publication en cours…' : 'Publier'}
+            {uploading ? 'Publication en cours…' : (scheduleAt ? 'Programmer' : 'Publier')}
           </button>
         )}
 

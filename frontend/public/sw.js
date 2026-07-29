@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v325'; // V325: ajout du moyen de paiement PawaPay (mobile money)
+var CACHE_NAME = 'afroboost-v327'; // V327: publications programmables (option Programmer)
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

@@ -6479,6 +6479,67 @@ def _v261_cloudinary_destroy(public_id: str, media_type: str) -> None:
         logger.warning(f"[V261] Suppression Cloudinary de {public_id} echouee: {e}")
 
 
+async def _v327_sortir_publications_programmees() -> int:
+    """
+    V327 : fait sortir les publications dont l'heure de programmation est passée.
+
+    ⚠️ POURQUOI ICI, ET PAS DANS LE SCHEDULER — vérifié avant d'écrire ce code :
+    `api/scheduler_engine.py` n'est appelé par PERSONNE dans ce déploiement.
+    APScheduler y est explicitement désactivé (`SCHEDULER_RUNNING = False`, absent
+    de `api/requirements.txt`), et les campagnes passent par l'endpoint
+    `/cron/check-campaigns` déclaré dans `vercel.json` — or le site tourne sur
+    Coolify, où ces crons Vercel ne s'exécutent pas. S'appuyer sur le scheduler
+    aurait donc produit des publications programmées qui ne seraient JAMAIS sorties.
+
+    On adopte le mécanisme que ce fichier utilise déjà pour les publications : le
+    passage PARESSEUX à la lecture (`_v261_purge_expired`). Une vitrine est
+    consultée en permanence — la publication sort donc au premier affichage suivant
+    son heure, côté public comme côté « Mes publications ».
+
+    Le compte à rebours de durée de vie démarre ICI, à la sortie, jamais à la
+    programmation : `created_at` et `expires_at` sont réécrits.
+
+    Anti-doublon : `update_one` filtre sur `scheduled: True`. Une publication déjà
+    sortie n'est plus sélectionnée, même si deux lectures arrivent en même temps.
+    """
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    dues = await db.publications.find(
+        {"scheduled": True, "scheduled_at": {"$lte": now_iso}},
+        {"_id": 0, "id": 1, "scheduled_at": 1}
+    ).to_list(50)
+    if not dues:
+        return 0
+
+    expires_iso = (now + timedelta(hours=V261_TTL_HOURS)).isoformat()
+    sorties = 0
+    for pub in dues:
+        # Un échec sur une publication ne doit pas empêcher les autres de sortir.
+        try:
+            pub_id = pub.get("id")
+            if not pub_id:
+                continue
+            res = await db.publications.update_one(
+                {"id": pub_id, "scheduled": True},
+                {
+                    "$set": {
+                        "scheduled": False,
+                        "created_at": now_iso,      # la publication « naît » maintenant
+                        "expires_at": expires_iso,  # 48 h PLEINES à partir de la sortie
+                    },
+                    "$unset": {"scheduled_at": ""},
+                }
+            )
+            if res.modified_count:
+                sorties += 1
+                logger.info(f"[SCHEDULER-PUB] ✅ Publication {pub_id} sortie "
+                            f"(prévue {pub.get('scheduled_at')}, visible {V261_TTL_HOURS}h)")
+        except Exception as e:
+            logger.error(f"[SCHEDULER-PUB] ❌ Erreur publication {pub.get('id')}: {e}")
+            continue
+    return sorties
+
+
 async def _v261_purge_expired() -> int:
     """V261: purge paresseuse des publications arrivees a echeance.
 
@@ -6486,7 +6547,19 @@ async def _v261_purge_expired() -> int:
     un plan Pro, et la vitrine est consultee bien plus souvent que toutes les
     48 h. Les suppressions Cloudinary partent dans un thread pour ne pas
     bloquer la boucle asyncio.
+
+    V327 : ce passage paresseux fait AUSSI sortir les publications programmées dont
+    l'heure est venue (voir _v327_sortir_publications_programmees). Il est appelé en
+    tête de GET /publications ET de GET /publications/mine : une publication due sort
+    donc dès le premier affichage, dans la même requête.
     """
+    # V327 : sortir AVANT la purge et avant la lecture du mur, pour qu'une publication
+    # dont l'heure vient de passer apparaisse dès CETTE requête.
+    try:
+        await _v327_sortir_publications_programmees()
+    except Exception as e:
+        # Une panne ici ne doit jamais empêcher la vitrine de s'afficher.
+        logger.error(f"[SCHEDULER-PUB] ❌ Passage des programmées ignoré: {e}")
     # V272c : filet paresseux — si le hook startup n'a pas migre les publications
     # legacy (redemarrage a froid), on le fait a la premiere lecture (publique OU
     # dashboard, les deux passent ici). Ainsi le fantome devient visible ET
@@ -6819,15 +6892,50 @@ async def create_publication(request: Request):
     # la carte.
     display_name = (body.get("display_name") or "").strip()[:60] or subscriber_name
 
-    active_count = await db.publications.count_documents({
-        "subscriber_code": code,
-        "expires_at": {"$gt": datetime.now(timezone.utc).isoformat()}
-    })
-    if active_count >= V261_MAX_ACTIVE_PER_CODE:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Vous avez déjà {V261_MAX_ACTIVE_PER_CODE} publications en ligne. Attendez qu'elles expirent."
-        )
+    # V327 : PROGRAMMATION OPTIONNELLE.
+    # `scheduled_at` absent -> comportement STRICTEMENT identique à avant V327.
+    # Une date passée ou illisible est traitée comme « publier maintenant » : on ne
+    # bloque jamais l'utilisateur pour un format de date.
+    _v327_scheduled_iso = ""
+    _v327_raw = (body.get("scheduled_at") or "").strip()
+    if _v327_raw:
+        try:
+            _v327_dt = datetime.fromisoformat(_v327_raw.replace("Z", "+00:00"))
+            if _v327_dt.tzinfo is None:
+                _v327_dt = _v327_dt.replace(tzinfo=timezone.utc)
+            _v327_dt = _v327_dt.astimezone(timezone.utc)
+            if _v327_dt > datetime.now(timezone.utc):
+                _v327_scheduled_iso = _v327_dt.isoformat()
+        except Exception:
+            _v327_scheduled_iso = ""
+
+    if _v327_scheduled_iso:
+        # V327 : une publication programmée n'est PAS en ligne — elle ne mange donc
+        # pas le quota « en ligne ». Elle a son propre plafond, pour éviter qu'on
+        # remplisse la file d'attente à l'infini.
+        scheduled_count = await db.publications.count_documents({
+            "subscriber_code": code,
+            "scheduled": True
+        })
+        if scheduled_count >= V261_MAX_ACTIVE_PER_CODE:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Vous avez déjà {V261_MAX_ACTIVE_PER_CODE} publications programmées. Attendez qu'elles sortent."
+            )
+    else:
+        # V327 : `scheduled: $ne True` — les programmées ne comptent pas ici. Sans ce
+        # filtre, programmer une publication aurait rogné le quota des publications
+        # réellement visibles (leur `expires_at` est dans le futur).
+        active_count = await db.publications.count_documents({
+            "subscriber_code": code,
+            "expires_at": {"$gt": datetime.now(timezone.utc).isoformat()},
+            "scheduled": {"$ne": True}
+        })
+        if active_count >= V261_MAX_ACTIVE_PER_CODE:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Vous avez déjà {V261_MAX_ACTIVE_PER_CODE} publications en ligne. Attendez qu'elles expirent."
+            )
 
     # V279b : identite de l'auteur, pour rendre l'avatar de la publication
     # cliquable vers son mini-profil. Le chemin coach met un email dans `code`
@@ -6898,7 +7006,25 @@ async def create_publication(request: Request):
         "created_at": now.isoformat(),
         "expires_at": (now + timedelta(hours=V261_TTL_HOURS)).isoformat(),
     }
+
+    # V327 : publication PROGRAMMÉE — créée mais invisible jusqu'à l'heure dite.
+    # `expires_at` est repoussé à `scheduled_at + TTL` pour deux raisons : la garder
+    # hors de portée de la purge paresseuse (qui supprime `expires_at <= now`), et la
+    # laisser visible dans « Mes publications » (qui filtre `expires_at > now`).
+    # Ce n'est PAS la durée de vie définitive : le scheduler la recalcule à la sortie,
+    # pour que le compte à rebours de 48 h démarre à la sortie et non maintenant.
+    if _v327_scheduled_iso:
+        _v327_sched_dt = datetime.fromisoformat(_v327_scheduled_iso)
+        pub["scheduled"] = True
+        pub["scheduled_at"] = _v327_scheduled_iso
+        pub["expires_at"] = (_v327_sched_dt + timedelta(hours=V261_TTL_HOURS)).isoformat()
+
     await db.publications.insert_one(pub)
+
+    if _v327_scheduled_iso:
+        logger.info(f"[V327] Publication PROGRAMMÉE de {code} ({media_type}) pour {_v327_scheduled_iso}")
+        return {"status": "scheduled", "id": pub["id"], "scheduled_at": _v327_scheduled_iso}
+
     logger.info(f"[V261] Publication de {code} ({media_type})")
     return {"status": "ok", "id": pub["id"]}
 
@@ -6929,7 +7055,12 @@ async def list_publications(coach_id: str = ""):
     # V276 : `paused: true` = publication mise en pause par l'admin -> invisible
     # sur toutes les vitrines, mais son compte a rebours 48 h continue (elle sera
     # purgee normalement). `$ne: True` inclut les docs sans le champ.
-    query = {"$and": [time_q, {"coach_id": target}, {"paused": {"$ne": True}}]}
+    # V327 : `scheduled: true` = publication programmée, pas encore sortie -> elle
+    # n'apparaît JAMAIS sur la vitrine avant son heure. Même garde-fou que `paused` :
+    # `$ne: True` inclut tous les documents qui n'ont pas le champ (donc tout
+    # l'historique, inchangé).
+    query = {"$and": [time_q, {"coach_id": target}, {"paused": {"$ne": True}},
+                      {"scheduled": {"$ne": True}}]}
     pubs = await db.publications.find(
         query,
         {"_id": 0, "subscriber_code": 0, "cloudinary_public_id": 0, "thumbnail_public_id": 0}
@@ -6977,6 +7108,12 @@ async def list_my_publications(request: Request, subscriber_code: str = ""):
         {"_id": 0, "subscriber_code": 0, "cloudinary_public_id": 0, "thumbnail_public_id": 0}
     ).sort("created_at", -1).to_list(50)
     for p in pubs:
+        # V327 : pour une publication PROGRAMMÉE, un « temps restant » n'a aucun sens
+        # (elle n'est pas en ligne). On renvoie `scheduled` + `scheduled_at` pour que
+        # l'auteur voie « Programmée pour… », et on neutralise remaining_hours.
+        if p.get("scheduled"):
+            p["remaining_hours"] = None
+            continue
         try:
             remaining = (datetime.fromisoformat(p["expires_at"]) - now).total_seconds()
             p["remaining_hours"] = max(0, round(remaining / 3600, 1))
@@ -7003,6 +7140,13 @@ async def delete_publication(pub_id: str, request: Request, subscriber_code: str
     provided_code = (subscriber_code or "").strip().upper()
     is_author = bool(provided_code) and provided_code == (pub.get("subscriber_code") or "").upper()
 
+    # V327 (bug PRÉEXISTANT) : `user_email` n'était affecté que dans la branche
+    # `not is_author`, alors que le log final l'utilise TOUJOURS. Quand un abonné
+    # supprimait sa propre publication avec son code, la suppression avait bien lieu
+    # puis le log levait UnboundLocalError -> 500 renvoyé au client, qui croyait
+    # l'opération échouée. On initialise la variable ; rien d'autre ne change.
+    user_email = ""
+
     if not is_author:
         # V262: identification signee (JWT si pose, repli en-tete sinon).
         user_email = require_auth(request)
@@ -7021,7 +7165,9 @@ async def delete_publication(pub_id: str, request: Request, subscriber_code: str
     if pub.get("thumbnail_public_id"):
         await asyncio.to_thread(_v261_cloudinary_destroy, pub["thumbnail_public_id"], "image")
     await db.publications.delete_one({"id": pub_id})
-    logger.info(f"[V261] Publication {pub_id} supprimee par {user_email}")
+    # V327 : le code abonné est un SECRET — on ne le journalise jamais. « auteur
+    # abonné » suffit à tracer qui a agi sans écrire d'identifiant client.
+    logger.info(f"[V261] Publication {pub_id} supprimee par {user_email or 'auteur abonné'}")
     return {"status": "ok"}
 
 

@@ -9,7 +9,7 @@ import pytz
 import os
 import uuid as uuid_module
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta  # V327 : timedelta pour le TTL des publications
 import logging
 
 logger = logging.getLogger("scheduler_engine")
@@ -589,3 +589,100 @@ def scheduler_job(mongo_client_sync, scheduler_heartbeat_ref):
             
     except Exception as e:
         logger.error(f"[SCHEDULER] ❌ Erreur job: {e}")
+
+    # ==================== V327 : PUBLICATIONS PROGRAMMÉES ====================
+    # ⚠️ CE PASSAGE NE S'EXÉCUTE PAS DANS LE DÉPLOIEMENT ACTUEL.
+    # `scheduler_job` n'est appelé par personne : APScheduler est désactivé dans
+    # server.py (`SCHEDULER_RUNNING = False`) et absent de api/requirements.txt.
+    # Le mécanisme QUI FONCTIONNE VRAIMENT pour les publications programmées est le
+    # passage paresseux à la lecture, dans server.py :
+    # `_v327_sortir_publications_programmees()`, appelé par `_v261_purge_expired()`.
+    # Ce bloc-ci est conservé pour le jour où l'automate de fond sera réactivé — il
+    # fait exactement la même chose, et l'`update_one` filtré sur `scheduled: True`
+    # garantit qu'aucune publication ne sortirait deux fois si les deux tournaient.
+    #
+    # Passage INDÉPENDANT, volontairement placé HORS du try/except des campagnes :
+    # une panne des campagnes ne doit pas empêcher les publications de sortir, et
+    # réciproquement. Le bloc campagnes ci-dessus n'a pas été modifié d'une ligne.
+    try:
+        _v327_sortir_publications_programmees(scheduler_db)
+    except Exception as e:
+        logger.error(f"[SCHEDULER-PUB] ❌ Erreur du passage publications: {e}")
+
+
+def _v327_ttl_hours():
+    """
+    Durée de vie d'une publication, en heures.
+
+    Lue depuis server.py pour n'avoir qu'UNE source de vérité (V261_TTL_HOURS).
+    L'import est fait ici, à l'appel, et non en tête de fichier : server.py importe
+    déjà ce module, un import en tête créerait un cycle. Repli sur 48 h si l'import
+    échoue — mieux vaut une durée correcte par défaut qu'un plantage du passage.
+    """
+    try:
+        from api.server import V261_TTL_HOURS
+        return int(V261_TTL_HOURS)
+    except Exception:
+        return 48
+
+
+def _v327_sortir_publications_programmees(scheduler_db):
+    """
+    V327 — fait sortir les publications dont l'heure est venue.
+
+    Même architecture POSER-RAMASSER que les campagnes : la base est la seule source
+    de vérité. On ramasse celles dont `scheduled_at <= maintenant`, et on les bascule
+    en publication normale.
+
+    Le compte à rebours de durée de vie démarre ICI, à la sortie — pas à la
+    programmation. C'est pour cela que `created_at` et `expires_at` sont réécrits :
+    une publication programmée trois jours à l'avance doit rester visible ses 48 h
+    pleines, pas un reliquat.
+
+    Anti-doublon : le retrait de `scheduled: true` est atomique (`update_one`). Une
+    publication déjà sortie n'est plus sélectionnée au passage suivant, donc aucune
+    sortie en double n'est possible, même si deux passages se chevauchaient.
+    """
+    now_utc = datetime.now(timezone.utc)
+    now_iso = now_utc.isoformat()
+
+    a_sortir = list(scheduler_db.publications.find(
+        {"scheduled": True, "scheduled_at": {"$lte": now_iso}},
+        {"_id": 0, "id": 1, "scheduled_at": 1, "subscriber_code": 1}
+    ))
+
+    if not a_sortir:
+        return
+
+    ttl_h = _v327_ttl_hours()
+    expires_iso = (now_utc + timedelta(hours=ttl_h)).isoformat()
+    sorties = 0
+
+    for pub in a_sortir:
+        # Une publication qui échoue ne doit pas empêcher les suivantes de sortir.
+        try:
+            pub_id = pub.get("id")
+            if not pub_id:
+                continue
+            res = scheduler_db.publications.update_one(
+                {"id": pub_id, "scheduled": True},   # garde : uniquement si encore programmée
+                {
+                    "$set": {
+                        "scheduled": False,
+                        "created_at": now_iso,       # la publication « naît » maintenant
+                        "expires_at": expires_iso,   # 48 h pleines à partir de la sortie
+                    },
+                    "$unset": {"scheduled_at": ""},
+                }
+            )
+            if res.modified_count:
+                sorties += 1
+                logger.info(f"[SCHEDULER-PUB] ✅ Publication {pub_id} sortie "
+                            f"(prévue {pub.get('scheduled_at')}, visible {ttl_h}h)")
+                print(f"[SCHEDULER-PUB] ✅ Publication {pub_id} sortie")
+        except Exception as pub_error:
+            logger.error(f"[SCHEDULER-PUB] ❌ Erreur publication {pub.get('id')}: {pub_error}")
+            continue
+
+    if sorties:
+        logger.info(f"[SCHEDULER-PUB] 📤 {sorties} publication(s) sortie(s)")
