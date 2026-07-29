@@ -607,6 +607,71 @@ def t78_boost_pas_de_donnees_commerciales_publiques():
         record(78, "Mur public : données commerciales de Boost", False, str(e))
 
 
+def t79_v343_no_expiry_ignore_pour_non_admin():
+    """V343 (POUVOIR A) : `no_expiry` est un pouvoir du SUPER-ADMIN SEUL. Un abonné qui
+    l'envoie quand même doit obtenir une publication de 48 h ordinaire — jamais une
+    publication permanente. On le mesure sur le `remaining_hours` renvoyé par
+    « Mes publications » : ≤ 48 h = ignoré (une permanence donnerait ~876 000 h)."""
+    if not SUB_CODE:
+        return skip(79, "V343 : `no_expiry` ignoré pour un non super-admin", "SUB_CODE non fourni")
+    try:
+        r = requests.post(_url("/api/publications"), json={
+            "subscriber_code": SUB_CODE, "media_url": TEST_MEDIA, "media_type": "image",
+            "caption": "TEST non-régression (V343 no_expiry)", "no_expiry": True,
+        }, timeout=TIMEOUT)
+        if r.status_code != 200:
+            return record(79, "V343 : `no_expiry` ignoré pour un non super-admin", False,
+                          f"publication refusée : HTTP {r.status_code} {_short(r)}")
+        pid = (r.json() or {}).get("id") or ""
+        _created_pub_ids.append((pid, SUB_CODE))
+
+        m = requests.get(_url(f"/api/publications/mine?subscriber_code={SUB_CODE}"), timeout=TIMEOUT)
+        mienne = next((p for p in (m.json() or []) if p.get("id") == pid), None) if m.status_code == 200 else None
+        if mienne is None:
+            return record(79, "V343 : `no_expiry` ignoré pour un non super-admin", False,
+                          f"publication {pid} introuvable dans /publications/mine (HTTP {m.status_code})")
+        restant = mienne.get("remaining_hours")
+        ok = isinstance(restant, (int, float)) and restant <= 48.5
+        record(79, "V343 : `no_expiry` d'un abonné ignoré -> 48 h, pas de permanence", ok,
+               f"remaining_hours={restant}")
+    except Exception as e:
+        record(79, "V343 : `no_expiry` ignoré pour un non super-admin", False, str(e))
+
+
+def t80_v343_gratuite_refusee_sans_identite():
+    """V343 (POUVOIR B) : la gratuité est réservée au super-admin AUTEUR. Un appelant
+    sans identité ne doit obtenir NI apparition gratuite (`gratuit: true`) NI URL de
+    paiement — et `provider` devenu facultatif ne doit pas ouvrir de brèche : un corps
+    SANS moyen de paiement doit être refusé tout autant."""
+    try:
+        pubs = _fetch_publications()
+        if not pubs:
+            return skip(80, "V343 : gratuité refusée sans identité", "aucune publication en ligne")
+        pid = pubs[0].get("id") or ""
+        if not pid:
+            return skip(80, "V343 : gratuité refusée sans identité", "publication sans id exposé")
+
+        # Corps SANS `provider` : c'est la forme qu'utilise le chemin gratuit.
+        r = requests.post(_url(f"/api/publications/{pid}/boost/checkout"),
+                          json={"target": "home"}, timeout=TIMEOUT)
+        d = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        # 422 = le corps est rejeté par la validation avant même d'atteindre la route
+        # (c'était le cas avant V343, quand `provider` était obligatoire) : c'est un
+        # refus tout aussi valable. Ce qui compte : ni gratuité, ni paiement ouvert.
+        refuse = r.status_code in (400, 401, 403, 404, 422)
+        ok = refuse and not d.get("gratuit") and not d.get("payment_url")
+
+        # La publication ne doit pas non plus s'être retrouvée boostée au passage.
+        apres = _fetch_publications() or []
+        cible = next((p for p in apres if p.get("id") == pid), {})
+        ok = ok and not cible.get("boosted")
+
+        record(80, "V343 : boost/checkout anonyme sans provider -> refus, aucune gratuité",
+               ok, f"HTTP {r.status_code} gratuit={d.get('gratuit')} boosted={cible.get('boosted')}")
+    except Exception as e:
+        record(80, "V343 : gratuité refusée sans identité", False, str(e))
+
+
 def _v319_flag():
     """État EN DIRECT du drapeau REQUIRE_COACH_JWT (None si illisible)."""
     try:
@@ -1142,6 +1207,7 @@ def main():
                    t74_progression_donnees_sante,
                    t75_boost_prix_lecture_publique, t76_boost_prix_ecriture_admin_seulement,
                    t77_boost_checkout_exige_auteur, t78_boost_pas_de_donnees_commerciales_publiques,
+                   t79_v343_no_expiry_ignore_pour_non_admin, t80_v343_gratuite_refusee_sans_identite,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
