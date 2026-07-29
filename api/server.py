@@ -18299,21 +18299,35 @@ async def create_whatsapp_group():
 @api_router.get("/cron/check-campaigns")
 async def cron_check_campaigns(request: Request):
     """
-    Vercel Cron job: vérifie les campagnes 'scheduled' dont scheduledAt <= now.
-    Lance automatiquement chaque campagne due.
-    Protégé par header Vercel CRON_SECRET ou Super Admin.
+    Déclenchement MANUEL (diagnostic) du lancement des campagnes dues.
+    Réservé au cron porteur de CRON_SECRET ou au super-admin.
     v87: Comparaison datetime robuste (gère Z et +00:00).
+
+    V329 — FERMETURE D'UNE PORTE OUVERTE. Cet endpoint répondait 200 à N'IMPORTE QUI
+    en production : le contournement `is_local_dev = not cron_secret` accordait l'accès
+    dès lors qu'aucun CRON_SECRET n'était posé — ce qui est le cas sur Coolify. Prévu
+    pour le développement local, ce repli s'appliquait donc aussi en production.
+    Il est supprimé.
+
+    Depuis V328, la boucle de fond `_campaign_scheduler_loop()` appelle
+    `_v328_run_due_campaigns()` DIRECTEMENT, sans passer par cet endpoint : refermer
+    l'accès public n'a donc aucun effet sur l'envoi automatique des campagnes.
+
+    On n'EXIGE PAS que CRON_SECRET soit posé : le super-admin garde son accès manuel
+    sans avoir à gérer un secret dans Coolify.
     """
-    # Vérification sécurité (Vercel cron envoie Authorization: Bearer <CRON_SECRET>)
+    # Vérification sécurité (un cron externe envoie Authorization: Bearer <CRON_SECRET>)
     auth_header = request.headers.get("Authorization", "")
     user_email = request.headers.get("X-User-Email", "").lower()
     cron_secret = os.environ.get("CRON_SECRET", "")
 
-    is_vercel_cron = auth_header == f"Bearer {cron_secret}" if cron_secret else False
+    # (a) cron externe : uniquement si un secret est posé ET qu'il correspond.
+    is_cron_secret = bool(cron_secret) and auth_header == f"Bearer {cron_secret}"
+    # (b) super-admin.
     is_admin = is_super_admin(user_email)
-    is_local_dev = not cron_secret  # Si pas de secret, on autorise (dev local)
 
-    if not is_vercel_cron and not is_admin and not is_local_dev:
+    # V329 : plus de troisième porte. Ni secret valide, ni admin -> 401.
+    if not is_cron_secret and not is_admin:
         raise HTTPException(status_code=401, detail="Unauthorized - Cron access only")
 
     # V328 : le corps a été extrait dans `_v328_run_due_campaigns()` pour être partagé
