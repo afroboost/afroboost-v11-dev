@@ -9,7 +9,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom'; // V268d
 import axios from 'axios';
 import Cropper from 'react-easy-crop'; // V268c (F1)
-import { PrixBoost, BoutonBoost } from './publications/Boost'; // V342 : Boost payant
+import { PrixBoost, BoutonBoost, estSuperAdmin } from './publications/Boost'; // V342 : Boost payant / V343 : pouvoirs super-admin
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
@@ -782,6 +782,12 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleAt, setScheduleAt] = useState('');
   const [scheduledMsg, setScheduledMsg] = useState('');
+  // V343 (POUVOIR A) : durée de CETTE publication, réservée au super-admin.
+  // `false` = 48 h (défaut, comportement de tout le monde) ; `true` = sans limite.
+  // `adminDuree` n'est qu'un confort d'affichage : le serveur revérifie l'identité
+  // et ignore purement et simplement `no_expiry` venant d'un non super-admin.
+  const [adminDuree] = useState(estSuperAdmin);
+  const [sansLimite, setSansLimite] = useState(false);
 
   const revokeAll = () => {
     [preview, cropSrc, videoUrl, thumbnailPreview].forEach(u => u && URL.revokeObjectURL(u));
@@ -966,6 +972,12 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
           payload.scheduled_at = quand.toISOString();
         }
       }
+
+      // V343 (POUVOIR A) : durée choisie pour CETTE publication. On n'envoie le
+      // champ QUE si le super-admin a basculé sur « sans limite » — l'absence du
+      // champ laisse le serveur sur son comportement habituel (48 h, ou le drapeau
+      // global V333). Envoyé par un non super-admin, il serait ignoré côté serveur.
+      if (adminDuree && sansLimite) payload.no_expiry = true;
 
       const res = await axios.post(`${API}/publications`, payload);
 
@@ -1226,6 +1238,7 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
             identique à avant tant qu'on ne la déplie pas. */}
         {(preview || videoUrl) && !success && !showCrop && (
           <div style={{ marginTop: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
             <button
               type="button"
               onClick={() => { const n = !showSchedule; setShowSchedule(n); if (!n) setScheduleAt(''); }}
@@ -1245,6 +1258,37 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
               Programmer
             </button>
 
+            {/* V343 (POUVOIR A) : bascule de durée, réservée au super-admin.
+                Horloge = 48 h (défaut) ; infini = sans limite. N'apparaît JAMAIS
+                pour un coach ou un abonné — et si elle était forcée, le serveur
+                ignorerait `no_expiry` de toute façon. */}
+            {adminDuree && (
+              <button
+                type="button"
+                onClick={() => setSansLimite(!sansLimite)}
+                title={sansLimite ? 'Durée : sans limite' : 'Durée : 48 h'}
+                aria-label={sansLimite ? 'Durée : sans limite' : 'Durée : 48 h'}
+                aria-pressed={sansLimite}
+                data-testid="publish-duree-toggle"
+                style={{
+                  background: 'none', border: 'none', padding: 2, lineHeight: 0, cursor: 'pointer',
+                  color: sansLimite ? 'var(--primary-color, #D91CD2)' : '#888',
+                  opacity: sansLimite ? 1 : 0.7, flexShrink: 0
+                }}
+              >
+                {sansLimite ? (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M7 8c-2.2 0-4 1.8-4 4s1.8 4 4 4c3 0 5-8 8-8 2.2 0 4 1.8 4 4s-1.8 4-4 4c-3 0-5-8-8-8z" />
+                  </svg>
+                ) : (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
+                  </svg>
+                )}
+              </button>
+            )}
+            </div>
+
             {showSchedule && (
               <div style={{ marginTop: 8 }}>
                 <input
@@ -1260,8 +1304,11 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
                   data-testid="publish-schedule-input"
                 />
                 <p style={{ color: '#666', fontSize: '0.68rem', margin: '4px 2px 0' }}>
-                  Laissez vide pour publier tout de suite. Les 48 h de visibilité
-                  démarrent à la sortie, pas à la programmation.
+                  {/* V343 : le rappel des 48 h n'a plus de sens si le super-admin a
+                      choisi « sans limite » pour cette publication. */}
+                  {adminDuree && sansLimite
+                    ? 'Laissez vide pour publier tout de suite. Cette publication restera en ligne sans limite de durée.'
+                    : 'Laissez vide pour publier tout de suite. Les 48 h de visibilité démarrent à la sortie, pas à la programmation.'}
                 </p>
               </div>
             )}
