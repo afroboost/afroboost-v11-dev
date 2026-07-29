@@ -619,6 +619,31 @@ def t63_coach_jwt_legit_access():
         record(63, "Coach légitime (JWT) -> accès complet", False, str(e))
 
 
+def t71_webhook_studiio():
+    """V331 : le webhook entrant Studiio ne s'ouvre jamais tout seul.
+    - `AFROBOOST_WEBHOOK_SECRET` absent -> 503, aucune publication créée (état par défaut) ;
+    - secret posé -> une signature absente ou fausse doit être refusée (401).
+    Dans les deux cas, un appel non signé ne doit RIEN créer. On n'envoie jamais de
+    signature valide ici : ce test ne doit pas publier sur la vitrine réelle."""
+    try:
+        r = requests.post(_url("/api/incoming-post"),
+                          json={"mediaUrl": "https://exemple.invalide/x.jpg", "mediaType": "image",
+                                "title": "TEST non-régression (ne doit jamais passer)"},
+                          timeout=TIMEOUT)
+        d = {}
+        try:
+            d = r.json() or {}
+        except Exception:
+            pass
+        # 503 = webhook non configuré (inerte) ; 401 = configuré mais signature exigée.
+        ok = r.status_code in (503, 401) and d.get("ok") is False
+        etat = "inerte (503)" if r.status_code == 503 else ("signature exigée (401)" if r.status_code == 401 else "?")
+        record(71, "Webhook Studiio : jamais ouvert sans signature valide", ok,
+               f"HTTP {r.status_code} -> {etat} {_short(r)}")
+    except Exception as e:
+        record(71, "Webhook Studiio : jamais ouvert sans signature valide", False, str(e))
+
+
 def t69_cron_campagnes_ferme():
     """V329/V330 : /api/cron/check-campaigns n'est plus une porte ouverte.
     - V329 a fermé l'anonyme (le repli `is_local_dev` s'appliquait en production,
@@ -979,7 +1004,7 @@ def main():
                    t64_pawapay_flag_admin_only, t65_pawapay_gated_by_flag,
                    t66_stripe_cinetpay_untouched,
                    t67_publication_programmee, t68_suppression_programmee,
-                   t69_cron_campagnes_ferme, t70_cron_campagnes_admin_jwt,
+                   t69_cron_campagnes_ferme, t70_cron_campagnes_admin_jwt, t71_webhook_studiio,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

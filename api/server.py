@@ -7210,6 +7210,229 @@ async def delete_publication(pub_id: str, request: Request, subscriber_code: str
     return {"status": "ok"}
 
 
+# =====================================================================
+# V331 — WEBHOOK ENTRANT STUDIIO -> PUBLICATION DE LA VITRINE
+# =====================================================================
+# Studiio pousse ici ses posts programmés ; chacun devient une publication de la
+# vitrine, appartenant à l'admin. On RÉUTILISE les systèmes existants :
+#   - le document publication de V261 (même forme, même dossier Cloudinary) ;
+#   - la programmation V327 (`scheduled` / `scheduled_at`) pour la sortie à l'heure.
+#
+# Trois différences ASSUMÉES avec une publication d'abonné :
+#   1. PERMANENTE — pas de purge à 48 h (contenu marketing, pas un post éphémère) ;
+#   2. HORS PLAFOND — le quota de 10 publications ne s'applique pas (source de confiance) ;
+#   3. marquée `source: "studiio"`, pour pouvoir la distinguer et la retrouver.
+#
+# INERTE PAR DÉFAUT : sans `AFROBOOST_WEBHOOK_SECRET` posé, l'endpoint répond 503 et
+# ne crée rien. Aucun impact tant que Bassi n'a pas configuré le secret.
+
+# Expiration « jamais » : ~100 ans. On ne met pas de sentinelle spéciale, pour que la
+# publication reste un document ORDINAIRE — le mur public filtre `expires_at > now`,
+# une date lointaine suffit donc à la rendre permanente sans toucher à la purge.
+V331_EXPIRATION_LOINTAINE_ANNEES = 100
+
+
+def _v331_secret() -> str:
+    return (os.environ.get("AFROBOOST_WEBHOOK_SECRET", "") or "").strip()
+
+
+def _v331_signature_valide(secret: str, corps_brut: bytes, entetes) -> bool:
+    """
+    Vérifie la signature du webhook, en TEMPS CONSTANT (hmac.compare_digest) —
+    une comparaison naïve fuirait le secret octet par octet.
+
+    Voie principale : `X-Studiio-Signature` = HMAC-SHA256(corps brut, secret) en hexa.
+    Voie de repli   : `Authorization: Bearer <secret>`, plus simple à câbler côté
+    Studiio pour démarrer. Les deux sont comparées en temps constant.
+    """
+    # Imports LOCAUX : `hmac`/`hashlib` ne sont pas importés en tête de ce fichier
+    # (le webhook Stripe fait pareil, cf. `import hmac as _hmac, hashlib as _hashlib`).
+    import hmac
+    import hashlib
+    attendue = hmac.new(secret.encode(), corps_brut, hashlib.sha256).hexdigest()
+    fournie = (entetes.get("X-Studiio-Signature", "") or "").strip()
+    # On tolère un préfixe « sha256= » (convention fréquente chez les émetteurs).
+    if fournie.lower().startswith("sha256="):
+        fournie = fournie.split("=", 1)[1].strip()
+    if fournie and hmac.compare_digest(fournie.lower(), attendue.lower()):
+        return True
+
+    auth = (entetes.get("Authorization", "") or "").strip()
+    if auth.lower().startswith("bearer "):
+        jeton = auth.split(" ", 1)[1].strip()
+        if jeton and hmac.compare_digest(jeton, secret):
+            return True
+    return False
+
+
+def _v331_televerser_cloudinary(media_url: str, media_type: str) -> dict:
+    """
+    Confie le média à Cloudinary, dans le dossier `publications/`.
+
+    Cloudinary télécharge lui-même depuis l'URL publique : rien ne transite par
+    notre serveur. Deux chemins, dans cet ordre :
+      1. upload SIGNÉ si CLOUDINARY_API_KEY/SECRET sont posés ;
+      2. sinon, upload NON SIGNÉ via le preset `afroboost` — exactement le chemin
+         qu'utilise déjà le frontend pour toutes les publications. Il ne demande
+         aucune clé, ce qui rend ce webhook fonctionnel même sans identifiants API
+         (situation réelle de ce déploiement).
+    Renvoie le dict Cloudinary. Lève une exception en cas d'échec.
+    """
+    import requests  # import LOCAL (non importé en tête de ce fichier)
+    est_video = media_type == "video"
+    ressource = "video" if est_video else "image"
+    cloud = os.environ.get("CLOUDINARY_CLOUD_NAME", "dtm0r7hwq")
+    api_key = os.environ.get("CLOUDINARY_API_KEY", "")
+    api_secret = os.environ.get("CLOUDINARY_API_SECRET", "")
+
+    if api_key and api_secret:
+        import cloudinary
+        import cloudinary.uploader
+        cloudinary.config(cloud_name=cloud, api_key=api_key, api_secret=api_secret, secure=True)
+        return cloudinary.uploader.upload(media_url, folder="publications", resource_type=ressource)
+
+    # Repli non signé — même preset et même dossier que le frontend.
+    preset = os.environ.get("CLOUDINARY_UPLOAD_PRESET", "afroboost")
+    reponse = requests.post(
+        f"https://api.cloudinary.com/v1_1/{cloud}/{ressource}/upload",
+        data={"file": media_url, "upload_preset": preset, "folder": "publications"},
+        timeout=60,
+    )
+    if reponse.status_code >= 300:
+        raise RuntimeError(f"Cloudinary HTTP {reponse.status_code}: {reponse.text[:200]}")
+    return reponse.json()
+
+
+@api_router.post("/incoming-post")
+async def v331_incoming_post(request: Request):
+    """
+    V331 — reçoit un post poussé par Studiio et le publie sur la vitrine.
+
+    Corps attendu (JSON) :
+      { "title", "caption", "mediaUrl", "mediaType": "video"|"image",
+        "scheduledFor": <ISO>, "source": "studiio", "postId": <optionnel> }
+
+    Réponses : 200 {ok,url,id,scheduled} | 400 corps invalide | 401 signature
+    invalide | 503 webhook non configuré | 502 échec du média.
+    """
+    secret = _v331_secret()
+    if not secret:
+        # Inerte tant que Bassi n'a pas posé le secret : on ne crée RIEN.
+        return JSONResponse(status_code=503, content={"ok": False, "error": "webhook non configuré"})
+
+    # Le corps BRUT est lu avant tout parsing : la signature porte sur les octets
+    # exacts reçus, pas sur un JSON re-sérialisé (qui différerait à la virgule près).
+    corps_brut = await request.body()
+    if not _v331_signature_valide(secret, corps_brut, request.headers):
+        logger.warning("[V331] Signature invalide sur /incoming-post")
+        return JSONResponse(status_code=401, content={"ok": False, "error": "signature invalide"})
+
+    try:
+        corps = json.loads(corps_brut.decode("utf-8") or "{}")
+    except Exception:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "JSON invalide"})
+    if not isinstance(corps, dict):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "JSON invalide"})
+
+    media_url_source = (corps.get("mediaUrl") or "").strip()
+    media_type = (corps.get("mediaType") or "image").strip().lower()
+    titre = (corps.get("title") or "").strip()[:120]
+    legende = (corps.get("caption") or "").strip()[:500]
+    prevu_pour = (corps.get("scheduledFor") or "").strip()
+    source = (corps.get("source") or "studiio").strip().lower()
+    post_id = (corps.get("postId") or "").strip()
+
+    if not media_url_source:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "mediaUrl manquant"})
+    if media_type not in ("video", "image"):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "mediaType doit être 'video' ou 'image'"})
+
+    # `scheduledFor` est OPTIONNEL : absent -> publication immédiate. Fourni mais
+    # illisible -> 400, car là c'est une erreur d'intégration qu'il vaut mieux signaler.
+    date_prevue = None
+    if prevu_pour:
+        date_prevue = _parse_scheduled_at(prevu_pour)
+        if not date_prevue:
+            return JSONResponse(status_code=400, content={"ok": False, "error": "scheduledFor illisible"})
+
+    # --- IDEMPOTENCE : Studiio peut réémettre (réessai réseau, relance). La clé est
+    # l'identifiant du post s'il en fournit un, sinon une empreinte stable du contenu.
+    import hashlib  # import LOCAL (non importé en tête de ce fichier)
+    if post_id:
+        studiio_key = hashlib.sha256(f"{source}|id|{post_id}".encode()).hexdigest()
+    else:
+        studiio_key = hashlib.sha256(
+            f"{source}|{media_url_source}|{prevu_pour}|{titre}".encode()
+        ).hexdigest()
+
+    frontend = os.environ.get('REACT_APP_FRONTEND_URL', 'https://afroboost.com')
+    existante = await db.publications.find_one({"studiio_key": studiio_key}, {"_id": 0, "id": 1})
+    if existante:
+        logger.info(f"[V331] Post déjà reçu (idempotence) : {studiio_key[:12]}…")
+        return {"ok": True, "url": frontend, "id": existante.get("id"), "duplicate": True}
+
+    # --- MÉDIA : confié à Cloudinary, dossier publications/ (comme toute publication).
+    try:
+        televerse = await asyncio.to_thread(_v331_televerser_cloudinary, media_url_source, media_type)
+        media_url = (televerse or {}).get("secure_url") or ""
+        public_id = (televerse or {}).get("public_id") or ""
+    except Exception as e:
+        logger.error(f"[V331] Échec du téléversement Cloudinary : {e}")
+        return JSONResponse(status_code=502, content={"ok": False, "error": "media upload échoué"})
+
+    if not media_url:
+        return JSONResponse(status_code=502, content={"ok": False, "error": "media upload échoué"})
+
+    # Miniature vidéo : Cloudinary sait dériver une image du public_id d'une vidéo.
+    thumbnail_url = ""
+    thumbnail_public_id = ""
+    if media_type == "video" and public_id:
+        cloud = os.environ.get("CLOUDINARY_CLOUD_NAME", "dtm0r7hwq")
+        thumbnail_url = f"https://res.cloudinary.com/{cloud}/video/upload/so_0/{public_id}.jpg"
+
+    now = datetime.now(timezone.utc)
+    # PERMANENCE : expiration très lointaine -> jamais ramassée par la purge V261,
+    # qui ne supprime que `expires_at <= maintenant`.
+    expiration = now.replace(year=now.year + V331_EXPIRATION_LOINTAINE_ANNEES)
+
+    pub = {
+        "id": str(uuid.uuid4()),
+        # Le post appartient à l'admin : même clé d'appartenance que le chemin coach.
+        "subscriber_code": DEFAULT_COACH_ID,
+        "subscriber_name": titre or "Afroboost",
+        "display_name": titre or "Afroboost",
+        "coach_id": DEFAULT_COACH_ID,
+        "author_id": DEFAULT_COACH_ID,
+        "author_photo": "",
+        "author_name": titre or "Afroboost",
+        "media_url": media_url,
+        "media_type": media_type,
+        "cloudinary_public_id": _v261_public_id_from_url(media_url),
+        "caption": legende,
+        "thumbnail_url": thumbnail_url,
+        "thumbnail_public_id": thumbnail_public_id,
+        "created_at": now.isoformat(),
+        "expires_at": expiration.isoformat(),
+        # V331 : traçabilité + idempotence.
+        "source": source,
+        "studiio_key": studiio_key,
+        "studiio_post_id": post_id,
+    }
+
+    # PROGRAMMATION (V327) : si l'heure est future, le post est créé masqué et sortira
+    # tout seul. Sinon il est visible immédiatement.
+    programme = bool(date_prevue and date_prevue > now)
+    if programme:
+        pub["scheduled"] = True
+        pub["scheduled_at"] = date_prevue.astimezone(timezone.utc).isoformat()
+
+    await db.publications.insert_one(pub)
+    logger.info(f"[V331] Post Studiio reçu -> publication {pub['id']} "
+                f"({media_type}, {'programmé pour ' + pub['scheduled_at'] if programme else 'visible immédiatement'})")
+
+    return {"ok": True, "url": frontend, "id": pub["id"], "scheduled": programme}
+
+
 @api_router.put("/publications/{pub_id}")
 async def update_publication(pub_id: str, request: Request):
     """V268: modifier la LEGENDE d'une publication (le media reste fige).
