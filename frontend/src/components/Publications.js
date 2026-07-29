@@ -285,9 +285,16 @@ const V268PublicationCard = ({ pub, onOpen }) => {
         onClick={() => onOpen(pub)}
         style={{
           position: 'relative', width: '100%', height: 250, maxHeight: 250, overflow: 'hidden',
-          borderRadius: 12, flexShrink: 0, background: '#000', cursor: 'pointer'
+          borderRadius: 12, flexShrink: 0, background: '#000', cursor: 'pointer',
+          // V342 : SEULE difference visuelle d'une publication boostee — un halo
+          // discret. Meme emplacement, meme taille, melangee aux autres : pas de
+          // section « A la une ». La couleur suit la charte du coach.
+          ...(pub.boosted ? {
+            boxShadow: '0 0 0 2px rgba(var(--primary-rgb, 217, 28, 210), .25),'
+                     + ' 0 0 12px rgba(var(--primary-rgb, 217, 28, 210), .25)'
+          } : {})
         }}
-        data-testid="publication-card"
+        data-testid={pub.boosted ? 'publication-card-boosted' : 'publication-card'}
       >
         {/* V272 : retour a `cover` (V271 Fix 2 annule) — le rendu plein cadre
             etait prefere aux bandes noires du `contain`. La lightbox, elle,
