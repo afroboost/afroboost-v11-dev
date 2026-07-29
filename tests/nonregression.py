@@ -672,6 +672,81 @@ def t80_v343_gratuite_refusee_sans_identite():
         record(80, "V343 : gratuité refusée sans identité", False, str(e))
 
 
+def _v344_flag():
+    """État EN DIRECT du drapeau SUPERADMIN_JWT_STRICT (None si illisible)."""
+    try:
+        d = requests.get(_url("/api/feature-flags"), timeout=TIMEOUT).json()
+        return bool(d.get("SUPERADMIN_JWT_STRICT")) if "SUPERADMIN_JWT_STRICT" in d else None
+    except Exception:
+        return None
+
+
+def t81_v344_drapeau_expose_et_admin_seul():
+    """V344 : le drapeau SUPERADMIN_JWT_STRICT doit être LISIBLE (sinon impossible de
+    prouver quelle version est déployée) et lui-même verrouillé — le basculer exige un
+    JWT super-admin signé. `X-User-Email` usurpé -> 403, et le drapeau ne bouge pas."""
+    try:
+        avant = _v344_flag()
+        if avant is None:
+            return record(81, "V344 : drapeau SUPERADMIN_JWT_STRICT exposé", False,
+                          "absent de GET /feature-flags — version V344 non déployée ?")
+        c1 = requests.put(_url("/api/feature-flags"), json={"SUPERADMIN_JWT_STRICT": True},
+                          timeout=TIMEOUT).status_code
+        c2 = requests.put(_url("/api/feature-flags"), json={"SUPERADMIN_JWT_STRICT": True},
+                          headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code
+        apres = _v344_flag()
+        ok = c1 == 403 and c2 == 403 and avant == apres
+        record(81, "V344 : drapeau lisible, bascule refusée sans JWT admin (403, inchangé)", ok,
+               f"anonyme={c1} usurpé={c2} drapeau {avant}->{apres}")
+    except Exception as e:
+        record(81, "V344 : drapeau SUPERADMIN_JWT_STRICT", False, str(e))
+
+
+def t82_v344_privileges_refuses_a_l_usurpateur():
+    """V344 — LE TEST CENTRAL. Une requête portant `X-User-Email: <admin>` SANS jeton
+    signé ne doit obtenir AUCUN des deux privilèges. On adapte l'attente au drapeau lu
+    en direct, pour que le test soit vrai dans ses DEUX états :
+
+      * drapeau OFF (défaut V344) -> le repli est encore accepté : on DOCUMENTE le trou
+        (`gratuit: true` annoncé) sans le déclarer conforme.
+      * drapeau ON                -> gratuité refusée (403) et `no_expiry` ignoré.
+
+    On ne teste QUE des lectures/refus : aucune publication n'est boostée pour de vrai.
+    """
+    flag = _v344_flag()
+    if flag is None:
+        return skip(82, "V344 : privilèges refusés à l'usurpateur", "drapeau illisible")
+    hdr = {"X-User-Email": ADMIN}
+    try:
+        # On cherche une publication DONT L'ADMIN EST L'AUTEUR (sinon la gratuité est
+        # refusée pour une autre raison — non-auteur — et le test ne prouverait rien).
+        pubs = _fetch_publications() or []
+        pid = ""
+        for p in pubs:
+            if (p.get("coach_id") or "").lower() == ADMIN.lower() and p.get("id"):
+                pid = p["id"]
+                break
+        if not pid:
+            return skip(82, "V344 : privilèges refusés à l'usurpateur",
+                        "aucune publication de l'admin en ligne")
+
+        r = requests.get(_url(f"/api/publications/{pid}/boost/destinations"),
+                         headers=hdr, timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        annonce_gratuit = bool(d.get("gratuit"))
+
+        if flag:
+            ok = not annonce_gratuit
+            record(82, "V344 drapeau ON : usurpation X-User-Email n'obtient AUCUNE gratuité",
+                   ok, f"HTTP {r.status_code} gratuit={annonce_gratuit}")
+        else:
+            ok = annonce_gratuit
+            record(82, "V344 drapeau OFF : repli X-User-Email encore actif (trou connu, non fermé)",
+                   ok, f"HTTP {r.status_code} gratuit={annonce_gratuit} — basculer le drapeau pour fermer")
+    except Exception as e:
+        record(82, "V344 : privilèges refusés à l'usurpateur", False, str(e))
+
+
 def _v319_flag():
     """État EN DIRECT du drapeau REQUIRE_COACH_JWT (None si illisible)."""
     try:
@@ -1208,6 +1283,7 @@ def main():
                    t75_boost_prix_lecture_publique, t76_boost_prix_ecriture_admin_seulement,
                    t77_boost_checkout_exige_auteur, t78_boost_pas_de_donnees_commerciales_publiques,
                    t79_v343_no_expiry_ignore_pour_non_admin, t80_v343_gratuite_refusee_sans_identite,
+                   t81_v344_drapeau_expose_et_admin_seul, t82_v344_privileges_refuses_a_l_usurpateur,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

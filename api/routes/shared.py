@@ -109,6 +109,59 @@ def is_super_admin(email: str) -> bool:
     """Vérifie si l'email est celui d'un Super Admin"""
     return email and email.lower().strip() in [e.lower() for e in SUPER_ADMIN_EMAILS]
 
+
+# =====================================================================
+# V344 — LES POUVOIRS SUPER-ADMIN SUR UNE IDENTITÉ *SIGNÉE*
+# =====================================================================
+# Constat V344 : deux privilèges s'obtenaient encore avec un simple en-tête
+# `X-User-Email` (repli transitoire V265), c'est-à-dire une valeur écrite par le
+# navigateur, donc falsifiable :
+#   1. `no_expiry` — publication permanente (Pouvoir A, V343) ;
+#   2. la gratuité du Boost vers une autre vitrine (Pouvoir B, V343).
+# Les autres écritures réservées (prix du Boost V342, `PUT /feature-flags`, cron
+# V330, cockpit V334) exigeaient DÉJÀ un jeton signé — elles ne changent pas.
+#
+# POURQUOI UN INTERRUPTEUR ET PAS UN VERROU IMMÉDIAT : le propriétaire entre
+# aujourd'hui par reconnaissance localStorage, SANS mot de passe, donc SANS jeton
+# signé. Fermer le repli d'un coup le mettrait dehors — c'est exactement
+# l'incident V310c (dashboard vide, revert 0e12578). On livre donc le verrou
+# OFF ; il ne se ferme qu'une fois prouvé que le propriétaire, connecté par
+# `/auth/login`, garde ses trois pouvoirs. Même pattern que `REQUIRE_COACH_JWT`
+# (V319) : basculable sans redéploiement, et donc utilisable en kill-switch.
+
+V344_FLAG = "SUPERADMIN_JWT_STRICT"
+
+
+def super_admin_signe(request) -> str:
+    """
+    V344 — email du super-admin PROUVÉ par un jeton signé, '' sinon.
+
+    Aucun repli : `coach_jwt_email` vérifie la signature HS256 et l'expiration,
+    et ne lit jamais `X-User-Email`. C'est le seul helper autorisé à accorder un
+    privilège super-admin quand le mode strict est actif.
+    """
+    email = coach_jwt_email(request)
+    return email if (email and is_super_admin(email)) else ""
+
+
+async def v344_jwt_strict_actif(database) -> bool:
+    """
+    V344 — le mode strict est-il activé ? Défaut FALSE (comportement V343).
+
+    REPLI VOLONTAIREMENT OUVERT : une base injoignable renvoie False, donc le
+    comportement actuel. Échouer « fermé » ici verrouillerait le propriétaire
+    dehors sur un simple hoquet de MongoDB Atlas — précisément ce qu'on cherche
+    à ne jamais reproduire.
+    """
+    if database is None:
+        return False
+    try:
+        flags = await database.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0}) or {}
+        return bool(flags.get(V344_FLAG, False))
+    except Exception as e:
+        logger.warning(f"[V344] Drapeau {V344_FLAG} illisible ({e}) — on garde le comportement V343")
+        return False
+
 def hex_to_rgb_triplet(hex_color: str) -> str:
     """V259: « r, g, b » d'une couleur #rrggbb, pour les rgba() des emails."""
     try:

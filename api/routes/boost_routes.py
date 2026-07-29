@@ -41,6 +41,8 @@ from typing import Optional
 from api.routes.shared import (
     coach_jwt_email, is_super_admin, subscriber_from_request,
     SUPER_ADMIN_EMAILS, DEFAULT_COACH_ID,
+    # V344 : identité super-admin PROUVÉE (jeton signé) + interrupteur du verrou.
+    super_admin_signe, v344_jwt_strict_actif,
 )
 
 logger = logging.getLogger(__name__)
@@ -221,10 +223,19 @@ def vitrine_de_la_publication(pub: dict) -> str:
     return (pub.get("coach_id") or DEFAULT_COACH_ID).lower()
 
 
-def est_auteur_super_admin(request: Request, pub: dict) -> str:
+def est_auteur_super_admin(request: Request, pub: dict, strict: bool = False) -> str:
     """
     V343 (POUVOIR B) — l'appelant est-il le super-admin ET l'AUTEUR de cette
     publication ? Renvoie son email si oui, chaîne vide sinon.
+
+    V344 — `strict` décide de ce qui vaut PREUVE d'identité :
+      - `strict=False` (défaut, comportement V343) : JWT signé OU repli
+        `X-User-Email` — donc falsifiable, c'est le trou que V344 vient fermer ;
+      - `strict=True` : SEUL un jeton signé compte (`super_admin_signe`). Un
+        en-tête `X-User-Email`, même portant l'adresse exacte de l'admin,
+        n'accorde plus rien.
+    L'appelant lit le drapeau `SUPERADMIN_JWT_STRICT` et transmet la valeur ; ce
+    helper reste synchrone, donc utilisable partout sans changer les signatures.
 
     Pourquoi exiger AUSSI d'être l'auteur : `autoriser_auteur` laisse le
     super-admin agir sur n'importe quelle publication (c'est son rôle de
@@ -246,8 +257,14 @@ def est_auteur_super_admin(request: Request, pub: dict) -> str:
     chaque gratuité obtenue sans jeton signé, pour pouvoir mesurer avant de
     durcir — même démarche que le WARNING `[V265] repli X-User-Email`.
     """
-    email = identite_coach(request)
-    if not email or not is_super_admin(email):
+    if strict:
+        # V344 : plus AUCUN repli. Pas de jeton signé -> pas de privilège.
+        email = super_admin_signe(request)
+    else:
+        email = identite_coach(request)
+        if email and not is_super_admin(email):
+            email = ""
+    if not email:
         return ""
     # Les trois champs où peut vivre l'identité de l'auteur, selon le chemin de
     # publication : coach (`coach_id` / `subscriber_code` = son email) ou
@@ -256,9 +273,11 @@ def est_auteur_super_admin(request: Request, pub: dict) -> str:
                  for champ in ("coach_id", "author_id", "subscriber_code"))
     if not auteur:
         return ""
-    # La trace n'a de sens qu'une fois la gratuité RÉELLEMENT ouverte — sinon on
-    # alerterait aussi pour un super-admin qui consulte la publication d'un tiers.
-    if not coach_jwt_email(request):
+    # V344 : en mode strict, l'identité est signée par construction — l'ancien
+    # avertissement V343 n'a plus d'objet et disparaît. Mode OFF : on continue de
+    # tracer chaque gratuité obtenue sans jeton, c'est la mesure qui dira quand
+    # basculer le drapeau sans risque.
+    if not strict and not coach_jwt_email(request):
         logger.warning(f"[V343] repli X-User-Email — gratuité ouverte à {email} SANS jeton signé "
                        f"(publication {pub.get('id', '?')})")
     return email
@@ -451,7 +470,10 @@ async def boost_destinations(pub_id: str, request: Request, subscriber_code: str
     # `gratuit` sert à deux choses côté client : afficher « Publier gratuitement
     # ici » au lieu de « Payer N CHF », et ne pas griser les vitrines dont le
     # paiement n'est pas configuré — sans paiement, cela n'a plus d'importance.
-    gratuit = bool(est_auteur_super_admin(request, pub))
+    # V344 : la gratuité s'ANNONCE ici selon la même règle qu'elle sera ACCORDÉE
+    # au checkout. Sans cela, mode strict actif, l'admin non signé verrait
+    # « Publier gratuitement ici » puis se ferait refuser — un écran menteur.
+    gratuit = bool(est_auteur_super_admin(request, pub, await v344_jwt_strict_actif(db)))
 
     origine = vitrine_de_la_publication(pub)
     admin = SUPER_ADMIN_EMAILS[0].lower()
@@ -550,9 +572,25 @@ async def boost_checkout(pub_id: str, payload: BoostCheckoutRequest, request: Re
     # autre appelant, l'exécution continue vers le chemin payant V342, inchangé :
     # un non-admin ne peut donc en aucun cas apparaître ailleurs sans paiement
     # confirmé par le prestataire.
-    admin_auteur = est_auteur_super_admin(request, pub)
+    # V344 : `strict` à ON, seul un jeton signé ouvre ce chemin. L'appelant qui
+    # revendique l'admin par `X-User-Email` sans jeton ne tombe PAS dans un simple
+    # « pas de gratuité » silencieux : on le refuse explicitement (403) et on le
+    # trace. Le laisser glisser vers le chemin payant lui ferait ouvrir un paiement
+    # au nom de l'admin — pire que le refus.
+    _v344_strict = await v344_jwt_strict_actif(db)
+    admin_auteur = est_auteur_super_admin(request, pub, _v344_strict)
     if admin_auteur:
         return await activer_boost_gratuit(pub, cible, admin_auteur)
+
+    if _v344_strict:
+        _revendique = identite_coach(request)
+        if _revendique and is_super_admin(_revendique):
+            logger.warning(f"[V344] REFUS gratuité — {_revendique} revendique le super-admin SANS "
+                           f"jeton signé (publication {pub_id}, vitrine « {cible} »)")
+            raise HTTPException(
+                status_code=403,
+                detail="Session non signée : reconnectez-vous pour utiliser vos pouvoirs d'administrateur.",
+            )
 
     beneficiaire = beneficiaire_de(cible)
 
