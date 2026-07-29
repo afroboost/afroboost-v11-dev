@@ -620,23 +620,43 @@ def t63_coach_jwt_legit_access():
 
 
 def t69_cron_campagnes_ferme():
-    """V329 : /api/cron/check-campaigns n'est plus une porte ouverte.
-    Il répondait 200 à n'importe qui (le repli `is_local_dev` s'appliquait en
-    production, faute de CRON_SECRET posé). Sans identité -> 401 ; un e-mail
-    non-admin -> 401 ; le super-admin garde son accès manuel -> 200."""
+    """V329/V330 : /api/cron/check-campaigns n'est plus une porte ouverte.
+    - V329 a fermé l'anonyme (le repli `is_local_dev` s'appliquait en production,
+      faute de CRON_SECRET posé) ;
+    - V330 a fermé la voie `X-User-Email`, FALSIFIABLE : l'identité admin vient
+      désormais d'un JWT SIGNÉ.
+    Anonyme -> 401 ; en-tête X-User-Email admin SEUL -> 401 ; e-mail non-admin -> 401."""
     try:
         anonyme = requests.get(_url("/api/cron/check-campaigns"), timeout=TIMEOUT).status_code
+        entete_admin = requests.get(_url("/api/cron/check-campaigns"),
+                                    headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code
         pirate = requests.get(_url("/api/cron/check-campaigns"),
                               headers={"X-User-Email": "pirate@example.com"}, timeout=TIMEOUT).status_code
-        admin = requests.get(_url("/api/cron/check-campaigns"),
-                             headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
-        forme = admin.status_code == 200 and all(
-            k in (admin.json() or {}) for k in ("success", "due_campaigns", "launched", "errors", "stuck_fixed"))
-        ok = anonyme == 401 and pirate == 401 and forme
-        record(69, "Cron campagnes : fermé au public, ouvert au super-admin", ok,
-               f"anonyme={anonyme} non-admin={pirate} admin={admin.status_code} forme_ok={forme}")
+        ok = anonyme == 401 and entete_admin == 401 and pirate == 401
+        record(69, "Cron campagnes : anonyme ET X-User-Email falsifié -> 401", ok,
+               f"anonyme={anonyme} entete_admin={entete_admin} non-admin={pirate}")
     except Exception as e:
         record(69, "Cron campagnes : fermé au public", False, str(e))
+
+
+def t70_cron_campagnes_admin_jwt():
+    """V330 — PARCOURS LÉGITIME (règle V310c du dépôt : prouver que le propriétaire
+    garde l'accès AVANT de durcir). Avec un JWT super-admin valide, l'endpoint doit
+    répondre 200 avec la même forme qu'avant.
+    SKIP si ADMIN_JWT n'est pas fourni — un SKIP ici signifie que le durcissement
+    n'est PAS prouvé par la suite, et doit être vérifié à la main."""
+    if not ADMIN_JWT:
+        return skip(70, "Cron campagnes : JWT super-admin -> 200",
+                    "ADMIN_JWT non fourni — parcours légitime NON couvert ici")
+    try:
+        r = requests.get(_url("/api/cron/check-campaigns"),
+                         headers={"Authorization": "Bearer " + ADMIN_JWT}, timeout=TIMEOUT)
+        forme = r.status_code == 200 and all(
+            k in (r.json() or {}) for k in ("success", "due_campaigns", "launched", "errors", "stuck_fixed"))
+        record(70, "Cron campagnes : JWT super-admin -> 200 (forme inchangée)", forme,
+               f"HTTP {r.status_code} {_short(r)}")
+    except Exception as e:
+        record(70, "Cron campagnes : JWT super-admin -> 200", False, str(e))
 
 
 def t67_publication_programmee():
@@ -959,7 +979,7 @@ def main():
                    t64_pawapay_flag_admin_only, t65_pawapay_gated_by_flag,
                    t66_stripe_cinetpay_untouched,
                    t67_publication_programmee, t68_suppression_programmee,
-                   t69_cron_campagnes_ferme,
+                   t69_cron_campagnes_ferme, t70_cron_campagnes_admin_jwt,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
