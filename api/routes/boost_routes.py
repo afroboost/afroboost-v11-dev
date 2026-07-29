@@ -221,6 +221,147 @@ def vitrine_de_la_publication(pub: dict) -> str:
     return (pub.get("coach_id") or DEFAULT_COACH_ID).lower()
 
 
+def est_auteur_super_admin(request: Request, pub: dict) -> str:
+    """
+    V343 (POUVOIR B) — l'appelant est-il le super-admin ET l'AUTEUR de cette
+    publication ? Renvoie son email si oui, chaîne vide sinon.
+
+    Pourquoi exiger AUSSI d'être l'auteur : `autoriser_auteur` laisse le
+    super-admin agir sur n'importe quelle publication (c'est son rôle de
+    modération). Sans cette seconde condition, il pourrait placer GRATUITEMENT
+    le contenu d'un tiers sur la vitrine d'un coach — ce que le coach n'a pas
+    demandé et pour quoi personne n'aurait payé. La gratuité est donc bornée à
+    SES propres publications ; s'il boostait celle d'un autre, il repasserait
+    par le paiement normal V342.
+
+    Vérification SERVEUR : l'identité vient du JWT (ou du repli X-User-Email du
+    mode transitoire V265, comme partout ailleurs sur les publications), jamais
+    d'un drapeau « je suis admin » envoyé par le client.
+
+    LIMITE CONNUE, à lever avec le reste du chantier JWT : tant que le repli
+    X-User-Email existe (V265), il reste falsifiable. On ne le ferme PAS ici —
+    l'entrée coach du tableau de bord s'authentifie précisément par ce repli et
+    n'émet aucun JWT ; l'exiger rendrait la fonction inutilisable pour son seul
+    utilisateur légitime (c'est l'incident V310c à la lettre). On TRACE donc
+    chaque gratuité obtenue sans jeton signé, pour pouvoir mesurer avant de
+    durcir — même démarche que le WARNING `[V265] repli X-User-Email`.
+    """
+    email = identite_coach(request)
+    if not email or not is_super_admin(email):
+        return ""
+    if not coach_jwt_email(request):
+        logger.warning(f"[V343] repli X-User-Email — gratuité accordée à {email} SANS jeton signé "
+                       f"(publication {pub.get('id', '?')})")
+    # Les trois champs où peut vivre l'identité de l'auteur, selon le chemin de
+    # publication : coach (`coach_id` / `subscriber_code` = son email) ou
+    # résolution d'email a posteriori (`author_id`).
+    for champ in ("coach_id", "author_id", "subscriber_code"):
+        if (pub.get(champ) or "").strip().lower() == email:
+            return email
+    return ""
+
+
+def fin_de_boost(pub: dict) -> str:
+    """
+    V343 — date de fin d'apparition sur la vitrine de destination.
+
+    48 h par défaut. Si la publication a été créée « sans limite » (POUVOIR A,
+    `no_expiry`), son apparition n'a pas de raison d'être plus courte que la
+    publication elle-même : on réutilise le mécanisme V331 (date très lointaine),
+    exactement comme pour `expires_at`.
+    """
+    maintenant = datetime.now(timezone.utc)
+    if not pub.get("no_expiry"):
+        return (maintenant + timedelta(hours=V342_BOOST_HOURS)).isoformat()
+    try:
+        from api.server import V331_EXPIRATION_LOINTAINE_ANNEES as annees
+    except Exception:
+        annees = 100  # même valeur que V331 ; repli si l'import n'est pas résoluble
+    # `timedelta` plutôt que `replace(year=...)` : ce dernier lève une ValueError
+    # un 29 février (le 29/02 de l'année cible n'existe pas une fois sur quatre).
+    # Seule compte ici la nature de la date — très lointaine, donc jamais atteinte.
+    return (maintenant + timedelta(days=365 * annees)).isoformat()
+
+
+async def activer_boost_gratuit(pub: dict, cible: str, admin: str) -> dict:
+    """
+    V343 (POUVOIR B) — apparition GRATUITE, réservée au super-admin auteur.
+
+    Ce chemin ne crée AUCUN paiement (ni Stripe ni PawaPay), n'encaisse rien et
+    n'écrit RIEN dans `payment_transactions` : personne ne reçoit d'argent, le
+    montant est 0 et il n'y a pas de bénéficiaire. Une trace est tout de même
+    conservée dans `boost_transactions`, pour que l'apparition soit auditable
+    comme n'importe quelle autre.
+
+    IDEMPOTENCE : si cette publication apparaît DÉJÀ gratuitement sur CETTE même
+    vitrine et que l'apparition court encore, on renvoie l'existant sans rien
+    réécrire — rappeler l'action ne rallonge donc jamais la durée et n'empile pas
+    les entrées. Choisir une AUTRE vitrine remplace la destination, conformément
+    au modèle V342 (une publication apparaît sur une vitrine à la fois).
+    """
+    maintenant_iso = datetime.now(timezone.utc).isoformat()
+    pub_id = pub.get("id", "")
+
+    if (pub.get("boost_target_vitrine") == cible
+            and pub.get("boost_provider") == "admin_gratuit"
+            and (pub.get("boosted_until") or "") > maintenant_iso):
+        existant = await db.boost_transactions.find_one(
+            {"publication_id": pub_id, "target": cible, "provider": "admin_gratuit",
+             "status": "completed"},
+            {"_id": 0, "boost_id": 1},
+        ) or {}
+        logger.info(f"[V343] Boost gratuit déjà actif pour {pub_id} sur « {cible} » — inchangé")
+        return {
+            "success": True, "gratuit": True, "status": "already_processed",
+            "boost_id": existant.get("boost_id", ""), "target": cible,
+            "amount_chf": 0, "currency": "CHF",
+            "boosted_until": pub.get("boosted_until", ""),
+        }
+
+    boost_id = f"boost_{uuid.uuid4().hex[:16]}"
+    fin = fin_de_boost(pub)
+
+    await db.boost_transactions.insert_one({
+        "boost_id": boost_id,
+        "publication_id": pub_id,
+        "target": cible,
+        "payee": None,                 # personne n'encaisse : c'est gratuit
+        "payer_email": admin,
+        "payer_label": admin,
+        "provider": "admin_gratuit",
+        "amount_chf": 0,
+        "currency": "CHF",
+        "status": "completed",
+        "created_at": maintenant_iso,
+        "completed_at": maintenant_iso,
+        "boosted_until": fin,
+    })
+
+    maj = await db.publications.update_one(
+        {"id": pub_id},
+        {"$set": {
+            "boost_target_vitrine": cible,
+            "boosted_until": fin,
+            "boost_payment_id": boost_id,
+            "boost_provider": "admin_gratuit",
+            "boost_amount_chf": 0,
+            "boost_payer": admin,
+            "boost_payee": None,
+        }},
+    )
+    if not getattr(maj, "matched_count", 0):
+        raise HTTPException(status_code=404, detail="Publication non trouvée")
+
+    logger.info(f"[V343] Boost GRATUIT super-admin : publication {pub_id} visible sur "
+                f"« {cible} » jusqu'au {fin} — aucun paiement, aucun encaissement")
+    return {
+        "success": True, "gratuit": True, "status": "completed",
+        "boost_id": boost_id, "target": cible,
+        "amount_chf": 0, "currency": "CHF", "payee": None,
+        "boosted_until": fin,
+    }
+
+
 def beneficiaire_de(target: str) -> str:
     """
     Propriétaire de la vitrine de destination = celui qui ENCAISSE.
@@ -303,6 +444,12 @@ async def boost_destinations(pub_id: str, request: Request, subscriber_code: str
     pub = await charger_publication(pub_id)
     await autoriser_auteur(request, pub, subscriber_code)
 
+    # V343 (POUVOIR B) : pour le super-admin AUTEUR, l'apparition est gratuite.
+    # `gratuit` sert à deux choses côté client : afficher « Publier gratuitement
+    # ici » au lieu de « Payer N CHF », et ne pas griser les vitrines dont le
+    # paiement n'est pas configuré — sans paiement, cela n'a plus d'importance.
+    gratuit = bool(est_auteur_super_admin(request, pub))
+
     origine = vitrine_de_la_publication(pub)
     admin = SUPER_ADMIN_EMAILS[0].lower()
     destinations = []
@@ -339,12 +486,20 @@ async def boost_destinations(pub_id: str, request: Request, subscriber_code: str
         "price_chf": await lire_prix_boost(),
         "currency": "CHF",
         "hours": V342_BOOST_HOURS,
+        # V343 : vrai UNIQUEMENT pour le super-admin auteur. Le serveur ne se fie
+        # pas à ce qu'en fera le client : la gratuité est re-vérifiée au checkout.
+        "gratuit": gratuit,
+        # V343 : si la publication est « sans limite » (POUVOIR A), son apparition
+        # sur la vitrine de destination l'est aussi.
+        "sans_limite": bool(gratuit and pub.get("no_expiry")),
     }
 
 
 class BoostCheckoutRequest(BaseModel):
     target: str
-    provider: str                       # "stripe" | "pawapay"
+    # V343 : facultatif — le chemin GRATUIT du super-admin n'utilise aucun
+    # prestataire. Le chemin PAYANT continue d'exiger une valeur valide (400 sinon).
+    provider: Optional[str] = ""         # "stripe" | "pawapay"
     subscriber_code: Optional[str] = ""
     customer_phone: Optional[str] = ""  # Mobile Money uniquement
     customer_email: Optional[str] = ""
@@ -379,6 +534,22 @@ async def boost_checkout(pub_id: str, payload: BoostCheckoutRequest, request: Re
         connu = await db.coaches.find_one({"email": cible, "is_active": True}, {"_id": 0, "email": 1})
         if not connu:
             raise HTTPException(status_code=404, detail="Vitrine de destination inconnue")
+
+    # =====================================================================
+    # V343 (POUVOIR B) — COURT-CIRCUIT GRATUIT DU SUPER-ADMIN
+    # =====================================================================
+    # Placé APRÈS toutes les validations de destination (elles valent pour lui
+    # aussi) et AVANT toute création de paiement : aucun appel Stripe/PawaPay
+    # n'est émis, aucun montant n'est calculé, rien n'est encaissé.
+    #
+    # C'est le SEUL endroit qui accorde une apparition sans paiement, et il est
+    # gardé par `est_auteur_super_admin` — une vérification serveur. Pour tout
+    # autre appelant, l'exécution continue vers le chemin payant V342, inchangé :
+    # un non-admin ne peut donc en aucun cas apparaître ailleurs sans paiement
+    # confirmé par le prestataire.
+    admin_auteur = est_auteur_super_admin(request, pub)
+    if admin_auteur:
+        return await activer_boost_gratuit(pub, cible, admin_auteur)
 
     beneficiaire = beneficiaire_de(cible)
 

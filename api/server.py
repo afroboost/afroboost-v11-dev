@@ -7089,14 +7089,37 @@ async def create_publication(request: Request):
     # `no_expiry` est posé sur le document : c'est lui qui protège la permanence si
     # la publication est programmée (V327) — sans quoi la sortie recalculerait un
     # expires_at à 48 h et la permanence serait silencieusement perdue.
+    #
+    # V343 (POUVOIR A) : le super-admin choisit désormais la durée PUBLICATION PAR
+    # PUBLICATION, via le champ optionnel `no_expiry` du corps. Arbitrage avec le
+    # drapeau global V333, choisi pour ne rien casser de l'existant :
+    #   - champ PRÉSENT + auteur super-admin -> le champ GAGNE (true = permanent,
+    #     false = 48 h), quel que soit l'état du drapeau ;
+    #   - champ ABSENT -> comportement V333 strictement inchangé (le drapeau décide) ;
+    #   - auteur NON super-admin -> champ IGNORÉ, toujours 48 h.
+    # La vérification est SERVEUR (`is_super_admin`) : un client qui envoie
+    # `no_expiry: true` sans en avoir le droit n'obtient rien de plus.
+    _v343_no_expiry_demande = body.get("no_expiry", None)
     try:
         if is_super_admin(code):
-            _v333_flags = await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0}) or {}
-            if bool(_v333_flags.get("PUBLICATIONS_NO_EXPIRY", False)):
+            _v343_permanent = None
+            if _v343_no_expiry_demande is not None:
+                # Choix explicite de l'auteur super-admin pour CETTE publication.
+                _v343_permanent = bool(_v343_no_expiry_demande)
+            else:
+                # Aucun choix exprimé : on retombe sur le drapeau global V333.
+                _v333_flags = await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0}) or {}
+                _v343_permanent = bool(_v333_flags.get("PUBLICATIONS_NO_EXPIRY", False))
+
+            if _v343_permanent:
                 pub["no_expiry"] = True
                 pub["expires_at"] = now.replace(
                     year=now.year + V331_EXPIRATION_LOINTAINE_ANNEES).isoformat()
-                logger.info(f"[V333] Publication super-admin SANS durée limitée ({pub['id']})")
+                logger.info(f"[V343] Publication super-admin SANS durée limitée ({pub['id']})")
+        elif _v343_no_expiry_demande:
+            # Trace explicite : quelqu'un a demandé la permanence sans y avoir droit.
+            # On ne lève pas d'erreur — la publication part normalement en 48 h.
+            logger.warning(f"[V343] `no_expiry` ignoré pour {code} (non super-admin) — 48 h appliquées")
     except Exception as _v333_err:
         # Une panne de lecture du drapeau ne doit jamais empêcher de publier :
         # on retombe simplement sur le comportement habituel (48 h).

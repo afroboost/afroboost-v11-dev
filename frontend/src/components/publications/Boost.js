@@ -201,6 +201,9 @@ const ModaleBoost = ({ pubId, subscriberCode, prix, onClose }) => {
   const [moyen, setMoyen] = useState('');
   const [telephone, setTelephone] = useState('');
   const [occupe, setOccupe] = useState(false);
+  // V343 (POUVOIR B) : succès de l'apparition GRATUITE (super-admin), sans
+  // redirection vers une page de paiement — il n'y en a pas.
+  const [faitGratuit, setFaitGratuit] = useState('');
 
   useEffect(() => {
     const q = subscriberCode ? `?subscriber_code=${encodeURIComponent(subscriberCode)}` : '';
@@ -218,22 +221,49 @@ const ModaleBoost = ({ pubId, subscriberCode, prix, onClose }) => {
   const choisie = destinations.find((d) => d.target === cible) || null;
   const moyensPossibles = (choisie && choisie.providers) || [];
   const montant = (donnees && donnees.price_chf) || prix;
+  // V343 (POUVOIR B) : c'est le SERVEUR qui déclare la gratuité (il a vérifié que
+  // l'appelant est le super-admin ET l'auteur). Le client ne fait que l'afficher —
+  // et le serveur la re-vérifie au moment du checkout.
+  const gratuit = !!(donnees && donnees.gratuit);
+  const sansLimite = !!(donnees && donnees.sans_limite);
+  // Sans paiement, une vitrine dont le prestataire n'est pas configuré reste
+  // parfaitement atteignable : on ne la grise donc plus.
+  const destinationDispo = (d) => gratuit || ((d.providers || []).length > 0);
+  // Gratuit : le choix de la destination suffit. Payant : il faut aussi un moyen.
+  const pretAValider = !!cible && (gratuit || !!moyen);
 
   const payer = async () => {
-    if (occupe || !cible || !moyen) return;
+    if (occupe || !pretAValider) return;
     setOccupe(true);
     setErreur('');
     try {
-      const corps = { target: cible, provider: moyen };
+      const corps = { target: cible };
+      // V343 : aucun moyen de paiement sur le chemin gratuit — il n'y a pas de
+      // paiement à ouvrir. Le serveur n'en attend pas non plus.
+      if (!gratuit) corps.provider = moyen;
       if (subscriberCode) corps.subscriber_code = subscriberCode;
-      if (moyen === 'pawapay' && telephone) corps.customer_phone = telephone;
+      if (!gratuit && moyen === 'pawapay' && telephone) corps.customer_phone = telephone;
       const r = await axios.post(`${API}/publications/${pubId}/boost/checkout`, corps);
+
+      // V343 : réponse gratuite -> l'apparition est DÉJÀ accordée, on ne
+      // redirige nulle part. On rafraîchit les vitrines et on confirme sur place.
+      if (r.data && r.data.gratuit) {
+        const nom = (choisie && choisie.name) || 'la vitrine choisie';
+        setFaitGratuit(sansLimite
+          ? `C'est publié sur ${nom}, sans limite de durée.`
+          : `C'est publié sur ${nom} pour ${(donnees && donnees.hours) || DUREE_BOOST_H} h.`);
+        try { window.dispatchEvent(new CustomEvent('afroboost:publications-changed')); } catch (e) { /* ignore */ }
+        setOccupe(false);
+        return;
+      }
+
       const url = r.data && r.data.payment_url;
       if (url) { window.location.href = url; return; }
       setErreur("Le paiement n'a pas pu être ouvert.");
     } catch (e) {
       setErreur((e && e.response && e.response.data && e.response.data.detail)
-        || "Le paiement n'a pas pu être ouvert.");
+        || (gratuit ? "La publication n'a pas pu être diffusée."
+                    : "Le paiement n'a pas pu être ouvert."));
     }
     setOccupe(false);
   };
@@ -264,13 +294,30 @@ const ModaleBoost = ({ pubId, subscriberCode, prix, onClose }) => {
                            cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
 
-        <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.75rem', margin: '8px 0 14px' }}>
-          Apparaître <strong style={{ color: '#fff' }}>{(donnees && donnees.hours) || DUREE_BOOST_H} h</strong> sur une autre vitrine ou
-          sur la page d'accueil, pour <strong style={{ color: '#fff' }}>{montant} CHF</strong>.
-          Publier sur votre propre vitrine reste gratuit.
-        </p>
+        {/* V343 : le super-admin auteur ne voit ni prix ni moyen de paiement —
+            pour lui, l'apparition ailleurs est gratuite. */}
+        {gratuit ? (
+          <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.75rem', margin: '8px 0 14px' }}>
+            Faire apparaître cette publication sur la vitrine de votre choix,
+            {sansLimite
+              ? <strong style={{ color: '#fff' }}> sans limite de durée</strong>
+              : <> pendant <strong style={{ color: '#fff' }}>{(donnees && donnees.hours) || DUREE_BOOST_H} h</strong></>}
+            . <strong style={{ color: '#fff' }}>Gratuit</strong> — aucun paiement.
+          </p>
+        ) : (
+          <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.75rem', margin: '8px 0 14px' }}>
+            Apparaître <strong style={{ color: '#fff' }}>{(donnees && donnees.hours) || DUREE_BOOST_H} h</strong> sur une autre vitrine ou
+            sur la page d'accueil, pour <strong style={{ color: '#fff' }}>{montant} CHF</strong>.
+            Publier sur votre propre vitrine reste gratuit.
+          </p>
+        )}
 
-        {donnees === null ? (
+        {faitGratuit ? (
+          <p data-testid="boost-gratuit-ok"
+             style={{ color: PRIMAIRE, fontSize: '0.82rem', fontWeight: 600, margin: '0 0 4px' }}>
+            {faitGratuit}
+          </p>
+        ) : donnees === null ? (
           <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.8rem' }}>Chargement…</p>
         ) : destinations.length === 0 ? (
           <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.8rem' }}>
@@ -279,11 +326,11 @@ const ModaleBoost = ({ pubId, subscriberCode, prix, onClose }) => {
         ) : (
           <>
             <p style={{ color: '#fff', fontSize: '0.8rem', fontWeight: 600, margin: '0 0 6px' }}>
-              1. Où voulez-vous apparaître ?
+              {gratuit ? 'Où voulez-vous apparaître ?' : '1. Où voulez-vous apparaître ?'}
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
               {destinations.map((d) => {
-                const dispo = (d.providers || []).length > 0;
+                const dispo = destinationDispo(d);
                 const actif = cible === d.target;
                 return (
                   <button
@@ -312,7 +359,8 @@ const ModaleBoost = ({ pubId, subscriberCode, prix, onClose }) => {
               })}
             </div>
 
-            {choisie ? (
+            {/* V343 : l'étape « moyen de paiement » n'existe pas sur le chemin gratuit. */}
+            {choisie && !gratuit ? (
               <>
                 <p style={{ color: '#fff', fontSize: '0.8rem', fontWeight: 600, margin: '0 0 6px' }}>
                   2. Comment payer ?
@@ -353,16 +401,19 @@ const ModaleBoost = ({ pubId, subscriberCode, prix, onClose }) => {
             ) : null}
 
             <button
-              type="button" onClick={payer} disabled={!cible || !moyen || occupe}
+              type="button" onClick={payer} disabled={!pretAValider || occupe}
               data-testid="boost-payer"
               style={{
                 width: '100%', padding: '11px', borderRadius: 10, border: 'none', fontWeight: 700,
                 fontSize: '0.85rem', color: '#fff',
-                background: (!cible || !moyen) ? 'rgba(255,255,255,0.1)' : PRIMAIRE,
-                cursor: (!cible || !moyen || occupe) ? 'not-allowed' : 'pointer',
+                background: !pretAValider ? 'rgba(255,255,255,0.1)' : PRIMAIRE,
+                cursor: (!pretAValider || occupe) ? 'not-allowed' : 'pointer',
               }}
             >
-              {occupe ? 'Ouverture du paiement…' : `Payer ${montant} CHF`}
+              {/* V343 : libellé sans montant sur le chemin gratuit. */}
+              {gratuit
+                ? (occupe ? 'Diffusion…' : 'Publier gratuitement ici')
+                : (occupe ? 'Ouverture du paiement…' : `Payer ${montant} CHF`)}
             </button>
           </>
         )}
@@ -379,6 +430,9 @@ const ModaleBoost = ({ pubId, subscriberCode, prix, onClose }) => {
 export const BoutonBoost = ({ pubId, subscriberCode }) => {
   const prix = usePrixBoost();
   const [ouvert, setOuvert] = useState(false);
+  // V343 : ne pas annoncer un prix au super-admin, pour qui c'est gratuit. La
+  // gratuité RÉELLE est décidée par le serveur à l'ouverture de la modale.
+  const [admin] = useState(estSuperAdmin);
 
   return (
     <>
@@ -387,9 +441,11 @@ export const BoutonBoost = ({ pubId, subscriberCode }) => {
         onClick={() => setOuvert(true)}
         data-testid={`boost-bouton-${pubId}`}
         aria-label="Booster"
-        title={prix
-          ? `Booster : apparaître ${DUREE_BOOST_H} h sur une autre vitrine ou la page d'accueil — ${prix} CHF`
-          : `Booster : apparaître ${DUREE_BOOST_H} h sur une autre vitrine ou la page d'accueil`}
+        title={admin
+          ? "Diffuser : faire apparaître cette publication sur une autre vitrine"
+          : (prix
+            ? `Booster : apparaître ${DUREE_BOOST_H} h sur une autre vitrine ou la page d'accueil — ${prix} CHF`
+            : `Booster : apparaître ${DUREE_BOOST_H} h sur une autre vitrine ou la page d'accueil`)}
         style={{ background: 'none', border: 'none', padding: 4, lineHeight: 0,
                  cursor: 'pointer', color: PRIMAIRE }}
       >
