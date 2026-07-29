@@ -249,16 +249,19 @@ def est_auteur_super_admin(request: Request, pub: dict) -> str:
     email = identite_coach(request)
     if not email or not is_super_admin(email):
         return ""
-    if not coach_jwt_email(request):
-        logger.warning(f"[V343] repli X-User-Email — gratuité accordée à {email} SANS jeton signé "
-                       f"(publication {pub.get('id', '?')})")
     # Les trois champs où peut vivre l'identité de l'auteur, selon le chemin de
     # publication : coach (`coach_id` / `subscriber_code` = son email) ou
     # résolution d'email a posteriori (`author_id`).
-    for champ in ("coach_id", "author_id", "subscriber_code"):
-        if (pub.get(champ) or "").strip().lower() == email:
-            return email
-    return ""
+    auteur = any((pub.get(champ) or "").strip().lower() == email
+                 for champ in ("coach_id", "author_id", "subscriber_code"))
+    if not auteur:
+        return ""
+    # La trace n'a de sens qu'une fois la gratuité RÉELLEMENT ouverte — sinon on
+    # alerterait aussi pour un super-admin qui consulte la publication d'un tiers.
+    if not coach_jwt_email(request):
+        logger.warning(f"[V343] repli X-User-Email — gratuité ouverte à {email} SANS jeton signé "
+                       f"(publication {pub.get('id', '?')})")
+    return email
 
 
 def fin_de_boost(pub: dict) -> str:
