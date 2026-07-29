@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v339'; // V334 etape 4: cockpit global super admin
+var CACHE_NAME = 'afroboost-v340'; // V338: suivi repliable + seances datees + notes
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

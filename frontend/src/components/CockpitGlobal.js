@@ -11,6 +11,7 @@
  */
 import { useState, useEffect } from "react";
 import axios from "axios";
+import DetailAbonne, { NoteMotivation } from "./progress/DetailAbonne"; // V338 : blocs partages
 
 const API = `${process.env.REACT_APP_BACKEND_URL || ''}/api`;
 const PRIMAIRE = "var(--primary-color, #D91CD2)";
@@ -34,6 +35,21 @@ export default function CockpitGlobal() {
   const [erreur, setErreur] = useState("");
   const [coachOuvert, setCoachOuvert] = useState(null);
   const [abonnes, setAbonnes] = useState(null);
+  // V338 : exploration jusqu'à l'abonné (séances datées + note).
+  const [abonneOuvert, setAbonneOuvert] = useState(null);
+  const [detailAbonne, setDetailAbonne] = useState({});
+
+  const ouvrirAbonne = async (code) => {
+    if (abonneOuvert === code) { setAbonneOuvert(null); return; }
+    setAbonneOuvert(code);
+    if (detailAbonne[code]) return;
+    try {
+      const r = await axios.get(`${API}/progress/${encodeURIComponent(code)}/cockpit`);
+      setDetailAbonne((prev) => ({ ...prev, [code]: r.data.stats || {} }));
+    } catch (e) {
+      setDetailAbonne((prev) => ({ ...prev, [code]: { seances: [] } }));
+    }
+  };
 
   useEffect(() => {
     let vivant = true;
@@ -119,6 +135,10 @@ export default function CockpitGlobal() {
 
               {ouvert && (
                 <div style={{ marginTop: 10, borderTop: BORDURE, paddingTop: 10 }}>
+                  {/* V338 : note de l'ADMINISTRATEUR à ce coach — même mécanique
+                      que la note coach -> abonné, même composant. */}
+                  <NoteMotivation cibleType="coach" cibleId={co.coach_id} peutEcrire={true} />
+                  <div style={{ height: 10 }} />
                   {abonnes === null ? (
                     <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 12, margin: 0 }}>Chargement…</p>
                   ) : abonnes.length === 0 ? (
@@ -126,20 +146,40 @@ export default function CockpitGlobal() {
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {abonnes.slice(0, 50).map((s) => (
-                        <div key={s.code} style={{
-                          display: "flex", justifyContent: "space-between", gap: 8,
-                          fontSize: 11.5, color: "rgba(255,255,255,0.6)",
-                        }}>
-                          <span style={{ color: "#fff", overflow: "hidden",
-                                         textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {s.name || s.code}
-                            {s.decrochage > 0.3 ? (
-                              <span style={{ color: "#f59e0b", fontSize: 10, marginLeft: 6 }}>décroche</span>
-                            ) : null}
-                          </span>
-                          <span style={{ flexShrink: 0 }}>
-                            {s.seances_suivies} séances · {s.seances_30j ?? 0} sur 30 j
-                          </span>
+                        <div key={s.code}>
+                          <button
+                            type="button"
+                            onClick={() => ouvrirAbonne(s.code)}
+                            style={{
+                              width: "100%", display: "flex", justifyContent: "space-between",
+                              gap: 8, fontSize: 11.5, color: "rgba(255,255,255,0.6)",
+                              background: "none", border: "none", padding: "3px 0",
+                              cursor: "pointer", textAlign: "left",
+                            }}
+                            data-testid={`cockpit-abonne-${s.code}`}
+                          >
+                            <span style={{ color: "#fff", overflow: "hidden",
+                                           textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {s.name || s.code}
+                              {s.decrochage > 0.3 ? (
+                                <span style={{ color: "#f59e0b", fontSize: 10, marginLeft: 6 }}>décroche</span>
+                              ) : null}
+                            </span>
+                            <span style={{ flexShrink: 0 }}>
+                              {s.seances_suivies} séances · {s.seances_30j ?? 0} sur 30 j
+                            </span>
+                          </button>
+                          {abonneOuvert === s.code ? (
+                            <div style={{ margin: "6px 0 10px", paddingLeft: 8,
+                                          borderLeft: "2px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35)" }}>
+                              {/* V338 : MÊME bloc partagé qu'aux niveaux abonné et coach. */}
+                              <DetailAbonne
+                                code={s.code}
+                                seances={(detailAbonne[s.code] || {}).seances}
+                                peutEcrire={true}
+                              />
+                            </div>
+                          ) : null}
                         </div>
                       ))}
                     </div>

@@ -6710,7 +6710,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               })().map(sub => (
                 <button
                   key={sub.id}
-                  onClick={() => handleSubTabChange(sub.id)}
+                  onClick={() => {
+                    // V338 : l'onglet « Suivi » est REPLIABLE — recliquer dessus
+                    // le referme. Les autres onglets gardent leur comportement.
+                    if (sub.id === 'suivi' && offersSubTab === 'suivi') {
+                      setOffersSubTab('');
+                    } else {
+                      handleSubTabChange(sub.id);
+                    }
+                  }}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',

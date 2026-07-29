@@ -378,7 +378,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
                 super-admin signe sur /progress/admin/global — cet onglet ne fait
                 qu'afficher, il ne decide d'aucun droit. */}
             <button
-              onClick={() => setActiveTab('cockpit')}
+              onClick={() => setActiveTab(activeTab === 'cockpit' ? '' : 'cockpit')}  /* V338 : repliable */
               className={`px-4 py-2 text-sm font-medium transition-all ${
                 activeTab === 'cockpit'
                   ? 'text-white'

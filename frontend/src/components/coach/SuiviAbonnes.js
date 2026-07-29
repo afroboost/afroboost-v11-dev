@@ -15,6 +15,7 @@
  */
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
+import DetailAbonne from "../progress/DetailAbonne"; // V338 : bloc partage
 
 const API = `${process.env.REACT_APP_BACKEND_URL || ''}/api`;
 
@@ -57,6 +58,19 @@ export default function SuiviAbonnes() {
   }, []);
 
   useEffect(() => { charger(); }, [charger]);
+
+  // V338 : au dépliage, on charge le cockpit de CET abonné pour disposer de ses
+  // séances datées. Le serveur vérifie que ce coach y a droit.
+  const [detail, setDetail] = useState({});   // { [code]: {seances} }
+  const ouvrirDetail = async (code) => {
+    if (detail[code]) return;
+    try {
+      const r = await axios.get(`${API}/progress/${encodeURIComponent(code)}/cockpit`);
+      setDetail((prev) => ({ ...prev, [code]: r.data.stats || {} }));
+    } catch (e) {
+      setDetail((prev) => ({ ...prev, [code]: { seances: [] } }));
+    }
+  };
 
   const enregistrer = async (code) => {
     if (envoi) return;
@@ -130,7 +144,11 @@ export default function SuiviAbonnes() {
                 ) : null}
                 <button
                   type="button"
-                  onClick={() => { setOuvert(deplie ? null : s.code); setPoids(""); setNote(""); setRetour(null); }}
+                  onClick={() => {
+                    const suivant = deplie ? null : s.code;
+                    setOuvert(suivant); setPoids(""); setNote(""); setRetour(null);
+                    if (suivant) ouvrirDetail(suivant);
+                  }}
                   style={{
                     flexShrink: 0, padding: "6px 12px", borderRadius: 999,
                     border: `1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)`,
@@ -183,6 +201,13 @@ export default function SuiviAbonnes() {
                           data-testid={`suivi-submit-${s.code}`}>
                     {envoi ? "Enregistrement…" : "Enregistrer la mesure"}
                   </button>
+                  {/* V338 : séances datées + note « à améliorer / motivation ».
+                      Même bloc que dans le cockpit de l'abonné. */}
+                  <DetailAbonne
+                    code={s.code}
+                    seances={(detail[s.code] || {}).seances}
+                    peutEcrire={true}
+                  />
                 </div>
               )}
 

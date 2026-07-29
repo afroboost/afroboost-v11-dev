@@ -7695,16 +7695,24 @@ async def _v334_stats_abonne(code: str, email: str) -> dict:
             return None
 
     passees, a_venir, premiere = 0, 0, None
+    # V338 : on collecte AUSSI la date (et le nom) de chaque séance effectuée, dans le
+    # MÊME passage que les totaux et à partir de la même source. Impossible dès lors
+    # que la liste et le compteur divergent — ce qui arriverait fatalement si un écran
+    # refaisait le calcul de son côté.
+    seances = []
     for r in reservations:
         d = _date(r.get("datetime")) or _date(r.get("createdAt"))
         if not d:
             continue
         if d <= now:
             passees += 1
+            seances.append({"date": d.isoformat(), "nom": (r.get("courseName") or "").strip()})
             if premiere is None or d < premiere:
                 premiere = d
         else:
             a_venir += 1
+
+    seances.sort(key=lambda x: x["date"], reverse=True)   # les plus récentes en haut
 
     # Ancienneté : depuis la première séance suivie, à défaut depuis l'abonnement.
     anciennete_jours = 0
@@ -7728,7 +7736,146 @@ async def _v334_stats_abonne(code: str, email: str) -> dict:
         "seances_a_venir": a_venir,
         "anciennete_jours": anciennete_jours,
         "regularite_par_semaine": regularite,
+        # V338 : liste plafonnée à 200 — au-delà elle n'est plus lisible et alourdit
+        # la réponse pour rien. Le TOTAL, lui, reste exact.
+        "seances": seances[:200],
     }
+
+
+# =====================================================================
+# V338 — NOTES « Points à améliorer / Motivation »
+# =====================================================================
+# Un retour écrit, à deux niveaux, avec la MÊME mécanique :
+#   - coach       -> un de SES abonnés  (l'abonné la lit dans son cockpit) ;
+#   - super admin -> un coach           (le coach la lit dans son dashboard).
+#
+# Collection dédiée `db.coaching_notes`, UN SEUL enregistrement courant par cible
+# (upsert) : une note est un message vivant qu'on met à jour, pas un fil qui empile.
+#
+# C'est un texte qu'une personne lit sur elle-même : les droits sont donc aussi
+# stricts que pour les mesures. Tout passe par `_v338_autoriser_note()`.
+
+V338_CIBLES = ("subscriber", "coach")
+
+
+async def _v338_autoriser_note(request: Request, cible_type: str, cible_id: str,
+                               code: str = "", ecriture: bool = False):
+    """
+    Qui peut lire / écrire la note d'une cible ?
+
+    ÉCRITURE
+      - cible « subscriber » : SON coach, ou le super admin ;
+      - cible « coach »      : le super admin UNIQUEMENT (c'est lui qui s'adresse
+                               aux coachs ; un coach ne s'écrit pas à lui-même).
+    LECTURE
+      - cible « subscriber » : l'abonné concerné (par son code ou son jeton),
+                               son coach, ou le super admin ;
+      - cible « coach »      : le coach concerné, ou le super admin.
+
+    Renvoie (role, identite). Lève 403/404 sinon.
+    """
+    if cible_type not in V338_CIBLES:
+        raise HTTPException(status_code=400, detail="Cible invalide")
+    cible_id = (cible_id or "").strip()
+    if not cible_id:
+        raise HTTPException(status_code=400, detail="Cible manquante")
+
+    email = await _v263_authenticated_coach(request)
+    admin = bool(email) and is_super_admin(email)
+
+    if cible_type == "coach":
+        if admin:
+            return "admin", email
+        # Un coach lit la note qui LUI est adressée, jamais celle d'un confrère,
+        # et ne peut pas l'écrire.
+        if email and email.lower() == cible_id.lower() and not ecriture:
+            return "coach", email
+        raise HTTPException(status_code=403, detail="Accès refusé")
+
+    # --- cible « subscriber » : on réutilise exactement le contrôle des mesures.
+    cible_id = cible_id.upper()
+    ok, _nom, coach_id_cible = await _v261_resolve_subscriber(cible_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Abonné introuvable")
+
+    if admin:
+        return "admin", email
+    if email and coach_id_cible and email.lower() == str(coach_id_cible).lower():
+        return "coach", email
+
+    if ecriture:
+        # Un abonné ne s'écrit pas sa propre note de motivation.
+        raise HTTPException(status_code=403, detail="Accès refusé")
+
+    fourni = (code or "").strip().upper()
+    if fourni and fourni == cible_id:
+        return "subscriber", cible_id
+    try:
+        from api.routes.shared import subscriber_from_request
+        jeton = subscriber_from_request(request)
+        if jeton and (jeton.get("code") or "").strip().upper() == cible_id:
+            return "subscriber", cible_id
+    except Exception:
+        pass
+
+    raise HTTPException(status_code=403, detail="Accès refusé")
+
+
+@api_router.post("/notes")
+async def v338_ecrire_note(request: Request):
+    """
+    V338 — écrit (ou met à jour) la note « Points à améliorer / Motivation ».
+    Corps : { target_type: 'subscriber'|'coach', target_id, text }
+    """
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        corps = {}
+
+    cible_type = (corps.get("target_type") or "").strip().lower()
+    cible_id = (corps.get("target_id") or "").strip()
+    texte = (corps.get("text") or "").strip()[:2000]
+
+    role, auteur = await _v338_autoriser_note(request, cible_type, cible_id, ecriture=True)
+
+    cle = {"target_type": cible_type,
+           "target_id": cible_id.upper() if cible_type == "subscriber" else cible_id.lower()}
+    now = datetime.now(timezone.utc).isoformat()
+
+    if not texte:
+        # Un texte vide = retirer la note. Plus lisible qu'un enregistrement vide
+        # que le destinataire verrait comme un encart désespérément blanc.
+        await db.coaching_notes.delete_one(cle)
+        logger.info(f"[V338] Note retirée ({cible_type}) par {role}")
+        return {"ok": True, "removed": True}
+
+    await db.coaching_notes.update_one(
+        cle,
+        {"$set": {**cle, "text": texte, "author_id": auteur, "author_role": role,
+                  "updated_at": now},
+         "$setOnInsert": {"id": str(uuid.uuid4()), "created_at": now}},
+        upsert=True,
+    )
+    logger.info(f"[V338] Note enregistrée ({cible_type}) par {role}")
+    return {"ok": True, "text": texte, "updated_at": now}
+
+
+@api_router.get("/notes/{target_type}/{target_id}")
+async def v338_lire_note(target_type: str, target_id: str, request: Request, code: str = ""):
+    """
+    V338 — lit la note d'une cible. La cible elle-même, son auteur légitime, ou le
+    super admin. Renvoie `note: null` si aucune note n'a été écrite (pas une erreur).
+    """
+    cible_type = (target_type or "").strip().lower()
+    role, _identite = await _v338_autoriser_note(request, cible_type, target_id, code=code)
+
+    cle = {"target_type": cible_type,
+           "target_id": target_id.strip().upper() if cible_type == "subscriber"
+                        else target_id.strip().lower()}
+    note = await db.coaching_notes.find_one(cle, {"_id": 0})
+    return {"ok": True, "role": role, "note": note}
 
 
 @api_router.get("/progress/admin/global")
@@ -21563,6 +21710,13 @@ async def startup_db():
         pass  # Index existe deja
 
     # V334 : lecture de la progression par abonné, du plus récent au plus ancien.
+    # V338 : une seule note courante par cible.
+    try:
+        await db.coaching_notes.create_index([("target_type", 1), ("target_id", 1)], unique=True)
+        logger.info("[INDEX] coaching_notes (target_type,target_id) unique OK")
+    except Exception:
+        pass  # Index existe deja
+
     try:
         await db.progress_entries.create_index([("subscriber_code", 1), ("entry_date", -1)])
         logger.info("[INDEX] progress_entries (subscriber_code, entry_date) OK")

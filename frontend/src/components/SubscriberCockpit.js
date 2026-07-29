@@ -14,6 +14,7 @@
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import DetailAbonne from "./progress/DetailAbonne"; // V338 : bloc partage (seances datees + note)
 
 const API = `${process.env.REACT_APP_BACKEND_URL || ''}/api`;
 
@@ -248,6 +249,17 @@ export default function SubscriberCockpit({ accessCode }) {
                   Vos séances viendront s'y ajouter automatiquement.
                 </p>
               ) : null}
+
+              {/* V338 : séances datées + note du coach — MÊME bloc que côté coach
+                  et côté super-admin, pour un rendu strictement identique. */}
+              <div style={{ marginBottom: 14 }}>
+                <DetailAbonne
+                  code={accessCode}
+                  seances={stats.seances}
+                  codePreuve={accessCode}
+                  peutEcrire={false}
+                />
+              </div>
 
               {/* ===== Saisie d'une mesure ===== */}
               <button
