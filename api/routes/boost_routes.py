@@ -277,7 +277,10 @@ def fin_de_boost(pub: dict) -> str:
         from api.server import V331_EXPIRATION_LOINTAINE_ANNEES as annees
     except Exception:
         annees = 100  # même valeur que V331 ; repli si l'import n'est pas résoluble
-    return maintenant.replace(year=maintenant.year + annees).isoformat()
+    # `timedelta` plutôt que `replace(year=...)` : ce dernier lève une ValueError
+    # un 29 février (le 29/02 de l'année cible n'existe pas une fois sur quatre).
+    # Seule compte ici la nature de la date — très lointaine, donc jamais atteinte.
+    return (maintenant + timedelta(days=365 * annees)).isoformat()
 
 
 async def activer_boost_gratuit(pub: dict, cible: str, admin: str) -> dict:
