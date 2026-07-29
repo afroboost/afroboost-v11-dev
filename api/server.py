@@ -48,6 +48,8 @@ from api.routes.pawapay_routes import router as pawapay_router, init_db as init_
 # v15.0: Import routes paiement multi-vendeurs
 from api.routes.payment_config_routes import router as payment_config_router, init_db as init_payment_config_db
 from api.routes.checkout_routes import router as checkout_router, init_db as init_checkout_db
+# V342: Import routes Boost (place de marché des vitrines)
+from api.routes.boost_routes import router as boost_router, init_db as init_boost_db
 # V205: Import routes catégories contacts
 from api.routes.contact_categories_routes import category_router, init_category_db
 # V223: Calcul prix progressif (module pur, sans accès DB)
@@ -21670,6 +21672,10 @@ fastapi_app.include_router(payment_config_router)
 init_payment_config_db(db)
 fastapi_app.include_router(checkout_router)
 init_checkout_db(db)
+
+# V342: Boost payant des publications (place de marché des vitrines).
+fastapi_app.include_router(boost_router)
+init_boost_db(db)
 
 # V205: Routes catégories contacts
 fastapi_app.include_router(category_router, prefix="/api")
