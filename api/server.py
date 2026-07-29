@@ -10285,7 +10285,16 @@ async def update_subscriber_profile(code: str, payload: SubscriberProfileUpdate)
     if payload.objectifs is not None:
         updates["objectifs"] = payload.objectifs.strip()[:300]
 
-    await db.subscriptions.update_one({"code": code_upper}, {"$set": updates})
+    # V333 (correctif d'un défaut PRÉEXISTANT) : `update_many`, pas `update_one`.
+    # Un même code d'abonnement peut porter PLUSIEURS documents (renouvellements
+    # successifs : constaté en production, 4 documents pour un seul code, dont un
+    # `completed` et trois `active`). `update_one` n'écrivait que sur le premier
+    # rencontré, tandis que l'espace abonné lit le premier document *actif* — le
+    # profil enregistré n'était donc jamais celui relu. Cela faisait disparaître
+    # `name`, `whatsapp` et (V333) `objectifs`, et pouvait rouvrir l'onboarding
+    # indéfiniment. Ces champs décrivent LA PERSONNE, identifiée par son code :
+    # les écrire sur tous ses documents est la bonne sémantique.
+    await db.subscriptions.update_many({"code": code_upper}, {"$set": updates})
 
     # V223: le CRM lit chat_participants — la collection « contacts » n'existe
     # pas ; y écrire rendrait ces données invisibles au dashboard.
