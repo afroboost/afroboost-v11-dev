@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v341'; // V339: recherche + formulaire de mesure enrichi
+var CACHE_NAME = 'afroboost-v342'; // V342: Boost payant des publications
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

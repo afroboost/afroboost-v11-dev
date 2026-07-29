@@ -48,6 +48,11 @@ from api.routes.pawapay_routes import router as pawapay_router, init_db as init_
 # v15.0: Import routes paiement multi-vendeurs
 from api.routes.payment_config_routes import router as payment_config_router, init_db as init_payment_config_db
 from api.routes.checkout_routes import router as checkout_router, init_db as init_checkout_db
+# V342: Import routes Boost (place de marché des vitrines)
+from api.routes.boost_routes import (
+    router as boost_router, init_db as init_boost_db,
+    V342_CIBLE_ACCUEIL,
+)
 # V205: Import routes catégories contacts
 from api.routes.contact_categories_routes import category_router, init_category_db
 # V223: Calcul prix progressif (module pur, sans accès DB)
@@ -6582,8 +6587,17 @@ async def _v261_purge_expired() -> int:
             _V272C_MIGRATED = True  # une panne ne doit pas rebalayer a chaque lecture
             logger.warning(f"[V272c] Migration paresseuse ignoree: {e}")
     now_iso = datetime.now(timezone.utc).isoformat()
+    # V342 : un Boost PAYÉ est une prestation due. Si la durée de vie propre d'une
+    # publication s'achève avant la fin de son Boost, la supprimer ici couperait
+    # court à 48 h achetées sur une autre vitrine. On la garde donc tant que le
+    # Boost court — sans toucher à `expires_at`, si bien qu'elle disparaît quand
+    # même de la vitrine de SON auteur à l'heure prévue (le mur filtre dessus).
+    # `$not/$gt` couvre les documents SANS `boosted_until` : tout l'historique
+    # reste purgé exactement comme avant.
     expired = await db.publications.find(
-        {"expires_at": {"$lte": now_iso}}, {"_id": 0}
+        {"expires_at": {"$lte": now_iso},
+         "boosted_until": {"$not": {"$gt": now_iso}}},
+        {"_id": 0}
     ).to_list(100)
     if not expired:
         return 0
@@ -7128,7 +7142,21 @@ async def list_publications(coach_id: str = ""):
     # n'apparaît JAMAIS sur la vitrine avant son heure. Même garde-fou que `paused` :
     # `$ne: True` inclut tous les documents qui n'ont pas le champ (donc tout
     # l'historique, inchangé).
-    query = {"$and": [time_q, {"coach_id": target}, {"paused": {"$ne": True}},
+    # V342 : une vitrine montre DEUX choses, mélangées au même endroit —
+    #   1. ses propres publications (`coach_id`), soumises à leur durée de vie ;
+    #   2. celles qu'un auteur extérieur y a BOOSTÉES, tant que `boosted_until`
+    #      n'est pas passé. Leur durée de vie propre ne s'applique pas ici : le
+    #      Boost a été payé pour 48 h sur CETTE vitrine.
+    # La page d'accueil est la vitrine du super-admin : elle accepte donc aussi
+    # la cible symbolique « home ».
+    now_iso = now.isoformat()
+    cibles_boost = [target, V342_CIBLE_ACCUEIL] if is_super_admin(target) else [target]
+    appartenance = {"$or": [
+        {"$and": [time_q, {"coach_id": target}]},
+        {"$and": [{"boost_target_vitrine": {"$in": cibles_boost}},
+                  {"boosted_until": {"$gt": now_iso}}]},
+    ]}
+    query = {"$and": [appartenance, {"paused": {"$ne": True}},
                       {"scheduled": {"$ne": True}}]}
     pubs = await db.publications.find(
         query,
@@ -7140,6 +7168,18 @@ async def list_publications(coach_id: str = ""):
             p["remaining_hours"] = max(0, round(remaining / 3600, 1))
         except Exception:
             p["remaining_hours"] = 0
+        # V342 : `boosted` n'est vrai que sur la vitrine de DESTINATION — c'est ce
+        # qui allume le halo. Sur la vitrine d'origine, la même publication reste
+        # ordinaire. On ne renvoie ni le payeur ni le bénéficiaire : le halo n'a
+        # pas besoin de savoir qui a payé, et c'est une information commerciale.
+        p["boosted"] = bool(
+            p.get("boosted_until")
+            and p.get("boost_target_vitrine") in cibles_boost
+            and p["boosted_until"] > now_iso
+            and (p.get("coach_id") or "").lower() != target
+        )
+        for champ in ("boost_payer", "boost_payee", "boost_payment_id", "boost_amount_chf"):
+            p.pop(champ, None)
     return pubs
 
 
@@ -21670,6 +21710,10 @@ fastapi_app.include_router(payment_config_router)
 init_payment_config_db(db)
 fastapi_app.include_router(checkout_router)
 init_checkout_db(db)
+
+# V342: Boost payant des publications (place de marché des vitrines).
+fastapi_app.include_router(boost_router)
+init_boost_db(db)
 
 # V205: Routes catégories contacts
 fastapi_app.include_router(category_router, prefix="/api")

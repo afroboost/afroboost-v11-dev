@@ -540,6 +540,73 @@ def t60_strict_entry_proof_required():
         record(60, "Entrée stricte -> proof_required", False, str(e))
 
 
+def t75_boost_prix_lecture_publique():
+    """V342 : le prix du Boost est lisible sans authentification (il s'affiche dans
+    l'info-bulle du bouton avant toute connexion) et il est bien exprimé en CHF."""
+    try:
+        r = requests.get(_url("/api/settings/boost-price"), timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        ok = (r.status_code == 200 and isinstance(d.get("price_chf"), int)
+              and d["price_chf"] > 0 and d.get("currency") == "CHF")
+        record(75, "GET /settings/boost-price public -> prix en CHF", ok,
+               f"HTTP {r.status_code} {d}")
+    except Exception as e:
+        record(75, "GET /settings/boost-price public", False, str(e))
+
+
+def t76_boost_prix_ecriture_admin_seulement():
+    """V342 : changer le prix du Boost exige un JWT super-admin SIGNÉ. Ni un anonyme
+    ni un X-User-Email usurpé ne doivent y parvenir -> 403, et le prix ne bouge pas."""
+    try:
+        avant = requests.get(_url("/api/settings/boost-price"), timeout=TIMEOUT).json().get("price_chf")
+        c1 = requests.put(_url("/api/settings/boost-price"), json={"price_chf": 1},
+                          timeout=TIMEOUT).status_code
+        c2 = requests.put(_url("/api/settings/boost-price"), json={"price_chf": 1},
+                          headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code
+        apres = requests.get(_url("/api/settings/boost-price"), timeout=TIMEOUT).json().get("price_chf")
+        ok = c1 == 403 and c2 == 403 and avant == apres
+        record(76, "PUT /settings/boost-price sans JWT admin -> 403, prix inchangé", ok,
+               f"anonyme={c1} usurpé={c2} prix {avant}->{apres}")
+    except Exception as e:
+        record(76, "PUT /settings/boost-price sans JWT admin", False, str(e))
+
+
+def t77_boost_checkout_exige_auteur():
+    """V342 : nul ne peut ouvrir un paiement de Boost sur une publication qui n'est pas
+    la sienne. Sans authentification -> 401/403/404, JAMAIS une URL de paiement."""
+    try:
+        pubs = _fetch_publications()
+        if not pubs:
+            return skip(77, "Boost réservé à l'auteur", "aucune publication en ligne")
+        pid = pubs[0].get("id") or ""
+        if not pid:
+            return skip(77, "Boost réservé à l'auteur", "publication sans id exposé")
+        r = requests.post(_url(f"/api/publications/{pid}/boost/checkout"),
+                          json={"target": "home", "provider": "stripe"}, timeout=TIMEOUT)
+        d = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        ok = r.status_code in (401, 403, 404) and not d.get("payment_url")
+        record(77, "POST boost/checkout sans être l'auteur -> refus, aucune URL de paiement",
+               ok, f"HTTP {r.status_code}")
+    except Exception as e:
+        record(77, "POST boost/checkout sans être l'auteur", False, str(e))
+
+
+def t78_boost_pas_de_donnees_commerciales_publiques():
+    """V342 : le mur public peut contenir des publications boostées, mais ne doit JAMAIS
+    exposer qui a payé, qui encaisse, la référence de paiement ni le montant."""
+    try:
+        pubs = _fetch_publications()
+        fuites = []
+        for p in pubs:
+            for champ in ("boost_payer", "boost_payee", "boost_payment_id", "boost_amount_chf"):
+                if champ in p:
+                    fuites.append(champ)
+        record(78, "Mur public : aucune donnée commerciale de Boost exposée",
+               not fuites, f"champs fuités : {sorted(set(fuites))}")
+    except Exception as e:
+        record(78, "Mur public : données commerciales de Boost", False, str(e))
+
+
 def _v319_flag():
     """État EN DIRECT du drapeau REQUIRE_COACH_JWT (None si illisible)."""
     try:
@@ -1073,6 +1140,8 @@ def main():
                    t69_cron_campagnes_ferme, t70_cron_campagnes_admin_jwt, t71_webhook_studiio,
                    t72_optin_consentement_obligatoire, t73_liste_inscrits_protegee,
                    t74_progression_donnees_sante,
+                   t75_boost_prix_lecture_publique, t76_boost_prix_ecriture_admin_seulement,
+                   t77_boost_checkout_exige_auteur, t78_boost_pas_de_donnees_commerciales_publiques,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

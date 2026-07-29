@@ -9,6 +9,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom'; // V268d
 import axios from 'axios';
 import Cropper from 'react-easy-crop'; // V268c (F1)
+import { PrixBoost, BoutonBoost } from './publications/Boost'; // V342 : Boost payant
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
@@ -284,9 +285,16 @@ const V268PublicationCard = ({ pub, onOpen }) => {
         onClick={() => onOpen(pub)}
         style={{
           position: 'relative', width: '100%', height: 250, maxHeight: 250, overflow: 'hidden',
-          borderRadius: 12, flexShrink: 0, background: '#000', cursor: 'pointer'
+          borderRadius: 12, flexShrink: 0, background: '#000', cursor: 'pointer',
+          // V342 : SEULE difference visuelle d'une publication boostee — un halo
+          // discret. Meme emplacement, meme taille, melangee aux autres : pas de
+          // section « A la une ». La couleur suit la charte du coach.
+          ...(pub.boosted ? {
+            boxShadow: '0 0 0 2px rgba(var(--primary-rgb, 217, 28, 210), .25),'
+                     + ' 0 0 12px rgba(var(--primary-rgb, 217, 28, 210), .25)'
+          } : {})
         }}
-        data-testid="publication-card"
+        data-testid={pub.boosted ? 'publication-card-boosted' : 'publication-card'}
       >
         {/* V272 : retour a `cover` (V271 Fix 2 annule) — le rendu plein cadre
             etait prefere aux bandes noires du `contain`. La lightbox, elle,
@@ -483,7 +491,12 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
 
   return (
     <div style={{ marginTop: 20, borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 16 }}>
-      <h4 style={{ color: '#fff', fontSize: '0.9rem', margin: '0 0 12px' }}>Mes publications</h4>
+      {/* V342 : l'info prix du Boost, avec le crayon de réglage réservé au super-admin. */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    gap: 8, flexWrap: 'wrap', margin: '0 0 12px' }}>
+        <h4 style={{ color: '#fff', fontSize: '0.9rem', margin: 0 }}>Mes publications</h4>
+        <PrixBoost />
+      </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {items.map(p => (
           <div key={p.id} style={{ display: 'flex', gap: 10, background: '#0f0f1e', borderRadius: 10, padding: 8 }}>
@@ -524,6 +537,12 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
                           <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                         </svg>
                       </button>
+                      {/* V342 : Boost — apparaître 48 h sur une AUTRE vitrine ou la
+                          page d'accueil, contre paiement. Sans objet sur une
+                          publication programmée : elle n'est pas encore en ligne. */}
+                      {!p.scheduled && (
+                        <BoutonBoost pubId={p.id} subscriberCode={subscriberCode} />
+                      )}
                       {/* V286 : renouveler (+48 h) — flèche circulaire verte.
                           V327 : sans objet sur une publication programmée (elle n'est
                           pas encore en ligne, son compte à rebours n'a pas démarré). */}
