@@ -6,7 +6,7 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v327'; // V327: publications programmables (option Programmer)
+var CACHE_NAME = 'afroboost-v332'; // V332: inscriptions opt-in (WhatsApp + newsletter)
 var SW_VERSION = 265;
 
 var PRECACHE_URLS = [

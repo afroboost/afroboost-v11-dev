@@ -127,6 +127,7 @@ import SubscriberSpace from "./components/SubscriberSpace";
 import { useDataCache, invalidateCache } from "./hooks/useDataCache";
 import { applyPrimaryColor, persistThemeColors } from "./utils/themeColor"; // V259 + V295 (anti-FOUC)
 import { PublicationsCarousel } from "./components/Publications"; // V261
+import OptinSubscribe from "./components/OptinSubscribe"; // V332 : inscriptions opt-in
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -7331,6 +7332,10 @@ function App() {
           }
         />
       </div>
+
+      {/* V332 : inscriptions volontaires (WhatsApp + newsletter), avec consentement
+          explicite et horodate. Bloc autonome — il n'influence rien d'autre. */}
+      <OptinSubscribe />
 
       {/* v15: BARRE DE NAVIGATION STICKY - Sections claires */}
       <div

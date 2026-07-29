@@ -619,6 +619,48 @@ def t63_coach_jwt_legit_access():
         record(63, "Coach légitime (JWT) -> accès complet", False, str(e))
 
 
+def t72_optin_consentement_obligatoire():
+    """V332 : on ne peut PAS inscrire quelqu'un sans consentement explicite.
+    Sans `consent: true` -> 400. Une valeur invalide -> 400. C'est la garantie RGPD
+    la plus importante : aucune inscription ne doit pouvoir être créée sans la case."""
+    try:
+        sans = requests.post(_url("/api/subscribers/optin"),
+                             json={"channel": "whatsapp", "phone": "0790000000"}, timeout=TIMEOUT).status_code
+        faux = requests.post(_url("/api/subscribers/optin"),
+                             json={"channel": "whatsapp", "phone": "0790000000", "consent": False},
+                             timeout=TIMEOUT).status_code
+        canal = requests.post(_url("/api/subscribers/optin"),
+                              json={"channel": "pigeon", "phone": "0790000000", "consent": True},
+                              timeout=TIMEOUT).status_code
+        invalide = requests.post(_url("/api/subscribers/optin"),
+                                 json={"channel": "email", "email": "pas-un-email", "consent": True},
+                                 timeout=TIMEOUT).status_code
+        ok = sans == 400 and faux == 400 and canal == 400 and invalide == 400
+        record(72, "Opt-in : consentement obligatoire, valeurs validées", ok,
+               f"sans_consent={sans} consent_false={faux} canal_inconnu={canal} email_invalide={invalide}")
+    except Exception as e:
+        record(72, "Opt-in : consentement obligatoire", False, str(e))
+
+
+def t73_liste_inscrits_protegee():
+    """V332 : la liste des inscrits n'est JAMAIS publique.
+    Clé absente de l'environnement -> 503 (inerte) ; clé posée mais absente/fausse
+    dans la requête -> 401. Dans les deux cas, aucun numéro ni e-mail ne sort."""
+    try:
+        anonyme = requests.get(_url("/api/subscribers?channel=whatsapp"), timeout=TIMEOUT)
+        fausse = requests.get(_url("/api/subscribers?channel=whatsapp"),
+                              headers={"Authorization": "Bearer cle-bidon-de-test"}, timeout=TIMEOUT)
+        # 503 = non configurée (inerte) ; 401 = configurée mais clé exigée.
+        ok = anonyme.status_code in (401, 503) and fausse.status_code in (401, 503)
+        # Garde-fou : aucune fuite de données dans le corps, quel que soit le code.
+        fuite = ('"list"' in (anonyme.text or "")) or ('"list"' in (fausse.text or ""))
+        etat = "inerte (503)" if anonyme.status_code == 503 else "clé exigée (401)"
+        record(73, "Liste des inscrits : jamais accessible sans la clé", ok and not fuite,
+               f"anonyme={anonyme.status_code} fausse_cle={fausse.status_code} -> {etat} fuite={fuite}")
+    except Exception as e:
+        record(73, "Liste des inscrits : jamais accessible sans la clé", False, str(e))
+
+
 def t71_webhook_studiio():
     """V331 : le webhook entrant Studiio ne s'ouvre jamais tout seul.
     - `AFROBOOST_WEBHOOK_SECRET` absent -> 503, aucune publication créée (état par défaut) ;
@@ -1005,6 +1047,7 @@ def main():
                    t66_stripe_cinetpay_untouched,
                    t67_publication_programmee, t68_suppression_programmee,
                    t69_cron_campagnes_ferme, t70_cron_campagnes_admin_jwt, t71_webhook_studiio,
+                   t72_optin_consentement_obligatoire, t73_liste_inscrits_protegee,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

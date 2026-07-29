@@ -7433,6 +7433,321 @@ async def v331_incoming_post(request: Request):
     return {"ok": True, "url": frontend, "id": pub["id"], "scheduled": programme}
 
 
+# =====================================================================
+# V332 — INSCRIPTIONS OPT-IN (WhatsApp + Newsletter) — RGPD
+# =====================================================================
+# Collection DÉDIÉE `db.subscribers`, volontairement SÉPARÉE du CRM (`db.leads`) et
+# des campagnes : s'inscrire à la newsletter n'est pas la même chose qu'être un
+# contact commercial, et mélanger les deux rendrait le consentement intraçable.
+#
+# RGPD — ce qui est conservé pour chaque inscription :
+#   - `consent_at`   : horodatage du consentement ;
+#   - `consent_text` : le LIBELLÉ EXACT affiché à la personne au moment où elle a
+#                      coché la case (une preuve de consentement sans le texte
+#                      consenti ne vaut rien) ;
+#   - `source`       : d'où vient l'inscription.
+# Désabonnement toujours possible : lien dans chaque e-mail, et « STOP » sur WhatsApp.
+#
+# Anti-doublon : upsert sur le couple (channel, value). Une même personne qui
+# s'inscrit deux fois ne crée jamais deux lignes.
+
+V332_CANAUX = ("whatsapp", "email")
+
+
+def _v332_normaliser(canal: str, valeur: str) -> str:
+    """
+    Ramène la valeur à sa forme canonique — c'est elle qui sert de clé d'unicité.
+    - whatsapp -> E.164 via `format_phone_e164` (déjà en place, gère 0 -> +41) ;
+    - email    -> minuscules, espaces retirés.
+    Renvoie '' si la valeur est inexploitable.
+    """
+    valeur = (valeur or "").strip()
+    if not valeur:
+        return ""
+    if canal == "whatsapp":
+        e164 = format_phone_e164(valeur)
+        # Un numéro utilisable fait au minimum ~8 chiffres après l'indicatif.
+        chiffres = re.sub(r"\D", "", e164 or "")
+        return e164 if len(chiffres) >= 8 else ""
+    valeur = valeur.lower()
+    # Validation volontairement simple : on refuse l'absurde, sans prétendre
+    # valider un e-mail par expression régulière (le double opt-in fait foi).
+    if "@" not in valeur or "." not in valeur.split("@")[-1] or len(valeur) < 6:
+        return ""
+    return valeur
+
+
+def _v332_url_publique() -> str:
+    return os.environ.get('REACT_APP_FRONTEND_URL', 'https://afroboost.com')
+
+
+def _v332_page(titre: str, message: str, couleur: str = "#22c55e") -> HTMLResponse:
+    """Petite page de confirmation, lisible sans JavaScript."""
+    return HTMLResponse(content=f"""<!doctype html><html lang="fr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{titre} — Afroboost</title></head>
+<body style="margin:0;background:#0a0a1a;color:#fff;font-family:system-ui,Arial,sans-serif;
+display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;">
+<div style="max-width:420px;text-align:center;background:#141428;border-radius:16px;padding:32px;">
+<h1 style="color:{couleur};font-size:20px;margin:0 0 12px;">{titre}</h1>
+<p style="color:rgba(255,255,255,0.75);font-size:15px;line-height:1.5;margin:0 0 24px;">{message}</p>
+<a href="{_v332_url_publique()}" style="display:inline-block;padding:12px 24px;border-radius:999px;
+background:#D91CD2;color:#fff;text-decoration:none;font-weight:600;">Retour sur Afroboost</a>
+</div></body></html>""")
+
+
+@api_router.post("/subscribers/optin")
+async def v332_optin(request: Request):
+    """
+    V332 — inscription volontaire à WhatsApp ou à la newsletter.
+
+    Corps : { channel: 'whatsapp'|'email', phone|email, name?, consent: true,
+              source?, consent_text? }
+
+    Le consentement est OBLIGATOIRE : sans `consent: true`, on refuse (400). C'est la
+    base du RGPD — pas de case cochée, pas d'inscription.
+
+    WhatsApp -> `confirmed` directement (la case cochée sur le formulaire fait foi).
+    E-mail   -> `pending` + e-mail de confirmation (double opt-in) : l'adresse n'est
+                active qu'après le clic, ce qui empêche d'inscrire quelqu'un d'autre.
+    """
+    import secrets as _secrets
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        corps = {}
+
+    canal = (corps.get("channel") or "").strip().lower()
+    if canal not in V332_CANAUX:
+        raise HTTPException(status_code=400, detail="Canal invalide (whatsapp ou email)")
+
+    if corps.get("consent") is not True:
+        raise HTTPException(status_code=400, detail="Le consentement est obligatoire pour s'inscrire.")
+
+    brut = corps.get("phone") if canal == "whatsapp" else corps.get("email")
+    valeur = _v332_normaliser(canal, brut or "")
+    if not valeur:
+        raise HTTPException(
+            status_code=400,
+            detail="Numéro de téléphone invalide." if canal == "whatsapp" else "Adresse e-mail invalide."
+        )
+
+    nom = (corps.get("name") or "").strip()[:80]
+    source = (corps.get("source") or "site").strip()[:60]
+    # Le texte consenti est fourni par le formulaire ; on garde un repli explicite
+    # pour ne JAMAIS enregistrer un consentement sans savoir à quoi il se rapporte.
+    consent_text = (corps.get("consent_text") or "").strip()[:300] or (
+        "J'accepte de recevoir les actualités Afroboost sur WhatsApp." if canal == "whatsapp"
+        else "J'accepte de recevoir la newsletter Afroboost par e-mail."
+    )
+
+    now = datetime.now(timezone.utc).isoformat()
+    existant = await db.subscribers.find_one({"channel": canal, "value": valeur}, {"_id": 0})
+
+    jeton_desinscription = (existant or {}).get("unsubscribe_token") or _secrets.token_urlsafe(32)
+    statut = "confirmed" if canal == "whatsapp" else "pending"
+    jeton_confirmation = ""
+    if canal == "email":
+        # Une ré-inscription régénère le jeton : un ancien lien ne doit pas rester valable.
+        jeton_confirmation = _secrets.token_urlsafe(32)
+
+    doc = {
+        "channel": canal,
+        "value": valeur,
+        "name": nom or (existant or {}).get("name", ""),
+        "consent_at": now,
+        "consent_text": consent_text,
+        "source": source,
+        "status": statut,
+        "unsubscribe_token": jeton_desinscription,
+        "updated_at": now,
+    }
+    if jeton_confirmation:
+        doc["confirm_token"] = jeton_confirmation
+
+    if existant:
+        # Anti-doublon : on met à jour, jamais on ne duplique. Une personne qui
+        # s'était désabonnée et revient d'elle-même est bien ré-inscrite (elle a
+        # recoché la case) — c'est un consentement neuf, horodaté à nouveau.
+        await db.subscribers.update_one({"channel": canal, "value": valeur}, {"$set": doc})
+        sub_id = existant.get("id")
+    else:
+        sub_id = str(uuid.uuid4())
+        doc["id"] = sub_id
+        doc["created_at"] = now
+        await db.subscribers.insert_one(dict(doc))
+
+    logger.info(f"[V332] Opt-in {canal} -> {statut} (source={source})")
+
+    if canal == "whatsapp":
+        return {"ok": True, "status": statut,
+                "message": "Inscription confirmée. Vous recevrez les actualités Afroboost sur WhatsApp."}
+
+    # --- Double opt-in e-mail : envoi du lien de confirmation via Resend.
+    envoye = False
+    try:
+        import resend
+        cle = os.environ.get('RESEND_API_KEY', '')
+        if cle:
+            resend.api_key = cle
+            base = _v332_url_publique()
+            lien_confirm = f"{base}/api/subscribers/confirm?token={jeton_confirmation}"
+            lien_desinscription = f"{base}/api/subscribers/unsubscribe?token={jeton_desinscription}"
+            couleur = await _v259_primary_color()   # helper de CE fichier (V259)
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": "Afroboost <notifications@afroboost.com>",
+                "to": [valeur],
+                "subject": "Confirmez votre inscription à la newsletter Afroboost",
+                "html": f"""
+                <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:24px;background:#1a1a2e;color:#fff;border-radius:12px;">
+                    <h2 style="color:{couleur};margin-top:0;">Plus qu'un clic</h2>
+                    <p>Vous avez demandé à recevoir la newsletter Afroboost. Confirmez votre adresse pour finaliser :</p>
+                    <p style="margin:24px 0;">
+                        <a href="{lien_confirm}" style="display:inline-block;padding:12px 24px;background:{couleur};color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">
+                            Confirmer mon inscription
+                        </a>
+                    </p>
+                    <p style="font-size:12px;color:rgba(255,255,255,0.5);">
+                        Si vous n'êtes pas à l'origine de cette demande, ignorez simplement cet e-mail : sans ce clic, aucune inscription n'est enregistrée.
+                    </p>
+                    <p style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:20px;">
+                        <a href="{lien_desinscription}" style="color:rgba(255,255,255,0.45);">Se désinscrire</a>
+                    </p>
+                </div>
+                """
+            })
+            envoye = True
+    except Exception as e:
+        # L'inscription reste en `pending` : elle pourra être confirmée par un
+        # nouvel envoi. On ne fait pas échouer la requête pour un souci d'e-mail.
+        logger.error(f"[V332] Envoi de l'e-mail de confirmation échoué: {e}")
+
+    return {"ok": True, "status": "pending", "email_sent": envoye,
+            "message": "Vérifiez votre boîte e-mail et cliquez sur le lien de confirmation."}
+
+
+@api_router.get("/subscribers/confirm")
+async def v332_confirm(token: str = ""):
+    """V332 — double opt-in : le clic sur le lien active l'inscription."""
+    token = (token or "").strip()
+    if not token:
+        return _v332_page("Lien invalide", "Ce lien de confirmation est incomplet.", "#f87171")
+    sub = await db.subscribers.find_one({"confirm_token": token}, {"_id": 0})
+    if not sub:
+        return _v332_page("Lien invalide ou expiré",
+                          "Ce lien n'est plus valable. Réinscrivez-vous depuis le site.", "#f87171")
+    await db.subscribers.update_one(
+        {"channel": sub["channel"], "value": sub["value"]},
+        {"$set": {"status": "confirmed", "confirmed_at": datetime.now(timezone.utc).isoformat(),
+                  "updated_at": datetime.now(timezone.utc).isoformat()},
+         "$unset": {"confirm_token": ""}}   # jeton à usage unique
+    )
+    logger.info("[V332] Inscription e-mail confirmée")
+    return _v332_page("Inscription confirmée", "Vous recevrez désormais la newsletter Afroboost.")
+
+
+@api_router.get("/subscribers/unsubscribe")
+async def v332_unsubscribe(token: str = ""):
+    """V332 — désabonnement en un clic, sans authentification ni compte."""
+    token = (token or "").strip()
+    if not token:
+        return _v332_page("Lien invalide", "Ce lien de désinscription est incomplet.", "#f87171")
+    sub = await db.subscribers.find_one({"unsubscribe_token": token}, {"_id": 0})
+    if not sub:
+        return _v332_page("Lien invalide",
+                          "Ce lien n'est plus valable. Contactez-nous si le problème persiste.", "#f87171")
+    await db.subscribers.update_one(
+        {"channel": sub["channel"], "value": sub["value"]},
+        {"$set": {"status": "opted_out", "opted_out_at": datetime.now(timezone.utc).isoformat(),
+                  "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    logger.info(f"[V332] Désabonnement ({sub.get('channel')})")
+    return _v332_page("Désinscription effectuée",
+                      "Vous ne recevrez plus de messages. Vous pouvez revenir quand vous voulez.", "#f59e0b")
+
+
+@api_router.get("/subscribers")
+async def v332_liste(request: Request, channel: str = "whatsapp"):
+    """
+    V332 — liste des inscrits, pour Studiio. JAMAIS publique.
+
+    Protégée par `Authorization: Bearer <AFROBOOST_LIST_API_KEY>`, comparée en TEMPS
+    CONSTANT. Clé absente de l'environnement -> 503 (inerte, comme le webhook V331) :
+    une liste de contacts ne doit pas pouvoir fuiter à cause d'une variable oubliée.
+
+    Ne renvoie QUE les valeurs `confirmed` — ni les noms, ni les dates, ni les
+    désabonnés. Le strict nécessaire à l'envoi.
+    """
+    import hmac
+    cle_attendue = (os.environ.get("AFROBOOST_LIST_API_KEY", "") or "").strip()
+    if not cle_attendue:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "liste non configurée"})
+
+    auth = (request.headers.get("Authorization", "") or "").strip()
+    fournie = auth.split(" ", 1)[1].strip() if auth.lower().startswith("bearer ") else ""
+    if not fournie or not hmac.compare_digest(fournie, cle_attendue):
+        logger.warning("[V332] Accès refusé à la liste des inscrits")
+        return JSONResponse(status_code=401, content={"ok": False, "error": "clé invalide"})
+
+    canal = (channel or "whatsapp").strip().lower()
+    if canal not in V332_CANAUX:
+        raise HTTPException(status_code=400, detail="Canal invalide (whatsapp ou email)")
+
+    docs = await db.subscribers.find(
+        {"channel": canal, "status": "confirmed"}, {"_id": 0, "value": 1}
+    ).to_list(5000)
+
+    # WhatsApp : Studiio attend des numéros sans le « + » (format Meta).
+    if canal == "whatsapp":
+        liste = [(d.get("value") or "").lstrip("+") for d in docs if d.get("value")]
+    else:
+        liste = [d.get("value") for d in docs if d.get("value")]
+
+    return {"list": liste}
+
+
+async def _v332_stop_whatsapp(numero_brut: str, texte: str) -> bool:
+    """
+    V332 — désabonnement AUTOMATIQUE sur « STOP » reçu par WhatsApp.
+
+    Appelée depuis le webhook Meta ENTRANT DÉJÀ EN PLACE (`/webhook/whatsapp-meta`).
+    On ne crée pas un second webhook : Meta n'accepte qu'UNE seule URL de rappel par
+    application, et en déclarer une nouvelle couperait le flux IA des conversations
+    qui passe par celui-ci.
+
+    Renvoie True si le message a été traité comme une commande (STOP ou START) —
+    l'appelant doit alors s'arrêter là et ne PAS enchaîner sur une réponse IA.
+    """
+    import unicodedata  # import LOCAL (non importé en tête de ce fichier)
+    brut = (texte or "").strip().lower()
+    # Retirer accents et ponctuation : « arrêt ! », « Désabonner. » doivent marcher.
+    sans_accents = unicodedata.normalize("NFD", brut)
+    sans_accents = "".join(c for c in sans_accents if unicodedata.category(c) != "Mn")
+    mot = re.sub(r"[^a-z ]", "", sans_accents).strip()
+
+    MOTS_STOP = {"stop", "stop tout", "arret", "unsubscribe", "desabonner", "desabonne", "desinscrire"}
+    MOTS_START = {"start", "oui", "yes"}
+
+    if mot not in MOTS_STOP and mot not in MOTS_START:
+        return False
+
+    numero = format_phone_e164(numero_brut if numero_brut.startswith("+") else "+" + numero_brut)
+    sub = await db.subscribers.find_one({"channel": "whatsapp", "value": numero}, {"_id": 0})
+    if not sub:
+        logger.info(f"[V332] « {mot} » reçu d'un numéro non inscrit — rien à faire")
+        return True   # commande reconnue : on n'enchaîne pas sur l'IA
+
+    nouveau = "opted_out" if mot in MOTS_STOP else "confirmed"
+    await db.subscribers.update_one(
+        {"channel": "whatsapp", "value": numero},
+        {"$set": {"status": nouveau, "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    logger.info(f"[V332] WhatsApp « {mot} » -> statut {nouveau}")
+    return True
+
+
 @api_router.put("/publications/{pub_id}")
 async def update_publication(pub_id: str, request: Request):
     """V268: modifier la LEGENDE d'une publication (le media reste fige).
@@ -12528,6 +12843,19 @@ async def handle_meta_whatsapp_webhook(request: Request):
 
                 if not incoming_message or not from_phone:
                     continue
+
+                # V332 : « STOP » (et variantes) = désabonnement AUTOMATIQUE, traité
+                # AVANT tout le reste. Le message ne doit surtout pas partir dans le
+                # flux IA : répondre à un « STOP » par une réponse marketing serait
+                # exactement l'inverse de ce que la personne demande, et illégal.
+                # `_v332_stop_whatsapp` renvoie True si le message était une commande.
+                try:
+                    if await _v332_stop_whatsapp(from_phone, incoming_message):
+                        processed += 1
+                        continue
+                except Exception as _v332_err:
+                    # Un souci ici ne doit jamais faire échouer la réception du message.
+                    logger.error(f"[V332] Traitement STOP ignoré: {_v332_err}")
 
                 # Ajouter le + au numéro pour normaliser
                 if not from_phone.startswith("+"):
@@ -20502,6 +20830,17 @@ async def startup_db():
     try:
         await db.boosttribe_usage.create_index("created_dt", expireAfterSeconds=7 * 24 * 3600)
         logger.info("[INDEX] boosttribe_usage.created_dt TTL 7j OK")
+    except Exception:
+        pass  # Index existe deja
+
+    # V332 : unicite (canal, valeur) sur les inscriptions opt-in. C'est la garantie
+    # STRUCTURELLE de l'anti-doublon : meme si un upsert passait entre les mailles,
+    # la base refuserait la seconde ligne. Index a la creation, jamais de suppression.
+    try:
+        await db.subscribers.create_index([("channel", 1), ("value", 1)], unique=True)
+        await db.subscribers.create_index("unsubscribe_token", sparse=True)
+        await db.subscribers.create_index("confirm_token", sparse=True)
+        logger.info("[INDEX] subscribers (channel,value) unique OK")
     except Exception:
         pass  # Index existe deja
 
