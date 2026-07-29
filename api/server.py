@@ -7731,6 +7731,142 @@ async def _v334_stats_abonne(code: str, email: str) -> dict:
     }
 
 
+@api_router.get("/progress/admin/global")
+async def v334_cockpit_global(request: Request):
+    """
+    V334 étape 4 — cockpit GLOBAL du site, réservé au super admin.
+
+    Chiffres agrégés (abonnés actifs, séances totales, régularité moyenne, nombre de
+    coachs, entrées de progression) + répartition PAR COACH, pour permettre
+    l'exploration : le super admin descend ensuite sur un coach, puis sur un abonné
+    via les endpoints déjà en place (`/progress/coach/subscribers`, `/progress/{code}/cockpit`).
+
+    ACCÈS : super admin prouvé par JWT SIGNÉ (`_v311_coach_email_from_jwt`, comme
+    `PUT /feature-flags` et le cron V330) — pas par l'en-tête `X-User-Email`, qui est
+    falsifiable. Ce tableau expose les chiffres de TOUT le site : c'est le point le
+    plus sensible de la fonctionnalité, il mérite l'identité la plus forte.
+
+    PERFORMANCE : mêmes règles qu'à l'étape 3 — 4 requêtes en tout, jamais une par
+    abonné ni une par coach.
+    """
+    email = _v311_coach_email_from_jwt(request)
+    if not email or not is_super_admin(email):
+        raise HTTPException(status_code=403, detail="Super-admin requis")
+
+    now = datetime.now(timezone.utc)
+
+    # --- LOT 1 : tous les abonnements actifs.
+    abonnements = await db.subscriptions.find(
+        {"status": "active"},
+        {"_id": 0, "code": 1, "email": 1, "coach_id": 1, "name": 1}
+    ).to_list(5000)
+
+    # Regroupement par code : un même code porte plusieurs documents (V333b).
+    par_code = {}
+    for a in abonnements:
+        c = (a.get("code") or "").strip().upper()
+        if c and c not in par_code:
+            par_code[c] = a
+
+    emails = list({(a.get("email") or "").lower() for a in par_code.values() if a.get("email")})
+
+    # --- LOT 2 : toutes les réservations de ces abonnés.
+    reservations = []
+    if emails:
+        reservations = await db.reservations.find(
+            {"userEmail": {"$in": emails}},
+            {"_id": 0, "userEmail": 1, "datetime": 1, "createdAt": 1}
+        ).to_list(20000)
+
+    # --- LOT 3 et 4 : coachs et volume de progression.
+    coachs = await db.coaches.find({}, {"_id": 0, "email": 1, "name": 1}).to_list(500)
+    nb_entrees = await db.progress_entries.count_documents({})
+
+    def _date(v):
+        if isinstance(v, datetime):
+            return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+        try:
+            d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+            return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+
+    # Agrégation en mémoire, par e-mail.
+    par_email = {}
+    for r in reservations:
+        e = (r.get("userEmail") or "").lower()
+        d = _date(r.get("datetime")) or _date(r.get("createdAt"))
+        if not e or not d:
+            continue
+        agg = par_email.setdefault(e, {"passees": 0, "recentes": 0, "premiere": None})
+        if d <= now:
+            agg["passees"] += 1
+            if (now - d).days <= 30:
+                agg["recentes"] += 1
+            if agg["premiere"] is None or d < agg["premiere"]:
+                agg["premiere"] = d
+
+    # Par coach : combien d'abonnés, combien de séances, combien d'actifs.
+    par_coach = {}
+    seances_totales = 0
+    seances_30j = 0
+    regularites = []
+    actifs_30j = 0
+
+    for code, a in par_code.items():
+        e = (a.get("email") or "").lower()
+        agg = par_email.get(e, {})
+        passees = agg.get("passees", 0)
+        recentes = agg.get("recentes", 0)
+        premiere = agg.get("premiere")
+        anciennete = max(0, (now - premiere).days) if premiere else 0
+
+        seances_totales += passees
+        seances_30j += recentes
+        if recentes > 0:
+            actifs_30j += 1
+        if anciennete >= 7 and passees > 0:
+            regularites.append(passees / (anciennete / 7.0))
+
+        cid = (a.get("coach_id") or DEFAULT_COACH_ID)
+        bloc = par_coach.setdefault(str(cid).lower(), {
+            "coach_id": cid, "abonnes": 0, "seances": 0, "seances_30j": 0, "actifs_30j": 0,
+        })
+        bloc["abonnes"] += 1
+        bloc["seances"] += passees
+        bloc["seances_30j"] += recentes
+        if recentes > 0:
+            bloc["actifs_30j"] += 1
+
+    # Nom lisible pour chaque coach.
+    noms = {(c.get("email") or "").lower(): (c.get("name") or "") for c in coachs}
+    liste_coachs = []
+    for cle, bloc in par_coach.items():
+        bloc["name"] = noms.get(cle, "") or bloc["coach_id"]
+        liste_coachs.append(bloc)
+    liste_coachs.sort(key=lambda x: -x["abonnes"])
+
+    # Régularité moyenne : moyenne des régularités individuelles MESURABLES.
+    # On ne divise pas les séances totales par le nombre d'abonnés : un abonné
+    # inscrit hier tirerait la moyenne vers le bas sans rien signifier.
+    regularite_moyenne = round(sum(regularites) / len(regularites), 2) if regularites else None
+
+    return {
+        "ok": True,
+        "global": {
+            "abonnes_actifs": len(par_code),
+            "abonnes_actifs_30j": actifs_30j,
+            "seances_totales": seances_totales,
+            "seances_30j": seances_30j,
+            "regularite_moyenne": regularite_moyenne,
+            "nb_regularites_mesurables": len(regularites),
+            "nb_coachs": len(coachs),
+            "entrees_progression": nb_entrees,
+        },
+        "coaches": liste_coachs,
+    }
+
+
 @api_router.get("/progress/coach/subscribers")
 async def v334_suivi_abonnes_coach(request: Request):
     """

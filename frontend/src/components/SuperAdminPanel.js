@@ -5,6 +5,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import SvgIcon from "./SvgIcon";
+import CockpitGlobal from "./CockpitGlobal"; // V334 etape 4
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -373,6 +374,21 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
             >
               <span className="inline-flex items-center gap-1.5"><SvgIcon name="diamond" size={14} /> Tarifs Services</span>
             </button>
+            {/* V334 etape 4 : cockpit global du site. Le serveur exige un JWT
+                super-admin signe sur /progress/admin/global — cet onglet ne fait
+                qu'afficher, il ne decide d'aucun droit. */}
+            <button
+              onClick={() => setActiveTab('cockpit')}
+              className={`px-4 py-2 text-sm font-medium transition-all ${
+                activeTab === 'cockpit'
+                  ? 'text-white'
+                  : 'text-white/40 hover:text-white/70'
+              }`}
+              style={activeTab === 'cockpit' ? { color: 'var(--primary-color, #D91CD2)' } : {}}
+              data-testid="tab-cockpit"
+            >
+              <span className="inline-flex items-center gap-1.5"><SvgIcon name="barChart" size={14} /> Cockpit global</span>
+            </button>
           </div>
 
           {/* Erreur - v12.1: Design Sans Cadre */}
@@ -561,6 +577,8 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
           )}
 
           {/* Tab Coaches */}
+          {activeTab === 'cockpit' && <CockpitGlobal />}
+
           {activeTab === 'coaches' && (
             <div className="space-y-4">
               {coaches.length === 0 ? (
