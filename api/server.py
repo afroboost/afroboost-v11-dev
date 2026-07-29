@@ -18315,18 +18315,29 @@ async def cron_check_campaigns(request: Request):
 
     On n'EXIGE PAS que CRON_SECRET soit posé : le super-admin garde son accès manuel
     sans avoir à gérer un secret dans Coolify.
+
+    V330 — IDENTITÉ ADMIN SIGNÉE. V329 fermait la porte aux anonymes, mais la voie
+    « admin » reposait sur l'en-tête `X-User-Email`, FALSIFIABLE : quiconque connaît
+    l'adresse de l'admin passait. Conformément à la règle du dépôt (V319 : « le rôle
+    coach/admin ne se décide JAMAIS côté navigateur »), l'identité vient désormais
+    d'un JWT SIGNÉ, via le même helper que `PUT /feature-flags`
+    (`_v311_coach_email_from_jwt`). `X-User-Email` ne participe PLUS à la décision.
     """
-    # Vérification sécurité (un cron externe envoie Authorization: Bearer <CRON_SECRET>)
+    # Vérification sécurité. Les deux voies passent par l'en-tête `Authorization` :
+    # un cron externe y met `Bearer <CRON_SECRET>`, un admin son JWT. Les deux
+    # cohabitent sans ambiguïté — un secret ne se décode pas comme un JWT, et
+    # inversement, chaque test échoue silencieusement pour l'autre forme.
     auth_header = request.headers.get("Authorization", "")
-    user_email = request.headers.get("X-User-Email", "").lower()
     cron_secret = os.environ.get("CRON_SECRET", "")
 
     # (a) cron externe : uniquement si un secret est posé ET qu'il correspond.
     is_cron_secret = bool(cron_secret) and auth_header == f"Bearer {cron_secret}"
-    # (b) super-admin.
-    is_admin = is_super_admin(user_email)
 
-    # V329 : plus de troisième porte. Ni secret valide, ni admin -> 401.
+    # (b) super-admin PROUVÉ par un jeton signé (jamais par un en-tête déclaratif).
+    jwt_email = _v311_coach_email_from_jwt(request)
+    is_admin = bool(jwt_email) and is_super_admin(jwt_email)
+
+    # V329/V330 : ni secret valide, ni admin signé -> 401.
     if not is_cron_secret and not is_admin:
         raise HTTPException(status_code=401, detail="Unauthorized - Cron access only")
 
