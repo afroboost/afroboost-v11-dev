@@ -6617,6 +6617,45 @@ async def _v276_periodic_purge():
         await asyncio.sleep(3600)  # toutes les heures
 
 
+async def _campaign_scheduler_loop():
+    """
+    V328 : envoi AUTOMATIQUE des campagnes programmées, toutes les 60 secondes.
+
+    POURQUOI CETTE BOUCLE EXISTE — constat vérifié : une campagne `status:"scheduled"`
+    ne partait JAMAIS toute seule. Le seul déclencheur était `/cron/check-campaigns`,
+    déclaré dans `vercel.json`… or le site tourne sur Coolify, où ces crons Vercel ne
+    s'exécutent pas. APScheduler, lui, est désactivé (`SCHEDULER_RUNNING = False`) et
+    absent des dépendances. Bassi programmait donc des campagnes qui attendaient une
+    action manuelle.
+
+    La réparation n'invente rien : c'est le MÊME motif que `_v276_periodic_purge`
+    ci-dessus — une simple tâche asyncio native, lancée au démarrage. Ce motif est
+    déjà en service et prouvé sur ce serveur ; il fonctionne parce que Coolify fait
+    tourner un uvicorn permanent, contrairement à l'ancien serverless Vercel.
+
+    On n'active PAS APScheduler et on ne touche pas à `SCHEDULER_RUNNING`.
+
+    Anti-doublon : le lancement passe par `launch_campaign()`, dont le verrou atomique
+    est la seule barrière — on ne la contourne pas et on n'en ajoute pas d'autre.
+    Une erreur sur un passage est journalisée et n'arrête JAMAIS la boucle.
+    """
+    # Petit délai au démarrage : laisser l'application finir de s'initialiser
+    # (index, secrets) avant le premier passage.
+    await asyncio.sleep(20)
+    while True:
+        try:
+            resultat = await _v328_run_due_campaigns(origine="BOUCLE")
+            if resultat.get("launched") or resultat.get("stuck_fixed"):
+                logger.info(
+                    f"[SCHEDULER-CAMPAGNE] Passage : {len(resultat.get('launched', []))} lancée(s), "
+                    f"{resultat.get('stuck_fixed', 0)} débloquée(s), "
+                    f"{len(resultat.get('errors', []))} erreur(s)"
+                )
+        except Exception as e:
+            logger.warning(f"[SCHEDULER-CAMPAGNE] Passage ignoré : {e}")
+        await asyncio.sleep(60)  # vérification toutes les minutes
+
+
 # V272c: garde « migration deja jouee » — evite de rebalayer la collection a
 # chaque lecture. Le startup la remet a False une fois, la lecture publique la
 # declenche paresseusement si le hook startup n'a pas tourne (filet serverless).
@@ -18277,6 +18316,27 @@ async def cron_check_campaigns(request: Request):
     if not is_vercel_cron and not is_admin and not is_local_dev:
         raise HTTPException(status_code=401, detail="Unauthorized - Cron access only")
 
+    # V328 : le corps a été extrait dans `_v328_run_due_campaigns()` pour être partagé
+    # avec la boucle de fond. Cet endpoint est INCHANGÉ pour l'extérieur : même
+    # contrôle d'accès au-dessus, même réponse en dessous.
+    return await _v328_run_due_campaigns(origine="CRON")
+
+
+async def _v328_run_due_campaigns(origine: str = "CRON") -> dict:
+    """
+    V328 — lance les campagnes programmées dont l'heure est venue, et répare celles
+    coincées en « sending ».
+
+    Corps HISTORIQUE de `/cron/check-campaigns`, extrait tel quel pour être appelé
+    par DEUX appelants : l'endpoint (appel manuel super-admin / cron externe) et la
+    boucle de fond `_campaign_scheduler_loop()`. La logique n'a pas été réécrite —
+    seuls le préfixe de log (`origine`) et l'extraction changent.
+
+    Le lancement passe toujours par `launch_campaign()`, dont le verrou atomique
+    (`find_one_and_update` sur `status $nin [sending, completed, failed]`) est la
+    SEULE barrière anti-doublon : même si l'endpoint et la boucle tombaient sur la
+    même campagne au même instant, un seul des deux gagnerait.
+    """
     now_dt = datetime.now(timezone.utc)
     now = now_dt.isoformat()
 
@@ -18302,10 +18362,10 @@ async def cron_check_campaigns(request: Request):
             # Réutiliser le même endpoint de lancement
             result = await launch_campaign(campaign_id)
             launched.append({"id": campaign_id, "name": campaign_name, "results_count": len(result.get("results", []))})
-            logger.info(f"[CRON] ✅ Campagne '{campaign_name}' lancée automatiquement")
+            logger.info(f"[SCHEDULER-CAMPAGNE] ✅ '{campaign_name}' lancée automatiquement ({origine})")
         except Exception as e:
             errors.append({"id": campaign_id, "name": campaign_name, "error": str(e)})
-            logger.error(f"[CRON] ❌ Erreur lancement '{campaign_name}': {e}")
+            logger.error(f"[SCHEDULER-CAMPAGNE] ❌ Erreur lancement '{campaign_name}' ({origine}): {e}")
             # Marquer comme échouée pour ne pas retenter indéfiniment
             await db.campaigns.update_one(
                 {"id": campaign_id},
@@ -18333,7 +18393,7 @@ async def cron_check_campaigns(request: Request):
             }}
         )
         stuck_fixed += 1
-        logger.info(f"[CRON] 🔧 Campagne bloquée '{stuck.get('name')}' corrigée → {'completed' if has_success else 'failed'}")
+        logger.info(f"[SCHEDULER-CAMPAGNE] 🔧 Campagne bloquée '{stuck.get('name')}' corrigée → {'completed' if has_success else 'failed'} ({origine})")
 
     # Mettre à jour le heartbeat scheduler pour le badge UI
     last_run = datetime.now(timezone.utc).isoformat()
@@ -20220,6 +20280,15 @@ async def startup_db():
         logger.info("[V276] Tache de purge periodique demarree")
     except Exception as e:
         logger.warning(f"[V276] Demarrage purge periodique ignore: {e}")
+
+    # V328 : envoi automatique des campagnes programmees, toutes les 60 s. Meme
+    # motif que la purge ci-dessus (tache asyncio native, pas APScheduler). Sans
+    # elle, une campagne « scheduled » attendait une action manuelle indefiniment.
+    try:
+        asyncio.create_task(_campaign_scheduler_loop())
+        logger.info("[SCHEDULER-CAMPAGNE] Boucle d'envoi automatique demarree (60s)")
+    except Exception as e:
+        logger.warning(f"[SCHEDULER-CAMPAGNE] Demarrage ignore: {e}")
 
     logger.info("[SYSTEM] Database indexes initialized")
 
