@@ -7467,6 +7467,222 @@ async def v331_incoming_post(request: Request):
 
 
 # =====================================================================
+# V334 — SUIVI DE PROGRESSION (étape 1 : saisie et lecture des mesures)
+# =====================================================================
+# Collection dédiée `db.progress_entries`. Ce sont des données de SANTÉ (poids,
+# mensurations, photos) : elles ne sortent JAMAIS sans authentification, et jamais
+# d'un abonné vers un autre. Toute la sécurité de ce bloc tient dans
+# `_v334_autoriser()` ci-dessous — c'est le seul endroit à relire en cas de doute.
+#
+# Trois rôles, trois portées :
+#   - abonné      -> UNIQUEMENT ses propres entrées (prouvé par son code ou son jeton) ;
+#   - coach       -> uniquement les abonnés dont il est le `coach_id` ;
+#   - super admin -> tout.
+
+V334_FOLDER = "progress/"   # dossier Cloudinary dédié (les publications utilisent publications/)
+
+
+async def _v334_autoriser(request: Request, code_cible: str, code_fourni: str = ""):
+    """
+    Qui appelle, et a-t-il le droit de toucher aux données de CET abonné ?
+
+    Renvoie (role, identite, coach_id_cible) où role ∈ {'subscriber','coach','admin'}.
+    Lève 403/404 sinon — jamais de repli silencieux : sur des données de santé, un
+    doute doit fermer la porte, pas l'ouvrir.
+
+    L'identité n'est JAMAIS lue dans le corps de la requête (règle V262) : elle vient
+    du code de l'abonné, de son jeton d'appareil signé, ou de l'authentification coach.
+    """
+    code_cible = (code_cible or "").strip().upper()
+    ok, _nom, coach_id_cible = await _v261_resolve_subscriber(code_cible)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Abonné introuvable")
+
+    # --- Chemin ABONNÉ : il prouve son identité par son code, ou par son jeton
+    # d'appareil signé (V296). C'est le même modèle que l'espace abonné.
+    fourni = (code_fourni or "").strip().upper()
+    if fourni and fourni == code_cible:
+        return "subscriber", code_cible, coach_id_cible
+    try:
+        from api.routes.shared import subscriber_from_request
+        jeton = subscriber_from_request(request)
+        if jeton and (jeton.get("code") or "").strip().upper() == code_cible:
+            return "subscriber", code_cible, coach_id_cible
+    except Exception:
+        pass
+
+    # --- Chemin COACH / ADMIN : identité authentifiée, jamais déclarée.
+    email = await _v263_authenticated_coach(request)
+    if email:
+        if is_super_admin(email):
+            return "admin", email, coach_id_cible
+        if coach_id_cible and email.lower() == str(coach_id_cible).lower():
+            return "coach", email, coach_id_cible
+        # Un coach authentifié mais qui n'est PAS celui de cet abonné : refus net.
+        raise HTTPException(status_code=403, detail="Accès refusé")
+
+    raise HTTPException(status_code=403, detail="Authentification requise")
+
+
+def _v334_nettoyer_entree(corps: dict) -> dict:
+    """
+    Ne garde que les champs attendus, aux bons types. Tout est FACULTATIF sauf la
+    date : on saisit ce qu'on veut, quand on veut (une pesée seule, une série seule).
+    """
+    propre = {}
+
+    poids = corps.get("weight_kg")
+    if poids is not None:
+        try:
+            p = float(poids)
+            # Garde-fou de saisie : au-delà, c'est une faute de frappe, pas un poids.
+            if 20 <= p <= 400:
+                propre["weight_kg"] = round(p, 1)
+        except (TypeError, ValueError):
+            pass
+
+    mesures = corps.get("measurements")
+    if isinstance(mesures, dict):
+        propres_mesures = {}
+        for cle, val in list(mesures.items())[:12]:
+            try:
+                v = float(val)
+                if 0 < v <= 300:
+                    propres_mesures[str(cle)[:30]] = round(v, 1)
+            except (TypeError, ValueError):
+                continue
+        if propres_mesures:
+            propre["measurements"] = propres_mesures
+
+    reps = corps.get("reps")
+    if isinstance(reps, list):
+        propres_reps = []
+        for ligne in reps[:20]:
+            if not isinstance(ligne, dict):
+                continue
+            exercice = str(ligne.get("exercice") or "").strip()[:60]
+            if not exercice:
+                continue
+            entree = {"exercice": exercice}
+            for champ, borne in (("series", 100), ("repetitions", 1000), ("charge_kg", 1000)):
+                try:
+                    v = float(ligne.get(champ))
+                    if 0 <= v <= borne:
+                        entree[champ] = round(v, 1)
+                except (TypeError, ValueError):
+                    continue
+            propres_reps.append(entree)
+        if propres_reps:
+            propre["reps"] = propres_reps
+
+    # Photo : même garde que les publications (V261b) — uniquement une URL
+    # Cloudinary du dossier dédié. C'est ce qui cantonne les fichiers et empêche
+    # d'injecter une URL arbitraire dans une page.
+    photo = (corps.get("photo_url") or "").strip()
+    if photo.startswith(V261_MEDIA_PREFIX) and ("/" + V334_FOLDER) in photo:
+        propre["photo_url"] = photo
+
+    note = (corps.get("note") or "").strip()[:500]
+    if note:
+        propre["note"] = note
+
+    return propre
+
+
+@api_router.post("/progress")
+async def v334_creer_progression(request: Request):
+    """
+    V334 — enregistre une entrée de progression pour un abonné.
+
+    Corps : { subscriber_code (la cible), entry_date?, weight_kg?, measurements?,
+              reps?, photo_url?, note?, code? (preuve abonné) }
+
+    `created_by` est DÉDUIT de l'identité prouvée, jamais reçu du client : sinon
+    n'importe qui pourrait faire passer sa saisie pour celle du coach.
+    """
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        corps = {}
+
+    cible = (corps.get("subscriber_code") or "").strip().upper()
+    if not cible:
+        raise HTTPException(status_code=400, detail="subscriber_code requis")
+
+    role, identite, coach_id = await _v334_autoriser(
+        request, cible, corps.get("code") or corps.get("subscriber_code_proof") or ""
+    )
+
+    # Date de l'entrée : fournie ou maintenant. Une date illisible ne bloque pas —
+    # on retombe sur maintenant plutôt que de perdre la saisie de l'utilisateur.
+    entry_date = datetime.now(timezone.utc)
+    brut = (corps.get("entry_date") or "").strip()
+    if brut:
+        try:
+            d = datetime.fromisoformat(brut.replace("Z", "+00:00"))
+            entry_date = d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+        except Exception:
+            pass
+
+    mesures = _v334_nettoyer_entree(corps)
+    if not mesures:
+        raise HTTPException(status_code=400, detail="Aucune donnée à enregistrer.")
+
+    sub = await db.subscriptions.find_one({"code": cible}, {"_id": 0, "email": 1})
+    entree = {
+        "id": str(uuid.uuid4()),
+        "subscriber_code": cible,
+        "subscriber_email": ((sub or {}).get("email") or "").lower(),
+        "coach_id": coach_id or DEFAULT_COACH_ID,
+        "entry_date": entry_date.astimezone(timezone.utc).isoformat(),
+        "created_by": "subscriber" if role == "subscriber" else "coach",
+        "created_by_identity": identite if role != "subscriber" else "",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    entree.update(mesures)
+
+    await db.progress_entries.insert_one(dict(entree))
+    logger.info(f"[V334] Entrée de progression créée par {role} pour un abonné")
+    entree.pop("_id", None)
+    return {"ok": True, "entry": entree}
+
+
+@api_router.get("/progress/{subscriber_code}")
+async def v334_lire_progression(subscriber_code: str, request: Request, code: str = ""):
+    """
+    V334 — historique de progression d'un abonné, du plus récent au plus ancien.
+    Accessible à l'abonné lui-même, à SON coach, ou au super admin. Personne d'autre.
+    """
+    cible = (subscriber_code or "").strip().upper()
+    role, _identite, _coach = await _v334_autoriser(request, cible, code)
+
+    entrees = await db.progress_entries.find(
+        {"subscriber_code": cible}, {"_id": 0}
+    ).sort("entry_date", -1).to_list(500)
+
+    return {"ok": True, "role": role, "count": len(entrees), "entries": entrees}
+
+
+@api_router.delete("/progress/{entry_id}")
+async def v334_supprimer_progression(entry_id: str, request: Request, code: str = ""):
+    """
+    V334 — supprime une entrée. L'abonné concerné, son coach, ou le super admin.
+    On relit l'entrée pour connaître sa cible AVANT de vérifier les droits : sans
+    cela on ne saurait pas de quel abonné il s'agit.
+    """
+    entree = await db.progress_entries.find_one({"id": entry_id}, {"_id": 0})
+    if not entree:
+        raise HTTPException(status_code=404, detail="Entrée introuvable")
+
+    await _v334_autoriser(request, entree.get("subscriber_code") or "", code)
+    await db.progress_entries.delete_one({"id": entry_id})
+    logger.info(f"[V334] Entrée de progression {entry_id} supprimée")
+    return {"ok": True}
+
+
+# =====================================================================
 # V332 — INSCRIPTIONS OPT-IN (WhatsApp + Newsletter) — RGPD
 # =====================================================================
 # Collection DÉDIÉE `db.subscribers`, volontairement SÉPARÉE du CRM (`db.leads`) et
@@ -20885,6 +21101,13 @@ async def startup_db():
     try:
         await db.boosttribe_usage.create_index("created_dt", expireAfterSeconds=7 * 24 * 3600)
         logger.info("[INDEX] boosttribe_usage.created_dt TTL 7j OK")
+    except Exception:
+        pass  # Index existe deja
+
+    # V334 : lecture de la progression par abonné, du plus récent au plus ancien.
+    try:
+        await db.progress_entries.create_index([("subscriber_code", 1), ("entry_date", -1)])
+        logger.info("[INDEX] progress_entries (subscriber_code, entry_date) OK")
     except Exception:
         pass  # Index existe deja
 

@@ -619,6 +619,30 @@ def t63_coach_jwt_legit_access():
         record(63, "Coach légitime (JWT) -> accès complet", False, str(e))
 
 
+def t74_progression_donnees_sante():
+    """V334 : les données de progression (poids, mensurations, photos) sont des
+    données de SANTÉ. Elles ne doivent JAMAIS sortir sans authentification, ni
+    d'un abonné vers un autre. Sans identité prouvée : lecture, écriture et
+    suppression sont toutes refusées (403), et jamais 200."""
+    try:
+        cible = "AFR-SONDE-V334"
+        lecture = requests.get(_url(f"/api/progress/{cible}"), timeout=TIMEOUT)
+        ecriture = requests.post(_url("/api/progress"),
+                                 json={"subscriber_code": cible, "weight_kg": 70}, timeout=TIMEOUT)
+        suppression = requests.delete(_url("/api/progress/sonde-inexistante"), timeout=TIMEOUT)
+        # 403 = refusé faute d'identité ; 404 = l'abonné sonde n'existe pas (les
+        # droits sont vérifiés après résolution de la cible). Jamais 200.
+        ok = (lecture.status_code in (403, 404)
+              and ecriture.status_code in (403, 404)
+              and suppression.status_code in (403, 404))
+        fuite = ('"entries"' in (lecture.text or "")) or ('"entry"' in (ecriture.text or ""))
+        record(74, "Progression : aucune donnée de santé sans authentification", ok and not fuite,
+               f"lecture={lecture.status_code} ecriture={ecriture.status_code} "
+               f"suppression={suppression.status_code} fuite={fuite}")
+    except Exception as e:
+        record(74, "Progression : aucune donnée de santé sans authentification", False, str(e))
+
+
 def t72_optin_consentement_obligatoire():
     """V332 : on ne peut PAS inscrire quelqu'un sans consentement explicite.
     Sans `consent: true` -> 400. Une valeur invalide -> 400. C'est la garantie RGPD
@@ -1048,6 +1072,7 @@ def main():
                    t67_publication_programmee, t68_suppression_programmee,
                    t69_cron_campagnes_ferme, t70_cron_campagnes_admin_jwt, t71_webhook_studiio,
                    t72_optin_consentement_obligatoire, t73_liste_inscrits_protegee,
+                   t74_progression_donnees_sante,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
