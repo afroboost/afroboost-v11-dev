@@ -9,7 +9,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom'; // V268d
 import axios from 'axios';
 import Cropper from 'react-easy-crop'; // V268c (F1)
-import { PrixBoost } from './publications/Boost'; // V342 : Boost payant
+import { PrixBoost, BoutonBoost } from './publications/Boost'; // V342 : Boost payant
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
@@ -530,6 +530,12 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
                           <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                         </svg>
                       </button>
+                      {/* V342 : Boost — apparaître 48 h sur une AUTRE vitrine ou la
+                          page d'accueil, contre paiement. Sans objet sur une
+                          publication programmée : elle n'est pas encore en ligne. */}
+                      {!p.scheduled && (
+                        <BoutonBoost pubId={p.id} subscriberCode={subscriberCode} />
+                      )}
                       {/* V286 : renouveler (+48 h) — flèche circulaire verte.
                           V327 : sans objet sur une publication programmée (elle n'est
                           pas encore en ligne, son compte à rebours n'a pas démarré). */}

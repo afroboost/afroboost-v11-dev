@@ -13,6 +13,7 @@
  * `boost_price_chf` au moment de créer le paiement. Ici, c'est de l'affichage.
  */
 import { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
@@ -168,6 +169,233 @@ export const PrixBoost = () => {
         </span>
       )}
     </span>
+  );
+};
+
+/* =====================================================================
+ * ÉTAPE 2 — le bouton Boost : choix de la destination puis du moyen de paiement.
+ * ===================================================================== */
+
+const IconeBoost = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z" />
+  </svg>
+);
+
+const LIBELLES_MOYENS = { stripe: 'Carte / TWINT', pawapay: 'Mobile Money' };
+
+/**
+ * Modale de Boost. Deux décisions seulement : OÙ apparaître, et COMMENT payer.
+ * Le montant n'est jamais saisi ici — il est affiché à titre indicatif et
+ * recalculé par le serveur au moment de créer le paiement.
+ */
+const ModaleBoost = ({ pubId, subscriberCode, prix, onClose }) => {
+  const [donnees, setDonnees] = useState(null); // null = chargement
+  const [erreur, setErreur] = useState('');
+  const [cible, setCible] = useState('');
+  const [moyen, setMoyen] = useState('');
+  const [telephone, setTelephone] = useState('');
+  const [occupe, setOccupe] = useState(false);
+
+  useEffect(() => {
+    const q = subscriberCode ? `?subscriber_code=${encodeURIComponent(subscriberCode)}` : '';
+    axios.get(`${API}/publications/${pubId}/boost/destinations${q}`)
+      .then((r) => setDonnees(r.data || { destinations: [] }))
+      .catch((e) => {
+        setDonnees({ destinations: [] });
+        setErreur(e && e.response && e.response.status === 403
+          ? "Seul l'auteur peut booster cette publication."
+          : "Impossible de charger les vitrines disponibles.");
+      });
+  }, [pubId, subscriberCode]);
+
+  const destinations = (donnees && donnees.destinations) || [];
+  const choisie = destinations.find((d) => d.target === cible) || null;
+  const moyensPossibles = (choisie && choisie.providers) || [];
+  const montant = (donnees && donnees.price_chf) || prix;
+
+  const payer = async () => {
+    if (occupe || !cible || !moyen) return;
+    setOccupe(true);
+    setErreur('');
+    try {
+      const corps = { target: cible, provider: moyen };
+      if (subscriberCode) corps.subscriber_code = subscriberCode;
+      if (moyen === 'pawapay' && telephone) corps.customer_phone = telephone;
+      const r = await axios.post(`${API}/publications/${pubId}/boost/checkout`, corps);
+      const url = r.data && r.data.payment_url;
+      if (url) { window.location.href = url; return; }
+      setErreur("Le paiement n'a pas pu être ouvert.");
+    } catch (e) {
+      setErreur((e && e.response && e.response.data && e.response.data.detail)
+        || "Le paiement n'a pas pu être ouvert.");
+    }
+    setOccupe(false);
+  };
+
+  const carte = {
+    background: '#12121f', borderRadius: 14, padding: 16, width: '100%', maxWidth: 420,
+    maxHeight: '85vh', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.08)',
+  };
+
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(0,0,0,0.75)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+      }}
+      data-testid="boost-modal"
+    >
+      <div onClick={(e) => e.stopPropagation()} style={carte}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <h4 style={{ color: '#fff', fontSize: '0.95rem', margin: 0, display: 'flex',
+                       alignItems: 'center', gap: 6 }}>
+            <span style={{ color: PRIMAIRE, lineHeight: 0 }}><IconeBoost /></span>
+            Booster cette publication
+          </h4>
+          <button type="button" onClick={onClose} aria-label="Fermer"
+                  style={{ background: 'none', border: 'none', color: '#999', fontSize: 20,
+                           cursor: 'pointer', lineHeight: 1 }}>×</button>
+        </div>
+
+        <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.75rem', margin: '8px 0 14px' }}>
+          Apparaître <strong style={{ color: '#fff' }}>48 h</strong> sur une autre vitrine ou
+          sur la page d'accueil, pour <strong style={{ color: '#fff' }}>{montant} CHF</strong>.
+          Publier sur votre propre vitrine reste gratuit.
+        </p>
+
+        {donnees === null ? (
+          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.8rem' }}>Chargement…</p>
+        ) : destinations.length === 0 ? (
+          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.8rem' }}>
+            Aucune autre vitrine disponible pour le moment.
+          </p>
+        ) : (
+          <>
+            <p style={{ color: '#fff', fontSize: '0.8rem', fontWeight: 600, margin: '0 0 6px' }}>
+              1. Où voulez-vous apparaître ?
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+              {destinations.map((d) => {
+                const dispo = (d.providers || []).length > 0;
+                const actif = cible === d.target;
+                return (
+                  <button
+                    key={d.target}
+                    type="button"
+                    disabled={!dispo}
+                    onClick={() => { setCible(d.target); setMoyen(''); setErreur(''); }}
+                    data-testid={`boost-dest-${d.target}`}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                      padding: '9px 11px', borderRadius: 10, textAlign: 'left', fontSize: '0.8rem',
+                      background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.14)' : 'rgba(255,255,255,0.03)',
+                      border: actif ? `1px solid ${PRIMAIRE}` : '1px solid rgba(255,255,255,0.08)',
+                      color: dispo ? '#fff' : 'rgba(255,255,255,0.35)',
+                      cursor: dispo ? 'pointer' : 'not-allowed',
+                    }}
+                  >
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {d.name}
+                    </span>
+                    {!dispo ? (
+                      <span style={{ fontSize: '0.65rem', flexShrink: 0 }}>paiement non configuré</span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+
+            {choisie ? (
+              <>
+                <p style={{ color: '#fff', fontSize: '0.8rem', fontWeight: 600, margin: '0 0 6px' }}>
+                  2. Comment payer ?
+                </p>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+                  {moyensPossibles.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => { setMoyen(m); setErreur(''); }}
+                      data-testid={`boost-moyen-${m}`}
+                      style={{
+                        padding: '8px 12px', borderRadius: 10, fontSize: '0.78rem', cursor: 'pointer',
+                        background: moyen === m ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.14)' : 'rgba(255,255,255,0.03)',
+                        border: moyen === m ? `1px solid ${PRIMAIRE}` : '1px solid rgba(255,255,255,0.08)',
+                        color: '#fff',
+                      }}
+                    >
+                      {LIBELLES_MOYENS[m] || m}
+                    </button>
+                  ))}
+                </div>
+
+                {moyen === 'pawapay' ? (
+                  <input
+                    type="tel" value={telephone} placeholder="Numéro Mobile Money"
+                    onChange={(e) => setTelephone(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, marginBottom: 12,
+                             border: '1px solid rgba(255,255,255,0.18)', background: '#0a0a1a',
+                             color: '#fff', fontSize: '0.8rem', boxSizing: 'border-box' }}
+                  />
+                ) : null}
+              </>
+            ) : null}
+
+            {erreur ? (
+              <p style={{ color: '#fca5a5', fontSize: '0.75rem', margin: '0 0 10px' }}>{erreur}</p>
+            ) : null}
+
+            <button
+              type="button" onClick={payer} disabled={!cible || !moyen || occupe}
+              data-testid="boost-payer"
+              style={{
+                width: '100%', padding: '11px', borderRadius: 10, border: 'none', fontWeight: 700,
+                fontSize: '0.85rem', color: '#fff',
+                background: (!cible || !moyen) ? 'rgba(255,255,255,0.1)' : PRIMAIRE,
+                cursor: (!cible || !moyen || occupe) ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {occupe ? 'Ouverture du paiement…' : `Payer ${montant} CHF`}
+            </button>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+};
+
+/**
+ * L'icône éclair, discrète, affichée à l'auteur d'une publication.
+ * `subscriberCode` non vide = l'auteur est un abonné (il n'a pas de compte).
+ */
+export const BoutonBoost = ({ pubId, subscriberCode }) => {
+  const prix = usePrixBoost();
+  const [ouvert, setOuvert] = useState(false);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOuvert(true)}
+        data-testid={`boost-bouton-${pubId}`}
+        aria-label="Booster"
+        title={prix
+          ? `Booster : apparaître 48 h sur une autre vitrine ou la page d'accueil — ${prix} CHF`
+          : 'Booster : apparaître 48 h sur une autre vitrine ou la page d\'accueil'}
+        style={{ background: 'none', border: 'none', padding: 4, lineHeight: 0,
+                 cursor: 'pointer', color: PRIMAIRE }}
+      >
+        <IconeBoost />
+      </button>
+      {ouvert ? (
+        <ModaleBoost pubId={pubId} subscriberCode={subscriberCode} prix={prix}
+                     onClose={() => setOuvert(false)} />
+      ) : null}
+    </>
   );
 };
 
