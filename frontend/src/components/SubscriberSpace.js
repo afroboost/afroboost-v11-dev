@@ -2,12 +2,17 @@
 // V202: Multi-membres, lien personnel, Stripe, scroll fluide
 // Lien public /espace/AFR-XXXXXX — bienvenue, séances, QR, réservation, guide
 
-import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef, lazy, Suspense } from "react";
 import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { copyToClipboard } from "../utils/clipboard";
 import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
+// V334 etape 2 : « Mon cockpit » charge A LA DEMANDE (React.lazy).
+// Il embarque recharts, qui pese ~98 ko gzip : l'inclure dans le bundle
+// principal ferait payer ce poids a CHAQUE visiteur, pour une section repliee
+// par defaut. En lazy, le morceau n'est telecharge qu'a l'ouverture du cockpit.
+const SubscriberCockpit = lazy(() => import("./SubscriberCockpit"));
 import SvgIcon from "./SvgIcon";
 import { PublishModal } from "./Publications"; // V261
 
@@ -655,6 +660,13 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             onClose={() => setV261ShowPublish(false)}
           />
         )}
+
+        {/* V334 etape 2 : « Mon cockpit » — progression de l'abonné. Replie par
+            defaut et charge seulement a l'ouverture : l'espace abonne doit rester
+            rapide. Il n'affiche QUE les donnees de ce code. */}
+        <Suspense fallback={null}>
+          <SubscriberCockpit accessCode={accessCode} />
+        </Suspense>
 
         {/* ===== Mes séances restantes ===== */}
         <section

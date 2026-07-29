@@ -7665,6 +7665,113 @@ async def v334_lire_progression(subscriber_code: str, request: Request, code: st
     return {"ok": True, "role": role, "count": len(entrees), "entries": entrees}
 
 
+async def _v334_stats_abonne(code: str, email: str) -> dict:
+    """
+    V334 — agrégats de pratique d'un abonné, calculés à partir de `db.reservations`
+    (l'existant, aucune nouvelle collection).
+
+    Placé côté serveur et non dans l'écran : les étapes 3 (vue coach) et 4 (cockpit
+    global) ont besoin des MÊMES chiffres. Les recalculer dans trois interfaces
+    différentes, c'est se garantir trois résultats différents.
+
+    Renvoie séances suivies, séances à venir, ancienneté et régularité.
+    """
+    now = datetime.now(timezone.utc)
+    reservations = []
+    if email:
+        reservations = await db.reservations.find(
+            {"userEmail": {"$regex": f"^{re.escape(email)}$", "$options": "i"}},
+            {"_id": 0, "datetime": 1, "createdAt": 1, "courseName": 1}
+        ).to_list(500)
+
+    def _date(valeur):
+        """Les dates de cette base sont tantôt des chaînes ISO, tantôt des datetime."""
+        if isinstance(valeur, datetime):
+            return valeur if valeur.tzinfo else valeur.replace(tzinfo=timezone.utc)
+        try:
+            d = datetime.fromisoformat(str(valeur).replace("Z", "+00:00"))
+            return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+
+    passees, a_venir, premiere = 0, 0, None
+    for r in reservations:
+        d = _date(r.get("datetime")) or _date(r.get("createdAt"))
+        if not d:
+            continue
+        if d <= now:
+            passees += 1
+            if premiere is None or d < premiere:
+                premiere = d
+        else:
+            a_venir += 1
+
+    # Ancienneté : depuis la première séance suivie, à défaut depuis l'abonnement.
+    anciennete_jours = 0
+    if premiere:
+        anciennete_jours = max(0, (now - premiere).days)
+    else:
+        sub = await db.subscriptions.find_one({"code": code}, {"_id": 0, "created_at": 1})
+        d0 = _date((sub or {}).get("created_at"))
+        if d0:
+            anciennete_jours = max(0, (now - d0).days)
+
+    # Régularité : séances par semaine. Sur moins d'une semaine de recul, le ratio
+    # n'aurait aucun sens (2 séances en 2 jours donneraient « 7/semaine ») — on
+    # renvoie None plutôt qu'un chiffre flatteur et faux.
+    regularite = None
+    if anciennete_jours >= 7 and passees > 0:
+        regularite = round(passees / (anciennete_jours / 7.0), 1)
+
+    return {
+        "seances_suivies": passees,
+        "seances_a_venir": a_venir,
+        "anciennete_jours": anciennete_jours,
+        "regularite_par_semaine": regularite,
+    }
+
+
+@api_router.get("/progress/{subscriber_code}/cockpit")
+async def v334_cockpit_abonne(subscriber_code: str, request: Request, code: str = ""):
+    """
+    V334 étape 2 — tout ce qu'affiche « Mon cockpit », en un seul appel :
+    objectifs (V333), agrégats de pratique, historique de progression et photos.
+
+    Mêmes droits que le reste du bloc V334 : l'abonné concerné, SON coach, ou le
+    super admin. Personne d'autre.
+    """
+    cible = (subscriber_code or "").strip().upper()
+    role, _identite, _coach = await _v334_autoriser(request, cible, code)
+
+    sub = await db.subscriptions.find_one(
+        {"code": cible}, {"_id": 0, "email": 1, "name": 1, "objectifs": 1}
+    ) or {}
+    email = (sub.get("email") or "").lower()
+
+    stats = await _v334_stats_abonne(cible, email)
+
+    # Ordre CROISSANT ici (et non décroissant comme la liste) : une courbe se lit
+    # du plus ancien au plus récent.
+    entrees = await db.progress_entries.find(
+        {"subscriber_code": cible}, {"_id": 0}
+    ).sort("entry_date", 1).to_list(500)
+
+    photos = [
+        {"photo_url": e["photo_url"], "entry_date": e.get("entry_date")}
+        for e in entrees if e.get("photo_url")
+    ]
+
+    return {
+        "ok": True,
+        "role": role,
+        "name": sub.get("name") or "",
+        "objectifs": sub.get("objectifs") or "",
+        "stats": stats,
+        "entries": entrees,
+        "photos": photos,
+    }
+
+
 @api_router.delete("/progress/{entry_id}")
 async def v334_supprimer_progression(entry_id: str, request: Request, code: str = ""):
     """
