@@ -14,7 +14,7 @@
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import DetailAbonne from "./progress/DetailAbonne"; // V338 : bloc partage (seances datees + note)
+import DetailAbonne, { FormulaireMesure, ResultatsCalcules } from "./progress/DetailAbonne"; // V338/V339
 
 const API = `${process.env.REACT_APP_BACKEND_URL || ''}/api`;
 
@@ -64,10 +64,6 @@ export default function SubscriberCockpit({ accessCode }) {
   const [data, setData] = useState(null);      // null = pas encore chargé
   const [erreur, setErreur] = useState("");
   const [saisieOuverte, setSaisieOuverte] = useState(false);
-  const [poids, setPoids] = useState("");
-  const [taille, setTaille] = useState("");
-  const [note, setNote] = useState("");
-  const [envoi, setEnvoi] = useState(false);
   const [retour, setRetour] = useState(null);
 
   const charger = useCallback(async () => {
@@ -88,31 +84,6 @@ export default function SubscriberCockpit({ accessCode }) {
 
   // Chargé seulement à l'ouverture : l'espace abonné doit rester rapide.
   useEffect(() => { if (ouvert && data === null) charger(); }, [ouvert, data, charger]);
-
-  const enregistrer = async (e) => {
-    e.preventDefault();
-    if (envoi) return;
-    const corps = { subscriber_code: accessCode, code: accessCode };
-    if (poids.trim()) corps.weight_kg = poids.trim();
-    if (taille.trim()) corps.measurements = { taille: taille.trim() };
-    if (note.trim()) corps.note = note.trim();
-    if (!corps.weight_kg && !corps.measurements && !corps.note) {
-      setRetour({ type: "ko", texte: "Saisissez au moins une valeur." });
-      return;
-    }
-    setEnvoi(true); setRetour(null);
-    try {
-      await axios.post(`${API}/progress`, corps);
-      setPoids(""); setTaille(""); setNote("");
-      setRetour({ type: "ok", texte: "Mesure enregistrée." });
-      setData(null);            // force le rechargement des courbes
-      setSaisieOuverte(false);
-      await charger();
-    } catch (err) {
-      const d = err && err.response && err.response.data && err.response.data.detail;
-      setRetour({ type: "ko", texte: d || "Enregistrement impossible. Réessayez." });
-    } finally { setEnvoi(false); }
-  };
 
   const stats = (data && data.stats) || {};
   // Une courbe n'a de sens qu'à partir de deux points.
@@ -187,6 +158,10 @@ export default function SubscriberCockpit({ accessCode }) {
                   La régularité s'affiche après une semaine de pratique.
                 </p>
               ) : null}
+
+              {/* V339 : IMC, rapport taille/hanches, progression — calculés par le
+                  serveur, donc identiques à ce que voit le coach. */}
+              <ResultatsCalcules calculs={data.calculs} />
 
               {/* ===== Courbe de poids ===== */}
               {courbePoids.length >= 2 ? (
@@ -277,25 +252,16 @@ export default function SubscriberCockpit({ accessCode }) {
               </button>
 
               {saisieOuverte && (
-                <form onSubmit={enregistrer} style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
-                  <input type="number" step="0.1" inputMode="decimal" value={poids}
-                         onChange={(e) => setPoids(e.target.value)}
-                         placeholder="Poids (kg)" style={champ} data-testid="cockpit-poids" />
-                  <input type="number" step="0.1" inputMode="decimal" value={taille}
-                         onChange={(e) => setTaille(e.target.value)}
-                         placeholder="Tour de taille (cm)" style={champ} data-testid="cockpit-taille" />
-                  <input type="text" value={note} onChange={(e) => setNote(e.target.value.slice(0, 500))}
-                         placeholder="Note (facultatif)" style={champ} data-testid="cockpit-note" />
-                  <button type="submit" disabled={envoi}
-                          style={{
-                            padding: "10px", borderRadius: 999, border: "none",
-                            background: C.primary, color: "#fff", fontWeight: 700, fontSize: 13,
-                            cursor: envoi ? "wait" : "pointer", opacity: envoi ? 0.6 : 1,
-                          }}
-                          data-testid="cockpit-submit">
-                    {envoi ? "Enregistrement…" : "Enregistrer"}
-                  </button>
-                </form>
+                <div style={{ marginTop: 10 }}>
+                  {/* V339 : formulaire enrichi PARTAGÉ avec la vue coach — mêmes
+                      champs, mêmes règles, même mémorisation de la taille. */}
+                  <FormulaireMesure
+                    code={accessCode}
+                    codePreuve={accessCode}
+                    tailleCm={data.taille_cm}
+                    onEnregistre={async () => { setData(null); await charger(); }}
+                  />
+                </div>
               )}
 
               {retour ? (

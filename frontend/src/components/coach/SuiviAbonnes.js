@@ -15,7 +15,7 @@
  */
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
-import DetailAbonne from "../progress/DetailAbonne"; // V338 : bloc partage
+import DetailAbonne, { FormulaireMesure, ResultatsCalcules } from "../progress/DetailAbonne"; // V338/V339
 
 const API = `${process.env.REACT_APP_BACKEND_URL || ''}/api`;
 
@@ -28,6 +28,18 @@ const champ = {
   fontSize: 13, boxSizing: "border-box", outline: "none",
 };
 
+/** V339 : comparaison insensible à la casse ET aux accents. « Genevieve » doit
+ *  trouver « Geneviève », sinon la recherche paraît cassée. */
+const sansAccents = (t) => (t || "")
+  .toString()
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .toLowerCase();
+
+/** V339 : un numéro se cherche par ses CHIFFRES. « 076 », « 4176 » et « +41 76 »
+ *  doivent tous retrouver le même abonné : on retire tout le reste des deux côtés. */
+const chiffresSeuls = (t) => (t || "").toString().replace(/\D/g, "");
+
 const dateCourte = (iso) => {
   if (!iso) return "—";
   try {
@@ -39,10 +51,9 @@ export default function SuiviAbonnes() {
   const [liste, setListe] = useState(null);   // null = chargement
   const [erreur, setErreur] = useState("");
   const [ouvert, setOuvert] = useState(null); // code de l'abonné déplié
-  const [poids, setPoids] = useState("");
-  const [note, setNote] = useState("");
   const [envoi, setEnvoi] = useState(false);
   const [retour, setRetour] = useState(null);
+  const [recherche, setRecherche] = useState("");   // V339
 
   const charger = useCallback(async () => {
     try {
@@ -66,32 +77,32 @@ export default function SuiviAbonnes() {
     if (detail[code]) return;
     try {
       const r = await axios.get(`${API}/progress/${encodeURIComponent(code)}/cockpit`);
-      setDetail((prev) => ({ ...prev, [code]: r.data.stats || {} }));
+      // V339 : on garde AUSSI taille_cm et calculs — le formulaire et les résultats
+      // en ont besoin, et ils viennent du même appel (pas de second aller-retour).
+      setDetail((prev) => ({ ...prev, [code]: {
+        ...(r.data.stats || {}), taille_cm: r.data.taille_cm, calculs: r.data.calculs,
+      } }));
     } catch (e) {
       setDetail((prev) => ({ ...prev, [code]: { seances: [] } }));
     }
   };
 
-  const enregistrer = async (code) => {
-    if (envoi) return;
-    const corps = { subscriber_code: code };
-    if (poids.trim()) corps.weight_kg = poids.trim();
-    if (note.trim()) corps.note = note.trim();
-    if (!corps.weight_kg && !corps.note) {
-      setRetour({ code, type: "ko", texte: "Saisissez au moins une valeur." });
-      return;
-    }
-    setEnvoi(true); setRetour(null);
-    try {
-      await axios.post(`${API}/progress`, corps);
-      setPoids(""); setNote("");
-      setRetour({ code, type: "ok", texte: "Mesure enregistrée." });
-      await charger();
-    } catch (err) {
-      setRetour({ code, type: "ko",
-                  texte: err?.response?.data?.detail || "Enregistrement impossible." });
-    } finally { setEnvoi(false); }
-  };
+
+  // V339 : filtrage EN MÉMOIRE sur les données déjà chargées — pas d'appel réseau à
+  // chaque touche. Il ne porte que sur la liste reçue, donc uniquement les abonnés
+  // que le serveur a autorisés pour ce coach : l'isolation n'est pas contournable ici.
+  const q = (recherche || "").trim();
+  const qTexte = sansAccents(q);
+  const qChiffres = chiffresSeuls(q);
+  const filtree = !q ? (liste || []) : (liste || []).filter((s) => {
+    const parTexte = sansAccents(s.name).includes(qTexte)
+                  || sansAccents(s.email).includes(qTexte);
+    // On ne cherche par numéro que si la saisie contient des chiffres, sinon
+    // « a » matcherait tout numéro (chaîne vide incluse dans n'importe quoi).
+    const parNumero = qChiffres.length >= 2
+      && chiffresSeuls(s.whatsapp).includes(qChiffres);
+    return parTexte || parNumero;
+  });
 
   if (liste === null) {
     return <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 13 }}>Chargement du suivi…</p>;
@@ -109,12 +120,53 @@ export default function SuiviAbonnes() {
 
   return (
     <div data-testid="suivi-abonnes">
+      {/* V339 : recherche. Reste AU-DESSUS de la zone défilante pour ne jamais
+          disparaître pendant qu'on parcourt la liste. */}
+      <div style={{ position: "relative", marginBottom: 8 }}>
+        <input
+          type="text"
+          value={recherche}
+          onChange={(e) => setRecherche(e.target.value)}
+          placeholder="Rechercher un abonné (nom, email, WhatsApp)…"
+          data-testid="suivi-recherche"
+          style={{ ...champ, paddingRight: 34 }}
+        />
+        {recherche ? (
+          <button
+            type="button"
+            onClick={() => setRecherche("")}
+            aria-label="Effacer la recherche"
+            data-testid="suivi-recherche-clear"
+            style={{
+              position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",
+              background: "none", border: "none", color: "rgba(255,255,255,0.45)",
+              cursor: "pointer", padding: 4, lineHeight: 1,
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        ) : null}
+      </div>
+
       <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 11.5, margin: "0 0 12px" }}>
-        {liste.length} abonné{liste.length > 1 ? "s" : ""} — ceux qui décrochent en premier.
+        {q
+          ? `${filtree.length} résultat${filtree.length > 1 ? "s" : ""} sur ${liste.length} abonné${liste.length > 1 ? "s" : ""}.`
+          : `${liste.length} abonné${liste.length > 1 ? "s" : ""} — ceux qui décrochent en premier.`}
       </p>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {liste.map((s) => {
+      {filtree.length === 0 ? (
+        <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 13 }}>Aucun abonné trouvé.</p>
+      ) : null}
+
+      {/* V339 : zone DÉFILANTE à hauteur limitée — avec 38 abonnés la page devenait
+          interminable et le reste du dashboard inatteignable. */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8,
+                    maxHeight: "60vh", overflowY: "auto", paddingRight: 4 }}
+           data-testid="suivi-liste-defilante">
+        {filtree.map((s) => {
           const deplie = ouvert === s.code;
           return (
             <div key={s.code} style={{
@@ -146,7 +198,7 @@ export default function SuiviAbonnes() {
                   type="button"
                   onClick={() => {
                     const suivant = deplie ? null : s.code;
-                    setOuvert(suivant); setPoids(""); setNote(""); setRetour(null);
+                    setOuvert(suivant); setRetour(null);
                     if (suivant) ouvrirDetail(suivant);
                   }}
                   style={{
@@ -183,26 +235,19 @@ export default function SuiviAbonnes() {
 
               {/* Saisie d'une mesure POUR cet abonné */}
               {deplie && (
-                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 7 }}>
-                  <input type="number" step="0.1" inputMode="decimal" value={poids}
-                         onChange={(e) => setPoids(e.target.value)}
-                         placeholder="Poids (kg)" style={champ}
-                         data-testid={`suivi-poids-${s.code}`} />
-                  <input type="text" value={note}
-                         onChange={(e) => setNote(e.target.value.slice(0, 500))}
-                         placeholder="Note (facultatif)" style={champ}
-                         data-testid={`suivi-note-${s.code}`} />
-                  <button type="button" onClick={() => enregistrer(s.code)} disabled={envoi}
-                          style={{
-                            padding: "8px", borderRadius: 999, border: "none", background: PRIMAIRE,
-                            color: "#fff", fontWeight: 700, fontSize: 12.5,
-                            cursor: envoi ? "wait" : "pointer", opacity: envoi ? 0.6 : 1,
-                          }}
-                          data-testid={`suivi-submit-${s.code}`}>
-                    {envoi ? "Enregistrement…" : "Enregistrer la mesure"}
-                  </button>
-                  {/* V338 : séances datées + note « à améliorer / motivation ».
-                      Même bloc que dans le cockpit de l'abonné. */}
+                <div style={{ marginTop: 10 }}>
+                  {/* V339 : MÊME formulaire et MÊMES résultats que dans le cockpit
+                      de l'abonné — un seul composant, donc aucun écart possible. */}
+                  <FormulaireMesure
+                    code={s.code}
+                    tailleCm={(detail[s.code] || {}).taille_cm}
+                    onEnregistre={async () => {
+                      setDetail((prev) => { const c = { ...prev }; delete c[s.code]; return c; });
+                      await ouvrirDetail(s.code);
+                      await charger();
+                    }}
+                  />
+                  <ResultatsCalcules calculs={(detail[s.code] || {}).calculs} />
                   <DetailAbonne
                     code={s.code}
                     seances={(detail[s.code] || {}).seances}

@@ -7582,6 +7582,17 @@ def _v334_nettoyer_entree(corps: dict) -> dict:
     if photo.startswith(V261_MEDIA_PREFIX) and ("/" + V334_FOLDER) in photo:
         propre["photo_url"] = photo
 
+    # V339 : pourcentage de masse grasse. Borné : hors de cette plage, la valeur
+    # est une erreur de saisie, pas une mesure.
+    bf = corps.get("body_fat_pct")
+    if bf is not None:
+        try:
+            v = float(bf)
+            if 1 <= v <= 70:
+                propre["body_fat_pct"] = round(v, 1)
+        except (TypeError, ValueError):
+            pass
+
     note = (corps.get("note") or "").strip()[:500]
     if note:
         propre["note"] = note
@@ -7642,6 +7653,23 @@ async def v334_creer_progression(request: Request):
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     entree.update(mesures)
+
+    # V339 : la TAILLE (hauteur) saisie dans le formulaire de mesure est mémorisée au
+    # PROFIL, pas dans l'entrée : elle ne change pas d'une pesée à l'autre, et c'est
+    # ce qui permet de ne plus la redemander. `update_many` car un même code porte
+    # plusieurs documents (V333b).
+    _v339_taille = corps.get("taille_cm")
+    if _v339_taille is not None:
+        try:
+            _t = float(_v339_taille)
+            if 100 <= _t <= 250:
+                await db.subscriptions.update_many(
+                    {"code": cible},
+                    {"$set": {"taille_cm": round(_t, 1),
+                              "updated_at": datetime.now(timezone.utc).isoformat()}}
+                )
+        except (TypeError, ValueError):
+            pass
 
     await db.progress_entries.insert_one(dict(entree))
     logger.info(f"[V334] Entrée de progression créée par {role} pour un abonné")
@@ -8043,7 +8071,12 @@ async def v334_suivi_abonnes_coach(request: Request):
               else {"status": "active",
                     "coach_id": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
     abonnements = await db.subscriptions.find(
-        filtre, {"_id": 0, "code": 1, "name": 1, "email": 1, "objectifs": 1, "coach_id": 1}
+        filtre,
+        # V339 : `whatsapp` s'ajoute pour permettre la recherche par numéro. Ces
+        # données personnelles ne sortent QUE vers le coach de l'abonné ou le super
+        # admin — le filtre `coach_id` ci-dessus est ce qui le garantit.
+        {"_id": 0, "code": 1, "name": 1, "email": 1, "whatsapp": 1,
+         "objectifs": 1, "coach_id": 1}
     ).to_list(1000)
 
     # Un même code porte PLUSIEURS documents (renouvellements, cf. V333b) : on
@@ -8138,6 +8171,9 @@ async def v334_suivi_abonnes_coach(request: Request):
         resultat.append({
             "code": code,
             "name": a.get("name") or "",
+            # V339 : servent à la recherche côté client (nom / e-mail / WhatsApp).
+            "email": (a.get("email") or ""),
+            "whatsapp": (a.get("whatsapp") or ""),
             "objectifs": a.get("objectifs") or "",
             "seances_suivies": passees,
             "seances_a_venir": agg.get("a_venir", 0),
@@ -8168,6 +8204,105 @@ async def v334_suivi_abonnes_coach(request: Request):
             "count": len(resultat), "subscribers": resultat}
 
 
+def _v339_calculs(entrees: list, taille_cm) -> dict:
+    """
+    V339 — IMC, rapport taille/hanches et progression, calculés CÔTÉ SERVEUR.
+
+    Pourquoi ici et pas dans l'écran : les trois niveaux (abonné, coach, super admin)
+    affichent ces mêmes chiffres. Les calculer dans chaque interface reviendrait à
+    entretenir trois arrondis différents — et un coach qui annonce « −2,3 kg » à un
+    abonné qui lit « −2,4 kg » perd sa crédibilité.
+
+    `entrees` est la liste CROISSANTE (la plus ancienne d'abord) des mesures de CET
+    abonné, telle que renvoyée par le cockpit. Aucune donnée d'un autre abonné n'entre
+    jamais ici.
+    """
+    resultat = {"imc": None, "imc_categorie": None, "rapport_taille_hanches": None,
+                "progression": None, "premiere_mesure": False}
+    if not entrees:
+        return resultat
+
+    derniere = entrees[-1]
+    premiere = entrees[0]
+    precedente = entrees[-2] if len(entrees) >= 2 else None
+    mesures_d = derniere.get("measurements") or {}
+
+    # --- IMC : uniquement si poids ET hauteur sont connus. Sans l'un des deux, on
+    # n'affiche RIEN plutôt qu'un chiffre inventé.
+    poids = derniere.get("weight_kg")
+    try:
+        t = float(taille_cm) if taille_cm else 0
+    except (TypeError, ValueError):
+        t = 0
+    if poids and t >= 100:
+        metres = t / 100.0
+        imc = round(float(poids) / (metres * metres), 1)
+        resultat["imc"] = imc
+        if imc < 18.5:
+            resultat["imc_categorie"] = "insuffisance"
+        elif imc < 25:
+            resultat["imc_categorie"] = "normal"
+        elif imc < 30:
+            resultat["imc_categorie"] = "surpoids"
+        else:
+            resultat["imc_categorie"] = "obésité"
+
+    # --- Rapport tour de taille / tour de hanches.
+    tour_taille = mesures_d.get("tour_taille") or mesures_d.get("taille")
+    hanches = mesures_d.get("hanches")
+    try:
+        if tour_taille and hanches and float(hanches) > 0:
+            resultat["rapport_taille_hanches"] = round(float(tour_taille) / float(hanches), 2)
+    except (TypeError, ValueError):
+        pass
+
+    # --- Progression : variations depuis la PREMIÈRE et depuis la PRÉCÉDENTE mesure.
+    if len(entrees) < 2:
+        resultat["premiere_mesure"] = True
+        return resultat
+
+    def _valeur(entree, champ):
+        if champ == "weight_kg":
+            return entree.get("weight_kg")
+        m = entree.get("measurements") or {}
+        return m.get("tour_taille") or m.get("taille")
+
+    progression = {}
+    for champ, libelle, unite in (("weight_kg", "poids", "kg"),
+                                  ("tour_taille", "tour_taille", "cm")):
+        actuel = _valeur(derniere, champ)
+        if actuel is None:
+            continue
+        # On remonte au dernier point RENSEIGNÉ, pas au précédent tout court : une
+        # entrée où l'on n'a noté que le poids ne doit pas effacer le tour de taille.
+        def _dernier_renseigne(liste):
+            for e in reversed(liste):
+                v = _valeur(e, champ)
+                if v is not None:
+                    return v
+            return None
+        def _premier_renseigne(liste):
+            for e in liste:
+                v = _valeur(e, champ)
+                if v is not None:
+                    return v
+            return None
+
+        debut = _premier_renseigne(entrees)
+        avant = _dernier_renseigne(entrees[:-1])
+        bloc = {"actuel": actuel, "unite": unite}
+        if debut is not None and debut != actuel:
+            bloc["depuis_debut"] = round(float(actuel) - float(debut), 1)
+        elif debut is not None:
+            bloc["depuis_debut"] = 0.0
+        if avant is not None:
+            bloc["depuis_precedente"] = round(float(actuel) - float(avant), 1)
+        progression[libelle] = bloc
+
+    resultat["progression"] = progression or None
+    return resultat
+
+
 @api_router.get("/progress/{subscriber_code}/cockpit")
 async def v334_cockpit_abonne(subscriber_code: str, request: Request, code: str = ""):
     """
@@ -8181,7 +8316,7 @@ async def v334_cockpit_abonne(subscriber_code: str, request: Request, code: str 
     role, _identite, _coach = await _v334_autoriser(request, cible, code)
 
     sub = await db.subscriptions.find_one(
-        {"code": cible}, {"_id": 0, "email": 1, "name": 1, "objectifs": 1}
+        {"code": cible}, {"_id": 0, "email": 1, "name": 1, "objectifs": 1, "taille_cm": 1}
     ) or {}
     email = (sub.get("email") or "").lower()
 
@@ -8203,9 +8338,13 @@ async def v334_cockpit_abonne(subscriber_code: str, request: Request, code: str 
         "role": role,
         "name": sub.get("name") or "",
         "objectifs": sub.get("objectifs") or "",
+        # V339 : hauteur mémorisée au profil (pré-remplissage du formulaire + IMC).
+        "taille_cm": sub.get("taille_cm"),
         "stats": stats,
         "entries": entrees,
         "photos": photos,
+        # V339 : calculs faits ici, une seule fois, pour les trois écrans.
+        "calculs": _v339_calculs(entrees, sub.get("taille_cm")),
     }
 
 
@@ -11086,6 +11225,10 @@ class SubscriberProfileUpdate(BaseModel):
     # V333 : objectifs de l'abonné (perte de poids, prise de masse, souplesse…).
     # Saisi une fois à l'inscription, relu ensuite pour ne plus être redemandé.
     objectifs: Optional[str] = None
+    # V339 : TAILLE au sens HAUTEUR, en cm. Attention à ne pas la confondre avec le
+    # « tour de taille », qui est une mesure par entrée. La hauteur ne bouge pas :
+    # elle vit au profil, saisie une fois puis pré-remplie — comme la date de naissance.
+    taille_cm: Optional[float] = None
 
 
 @api_router.put("/subscriptions/{code}/profile")
@@ -11105,6 +11248,15 @@ async def update_subscriber_profile(code: str, payload: SubscriberProfileUpdate)
     # est relu dans l'espace abonné.
     if payload.objectifs is not None:
         updates["objectifs"] = payload.objectifs.strip()[:300]
+    # V339 : bornes de bon sens — au-delà c'est une faute de frappe (cm confondus
+    # avec des mètres, par exemple), et l'IMC calculé serait absurde.
+    if payload.taille_cm is not None:
+        try:
+            t = float(payload.taille_cm)
+            if 100 <= t <= 250:
+                updates["taille_cm"] = round(t, 1)
+        except (TypeError, ValueError):
+            pass
 
     # V333 (correctif d'un défaut PRÉEXISTANT) : `update_many`, pas `update_one`.
     # Un même code d'abonnement peut porter PLUSIEURS documents (renouvellements
