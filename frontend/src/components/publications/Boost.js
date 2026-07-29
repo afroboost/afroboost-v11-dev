@@ -21,6 +21,10 @@ const API = `${BACKEND_URL}/api`;
 
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
 
+// Durée d'apparition d'un Boost. Le serveur reste seul maître de la valeur
+// appliquée (V342_BOOST_HOURS) ; celle-ci ne sert qu'aux textes affichés.
+const DUREE_BOOST_H = 48;
+
 // Les mêmes que côté serveur. Sert UNIQUEMENT à décider d'afficher ou non le
 // crayon : l'écriture, elle, est refusée par le serveur (403) sans JWT admin.
 const SUPER_ADMINS = ['contact.artboost@gmail.com', 'afroboost.bassi@gmail.com'];
@@ -261,7 +265,7 @@ const ModaleBoost = ({ pubId, subscriberCode, prix, onClose }) => {
         </div>
 
         <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.75rem', margin: '8px 0 14px' }}>
-          Apparaître <strong style={{ color: '#fff' }}>48 h</strong> sur une autre vitrine ou
+          Apparaître <strong style={{ color: '#fff' }}>{(donnees && donnees.hours) || DUREE_BOOST_H} h</strong> sur une autre vitrine ou
           sur la page d'accueil, pour <strong style={{ color: '#fff' }}>{montant} CHF</strong>.
           Publier sur votre propre vitrine reste gratuit.
         </p>
@@ -384,8 +388,8 @@ export const BoutonBoost = ({ pubId, subscriberCode }) => {
         data-testid={`boost-bouton-${pubId}`}
         aria-label="Booster"
         title={prix
-          ? `Booster : apparaître 48 h sur une autre vitrine ou la page d'accueil — ${prix} CHF`
-          : 'Booster : apparaître 48 h sur une autre vitrine ou la page d\'accueil'}
+          ? `Booster : apparaître ${DUREE_BOOST_H} h sur une autre vitrine ou la page d'accueil — ${prix} CHF`
+          : `Booster : apparaître ${DUREE_BOOST_H} h sur une autre vitrine ou la page d'accueil`}
         style={{ background: 'none', border: 'none', padding: 4, lineHeight: 0,
                  cursor: 'pointer', color: PRIMAIRE }}
       >
@@ -456,7 +460,7 @@ export const ConfirmationBoost = () => {
 
   const messages = {
     attente: 'Vérification du paiement…',
-    ok: `C'est fait — votre publication apparaît ${48} h sur la vitrine choisie.`,
+    ok: `C'est fait — votre publication apparaît ${DUREE_BOOST_H} h sur la vitrine choisie.`,
     echec: "Paiement non confirmé. Rien n'a été débité ni publié.",
     annule: 'Boost annulé.',
   };
