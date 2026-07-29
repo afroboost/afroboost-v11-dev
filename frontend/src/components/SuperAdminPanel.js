@@ -53,6 +53,38 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
   
   const [aiPackLoading, setAiPackLoading] = useState(false);
 
+  // V333 : interrupteur « Publications sans durée limitée » (drapeau
+  // PUBLICATIONS_NO_EXPIRY). Il ne concerne QUE les publications du super admin —
+  // celles des abonnés et des coachs gardent leurs 48 h dans tous les cas.
+  // null = état encore inconnu : on n'affiche jamais un faux « désactivé ».
+  const [noExpiry, setNoExpiry] = useState(null);
+  const [noExpiryLoading, setNoExpiryLoading] = useState(false);
+  const [noExpiryError, setNoExpiryError] = useState("");
+
+  useEffect(() => {
+    let vivant = true;
+    axios.get(`${API}/feature-flags`)
+      .then((r) => { if (vivant) setNoExpiry(!!(r.data && r.data.PUBLICATIONS_NO_EXPIRY)); })
+      .catch(() => {
+        if (vivant) { setNoExpiry(null); setNoExpiryError("Impossible de lire l'état pour le moment."); }
+      });
+    return () => { vivant = false; };
+  }, []);
+
+  // Le PUT exige un JWT super-admin (403 sinon) — l'intercepteur axios l'attache.
+  const basculerNoExpiry = async (suivant) => {
+    setNoExpiryLoading(true); setNoExpiryError("");
+    try {
+      const r = await axios.put(`${API}/feature-flags`, { PUBLICATIONS_NO_EXPIRY: suivant });
+      setNoExpiry(!!(r.data && r.data.PUBLICATIONS_NO_EXPIRY));
+    } catch (e) {
+      const code = e && e.response && e.response.status;
+      setNoExpiryError(code === 403
+        ? "Réservé au super-admin — reconnectez-vous."
+        : "Le changement n'a pas pu être enregistré. Réessayez.");
+    } finally { setNoExpiryLoading(false); }
+  };
+
   const handleAIPackEnhance = async () => {
     const text = packForm.description;
     if (!text || text.trim().length < 3) return;
@@ -247,6 +279,60 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
             >
               <SvgIcon name="close" size={20} />
             </button>
+          </div>
+
+          {/* V333 : interrupteur « Publications sans durée limitée ». Encart sobre,
+              au-dessus des onglets, dans le style compact des interrupteurs du
+              dashboard. Présent uniquement ici = réservé au super admin. */}
+          <div style={{
+            marginBottom: '20px', padding: '10px 12px', borderRadius: '10px',
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.22)'
+          }}>
+            <div className="flex items-center justify-between" style={{ gap: '8px' }}>
+              <div style={{ minWidth: 0 }}>
+                <span className="text-white/80" style={{ fontSize: '12px' }}>
+                  Publications sans durée limitée
+                </span>
+                <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '11px', margin: '2px 0 0' }}>
+                  Vos publications ne s'effacent plus après 48 h. Celles des abonnés et des coachs ne changent pas.
+                </p>
+              </div>
+              <div className="flex items-center" style={{ gap: '6px', flexShrink: 0 }}>
+                {noExpiry === null ? (
+                  <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+                    background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)' }}>Inconnu</span>
+                ) : noExpiry ? (
+                  <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+                    background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.35)' }}>Activé</span>
+                ) : (
+                  <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+                    background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)' }}>Désactivé</span>
+                )}
+                <button
+                  onClick={() => basculerNoExpiry(!noExpiry)}
+                  disabled={noExpiryLoading || noExpiry === null}
+                  title={noExpiry ? 'Désactiver' : 'Activer'}
+                  data-testid="toggle-publications-no-expiry"
+                  style={{
+                    position: 'relative', width: '38px', height: '20px', borderRadius: '999px', border: 'none',
+                    cursor: (noExpiryLoading || noExpiry === null) ? 'not-allowed' : 'pointer',
+                    background: noExpiry ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.18)',
+                    opacity: (noExpiryLoading || noExpiry === null) ? 0.5 : 1,
+                    transition: 'background 0.2s ease', flexShrink: 0
+                  }}
+                >
+                  <span style={{
+                    position: 'absolute', top: '3px', left: noExpiry ? '21px' : '3px',
+                    width: '14px', height: '14px', borderRadius: '50%', background: '#fff',
+                    transition: 'left 0.2s ease'
+                  }} />
+                </button>
+              </div>
+            </div>
+            {noExpiryError ? (
+              <p style={{ color: '#ef4444', fontSize: '11px', margin: '6px 0 0' }}>{noExpiryError}</p>
+            ) : null}
           </div>
 
           {/* Tabs - v12.1: Ajout onglet Tarifs */}

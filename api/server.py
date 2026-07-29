@@ -1037,6 +1037,10 @@ class FeatureFlags(BaseModel):
     # en 404, option masquée côté frontend). Stripe et CinetPay ne sont PAS concernés :
     # ce drapeau n'ajoute qu'un prestataire supplémentaire. Basculable SANS redéploiement.
     PAWAPAY_ENABLED: bool = False
+    # V333 : quand ce drapeau est ON, les publications du SUPER ADMIN ne s'effacent
+    # plus au bout de 48 h. Il ne change RIEN pour les abonnés ni pour les coachs :
+    # leurs publications gardent leur durée de vie habituelle.
+    PUBLICATIONS_NO_EXPIRY: bool = False
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1047,6 +1051,7 @@ class FeatureFlagsUpdate(BaseModel):
     SUBSCRIBER_STRICT_ENTRY: Optional[bool] = None  # V315
     REQUIRE_COACH_JWT: Optional[bool] = None  # V319
     PAWAPAY_ENABLED: Optional[bool] = None  # V325
+    PUBLICATIONS_NO_EXPIRY: Optional[bool] = None  # V333
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -6506,7 +6511,7 @@ async def _v327_sortir_publications_programmees() -> int:
     now_iso = now.isoformat()
     dues = await db.publications.find(
         {"scheduled": True, "scheduled_at": {"$lte": now_iso}},
-        {"_id": 0, "id": 1, "scheduled_at": 1}
+        {"_id": 0, "id": 1, "scheduled_at": 1, "no_expiry": 1, "expires_at": 1, "source": 1}
     ).to_list(50)
     if not dues:
         return 0
@@ -6519,16 +6524,21 @@ async def _v327_sortir_publications_programmees() -> int:
             pub_id = pub.get("id")
             if not pub_id:
                 continue
+            # V333 : une publication marquée PERMANENTE (super admin V333, ou post
+            # Studiio V331 programmé) garde son expiration lointaine. Sans cette
+            # garde, la sortie lui appliquait 48 h et la permanence disparaissait
+            # sans que personne ne s'en aperçoive avant deux jours.
+            champs = {
+                "scheduled": False,
+                "created_at": now_iso,      # la publication « naît » maintenant
+                "expires_at": expires_iso,  # 48 h PLEINES à partir de la sortie
+            }
+            if pub.get("no_expiry") or pub.get("source") == "studiio":
+                champs["expires_at"] = pub.get("expires_at") or now.replace(
+                    year=now.year + V331_EXPIRATION_LOINTAINE_ANNEES).isoformat()
             res = await db.publications.update_one(
                 {"id": pub_id, "scheduled": True},
-                {
-                    "$set": {
-                        "scheduled": False,
-                        "created_at": now_iso,      # la publication « naît » maintenant
-                        "expires_at": expires_iso,  # 48 h PLEINES à partir de la sortie
-                    },
-                    "$unset": {"scheduled_at": ""},
-                }
+                {"$set": champs, "$unset": {"scheduled_at": ""}}
             )
             if res.modified_count:
                 sorties += 1
@@ -7058,6 +7068,26 @@ async def create_publication(request: Request):
         pub["scheduled_at"] = _v327_scheduled_iso
         pub["expires_at"] = (_v327_sched_dt + timedelta(hours=V261_TTL_HOURS)).isoformat()
 
+    # V333 : publications SANS DURÉE LIMITÉE, réservées au super admin.
+    # Deux conditions, toutes deux nécessaires : le drapeau PUBLICATIONS_NO_EXPIRY
+    # doit être ON *et* l'auteur doit être super admin. Une publication d'abonné ou
+    # de coach garde donc TOUJOURS ses 48 h, même drapeau activé.
+    # `no_expiry` est posé sur le document : c'est lui qui protège la permanence si
+    # la publication est programmée (V327) — sans quoi la sortie recalculerait un
+    # expires_at à 48 h et la permanence serait silencieusement perdue.
+    try:
+        if is_super_admin(code):
+            _v333_flags = await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0}) or {}
+            if bool(_v333_flags.get("PUBLICATIONS_NO_EXPIRY", False)):
+                pub["no_expiry"] = True
+                pub["expires_at"] = now.replace(
+                    year=now.year + V331_EXPIRATION_LOINTAINE_ANNEES).isoformat()
+                logger.info(f"[V333] Publication super-admin SANS durée limitée ({pub['id']})")
+    except Exception as _v333_err:
+        # Une panne de lecture du drapeau ne doit jamais empêcher de publier :
+        # on retombe simplement sur le comportement habituel (48 h).
+        logger.warning(f"[V333] Lecture du drapeau ignorée : {_v333_err}")
+
     await db.publications.insert_one(pub)
 
     if _v327_scheduled_iso:
@@ -7415,6 +7445,9 @@ async def v331_incoming_post(request: Request):
         "expires_at": expiration.isoformat(),
         # V331 : traçabilité + idempotence.
         "source": source,
+        # V333 : marqueur explicite de permanence — c'est lui que lit la sortie
+        # programmée (V327) pour ne pas ramener l'expiration à 48 h.
+        "no_expiry": True,
         "studiio_key": studiio_key,
         "studiio_post_id": post_id,
     }
@@ -9462,6 +9495,10 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
             # Branché par membre, symétriquement à display_name ci-dessus : sinon
             # un membre secondaire recevrait le WhatsApp du titulaire du groupe.
             "whatsapp": (member.get("whatsapp") if member else (subscription or {}).get("whatsapp")) or "",
+            # V333 : objectifs déjà saisis. Renvoyés pour que le formulaire les
+            # pré-remplisse et ne les redemande pas — même principe que `whatsapp`
+            # ci-dessus, dont l'absence rouvrait l'onboarding à chaque visite.
+            "objectifs": (subscription or {}).get("objectifs") or "",
         },
         "subscription": {
             "id": (subscription or {}).get("id"),
@@ -10225,6 +10262,9 @@ async def adjust_subscription_sessions(subscription_id: str, request: Request):
 class SubscriberProfileUpdate(BaseModel):
     name: Optional[str] = None
     whatsapp: Optional[str] = None
+    # V333 : objectifs de l'abonné (perte de poids, prise de masse, souplesse…).
+    # Saisi une fois à l'inscription, relu ensuite pour ne plus être redemandé.
+    objectifs: Optional[str] = None
 
 
 @api_router.put("/subscriptions/{code}/profile")
@@ -10240,6 +10280,10 @@ async def update_subscriber_profile(code: str, payload: SubscriberProfileUpdate)
         updates["name"] = payload.name.strip()
     if payload.whatsapp:
         updates["whatsapp"] = payload.whatsapp.strip()
+    # V333 : plafonné à 300 caractères — c'est une phrase, pas un roman, et ce texte
+    # est relu dans l'espace abonné.
+    if payload.objectifs is not None:
+        updates["objectifs"] = payload.objectifs.strip()[:300]
 
     await db.subscriptions.update_one({"code": code_upper}, {"$set": updates})
 
@@ -12068,6 +12112,7 @@ async def get_feature_flags():
             "SUBSCRIBER_STRICT_ENTRY": False,  # V315 : défaut OFF (zéro friction)
             "REQUIRE_COACH_JWT": False,        # V319 : défaut OFF (comportement actuel)
             "PAWAPAY_ENABLED": False,          # V325 : défaut OFF (PawaPay invisible)
+            "PUBLICATIONS_NO_EXPIRY": False,   # V333 : défaut OFF (48 h pour tout le monde)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -12080,7 +12125,8 @@ async def get_feature_flags():
     # lecture avec la valeur par défaut du modèle, SANS jamais écraser ce qui est en base.
     for _k, _default in (("AUDIO_SERVICE_ENABLED", False), ("VIDEO_SERVICE_ENABLED", False),
                          ("STREAMING_SERVICE_ENABLED", False), ("SUBSCRIBER_STRICT_ENTRY", False),
-                         ("REQUIRE_COACH_JWT", False), ("PAWAPAY_ENABLED", False)):
+                         ("REQUIRE_COACH_JWT", False), ("PAWAPAY_ENABLED", False),
+                         ("PUBLICATIONS_NO_EXPIRY", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags
