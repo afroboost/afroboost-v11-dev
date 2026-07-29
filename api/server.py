@@ -1046,6 +1046,13 @@ class FeatureFlags(BaseModel):
     # plus au bout de 48 h. Il ne change RIEN pour les abonnés ni pour les coachs :
     # leurs publications gardent leur durée de vie habituelle.
     PUBLICATIONS_NO_EXPIRY: bool = False
+    # V344 : interrupteur du verrouillage des POUVOIRS SUPER-ADMIN sur une identité
+    # SIGNÉE. Défaut FALSE = comportement V343 (le repli X-User-Email accorde encore
+    # `no_expiry` et la gratuité du Boost). True = SEUL un JWT signé les accorde ;
+    # sans jeton, `no_expiry` est ignoré (48 h) et la gratuité refusée (403).
+    # À ne basculer QU'APRÈS avoir prouvé que le propriétaire, connecté par
+    # /auth/login, conserve ses trois pouvoirs (règle V310c). Kill-switch immédiat.
+    SUPERADMIN_JWT_STRICT: bool = False
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1057,6 +1064,7 @@ class FeatureFlagsUpdate(BaseModel):
     REQUIRE_COACH_JWT: Optional[bool] = None  # V319
     PAWAPAY_ENABLED: Optional[bool] = None  # V325
     PUBLICATIONS_NO_EXPIRY: Optional[bool] = None  # V333
+    SUPERADMIN_JWT_STRICT: Optional[bool] = None  # V344
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -7099,9 +7107,27 @@ async def create_publication(request: Request):
     #   - auteur NON super-admin -> champ IGNORÉ, toujours 48 h.
     # La vérification est SERVEUR (`is_super_admin`) : un client qui envoie
     # `no_expiry: true` sans en avoir le droit n'obtient rien de plus.
+    #
+    # V344 — QUI EST « super-admin » ICI. Jusqu'à V343, `code` venait de
+    # `_v263_authenticated_coach`, qui accepte le repli `X-User-Email` : écrire cet
+    # en-tête suffisait donc à obtenir une publication permanente. Drapeau
+    # SUPERADMIN_JWT_STRICT à ON, seul un JWT SIGNÉ accorde ce pouvoir ; le champ
+    # `no_expiry` d'un appelant non signé est purement et simplement IGNORÉ (48 h),
+    # sans faire échouer la publication elle-même — elle reste légitime, c'est le
+    # PRIVILÈGE qui est refusé. Drapeau OFF (défaut) : comportement V343 intact.
     _v343_no_expiry_demande = body.get("no_expiry", None)
     try:
-        if is_super_admin(code):
+        from api.routes.shared import super_admin_signe, v344_jwt_strict_actif
+        _v344_strict = await v344_jwt_strict_actif(db)
+        _v344_signe = super_admin_signe(request)
+        _v344_admin = bool(_v344_signe) if _v344_strict else bool(is_super_admin(code))
+
+        # Trace du REFUS : identité admin revendiquée sans jeton signé, mode strict.
+        if _v344_strict and not _v344_signe and is_super_admin(code) and _v343_no_expiry_demande:
+            logger.warning(f"[V344] REFUS `no_expiry` — {code} revendique le super-admin SANS "
+                           f"jeton signé (publication {pub['id']}) — 48 h appliquées")
+
+        if _v344_admin:
             _v343_permanent = None
             if _v343_no_expiry_demande is not None:
                 # Choix explicite de l'auteur super-admin pour CETTE publication.
@@ -7116,9 +7142,11 @@ async def create_publication(request: Request):
                 pub["expires_at"] = now.replace(
                     year=now.year + V331_EXPIRATION_LOINTAINE_ANNEES).isoformat()
                 logger.info(f"[V343] Publication super-admin SANS durée limitée ({pub['id']})")
-        elif _v343_no_expiry_demande:
+        elif _v343_no_expiry_demande and not is_super_admin(code):
             # Trace explicite : quelqu'un a demandé la permanence sans y avoir droit.
             # On ne lève pas d'erreur — la publication part normalement en 48 h.
+            # (Le cas « admin revendiqué mais non signé » est déjà tracé plus haut
+            # en [V344] : on ne le journalise pas deux fois.)
             logger.warning(f"[V343] `no_expiry` ignoré pour {code} (non super-admin) — 48 h appliquées")
     except Exception as _v333_err:
         # Une panne de lecture du drapeau ne doit jamais empêcher de publier :
@@ -7127,12 +7155,19 @@ async def create_publication(request: Request):
 
     await db.publications.insert_one(pub)
 
+    # V344 : on RENVOIE la durée réellement appliquée. Sans cela, un super-admin
+    # dont la session n'est plus signée demanderait « sans limite » et obtiendrait
+    # 48 h sans le savoir — une dégradation silencieuse, le pire des cas pour lui.
+    # Le frontend s'en sert pour l'avertir de se reconnecter.
+    _v344_permanent_applique = bool(pub.get("no_expiry"))
+
     if _v327_scheduled_iso:
         logger.info(f"[V327] Publication PROGRAMMÉE de {code} ({media_type}) pour {_v327_scheduled_iso}")
-        return {"status": "scheduled", "id": pub["id"], "scheduled_at": _v327_scheduled_iso}
+        return {"status": "scheduled", "id": pub["id"], "scheduled_at": _v327_scheduled_iso,
+                "no_expiry": _v344_permanent_applique}
 
     logger.info(f"[V261] Publication de {code} ({media_type})")
-    return {"status": "ok", "id": pub["id"]}
+    return {"status": "ok", "id": pub["id"], "no_expiry": _v344_permanent_applique}
 
 
 @api_router.get("/publications")
@@ -13158,6 +13193,7 @@ async def get_feature_flags():
             "REQUIRE_COACH_JWT": False,        # V319 : défaut OFF (comportement actuel)
             "PAWAPAY_ENABLED": False,          # V325 : défaut OFF (PawaPay invisible)
             "PUBLICATIONS_NO_EXPIRY": False,   # V333 : défaut OFF (48 h pour tout le monde)
+            "SUPERADMIN_JWT_STRICT": False,    # V344 : défaut OFF (repli X-User-Email encore accepté)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -13171,7 +13207,7 @@ async def get_feature_flags():
     for _k, _default in (("AUDIO_SERVICE_ENABLED", False), ("VIDEO_SERVICE_ENABLED", False),
                          ("STREAMING_SERVICE_ENABLED", False), ("SUBSCRIBER_STRICT_ENTRY", False),
                          ("REQUIRE_COACH_JWT", False), ("PAWAPAY_ENABLED", False),
-                         ("PUBLICATIONS_NO_EXPIRY", False)):
+                         ("PUBLICATIONS_NO_EXPIRY", False), ("SUPERADMIN_JWT_STRICT", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags

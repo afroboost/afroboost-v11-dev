@@ -981,6 +981,14 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
 
       const res = await axios.post(`${API}/publications`, payload);
 
+      // V344 : « sans limite » demandé mais NON appliqué = la session n'est plus
+      // signée (le serveur a ignoré le privilège). On le dit franchement plutôt que
+      // de laisser croire à une publication permanente qui expirera dans 48 h.
+      if (adminDuree && sansLimite && res && res.data && res.data.no_expiry === false) {
+        setError('Publication en ligne, mais limitée à 48 h : votre session n\'est plus signée. '
+          + 'Reconnectez-vous pour retrouver la durée sans limite.');
+      }
+
       // V327 : message de confirmation distinct selon publication immédiate ou différée.
       if (res && res.data && res.data.status === 'scheduled' && res.data.scheduled_at) {
         const d = new Date(res.data.scheduled_at);
