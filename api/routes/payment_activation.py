@@ -177,6 +177,20 @@ async def activate_after_payment(
 
             logger.info(f"[{log_prefix}] {credits_to_add} crédits ajoutés à {coach_email}")
 
+    # --- V342 : Boost d'une publication ---
+    # Le paiement vient d'être confirmé par le prestataire (l'appelant a déjà
+    # re-vérifié auprès de son API). Il ne reste qu'à accorder l'apparition 48 h
+    # sur la vitrine de destination et à créditer son propriétaire. L'import est
+    # LAZY : `boost_routes` importe déjà `pawapay_routes`, un import en tête de
+    # fichier créerait un cycle.
+    elif tx_type == "publication_boost":
+        boost_id = local_tx.get("boost_id", "")
+        if boost_id:
+            from api.routes.boost_routes import activer_boost
+            await activer_boost(boost_id, provider=provider, reference=transaction_ref)
+        else:
+            logger.error(f"[{log_prefix}] Boost sans boost_id — rien à activer")
+
     # --- Achat client (séances) ---
     else:
         customer_email = (local_tx.get("customer_email", "") or "").lower()

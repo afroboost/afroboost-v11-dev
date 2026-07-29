@@ -27,11 +27,12 @@ SÉCURITÉ
 
 Étape 1 : le prix (lecture publique, écriture super-admin).
 Étape 2 : le bouton Boost — destinations possibles et création du paiement.
+Étape 3 : confirmation du paiement -> apparition 48 h + encaissement.
 """
 import os
 import uuid
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -543,3 +544,220 @@ async def boost_checkout(pub_id: str, payload: BoostCheckoutRequest, request: Re
         await db.boost_transactions.update_one(
             {"boost_id": boost_id}, {"$set": {"status": "failed", "error": str(e)}})
         raise HTTPException(status_code=502, detail="Le paiement n'a pas pu être ouvert. Réessayez.")
+
+
+# =====================================================================
+# ÉTAPE 3 — CONFIRMATION DU PAIEMENT : APPARITION 48 H + ENCAISSEMENT
+# =====================================================================
+#
+# RÈGLE CARDINALE : aucune apparition n'est accordée sur la foi d'un clic, ni
+# même sur la foi du corps d'un webhook. Le corps reçu ne sert QU'À identifier le
+# Boost concerné ; le statut réel est ensuite redemandé au prestataire, qui est la
+# seule source de vérité (même prudence que le webhook PawaPay depuis V325).
+#
+# IDEMPOTENCE : `boost_transactions.status` passe à « completed » une seule fois.
+# Un webhook rejoué, ou un retour navigateur rafraîchi, retombe sur cette garde et
+# ne rallonge JAMAIS la durée d'affichage.
+
+
+async def enregistrer_encaissement(tx: dict, reference: str):
+    """
+    Inscrit la vente au crédit du BÉNÉFICIAIRE, dans la collection que lit déjà
+    le tableau des transactions du coach (`/dashboard/all-transactions`). Le Boost
+    apparaît donc comme n'importe quelle autre vente, sans toucher à cet endpoint.
+    """
+    await db.payment_transactions.insert_one({
+        "id": str(uuid.uuid4()),
+        "session_id": reference or tx.get("boost_id", ""),
+        "coach_id": tx.get("payee", ""),          # <- qui encaisse
+        "payment_status": "paid",
+        "status": "completed",
+        "amount_total": int(round(float(tx.get("amount_chf") or 0) * 100)),
+        "currency": "chf",
+        "provider": tx.get("provider", ""),
+        "source": "publication_boost",
+        "boost_id": tx.get("boost_id", ""),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "metadata": {
+            "customer_name": tx.get("payer_label", "") or "Auteur",
+            "customer_email": tx.get("payer_email", ""),
+            "product_name": f"Boost publication ({V342_BOOST_HOURS} h)",
+            "publication_id": tx.get("publication_id", ""),
+            "target": tx.get("target", ""),
+        },
+    })
+
+
+async def activer_boost(boost_id: str, *, provider: str, reference: str = "") -> dict:
+    """
+    Accorde l'apparition de 48 h sur la vitrine de destination et enregistre
+    l'encaissement. À n'appeler QU'APRÈS vérification du paiement auprès du
+    prestataire. Idempotent.
+    """
+    tx = await db.boost_transactions.find_one({"boost_id": boost_id}, {"_id": 0})
+    if not tx:
+        logger.warning(f"[V342] Boost inconnu à l'activation: {boost_id}")
+        return {"status": "unknown"}
+
+    if tx.get("status") == "completed":
+        return {"status": "already_processed", "boost_id": boost_id}
+
+    fin = datetime.now(timezone.utc) + timedelta(hours=V342_BOOST_HOURS)
+
+    # La publication d'ORIGINE n'est pas touchée dans sa vitrine : on n'ajoute que
+    # les champs d'apparition temporaire ailleurs (ni `coach_id`, ni `expires_at`).
+    maj = await db.publications.update_one(
+        {"id": tx.get("publication_id", "")},
+        {"$set": {
+            "boost_target_vitrine": tx.get("target", ""),
+            "boosted_until": fin.isoformat(),
+            "boost_payment_id": reference or boost_id,
+            "boost_provider": provider,
+            "boost_amount_chf": tx.get("amount_chf", 0),
+            "boost_payer": tx.get("payer_email", "") or tx.get("payer_label", ""),
+            "boost_payee": tx.get("payee", ""),
+        }},
+    )
+    if not getattr(maj, "matched_count", 0):
+        # La publication a pu être supprimée entre le paiement et la confirmation.
+        logger.error(f"[V342] Boost {boost_id} payé mais publication introuvable "
+                     f"({tx.get('publication_id')}) — encaissement conservé.")
+
+    await db.boost_transactions.update_one(
+        {"boost_id": boost_id},
+        {"$set": {
+            "status": "completed",
+            "boosted_until": fin.isoformat(),
+            "provider_reference": reference,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+
+    await enregistrer_encaissement(tx, reference)
+
+    logger.info(f"[V342] Boost {boost_id} confirmé : publication {tx.get('publication_id')} "
+                f"visible {V342_BOOST_HOURS} h sur « {tx.get('target')} », "
+                f"{tx.get('amount_chf')} CHF encaissés par {tx.get('payee')}")
+    return {"status": "ok", "boost_id": boost_id, "boosted_until": fin.isoformat()}
+
+
+async def verifier_paiement_stripe(tx: dict):
+    """
+    Redemande à Stripe l'état RÉEL de la session, avec la clé du bénéficiaire.
+    Renvoie (paye: bool, reference: str, erreur: str).
+
+    On ne se contente pas de la signature du webhook : chaque partenaire encaisse
+    sur SON compte Stripe, avec SON secret de webhook — une signature vérifiable
+    par la plateforme n'existe donc que pour les paiements de l'admin. Redemander
+    l'état à Stripe protège TOUS les cas, y compris un webhook forgé.
+    """
+    session_id = tx.get("stripe_session_id", "")
+    if not session_id:
+        return False, "", "Aucune session Stripe rattachée à ce Boost"
+
+    cle, erreur = await cles_stripe(tx.get("payee", ""))
+    if erreur:
+        return False, "", erreur
+
+    try:
+        import stripe
+        stripe.api_key = cle
+        session = stripe.checkout.Session.retrieve(session_id)
+    except Exception as e:
+        logger.error(f"[V342] Vérification Stripe impossible ({session_id}): {e}")
+        return False, "", "Vérification du paiement impossible"
+
+    statut = (getattr(session, "payment_status", "") or "")
+    if statut != "paid":
+        return False, session_id, f"Paiement non abouti (état Stripe : {statut or 'inconnu'})"
+    return True, session_id, ""
+
+
+@router.post("/boost/webhook/stripe")
+async def boost_webhook_stripe(request: Request):
+    """
+    Webhook Stripe des Boosts (`checkout.session.completed`).
+
+    Le corps ne sert qu'à retrouver le `boost_id`. La signature est vérifiée quand
+    `STRIPE_WEBHOOK_SECRET` est disponible ET que le paiement va à l'admin ; dans
+    tous les cas, l'état du paiement est redemandé à Stripe avant d'accorder quoi
+    que ce soit. Un événement qui ne concerne pas un Boost est ignoré.
+    """
+    corps = await request.body()
+
+    secret_webhook = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+    signature = request.headers.get("stripe-signature", "")
+    evenement = None
+    if secret_webhook and signature:
+        try:
+            import stripe
+            evenement = stripe.Webhook.construct_event(corps, signature, secret_webhook)
+        except Exception:
+            # Signature invalide pour NOTRE secret : c'est le cas normal quand le
+            # paiement va à un partenaire (autre compte, autre secret). On ne
+            # rejette pas — on retombe sur la re-vérification auprès de Stripe.
+            evenement = None
+
+    if evenement is None:
+        import json
+        try:
+            evenement = json.loads(corps)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Corps illisible")
+
+    if (evenement.get("type") if isinstance(evenement, dict) else evenement["type"]) != "checkout.session.completed":
+        return {"status": "ignored"}
+
+    session = evenement["data"]["object"]
+    meta = session.get("metadata") or {}
+    if meta.get("type") != "publication_boost":
+        return {"status": "ignored"}
+
+    boost_id = meta.get("boost_id") or session.get("client_reference_id") or ""
+    if not boost_id:
+        return {"status": "no_boost_id"}
+
+    tx = await db.boost_transactions.find_one({"boost_id": boost_id}, {"_id": 0})
+    if not tx:
+        return {"status": "unknown_boost"}
+    if tx.get("status") == "completed":
+        return {"status": "already_processed"}
+
+    paye, reference, erreur = await verifier_paiement_stripe(tx)
+    if not paye:
+        logger.warning(f"[V342] Webhook Boost {boost_id} ignoré : {erreur}")
+        return {"status": "not_paid"}
+
+    return await activer_boost(boost_id, provider="stripe", reference=reference)
+
+
+@router.get("/publications/boost/confirm/{boost_id}")
+async def boost_confirm(boost_id: str):
+    """
+    Confirmation au RETOUR du paiement (page `?boost=success`).
+
+    Indispensable en place de marché : le compte Stripe d'un partenaire n'envoie
+    pas ses webhooks à Afroboost tant qu'il ne les a pas configurés lui-même. Sans
+    ce point de contrôle, un Boost payé chez un coach ne s'activerait jamais.
+    Ce n'est PAS un raccourci : l'état est redemandé à Stripe exactement comme
+    dans le webhook, donc appeler cette route sans avoir payé n'accorde rien.
+    """
+    tx = await db.boost_transactions.find_one({"boost_id": boost_id}, {"_id": 0})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Boost inconnu")
+
+    if tx.get("status") == "completed":
+        return {"status": "completed", "boosted_until": tx.get("boosted_until", ""),
+                "target": tx.get("target", "")}
+
+    if tx.get("provider") == "stripe":
+        paye, reference, erreur = await verifier_paiement_stripe(tx)
+        if paye:
+            resultat = await activer_boost(boost_id, provider="stripe", reference=reference)
+            return {"status": "completed", "boosted_until": resultat.get("boosted_until", ""),
+                    "target": tx.get("target", "")}
+        return {"status": "pending", "message": erreur}
+
+    # PawaPay : c'est son propre webhook qui confirme (il re-vérifie déjà auprès
+    # de l'API PawaPay). Ici on ne fait que rapporter l'état courant.
+    return {"status": tx.get("status", "pending"), "target": tx.get("target", "")}

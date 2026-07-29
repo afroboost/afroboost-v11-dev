@@ -127,6 +127,7 @@ import SubscriberSpace from "./components/SubscriberSpace";
 import { useDataCache, invalidateCache } from "./hooks/useDataCache";
 import { applyPrimaryColor, persistThemeColors } from "./utils/themeColor"; // V259 + V295 (anti-FOUC)
 import { PublicationsCarousel } from "./components/Publications"; // V261
+import { ConfirmationBoost } from "./components/publications/Boost"; // V342
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -8802,6 +8803,10 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* V342 : retour de paiement d'un Boost — le serveur reverifie aupres du
+          prestataire avant d'accorder l'apparition 48 h. N'affiche rien hors retour. */}
+      <ConfirmationBoost />
 
       {/* v74: CSS Animations — slide-up + Glow Pulse + Zoom */}
       <style>{`

@@ -399,4 +399,89 @@ export const BoutonBoost = ({ pubId, subscriberCode }) => {
   );
 };
 
+/* =====================================================================
+ * ÉTAPE 3 — retour du paiement : on demande au SERVEUR de confirmer.
+ * ===================================================================== */
+
+/**
+ * Bandeau affiché au retour de la page de paiement (`?boost=success&bid=…`).
+ *
+ * Il ne décide RIEN : il appelle le serveur, qui redemande l'état réel au
+ * prestataire avant d'accorder quoi que ce soit. Cet appel est indispensable en
+ * place de marché — le compte Stripe d'un partenaire n'envoie pas ses webhooks à
+ * Afroboost tant qu'il ne les a pas configurés lui-même.
+ */
+export const ConfirmationBoost = () => {
+  const [etat, setEtat] = useState(null); // null | 'attente' | 'ok' | 'echec' | 'annule'
+
+  useEffect(() => {
+    let params;
+    try { params = new URLSearchParams(window.location.search); } catch (e) { return; }
+    const boost = params.get('boost');
+    const bid = params.get('bid');
+    if (!boost) return;
+
+    // On nettoie l'URL tout de suite : un rafraîchissement ne doit pas rejouer
+    // l'écran de confirmation (l'activation, elle, est idempotente côté serveur).
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('boost');
+      url.searchParams.delete('bid');
+      window.history.replaceState({}, document.title, url.pathname + url.search);
+    } catch (e) { /* ignore */ }
+
+    if (boost === 'cancelled') { setEtat('annule'); return; }
+    if (boost !== 'success' || !bid) return;
+
+    setEtat('attente');
+    axios.get(`${API}/publications/boost/confirm/${encodeURIComponent(bid)}`)
+      .then((r) => {
+        const ok = r.data && r.data.status === 'completed';
+        setEtat(ok ? 'ok' : 'echec');
+        if (ok) {
+          try { window.dispatchEvent(new CustomEvent('afroboost:publications-changed')); } catch (e) { /* ignore */ }
+        }
+      })
+      .catch(() => setEtat('echec'));
+  }, []);
+
+  useEffect(() => {
+    if (etat === 'ok' || etat === 'annule') {
+      const t = setTimeout(() => setEtat(null), 6000);
+      return () => clearTimeout(t);
+    }
+  }, [etat]);
+
+  if (!etat) return null;
+
+  const messages = {
+    attente: 'Vérification du paiement…',
+    ok: `C'est fait — votre publication apparaît ${48} h sur la vitrine choisie.`,
+    echec: "Paiement non confirmé. Rien n'a été débité ni publié.",
+    annule: 'Boost annulé.',
+  };
+  const couleurs = {
+    attente: 'rgba(255,255,255,0.6)',
+    ok: PRIMAIRE,
+    echec: '#fca5a5',
+    annule: 'rgba(255,255,255,0.6)',
+  };
+
+  return createPortal(
+    <div
+      data-testid="boost-confirmation"
+      style={{
+        position: 'fixed', left: '50%', transform: 'translateX(-50%)', bottom: 20, zIndex: 10001,
+        maxWidth: 'min(92vw, 420px)', padding: '11px 16px', borderRadius: 12,
+        background: '#12121f', border: `1px solid ${couleurs[etat]}`,
+        color: '#fff', fontSize: '0.8rem', textAlign: 'center',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
+      }}
+    >
+      {messages[etat]}
+    </div>,
+    document.body
+  );
+};
+
 export default PrixBoost;
