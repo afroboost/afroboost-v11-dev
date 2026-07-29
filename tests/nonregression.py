@@ -619,6 +619,26 @@ def t63_coach_jwt_legit_access():
         record(63, "Coach légitime (JWT) -> accès complet", False, str(e))
 
 
+def t69_cron_campagnes_ferme():
+    """V329 : /api/cron/check-campaigns n'est plus une porte ouverte.
+    Il répondait 200 à n'importe qui (le repli `is_local_dev` s'appliquait en
+    production, faute de CRON_SECRET posé). Sans identité -> 401 ; un e-mail
+    non-admin -> 401 ; le super-admin garde son accès manuel -> 200."""
+    try:
+        anonyme = requests.get(_url("/api/cron/check-campaigns"), timeout=TIMEOUT).status_code
+        pirate = requests.get(_url("/api/cron/check-campaigns"),
+                              headers={"X-User-Email": "pirate@example.com"}, timeout=TIMEOUT).status_code
+        admin = requests.get(_url("/api/cron/check-campaigns"),
+                             headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
+        forme = admin.status_code == 200 and all(
+            k in (admin.json() or {}) for k in ("success", "due_campaigns", "launched", "errors", "stuck_fixed"))
+        ok = anonyme == 401 and pirate == 401 and forme
+        record(69, "Cron campagnes : fermé au public, ouvert au super-admin", ok,
+               f"anonyme={anonyme} non-admin={pirate} admin={admin.status_code} forme_ok={forme}")
+    except Exception as e:
+        record(69, "Cron campagnes : fermé au public", False, str(e))
+
+
 def t67_publication_programmee():
     """V327 : une publication PROGRAMMÉE est créée invisible.
     - POST avec `scheduled_at` futur -> status "scheduled"
@@ -939,6 +959,7 @@ def main():
                    t64_pawapay_flag_admin_only, t65_pawapay_gated_by_flag,
                    t66_stripe_cinetpay_untouched,
                    t67_publication_programmee, t68_suppression_programmee,
+                   t69_cron_campagnes_ferme,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
