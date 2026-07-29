@@ -7934,6 +7934,33 @@ async def v334_supprimer_progression(entry_id: str, request: Request, code: str 
 
 V332_CANAUX = ("whatsapp", "email")
 
+# V336 — DÉLIVRABILITÉ DES E-MAILS
+# Adresse de réponse réelle : un expéditeur dont le Reply-To ne mène nulle part
+# ressemble à une machine anonyme. Surchargeable par l'environnement.
+V336_REPLY_TO = os.environ.get("AFROBOOST_REPLY_TO", "contact@afroboost.ch")
+
+
+def _v336_entetes_desinscription(lien_desinscription: str) -> dict:
+    """
+    En-têtes de désabonnement en UN CLIC, tels qu'attendus par Gmail et Apple Mail.
+
+    Pourquoi ça compte : sans eux, un destinataire lassé n'a qu'un seul bouton à
+    portée — « Signaler comme spam ». Chaque signalement abîme la réputation du
+    domaine pour TOUS les envois, y compris les e-mails transactionnels. Les deux
+    en-têtes offrent une sortie propre, honorée par le client mail lui-même.
+
+    `List-Unsubscribe-Post` déclenche un **POST** vers l'URL : c'est pour cela que
+    `/api/subscribers/unsubscribe` accepte GET et POST depuis V336. Le `mailto:`
+    est le repli exigé par la RFC 8058 pour les clients sans un-clic.
+    """
+    return {
+        "List-Unsubscribe": (
+            f"<{lien_desinscription}>, "
+            "<mailto:notifications@afroboost.com?subject=unsubscribe>"
+        ),
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    }
+
 
 def _v332_normaliser(canal: str, valeur: str) -> str:
     """
@@ -8080,7 +8107,30 @@ async def v332_optin(request: Request):
             await asyncio.to_thread(resend.Emails.send, {
                 "from": "Afroboost <notifications@afroboost.com>",
                 "to": [valeur],
+                # V336 : sujet clair, SANS emoji en tête — un sujet qui commence par
+                # un emoji est un signal de filtrage classique chez Gmail.
                 "subject": "Confirmez votre inscription à la newsletter Afroboost",
+                # V336 : adresse de réponse RÉELLE. Un expéditeur sans Reply-To
+                # exploitable passe pour une machine anonyme.
+                "reply_to": V336_REPLY_TO,
+                # V336 : désabonnement en UN CLIC. Gmail l'exige des expéditeurs en
+                # nombre : sans ces deux en-têtes, les destinataires n'ont d'autre
+                # recours que « Signaler comme spam » — ce qui abîme durablement la
+                # réputation du domaine. Le lien visible dans le corps reste
+                # obligatoire EN PLUS : l'en-tête ne le remplace pas.
+                "headers": _v336_entetes_desinscription(lien_desinscription),
+                # V336 : version TEXTE. Un e-mail HTML sans équivalent plain-text
+                # est un signal spam à lui seul, et c'est la seule version lisible
+                # par les clients qui bloquent le HTML.
+                "text": (
+                    "Confirmez votre inscription à la newsletter Afroboost\n\n"
+                    "Vous avez demandé à recevoir la newsletter Afroboost.\n"
+                    "Confirmez votre adresse en ouvrant ce lien :\n"
+                    f"{lien_confirm}\n\n"
+                    "Si vous n'êtes pas à l'origine de cette demande, ignorez cet e-mail : "
+                    "sans ce clic, aucune inscription n'est enregistrée.\n\n"
+                    f"Se désinscrire : {lien_desinscription}\n"
+                ),
                 "html": f"""
                 <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:24px;background:#1a1a2e;color:#fff;border-radius:12px;">
                     <h2 style="color:{couleur};margin-top:0;">Plus qu'un clic</h2>
@@ -8129,9 +8179,20 @@ async def v332_confirm(token: str = ""):
     return _v332_page("Inscription confirmée", "Vous recevrez désormais la newsletter Afroboost.")
 
 
-@api_router.get("/subscribers/unsubscribe")
+@api_router.api_route("/subscribers/unsubscribe", methods=["GET", "POST"])
 async def v332_unsubscribe(token: str = ""):
-    """V332 — désabonnement en un clic, sans authentification ni compte."""
+    """
+    V332 — désabonnement en un clic, sans authentification ni compte.
+
+    V336 — accepte désormais GET **et** POST :
+      - GET  = un humain clique sur le lien dans le corps de l'e-mail ;
+      - POST = le « un clic » automatique de Gmail/Apple Mail, déclenché par les
+               en-têtes List-Unsubscribe / List-Unsubscribe-Post. Ces clients
+               envoient un POST à l'URL ; s'il échouait, Gmail considérerait le
+               désabonnement comme non honoré — exactement ce qui fait tomber un
+               expéditeur en spam.
+    Le jeton reste passé en query string dans les deux cas (l'URL le porte).
+    """
     token = (token or "").strip()
     if not token:
         return _v332_page("Lien invalide", "Ce lien de désinscription est incomplet.", "#f87171")
