@@ -6,8 +6,12 @@
 // Si le pre-cache rate, on continue. Si les notifs crashent, on continue.
 // =================================================================
 
-var CACHE_NAME = 'afroboost-v342'; // V342: Boost payant des publications
-var SW_VERSION = 265;
+// V347 : le cache etait reste bloque sur v342 pendant V343, V344, V345 et V346 —
+// les appareils deja installes (mobile en particulier) continuaient donc de servir
+// un ancien bundle malgre quatre deploiements reussis. On le bumpe pour forcer
+// tous les clients a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
+var CACHE_NAME = 'afroboost-v347'; // V347: categories des conversations + purge du cache
+var SW_VERSION = 266;
 
 var PRECACHE_URLS = [
   '/',
