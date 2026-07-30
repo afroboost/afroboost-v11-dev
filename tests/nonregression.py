@@ -854,6 +854,50 @@ def t83_v345_sessions_refus_explicite_pas_liste_vide():
         record(83, "V345 : /chat/sessions refus explicite", False, str(e))
 
 
+def t87_v350_piece_jointe_du_chat():
+    """V350 : l'envoi d'image/fichier dans le chat n'existait pas — le modèle de
+    message n'avait aucun champ `media_url` et, le modèle étant en `extra=ignore`,
+    tout média envoyé était silencieusement jeté.
+
+    Trois affirmations, sur une conversation que le test crée lui-même :
+      - une pièce jointe SEULE (sans légende) passe et revient dans le fil ;
+      - une URL hors Cloudinary est REFUSÉE (sinon on ferait afficher n'importe
+        quelle image distante dans la conversation) ;
+      - un message vide sans pièce jointe reste refusé.
+    Exige ADMIN_JWT : poster une réponse coach demande une identité.
+    """
+    if not ADMIN_JWT:
+        return skip(87, "V350 : pièce jointe du chat", "ADMIN_JWT non fourni")
+    hdr = {"Authorization": "Bearer " + ADMIN_JWT}
+    try:
+        import uuid as _uuid
+        r0 = _smart_entry({"name": "V350 sonde",
+                           "email": f"v350-{_uuid.uuid4().hex[:8]}@example.com"})
+        sid = ((r0.json() or {}).get("session") or {}).get("id") if r0.status_code == 200 else ""
+        if not sid:
+            return skip(87, "V350 : pièce jointe du chat", "conversation de sonde non créée")
+
+        avec = requests.post(_url("/api/chat/coach-response"),
+                             json={"session_id": sid, "message": "", "coach_name": "Coach",
+                                   "media_url": TEST_MEDIA, "media_type": "image"},
+                             headers=hdr, timeout=TIMEOUT).status_code
+        hors = requests.post(_url("/api/chat/coach-response"),
+                             json={"session_id": sid, "message": "x",
+                                   "media_url": "https://evil.example.com/t.png"},
+                             headers=hdr, timeout=TIMEOUT).status_code
+        vide = requests.post(_url("/api/chat/coach-response"),
+                             json={"session_id": sid, "message": "", "coach_name": "Coach"},
+                             headers=hdr, timeout=TIMEOUT).status_code
+        lu = requests.get(_url(f"/api/chat/sessions/{sid}/messages"), headers=hdr, timeout=TIMEOUT)
+        medias = [m for m in (lu.json() if lu.status_code == 200 else []) if m.get("media_url")]
+
+        ok = avec == 200 and hors == 400 and vide == 400 and len(medias) == 1
+        record(87, "V350 : pièce jointe acceptée, URL étrangère et message vide refusés", ok,
+               f"image_seule={avec} url_etrangere={hors} vide={vide} relus={len(medias)}")
+    except Exception as e:
+        record(87, "V350 : pièce jointe du chat", False, str(e))
+
+
 def _v349_flag():
     """État EN DIRECT du drapeau CHAT_READ_STRICT (None si illisible)."""
     try:
@@ -1535,7 +1579,7 @@ def main():
                    t81_v344_drapeau_expose_et_admin_seul, t82_v344_privileges_refuses_a_l_usurpateur,
                    t83_v345_sessions_refus_explicite_pas_liste_vide,
                    t84_v346_categories_des_conversations, t85_v348_suppression_conversation_exige_jeton,
-                   t86_v349_contenu_des_conversations_ferme,
+                   t86_v349_contenu_des_conversations_ferme, t87_v350_piece_jointe_du_chat,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
