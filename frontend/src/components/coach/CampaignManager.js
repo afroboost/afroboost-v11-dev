@@ -207,6 +207,54 @@ const CampaignManager = ({
   };
 
   // Move campaign (drag & drop)
+  // V360 — SELECTEUR DE DATE TACTILE.
+  //
+  // Le calendrier ne proposait que le clic droit (menu « Dupliquer ») et le
+  // glisser-deposer HTML5 pour changer la date. Ni l'un ni l'autre n'existe sur
+  // mobile : la fonctionnalite y etait donc INACCESSIBLE, alors qu'elle etait bien
+  // codee. On expose la meme logique par un simple appui, avec des champs date et
+  // heure natifs — ceux-la ouvrent le selecteur du telephone.
+  //
+  // `dateCible` = { id, nom, creee } : la campagne dont on choisit la date.
+  // `creee` distingue « je viens de dupliquer » de « je deplace une campagne ».
+  const [dateCible, setDateCible] = useState(null);
+  const [dateJour, setDateJour] = useState('');
+  const [dateHeure, setDateHeure] = useState('10:00');
+  const [dateOccupe, setDateOccupe] = useState(false);
+
+  // Par defaut : demain 10 h. Une date passee partirait immediatement au prochain
+  // passage de la boucle d'envoi — ce n'est jamais ce qu'on veut par defaut.
+  useEffect(() => {
+    if (!dateCible) return;
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    setDateJour(d.toISOString().slice(0, 10));
+    setDateHeure('10:00');
+  }, [dateCible]);
+
+  const validerDate = async () => {
+    if (!dateCible || !dateJour || dateOccupe) return;
+    setDateOccupe(true);
+    try {
+      // `new Date('AAAA-MM-JJTHH:MM')` lit l'heure dans le fuseau du navigateur ;
+      // `toISOString()` la convertit en UTC, ce que le backend attend.
+      const quand = new Date(`${dateJour}T${dateHeure || '10:00'}`);
+      if (isNaN(quand.getTime())) throw new Error('Date invalide');
+      // PUT scheduledAt -> le backend repasse la campagne en statut « scheduled »
+      // et vide ses anciens resultats. C'est ce statut que la boucle d'envoi
+      // selectionne ; sans lui, la copie resterait un brouillon jamais envoye.
+      await axios.put(`${API}/campaigns/${dateCible.id}`, { scheduledAt: quand.toISOString() });
+      showCampaignToast?.(
+        `Campagne programmée le ${quand.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long' })} à ${dateHeure}`,
+        'success');
+      setDateCible(null);
+      window.location.reload();
+    } catch (err) {
+      showCampaignToast?.(`Erreur: ${err.message}`, 'error');
+      setDateOccupe(false);
+    }
+  };
+
   const handleMoveCampaign = async (campaignId, newDateStr) => {
     try {
       // Convert to ISO with user's timezone
@@ -245,11 +293,31 @@ const CampaignManager = ({
         ctaType: campaign.ctaType || null,
         ctaText: campaign.ctaText || null,
         ctaLink: campaign.ctaLink || null,
+        // V360 — BUG CORRIGE : `mediaType` n'etait PAS recopie. Il vaut 'upload',
+        // 'youtube', 'drive'… et conditionne la FACON dont le media est rendu : la
+        // copie pouvait donc afficher son media de travers, ou pas du tout.
+        //
+        // NOTE, verifiee et volontairement NON « corrigee » : `targetCategories` et
+        // `categoryFilterMode` (ciblage par categories, V154) ne sont PAS recopies
+        // non plus — mais les recopier ne servirait a rien. Mesure faite : le modele
+        // CampaignCreate de server.py ne les declare pas et les jette (extra=ignore),
+        // la logique d'envoi ne les lit NULLE PART (0 occurrence), et aucune campagne
+        // reelle n'en porte. C'est une fonctionnalite jamais branchee de bout en bout.
+        // Les copier ici donnerait l'illusion qu'elle marche.
+        mediaType: campaign.mediaType || null,
         scheduledAt: null
       };
-      await axios.post(`${API}/campaigns`, dupData);
-      showCampaignToast?.(`📋 "${campaign.name}" dupliquée`, 'success');
-      window.location.reload();
+      const res = await axios.post(`${API}/campaigns`, dupData);
+      const copie = res && res.data;
+      showCampaignToast?.(`"${campaign.name}" dupliquée — choisissez la date d'envoi`, 'success');
+      // V360 : on enchaine sur le SELECTEUR DE DATE plutot que de recharger la page.
+      // Une copie sans date reste en brouillon et ne part jamais : la reprogrammer
+      // est la suite naturelle du geste, pas une action a retrouver soi-meme.
+      if (copie && copie.id) {
+        setDateCible({ id: copie.id, nom: copie.name || 'Copie', creee: true });
+      } else {
+        window.location.reload();
+      }
     } catch (err) {
       showCampaignToast?.(`Erreur duplication: ${err.message}`, 'error');
     }
@@ -300,6 +368,59 @@ const CampaignManager = ({
         onMoveCampaign={handleMoveCampaign}
         onDuplicateCampaign={handleDuplicateCampaign}
       />
+
+      {/* === V360 : SELECTEUR DE DATE TACTILE ===
+           Champs `date` et `time` NATIFS : sur telephone ils ouvrent le selecteur
+           du systeme, donc utilisables au doigt sans glisser-deposer. */}
+      {dateCible && (
+        <div
+          onClick={() => !dateOccupe && setDateCible(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(0,0,0,0.75)',
+                   display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
+          data-testid="campagne-selecteur-date"
+        >
+          <div onClick={(e) => e.stopPropagation()}
+               style={{ background: '#12121f', borderRadius: '14px', padding: '18px', width: '100%',
+                        maxWidth: '360px', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <h4 style={{ color: '#fff', fontSize: '0.95rem', margin: '0 0 4px' }}>
+              {dateCible.creee ? 'Copie créée — quand l\'envoyer ?' : 'Choisir la date d\'envoi'}
+            </h4>
+            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.75rem', margin: '0 0 14px' }}>
+              {dateCible.nom}
+            </p>
+
+            <label style={{ display: 'block', color: 'rgba(255,255,255,0.7)', fontSize: '0.72rem', marginBottom: '4px' }}>Date</label>
+            <input type="date" value={dateJour} onChange={(e) => setDateJour(e.target.value)}
+                   data-testid="campagne-date-jour"
+                   style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', marginBottom: '10px',
+                            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+                            background: '#0a0a1a', color: '#fff', fontSize: '16px', boxSizing: 'border-box' }} />
+
+            <label style={{ display: 'block', color: 'rgba(255,255,255,0.7)', fontSize: '0.72rem', marginBottom: '4px' }}>Heure</label>
+            <input type="time" value={dateHeure} onChange={(e) => setDateHeure(e.target.value)}
+                   data-testid="campagne-date-heure"
+                   style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', marginBottom: '14px',
+                            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
+                            background: '#0a0a1a', color: '#fff', fontSize: '16px', boxSizing: 'border-box' }} />
+
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button type="button" onClick={() => setDateCible(null)} disabled={dateOccupe}
+                      style={{ flex: 1, padding: '11px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.18)',
+                               background: 'transparent', color: '#999', fontSize: '0.85rem', cursor: 'pointer' }}>
+                Annuler
+              </button>
+              <button type="button" onClick={validerDate} disabled={dateOccupe || !dateJour}
+                      data-testid="campagne-date-valider"
+                      style={{ flex: 2, padding: '11px', borderRadius: '10px', border: 'none', fontWeight: 700,
+                               background: dateJour ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.1)',
+                               color: '#fff', fontSize: '0.85rem',
+                               cursor: (dateOccupe || !dateJour) ? 'not-allowed' : 'pointer' }}>
+                {dateOccupe ? 'Enregistrement…' : 'Programmer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* === MODAL TUNNEL 3 ÉTAPES === */}
       <CampaignModal
@@ -532,6 +653,22 @@ const CampaignManager = ({
                         <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                           <button type="button" onClick={() => openEditCampaign(campaign)}
                             style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(234,179,8,0.2)', border: 'none', color: '#fbbf24', cursor: 'pointer' }} title="Modifier" aria-label="Modifier"><SvgIcon name="edit" size={14} /></button>
+
+                          {/* V360 : DUPLIQUER, visible et au simple appui. L'action
+                              existait deja mais uniquement dans un menu au CLIC DROIT
+                              du calendrier — inaccessible sur mobile, et invisible
+                              pour qui ne connait pas le geste. */}
+                          <button type="button" onClick={() => handleDuplicateCampaign(campaign)}
+                            style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(139,92,246,0.25)', border: 'none', color: '#c4b5fd', cursor: 'pointer' }}
+                            title="Dupliquer cette campagne" aria-label="Dupliquer"
+                            data-testid={`campagne-dupliquer-${campaign.id}`}><SvgIcon name="clipboard" size={14} /></button>
+
+                          {/* V360 : PROGRAMMER / DEPLACER au tap — remplace le
+                              glisser-deposer, qui n'existe pas sur mobile. */}
+                          <button type="button" onClick={() => setDateCible({ id: campaign.id, nom: campaign.name, creee: false })}
+                            style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(59,130,246,0.2)', border: 'none', color: '#93c5fd', cursor: 'pointer' }}
+                            title="Choisir la date d'envoi" aria-label="Choisir la date d'envoi"
+                            data-testid={`campagne-date-${campaign.id}`}><SvgIcon name="calendar" size={14} /></button>
                           {campaign.status === 'draft' && (
                             <button type="button" onClick={(e) => launchCampaignWithSend(e, campaign.id)}
                               style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', background: 'rgba(139,92,246,0.3)', border: 'none', color: '#c4b5fd', cursor: 'pointer' }} aria-label="Lancer maintenant"><SvgIcon name="rocket" size={14} /></button>
