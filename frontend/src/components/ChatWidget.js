@@ -1254,15 +1254,21 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
     </button>
   ) : null;
 
-  const v352Mention = (v352Restant || msg?.media_expired) ? (
+  // V357 : le bouton de suppression etait LOGE dans le compte a rebours — un media
+  // sans echeance n'avait donc aucun bouton. Les deux sont desormais independants :
+  // la barre s'affiche des qu'il y a un media (ou un media expire), le compte a
+  // rebours n'en est qu'un element facultatif.
+  const v352Mention = (hasMedia || msg?.media_expired) ? (
     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px',
                   color: 'rgba(255,255,255,0.45)', marginLeft: '4px' }}
          data-testid="media-compte-a-rebours">
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-        <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
-      </svg>
-      {msg?.media_expired ? 'Média expiré' : v352Restant}
+      {(msg?.media_expired || v352Restant) ? (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
+        </svg>
+      ) : null}
+      {msg?.media_expired ? 'Média expiré' : (v352Restant || null)}
       {v356BoutonSupprimer}
     </div>
   ) : null;
@@ -1641,6 +1647,13 @@ const MemoizedMessageBubble = memo(MessageBubble, (prevProps, nextProps) => {
   // Si l'avatar change (utilisateur a uploadé une nouvelle photo), on doit re-rendre
   if (prevProps.msg.senderPhotoUrl !== nextProps.msg.senderPhotoUrl) return false;
   if (prevProps.profilePhotoUrl !== nextProps.profilePhotoUrl) return false;
+
+  // V357 : le MÉDIA doit figurer ici. Sans ces deux lignes, ce comparateur renvoyait
+  // `true` (« rien n'a changé ») après une suppression : la bulle gardait son image
+  // ou son lecteur à l'écran alors que la base et Cloudinary étaient déjà vidés.
+  // Le correctif du bouton n'aurait rien donné de visible.
+  if (prevProps.msg.media_url !== nextProps.msg.media_url) return false;
+  if (prevProps.msg.media_expired !== nextProps.msg.media_expired) return false;
 
   // Sinon, pas besoin de re-rendre (même message, même avatar)
   return true;
@@ -2759,16 +2772,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     try {
       const res = await axios.get(`${API}/chat/sessions/${sessionId}/messages`, { params: { participant_id: participantId || '' } });
       // V108.4: Formater les messages serveur → format client unifié
-      const formatted = (res.data || []).map(m => ({
-        id: m.id,
-        type: m.type || (m.sender_type === 'user' ? 'user' : m.sender_type === 'coach' ? 'coach' : 'ai'),
-        text: m.content || m.text || '',
-        sender: m.sender_name || m.sender || '',
-        senderId: m.sender_id || m.senderId || '',
-        created_at: m.created_at,
-        media_url: m.media_url || null,
-        is_group: true
-      }));
+      const formatted = (res.data || []).map(m => Object.assign(v357Normaliser(m), { is_group: true }));
       setGroupMessages(formatted);
       setGroupMsgStatus('ready');
     } catch (err) {
@@ -5792,21 +5796,37 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   };
 
   // === MODE COACH: Charger les messages d'une session ===
+
+  // V357 — NORMALISATION UNIQUE des messages venant du serveur.
+  //
+  // Les chargeurs recopiaient le message champ par champ, chacun avec SA liste :
+  // `media_type`, `media_expires_at` et `media_expired` etaient absents des deux.
+  // Consequence en cascade : `v352Restant` restait vide, donc `v352Mention` valait
+  // null, donc le BOUTON DE SUPPRESSION qu'elle contenait n'etait jamais rendu —
+  // pour l'audio, l'image ET le PDF, des deux cotes. Un seul point de conversion
+  // supprime cette classe de bug : ajouter un champ au serveur ne demande plus de
+  // penser a deux endroits.
+  const v357Normaliser = (m) => ({
+    id: m.id,
+    type: m.type || (m.sender_type === 'user' ? 'user' : m.sender_type === 'coach' ? 'coach' : 'ai'),
+    text: m.content || m.text || '',
+    sender: m.sender_name || m.sender || '',
+    senderId: m.sender_id || m.senderId || '',
+    created_at: m.created_at,
+    media_url: m.media_url || null,
+    media_type: m.media_type || null,
+    media_expires_at: m.media_expires_at || null,
+    media_expired: !!m.media_expired,
+    cta_type: m.cta_type || null,
+    cta_text: m.cta_text || null,
+    cta_link: m.cta_link || null
+  });
+
   const loadCoachSessionMessages = async (session) => {
     setSelectedCoachSession(session);
     try {
       const res = await axios.get(`${API}/chat/sessions/${session.id}/messages`, { params: { participant_id: participantId || '' } });
-      const formattedMessages = res.data.map(m => ({
-        id: m.id,
-        type: m.sender_type === 'user' ? 'user' : m.sender_type === 'coach' ? 'coach' : 'ai',
-        text: m.content || m.text || '',
-        sender: m.sender_name,
-        senderId: m.sender_id,
-        media_url: m.media_url || null,
-        cta_type: m.cta_type || null,
-        cta_text: m.cta_text || null,
-        cta_link: m.cta_link || null
-      }));
+      const formattedMessages = res.data.map(v357Normaliser);
       setMessages(formattedMessages);
       setLastMessageCount(formattedMessages.length);
     } catch (err) {
