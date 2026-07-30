@@ -1197,6 +1197,68 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
   const hasMedia = msg?.media_url && typeof msg.media_url === 'string' && msg.media_url.startsWith('http');
   const hasCta = msg?.cta_type && msg?.cta_text;
   
+  // V352 — NOTE VOCALE : lecteur dédié. `MediaMessage` est conçu pour des images,
+  // des vidéos et des CTA ; lui confier un fichier audio afficherait une vignette
+  // cassée. On le court-circuite donc pour ce seul cas.
+  const estVocal = hasMedia && (msg.media_type === 'audio'
+    || /\.(webm|m4a|mp3|ogg|wav)(\?|$)/i.test(msg.media_url));
+
+  // V352 — COMPTE À REBOURS. L'échéance vient du SERVEUR (`media_expires_at`), elle
+  // est donc identique pour l'expéditeur et pour les destinataires : chacun voit le
+  // même temps restant, personne n'a de surprise.
+  const v352Restant = (() => {
+    if (!msg?.media_expires_at) return '';
+    const ms = new Date(msg.media_expires_at).getTime() - Date.now();
+    if (isNaN(ms) || ms <= 0) return 'Expire…';
+    const min = Math.ceil(ms / 60000);
+    return min >= 60 ? 'Disparaît dans 1 h' : 'Disparaît dans ' + min + ' min';
+  })();
+
+  const v352Mention = (v352Restant || msg?.media_expired) ? (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px',
+                  color: 'rgba(255,255,255,0.45)', marginLeft: '4px' }}
+         data-testid="media-compte-a-rebours">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+        <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
+      </svg>
+      {msg?.media_expired ? 'Média expiré' : v352Restant}
+    </div>
+  ) : null;
+
+  // V352 : le média a été purgé — on le DIT, au lieu d'afficher un vide inexpliqué.
+  if (msg?.media_expired && !hasMedia) {
+    return (
+      <div style={{ alignSelf: isUser ? 'flex-end' : 'flex-start', maxWidth: '320px',
+                    display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        {messageText ? (
+          <div style={{ fontSize: '13px', color: '#fff' }}>{messageText}</div>
+        ) : null}
+        {v352Mention}
+      </div>
+    );
+  }
+
+  if (estVocal) {
+    return (
+      <div style={{ alignSelf: isUser ? 'flex-end' : 'flex-start', maxWidth: '320px',
+                    display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        {!isUser && (
+          <div style={{ fontSize: '10px', fontWeight: 600, marginLeft: '4px', color: getNameColor() }}>
+            {displayName}
+          </div>
+        )}
+        <audio src={msg.media_url} controls preload="metadata"
+               data-testid="message-note-vocale"
+               style={{ width: '260px', maxWidth: '100%' }} />
+        {messageText ? (
+          <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.85)', marginLeft: '4px' }}>{messageText}</div>
+        ) : null}
+        {v352Mention}
+      </div>
+    );
+  }
+
   // Si c'est un message média avec CTA, utiliser MediaMessage
   if (hasMedia || hasCta) {
     const ctaConfig = hasCta ? {
@@ -1257,6 +1319,8 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
           onReservationClick={onReservationClick}
           isCompact={true}
         />
+        {/* V352 : compte à rebours sous l'image, même information que pour l'audio. */}
+        {v352Mention}
       </div>
     );
   }
@@ -2058,6 +2122,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   var _v350P = useState(null); var v350Piece = _v350P[0]; var setV350Piece = _v350P[1];
   var _v350U = useState(false); var v350Televersement = _v350U[0]; var setV350Televersement = _v350U[1];
   var _v350E = useState(''); var v350PieceErr = _v350E[0]; var setV350PieceErr = _v350E[1];
+  // V352 : enregistrement d'une note vocale. `v352Enregistre` pilote l'interface,
+  // `v352Duree` affiche les secondes écoulées. Le MediaRecorder et le minuteur
+  // vivent dans des refs : un état React les recréerait à chaque rendu.
+  var _v352R = useState(false); var v352Enregistre = _v352R[0]; var setV352Enregistre = _v352R[1];
+  var _v352D = useState(0); var v352Duree = _v352D[0]; var setV352Duree = _v352D[1];
+  const v352RecRef = useRef(null);
+  const v352TimerRef = useRef(null);
   // V298 : traduction du texte SAISI avant envoi (état de chargement + message d'erreur).
   var _v298Translating = useState(false); var v298Translating = _v298Translating[0]; var setV298Translating = _v298Translating[1];
   var _v298TransErr = useState(''); var v298TransErr = _v298TransErr[0]; var setV298TransErr = _v298TransErr[1];
@@ -5697,6 +5768,88 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       // Échec honnête : on le DIT, plutôt que de laisser l'utilisateur cliquer
       // sur « envoyer » avec une pièce jointe qui n'existe pas.
       setV350PieceErr("Téléversement impossible. Réessayez.");
+    }
+    setV350Televersement(false);
+  };
+
+  // === V352 — NOTE VOCALE ===
+  //
+  // `MediaRecorder` est natif : aucune dépendance ajoutée. On demande le format
+  // WebM/Opus, très léger (~20 Ko pour 10 s) ; Safari/iOS ne le connaît pas et
+  // impose `audio/mp4`, d'où la liste d'essais. Sans ce repli, le bouton serait
+  // silencieusement inopérant sur iPhone — la moitié des utilisateurs.
+  const v352ChoisirFormat = () => {
+    const candidats = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+    for (var i = 0; i < candidats.length; i++) {
+      try {
+        if (window.MediaRecorder && window.MediaRecorder.isTypeSupported(candidats[i])) {
+          return candidats[i];
+        }
+      } catch (e) { /* navigateur sans isTypeSupported */ }
+    }
+    return '';
+  };
+
+  const v352DemarrerVocal = async () => {
+    setV350PieceErr('');
+    if (!navigator.mediaDevices || !window.MediaRecorder) {
+      setV350PieceErr("Votre navigateur ne permet pas l'enregistrement vocal.");
+      return;
+    }
+    try {
+      const flux = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const format = v352ChoisirFormat();
+      const rec = new window.MediaRecorder(flux, format ? { mimeType: format } : undefined);
+      const morceaux = [];
+      rec.ondataavailable = function (e) { if (e.data && e.data.size) morceaux.push(e.data); };
+      rec.onstop = function () {
+        // On libère le micro TOUT DE SUITE : garder le flux ouvert laisse la
+        // pastille d'enregistrement allumée, ce qui inquiète légitimement.
+        try { flux.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* ignore */ }
+        const blob = new Blob(morceaux, { type: format || 'audio/webm' });
+        v352EnvoyerVocal(blob);
+      };
+      rec.start();
+      v352RecRef.current = rec;
+      setV352Enregistre(true);
+      setV352Duree(0);
+      v352TimerRef.current = setInterval(function () {
+        setV352Duree(function (d) {
+          // Garde-fou : 2 minutes maximum. Au-delà, le fichier devient lourd
+          // pour rien et l'utilisateur ne s'en rend pas compte.
+          if (d >= 120) { try { rec.stop(); } catch (e) { /* ignore */ } }
+          return d + 1;
+        });
+      }, 1000);
+    } catch (e) {
+      setV350PieceErr("Micro refusé ou indisponible.");
+    }
+  };
+
+  const v352ArreterVocal = () => {
+    if (v352TimerRef.current) { clearInterval(v352TimerRef.current); v352TimerRef.current = null; }
+    setV352Enregistre(false);
+    try { if (v352RecRef.current) v352RecRef.current.stop(); } catch (e) { /* ignore */ }
+    v352RecRef.current = null;
+  };
+
+  const v352EnvoyerVocal = async (blob) => {
+    if (!blob || !blob.size) return;
+    setV350Televersement(true);
+    setV350PieceErr('');
+    try {
+      const fd = new FormData();
+      // Nom explicite : Cloudinary s'en sert pour deviner le type.
+      fd.append('file', blob, 'note-vocale.' + ((blob.type || '').indexOf('mp4') !== -1 ? 'm4a' : 'webm'));
+      fd.append('upload_preset', 'afroboost');
+      fd.append('folder', 'chat');   // V352 : indispensable pour que la purge puisse supprimer
+      const r = await fetch('https://api.cloudinary.com/v1_1/dtm0r7hwq/auto/upload',
+        { method: 'POST', body: fd });
+      const d = await r.json();
+      if (!r.ok || !d.secure_url) throw new Error('upload');
+      setV350Piece({ url: d.secure_url, kind: 'audio', name: 'Note vocale' });
+    } catch (e) {
+      setV350PieceErr("Envoi de la note vocale impossible. Réessayez.");
     }
     setV350Televersement(false);
   };
@@ -9654,6 +9807,56 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                             <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                           </svg>
                         </button>
+
+                        {/* V352 : NOTE VOCALE. Un clic démarre, un second arrête et
+                            envoie. Le compteur de secondes est le seul repère de
+                            l'utilisateur pendant qu'il parle. */}
+                        <button
+                          type="button"
+                          onClick={function () { v352Enregistre ? v352ArreterVocal() : v352DemarrerVocal(); }}
+                          disabled={v350Televersement}
+                          title={v352Enregistre ? 'Arrêter et envoyer' : 'Enregistrer une note vocale'}
+                          data-testid="coach-note-vocale"
+                          style={{
+                            width: '40px', height: '40px', borderRadius: '50%',
+                            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
+                            background: v352Enregistre ? '#E53E3E' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)',
+                            cursor: v350Televersement ? 'wait' : 'pointer', display: 'flex',
+                            alignItems: 'center', justifyContent: 'center', flexShrink: 0, padding: 0
+                          }}
+                        >
+                          {v352Enregistre ? (
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff">
+                              <rect x="6" y="6" width="12" height="12" rx="2" />
+                            </svg>
+                          ) : (
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                                 stroke="var(--primary-color, #D91CD2)" strokeWidth="2"
+                                 strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                              <line x1="12" y1="19" x2="12" y2="23" />
+                            </svg>
+                          )}
+                        </button>
+
+                        {v352Enregistre && (
+                          <span data-testid="coach-vocal-duree"
+                                style={{ color: '#E53E3E', fontSize: '0.75rem', fontWeight: 700 }}>
+                            ● {Math.floor(v352Duree / 60)}:{String(v352Duree % 60).padStart(2, '0')}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* V352 — AVERTISSEMENT. L'effacement automatique doit être
+                          ANNONCÉ, pas découvert. Mention permanente sous la barre
+                          d'icônes, visible avant même de choisir un fichier. */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#888', fontSize: '0.68rem' }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                          <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
+                        </svg>
+                        Les photos et messages vocaux s'effacent après 1 h.
                       </div>
 
                       {/* V350 : état de la pièce jointe — nom du fichier + retrait,
