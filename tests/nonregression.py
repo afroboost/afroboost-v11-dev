@@ -776,6 +776,47 @@ def t83_v345_sessions_refus_explicite_pas_liste_vide():
         record(83, "V345 : /chat/sessions refus explicite", False, str(e))
 
 
+def t84_v346_categories_des_conversations():
+    """V346 : les onglets « Abonnés » / « Visiteurs » / « Liens intelligents » du
+    ChatWidget sont alimentés par le champ `category` de GET /chat/sessions. Avant
+    V346, la catégorisation ne lisait QUE `subscriptions` (en ignorant
+    `discount_codes`, où vit l'essentiel des abonnés) et ne reconnaissait un lien
+    intelligent que via `is_smart_link` (en ignorant les anciens liens à `lead_type`) :
+    presque tout retombait sur « visitor », et deux onglets sur trois restaient vides.
+
+    Ce test exige un JWT admin (les conversations sont des données personnelles). Il
+    vérifie que :
+      - chaque session porte bien un `category` parmi les trois valeurs attendues ;
+      - la somme des trois catégories == le total (l'onglet « Tout » reste la somme) ;
+      - au moins DEUX catégories distinctes sont présentes — c'est la signature du
+        correctif : avant, une seule (« visitor ») l'était.
+    """
+    if not ADMIN_JWT:
+        return skip(84, "V346 : catégories des conversations",
+                    "ADMIN_JWT non fourni — parcours admin NON couvert ici")
+    try:
+        r = requests.get(_url("/api/chat/sessions"),
+                         headers={"Authorization": "Bearer " + ADMIN_JWT}, timeout=TIMEOUT)
+        if r.status_code != 200:
+            return record(84, "V346 : catégories des conversations", False,
+                          f"HTTP {r.status_code} avec le JWT admin")
+        sessions = r.json() or []
+        if not sessions:
+            return skip(84, "V346 : catégories des conversations", "aucune conversation en base")
+
+        attendues = {"subscriber", "visitor", "smart_link"}
+        cats = [s.get("category") for s in sessions]
+        inconnues = sorted(set(c for c in cats if c not in attendues))
+        compte = {c: cats.count(c) for c in attendues}
+        somme = sum(compte.values())
+
+        ok = (not inconnues) and somme == len(sessions) and len([c for c in compte.values() if c]) >= 2
+        record(84, "V346 : chaque conversation catégorisée, somme == total, ≥2 catégories",
+               ok, f"total={len(sessions)} {compte} inconnues={inconnues}")
+    except Exception as e:
+        record(84, "V346 : catégories des conversations", False, str(e))
+
+
 def _v319_flag():
     """État EN DIRECT du drapeau REQUIRE_COACH_JWT (None si illisible)."""
     try:
@@ -1314,6 +1355,7 @@ def main():
                    t79_v343_no_expiry_ignore_pour_non_admin, t80_v343_gratuite_refusee_sans_identite,
                    t81_v344_drapeau_expose_et_admin_seul, t82_v344_privileges_refuses_a_l_usurpateur,
                    t83_v345_sessions_refus_explicite_pas_liste_vide,
+                   t84_v346_categories_des_conversations,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

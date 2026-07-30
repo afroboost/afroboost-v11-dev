@@ -16120,6 +16120,57 @@ async def join_group_automatically(request: GroupJoinRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- Chat Sessions ---
+async def _v346_emails_abonnes() -> set:
+    """
+    V346 — emails de TOUS les abonnés, pour catégoriser les conversations.
+
+    LE BUG CORRIGÉ ICI. La catégorisation (V198) ne lisait que `subscriptions`,
+    c'est-à-dire les abonnements créés automatiquement après un paiement Stripe.
+    Or l'essentiel des abonnés d'Afroboost vit dans `discount_codes` (les codes
+    d'accès AFR-…, BASSBOOSTX-…), une collection à la forme DIFFÉRENTE — le dépôt
+    le documente déjà dans `_v261_resolve_subscriber` :
+        « `discount_codes` porte `active: True` (booléen) et N'A PAS de champ
+          `status` ; `subscriptions` porte `status: "active"`. »
+    Conséquence : ces abonnés n'étaient jamais reconnus, la catégorie retombait
+    sur « visitor », et l'onglet « Abonnés » du ChatWidget restait vide DEPUIS
+    TOUJOURS. On interroge donc les DEUX collections, chacune avec sa forme.
+
+    Un code épuisé reste compté : l'onglet répond à « qui est cette personne ? »,
+    pas à « lui reste-t-il des séances ? ». Un abonné sans crédit n'est pas
+    redevenu un visiteur anonyme.
+    """
+    emails = set()
+    try:
+        async for sub in db.subscriptions.find({"status": "active"}, {"_id": 0, "email": 1}):
+            em = (sub.get("email") or "").lower().strip()
+            if em:
+                emails.add(em)
+    except Exception as e:
+        logger.warning(f"[V346] Lecture de subscriptions impossible : {e}")
+    try:
+        async for dc in db.discount_codes.find({"active": True}, {"_id": 0, "assignedEmail": 1}):
+            em = (dc.get("assignedEmail") or "").lower().strip()
+            if em:
+                emails.add(em)
+    except Exception as e:
+        logger.warning(f"[V346] Lecture de discount_codes impossible : {e}")
+    return emails
+
+
+def _v346_est_lien_intelligent(session: dict) -> bool:
+    """
+    V346 — cette conversation vient-elle d'un Lien Intelligent ?
+
+    La catégorisation ne testait que `is_smart_link is True`, alors que la liste
+    officielle des liens intelligents (`GET /chat/links`) accepte DEUX formes
+    depuis v162m : `is_smart_link: True` OU la présence de `lead_type` (les liens
+    créés avant l'ajout du marqueur). Les anciens liens étaient donc classés
+    « visitor » et l'onglet « Liens intelligents » les perdait. On aligne ici sur
+    le MÊME critère, pour que les deux vues ne puissent plus diverger.
+    """
+    return session.get("is_smart_link") is True or session.get("lead_type") is not None
+
+
 @api_router.get("/chat/sessions")
 async def get_chat_sessions(include_deleted: bool = False, request: Request = None):
     """Récupère toutes les sessions de chat (exclut les supprimées par défaut)
@@ -16160,16 +16211,9 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
     # v14.0: Enrichir chaque session avec les infos du premier participant
     enriched_sessions = []
     # V198: Pré-charger les emails des abonnés actifs en une seule requête (perf vs N+1)
-    active_subscriber_emails = set()
-    try:
-        sub_cursor = db.subscriptions.find({"status": "active"}, {"_id": 0, "email": 1})
-        async for sub in sub_cursor:
-            email = (sub.get("email") or "").lower().strip()
-            if email:
-                active_subscriber_emails.add(email)
-    except Exception as _e:
-        # Si la requête échoue, on continue sans catégorisation abonné
-        pass
+    # V346 : les DEUX collections d'abonnés, pas seulement `subscriptions` — voir
+    # _v346_emails_abonnes. C'est ce qui vidait l'onglet « Abonnés » depuis toujours.
+    active_subscriber_emails = await _v346_emails_abonnes()
 
     # V300 : infos abonné (WhatsApp + date de naissance + code) pour la fiche CRM,
     # depuis subscriber_infos (V294), indexées par email. LECTURE SEULE.
@@ -16219,7 +16263,10 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
         #   - "smart_link" si la session vient d'un Lien Intelligent
         #   - "subscriber" si l'email du participant a un abonnement actif
         #   - "visitor" sinon (visiteurs du site)
-        if session.get("is_smart_link") is True:
+        # V346 : les deux premiers tests ne reconnaissaient presque rien (une seule
+        # collection d'abonnés, un seul marqueur de lien) — tout retombait sur
+        # « visitor ». Les critères sont désormais partagés avec /chat/links et le CRM.
+        if _v346_est_lien_intelligent(session):
             category = "smart_link"
         elif participant_email and participant_email.lower().strip() in active_subscriber_emails:
             category = "subscriber"
@@ -16372,15 +16419,10 @@ async def get_conversations_advanced(
     enriched_conversations = []
 
     # V198b: Pré-charger les emails des abonnés actifs (1 requête au lieu de N)
-    active_subscriber_emails = set()
-    try:
-        sub_cursor = db.subscriptions.find({"status": "active"}, {"_id": 0, "email": 1})
-        async for sub in sub_cursor:
-            email = (sub.get("email") or "").lower().strip()
-            if email:
-                active_subscriber_emails.add(email)
-    except Exception:
-        pass  # En cas d'erreur, on continue sans catégorisation abonné
+    # V346 : source unique partagée avec /chat/sessions — `subscriptions` ET
+    # `discount_codes`. Cette copie ne lisait que la première, d'où la même
+    # catégorisation fausse que dans le ChatWidget.
+    active_subscriber_emails = await _v346_emails_abonnes()
 
     # V198c: Batch des requêtes — passe de 3*N à 3 requêtes pour N sessions
     session_ids = [s["id"] for s in sessions if s.get("id")]
@@ -16456,7 +16498,9 @@ async def get_conversations_advanced(
             first_participant_name = session.get("title")
 
         # V198b: Catégorie pour le dashboard coach (3 sections : abonnés / visiteurs / liens intelligents)
-        if session.get("is_smart_link") is True:
+        # V346 : mêmes critères que /chat/sessions (helpers partagés) — sans quoi une
+        # conversation pouvait être « abonné » ici et « visiteur » là.
+        if _v346_est_lien_intelligent(session):
             session_category = "smart_link"
         elif first_participant_email and first_participant_email.lower().strip() in active_subscriber_emails:
             session_category = "subscriber"
