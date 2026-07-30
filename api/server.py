@@ -16206,7 +16206,47 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
     if caller_email and not is_super_admin(caller_email):
         query["coach_id"] = caller_email
     
-    sessions = await db.chat_sessions.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
+    # V347 : le plafond était de 100. Mesuré sur la base réelle : 171 conversations,
+    # dont 69 artefacts de la suite de tests — les VRAIES conversations d'abonnés et de
+    # liens intelligents étaient donc poussées HORS de la fenêtre, et les onglets
+    # correspondants restaient vides alors que la catégorisation était juste. On monte
+    # le plafond à 300 ; c'est finançable parce que la recherche des participants est
+    # désormais groupée (ci-dessous) au lieu d'une requête par conversation.
+    sessions = await db.chat_sessions.find(query, {"_id": 0}).sort("created_at", -1).to_list(300)
+
+    # V347 : PARTICIPANTS EN UN SEUL LOT (avant : un find_one par conversation, soit
+    # N requêtes — c'est ce qui rendait impossible de relever le plafond). Même
+    # technique que la vue CRM, qui le faisait déjà.
+    _pids_recherches = []
+    for _s in sessions:
+        for _pid in (_s.get("participant_ids") or []):
+            _pids_recherches.append(_pid)
+    _participants_par_id = {}
+    if _pids_recherches:
+        async for _p in db.chat_participants.find(
+            {"id": {"$in": list(set(_pids_recherches))}},
+            {"_id": 0, "id": 1, "name": 1, "email": 1, "whatsapp": 1},
+        ):
+            _participants_par_id[_p.get("id")] = _p
+
+    # V347 : dernier message + nombre de messages, en UNE agrégation pour toutes les
+    # conversations (avant : deux requêtes chacune). Même pipeline que la vue CRM.
+    _stats_messages = {}
+    _ids_sessions = [s.get("id") for s in sessions if s.get("id")]
+    if _ids_sessions:
+        try:
+            async for _row in db.chat_messages.aggregate([
+                {"$match": {"session_id": {"$in": _ids_sessions}, "is_deleted": {"$ne": True}}},
+                {"$sort": {"created_at": -1}},
+                {"$group": {"_id": "$session_id",
+                            "count": {"$sum": 1},
+                            "last_content": {"$first": "$content"}}},
+            ]):
+                _stats_messages[_row["_id"]] = _row
+        except Exception as _e:
+            # Une agrégation en échec ne doit pas vider la liste : on retombe sur
+            # « aucun message » plutôt que de faire échouer toute la requête.
+            logger.warning(f"[V347] Agrégation des messages impossible : {_e}")
 
     # v14.0: Enrichir chaque session avec les infos du premier participant
     enriched_sessions = []
@@ -16233,9 +16273,9 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
         participant_email = ""
         participant_whatsapp = ""
 
-        # Chercher dans participant_ids
+        # Chercher dans participant_ids — V347 : lecture dans le lot pré-chargé.
         for pid in session.get("participant_ids", []):
-            participant = await db.chat_participants.find_one({"id": pid}, {"_id": 0, "name": 1, "email": 1, "whatsapp": 1})
+            participant = _participants_par_id.get(pid)
             if participant:
                 participant_name = participant.get("name", "")
                 participant_email = participant.get("email", "")
@@ -16246,18 +16286,11 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
         if not participant_name and session.get("title"):
             participant_name = session.get("title")
 
-        # Récupérer le dernier message
-        last_message = await db.chat_messages.find_one(
-            {"session_id": session.get("id"), "is_deleted": {"$ne": True}},
-            {"_id": 0, "content": 1},
-            sort=[("created_at", -1)]
-        )
-
-        # Compter les messages
-        message_count = await db.chat_messages.count_documents({
-            "session_id": session.get("id"),
-            "is_deleted": {"$ne": True}
-        })
+        # V347 : dernier message + compteur, lus dans le lot pré-calculé (avant :
+        # deux requêtes PAR conversation, ce qui interdisait de relever le plafond).
+        _st = _stats_messages.get(session.get("id"))
+        last_message = {"content": _st.get("last_content") or ""} if _st else None
+        message_count = _st.get("count", 0) if _st else 0
 
         # V198: Catégorie de la session pour les 3 sections du dashboard coach
         #   - "smart_link" si la session vient d'un Lien Intelligent
