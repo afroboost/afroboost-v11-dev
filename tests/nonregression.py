@@ -747,6 +747,35 @@ def t82_v344_privileges_refuses_a_l_usurpateur():
         record(82, "V344 : privilèges refusés à l'usurpateur", False, str(e))
 
 
+def t83_v345_sessions_refus_explicite_pas_liste_vide():
+    """V345 : le ChatWidget distingue désormais « refusé » de « aucune conversation ».
+    Cela n'est vrai que si le serveur REFUSE (401/403) au lieu de renvoyer 200 + liste
+    vide. Ce test verrouille cet invariant : si /chat/sessions repassait un jour à
+    « 200 [] » pour un appelant non autorisé, le widget réafficherait « Aucune
+    conversation » et la session zombie silencieuse reviendrait — sans que rien ne le
+    signale. On vérifie les trois profils non autorisés."""
+    try:
+        cas = {
+            "anonyme": {},
+            "X-User-Email usurpé": {"X-User-Email": ADMIN},
+            # Jeton de forme valide mais signé avec un mauvais secret.
+            "jeton invalide": {"Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9."
+                                                "eyJlbWFpbCI6ImFAYi5jIn0.mauvaise_signature"},
+        }
+        details = []
+        ok = True
+        for nom, hdr in cas.items():
+            r = requests.get(_url("/api/chat/sessions"), headers=hdr, timeout=TIMEOUT)
+            refuse = r.status_code in (401, 403)
+            details.append(f"{nom}={r.status_code}")
+            if not refuse:
+                ok = False
+        record(83, "V345 : /chat/sessions REFUSE (401/403) au lieu de renvoyer une liste vide",
+               ok, " | ".join(details))
+    except Exception as e:
+        record(83, "V345 : /chat/sessions refus explicite", False, str(e))
+
+
 def _v319_flag():
     """État EN DIRECT du drapeau REQUIRE_COACH_JWT (None si illisible)."""
     try:
@@ -1284,6 +1313,7 @@ def main():
                    t77_boost_checkout_exige_auteur, t78_boost_pas_de_donnees_commerciales_publiques,
                    t79_v343_no_expiry_ignore_pour_non_admin, t80_v343_gratuite_refusee_sans_identite,
                    t81_v344_drapeau_expose_et_admin_seul, t82_v344_privileges_refuses_a_l_usurpateur,
+                   t83_v345_sessions_refus_explicite_pas_liste_vide,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

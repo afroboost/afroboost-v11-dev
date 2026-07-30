@@ -31,6 +31,10 @@ import {
   playSoundIfAllowed,
   SOUND_TYPES 
 } from '../services/SoundManager';
+// V345 : lecture de l'expiration du jeton (aucune vérification de signature —
+// c'est le serveur qui décide ; ici on évite seulement d'afficher une interface
+// coach qui ne fonctionnera pas).
+import { jetonExpire } from '../utils/jwt';
 import AfricanEmojiPicker from './chat/AfricanEmojiPicker';
 import SubscriberForm from './chat/SubscriberForm';
 import OnboardingTunnel from './chat/OnboardingTunnel';
@@ -91,7 +95,14 @@ try { V319_REQUIRE_COACH_JWT = localStorage.getItem('afroboost_require_coach_jwt
 function v319HasCoachJwt() {
   try {
     var t = localStorage.getItem('afroboost_jwt');
-    return !!(t && String(t).length > 10);
+    if (!(t && String(t).length > 10)) return false;
+    // V345 : un jeton PRÉSENT n'est pas un jeton VALIDE. Il expire au bout de 7 jours
+    // (JWT_EXPIRATION_DAYS). Sans ce contrôle, l'interface coach s'affichait avec un
+    // jeton périmé pendant que le serveur répondait 403 à chaque appel — la « session
+    // zombie » qui vidait les listes Abonnés / Visiteurs / Liens intelligents sans
+    // afficher la moindre explication. `jetonExpire` ne dit vrai que s'il a POSITIVEMENT
+    // lu une expiration passée : un jeton illisible reste accepté, le serveur tranche.
+    return !jetonExpire(t);
   } catch (e) { return false; }
 }
 
@@ -1957,6 +1968,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCoachMode]);
   const [coachSessions, setCoachSessions] = useState([]); // Liste des sessions pour le coach
+  // V345 : motif d'échec du chargement des conversations. '' = aucun échec.
+  // 'expiree' = 401/403 (session périmée ou non signée) ; 'reseau' = tout le reste.
+  // Sans cet état, un refus serveur était indiscernable d'une liste réellement vide.
+  const [coachSessionsErreur, setCoachSessionsErreur] = useState('');
   const [selectedCoachSession, setSelectedCoachSession] = useState(null); // Session sélectionnée par le coach
   // v162: Mini-dashboard tabs
   var _ctab = useState('conversations'); var coachDashTab = _ctab[0]; var setCoachDashTab = _ctab[1];
@@ -4923,8 +4938,15 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       // Filtrer les sessions non supprimées avec des messages récents
       const activeSessions = res.data.filter(s => !s.is_deleted);
       setCoachSessions(activeSessions);
+      setCoachSessionsErreur(''); // V345 : succès -> on efface un éventuel échec précédent
     } catch (err) {
-      console.error('Error loading coach sessions:', err);
+      // V345 — ÉCHEC HONNÊTE. Ce `catch` était MUET : un refus d'accès (403) laissait
+      // les trois listes (Abonnés / Visiteurs / Liens intelligents) vides, sans un mot,
+      // impossible à distinguer d'un compte réellement sans conversation. On qualifie
+      // désormais l'échec pour que l'interface puisse le dire et proposer la reconnexion.
+      var statut = (err && err.response && err.response.status) || 0;
+      setCoachSessionsErreur(statut === 401 || statut === 403 ? 'expiree' : 'reseau');
+      console.error('[V345] Chargement des conversations refusé (HTTP ' + statut + ')');
     }
   };
 
@@ -8907,10 +8929,51 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           </div>
 
                           <div style={{ padding: '12px' }}>
-                            <div style={{ color: '#fff', fontSize: '12px', marginBottom: '10px', opacity: 0.7 }}>
-                              {filtered.length} conversation{filtered.length !== 1 ? 's' : ''}
-                            </div>
-                            {filtered.length === 0 ? (
+                            {/* V345 : pas de « 0 conversations » quand le chargement a
+                                ÉCHOUÉ — le compte serait faux et contredirait le message. */}
+                            {!coachSessionsErreur && (
+                              <div style={{ color: '#fff', fontSize: '12px', marginBottom: '10px', opacity: 0.7 }}>
+                                {filtered.length} conversation{filtered.length !== 1 ? 's' : ''}
+                              </div>
+                            )}
+                            {/* V345 — ÉCHEC HONNÊTE. Une liste vide parce que le serveur
+                                a REFUSÉ l'accès n'est pas une liste vide : c'est une panne
+                                de session. On le dit, et on propose la reconnexion, au lieu
+                                d'afficher « Aucune conversation » qui laissait croire à une
+                                perte de données (la « session zombie » du diagnostic V345). */}
+                            {coachSessionsErreur === 'expiree' ? (
+                              <div style={{ textAlign: 'center', padding: '18px 12px' }}>
+                                <div style={{ color: '#fff', fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>
+                                  Session expirée
+                                </div>
+                                <div style={{ color: '#aaa', fontSize: '12px', marginBottom: '14px', lineHeight: 1.5 }}>
+                                  Vos conversations sont intactes : c'est votre connexion qui a expiré.
+                                  Reconnectez-vous pour les réafficher.
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={function () { setShowCoachLoginForm(true); }}
+                                  data-testid="conv-session-expiree"
+                                  style={{ padding: '9px 18px', borderRadius: '20px', border: 'none', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 700, background: 'var(--primary-color, #D91CD2)', color: '#fff' }}
+                                >
+                                  Se reconnecter
+                                </button>
+                              </div>
+                            ) : coachSessionsErreur === 'reseau' ? (
+                              <div style={{ textAlign: 'center', padding: '18px 12px' }}>
+                                <div style={{ color: '#aaa', fontSize: '12px', marginBottom: '14px', lineHeight: 1.5 }}>
+                                  Impossible de charger les conversations pour le moment.
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={function () { loadCoachSessions(); }}
+                                  data-testid="conv-reessayer"
+                                  style={{ padding: '9px 18px', borderRadius: '20px', border: '1px solid #444', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600, background: 'transparent', color: '#fff' }}
+                                >
+                                  Réessayer
+                                </button>
+                              </div>
+                            ) : filtered.length === 0 ? (
                               <div style={{ color: '#fff', opacity: 0.5, textAlign: 'center', padding: '20px', fontSize: '13px' }}>
                                 Aucune conversation
                               </div>
