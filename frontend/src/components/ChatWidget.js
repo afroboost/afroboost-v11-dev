@@ -2047,6 +2047,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   var _v297Lang = useState(function () { try { return localStorage.getItem('afroboost_translate_lang') || ''; } catch (e) { return ''; } });
   var v297PreferredLang = _v297Lang[0]; var setV297PreferredLangState = _v297Lang[1];
   var _v297LangMenu = useState(false); var v297LangMenuOpen = _v297LangMenu[0]; var setV297LangMenuOpen = _v297LangMenu[1];
+  // V350 : géométrie du bouton globe au moment de l'ouverture. La roue étant rendue
+  // dans un portail sur <body> (pour échapper au `overflow: hidden` du panneau coach
+  // qui la découpait), elle n'a plus de parent positionné : c'est cette mesure qui
+  // la place en face de son bouton. `null` = mesure impossible -> repli en bas à droite.
+  var _v350Rect = useState(null); var v350RoueRect = _v350Rect[0]; var setV350RoueRect = _v350Rect[1];
   // V298 : traduction du texte SAISI avant envoi (état de chargement + message d'erreur).
   var _v298Translating = useState(false); var v298Translating = _v298Translating[0]; var setV298Translating = _v298Translating[1];
   var _v298TransErr = useState(''); var v298TransErr = _v298TransErr[0]; var setV298TransErr = _v298TransErr[1];
@@ -6098,15 +6103,33 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   // V298 : bouton GLOBE + ROUE de langues (drapeau + nom). Rendu unique -> IDENTIQUE
   // dans les deux espaces (abonné/coach). Couleurs du THÈME. La roue défile
   // (tactile + souris) avec scroll-snap façon picker iOS.
+  // V350 — POURQUOI UN PORTAIL. Le rendu est bien UNIQUE (même code pour le coach
+  // et pour l'abonné), mais la roue s'ouvre vers le HAUT en `position: absolute`
+  // (bottom: 120%), donc HORS de la boîte de son parent. Côté coach, un ancêtre
+  // porte `overflow: hidden` (le conteneur en colonne du panneau de conversation) :
+  // la roue y était purement et simplement DÉCOUPÉE — d'où « la fenêtre ne
+  // s'affiche pas » et « les drapeaux n'apparaissent pas ». Côté abonné, aucun
+  // ancêtre ne coupe, ce qui explique que le même code marchait d'un côté seulement.
+  // On sort donc la roue du flux : un portail sur <body> est insensible à tout
+  // `overflow` d'ancêtre, et la position vient de la géométrie réelle du bouton.
   const renderTranslateGlobe = (size) => {
     const d = size || 40;
     const icon = Math.round(d * 0.5);
     const ITEM_H = 40;
+    const LARGEUR = 190;
+    // Coordonnées à l'écran du bouton, mesurées à l'ouverture.
+    const ouvrirRoue = (e) => {
+      try {
+        const r = e.currentTarget.getBoundingClientRect();
+        setV350RoueRect({ top: r.top, bottom: r.bottom, left: r.left, right: r.right });
+      } catch (err) { setV350RoueRect(null); }
+      setV297LangMenuOpen(o => !o);
+    };
     return (
       <div style={{ position: 'relative', flexShrink: 0 }}>
         <button
           type="button"
-          onClick={() => setV297LangMenuOpen(o => !o)}
+          onClick={ouvrirRoue}
           title="Traduire mon message"
           data-testid="translate-globe-btn"
           disabled={v298Translating}
@@ -6130,12 +6153,25 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           </div>
         )}
 
-        {v297LangMenuOpen && (
+        {v297LangMenuOpen && ReactDOM.createPortal(
           <>
             {/* Voile de fermeture au clic extérieur */}
             <div onClick={() => setV297LangMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 10000 }} />
-            {/* ROUE : liste verticale défilante, scroll-snap centré (effet picker) */}
-            <div style={{ position: 'absolute', bottom: '120%', right: 0, zIndex: 10001, background: 'rgba(0,0,0,0.95)', border: '1px solid rgba(139,92,246,0.4)', borderRadius: 10, width: 190, boxShadow: '0 8px 24px rgba(0,0,0,0.6)', overflow: 'hidden' }}>
+            {/* ROUE : liste verticale défilante, scroll-snap centré (effet picker).
+                V350 : `fixed` + coordonnées du bouton — la roue n'est plus enfant du
+                conteneur découpé, donc plus jamais rognée, dans les deux espaces.
+                Si la mesure a échoué, on retombe en bas à droite plutôt que de ne
+                rien afficher : une roue mal placée reste utilisable, une roue absente non.
+                V350 : bordure à la couleur de la charte (c'était un violet codé en dur). */}
+            <div style={{
+              position: 'fixed',
+              bottom: v350RoueRect ? `calc(100vh - ${v350RoueRect.top}px + 8px)` : 90,
+              left: v350RoueRect ? Math.max(8, Math.min(v350RoueRect.right - LARGEUR, window.innerWidth - LARGEUR - 8)) : undefined,
+              right: v350RoueRect ? undefined : 16,
+              zIndex: 10001, background: 'rgba(0,0,0,0.95)',
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
+              borderRadius: 10, width: LARGEUR, boxShadow: '0 8px 24px rgba(0,0,0,0.6)', overflow: 'hidden'
+            }}>
               <div style={{ padding: '6px 10px', fontSize: 10, color: 'rgba(255,255,255,0.6)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                 Traduire mon message en…
               </div>
@@ -6173,7 +6209,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                 })}
               </div>
             </div>
-          </>
+          </>,
+          document.body
         )}
       </div>
     );
