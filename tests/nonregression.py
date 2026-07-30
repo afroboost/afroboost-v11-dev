@@ -117,9 +117,15 @@ def _smart_entry(payload=None, **kwargs):
 def cleanup_sessions():
     """V347 : met à la corbeille les conversations créées par CE run.
 
-    Utilise DELETE /chat/sessions/{id} avec l'en-tête admin — la seule voie dont
-    dispose la suite (cette route accepte encore `X-User-Email`). C'est un
-    soft-delete : rien n'est effacé définitivement, la conversation part simplement
+    V348 : la suppression passe par un JETON SIGNÉ (`ADMIN_JWT`) dès qu'il est
+    fourni. C'est indispensable : `DELETE /chat/sessions/{id}` est une route
+    DESTRUCTIVE, et le drapeau `SUPERADMIN_JWT_STRICT` lui retire le repli
+    `X-User-Email`. Sans jeton, le nettoyage cesserait de fonctionner le jour de la
+    bascule — et les conversations de test recommenceraient à s'accumuler en
+    silence. On garde donc le repli TANT QUE le drapeau est OFF, et on AVERTIT
+    bruyamment sinon : mieux vaut un message gênant qu'une pollution invisible.
+
+    C'est un soft-delete : rien n'est effacé définitivement, la conversation part
     dans la corbeille, comme quand le coach supprime depuis l'interface.
 
     Best-effort et SILENCIEUX en cas de succès ; ce qui résiste est AFFICHÉ, pour
@@ -127,20 +133,29 @@ def cleanup_sessions():
     """
     if not _created_session_ids:
         return
+    if ADMIN_JWT:
+        entetes = {"Authorization": "Bearer " + ADMIN_JWT}
+        voie = "jeton signé"
+    else:
+        entetes = {"X-User-Email": ADMIN}
+        voie = "repli X-User-Email"
     restants = []
     for sid in sorted(_created_session_ids):
         try:
             r = requests.delete(_url(f"/api/chat/sessions/{sid}"),
-                                headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
+                                headers=entetes, timeout=TIMEOUT)
             if r.status_code not in (200, 204, 404):
                 restants.append(f"{sid[:8]}({r.status_code})")
         except Exception as e:
             restants.append(f"{sid[:8]}({type(e).__name__})")
     if restants:
-        print(f"⚠️  {len(restants)} conversation(s) de test NON supprimée(s) : "
+        print(f"⚠️  {len(restants)} conversation(s) de test NON supprimée(s) via {voie} : "
               f"{', '.join(restants[:10])}")
+        if not ADMIN_JWT:
+            print("    → fournir ADMIN_JWT : la route de suppression exige un jeton signé "
+                  "quand SUPERADMIN_JWT_STRICT est actif (V348).")
     else:
-        print(f"🧹 {len(_created_session_ids)} conversation(s) de test nettoyée(s).")
+        print(f"🧹 {len(_created_session_ids)} conversation(s) de test nettoyée(s) ({voie}).")
 
 
 # ---------------------------------------------------------------------------
@@ -839,6 +854,43 @@ def t83_v345_sessions_refus_explicite_pas_liste_vide():
         record(83, "V345 : /chat/sessions refus explicite", False, str(e))
 
 
+def t85_v348_suppression_conversation_exige_jeton():
+    """V348 : DELETE /chat/sessions/{id} est DESTRUCTIVE — elle ne lisait que
+    `X-User-Email`, donc un `curl` suffisait à effacer les conversations du coach.
+    Elle n'était même pas couverte par REQUIRE_COACH_JWT (qui ne vise que les
+    lectures). Le verrou est derrière SUPERADMIN_JWT_STRICT.
+
+    On mesure sur une session INEXISTANTE : le contrôle d'identité passe AVANT la
+    recherche en base, donc le code renvoyé distingue sans ambiguïté « refusé »
+    (403) de « identité acceptée, mais rien à supprimer » (404). Aucune vraie
+    conversation n'est touchée — c'est ce qui rend ce test sûr en production.
+
+    Attente adaptée aux DEUX états du drapeau, comme t82 :
+      * OFF -> le repli X-User-Email vaut encore identité : 404 (trou DOCUMENTÉ) ;
+      * ON  -> 403, l'usurpation ne supprime plus rien.
+    """
+    faux_id = "v348-session-inexistante-0000"
+    flag = _v344_flag()
+    if flag is None:
+        return skip(85, "V348 : suppression de conversation", "drapeau illisible")
+    try:
+        r = requests.delete(_url(f"/api/chat/sessions/{faux_id}"),
+                            headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
+        anon = requests.delete(_url(f"/api/chat/sessions/{faux_id}"), timeout=TIMEOUT).status_code
+        if flag:
+            ok = r.status_code == 403 and anon == 403
+            record(85, "V348 drapeau ON : suppression refusée sans jeton signé (403)", ok,
+                   f"usurpé={r.status_code} anonyme={anon}")
+        else:
+            # Drapeau OFF : l'usurpateur est encore accepté comme identité (404 = il a
+            # passé le contrôle). L'anonyme, lui, doit rester refusé dans tous les cas.
+            ok = r.status_code == 404 and anon == 403
+            record(85, "V348 drapeau OFF : repli X-User-Email encore actif (trou connu, non fermé)",
+                   ok, f"usurpé={r.status_code} anonyme={anon} — basculer le drapeau pour fermer")
+    except Exception as e:
+        record(85, "V348 : suppression de conversation", False, str(e))
+
+
 def t84_v346_categories_des_conversations():
     """V346 : les onglets « Abonnés » / « Visiteurs » / « Liens intelligents » du
     ChatWidget sont alimentés par le champ `category` de GET /chat/sessions. Avant
@@ -1419,7 +1471,7 @@ def main():
                    t79_v343_no_expiry_ignore_pour_non_admin, t80_v343_gratuite_refusee_sans_identite,
                    t81_v344_drapeau_expose_et_admin_seul, t82_v344_privileges_refuses_a_l_usurpateur,
                    t83_v345_sessions_refus_explicite_pas_liste_vide,
-                   t84_v346_categories_des_conversations,
+                   t84_v346_categories_des_conversations, t85_v348_suppression_conversation_exige_jeton,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

@@ -16327,8 +16327,38 @@ async def get_chat_sessions(include_deleted: bool = False, request: Request = No
 # v162g: Supprimer (soft-delete) une session de chat
 @api_router.delete("/chat/sessions/{session_id}")
 async def delete_chat_session(session_id: str, request: Request):
-    """Soft-delete une session de chat (marque is_deleted=True)"""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    """Soft-delete une session de chat (marque is_deleted=True)
+
+    V348 — ROUTE DESTRUCTIVE, IDENTITÉ SIGNÉE. Cette route ne lisait QUE
+    `X-User-Email`, un en-tête que n'importe qui peut écrire : un `curl` suffisait
+    à effacer les conversations du coach. Elle n'était même pas couverte par
+    `REQUIRE_COACH_JWT` (V319), qui ne s'applique qu'aux routes de LECTURE.
+    Supprimer est plus grave que lire : le verrou lui manquait d'autant plus.
+
+    Comme pour V344, la fermeture est derrière le drapeau `SUPERADMIN_JWT_STRICT`
+    et le drapeau reste OFF tant que l'accès du propriétaire n'a pas été prouvé —
+    on ne verrouille pas quelqu'un dehors de sa propre corbeille (leçon V310c) :
+      - drapeau OFF (défaut) : JWT signé s'il y en a un, sinon repli `X-User-Email`
+        — comportement historique, à ceci près que le jeton est désormais
+        PRIORITAIRE (une session signée n'a plus besoin de l'en-tête) ;
+      - drapeau ON : SEUL un jeton signé vaut identité ; sans lui, 403 et refus tracé.
+    """
+    from api.routes.shared import v344_jwt_strict_actif
+    _v348_strict = await v344_jwt_strict_actif(db)
+    _v348_signe = _v311_coach_email_from_jwt(request)
+    if _v348_strict:
+        caller_email = _v348_signe
+    else:
+        caller_email = _v348_signe or request.headers.get("X-User-Email", "").lower().strip()
+
+    if _v348_strict and not caller_email:
+        _revendique = (request.headers.get("X-User-Email", "") or "").lower().strip()
+        logger.warning(f"[V348] REFUS suppression de conversation — « {_revendique or 'anonyme'} » "
+                       f"sans jeton signé (session {session_id})")
+        raise HTTPException(
+            status_code=403,
+            detail="Session non signée : reconnectez-vous pour supprimer une conversation.",
+        )
 
     # Vérifier que la session existe
     session = await db.chat_sessions.find_one({"id": session_id})
