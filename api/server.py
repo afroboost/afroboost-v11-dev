@@ -22434,7 +22434,16 @@ async def _v309_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=(self)"
+    # V354 — LE MICRO ETAIT COUPE PAR CET EN-TETE. `microphone=()` est une liste
+    # d'autorisation VIDE : la fonctionnalité est refusée à TOUT LE MONDE, y compris
+    # au site lui-même. Le navigateur rejetait donc `getUserMedia({audio:true})`
+    # SANS jamais afficher la demande d'autorisation — d'où « aucun popup, et un
+    # échec immédiat » sur les notes vocales V352.
+    # C'était juste quand cet en-tête a été posé (V309) : aucune fonctionnalité
+    # n'utilisait le micro. V352 en a introduit une sans mettre la politique à jour.
+    # `microphone=(self)` autorise UNIQUEMENT afroboost.com — un site tiers embarqué
+    # reste privé de micro, exactement comme `camera=(self)` juste à côté.
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(self), camera=(self)"
     return response
 
 # Dynamic manifest.json endpoint for PWA

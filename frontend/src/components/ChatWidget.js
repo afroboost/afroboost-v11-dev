@@ -5836,14 +5836,58 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     return '';
   };
 
+  // V354 : navigateur INTÉGRÉ à une autre application (Instagram, Facebook,
+  // TikTok, LinkedIn…). Ces webviews n'ont pas accès au micro et ne montrent
+  // aucune demande d'autorisation : il faut dire d'ouvrir dans un vrai navigateur,
+  // pas laisser croire à un refus de l'utilisateur.
+  const v354EstWebviewIntegre = () => {
+    try {
+      const ua = navigator.userAgent || '';
+      return /(FBAN|FBAV|Instagram|Line\/|TikTok|LinkedInApp|Twitter|Snapchat)/i.test(ua);
+    } catch (e) { return false; }
+  };
+
   const v352DemarrerVocal = async () => {
     setV350PieceErr('');
-    if (!navigator.mediaDevices || !window.MediaRecorder) {
-      setV350PieceErr("Votre navigateur ne permet pas l'enregistrement vocal.");
+    // V354 : contexte non sécurisé — `mediaDevices` n'existe qu'en HTTPS (ou
+    // localhost). Utile à distinguer d'un refus : le remède n'est pas le même.
+    if (!window.isSecureContext) {
+      setV350PieceErr("Enregistrement possible uniquement en HTTPS.");
       return;
     }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+      setV350PieceErr(v354EstWebviewIntegre()
+        ? "Ouvrez afroboost dans Safari ou Chrome pour enregistrer."
+        : "Votre navigateur ne permet pas l'enregistrement vocal.");
+      return;
+    }
+    // V354 — APPEL DIRECT DANS LE GESTE UTILISATEUR. `getUserMedia` est la PREMIÈRE
+    // instruction asynchrone : tout ce qui précède est synchrone, donc l'appel reste
+    // rattaché au tap. Sur iOS, un appel sorti du geste utilisateur n'affiche aucune
+    // demande d'autorisation et échoue en silence — c'est à ne pas casser.
+    let flux;
     try {
-      const flux = await navigator.mediaDevices.getUserMedia({ audio: true });
+      flux = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      // V354 : on distingue enfin les cas. Avant, TOUTE erreur — y compris un
+      // MediaRecorder mal construit — s'affichait « Micro refusé ou indisponible »,
+      // ce qui accusait l'utilisateur d'un refus qu'il n'avait jamais donné.
+      const nom = (e && e.name) || '';
+      if (nom === 'NotAllowedError' || nom === 'SecurityError') {
+        setV350PieceErr(v354EstWebviewIntegre()
+          ? "Ouvrez afroboost dans Safari ou Chrome pour enregistrer."
+          : "Micro refusé : autorisez le micro dans les réglages du navigateur.");
+      } else if (nom === 'NotFoundError' || nom === 'OverconstrainedError') {
+        setV350PieceErr("Aucun micro détecté sur cet appareil.");
+      } else if (nom === 'NotReadableError') {
+        setV350PieceErr("Micro déjà utilisé par une autre application.");
+      } else {
+        setV350PieceErr("Ouvrez afroboost dans Safari ou Chrome pour enregistrer.");
+      }
+      return;
+    }
+
+    try {
       const format = v352ChoisirFormat();
       const rec = new window.MediaRecorder(flux, format ? { mimeType: format } : undefined);
       const morceaux = [];
@@ -5868,7 +5912,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         });
       }, 1000);
     } catch (e) {
-      setV350PieceErr("Micro refusé ou indisponible.");
+      // V354 : à ce stade l'autorisation est ACQUISE — l'échec vient de
+      // MediaRecorder (format refusé). On libère le micro et on le dit tel quel,
+      // au lieu d'accuser un refus qui n'a pas eu lieu.
+      try { if (flux) flux.getTracks().forEach(function (t) { t.stop(); }); } catch (e2) { /* ignore */ }
+      setV350PieceErr("Enregistrement impossible sur ce navigateur.");
     }
   };
 

@@ -854,6 +854,33 @@ def t83_v345_sessions_refus_explicite_pas_liste_vide():
         record(83, "V345 : /chat/sessions refus explicite", False, str(e))
 
 
+def t88_v354_permissions_policy_micro():
+    """V354 : l'en-tête `Permissions-Policy` portait `microphone=()` — une liste
+    d'autorisation VIDE, qui refuse le micro à TOUT LE MONDE, y compris au site
+    lui-même. Le navigateur rejetait `getUserMedia({audio:true})` SANS jamais
+    afficher la demande d'autorisation : les notes vocales V352 étaient donc
+    inutilisables, avec un message trompeur accusant un refus de l'utilisateur.
+
+    Ce test verrouille les deux moitiés de la correction, car elles sont
+    indissociables : le micro doit être autorisé pour `self`, et il ne doit PAS
+    être ouvert à tous (`microphone=*` serait une régression de sécurité).
+    Les autres en-têtes de sécurité sont vérifiés au passage : la correction ne
+    doit pas les avoir emportés.
+    """
+    try:
+        r = requests.get(_url("/"), timeout=TIMEOUT)
+        pp = (r.headers.get("Permissions-Policy") or "").replace(" ", "")
+        micro_ok = "microphone=(self)" in pp
+        pas_ouvert = "microphone=*" not in pp
+        autres = all(h in r.headers for h in
+                     ("X-Content-Type-Options", "X-Frame-Options", "Strict-Transport-Security"))
+        ok = micro_ok and pas_ouvert and autres
+        record(88, "V354 : micro autorisé pour le site seul (microphone=(self)), en-têtes intacts",
+               ok, f"Permissions-Policy={pp!r} autres_en-têtes={autres}")
+    except Exception as e:
+        record(88, "V354 : Permissions-Policy du micro", False, str(e))
+
+
 def t87_v350_piece_jointe_du_chat():
     """V350 : l'envoi d'image/fichier dans le chat n'existait pas — le modèle de
     message n'avait aucun champ `media_url` et, le modèle étant en `extra=ignore`,
@@ -1579,7 +1606,7 @@ def main():
                    t81_v344_drapeau_expose_et_admin_seul, t82_v344_privileges_refuses_a_l_usurpateur,
                    t83_v345_sessions_refus_explicite_pas_liste_vide,
                    t84_v346_categories_des_conversations, t85_v348_suppression_conversation_exige_jeton,
-                   t86_v349_contenu_des_conversations_ferme, t87_v350_piece_jointe_du_chat,
+                   t86_v349_contenu_des_conversations_ferme, t87_v350_piece_jointe_du_chat, t88_v354_permissions_policy_micro,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
