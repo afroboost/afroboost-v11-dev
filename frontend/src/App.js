@@ -4,6 +4,9 @@ import axios from "axios";
 // V277 : langues supplementaires (africaines + creole) + contexte de langue.
 import { translations as _extraLangs } from "./utils/i18n";
 import { LanguageContext } from "./contexts/LanguageContext";
+// V345 : lecture de l'expiration du jeton (sans vérification de signature — le
+// serveur reste seul juge ; ici on distingue « refusé » de « session morte »).
+import { jetonExpire } from "./utils/jwt";
 
 // V133: Intercepteur global — JWT prioritaire + fallback X-User-Email
 axios.interceptors.request.use((config) => {
@@ -65,12 +68,35 @@ axios.interceptors.request.use((config) => {
 // On ne reagit QU'AUX 401 marques `X-Auth-Reason` par require_auth : un 401
 // venant d'un mauvais code staff ou d'un code abonne inconnu ne doit surtout
 // pas deconnecter le coach.
+// V345 : un 403 ne déclenchait RIEN (l'intercepteur ne regardait que les 401 marqués).
+// Or c'est précisément un 403 que renvoie /chat/sessions quand le jeton a expiré —
+// d'où la « session zombie » : interface coach affichée, listes vides, aucun message.
+// On traite désormais ce cas, mais SANS déconnecter sur n'importe quel 403 : beaucoup
+// de 403 sont légitimes (action réservée, ressource d'un autre coach) et déconnecter
+// l'utilisateur à chaque fois serait pire que le mal. On n'agit donc QUE si le jeton
+// stocké est POSITIVEMENT expiré — un fait vérifiable localement, sans ambiguïté.
 axios.interceptors.response.use(
   (response) => response,
   (error) => {
     try {
       const res = error && error.response;
       const reason = res && res.headers && (res.headers['x-auth-reason'] || res.headers['X-Auth-Reason']);
+
+      // V345 : refus (401/403) ET jeton expiré -> la session est morte, on le dit.
+      if (res && (res.status === 401 || res.status === 403) && !reason) {
+        const jeton = localStorage.getItem('afroboost_jwt');
+        if (jeton && jetonExpire(jeton)) {
+          // Une seule alerte par session de navigation : ces refus arrivent souvent
+          // en rafale (plusieurs appels simultanés au chargement du dashboard).
+          if (!window.__v345_session_expiree_signalee) {
+            window.__v345_session_expiree_signalee = true;
+            localStorage.removeItem('afroboost_jwt');
+            alert('Session expirée — reconnectez-vous pour retrouver vos données.');
+          }
+          return Promise.reject(error);
+        }
+      }
+
       if (res && res.status === 401 && reason) {
         const hadSession = !!localStorage.getItem('afroboost_coach_user');
         localStorage.removeItem('afroboost_jwt');
