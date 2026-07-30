@@ -860,33 +860,42 @@ def t85_v348_suppression_conversation_exige_jeton():
     Elle n'était même pas couverte par REQUIRE_COACH_JWT (qui ne vise que les
     lectures). Le verrou est derrière SUPERADMIN_JWT_STRICT.
 
-    On mesure sur une session INEXISTANTE : le contrôle d'identité passe AVANT la
-    recherche en base, donc le code renvoyé distingue sans ambiguïté « refusé »
-    (403) de « identité acceptée, mais rien à supprimer » (404). Aucune vraie
-    conversation n'est touchée — c'est ce qui rend ce test sûr en production.
+    On mesure sur une conversation que le test CRÉE lui-même, jamais sur une vraie.
 
-    Attente adaptée aux DEUX états du drapeau, comme t82 :
-      * OFF -> le repli X-User-Email vaut encore identité : 404 (trou DOCUMENTÉ) ;
+    Un identifiant INEXISTANT ne conviendrait pas : drapeau OFF, il n'y a pas de
+    garde d'identité en tête de route, donc le 404 « session inconnue » tombe AVANT
+    le contrôle de permission — anonyme et usurpateur reçoivent le même 404, et le
+    test ne prouve rien. Sur une conversation qui EXISTE, les deux se distinguent.
+
+    Ordre volontaire : l'anonyme d'abord (il ne doit rien pouvoir supprimer, dans
+    les deux états du drapeau), l'usurpateur ensuite (c'est lui qui change).
+      * OFF -> `X-User-Email` vaut encore identité admin : 200 (trou DOCUMENTÉ) ;
       * ON  -> 403, l'usurpation ne supprime plus rien.
     """
-    faux_id = "v348-session-inexistante-0000"
     flag = _v344_flag()
     if flag is None:
         return skip(85, "V348 : suppression de conversation", "drapeau illisible")
     try:
-        r = requests.delete(_url(f"/api/chat/sessions/{faux_id}"),
-                            headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
-        anon = requests.delete(_url(f"/api/chat/sessions/{faux_id}"), timeout=TIMEOUT).status_code
+        import uuid as _uuid
+        r0 = _smart_entry({"name": "V348 sonde",
+                           "email": f"v348-{_uuid.uuid4().hex[:8]}@example.com"})
+        sid = ((r0.json() or {}).get("session") or {}).get("id") if r0.status_code == 200 else ""
+        if not sid:
+            return skip(85, "V348 : suppression de conversation",
+                        "conversation de sonde non créée (entrée stricte ?)")
+
+        anon = requests.delete(_url(f"/api/chat/sessions/{sid}"), timeout=TIMEOUT).status_code
+        usurp = requests.delete(_url(f"/api/chat/sessions/{sid}"),
+                                headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code
         if flag:
-            ok = r.status_code == 403 and anon == 403
+            ok = anon == 403 and usurp == 403
             record(85, "V348 drapeau ON : suppression refusée sans jeton signé (403)", ok,
-                   f"usurpé={r.status_code} anonyme={anon}")
+                   f"anonyme={anon} usurpé={usurp}")
         else:
-            # Drapeau OFF : l'usurpateur est encore accepté comme identité (404 = il a
-            # passé le contrôle). L'anonyme, lui, doit rester refusé dans tous les cas.
-            ok = r.status_code == 404 and anon == 403
-            record(85, "V348 drapeau OFF : repli X-User-Email encore actif (trou connu, non fermé)",
-                   ok, f"usurpé={r.status_code} anonyme={anon} — basculer le drapeau pour fermer")
+            ok = anon == 403 and usurp == 200
+            record(85, "V348 drapeau OFF : anonyme refusé, repli X-User-Email encore actif "
+                       "(trou connu, non fermé)", ok,
+                   f"anonyme={anon} usurpé={usurp} — basculer le drapeau pour fermer")
     except Exception as e:
         record(85, "V348 : suppression de conversation", False, str(e))
 
