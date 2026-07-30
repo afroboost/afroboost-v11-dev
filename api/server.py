@@ -17351,6 +17351,69 @@ async def create_chat_message(message: EnhancedChatMessageCreate):
     await db.chat_messages.insert_one(message_obj.model_dump())
     return message_obj.model_dump()
 
+@api_router.delete("/chat/messages/{message_id}/media")
+async def v356_supprimer_media_maintenant(message_id: str, request: Request,
+                                          participant_id: str = ""):
+    """
+    V356 — suppression IMMÉDIATE d'un média, sans attendre l'échéance d'1 h.
+
+    MÊME MÉCANISME QUE LA PURGE AUTOMATIQUE, littéralement : on avance l'échéance
+    à maintenant, puis on rejoue `_v352_purger_medias_expires`. Aucune seconde
+    voie de suppression n'est écrite — donc aucun risque qu'une des deux oublie
+    Cloudinary ou la base. Ce qui vaut pour la purge d'1 h vaut ici mot pour mot :
+    fichier distant d'abord, document ensuite ; réessai au passage suivant si la
+    suppression distante échoue.
+
+    QUI PEUT SUPPRIMER — deux profils, et aucun autre :
+      - le COACH PROPRIÉTAIRE de la conversation (ou le super-admin), sur identité
+        SIGNÉE, comme V348 ;
+      - l'AUTEUR du message. Un visiteur n'a pas de jeton signé : c'est le même
+        niveau de preuve que pour LIRE la conversation (V349) — son
+        `participant_id` doit être celui de l'expéditeur du message ET figurer
+        dans la conversation. Exiger un jeton signé lui interdirait de supprimer
+        son propre vocal, ce que la demande réclame explicitement.
+    Un tiers, même participant de la conversation, ne peut rien supprimer : il
+    n'est ni l'auteur ni le coach.
+
+    IDEMPOTENT : un média déjà parti renvoie « already » sans rien retenter.
+    """
+    msg = await db.chat_messages.find_one({"id": message_id}, {"_id": 0})
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message introuvable")
+    if not msg.get("media_url"):
+        return {"status": "already", "message_id": message_id}
+
+    session = await db.chat_sessions.find_one({"id": msg.get("session_id", "")}, {"_id": 0}) or {}
+
+    autorise = ""
+    email = _v311_coach_email_from_jwt(request)
+    if email and (is_super_admin(email)
+                  or (session.get("coach_id") or "").strip().lower() == email):
+        autorise = "coach propriétaire"
+    else:
+        pid = (participant_id or "").strip()
+        if (pid and pid == (msg.get("sender_id") or "")
+                and pid in (session.get("participant_ids") or [])):
+            autorise = "auteur"
+
+    if not autorise:
+        logger.warning(f"[V356] REFUS suppression du média {message_id} — "
+                       f"appelant ni auteur ni coach propriétaire")
+        raise HTTPException(status_code=403,
+                            detail="Seul l'auteur ou le coach peut supprimer ce média")
+
+    await db.chat_messages.update_one(
+        {"id": message_id},
+        {"$set": {"media_expires_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    await _v352_purger_medias_expires(msg.get("session_id", ""))
+
+    apres = await db.chat_messages.find_one({"id": message_id}, {"_id": 0, "media_url": 1}) or {}
+    logger.info(f"[V356] Média {message_id} supprimé immédiatement ({autorise})")
+    return {"status": "ok" if not apres.get("media_url") else "pending",
+            "message_id": message_id, "par": autorise}
+
+
 @api_router.put("/chat/messages/{message_id}/delete")
 async def soft_delete_message(message_id: str):
     """Suppression logique d'un message"""

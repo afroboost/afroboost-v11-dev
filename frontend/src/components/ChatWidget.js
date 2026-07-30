@@ -35,6 +35,7 @@ import {
 // c'est le serveur qui décide ; ici on évite seulement d'afficher une interface
 // coach qui ne fonctionnera pas).
 import { jetonExpire } from '../utils/jwt';
+import AudioMessage from './chat/AudioMessage'; // V356 : lecteur de note vocale
 import AfricanEmojiPicker from './chat/AfricanEmojiPicker';
 import SubscriberForm from './chat/SubscriberForm';
 import OnboardingTunnel from './chat/OnboardingTunnel';
@@ -1214,6 +1215,45 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
     return min >= 60 ? 'Disparaît dans 1 h' : 'Disparaît dans ' + min + ' min';
   })();
 
+  // V356 — SUPPRESSION IMMEDIATE. Le serveur rejoue EXACTEMENT la purge d'1 h
+  // (base + fichier Cloudinary) : aucune seconde voie de suppression n'existe, donc
+  // aucune des deux ne peut oublier quelque chose. Il refuse (403) si l'appelant
+  // n'est ni l'auteur ni le coach proprietaire — le masquage ci-dessous n'est qu'un
+  // confort d'affichage, la decision est SERVEUR.
+  const v356PeutSupprimer = hasMedia && (v319HasCoachJwt()
+    || (msg?.senderId && currentUserId && msg.senderId === currentUserId));
+
+  const v356Supprimer = async () => {
+    if (!msg?.id) return;
+    try {
+      await axios.delete(`${API}/chat/messages/${encodeURIComponent(msg.id)}/media`,
+        { params: { participant_id: currentUserId || '' } });
+      // Le fil se recharge de lui-meme au prochain sondage (3 s cote abonne) ;
+      // cet evenement le fait tout de suite, pour que l'auteur voie l'effet de son
+      // geste sans attendre.
+      try { window.dispatchEvent(new CustomEvent('afroboost:media-supprime')); } catch (e) { /* ignore */ }
+    } catch (e) { /* le serveur a refuse : rien ne bouge, c'est le comportement voulu */ }
+  };
+
+  const v356BoutonSupprimer = v356PeutSupprimer ? (
+    <button
+      type="button"
+      onClick={v356Supprimer}
+      title="Supprimer ce média maintenant"
+      data-testid="media-supprimer"
+      style={{
+        background: 'none', border: 'none', padding: '2px', cursor: 'pointer',
+        color: 'rgba(255,255,255,0.45)', lineHeight: 0, flexShrink: 0
+      }}
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="3 6 5 6 21 6" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      </svg>
+    </button>
+  ) : null;
+
   const v352Mention = (v352Restant || msg?.media_expired) ? (
     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px',
                   color: 'rgba(255,255,255,0.45)', marginLeft: '4px' }}
@@ -1223,6 +1263,7 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
         <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
       </svg>
       {msg?.media_expired ? 'Média expiré' : v352Restant}
+      {v356BoutonSupprimer}
     </div>
   ) : null;
 
@@ -1294,9 +1335,11 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
             {displayName}
           </div>
         )}
-        <audio src={msg.media_url} controls preload="metadata"
-               data-testid="message-note-vocale"
-               style={{ width: '260px', maxWidth: '100%' }} />
+        {/* V356 : lecteur dedie (bouton rond, onde, mm:ss, vitesse), aux couleurs
+            du coach via var(--primary-color) — voir AudioMessage.js. */}
+        <div data-testid="message-note-vocale">
+          <AudioMessage src={msg.media_url} compact />
+        </div>
         {messageText ? (
           <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.85)', marginLeft: '4px' }}>{messageText}</div>
         ) : null}
