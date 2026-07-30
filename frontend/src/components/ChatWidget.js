@@ -4185,17 +4185,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
             try {
               const historyRes = await axios.get(`${API}/chat/sessions/${response.data.conversation_id}/messages`, { params: { participant_id: participantId || '' } });
               if (historyRes.data && historyRes.data.length > 0) {
-                const restoredMessages = historyRes.data.map(msg => ({
-                  id: msg.id,
-                  type: msg.sender_type === 'user' ? 'user' : msg.sender_type === 'coach' ? 'coach' : 'ai',
-                  // v10.4: Fallback robuste pour texte (content, text, body)
-                  text: msg.content || msg.text || msg.body || '',
-                  sender: msg.sender_name,
-                  media_url: msg.media_url || null,
-                  cta_type: msg.cta_type || null,
-                  cta_text: msg.cta_text || null,
-                  cta_link: msg.cta_link || null
-                }));
+                // V358 : normalisation UNIQUE — cette recopie champ par champ perdait
+                // media_type, media_expires_at, media_expired et senderId. Sans
+                // senderId, l'auteur perdait son bouton de suppression apres un
+                // simple rechargement.
+                const restoredMessages = historyRes.data.map(v357Normaliser);
                 setMessages(restoredMessages);
               }
             } catch (histErr) {
@@ -4248,17 +4242,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         if (savedSession?.id) {
           const response = await axios.get(`${API}/chat/sessions/${savedSession.id}/messages`, { params: { participant_id: participantId || '' } });
           if (response.data && response.data.length > 0) {
-            const restoredMessages = response.data.map(msg => ({
-              id: msg.id,
-              type: msg.sender_type === 'user' ? 'user' : msg.sender_type === 'coach' ? 'coach' : 'ai',
-              // v10.4: Fallback robuste pour texte
-              text: msg.content || msg.text || msg.body || '',
-              sender: msg.sender_name,
-              media_url: msg.media_url || null,
-              cta_type: msg.cta_type || null,
-              cta_text: msg.cta_text || null,
-              cta_link: msg.cta_link || null
-            }));
+            // V358 : normalisation UNIQUE — cette recopie champ par champ perdait
+                // media_type, media_expires_at, media_expired et senderId. Sans
+                // senderId, l'auteur perdait son bouton de suppression apres un
+                // simple rechargement.
+                const restoredMessages = response.data.map(v357Normaliser);
             // V181: Préserver les messages locaux (confirmation réservation, etc.) qui ne sont pas dans le backend
             setMessages(prev => {
               const localOnly = (prev || []).filter(m => m && (m.isLocalOnly === true || m.isReservationSummary === true));
@@ -4322,17 +4310,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         try {
           const response = await axios.get(`${API}/chat/sessions/${savedSession.id}/messages`, { params: { participant_id: participantId || '' } });
           if (response.data && response.data.length > 0) {
-            const restoredMessages = response.data.map(msg => ({
-              id: msg.id,
-              type: msg.sender_type === 'user' ? 'user' : msg.sender_type === 'coach' ? 'coach' : 'ai',
-              // v10.4: Fallback robuste pour texte
-              text: msg.content || msg.text || msg.body || '',
-              sender: msg.sender_name,
-              media_url: msg.media_url || null,
-              cta_type: msg.cta_type || null,
-              cta_text: msg.cta_text || null,
-              cta_link: msg.cta_link || null
-            }));
+            // V358 : normalisation UNIQUE — cette recopie champ par champ perdait
+                // media_type, media_expires_at, media_expired et senderId. Sans
+                // senderId, l'auteur perdait son bouton de suppression apres un
+                // simple rechargement.
+                const restoredMessages = response.data.map(v357Normaliser);
             setMessages(restoredMessages);
             saveCachedMessages(restoredMessages);
             console.log('[v9.4.0] Historique rechargé à l\'ouverture:', restoredMessages.length, 'messages');
@@ -4664,8 +4646,19 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
             // V146: ANTI-DOUBLONS AMÉLIORÉ — vérifie ID + contenu pour détecter les messages optimistes
             const existingIds = new Set(prev.flatMap(m => [m.id, m._id].filter(Boolean)));
             // V146: Collecter le texte des messages optimistes (temp_user_*) pour éviter les doublons
+            // V358 — LA CAUSE DE LA DISPARITION DES AUDIOS. Cet anti-doublon compare
+            // les messages par leur TEXTE. Un message qui n'est QU'un media (audio,
+            // image ou PDF sans legende, possible depuis V355) a un texte VIDE : la
+            // chaine vide entrait dans cet ensemble, et TOUT message sans texte
+            // revenant du serveur etait ensuite jete comme « doublon ». Au
+            // rechargement, la note vocale disparaissait donc definitivement de
+            // l'affichage — alors qu'elle etait bien en base et bien renvoyee.
+            // On n'indexe plus que les textes NON VIDES : deux messages vides ne
+            // sont pas des doublons l'un de l'autre.
             const pendingTexts = new Set(
-              prev.filter(m => m.id && m.id.startsWith('temp_user_')).map(m => (m.text || '').trim().toLowerCase())
+              prev.filter(m => m.id && m.id.startsWith('temp_user_'))
+                  .map(m => (m.text || '').trim().toLowerCase())
+                  .filter(t => t.length > 0)
             );
 
             let updatedPrev = [...prev];
@@ -4743,14 +4736,19 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
               setMessages(prev => {
                 const existingIds = new Set(prev.flatMap(m => [m.id, m._id].filter(Boolean)));
                 // V146: Aussi vérifier les messages optimistes par contenu
+                // V358 : meme correction que ci-dessus — un texte vide n'est pas
+                // une empreinte de doublon, sinon tout message media-seul est jete.
                 const pendingTexts = new Set(
-                  prev.filter(m => m.id && m.id.startsWith('temp_user_')).map(m => (m.text || '').trim().toLowerCase())
+                  prev.filter(m => m.id && m.id.startsWith('temp_user_'))
+                      .map(m => (m.text || '').trim().toLowerCase())
+                      .filter(t => t.length > 0)
                 );
                 const newMsgs = data.filter(m => {
                   if (!m.id || existingIds.has(m.id)) return false;
                   // V146: Skip si c'est un doublon d'un message optimiste
                   const mText = (m.text || m.content || '').trim().toLowerCase();
-                  if ((m.sender_type === 'user' || m.type === 'user') && pendingTexts.has(mText)) return false;
+                  // V358 : `mText` vide -> aucune deduplication possible par texte.
+                  if (mText && (m.sender_type === 'user' || m.type === 'user') && pendingTexts.has(mText)) return false;
                   return true;
                 });
                 if (newMsgs.length > 0) {
@@ -5809,7 +5807,9 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   const v357Normaliser = (m) => ({
     id: m.id,
     type: m.type || (m.sender_type === 'user' ? 'user' : m.sender_type === 'coach' ? 'coach' : 'ai'),
-    text: m.content || m.text || '',
+    // V358 : repli `body` conserve — il figurait dans les restaurations
+    // d'historique que ce normaliseur remplace.
+    text: m.content || m.text || m.body || '',
     sender: m.sender_name || m.sender || '',
     senderId: m.sender_id || m.senderId || '',
     created_at: m.created_at,
