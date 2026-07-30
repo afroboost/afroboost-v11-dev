@@ -1248,13 +1248,21 @@ class EnhancedChatMessage(BaseModel):
     notified: bool = False
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     deleted_at: Optional[str] = None
+    # V350 : PIECE JOINTE. Le champ manquait purement et simplement — et comme le
+    # modele est en `extra="ignore"`, tout `media_url` envoye etait SILENCIEUSEMENT
+    # jete. L'affichage, lui, existait deja (MediaMessage lit `media_url`) : il ne
+    # recevait jamais rien. C'est la cause exacte de « impossible d'envoyer une image ».
+    media_url: Optional[str] = None
+    media_type: Optional[str] = None   # "image" | "file"
 
 class EnhancedChatMessageCreate(BaseModel):
     session_id: str
     sender_id: str
     sender_name: str
     sender_type: str = "user"
-    content: str
+    content: str = ""
+    media_url: Optional[str] = None
+    media_type: Optional[str] = None
 
 class ChatLinkResponse(BaseModel):
     """Réponse pour la génération de lien partageable"""
@@ -17081,9 +17089,21 @@ async def create_chat_message(message: EnhancedChatMessageCreate):
     session = await db.chat_sessions.find_one({"id": message.session_id}, {"_id": 0})
     if not session:
         raise HTTPException(status_code=404, detail="Session non trouvée")
-    
+
+    # V350 : même garde-fou que sur la réponse coach — seule une URL Cloudinary est
+    # acceptée comme pièce jointe, et un message vide sans pièce jointe est refusé.
+    _v350 = message.model_dump()
+    _v350_media = (_v350.get("media_url") or "").strip()
+    if _v350_media and not _v350_media.startswith(V261_MEDIA_PREFIX):
+        raise HTTPException(status_code=400, detail="Pièce jointe invalide")
+    if not (_v350.get("content") or "").strip() and not _v350_media:
+        raise HTTPException(status_code=400, detail="Message vide")
+    _v350["media_url"] = _v350_media or None
+    if _v350_media and _v350.get("media_type") not in ("image", "file"):
+        _v350["media_type"] = "image"
+
     message_obj = EnhancedChatMessage(
-        **message.model_dump(),
+        **_v350,
         mode=session.get("mode", "ai")
     )
     await db.chat_messages.insert_one(message_obj.model_dump())
@@ -18791,13 +18811,24 @@ async def send_coach_response(request: Request):
     message_text = body.get("message", "").strip()
     coach_name = body.get("coach_name", "Coach")
     
-    if not session_id or not message_text:
+    # V350 : PIÈCE JOINTE. `media_url` est validé côté SERVEUR — seule une URL
+    # Cloudinary est acceptée. Sans ce garde-fou, n'importe qui pourrait faire
+    # afficher dans le fil une image hébergée n'importe où (traceur, contenu
+    # arbitraire) : le message est rendu tel quel côté client.
+    _v350_media = (body.get("media_url") or "").strip()
+    if _v350_media and not _v350_media.startswith(V261_MEDIA_PREFIX):
+        raise HTTPException(status_code=400, detail="Pièce jointe invalide")
+    _v350_type = "file" if (body.get("media_type") == "file") else "image"
+
+    # V350 : un message peut désormais n'être QU'une pièce jointe (envoyer une photo
+    # sans légende est le cas le plus courant). Le texte reste requis si rien n'est joint.
+    if not session_id or (not message_text and not _v350_media):
         raise HTTPException(status_code=400, detail="session_id et message sont requis")
-    
+
     session = await db.chat_sessions.find_one({"id": session_id}, {"_id": 0})
     if not session:
         raise HTTPException(status_code=404, detail="Session non trouvée")
-    
+
     # Créer le message du coach
     coach_message = EnhancedChatMessage(
         session_id=session_id,
@@ -18805,7 +18836,9 @@ async def send_coach_response(request: Request):
         sender_name=coach_name,
         sender_type="coach",
         content=message_text,
-        mode=session.get("mode", "human")
+        mode=session.get("mode", "human"),
+        media_url=_v350_media or None,
+        media_type=_v350_type if _v350_media else None,
     )
     await db.chat_messages.insert_one(coach_message.model_dump())
     

@@ -2052,6 +2052,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   // qui la découpait), elle n'a plus de parent positionné : c'est cette mesure qui
   // la place en face de son bouton. `null` = mesure impossible -> repli en bas à droite.
   var _v350Rect = useState(null); var v350RoueRect = _v350Rect[0]; var setV350RoueRect = _v350Rect[1];
+  // V350 — PIÈCE JOINTE du chat coach. `{ url, kind, name }` une fois téléversée,
+  // `null` sinon. L'envoi n'a lieu qu'ensuite : on ne poste jamais un message
+  // référençant un fichier qui n'est pas encore en ligne.
+  var _v350P = useState(null); var v350Piece = _v350P[0]; var setV350Piece = _v350P[1];
+  var _v350U = useState(false); var v350Televersement = _v350U[0]; var setV350Televersement = _v350U[1];
+  var _v350E = useState(''); var v350PieceErr = _v350E[0]; var setV350PieceErr = _v350E[1];
   // V298 : traduction du texte SAISI avant envoi (état de chargement + message d'erreur).
   var _v298Translating = useState(false); var v298Translating = _v298Translating[0]; var setV298Translating = _v298Translating[1];
   var _v298TransErr = useState(''); var v298TransErr = _v298TransErr[0]; var setV298TransErr = _v298TransErr[1];
@@ -5649,17 +5655,64 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   };
 
   // === MODE COACH: Envoyer une réponse ===
+  // V350 — TÉLÉVERSEMENT d'une pièce jointe du chat.
+  //
+  // Le fichier part DIRECTEMENT chez Cloudinary (preset non signé `afroboost`),
+  // comme le font déjà les publications (V269) et les photos de profil. Aucune
+  // nouvelle route de téléversement côté serveur : c'est autant de surface d'attaque
+  // en moins, et le serveur n'accepte de toute façon que des URL Cloudinary.
+  // `auto/upload` couvre les images ET les documents (PDF) d'un seul endpoint.
+  const V350_TAILLE_MAX = 10 * 1024 * 1024; // 10 Mo
+  const V350_IMAGES = ['image/jpeg', 'image/png', 'image/webp'];
+  const V350_FICHIERS = ['application/pdf'];
+
+  const v350EnvoyerPiece = async (file) => {
+    if (!file) return;
+    setV350PieceErr('');
+    const estImage = V350_IMAGES.indexOf(file.type) !== -1;
+    const estFichier = V350_FICHIERS.indexOf(file.type) !== -1;
+    if (!estImage && !estFichier) {
+      setV350PieceErr('Formats acceptés : JPG, PNG, WEBP, PDF.');
+      return;
+    }
+    if (file.size > V350_TAILLE_MAX) {
+      setV350PieceErr('Fichier trop lourd (10 Mo maximum).');
+      return;
+    }
+    setV350Televersement(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('upload_preset', 'afroboost');
+      const r = await fetch('https://api.cloudinary.com/v1_1/dtm0r7hwq/auto/upload',
+        { method: 'POST', body: fd });
+      const d = await r.json();
+      if (!r.ok || !d.secure_url) throw new Error(d && d.error && d.error.message);
+      setV350Piece({ url: d.secure_url, kind: estImage ? 'image' : 'file', name: file.name });
+    } catch (e) {
+      // Échec honnête : on le DIT, plutôt que de laisser l'utilisateur cliquer
+      // sur « envoyer » avec une pièce jointe qui n'existe pas.
+      setV350PieceErr("Téléversement impossible. Réessayez.");
+    }
+    setV350Televersement(false);
+  };
+
   const sendCoachResponse = async () => {
-    if (!selectedCoachSession || !inputMessage.trim()) return;
-    
+    // V350 : un message peut n'être QU'une pièce jointe (envoyer une photo sans
+    // légende est le cas courant). On n'exige donc plus de texte s'il y a un fichier.
+    if (!selectedCoachSession || (!inputMessage.trim() && !v350Piece)) return;
+
     setIsLoading(true);
     try {
       await axios.post(`${API}/chat/coach-response`, {
         session_id: selectedCoachSession.id,
         message: inputMessage.trim(),
-        coach_name: 'Coach'
+        coach_name: 'Coach',
+        media_url: v350Piece ? v350Piece.url : undefined,
+        media_type: v350Piece ? v350Piece.kind : undefined
       });
       setInputMessage('');
+      setV350Piece(null);
       // Recharger les messages
       await loadCoachSessionMessages(selectedCoachSession);
       playSoundIfEnabled('coach');
@@ -9557,7 +9610,70 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         >✨</button>
                         {/* Globe de traduction (identique à l'espace abonné, 40px) */}
                         {renderTranslateGlobe(40)}
+
+                        {/* V350 : PIÈCE JOINTE — bouton trombone + champ caché.
+                            L'envoi d'image/fichier n'existait tout simplement pas
+                            dans le chat : ni bouton, ni champ `media_url` sur le
+                            modèle de message. L'affichage, lui, était déjà en place. */}
+                        <input
+                          id="v350-piece-coach"
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,application/pdf"
+                          style={{ display: 'none' }}
+                          onChange={function (e) {
+                            var f = e.target.files && e.target.files[0];
+                            e.target.value = '';
+                            if (f) v350EnvoyerPiece(f);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={function () {
+                            var el = document.getElementById('v350-piece-coach');
+                            if (el) el.click();
+                          }}
+                          disabled={v350Televersement}
+                          title="Joindre une image ou un fichier (10 Mo max)"
+                          data-testid="coach-piece-jointe"
+                          style={{
+                            width: '40px', height: '40px', borderRadius: '50%',
+                            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
+                            background: v350Piece ? 'var(--primary-color, #D91CD2)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)',
+                            cursor: v350Televersement ? 'wait' : 'pointer', display: 'flex',
+                            alignItems: 'center', justifyContent: 'center', flexShrink: 0, padding: 0
+                          }}
+                        >
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                               stroke={v350Piece ? '#fff' : 'var(--primary-color, #D91CD2)'}
+                               strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                               style={{ opacity: v350Televersement ? 0.5 : 1 }}>
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                          </svg>
+                        </button>
                       </div>
+
+                      {/* V350 : état de la pièce jointe — nom du fichier + retrait,
+                          ou message d'erreur. Sans ce retour, l'utilisateur ne saurait
+                          pas si son fichier est réellement prêt à partir. */}
+                      {(v350Piece || v350PieceErr || v350Televersement) && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.72rem' }}>
+                          {v350Televersement ? (
+                            <span style={{ color: 'rgba(255,255,255,0.6)' }}>Téléversement…</span>
+                          ) : v350PieceErr ? (
+                            <span style={{ color: '#fca5a5' }}>{v350PieceErr}</span>
+                          ) : (
+                            <>
+                              <span style={{ color: 'var(--primary-color, #D91CD2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '70%' }}>
+                                {v350Piece.name}
+                              </span>
+                              <button type="button" onClick={function () { setV350Piece(null); }}
+                                      style={{ background: 'none', border: 'none', color: '#999', cursor: 'pointer', padding: 0, fontSize: '0.9rem', lineHeight: 1 }}>
+                                ×
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
                       {/* LIGNE DU BAS : champ large (textarea auto-extensible) + envoi */}
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
                         <textarea
