@@ -49,6 +49,13 @@ TEST_MEDIA = "https://res.cloudinary.com/dtm0r7hwq/image/upload/publications/non
 
 results = []          # (num, titre, statut, detail) — statut: 'pass'|'fail'|'skip'
 _created_pub_ids = [] # publications de test à nettoyer
+# V347 : conversations créées par CE run via /chat/smart-entry, à nettoyer à la fin.
+# Chaque appel à smart-entry crée une session ; sans ce nettoyage elles s'accumulaient
+# indéfiniment (71 retrouvées en production), et comme le mur des conversations ne
+# renvoie que les N plus récentes, ces artefacts CHASSAIENT les vraies conversations
+# d'abonnés et de liens intelligents hors de la fenêtre : les onglets du ChatWidget
+# apparaissaient vides. Un test qui salit la production n'est pas un test neutre.
+_created_session_ids = set()
 
 
 def _url(p):
@@ -78,6 +85,62 @@ def _short(resp):
         return json.dumps(resp.json())[:300]
     except Exception:
         return (resp.text or "")[:300]
+
+
+def _smart_entry(payload=None, **kwargs):
+    """V347 : POST /chat/smart-entry qui RETIENT la conversation créée.
+
+    Passage OBLIGÉ pour tout appel à smart-entry dans cette suite : c'est ce qui
+    permet de tout supprimer à la fin. Appeler `requests.post` directement laisserait
+    un déchet en production à chaque exécution.
+
+    Le corps s'écrit indifféremment en positionnel (`_smart_entry({...})`) ou en
+    mot-clé (`_smart_entry(json={...})`) : les deux formes coexistent dans la suite,
+    et refuser l'une d'elles ferait échouer des tests sans rapport avec leur objet.
+    """
+    if payload is None:
+        payload = kwargs.pop("json", None)
+    else:
+        kwargs.pop("json", None)
+    r = requests.post(_url("/api/chat/smart-entry"), json=payload,
+                      timeout=kwargs.pop("timeout", TIMEOUT), **kwargs)
+    try:
+        d = r.json()
+        sid = (d.get("session") or {}).get("id") or d.get("session_id") or ""
+        if sid:
+            _created_session_ids.add(sid)
+    except Exception:
+        pass  # une réponse non JSON (erreur, refus) ne crée pas de conversation
+    return r
+
+
+def cleanup_sessions():
+    """V347 : met à la corbeille les conversations créées par CE run.
+
+    Utilise DELETE /chat/sessions/{id} avec l'en-tête admin — la seule voie dont
+    dispose la suite (cette route accepte encore `X-User-Email`). C'est un
+    soft-delete : rien n'est effacé définitivement, la conversation part simplement
+    dans la corbeille, comme quand le coach supprime depuis l'interface.
+
+    Best-effort et SILENCIEUX en cas de succès ; ce qui résiste est AFFICHÉ, pour
+    qu'un humain le voie plutôt que de découvrir l'accumulation six mois plus tard.
+    """
+    if not _created_session_ids:
+        return
+    restants = []
+    for sid in sorted(_created_session_ids):
+        try:
+            r = requests.delete(_url(f"/api/chat/sessions/{sid}"),
+                                headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
+            if r.status_code not in (200, 204, 404):
+                restants.append(f"{sid[:8]}({r.status_code})")
+        except Exception as e:
+            restants.append(f"{sid[:8]}({type(e).__name__})")
+    if restants:
+        print(f"⚠️  {len(restants)} conversation(s) de test NON supprimée(s) : "
+              f"{', '.join(restants[:10])}")
+    else:
+        print(f"🧹 {len(_created_session_ids)} conversation(s) de test nettoyée(s).")
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +435,7 @@ def t24_smart_entry_no_pii():
     if not SUB_EMAIL:
         return skip(24, "smart-entry sans PII", "SUB_EMAIL non fourni")
     try:
-        r = requests.post(_url("/api/chat/smart-entry"), json={"name": "Bassi", "email": SUB_EMAIL}, timeout=TIMEOUT)
+        r = _smart_entry({"name": "Bassi", "email": SUB_EMAIL}, timeout=TIMEOUT)
         d = r.json() if r.status_code == 200 else {}
         blob = json.dumps(d).lower()
         p = d.get("participant") or {}
@@ -412,7 +475,7 @@ def t39_redos_input():
     import time as _t
     try:
         t0 = _t.time()
-        r = requests.post(_url("/api/chat/smart-entry"), json={"name": "(a+)+$" * 5, "email": "redos@example.com"}, timeout=TIMEOUT)
+        r = _smart_entry({"name": "(a+)+$" * 5, "email": "redos@example.com"}, timeout=TIMEOUT)
         dur = _t.time() - t0
         ok = r.status_code in (200, 400) and dur < 8
         record(39, "Entrée regex catastrophique -> pas de saturation", ok, f"HTTP {r.status_code} en {dur:.2f}s")
@@ -423,7 +486,7 @@ def t39_redos_input():
 def t40_nosql_injection():
     """Un champ objet {\"$ne\": null} ne doit pas être injecté ni provoquer un 500."""
     try:
-        r = requests.post(_url("/api/chat/smart-entry"), json={"name": "Test", "email": {"$ne": None}}, timeout=TIMEOUT)
+        r = _smart_entry({"name": "Test", "email": {"$ne": None}}, timeout=TIMEOUT)
         d = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
         blob = json.dumps(d).lower() if d else (r.text or "")[:200]
         # Ni 500, ni fuite (pas de whatsapp/phone d'un autre compte).
@@ -482,9 +545,9 @@ def t57_no_identity_overwrite():
         if fl.get("SUBSCRIBER_STRICT_ENTRY"):
             return skip(57, "Anti-falsification (smart-entry)", "mode strict ON : reconnaissance anonyme bloquée")
         # 1) fiche « légitime » : créée au 1er run, simplement reconnue ensuite
-        requests.post(_url("/api/chat/smart-entry"), json={"name": "V312 Legit", "email": fixed}, timeout=TIMEOUT)
+        _smart_entry({"name": "V312 Legit", "email": fixed}, timeout=TIMEOUT)
         # 2) intrus : même email, nom DIFFÉRENT, AUCUN jeton d'appareil
-        r2 = requests.post(_url("/api/chat/smart-entry"), json={"name": "V312 INTRUS", "email": fixed}, timeout=TIMEOUT)
+        r2 = _smart_entry({"name": "V312 INTRUS", "email": fixed}, timeout=TIMEOUT)
         d2 = r2.json() or {}
         n2 = (d2.get("participant") or {}).get("name")
         # reconnu, mais le nom en base ne doit PAS être devenu "V312 INTRUS"
@@ -530,7 +593,7 @@ def t60_strict_entry_proof_required():
         fl = requests.get(_url("/api/feature-flags"), timeout=TIMEOUT).json()
         if not fl.get("SUBSCRIBER_STRICT_ENTRY"):
             return skip(60, "Entrée stricte -> proof_required", "SUBSCRIBER_STRICT_ENTRY OFF")
-        r = requests.post(_url("/api/chat/smart-entry"),
+        r = _smart_entry(
                           json={"name": "probe strict", "email": SUB_EMAIL}, timeout=TIMEOUT)
         d = r.json() if r.status_code == 200 else {}
         ok = bool(d.get("proof_required")) and not d.get("session")
@@ -853,7 +916,7 @@ def t62_coach_spoof_via_email_header():
     try:
         sess = requests.get(_url("/api/chat/sessions"), headers=hdr, timeout=TIMEOUT).status_code
         probe_email = SUB_EMAIL or "v319-probe@example.com"
-        r = requests.post(_url("/api/chat/smart-entry"),
+        r = _smart_entry(
                           json={"name": "V319 probe", "email": probe_email}, headers=hdr, timeout=TIMEOUT)
         d = r.json() if r.status_code == 200 else {}
         p = d.get("participant") or {}
@@ -882,7 +945,7 @@ def t63_coach_jwt_legit_access():
         r1 = requests.get(_url("/api/chat/sessions"), headers=hdr, timeout=TIMEOUT)
         n = len(r1.json()) if r1.status_code == 200 and isinstance(r1.json(), list) else -1
         probe_email = SUB_EMAIL or "v319-probe@example.com"
-        r2 = requests.post(_url("/api/chat/smart-entry"),
+        r2 = _smart_entry(
                            json={"name": "V319 legit", "email": probe_email}, headers=hdr, timeout=TIMEOUT)
         d = r2.json() if r2.status_code == 200 else {}
         p = d.get("participant") or {}
@@ -1167,7 +1230,7 @@ def t18_no_recognition_by_name_only():
     """V308 : smart-entry par NOM SEUL ne doit PLUS reconnaître un compte existant."""
     try:
         uniq = "ZZZ Testeur Inconnu 918273"
-        r = requests.post(_url("/api/chat/smart-entry"), json={"name": uniq}, timeout=TIMEOUT)
+        r = _smart_entry({"name": uniq}, timeout=TIMEOUT)
         d = r.json() if r.status_code == 200 else {}
         # Un nom inconnu ne doit jamais tomber sur un compte existant.
         ok = r.status_code == 200 and (d.get("is_returning") in (False, None))
@@ -1196,7 +1259,7 @@ def t20_new_visitor_ok():
     import time as _t
     uniq = f"nouveau-{os.getpid()}-{int(_t.time())}@example.com"
     try:
-        r = requests.post(_url("/api/chat/smart-entry"), json={
+        r = _smart_entry({
             "name": "Nouveau Visiteur", "email": uniq
         }, timeout=TIMEOUT)
         d = r.json() if r.status_code == 200 else {}
@@ -1313,6 +1376,7 @@ def _install_signal_cleanup():
         print(f"\n(interruption reçue — nettoyage des publications de test avant de quitter)")
         try:
             cleanup()
+            cleanup_sessions()          # V347 : conversations de test
             sweep_leftovers("(interruption)")
         finally:
             sys.exit(130)
@@ -1361,6 +1425,7 @@ def main():
     finally:
         # V307 : nettoyage GARANTI, même si un test échoue ou si le script est interrompu.
         cleanup()
+        cleanup_sessions()              # V347 : conversations de test
         sweep_leftovers()
     passed = sum(1 for _, _, st, _ in results if st == "pass")
     failed = sum(1 for _, _, st, _ in results if st == "fail")
