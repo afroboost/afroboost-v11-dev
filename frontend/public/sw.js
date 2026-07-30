@@ -10,8 +10,15 @@
 // les appareils deja installes (mobile en particulier) continuaient donc de servir
 // un ancien bundle malgre quatre deploiements reussis. On le bumpe pour forcer
 // tous les clients a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
-var CACHE_NAME = 'afroboost-v347'; // V347: categories des conversations + purge du cache
-var SW_VERSION = 266;
+// V359 : le cache etait reste sur v347 pendant V348 a V358 — onze versions.
+// L'index.html en cache reference l'ANCIEN hash de bundle, et comme /static/ est
+// servi en cache-first, l'ancien JS restait epingle : c'est ce qui explique que le
+// mobile ne pouvait ni supprimer un media (V356/V357) ni garder un vocal au
+// rechargement (V358), alors que le correctif etait en ligne depuis longtemps.
+// Bumper CACHE_NAME purge l'ancien cache a l'activation et force tous les appareils
+// a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
+var CACHE_NAME = 'afroboost-v358'; // V358: medias du chat (vocal persistant, suppression)
+var SW_VERSION = 267;
 
 var PRECACHE_URLS = [
   '/',
