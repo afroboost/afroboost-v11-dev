@@ -46,14 +46,23 @@ export function isCloudinaryConfigured() {
  * @throws {Error} message deja lisible par un humain (affichable tel quel)
  */
 export async function uploadToCloudinary(file, opts = {}) {
-  const { folder = 'offers', maxSizeMB = 10 } = opts;
+  const { folder = 'offers', maxSizeMB = 10, maxSizeMBVideo } = opts;
+
+  // V351 — LA LIMITE DOIT DEPENDRE DU TYPE. Une meme valeur pour les images et
+  // les videos condamnait la video : un plafond raisonnable pour une photo (10 a
+  // 50 Mo) est franchi par la moindre video de telephone. Mesure faite sur le
+  // preset `afroboost` : un envoi de 60 Mo est ACCEPTE (refuse seulement pour
+  // format invalide, jamais pour la taille) — le plafond du compte est donc bien
+  // au-dela. On retient 100 Mo pour la video, le maximum du plan Cloudinary.
+  const estVideo = (file.type || '').indexOf('video/') === 0;
+  const plafond = estVideo ? (maxSizeMBVideo || 100) : maxSizeMB;
 
   if (!isCloudinaryConfigured()) {
     throw new Error("Upload non configure. Collez un lien a la place.");
   }
-  if (file.size > maxSizeMB * 1024 * 1024) {
+  if (file.size > plafond * 1024 * 1024) {
     const mb = (file.size / 1024 / 1024).toFixed(1);
-    throw new Error(`Fichier trop lourd (${mb} Mo, maximum ${maxSizeMB} Mo).`);
+    throw new Error(`Fichier trop lourd (${mb} Mo, maximum ${plafond} Mo pour ${estVideo ? 'une vidéo' : 'une image'}).`);
   }
 
   const formData = new FormData();
@@ -114,22 +123,29 @@ export default function CloudinaryUploadButton({
   accept = 'image/*',
   label = 'Uploader',
   maxSizeMB = 10,
+  maxSizeMBVideo,
   folder = 'offers',
   'data-testid': dataTestId,
 }) {
   const inputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+  // V351 : retour de SUCCES. Sans lui, la seule chose que voyait l'utilisateur
+  // apres un envoi reussi etait l'apercu — et comme l'apercu etait casse pour la
+  // video, il en concluait que l'upload avait echoue. Il n'avait pas echoue.
+  const [succes, setSucces] = useState('');
 
   const handleFile = async (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
 
     setError('');
+    setSucces('');
     setUploading(true);
     try {
-      const { url, resourceType } = await uploadToCloudinary(file, { folder, maxSizeMB });
+      const { url, resourceType } = await uploadToCloudinary(file, { folder, maxSizeMB, maxSizeMBVideo });
       onUpload(url, { resourceType });
+      setSucces(resourceType === 'video' ? 'Vidéo ajoutée' : 'Image ajoutée');
     } catch (err) {
       setError(err.message);
       console.error('[V229] Cloudinary upload:', err);
@@ -197,6 +213,15 @@ export default function CloudinaryUploadButton({
           style={{ color: '#FF2DAA', fontSize: '11px', maxWidth: '220px', lineHeight: 1.3 }}
         >
           {error}
+        </span>
+      )}
+      {/* V351 : confirmation explicite du succes (l'erreur a la priorite). */}
+      {!error && succes && (
+        <span
+          data-testid="upload-succes"
+          style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '11px', fontWeight: 600, lineHeight: 1.3 }}
+        >
+          {succes}
         </span>
       )}
     </span>

@@ -243,6 +243,14 @@ export default function CampaignModal({
     }
   }, [preSelectedDate, isOpen, setNewCampaign]);
 
+  // V351 : repli d'aperçu géré par React plutôt qu'une écriture directe en
+  // innerHTML (remplacer le DOM sous les pieds de React est fragile, et l'outil
+  // d'analyse du dépôt le signale à juste titre). Déclaré ICI, au-dessus du
+  // `return null` conditionnel : un hook appelé après un retour anticipé change
+  // l'ordre des hooks d'un rendu à l'autre, ce que React interdit.
+  const [apercuKo, setApercuKo] = useState(false);
+  useEffect(() => { setApercuKo(false); }, [newCampaign.mediaUrl]);
+
   if (!isOpen) return null;
 
   const generateAiSuggestions = async () => {
@@ -315,6 +323,12 @@ export default function CampaignModal({
 
   const isGoogleDrive = /drive\.google\.com/.test(newCampaign.mediaUrl || '');
   const resolvedMediaUrl = convertGoogleDriveUrl(newCampaign.mediaUrl || '');
+  // V351 : le média est-il une VIDÉO ? Deux indices, volontairement redondants :
+  // le segment `/video/upload/` propre aux URL Cloudinary, et l'extension pour
+  // les liens collés à la main. L'aperçu doit choisir <video> ou <img> — servir
+  // un .mp4 à un <img> était toute la cause du « Aperçu non disponible ».
+  const isVideoMedia = /\/video\/upload\//i.test(resolvedMediaUrl)
+    || /\.(mp4|webm|mov|m4v|ogv)(\?|$)/i.test(resolvedMediaUrl);
 
   return (
     <div style={{
@@ -479,12 +493,18 @@ export default function CampaignModal({
                     reste possible. Updater fonctionnel obligatoire : l'upload dure
                     plusieurs secondes et un spread sur `newCampaign` capture au
                     rendu ecraserait le message redige pendant l'envoi. */}
+                {/* V351 : plafonds DISTINCTS image / vidéo. 10 Mo suffisent largement
+                    pour une image ; une vidéo de téléphone dépasse couramment 50 Mo,
+                    et l'ancien plafond unique de 50 Mo la refusait donc. Mesuré sur le
+                    preset `afroboost` : un envoi de 60 Mo passe sans problème de
+                    taille — on retient 100 Mo, le maximum du plan Cloudinary. */}
                 <div style={{ marginTop: '8px' }}>
                   <CloudinaryUploadButton
                     accept="image/*,video/*"
                     folder="campaigns"
                     label="Uploader média"
-                    maxSizeMB={50}
+                    maxSizeMB={10}
+                    maxSizeMBVideo={100}
                     data-testid="campaign-media-upload"
                     onUpload={(url) => setNewCampaign(prev => ({ ...prev, mediaUrl: url }))}
                   />
@@ -525,8 +545,34 @@ export default function CampaignModal({
                             <div style={{ fontSize: '10px', fontWeight: 600, opacity: 0.9 }}>Post Instagram</div>
                           </div>
                         </div>
+                      ) : isVideoMedia ? (
+                        /* V351 — LA CAUSE DU SYMPTOME. L'apercu servait TOUJOURS un
+                           <img>, y compris pour une video : un navigateur ne sait pas
+                           afficher un .mp4 dans une balise <img>, donc `onError` se
+                           declenchait et affichait « Apercu non disponible ». L'upload,
+                           lui, avait parfaitement reussi et l'URL etait bien enregistree
+                           (verifie en base : une campagne porte deja un mediaUrl video).
+                           C'est ce message trompeur qui donnait a croire a un echec. */
+                        <video
+                          src={resolvedMediaUrl}
+                          controls
+                          playsInline
+                          preload="metadata"
+                          data-testid="campaign-media-preview-video"
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', background: '#000' }}
+                        />
+                      ) : apercuKo ? (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.4)', fontSize: '11px', textAlign: 'center', padding: '8px' }}>
+                          Aperçu non disponible<br />Le média sera visible dans l'email
+                        </div>
                       ) : (
-                        <img src={resolvedMediaUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.target.parentElement.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:rgba(255,255,255,0.4);font-size:11px;text-align:center;padding:8px">Aperçu non disponible<br/>Le média sera visible dans l\'email</div>'; }} />
+                        <img
+                          src={resolvedMediaUrl}
+                          alt=""
+                          data-testid="campaign-media-preview-image"
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          onError={() => setApercuKo(true)}
+                        />
                       )}
                     </div>
                   </div>
