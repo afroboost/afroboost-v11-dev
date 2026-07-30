@@ -6668,7 +6668,54 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     }
   };
 
+  // V355 — ENVOI D'UN MÉDIA CÔTÉ ABONNÉ / VISITEUR.
+  //
+  // On NE fait PAS transiter le média par `handleSendMessage` : ce chemin porte
+  // l'IA, le mode groupe et la reprise de participantId, et le traverser pour une
+  // pièce jointe risquerait de casser la conversation elle-même. On poste donc le
+  // média par la route dédiée `POST /chat/messages`, qui accepte déjà les médias
+  // (V350) et leur pose l'échéance d'1 h (V352). Le parcours IA reste intact.
+  const v355EnvoyerMediaAbonne = async () => {
+    if (!v350Piece) return false;
+    const sid = (selectedGroup && selectedGroup.session_id) || (sessionData && sessionData.id) || '';
+    const pid = participantId || '';
+    if (!sid || !pid) {
+      setV350PieceErr("Conversation pas encore prête — réessayez dans un instant.");
+      return false;
+    }
+    const texte = inputMessage.trim();
+    try {
+      await axios.post(`${API}/chat/messages`, {
+        session_id: sid,
+        sender_id: pid,
+        sender_name: (leadData && leadData.firstName) || (afroboostProfile && afroboostProfile.name) || 'Moi',
+        sender_type: 'user',
+        content: texte,
+        media_url: v350Piece.url,
+        media_type: v350Piece.kind
+      });
+      setV350Piece(null);
+      setV350PieceErr('');
+      setInputMessage('');
+      // Rafraîchit le fil pour que l'expéditeur voie son média tout de suite.
+      try {
+        const r = await axios.get(`${API}/chat/sessions/${sid}/messages`,
+          { params: { participant_id: pid } });
+        if (Array.isArray(r.data)) {
+          (selectedGroup && selectedGroup.session_id ? setGroupMessages : setMessages)(r.data);
+        }
+      } catch (e) { /* le média est parti ; l'affichage se rattrapera au prochain sondage */ }
+      return true;
+    } catch (e) {
+      setV350PieceErr("Envoi impossible. Réessayez.");
+      return false;
+    }
+  };
+
   const handleSendMessage = async () => {
+    // V355 : un message peut n'être QU'un média. On traite ce cas d'abord, puis on
+    // s'arrête : le texte éventuel est déjà parti avec le média, en légende.
+    if (v350Piece) { await v355EnvoyerMediaAbonne(); return; }
     if (!inputMessage.trim() || isLoading) return;
 
     const userMessage = inputMessage.trim();
@@ -9909,29 +9956,24 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           type="button"
                           onClick={function () { v352Enregistre ? v352ArreterVocal() : v352DemarrerVocal(); }}
                           disabled={v350Televersement}
-                          title={v352Enregistre ? 'Arrêter et envoyer' : 'Enregistrer une note vocale'}
+                          title={v352Enregistre ? 'Arrêter et envoyer' : 'Enregistrer un message vocal'}
                           data-testid="coach-note-vocale"
                           style={{
                             width: '40px', height: '40px', borderRadius: '50%',
                             border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
-                            background: v352Enregistre ? '#E53E3E' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)',
+                            background: v352Enregistre ? 'var(--primary-color, #D91CD2)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)',
+                            color: v352Enregistre ? '#fff' : 'var(--primary-color, #D91CD2)',
                             cursor: v350Televersement ? 'wait' : 'pointer', display: 'flex',
                             alignItems: 'center', justifyContent: 'center', flexShrink: 0, padding: 0
                           }}
                         >
-                          {v352Enregistre ? (
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff">
-                              <rect x="6" y="6" width="12" height="12" rx="2" />
-                            </svg>
-                          ) : (
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-                                 stroke="var(--primary-color, #D91CD2)" strokeWidth="2"
-                                 strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                              <line x1="12" y1="19" x2="12" y2="23" />
-                            </svg>
-                          )}
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                               stroke="currentColor" strokeWidth="2"
+                               strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                            <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
+                            <path d="M12 18v4" />
+                          </svg>
                         </button>
 
                         {v352Enregistre && (
@@ -10006,18 +10048,21 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                             e.stopPropagation();
                             sendCoachResponse();
                           }}
-                          disabled={isLoading || v298Translating || !inputMessage.trim()}
+                          /* V355 : actif des qu'il y a un MEDIA ou du texte. Le backend
+                             acceptait deja un media sans legende (V350) — c'est ce bouton,
+                             desactive faute de texte, qui rendait l'envoi impossible. */
+                          disabled={isLoading || v298Translating || (!inputMessage.trim() && !v350Piece)}
                           style={{
-                            background: inputMessage.trim() ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)' : 'rgba(255,255,255,0.1)',
+                            background: (inputMessage.trim() || v350Piece) ? 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)' : 'rgba(255,255,255,0.1)',
                             border: 'none',
                             borderRadius: '50%',
                             width: '40px',
                             height: '40px',
-                            cursor: (inputMessage.trim() && !v298Translating) ? 'pointer' : 'not-allowed',
+                            cursor: ((inputMessage.trim() || v350Piece) && !v298Translating) ? 'pointer' : 'not-allowed',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            opacity: inputMessage.trim() ? 1 : 0.5,
+                            opacity: (inputMessage.trim() || v350Piece) ? 1 : 0.5,
                             flexShrink: 0
                           }}
                           data-testid="coach-widget-send-btn"
@@ -11270,6 +11315,106 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
 
                     {/* V299 (Fix 2) : globe de traduction dans la rangée d'icônes du HAUT */}
                     {renderTranslateGlobe(40)}
+
+                    {/* V355 — PIÈCE JOINTE et NOTE VOCALE côté abonné/visiteur.
+                        Elles n'existaient QUE dans la barre du coach : un abonné ne
+                        pouvait ni joindre un fichier ni enregistrer un vocal. Mêmes
+                        état et mêmes fonctions que côté coach — un seul comportement
+                        à maintenir, donc pas de dérive entre les deux espaces. */}
+                    <input
+                      id="v355-piece-abonne"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,application/pdf"
+                      style={{ display: 'none' }}
+                      onChange={function (e) {
+                        var f = e.target.files && e.target.files[0];
+                        e.target.value = '';
+                        if (f) v350EnvoyerPiece(f);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={function () {
+                        var el = document.getElementById('v355-piece-abonne');
+                        if (el) el.click();
+                      }}
+                      disabled={v350Televersement}
+                      title="Joindre une image ou un fichier (10 Mo max)"
+                      data-testid="abonne-piece-jointe"
+                      style={{
+                        width: '40px', height: '40px', borderRadius: '50%',
+                        border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
+                        background: v350Piece ? 'var(--primary-color, #D91CD2)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)',
+                        color: v350Piece ? '#fff' : 'var(--primary-color, #D91CD2)',
+                        cursor: v350Televersement ? 'wait' : 'pointer', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center', flexShrink: 0, padding: 0
+                      }}
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                           stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                      </svg>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={function () { v352Enregistre ? v352ArreterVocal() : v352DemarrerVocal(); }}
+                      disabled={v350Televersement}
+                      title={v352Enregistre ? 'Arrêter et envoyer' : 'Enregistrer un message vocal'}
+                      data-testid="abonne-note-vocale"
+                      style={{
+                        width: '40px', height: '40px', borderRadius: '50%',
+                        border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
+                        background: v352Enregistre ? 'var(--primary-color, #D91CD2)' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)',
+                        color: v352Enregistre ? '#fff' : 'var(--primary-color, #D91CD2)',
+                        cursor: v350Televersement ? 'wait' : 'pointer', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center', flexShrink: 0, padding: 0
+                      }}
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                           stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                        <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
+                        <path d="M12 18v4" />
+                      </svg>
+                    </button>
+
+                    {v352Enregistre && (
+                      <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '0.75rem', fontWeight: 700 }}>
+                        {Math.floor(v352Duree / 60)}:{String(v352Duree % 60).padStart(2, '0')}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* V355 : état de la pièce jointe + avertissement d'effacement,
+                      exactement comme côté coach — l'information doit être la même
+                      pour tout le monde. */}
+                  {(v350Piece || v350PieceErr || v350Televersement) && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.72rem', padding: '0 4px' }}>
+                      {v350Televersement ? (
+                        <span style={{ color: 'rgba(255,255,255,0.6)' }}>Téléversement…</span>
+                      ) : v350PieceErr ? (
+                        <span style={{ color: '#fca5a5' }}>{v350PieceErr}</span>
+                      ) : (
+                        <>
+                          <span style={{ color: 'var(--primary-color, #D91CD2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '70%' }}>
+                            {v350Piece.name}
+                          </span>
+                          <button type="button" onClick={function () { setV350Piece(null); }}
+                                  style={{ background: 'none', border: 'none', color: '#999', cursor: 'pointer', padding: 0, fontSize: '0.9rem', lineHeight: 1 }}>
+                            ×
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#888', fontSize: '0.68rem', padding: '0 4px' }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                      <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
+                    </svg>
+                    Les photos, messages vocaux et fichiers s'effacent après 1 h — téléchargez avant.
                   </div>
 
                   {/* === LIGNE DU BAS : champ large (textarea auto-extensible) + envoi === */}
@@ -11315,7 +11460,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         e.stopPropagation();
                         handleSendMessage();
                       }}
-                      disabled={isLoading || v298Translating || !inputMessage.trim()}
+                      disabled={isLoading || v298Translating || (!inputMessage.trim() && !v350Piece)}
                       style={{
                         width: '40px',
                         height: '40px',
