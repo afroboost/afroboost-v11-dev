@@ -16787,7 +16787,9 @@ V349_FLAG = "CHAT_READ_STRICT"
 
 V352_DUREE_MEDIA_S = 3600          # 1 h. Abaissable par variable d'env pour les tests.
 V352_DOSSIER = "chat/"             # dossier Cloudinary dédié — borne les suppressions
-V352_TYPES_EPHEMERES = ("image", "audio")
+# V353 : les DOCUMENTS s'effacent desormais comme le reste. Tout media du chat est
+# ephemere — aucune exception, donc aucun fichier qui s'accumule en silence.
+V352_TYPES_EPHEMERES = ("image", "audio", "file")
 
 
 def _v352_duree() -> int:
@@ -16833,8 +16835,14 @@ def _v352_detruire_cloudinary(public_id: str, media_type: str) -> None:
             cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME", "dtm0r7hwq"),
             api_key=api_key, api_secret=api_secret, secure=True,
         )
-        # `image` pour une photo ; `video` pour l'audio (classement Cloudinary).
-        ressource = "image" if media_type == "image" else "video"
+        # Classement Cloudinary, VERIFIE par un depot reel avec le preset `afroboost` :
+        #   - une photo      -> resource_type "image" ;
+        #   - un PDF         -> resource_type "image" AUSSI (format "pdf") ;
+        #   - une note vocale-> resource_type "video" (Cloudinary range l'audio la).
+        # V353 : le mappage precedent (`"image" if image else "video"`) envoyait donc
+        # "video" pour un document, et `destroy` echouait EN SILENCE — le fichier
+        # serait reste en ligne alors que la base et l'affichage l'auraient perdu.
+        ressource = "video" if media_type == "audio" else "image"
         cloudinary.uploader.destroy(public_id, resource_type=ressource, invalidate=True)
         logger.info(f"[V352] Fichier supprimé chez Cloudinary : {public_id}")
     except Exception as e:

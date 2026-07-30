@@ -1239,6 +1239,52 @@ const MessageBubble = ({ msg, isUser, onParticipantClick, isCommunity, currentUs
     );
   }
 
+  // V353 — DOCUMENT (PDF...). `MediaMessage` afficherait une vignette cassee : on
+  // rend un lien de telechargement clair. L'avertissement dit « telechargez avant » :
+  // encore faut-il que ce soit possible.
+  const estFichier = hasMedia && !estVocal && (msg.media_type === 'file'
+    || /\.(pdf|docx?|xlsx?|pptx?|zip|txt|csv)(\?|$)/i.test(msg.media_url));
+
+  if (estFichier) {
+    return (
+      <div style={{ alignSelf: isUser ? 'flex-end' : 'flex-start', maxWidth: '320px',
+                    display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        {!isUser && (
+          <div style={{ fontSize: '10px', fontWeight: 600, marginLeft: '4px', color: getNameColor() }}>
+            {displayName}
+          </div>
+        )}
+        <a
+          href={msg.media_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          download
+          data-testid="message-fichier"
+          style={{
+            display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none',
+            padding: '10px 12px', borderRadius: '10px',
+            background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
+            border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35)',
+            color: '#fff', fontSize: '12px'
+          }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+               stroke="var(--primary-color, #D91CD2)" strokeWidth="2"
+               strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="12" y1="18" x2="12" y2="12" />
+            <polyline points="9 15 12 18 15 15" />
+          </svg>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {messageText || 'Telecharger le fichier'}
+          </span>
+        </a>
+        {v352Mention}
+      </div>
+    );
+  }
+
   if (estVocal) {
     return (
       <div style={{ alignSelf: isUser ? 'flex-end' : 'flex-start', maxWidth: '320px',
@@ -9856,7 +9902,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                           <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
                         </svg>
-                        Les photos et messages vocaux s'effacent après 1 h.
+                        Les photos, messages vocaux et fichiers s'effacent après 1 h — téléchargez avant.
                       </div>
 
                       {/* V350 : état de la pièce jointe — nom du fichier + retrait,
