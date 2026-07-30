@@ -366,6 +366,43 @@
                             });
                         })
                         .catch(function(e) { console.log('[V121] SW fail:', e); });
+
+                    // V361 — VERIFICATION PERIODIQUE DES MISES A JOUR.
+                    //
+                    // `reg.update()` n'etait appele QU'UNE FOIS, au chargement. Une app
+                    // installee reste ouverte des jours : elle ne redemandait donc jamais
+                    // le sw.js, et ne voyait aucun deploiement tant qu'on ne la fermait pas
+                    // completement. C'est le manque qui explique « meme apres fermeture,
+                    // rien ne change » quand l'app n'a pas ete reellement tuee.
+                    //
+                    // On redemande le sw.js a chaque RETOUR dans l'app (c'est le moment ou
+                    // l'utilisateur va s'en servir) et au plus toutes les 30 minutes tant
+                    // qu'elle reste ouverte. Si un nouveau sw.js existe, il s'installe,
+                    // appelle skipWaiting(), prend le controle, et le `controllerchange`
+                    // ci-dessous recharge la page. L'app se met donc a jour toute seule.
+                    //
+                    // Cout : une requete conditionnelle sur un fichier de quelques Ko.
+                    var v361Dernier = 0;
+                    function v361VerifierMaj() {
+                        var maintenant = Date.now();
+                        if (maintenant - v361Dernier < 30 * 60 * 1000) return;
+                        v361Dernier = maintenant;
+                        try {
+                            navigator.serviceWorker.getRegistration().then(function(reg) {
+                                if (reg) {
+                                    reg.update();
+                                    // Un SW deja telecharge mais bloque en attente ne prend
+                                    // la main que si on l'y invite explicitement.
+                                    if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+                                }
+                            }).catch(function() {});
+                        } catch (e) {}
+                    }
+                    document.addEventListener('visibilitychange', function() {
+                        if (document.visibilityState === 'visible') v361VerifierMaj();
+                    });
+                    window.addEventListener('focus', v361VerifierMaj);
+                    setInterval(v361VerifierMaj, 30 * 60 * 1000);
                     // V130: Quand le SW se met à jour, recharger la page pour servir le nouveau contenu
                     // Empêche l'écran noir sur les PWA installées avec un ancien SW
                     var refreshing = false;
