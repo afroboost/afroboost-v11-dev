@@ -854,6 +854,60 @@ def t83_v345_sessions_refus_explicite_pas_liste_vide():
         record(83, "V345 : /chat/sessions refus explicite", False, str(e))
 
 
+def _v349_flag():
+    """État EN DIRECT du drapeau CHAT_READ_STRICT (None si illisible)."""
+    try:
+        d = requests.get(_url("/api/feature-flags"), timeout=TIMEOUT).json()
+        return bool(d.get("CHAT_READ_STRICT")) if "CHAT_READ_STRICT" in d else None
+    except Exception:
+        return None
+
+
+def t86_v349_contenu_des_conversations_ferme():
+    """V349 — LA FUITE MAJEURE. `GET /chat/sessions/{id}/messages` n'avait aucune
+    authentification : un anonyme lisait le CONTENU des conversations privées et de
+    groupe, y compris celles mises à la corbeille. Les routes de groupe exposaient en
+    plus ~1200 identifiants de membres, les jetons d'invitation et les prompts IA.
+
+    On mesure sur une conversation que le test CRÉE lui-même. Deux affirmations, et
+    la première compte autant que la seconde :
+      - le PARTICIPANT légitime lit sa conversation (sinon on aurait cassé le chat) ;
+      - l'anonyme et l'usurpateur sont refusés.
+    Attente adaptée aux DEUX états du drapeau.
+    """
+    flag = _v349_flag()
+    if flag is None:
+        return skip(86, "V349 : contenu des conversations", "drapeau illisible")
+    try:
+        import uuid as _uuid
+        r0 = _smart_entry({"name": "V349 sonde",
+                           "email": f"v349-{_uuid.uuid4().hex[:8]}@example.com"})
+        d0 = r0.json() if r0.status_code == 200 else {}
+        sid = (d0.get("session") or {}).get("id") or ""
+        pid = (d0.get("participant") or {}).get("id") or ""
+        if not sid or not pid:
+            return skip(86, "V349 : contenu des conversations",
+                        "conversation de sonde non créée (entrée stricte ?)")
+
+        legit = requests.get(_url(f"/api/chat/sessions/{sid}/messages"),
+                             params={"participant_id": pid}, timeout=TIMEOUT).status_code
+        anon = requests.get(_url(f"/api/chat/sessions/{sid}/messages"), timeout=TIMEOUT).status_code
+        usurp = requests.get(_url(f"/api/chat/sessions/{sid}/messages"),
+                             headers={"X-User-Email": ADMIN}, timeout=TIMEOUT).status_code
+        grp = requests.get(_url("/api/chat/groups"), timeout=TIMEOUT).status_code
+
+        if flag:
+            ok = legit == 200 and anon == 403 and usurp == 403 and grp == 403
+            record(86, "V349 drapeau ON : participant lit, anonyme et usurpateur refusés", ok,
+                   f"participant={legit} anonyme={anon} usurpé={usurp} /chat/groups={grp}")
+        else:
+            ok = legit == 200 and anon == 200
+            record(86, "V349 drapeau OFF : lecture encore ouverte (trou connu, non fermé)", ok,
+                   f"participant={legit} anonyme={anon} — basculer CHAT_READ_STRICT pour fermer")
+    except Exception as e:
+        record(86, "V349 : contenu des conversations", False, str(e))
+
+
 def t85_v348_suppression_conversation_exige_jeton():
     """V348 : DELETE /chat/sessions/{id} est DESTRUCTIVE — elle ne lisait que
     `X-User-Email`, donc un `curl` suffisait à effacer les conversations du coach.
@@ -1481,6 +1535,7 @@ def main():
                    t81_v344_drapeau_expose_et_admin_seul, t82_v344_privileges_refuses_a_l_usurpateur,
                    t83_v345_sessions_refus_explicite_pas_liste_vide,
                    t84_v346_categories_des_conversations, t85_v348_suppression_conversation_exige_jeton,
+                   t86_v349_contenu_des_conversations_ferme,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
