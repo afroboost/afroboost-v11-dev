@@ -1053,6 +1053,9 @@ class FeatureFlags(BaseModel):
     # À ne basculer QU'APRÈS avoir prouvé que le propriétaire, connecté par
     # /auth/login, conserve ses trois pouvoirs (règle V310c). Kill-switch immédiat.
     SUPERADMIN_JWT_STRICT: bool = False
+    # V349 : verrou de LECTURE du chat (contenu des conversations + routes de groupe).
+    # Defaut FALSE = comportement actuel. True = seules les parties prenantes lisent.
+    CHAT_READ_STRICT: bool = False
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1065,6 +1068,7 @@ class FeatureFlagsUpdate(BaseModel):
     PAWAPAY_ENABLED: Optional[bool] = None  # V325
     PUBLICATIONS_NO_EXPIRY: Optional[bool] = None  # V333
     SUPERADMIN_JWT_STRICT: Optional[bool] = None  # V344
+    CHAT_READ_STRICT: Optional[bool] = None  # V349
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -13194,6 +13198,7 @@ async def get_feature_flags():
             "PAWAPAY_ENABLED": False,          # V325 : défaut OFF (PawaPay invisible)
             "PUBLICATIONS_NO_EXPIRY": False,   # V333 : défaut OFF (48 h pour tout le monde)
             "SUPERADMIN_JWT_STRICT": False,    # V344 : défaut OFF (repli X-User-Email encore accepté)
+            "CHAT_READ_STRICT": False,         # V349 : défaut OFF (lecture du chat encore ouverte)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -13207,7 +13212,8 @@ async def get_feature_flags():
     for _k, _default in (("AUDIO_SERVICE_ENABLED", False), ("VIDEO_SERVICE_ENABLED", False),
                          ("STREAMING_SERVICE_ENABLED", False), ("SUBSCRIBER_STRICT_ENTRY", False),
                          ("REQUIRE_COACH_JWT", False), ("PAWAPAY_ENABLED", False),
-                         ("PUBLICATIONS_NO_EXPIRY", False), ("SUPERADMIN_JWT_STRICT", False)):
+                         ("PUBLICATIONS_NO_EXPIRY", False), ("SUPERADMIN_JWT_STRICT", False),
+                         ("CHAT_READ_STRICT", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags
@@ -16718,11 +16724,128 @@ async def toggle_session_ai(session_id: str):
     return updated
 
 # --- Chat Messages ---
+# =====================================================================
+# V349 — LE CONTENU DES CONVERSATIONS N'EST PLUS PUBLIC
+# =====================================================================
+# Constat mesuré en production : `GET /chat/sessions/{id}/messages` n'avait même
+# pas de paramètre `request` — aucune authentification n'était techniquement
+# possible. Un appel anonyme rendait 19, 32, 81 messages de groupes, et 29 ou 45
+# messages de conversations privées réelles. Elle servait aussi les conversations
+# MISES À LA CORBEILLE (la session absente n'interrompait pas la lecture).
+#
+# Prudence V310c : le verrou est derrière `CHAT_READ_STRICT`, livré à OFF, et il
+# ne se ferme qu'une fois prouvé que le coach ET un visiteur légitime gardent
+# l'accès. Une lecture de drapeau en échec retombe sur OFF : un hoquet d'Atlas ne
+# doit jamais couper le chat.
+
+V349_FLAG = "CHAT_READ_STRICT"
+
+
+async def _v349_exiger_proprietaire(request: Request, group_id: str, action: str) -> str:
+    """
+    V349 — écriture sur un groupe : identité SIGNÉE **et** propriété.
+
+    Les routes de modification, suppression et visibilité se contentaient de
+    `require_auth` — qui accepte le repli `X-User-Email` (V265) — et ne vérifiaient
+    AUCUNE appartenance : n'importe quel coach authentifié pouvait modifier ou
+    supprimer le groupe d'un autre. Un MEMBRE n'obtient jamais ces droits : seuls
+    le propriétaire et le super-admin passent.
+
+    Sans effet tant que le drapeau est OFF (comportement actuel préservé).
+    """
+    if not await _v349_lecture_stricte():
+        return ""
+    email = _v311_coach_email_from_jwt(request)
+    if not email:
+        logger.warning(f"[V349] REFUS {action} du groupe {group_id} — aucun jeton signé")
+        raise HTTPException(status_code=403, detail="Action réservée au coach propriétaire")
+    groupe = await db.chat_groups.find_one({"id": group_id}, {"_id": 0, "coach_id": 1})
+    if not groupe:
+        raise HTTPException(status_code=404, detail="Groupe introuvable")
+    if not is_super_admin(email) and (groupe.get("coach_id") or "").strip().lower() != email:
+        logger.warning(f"[V349] REFUS {action} du groupe {group_id} — {email} n'en est pas propriétaire")
+        raise HTTPException(status_code=403, detail="Action réservée au coach propriétaire")
+    return email
+
+
+async def _v349_lecture_stricte() -> bool:
+    """V349 — le verrou de lecture est-il actif ? Défaut False (comportement actuel)."""
+    try:
+        flags = await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0}) or {}
+        return bool(flags.get(V349_FLAG, False))
+    except Exception as e:
+        logger.warning(f"[V349] Drapeau {V349_FLAG} illisible ({e}) — lecture laissée ouverte")
+        return False
+
+
+async def _v349_peut_lire_conversation(request: Request, session: dict,
+                                       participant_id: str = "") -> str:
+    """
+    V349 — l'appelant est-il PARTIE PRENANTE de cette conversation ?
+    Renvoie le motif d'autorisation, ou '' si l'accès doit être refusé.
+
+    Trois profils légitimes, et AUCUN ne donne les droits d'un autre :
+      1. le SUPER-ADMIN, qui modère l'ensemble — identité SIGNÉE ;
+      2. le COACH PROPRIÉTAIRE de la conversation — identité SIGNÉE ;
+      3. un PARTICIPANT de la conversation. Un visiteur n'a pas de jeton signé :
+         c'est son appartenance à `participant_ids` qui fait foi, prouvée soit par
+         son jeton d'appareil abonné (V296), soit par le `participant_id` qu'il
+         présente et qui doit RÉELLEMENT figurer dans la conversation.
+
+    Le `participant_id` est un UUID non devinable, et il ne donne accès qu'à la
+    conversation où il figure : ce n'est pas une preuve d'identité forte, mais
+    c'est exactement le niveau dont dispose un visiteur anonyme du chat. Sans lui,
+    fermer cette route couperait tout le chat public.
+    """
+    email = _v311_coach_email_from_jwt(request)
+    if email:
+        if is_super_admin(email):
+            return "super-admin"
+        if (session.get("coach_id") or "").strip().lower() == email:
+            return "coach propriétaire"
+
+    membres = session.get("participant_ids") or []
+
+    pid = (participant_id or "").strip()
+    if pid and pid in membres:
+        return "participant"
+
+    try:
+        from api.routes.shared import subscriber_from_request
+        jeton = subscriber_from_request(request)
+    except Exception:
+        jeton = None
+    if jeton and (jeton.get("email") or "").strip():
+        p = await db.chat_participants.find_one(
+            {"email": (jeton["email"] or "").strip().lower()}, {"_id": 0, "id": 1})
+        if p and p.get("id") in membres:
+            return "abonné prouvé"
+
+    return ""
+
+
 @api_router.get("/chat/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str, include_deleted: bool = False):
+async def get_session_messages(session_id: str, request: Request,
+                               include_deleted: bool = False, participant_id: str = ""):
     """Recupere tous les messages d'une session avec format unifie.
     V107.8: Auto-détecte et fusionne les sessions dupliquées côté coach.
+
+    V349 : réservé aux parties prenantes de la conversation (voir
+    `_v349_peut_lire_conversation`). Vaut pour le 1-à-1, les groupes, ET les
+    conversations à la corbeille — qui restaient lisibles par n'importe qui.
     """
+    if await _v349_lecture_stricte():
+        # On charge la session SANS filtrer la corbeille : une conversation
+        # supprimée ne doit pas devenir plus permissive qu'une conversation vivante.
+        _v349_sess = await db.chat_sessions.find_one({"id": session_id}, {"_id": 0})
+        if not _v349_sess:
+            raise HTTPException(status_code=404, detail="Conversation introuvable")
+        _v349_motif = await _v349_peut_lire_conversation(request, _v349_sess, participant_id)
+        if not _v349_motif:
+            logger.warning(f"[V349] REFUS lecture de conversation {session_id} — "
+                           f"appelant non partie prenante")
+            raise HTTPException(status_code=403, detail="Conversation non accessible")
+
     # V107.9: Vérifier s'il existe des sessions dupliquées à fusionner
     # Cross-référence via chat_participants pour trouver TOUTES les sessions du même abonné
     session = await db.chat_sessions.find_one({"id": session_id, "is_deleted": {"$ne": True}}, {"_id": 0})
@@ -16868,8 +16991,25 @@ async def restore_merged_sessions():
 
 # v8.6: Endpoint messages de groupe
 @api_router.get("/chat/group/messages")
-async def get_group_messages(limit: int = 100):
-    """Recupere les messages de groupe (is_group=True ou session_id=group)"""
+async def get_group_messages(request: Request, limit: int = 100):
+    """Recupere les messages de groupe (is_group=True ou session_id=group)
+
+    V349 : mur de diffusion — il était lisible par n'importe qui, sans identité ni
+    filtre. Il reste un mur COMMUN (c'est sa nature : une diffusion à tous), mais
+    il faut désormais être identifié pour le lire : coach signé, ou abonné porteur
+    de son jeton d'appareil.
+    """
+    if await _v349_lecture_stricte():
+        _autorise = bool(_v311_coach_email_from_jwt(request))
+        if not _autorise:
+            try:
+                from api.routes.shared import subscriber_from_request
+                _autorise = bool(subscriber_from_request(request))
+            except Exception:
+                _autorise = False
+        if not _autorise:
+            logger.warning("[V349] REFUS mur de diffusion — appelant sans identité")
+            raise HTTPException(status_code=403, detail="Identité requise")
     query = {"$or": [{"is_group": True}, {"session_id": "group"}], "is_deleted": {"$ne": True}}
     raw = await db.chat_messages.find(query, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
     return [format_message_for_frontend(m) for m in reversed(raw)]
@@ -18692,7 +18832,17 @@ async def send_coach_response(request: Request):
 # v8.6: Envoi message de groupe a tous les abonnes
 @api_router.post("/chat/group-message")
 async def send_group_message(request: Request):
-    """Envoie un message a tous les abonnes actifs (is_group=True)"""
+    """Envoie un message a tous les abonnes actifs (is_group=True)
+
+    V349 : cette route DIFFUSE à 500 participants et n'avait AUCUN contrôle
+    d'identité — n'importe qui pouvait écrire à tous tes contacts au nom du coach.
+    Elle est désormais réservée au coach, sur identité SIGNÉE (comme V348).
+    """
+    if await _v349_lecture_stricte():
+        _emetteur = _v311_coach_email_from_jwt(request)
+        if not _emetteur or not await _v309_is_coach_or_admin(_emetteur):
+            logger.warning("[V349] REFUS diffusion de groupe — appelant sans jeton coach signé")
+            raise HTTPException(status_code=403, detail="Diffusion réservée au coach")
     body = await request.json()
     message_text = body.get("message", "").strip()
     coach_name = body.get("coach_name", "Coach Bassi")
@@ -18782,8 +18932,23 @@ async def create_chat_group(request: Request):
 
 @api_router.get("/chat/groups")
 async def get_chat_groups(request: Request):
-    """v108: Liste des groupes du coach — enrichi avec noms des membres"""
+    """v108: Liste des groupes du coach — enrichi avec noms des membres
+
+    V349 — FUITE FERMÉE. Cette route renvoyait 200 à un ANONYME, et le filtre par
+    coach n'était appliqué que si un email était fourni : un appelant sans identité
+    y échappait donc et recevait TOUS les groupes de TOUS les coachs, avec leurs
+    `member_ids` (1 200 identifiants de participants mesurés en production), les
+    `link_token` d'invitation et les prompts IA.
+    Désormais : identité SIGNÉE obligatoire, et cadrage sur SES propres groupes.
+    """
     caller_email = request.headers.get("X-User-Email", "").lower().strip()
+    if await _v349_lecture_stricte():
+        _signe = _v311_coach_email_from_jwt(request)
+        if not _signe:
+            logger.warning(f"[V349] REFUS liste des groupes — « {caller_email or 'anonyme'} » "
+                           f"sans jeton signé")
+            raise HTTPException(status_code=403, detail="Accès réservé au coach")
+        caller_email = _signe
     query = {"is_deleted": {"$ne": True}}
     if caller_email and not is_super_admin(caller_email):
         query["coach_id"] = caller_email
@@ -18808,8 +18973,14 @@ async def get_chat_groups(request: Request):
 
 @api_router.put("/chat/groups/{group_id}")
 async def update_chat_group(group_id: str, request: Request):
-    """v101: Modifier un groupe (nom, membres, prompt IA, switch IA)"""
+    """v101: Modifier un groupe (nom, membres, prompt IA, switch IA)
+
+    V349 : `require_auth` acceptait le repli X-User-Email ET ne vérifiait AUCUNE
+    propriété — n'importe quel coach authentifié pouvait modifier le groupe d'un
+    autre. Identité signée + propriétaire, désormais.
+    """
     require_auth(request)
+    await _v349_exiger_proprietaire(request, group_id, "modification")
     body = await request.json()
     update_fields = {"updated_at": datetime.now(timezone.utc).isoformat()}
     for key in ["name", "member_ids", "system_prompt", "is_ai_active"]:
@@ -18831,8 +19002,12 @@ async def update_chat_group(group_id: str, request: Request):
 
 @api_router.delete("/chat/groups/{group_id}")
 async def delete_chat_group(group_id: str, request: Request):
-    """v101: Supprimer un groupe (soft delete)"""
+    """v101: Supprimer un groupe (soft delete)
+
+    V349 : identite signee + proprietaire (voir _v349_exiger_proprietaire).
+    """
     require_auth(request)
+    await _v349_exiger_proprietaire(request, group_id, "suppression")
     now_iso = datetime.now(timezone.utc).isoformat()
     await db.chat_groups.update_one({"id": group_id}, {"$set": {"is_deleted": True, "deleted_at": now_iso}})
     await db.chat_sessions.update_one({"group_id": group_id}, {"$set": {"is_deleted": True}})
@@ -18851,22 +19026,69 @@ async def get_public_groups(request: Request):
             "is_deleted": {"$ne": True},
             "visible_to_subscribers": {"$ne": False},  # V198: visible par défaut
         },
+        # V349 : `coach_id` ajouté à la projection — sans lui, le test « est-ce MON
+        # groupe ? » ci-dessous serait toujours faux et le coach ne verrait rien.
         {"_id": 0, "id": 1, "name": 1, "system_prompt": 1, "is_ai_active": 1,
-         "member_ids": 1, "link_token": 1, "created_at": 1}
+         "member_ids": 1, "link_token": 1, "created_at": 1, "coach_id": 1}
     ).sort("created_at", -1).to_list(50)
+
+    # V349 : cette liste partait à un ANONYME avec les `member_ids` complets et les
+    # `link_token` d'invitation. Deux corrections :
+    #   1. un membre ne voit QUE les groupes dont il fait partie (le coach voit les
+    #      siens) — plus de catalogue ouvert ;
+    #   2. `member_ids` et `link_token` ne sortent JAMAIS : un membre n'a aucun
+    #      besoin de la liste des identifiants des autres, et le jeton d'invitation
+    #      est précisément ce qui permet de rejoindre. Seul le NOMBRE est renvoyé.
+    if await _v349_lecture_stricte():
+        _signe = _v311_coach_email_from_jwt(request)
+        _pid = (request.query_params.get("participant_id") or "").strip()
+        _mes_pids = {_pid} if _pid else set()
+        try:
+            from api.routes.shared import subscriber_from_request
+            _jeton = subscriber_from_request(request)
+        except Exception:
+            _jeton = None
+        if _jeton and (_jeton.get("email") or "").strip():
+            _p = await db.chat_participants.find_one(
+                {"email": (_jeton["email"] or "").strip().lower()}, {"_id": 0, "id": 1})
+            if _p and _p.get("id"):
+                _mes_pids.add(_p["id"])
+
+        if not _signe and not _mes_pids:
+            logger.warning("[V349] REFUS liste des groupes publics — appelant sans identité")
+            raise HTTPException(status_code=403, detail="Identité requise")
+
+        visibles = []
+        for g in groups:
+            membres = set(g.get("member_ids") or [])
+            est_coach = bool(_signe) and (is_super_admin(_signe)
+                                          or (g.get("coach_id") or "").strip().lower() == _signe)
+            if est_coach or (_mes_pids & membres):
+                visibles.append(g)
+        groups = visibles
 
     # Enrichir avec session_id
     for g in groups:
         g["session_id"] = f"grp_{g['id'][:8]}"
         g["member_count"] = len(g.get("member_ids", []))
 
+    # V349 : retrait des données sensibles APRÈS le calcul du compteur.
+    if await _v349_lecture_stricte():
+        for g in groups:
+            g.pop("member_ids", None)
+            g.pop("link_token", None)
+
     return groups
 
 
 @api_router.put("/chat/groups/{group_id}/visibility")
 async def v198_toggle_group_visibility(group_id: str, request: Request):
-    """V198: Toggle la visibilité d'un groupe pour les abonnés (coach only)."""
+    """V198: Toggle la visibilité d'un groupe pour les abonnés (coach only).
+
+    V349 : identite signee + proprietaire.
+    """
     require_auth(request)
+    await _v349_exiger_proprietaire(request, group_id, "visibilité")
     body = await request.json()
     visible = bool(body.get("visible_to_subscribers", True))
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -18881,7 +19103,15 @@ async def v198_toggle_group_visibility(group_id: str, request: Request):
 
 @api_router.post("/chat/groups/{group_id}/join")
 async def join_chat_group(group_id: str, request: Request):
-    """V108: Un abonné rejoint un groupe. Assure la cohérence chat_participants + session."""
+    """V108: Un abonné rejoint un groupe. Assure la cohérence chat_participants + session.
+
+    V349 : un `participant_id` suffisait — n'importe qui pouvait donc inscrire
+    n'importe quel tiers dans n'importe quel groupe. Deux voies légitimes, et deux
+    seulement :
+      - le COACH PROPRIÉTAIRE, qui ajoute qui il veut (identité signée) ;
+      - l'INVITÉ porteur du `link_token` du groupe — le jeton d'invitation existe
+        déjà sur chaque groupe, il n'attendait que d'être exigé.
+    """
     body = await request.json()
     participant_id = body.get("participant_id", "").strip()
     if not participant_id:
@@ -18893,6 +19123,19 @@ async def join_chat_group(group_id: str, request: Request):
     )
     if not group:
         raise HTTPException(status_code=404, detail="Groupe introuvable")
+
+    if await _v349_lecture_stricte():
+        _email = _v311_coach_email_from_jwt(request)
+        _est_proprio = bool(_email) and (is_super_admin(_email)
+                                         or (group.get("coach_id") or "").strip().lower() == _email)
+        _jeton_fourni = (body.get("link_token") or "").strip()
+        _jeton_attendu = (group.get("link_token") or "").strip()
+        _invite = bool(_jeton_attendu) and _jeton_fourni == _jeton_attendu
+        if not _est_proprio and not _invite:
+            logger.warning(f"[V349] REFUS inscription au groupe {group_id} — "
+                           f"ni propriétaire signé, ni jeton d'invitation valide")
+            raise HTTPException(status_code=403,
+                                detail="Inscription réservée au coach ou à un invité muni du lien")
 
     session_id = f"grp_{group_id[:8]}"
 
