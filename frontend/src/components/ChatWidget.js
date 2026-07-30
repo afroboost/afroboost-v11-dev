@@ -5684,6 +5684,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       const fd = new FormData();
       fd.append('file', file);
       fd.append('upload_preset', 'afroboost');
+      // V352 : dossier `chat/` OBLIGATOIRE. La purge refuse de supprimer quoi que ce
+      // soit hors de ce dossier (garde anti-effacement d'un média tiers) : sans lui,
+      // le fichier serait indéboulonnable et le stockage se remplirait.
+      fd.append('folder', 'chat');
       const r = await fetch('https://api.cloudinary.com/v1_1/dtm0r7hwq/auto/upload',
         { method: 'POST', body: fd });
       const d = await r.json();

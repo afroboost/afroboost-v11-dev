@@ -1253,7 +1253,15 @@ class EnhancedChatMessage(BaseModel):
     # jete. L'affichage, lui, existait deja (MediaMessage lit `media_url`) : il ne
     # recevait jamais rien. C'est la cause exacte de « impossible d'envoyer une image ».
     media_url: Optional[str] = None
-    media_type: Optional[str] = None   # "image" | "file"
+    media_type: Optional[str] = None   # "image" | "file" | "audio"
+    # V352 : media EPHEMERE. `media_expires_at` porte l'echeance EN BASE (jamais un
+    # minuteur memoire : un redemarrage ne doit rien oublier). `media_public_id` est
+    # DERIVE de l'URL cote serveur, jamais recu du client — sinon on pourrait faire
+    # supprimer le fichier d'un tiers. `media_expired` survit a la purge pour que
+    # l'interface puisse afficher « Media expire » au lieu d'un blanc.
+    media_expires_at: Optional[str] = None
+    media_public_id: Optional[str] = None
+    media_expired: bool = False
 
 class EnhancedChatMessageCreate(BaseModel):
     session_id: str
@@ -1263,6 +1271,9 @@ class EnhancedChatMessageCreate(BaseModel):
     content: str = ""
     media_url: Optional[str] = None
     media_type: Optional[str] = None
+    # V352 : NI `media_expires_at` NI `media_public_id` ici. Ils sont calcules par
+    # le serveur : accepter une echeance du client permettrait de se donner un media
+    # eternel, et un public_id de faire supprimer le fichier d'un tiers.
 
 class ChatLinkResponse(BaseModel):
     """Réponse pour la génération de lien partageable"""
@@ -1305,6 +1316,9 @@ def format_message_for_frontend(m: dict) -> dict:
         "text": m.get("content", "") or m.get("text", ""), "sender": (m.get("sender_name") or m.get("sender", "")).replace("💪 ", ""),
         "senderId": m.get("sender_id") or m.get("senderId", ""), "sender_type": m.get("sender_type", "ai"),
         "created_at": m.get("created_at"), "media_url": m.get("media_url"), "media_type": m.get("media_type"),
+        # V352 : l'echeance part au client pour qu'il affiche le compte a rebours,
+        # et `media_expired` pour qu'il dise « Media expire » plutot que rien.
+        "media_expires_at": m.get("media_expires_at"), "media_expired": bool(m.get("media_expired")),
         "cta_type": m.get("cta_type"), "cta_text": m.get("cta_text"), "cta_link": m.get("cta_link"),
         "broadcast": m.get("broadcast", False), "scheduled": m.get("scheduled", False)
     }
@@ -16749,6 +16763,218 @@ async def toggle_session_ai(session_id: str):
 V349_FLAG = "CHAT_READ_STRICT"
 
 
+# =====================================================================
+# V352 — MÉDIAS ÉPHÉMÈRES DU CHAT (photos et notes vocales, 1 h)
+# =====================================================================
+# Objectif premier : que le stockage NE SE REMPLISSE PAS. Une image ou une note
+# vocale envoyée dans le chat vit 1 h, puis disparaît de l'affichage, de la base
+# ET de Cloudinary.
+#
+# POURQUOI CE MÉCANISME ET PAS UN MINUTEUR. L'échéance est écrite EN BASE sur le
+# message (`media_expires_at`), jamais gardée en mémoire : un redémarrage du
+# serveur — fréquent ici, chaque déploiement en provoque un — n'oublie donc
+# aucune échéance. Deux déclencheurs, exactement le motif éprouvé des
+# publications (V261 + V276) :
+#   1. purge PARESSEUSE à chaque lecture d'une conversation ;
+#   2. boucle de fond, pour les conversations que personne ne rouvre.
+# Le premier suffit dans 99 % des cas, le second garantit le reste.
+#
+# IDEMPOTENCE : la purge retire `media_url`. Un second passage ne voit plus rien
+# à faire — repasser dessus ne peut donc ni doubler une suppression ni échouer.
+#
+# CE QUI SURVIT : le TEXTE du message. Seul le média part, remplacé par un
+# drapeau `media_expired` que le frontend rend en « Média expiré ».
+
+V352_DUREE_MEDIA_S = 3600          # 1 h. Abaissable par variable d'env pour les tests.
+V352_DOSSIER = "chat/"             # dossier Cloudinary dédié — borne les suppressions
+V352_TYPES_EPHEMERES = ("image", "audio")
+
+
+def _v352_duree() -> int:
+    """Durée de vie d'un média du chat, en secondes. `CHAT_MEDIA_TTL_S` permet de
+    la raccourcir pour PROUVER la purge sans attendre une heure."""
+    try:
+        v = int(os.environ.get("CHAT_MEDIA_TTL_S", "") or V352_DUREE_MEDIA_S)
+        return v if v > 0 else V352_DUREE_MEDIA_S
+    except (TypeError, ValueError):
+        return V352_DUREE_MEDIA_S
+
+
+def _v352_detruire_cloudinary(public_id: str, media_type: str) -> None:
+    """
+    V352 — supprime le fichier chez Cloudinary. Silencieux et non bloquant.
+
+    Même garde que V261 : on ne supprime JAMAIS hors du dossier `chat/`. Sans
+    cette barrière, un identifiant douteux arrivé en base par un autre chemin
+    pourrait faire effacer le média d'un tiers.
+
+    Un audio téléversé en `auto/upload` est classé `video` par Cloudinary — c'est
+    ce type-là qu'il faut redonner à `destroy`, sans quoi la suppression échoue
+    en silence.
+    """
+    if not public_id:
+        return
+    if not str(public_id).startswith(V352_DOSSIER) or ".." in str(public_id).split("/"):
+        logger.warning(f"[V352] Suppression refusée, identifiant hors du dossier chat/: {public_id}")
+        return
+    try:
+        api_key = os.environ.get("CLOUDINARY_API_KEY", "")
+        api_secret = os.environ.get("CLOUDINARY_API_SECRET", "")
+        if not (api_key and api_secret):
+            # Constat mesuré : sans ces clés, le fichier RESTE en ligne. On le dit
+            # fort, c'est la seule condition non satisfaite de la promesse « rien
+            # ne s'accumule ».
+            logger.warning("[V352] Clés Cloudinary absentes — le fichier %s N'A PAS été supprimé "
+                           "(à poser dans Coolify, sinon le stockage se remplit)", public_id)
+            return
+        import cloudinary
+        import cloudinary.uploader
+        cloudinary.config(
+            cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME", "dtm0r7hwq"),
+            api_key=api_key, api_secret=api_secret, secure=True,
+        )
+        # `image` pour une photo ; `video` pour l'audio (classement Cloudinary).
+        ressource = "image" if media_type == "image" else "video"
+        cloudinary.uploader.destroy(public_id, resource_type=ressource, invalidate=True)
+        logger.info(f"[V352] Fichier supprimé chez Cloudinary : {public_id}")
+    except Exception as e:
+        logger.warning(f"[V352] Suppression Cloudinary impossible ({public_id}) : {e}")
+
+
+async def _v352_purger_medias_expires(session_id: str = "") -> int:
+    """
+    V352 — retire les médias arrivés à échéance : Cloudinary d'abord, base ensuite.
+
+    Cet ordre est volontaire. Si la suppression distante échoue, le document garde
+    son `media_expires_at` et sera retenté au passage suivant — on ne perd jamais
+    la trace d'un fichier à supprimer. L'inverse (vider la base d'abord) créerait
+    précisément l'orphelin qu'on veut éviter.
+
+    `session_id` restreint le passage à une conversation (purge paresseuse) ;
+    vide, il balaie tout (boucle de fond).
+    """
+    maintenant = datetime.now(timezone.utc).isoformat()
+    requete = {"media_expires_at": {"$lte": maintenant, "$ne": None},
+               "media_url": {"$nin": [None, ""]}}
+    if session_id:
+        requete["session_id"] = session_id
+    try:
+        expires = await db.chat_messages.find(
+            requete, {"_id": 0, "id": 1, "media_public_id": 1, "media_type": 1}
+        ).to_list(200)
+    except Exception as e:
+        logger.warning(f"[V352] Lecture des médias expirés impossible : {e}")
+        return 0
+    if not expires:
+        return 0
+
+    partis = 0
+    for m in expires:
+        try:
+            await asyncio.to_thread(
+                _v352_detruire_cloudinary,
+                m.get("media_public_id", ""), m.get("media_type", "image"),
+            )
+            await db.chat_messages.update_one(
+                {"id": m.get("id")},
+                {"$set": {"media_expired": True},
+                 "$unset": {"media_url": "", "media_type": "",
+                            "media_public_id": "", "media_expires_at": ""}},
+            )
+            partis += 1
+        except Exception as e:
+            # Un échec sur un média ne doit pas empêcher les autres de partir.
+            logger.warning(f"[V352] Purge du média {m.get('id')} ignorée : {e}")
+            continue
+    if partis:
+        logger.info(f"[V352] {partis} média(s) du chat expiré(s) et supprimé(s)")
+    return partis
+
+
+def _v352_public_id_from_url(media_url: str) -> str:
+    """
+    V352 — identifiant Cloudinary d'un média du CHAT, dérivé de son URL.
+
+    Pourquoi ne pas réutiliser `_v261_public_id_from_url` : celui-ci se termine par
+    `return public_id if public_id.startswith(V261_FOLDER) else ""` — il ne rend
+    donc RIEN pour un fichier hors du dossier `publications/`. Utilisé tel quel ici,
+    il aurait renvoyé une chaîne vide pour chaque média du chat, et la purge
+    n'aurait jamais rien supprimé chez Cloudinary : la promesse « le stockage ne se
+    remplit pas » serait tombée en silence.
+
+    Même prudence que l'original : toute forme inattendue rend "" — on échoue en
+    FERMETURE. Au pire un fichier survit ; jamais on ne supprime à l'aveugle.
+    """
+    try:
+        marker = "/upload/"
+        if marker not in media_url:
+            return ""
+        tail = media_url.split(marker, 1)[1].split("?")[0].split("#")[0]
+        parts = [p for p in tail.split("/") if p]
+        # Transformations éventuelles (`q_auto,f_auto`) puis segment de version.
+        while parts and ("," in parts[0] or (len(parts[0]) > 2 and parts[0][:2] in ("q_", "f_", "w_", "h_"))):
+            parts.pop(0)
+        if parts and len(parts[0]) > 1 and parts[0][0] == "v" and parts[0][1:].isdigit():
+            parts.pop(0)
+        if not parts:
+            return ""
+        if "." in parts[-1]:
+            parts[-1] = parts[-1].rsplit(".", 1)[0]
+        public_id = "/".join(parts)
+        if ".." in public_id.split("/"):
+            return ""
+        return public_id if public_id.startswith(V352_DOSSIER) else ""
+    except Exception:
+        return ""
+
+
+def _v352_media_du_message(media_url: str, media_type: str) -> dict:
+    """
+    V352 — champs media a poser sur un message. Valide, derive, et date l'echeance.
+
+    Trois garanties, toutes cote SERVEUR :
+      1. seule une URL Cloudinary est acceptee (deja le cas depuis V350) ;
+      2. `media_public_id` est DERIVE de l'URL, jamais recu du client — sinon un
+         appelant pourrait faire supprimer le fichier d'un tiers a l'echeance ;
+      3. une PHOTO ou une NOTE VOCALE recoit une echeance ; un document (PDF) n'en
+         recoit pas et reste donc permanent, conformement a la demande.
+    """
+    url = (media_url or "").strip()
+    if not url:
+        return {}
+    if not url.startswith(V261_MEDIA_PREFIX):
+        raise HTTPException(status_code=400, detail="Piece jointe invalide")
+    mtype = media_type if media_type in ("image", "file", "audio") else "image"
+    champs = {
+        "media_url": url,
+        "media_type": mtype,
+        "media_public_id": _v352_public_id_from_url(url),
+    }
+    if mtype in V352_TYPES_EPHEMERES:
+        champs["media_expires_at"] = (
+            datetime.now(timezone.utc) + timedelta(seconds=_v352_duree())
+        ).isoformat()
+    return champs
+
+
+async def _v352_boucle_purge():
+    """
+    V352 — filet de sécurité : passage toutes les 5 minutes, même sans trafic.
+
+    La purge paresseuse suffit tant qu'on rouvre les conversations. Cette boucle
+    couvre le reste : une conversation que personne ne rouvre ne doit pas garder
+    ses médias indéfiniment. Même motif que `_v276_periodic_purge`, déjà en
+    service ici. Une erreur n'arrête JAMAIS la boucle.
+    """
+    await asyncio.sleep(30)
+    while True:
+        try:
+            await _v352_purger_medias_expires()
+        except Exception as e:
+            logger.warning(f"[V352] Passage de purge ignoré : {e}")
+        await asyncio.sleep(300)
+
+
 async def _v349_exiger_proprietaire(request: Request, group_id: str, action: str) -> str:
     """
     V349 — écriture sur un groupe : identité SIGNÉE **et** propriété.
@@ -16938,6 +17164,14 @@ async def get_session_messages(session_id: str, request: Request,
                 )
                 logger.info(f"[V107.9] FUSION: {other['id'][:8]} → {session_id[:8]} ({migrated.modified_count} msgs, pids={list(all_pids)[:3]})")
 
+    # V352 : purge PARESSEUSE — les medias arrives a echeance partent AVANT la
+    # lecture, donc un media expire n'est jamais renvoye, meme une fraction de
+    # seconde. C'est ce qui garantit qu'il disparait chez TOUS les participants.
+    try:
+        await _v352_purger_medias_expires(session_id)
+    except Exception as _e:
+        logger.warning(f"[V352] Purge paresseuse ignoree : {_e}")
+
     query = {"session_id": session_id}
     if not include_deleted: query["is_deleted"] = {"$ne": True}
     raw = await db.chat_messages.find(query, {"_id": 0}).sort("created_at", 1).to_list(500)
@@ -17093,14 +17327,14 @@ async def create_chat_message(message: EnhancedChatMessageCreate):
     # V350 : même garde-fou que sur la réponse coach — seule une URL Cloudinary est
     # acceptée comme pièce jointe, et un message vide sans pièce jointe est refusé.
     _v350 = message.model_dump()
-    _v350_media = (_v350.get("media_url") or "").strip()
-    if _v350_media and not _v350_media.startswith(V261_MEDIA_PREFIX):
-        raise HTTPException(status_code=400, detail="Pièce jointe invalide")
-    if not (_v350.get("content") or "").strip() and not _v350_media:
+    _v352_champs = _v352_media_du_message(_v350.get("media_url"), _v350.get("media_type"))
+    if not (_v350.get("content") or "").strip() and not _v352_champs:
         raise HTTPException(status_code=400, detail="Message vide")
-    _v350["media_url"] = _v350_media or None
-    if _v350_media and _v350.get("media_type") not in ("image", "file"):
-        _v350["media_type"] = "image"
+    # V352 : les champs media viennent EXCLUSIVEMENT du helper — on ecarte ce que
+    # le client a pu envoyer (echeance ou public_id forges).
+    for _k in ("media_url", "media_type", "media_expires_at", "media_public_id", "media_expired"):
+        _v350.pop(_k, None)
+    _v350.update(_v352_champs)
 
     message_obj = EnhancedChatMessage(
         **_v350,
@@ -18815,10 +19049,9 @@ async def send_coach_response(request: Request):
     # Cloudinary est acceptée. Sans ce garde-fou, n'importe qui pourrait faire
     # afficher dans le fil une image hébergée n'importe où (traceur, contenu
     # arbitraire) : le message est rendu tel quel côté client.
-    _v350_media = (body.get("media_url") or "").strip()
-    if _v350_media and not _v350_media.startswith(V261_MEDIA_PREFIX):
-        raise HTTPException(status_code=400, detail="Pièce jointe invalide")
-    _v350_type = "file" if (body.get("media_type") == "file") else "image"
+    # V352 : validation, derivation de l'identifiant Cloudinary et echeance.
+    _v352_champs = _v352_media_du_message(body.get("media_url"), body.get("media_type"))
+    _v350_media = _v352_champs.get("media_url", "")
 
     # V350 : un message peut désormais n'être QU'une pièce jointe (envoyer une photo
     # sans légende est le cas le plus courant). Le texte reste requis si rien n'est joint.
@@ -18837,8 +19070,7 @@ async def send_coach_response(request: Request):
         sender_type="coach",
         content=message_text,
         mode=session.get("mode", "human"),
-        media_url=_v350_media or None,
-        media_type=_v350_type if _v350_media else None,
+        **_v352_champs,
     )
     await db.chat_messages.insert_one(coach_message.model_dump())
     
@@ -22399,6 +22631,14 @@ async def startup_db():
     # V328 : envoi automatique des campagnes programmees, toutes les 60 s. Meme
     # motif que la purge ci-dessus (tache asyncio native, pas APScheduler). Sans
     # elle, une campagne « scheduled » attendait une action manuelle indefiniment.
+    # V352 : purge des medias ephemeres du chat (photos, notes vocales), toutes les
+    # 5 min, meme sans trafic. Meme motif que la purge V276 ci-dessus.
+    try:
+        asyncio.create_task(_v352_boucle_purge())
+        logger.info("[V352] Boucle de purge des medias ephemeres demarree (5 min)")
+    except Exception as e:
+        logger.warning(f"[V352] Demarrage purge medias ignore: {e}")
+
     try:
         asyncio.create_task(_campaign_scheduler_loop())
         logger.info("[SCHEDULER-CAMPAGNE] Boucle d'envoi automatique demarree (60s)")
