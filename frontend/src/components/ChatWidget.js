@@ -92,6 +92,26 @@ var V319_REQUIRE_COACH_JWT = false;
 // coach chez un visiteur qui aurait juste saisi l'email de l'admin.
 try { V319_REQUIRE_COACH_JWT = localStorage.getItem('afroboost_require_coach_jwt') === '1'; } catch (e) {}
 
+/**
+ * V349 — en-têtes d'identité pour les appels faits en `fetch`.
+ *
+ * Les appels axios reçoivent `Authorization: Bearer` par l'intercepteur global
+ * (App.js) ; ceux en `fetch`, non. Sans cet ajout, ils tomberaient en 403 dès le
+ * verrouillage V349 de la lecture des messages.
+ */
+function v349EntetesChat() {
+  var h = {};
+  try {
+    var t = localStorage.getItem('afroboost_jwt');
+    if (t) h['Authorization'] = 'Bearer ' + t;
+  } catch (e) { /* localStorage indisponible */ }
+  try {
+    var st = localStorage.getItem('afroboost_subscriber_token');
+    if (st) h['X-Subscriber-Token'] = st;
+  } catch (e) { /* idem */ }
+  return h;
+}
+
 function v319HasCoachJwt() {
   try {
     var t = localStorage.getItem('afroboost_jwt');
@@ -2566,7 +2586,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     setGroupLoading(true);
     setGroupMsgStatus('loading'); setGroupMsgError('');
     try {
-      const res = await axios.get(`${API}/chat/sessions/${sessionId}/messages`);
+      const res = await axios.get(`${API}/chat/sessions/${sessionId}/messages`, { params: { participant_id: participantId || '' } });
       // V108.4: Formater les messages serveur → format client unifié
       const formatted = (res.data || []).map(m => ({
         id: m.id,
@@ -3988,7 +4008,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           // Charger l'historique du groupe
           if (response.data.conversation_id) {
             try {
-              const historyRes = await axios.get(`${API}/chat/sessions/${response.data.conversation_id}/messages`);
+              const historyRes = await axios.get(`${API}/chat/sessions/${response.data.conversation_id}/messages`, { params: { participant_id: participantId || '' } });
               if (historyRes.data && historyRes.data.length > 0) {
                 const restoredMessages = historyRes.data.map(msg => ({
                   id: msg.id,
@@ -4051,7 +4071,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         
         // Essayer de charger l'historique via smart-entry ou directement
         if (savedSession?.id) {
-          const response = await axios.get(`${API}/chat/sessions/${savedSession.id}/messages`);
+          const response = await axios.get(`${API}/chat/sessions/${savedSession.id}/messages`, { params: { participant_id: participantId || '' } });
           if (response.data && response.data.length > 0) {
             const restoredMessages = response.data.map(msg => ({
               id: msg.id,
@@ -4125,7 +4145,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       
       if (savedSession?.id) {
         try {
-          const response = await axios.get(`${API}/chat/sessions/${savedSession.id}/messages`);
+          const response = await axios.get(`${API}/chat/sessions/${savedSession.id}/messages`, { params: { participant_id: participantId || '' } });
           if (response.data && response.data.length > 0) {
             const restoredMessages = response.data.map(msg => ({
               id: msg.id,
@@ -4215,7 +4235,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         });
         // Récupérer les messages manqués pendant la déconnexion
         try {
-          const response = await fetch(`${API}/chat/sessions/${sessionData.id}/messages`);
+          const response = await fetch(`${API}/chat/sessions/${sessionData.id}/messages?participant_id=${encodeURIComponent(participantId || '')}`, { headers: v349EntetesChat() });
           if (response.ok) {
             const data = await response.json();
             if (data.messages && data.messages.length > 0) {
@@ -4541,7 +4561,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         // Fallback vers l'ancien endpoint
         console.log('[RAMASSER] Tentative fallback...');
         try {
-          const fallback = await fetch(`${API}/chat/sessions/${sessionData.id}/messages`);
+          const fallback = await fetch(`${API}/chat/sessions/${sessionData.id}/messages?participant_id=${encodeURIComponent(participantId || '')}`, { headers: v349EntetesChat() });
           if (fallback.ok) {
             const data = await fallback.json();
             if (Array.isArray(data) && data.length > 0) {
@@ -5604,7 +5624,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   const loadCoachSessionMessages = async (session) => {
     setSelectedCoachSession(session);
     try {
-      const res = await axios.get(`${API}/chat/sessions/${session.id}/messages`);
+      const res = await axios.get(`${API}/chat/sessions/${session.id}/messages`, { params: { participant_id: participantId || '' } });
       const formattedMessages = res.data.map(m => ({
         id: m.id,
         type: m.sender_type === 'user' ? 'user' : m.sender_type === 'coach' ? 'coach' : 'ai',

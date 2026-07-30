@@ -7,6 +7,27 @@ import { Users, Plus, X, Search, Check, Bot, UserCircle, Trash2, ChevronDown, Ch
 import { renderTextWithLinks } from '../chat/ChatBubbles';
 import SvgIcon from '../SvgIcon';
 
+/**
+ * V349 — en-têtes portant l'identité SIGNÉE.
+ *
+ * Ce module appelle l'API avec `fetch`, et non axios : il n'a donc PAS
+ * l'intercepteur global qui ajoute `Authorization: Bearer` (App.js). Il n'envoyait
+ * jusqu'ici que `X-User-Email`, un en-tête falsifiable — c'est précisément le repli
+ * que V349 ferme côté serveur. Sans cet ajout, la gestion des groupes tomberait
+ * entièrement en 403 le jour du verrouillage : exactement l'incident V310c.
+ *
+ * On CONSERVE `X-User-Email` : tant que le verrou n'est pas basculé, il reste la
+ * voie acceptée, et le retirer casserait l'existant pour rien.
+ */
+const v349Entetes = (coachEmail, extra) => {
+  const h = Object.assign({ 'X-User-Email': coachEmail || '' }, extra || {});
+  try {
+    const jeton = localStorage.getItem('afroboost_jwt');
+    if (jeton) h['Authorization'] = 'Bearer ' + jeton;
+  } catch (e) { /* localStorage indisponible : on part sans jeton */ }
+  return h;
+};
+
 // === AI / Human Toggle Switch ===
 const AiHumanSwitch = memo(({ isAi, onToggle, size = 'normal' }) => {
   const h = size === 'small' ? 28 : 36;
@@ -109,7 +130,7 @@ const GroupChatPanel = memo(({ group, API, coachEmail, onClose }) => {
     setLoading(true);
     try {
       const res = await fetch(`${API}/chat/sessions/${sessionId}/messages`, {
-        headers: { 'X-User-Email': coachEmail || '' }
+        headers: v349Entetes(coachEmail)
       });
       if (res.ok) {
         const data = await res.json();
@@ -135,7 +156,7 @@ const GroupChatPanel = memo(({ group, API, coachEmail, onClose }) => {
     try {
       const res = await fetch(`${API}/chat/coach-response`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail || '' },
+        headers: v349Entetes(coachEmail, { 'Content-Type': 'application/json' }),
         body: JSON.stringify({ session_id: sessionId, message: msg, coach_name: 'Coach' }),
       });
       if (res.ok) {
@@ -382,7 +403,7 @@ const GroupForm = memo(({
     try {
       const res = await fetch(`${API}/ai/enhance-text`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail || '' },
+        headers: v349Entetes(coachEmail, { 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           text: `Génère un prompt système expert pour un assistant IA dans un groupe appelé "${groupName.trim()}". Le prompt doit définir la personnalité, le ton et l'expertise de l'IA. Style Afroboost : motivant, chaleureux, professionnel. Maximum 3 phrases.`,
           style: 'expert'
@@ -551,7 +572,7 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
     if (!API) return;
     const fetchGroups = async () => {
       try {
-        const res = await fetch(`${API}/chat/groups`, { headers: { 'X-User-Email': coachEmail || '' } });
+        const res = await fetch(`${API}/chat/groups`, { headers: v349Entetes(coachEmail) });
         if (res.ok) setGroups(await res.json());
       } catch (e) { console.error('[V101] Erreur fetch groupes:', e); }
     };
@@ -564,7 +585,7 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
     try {
       const res = await fetch(`${API}/chat/groups`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail || '' },
+        headers: v349Entetes(coachEmail, { 'Content-Type': 'application/json' }),
         body: JSON.stringify({ name: formData.name, members: formData.members, system_prompt: formData.system_prompt, is_ai_active: formData.is_ai_active }),
       });
       if (res.ok) {
@@ -590,7 +611,7 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
     try {
       const res = await fetch(`${API}/chat/groups/${editingGroup.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail || '' },
+        headers: v349Entetes(coachEmail, { 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           name: formData.name,
           member_ids: formData.members,
@@ -619,7 +640,7 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
     if (!API) return;
     if (!window.confirm('Supprimer ce groupe ?')) return;
     try {
-      await fetch(`${API}/chat/groups/${groupId}`, { method: 'DELETE', headers: { 'X-User-Email': coachEmail || '' } });
+      await fetch(`${API}/chat/groups/${groupId}`, { method: 'DELETE', headers: v349Entetes(coachEmail) });
       setGroups(prev => prev.filter(g => g.id !== groupId));
       if (editingGroup?.id === groupId) setEditingGroup(null);
       if (chatGroupId === groupId) setChatGroupId(null);
@@ -647,7 +668,7 @@ const GroupChatModule = memo(({ contacts = [], API, coachEmail }) => {
     try {
       const res = await fetch(`${API}/chat/groups/${groupId}/visibility`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail || '' },
+        headers: v349Entetes(coachEmail, { 'Content-Type': 'application/json' }),
         body: JSON.stringify({ visible_to_subscribers: newVisible }),
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
