@@ -196,12 +196,15 @@ async def _calcule_personnes():
     enregistrements = []
     for nom in collections:
         projection = {"_id": 0, "id": 1, "name": 1, "email": 1, "whatsapp": 1,
-                      "phone": 1, "source": 1, "code": 1, "subscriptionCode": 1}
+                      "phone": 1, "source": 1, "code": 1, "subscriptionCode": 1,
+                      "participant_id": 1}
         for d in await db[nom].find({}, projection).to_list(20000):
             brut = d.get("whatsapp") or d.get("phone") or ""
             enregistrements.append({
                 "coll": nom,
-                "id": d.get("id") or "",
+                # V363b : repli sur participant_id — une partie des `leads` n'a pas de
+                # champ `id` mais pointe vers la fiche CRM par `participant_id`.
+                "id": d.get("id") or d.get("participant_id") or "",
                 "tel": _normalise_tel(brut, cfg),
                 "mail": _normalise_email(d.get("email"), cfg),
                 "source": str(d.get("source") or ""),
@@ -343,13 +346,21 @@ async def lister_segment(cle: str, request: Request, limite: int = 5000):
     if cle not in SEGMENTS_CONNUS:
         raise HTTPException(status_code=404, detail=f"Segment inconnu : {cle}")
     personnes, cfg = await _calcule_personnes()
-    retenues = [p for p in personnes if cle in p["etiquettes"] and p["id"]]
-    tronque = len(retenues) > limite
+    du_segment = [p for p in personnes if cle in p["etiquettes"]]
+    # V363b : une personne sans identifiant exploitable ne peut PAS être ciblée par une
+    # campagne (launch_campaign résout des ids). On le dit au lieu de la faire
+    # disparaître : `total` compte les personnes du segment, `adressables` celles
+    # réellement utilisables, et l'écart est affiché.
+    adressables = [p for p in du_segment if p["id"]]
+    tronque = len(adressables) > limite
     return {
         "success": True,
         "segment": cle,
-        "total": len(retenues),
+        "total": len(du_segment),
+        "adressables": len(adressables),
+        "sans_identifiant": len(du_segment) - len(adressables),
         "tronque": tronque,          # jamais de troncature silencieuse
         "calcule_le": datetime.now(timezone.utc).isoformat(),
-        "contacts": [{"id": p["id"], "collection": p["collection"]} for p in retenues[:limite]],
+        "contacts": [{"id": p["id"], "collection": p["collection"]}
+                     for p in adressables[:limite]],
     }

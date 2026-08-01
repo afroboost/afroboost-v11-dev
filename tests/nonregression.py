@@ -895,15 +895,20 @@ def t89_v363_segments_contacts():
         r_seg = requests.get(_url("/api/contacts/segment/demarchable_whatsapp"),
                              headers=hdr, timeout=TIMEOUT)
         seg = r_seg.json() if r_seg.status_code == 200 else {}
+        # V363b : le segment annonce autant de personnes que le compteur, ET distingue
+        # celles réellement adressables (une personne sans identifiant ne peut pas être
+        # ciblée par une campagne). L'écart doit être AFFICHÉ, jamais absorbé.
         coherent = (seg.get("total") == groupes.get("demarchable_whatsapp")
-                    and len(seg.get("contacts", [])) == seg.get("total")
+                    and seg.get("adressables", 0) + seg.get("sans_identifiant", 0) == seg.get("total")
+                    and len(seg.get("contacts", [])) == seg.get("adressables")
                     and seg.get("tronque") is False)
         ok = (ferme and aucune_fuite and r.status_code == 200 and somme_ok
               and r404.status_code == 404 and coherent)
         record(89, "V363 : segments fermés sans jeton, comptes cohérents avec jeton", ok,
                f"anon={r_anon.status_code} usurpé={r_spoof.status_code} "
                f"personnes={d.get('personnes')} groupes={groupes} "
-               f"segment={seg.get('total')} inconnu={r404.status_code}")
+               f"segment={seg.get('total')} adressables={seg.get('adressables')} "
+               f"sans_id={seg.get('sans_identifiant')} inconnu={r404.status_code}")
     except Exception as e:
         record(89, "V363 : segments de contacts", False, str(e))
 
