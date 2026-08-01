@@ -3838,7 +3838,13 @@ def substitute_campaign_variables(message: str, contact: dict) -> str:
 
     result = message
     for pattern, value in replacements.items():
-        result = re.sub(pattern, value, result, flags=re.IGNORECASE)
+        # V362 : `value or ""` — un champ PRÉSENT mais à null (name/email/whatsapp/phone)
+        # traverse `contact.get(k, "")`, qui ne renvoie "" que si la CLÉ est absente.
+        # re.sub(pattern, None, ...) levait alors « decoding to str: need a bytes-like
+        # object, NoneType found » ; l'appel étant hors try/except dans la boucle des
+        # contacts de launch_campaign, un seul contact incomplet faisait tomber TOUTE
+        # la campagne (statut « Échoué », results jamais écrit -> compteur « (0) »).
+        result = re.sub(pattern, value or "", result, flags=re.IGNORECASE)
 
     return result
 
