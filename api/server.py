@@ -55,6 +55,8 @@ from api.routes.boost_routes import (
 )
 # V205: Import routes catégories contacts
 from api.routes.contact_categories_routes import category_router, init_category_db
+# V363: Import routes segments de contacts (CALCULÉS, lecture seule, aucune écriture)
+from api.routes.contact_segments_routes import segments_router, init_segments_db
 # V223: Calcul prix progressif (module pur, sans accès DB)
 from api.pricing import compute_active_price  # V223
 
@@ -22469,6 +22471,11 @@ init_boost_db(db)
 # V205: Routes catégories contacts
 fastapi_app.include_router(category_router, prefix="/api")
 init_category_db(db)
+
+# V363: Routes segments de contacts — LECTURE SEULE, JWT coach obligatoire.
+# N'écrit jamais en base et ne touche ni aux campagnes, ni au chemin d'envoi.
+fastapi_app.include_router(segments_router, prefix="/api")
+init_segments_db(db)
 
 # V309 (FIX 4.4) : CORS resserré. `*` autorisait N'IMPORTE QUEL site à appeler l'API
 # depuis un navigateur. On n'autorise que le domaine du site (+ localhost dev). Si

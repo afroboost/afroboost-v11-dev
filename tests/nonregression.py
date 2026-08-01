@@ -854,6 +854,60 @@ def t83_v345_sessions_refus_explicite_pas_liste_vide():
         record(83, "V345 : /chat/sessions refus explicite", False, str(e))
 
 
+def t89_v363_segments_contacts():
+    """V363 : les segments de contacts sont CALCULÉS, jamais stockés.
+
+    Deux affirmations :
+      - les deux routes REFUSENT (401/403) sans jeton coach signé — elles exposent
+        des identifiants de contacts, la règle « aucune donnée personnelle sans
+        authentification » s'applique ; un simple X-User-Email ne doit rien ouvrir ;
+      - avec ADMIN_JWT : les comptes sont cohérents (les quatre groupes d'usage sont
+        exclusifs, leur somme vaut le nombre de personnes) et un segment inconnu
+        renvoie 404 plutôt qu'une liste vide trompeuse.
+
+    Ces routes ne touchent NI aux campagnes, NI au chemin d'envoi : rien n'est
+    envoyé à personne pendant ce test.
+    """
+    try:
+        # 1) portes fermées — anonyme puis usurpation par en-tête
+        r_anon = requests.get(_url("/api/contacts/segments"), timeout=TIMEOUT)
+        r_spoof = requests.get(_url("/api/contacts/segments"),
+                               headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
+        r_liste = requests.get(_url("/api/contacts/segment/demarchable_whatsapp"),
+                               timeout=TIMEOUT)
+        ferme = all(x.status_code in (401, 403) for x in (r_anon, r_spoof, r_liste))
+        aucune_fuite = all("contacts" not in (x.text or "") for x in (r_anon, r_spoof, r_liste))
+        if not ADMIN_JWT:
+            return record(89, "V363 : segments fermés sans jeton signé (parcours admin non couvert)",
+                          ferme and aucune_fuite,
+                          f"anon={r_anon.status_code} usurpé={r_spoof.status_code} "
+                          f"liste={r_liste.status_code}")
+
+        # 2) parcours légitime
+        hdr = {"Authorization": "Bearer " + ADMIN_JWT}
+        r = requests.get(_url("/api/contacts/segments"), headers=hdr, timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        groupes = d.get("groupes_usage", {}) or {}
+        somme_ok = (d.get("total_groupes_usage") == d.get("personnes")
+                    and sum(groupes.values()) == d.get("personnes"))
+        r404 = requests.get(_url("/api/contacts/segment/segment_qui_nexiste_pas"),
+                            headers=hdr, timeout=TIMEOUT)
+        r_seg = requests.get(_url("/api/contacts/segment/demarchable_whatsapp"),
+                             headers=hdr, timeout=TIMEOUT)
+        seg = r_seg.json() if r_seg.status_code == 200 else {}
+        coherent = (seg.get("total") == groupes.get("demarchable_whatsapp")
+                    and len(seg.get("contacts", [])) == seg.get("total")
+                    and seg.get("tronque") is False)
+        ok = (ferme and aucune_fuite and r.status_code == 200 and somme_ok
+              and r404.status_code == 404 and coherent)
+        record(89, "V363 : segments fermés sans jeton, comptes cohérents avec jeton", ok,
+               f"anon={r_anon.status_code} usurpé={r_spoof.status_code} "
+               f"personnes={d.get('personnes')} groupes={groupes} "
+               f"segment={seg.get('total')} inconnu={r404.status_code}")
+    except Exception as e:
+        record(89, "V363 : segments de contacts", False, str(e))
+
+
 def t88_v354_permissions_policy_micro():
     """V354 : l'en-tête `Permissions-Policy` portait `microphone=()` — une liste
     d'autorisation VIDE, qui refuse le micro à TOUT LE MONDE, y compris au site
@@ -1607,6 +1661,7 @@ def main():
                    t83_v345_sessions_refus_explicite_pas_liste_vide,
                    t84_v346_categories_des_conversations, t85_v348_suppression_conversation_exige_jeton,
                    t86_v349_contenu_des_conversations_ferme, t87_v350_piece_jointe_du_chat, t88_v354_permissions_policy_micro,
+                   t89_v363_segments_contacts,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
