@@ -32,6 +32,8 @@ import SuperAdminPanel from "./SuperAdminPanel"; // v8.9 Super Admin Panel
 import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab, PaymentConfigTab, BrandingManager, SEOManager, FAQManager, ContactsManager, InvoiceGenerator } from "./dashboard";
 // V199: Accordéon paiements (5 sections pliables)
 import V199BoutiqueAccordion from "./dashboard/V199BoutiqueAccordion";
+// V366 : dépliage des groupes en personnes (partagé avec la duplication)
+import { deplierTargetIds, estIdentifiantDeGroupe } from '../utils/deplierGroupes';
 import { copyToClipboard } from "../utils/clipboard"; // Utilitaire copier avec fallback mobile
 import SvgIcon from "./SvgIcon"; // V230: jeu d'icones vectorielles inline
 
@@ -4587,6 +4589,28 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
     // Recharger le panier de destinataires (targetIds)
     if (campaign.targetIds && campaign.targetIds.length > 0) {
+      // V366 : rouvrir une campagne ne doit pas ramener une ligne de groupe qui
+      // n'écrit à personne. Si la campagne ne cible QUE des groupes, on les déplie
+      // en vraies personnes — le compteur V364 affiche alors le nombre réel au lieu
+      // d'un « 0 joignable » qu'on ne comprend pas. Le dépliage est asynchrone :
+      // le panier est d'abord posé tel quel, puis remplacé dès que les groupes
+      // arrivent (0,3 s depuis V365), pour ne jamais bloquer l'ouverture du modal.
+      if (campaign.targetIds.some(estIdentifiantDeGroupe)) {
+        axios.get(`${API}/chat/groups`)
+          .then(res => {
+            const resultat = deplierTargetIds(campaign.targetIds, res.data || []);
+            if (!resultat.deplie) return;                 // rien à remplacer
+            setSelectedRecipients(resultat.ids.map(id => {
+              const conv = activeConversations.find(c => c.conversation_id === id);
+              return conv
+                ? { id: conv.conversation_id, name: conv.name || 'Sans nom', type: 'user' }
+                : { id, name: 'Destinataire', type: 'user' };
+            }));
+            showCampaignToast(
+              `👥 Groupe déplié : ${resultat.membres} destinataire(s) réel(s)`, 'info');
+          })
+          .catch(() => { /* on garde le panier d'origine, le compteur V364 dira la vérité */ });
+      }
       // Retrouver les infos de chaque destinataire depuis activeConversations
       const recipients = campaign.targetIds.map(id => {
         const conv = activeConversations.find(c => c.conversation_id === id);

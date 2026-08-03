@@ -11,6 +11,7 @@ import axios from 'axios';
 import CampaignCalendar from './CampaignCalendar';
 import CampaignModal from './CampaignModal';
 import SvgIcon from '../SvgIcon';
+import { deplierTargetIds, estIdentifiantDeGroupe } from '../../utils/deplierGroupes';
 
 const CampaignManager = ({
   // === ÉTATS PRINCIPAUX ===
@@ -276,6 +277,33 @@ const CampaignManager = ({
       return;
     }
     try {
+      // V366 : une copie qui n'écrit à personne n'est pas une copie utile.
+      // `targetIds` était recopié tel quel : une campagne ne ciblant qu'un groupe
+      // (« grp_xxx ») produisait une copie tout aussi inerte — le moteur ne trouve
+      // aucun numéro pour un identifiant de groupe. On déplie donc les groupes en
+      // leurs membres avant de créer la copie. Les contacts individuels, eux, sont
+      // recopiés tels quels, et une campagne qui cible déjà des personnes n'est
+      // pas touchée (cf. deplierGroupes.js).
+      let cibles = campaign.targetIds || [];
+      const contientUnGroupe = cibles.some(estIdentifiantDeGroupe);
+      if (contientUnGroupe) {
+        try {
+          const groupes = await axios.get(`${API}/chat/groups`);
+          const resultat = deplierTargetIds(cibles, groupes.data || []);
+          cibles = resultat.ids;
+          if (resultat.deplie) {
+            showCampaignToast?.(
+              `Groupe déplié : ${resultat.membres} personne(s) dans la copie.`, 'success');
+          } else if (resultat.echec) {
+            showCampaignToast?.(
+              "Le groupe n'a pas pu être déplié — vérifie les destinataires de la copie.", 'error');
+          }
+        } catch (e) {
+          // Échec HONNÊTE : on duplique quand même à l'identique, mais on le dit.
+          showCampaignToast?.(
+            "Impossible de déplier le groupe — la copie garde les destinataires d'origine.", 'error');
+        }
+      }
       const dupData = {
         name: `${campaign.name} (copie)`,
         message: campaign.message || '',
@@ -285,7 +313,7 @@ const CampaignManager = ({
         selectedContacts: campaign.selectedContacts || [],
         channels: campaign.channels || { internal: true },
         targetGroupId: campaign.targetGroupId || 'community',
-        targetIds: campaign.targetIds || [],
+        targetIds: cibles,                       // V366 : groupes dépliés en personnes
         targetConversationId: campaign.targetConversationId || '',
         targetConversationName: campaign.targetConversationName || '',
         systemPrompt: campaign.systemPrompt || null,
