@@ -4110,6 +4110,47 @@ async def launch_campaign(campaign_id: str):
             if has_specific_targets and campaign.get("targetType") == "all":
                 logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ targetType='all' MAIS targetIds présents — utilisation des targetIds spécifiques (sécurité V165.4)")
             contact_ids = valid_target_ids if valid_target_ids else campaign.get("selectedContacts", [])
+
+            # === V376 : DÉPLIAGE DES GROUPES AU MOMENT DE L'ENVOI ===
+            #
+            # Un identifiant de session de groupe (« grp_xxxxxxxx ») ne correspond à
+            # AUCUN utilisateur : les trois recherches ci-dessous (users,
+            # chat_participants, chat_sessions par participantEmail) le laissaient
+            # tomber en silence. Une campagne réglée sur « Contacts WhatsApp »
+            # (210 membres) n'atteignait donc que les contacts listés À CÔTÉ du
+            # groupe — 25 personnes le 3 août à midi, au lieu de 210.
+            #
+            # V366 avait corrigé le dépliage à la DUPLICATION et à la RÉÉDITION,
+            # côté interface. Le moteur d'envoi, lui, n'avait jamais su le faire :
+            # une campagne créée autrement (import, ancienne campagne, API) restait
+            # donc muette pour l'essentiel de sa cible.
+            #
+            # PORTÉE STRICTE : ce dépliage ne concerne QUE la résolution des
+            # destinataires WhatsApp/e-mail. Le canal `internal` plus haut continue
+            # d'utiliser `valid_target_ids` tel quel, et publie donc toujours UN
+            # message dans la conversation de groupe — comportement inchangé.
+            _ids_groupes = [c for c in contact_ids if isinstance(c, str) and c.startswith("grp_")]
+            if _ids_groupes:
+                _membres = []
+                for _gid in _ids_groupes:
+                    _session = await db.chat_sessions.find_one(
+                        {"id": _gid}, {"_id": 0, "participant_ids": 1, "group_id": 1})
+                    _liste = (_session or {}).get("participant_ids") or []
+                    if not _liste and (_session or {}).get("group_id"):
+                        _grp = await db.chat_groups.find_one(
+                            {"id": _session["group_id"]}, {"_id": 0, "member_ids": 1})
+                        _liste = (_grp or {}).get("member_ids") or []
+                    logger.info(f"[CAMPAIGN-LAUNCH] 👥 Groupe {_gid} déplié en {len(_liste)} membre(s)")
+                    _membres.extend(_liste)
+                if _membres:
+                    # On garde l'ordre et on retire les doublons ; les identifiants de
+                    # groupe sortent de la liste, ils n'ont plus rien à y faire.
+                    _sans_groupe = [c for c in contact_ids if c not in _ids_groupes]
+                    contact_ids = list(dict.fromkeys(_sans_groupe + _membres))
+                    logger.info(f"[CAMPAIGN-LAUNCH] 👥 Destinataires après dépliage : {len(contact_ids)}")
+                else:
+                    logger.warning(f"[CAMPAIGN-LAUNCH] ⚠️ Groupe(s) {_ids_groupes} sans membre exploitable")
+
             if contact_ids:
                 # 1) Essayer de trouver directement par ID utilisateur
                 contacts = await db.users.find({"id": {"$in": contact_ids}}, {"_id": 0}).to_list(1000)
@@ -20518,6 +20559,61 @@ async def whatsapp_diagnostic():
     }
 
     return results
+
+
+@api_router.get("/whatsapp-app-info")
+async def whatsapp_app_info():
+    """V377 — À QUELLE APP META appartient le jeton qui envoie les campagnes ?
+
+    LECTURE SEULE, AUCUN message envoyé. Répond à une question qu'on ne peut pas
+    trancher depuis le tableau de bord quand plusieurs apps portent le même nom :
+    plusieurs « Afroboost Api » coexistent, la plupart en mode Développement, et un
+    jeton issu d'une app en développement ne livre les TEMPLATES qu'aux numéros de
+    test — ce qui expliquerait des campagnes acceptées par Meta mais jamais reçues.
+
+    Le jeton n'est JAMAIS renvoyé : seuls son app_id, son type et sa validité.
+    """
+    import httpx
+    config = await _get_whatsapp_config()
+    if not config or config.get("api_mode") != "meta":
+        return {"error": "Config Meta absente"}
+    jeton = config["access_token"]
+    version = config.get("api_version", "v21.0")
+    phone_id = config.get("phone_number_id")
+    resultats = {"phone_number_id": phone_id, "api_version": version}
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        # 1) À quelle app ce jeton appartient-il ?
+        r = await client.get(f"https://graph.facebook.com/{version}/debug_token",
+                             params={"input_token": jeton, "access_token": jeton})
+        brut = (r.json() or {}).get("data", {}) if r.status_code == 200 else r.json()
+        resultats["jeton"] = {
+            "app_id": brut.get("app_id"),
+            "application": brut.get("application"),
+            "type": brut.get("type"),
+            "valide": brut.get("is_valid"),
+            "expire_le": brut.get("expires_at"),
+            "permissions": (brut.get("scopes") or [])[:12],
+            "erreur": brut.get("error"),
+        }
+        # 2) À quel WABA ce numéro est-il rattaché ? (source : Meta, pas le code)
+        r2 = await client.get(f"https://graph.facebook.com/{version}/{phone_id}",
+                              params={"access_token": jeton,
+                                      "fields": "id,display_phone_number,verified_name"})
+        resultats["numero"] = r2.json()
+        # 3) Les numéros que ce WABA déclare — confirme (ou non) le rattachement.
+        waba = "1615280896432370"
+        r3 = await client.get(f"https://graph.facebook.com/{version}/{waba}/phone_numbers",
+                              params={"access_token": jeton,
+                                      "fields": "id,display_phone_number,quality_rating"})
+        resultats["waba_interroge"] = waba
+        resultats["numeros_du_waba"] = r3.json()
+        # 4) Les apps abonnées à ce WABA (celle qui reçoit les webhooks).
+        r4 = await client.get(f"https://graph.facebook.com/{version}/{waba}/subscribed_apps",
+                              params={"access_token": jeton})
+        resultats["apps_abonnees"] = r4.json()
+
+    return resultats
 
 
 @api_router.get("/campaign-debug/{campaign_id}")
