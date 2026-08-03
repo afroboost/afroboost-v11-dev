@@ -17,7 +17,7 @@
 // rechargement (V358), alors que le correctif etait en ligne depuis longtemps.
 // Bumper CACHE_NAME purge l'ancien cache a l'activation et force tous les appareils
 // a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
-var CACHE_NAME = 'afroboost-v375'; // V375: date de reference des paliers de prix, dans l etape Prix
+var CACHE_NAME = 'afroboost-v380'; // V380: ecran « A qui envoyer ? » simplifie
 var SW_VERSION = 268;
 
 var PRECACHE_URLS = [

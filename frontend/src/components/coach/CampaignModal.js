@@ -107,6 +107,9 @@ export default function CampaignModal({
   const [segmentsChargement, setSegmentsChargement] = useState(false);
   const [groupeDepliage, setGroupeDepliage] = useState('');    // id du groupe en cours de dépliage
   const [groupesCache, setGroupesCache] = useState(null);      // /chat/groups : lent, chargé une fois
+  // V380 : l'ancien écran (recherche, onglets, liste de 1288 lignes, panier) est
+  // replié ici. Fermé par défaut : on ne le montre qu'à qui le demande.
+  const [optionsAvancees, setOptionsAvancees] = useState(false);
 
   // V154: Category filter for campaign targeting
   const [campaignCategories, setCampaignCategories] = useState([]);
@@ -740,256 +743,403 @@ export default function CampaignModal({
           {/* ===== ÉTAPE 2: Contacts & Canaux (v18: CHECKBOX MULTI-SELECT) ===== */}
           {step === 2 && (
             <div>
-              {/* Destinataires header + counter */}
-              <div style={{ marginBottom: '12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <label style={{ color: '#fff', fontSize: '13px', fontWeight: 500 }}>
-                    <span className="inline-flex items-center gap-1.5"><SvgIcon name="target" size={14} />Destinataires ({selectedRecipients?.length || 0} sélectionnés)</span>
-                  </label>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    {selectedRecipients?.length > 0 && (
-                      <button type="button" onClick={deselectAll} style={{
-                        padding: '4px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 600,
-                        background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
-                        color: '#ef4444', cursor: 'pointer'
-                      }}>Tout désélectionner</button>
-                    )}
-                    {filteredContacts.length > 0 && (
-                      <button type="button" onClick={selectAllVisible} style={{
-                        padding: '4px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 600,
-                        background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)',
-                        color: '#22c55e', cursor: 'pointer'
-                      }}>Tout sélectionner</button>
-                    )}
-                  </div>
+              {/* ═══════════════════════════════════════════════════════════════
+                  V380 — « À QUI ENVOYER ? »
+
+                  L'écran affichait DOUZE nombres concurrents : 301 joignables,
+                  266 adressables, 210 membres du groupe figé, 1288 lignes de
+                  liste, compteurs d'onglets, panier… Aucun ne répondait à la
+                  seule question qui compte : combien de personnes vont recevoir
+                  ce message. On garde UN seul grand nombre, et on replie le
+                  reste — rien n'est supprimé, tout revient en un clic.
+
+                  Le nombre affiché est celui des ADRESSABLES (266), jamais celui
+                  des joignables théoriques (301) : on ne promet pas plus que ce
+                  que le moteur d'envoi sait faire.
+
+                  RIEN n'est présélectionné : une campagne ne doit jamais partir
+                  à 266 personnes parce qu'on a oublié de décocher.
+                  ═══════════════════════════════════════════════════════════ */}
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ color: '#fff', fontSize: '15px', fontWeight: 700, marginBottom: '12px' }}>
+                  À qui envoyer ?
                 </div>
 
-                {/* V364 : SEGMENTS CALCULÉS — un clic déplie les personnes au panier.
-                    Les nombres viennent des routes V363, recalculées à l'ouverture :
-                    ils ne peuvent pas vieillir comme un groupe figé. */}
                 {segmentsChargement && (
-                  <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', marginBottom: '8px' }}>
-                    Calcul des destinataires joignables…
+                  <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)', marginBottom: '10px' }}>
+                    Calcul des destinataires…
                   </div>
                 )}
                 {segmentsErreur && (
                   <div style={{
-                    marginBottom: '8px', padding: '8px 10px', borderRadius: '8px', fontSize: '11px',
+                    marginBottom: '10px', padding: '10px 12px', borderRadius: '8px', fontSize: '12px',
                     background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5'
                   }}>{segmentsErreur}</div>
                 )}
+
                 {segmentsInfo && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
-                    {[
-                      { cle: 'demarchable_whatsapp', libelle: 'Joignables WhatsApp' },
-                      { cle: 'abonne_actif', libelle: 'Abonnés actifs' },
-                      { cle: 'abonnement_expire', libelle: 'Abonnements expirés' },
-                      { cle: 'essai_gratuit', libelle: 'Essai gratuit' }
-                    ].filter(s => (segmentsInfo.etiquettes?.[s.cle] || 0) > 0).map(s => (
-                      <button key={s.cle} type="button" disabled={!!groupeDepliage}
-                        onClick={() => ajouterSegment(s.cle)}
-                        title={`Ajouter les ${segmentsInfo.etiquettes[s.cle]} personnes de ce segment`}
+                  <>
+                    {/* Le choix principal, volontairement dominant : un seul clic. */}
+                    <button
+                      type="button"
+                      disabled={!!groupeDepliage}
+                      onClick={() => ajouterSegment('demarchable_whatsapp')}
+                      data-testid="cible-tous-whatsapp"
+                      style={{
+                        width: '100%', padding: '18px 20px', borderRadius: '12px', marginBottom: '10px',
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        cursor: groupeDepliage ? 'wait' : 'pointer', textAlign: 'left',
+                        background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.28), rgba(139,92,246,0.22))',
+                        border: '2px solid var(--primary-color, #D91CD2)',
+                        color: '#fff'
+                      }}>
+                      <span>
+                        <span style={{ fontSize: '16px', fontWeight: 700, display: 'block' }}>
+                          👥 Tous mes contacts WhatsApp
+                        </span>
+                        <span style={{ fontSize: '13px', opacity: 0.85 }}>
+                          {groupeDepliage === 'segment:demarchable_whatsapp'
+                            ? 'Ajout en cours…'
+                            : `${idsJoignables ? idsJoignables.size : segmentsInfo.etiquettes?.demarchable_whatsapp || 0} personnes`}
+                        </span>
+                      </span>
+                      <span style={{ fontSize: '22px' }}>›</span>
+                    </button>
+
+                    {/* Les trois cibles secondaires, plus discrètes. */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                      {[
+                        { cle: 'abonne_actif', libelle: '✅ Abonnés actifs' },
+                        { cle: 'abonnement_expire', libelle: '⏰ Expirés' },
+                        { cle: 'essai_gratuit', libelle: '🎁 Essai gratuit' }
+                      ].map(s => (
+                        <button key={s.cle} type="button" disabled={!!groupeDepliage}
+                          onClick={() => ajouterSegment(s.cle)}
+                          data-testid={`cible-${s.cle}`}
+                          style={{
+                            padding: '12px 10px', borderRadius: '10px', cursor: groupeDepliage ? 'wait' : 'pointer',
+                            background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.14)',
+                            color: '#fff', textAlign: 'center'
+                          }}>
+                          <span style={{ fontSize: '11px', display: 'block', opacity: 0.85 }}>{s.libelle}</span>
+                          <span style={{ fontSize: '18px', fontWeight: 700 }}>
+                            {segmentsInfo.etiquettes?.[s.cle] || 0}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {/* LE nombre. Un seul, en grand, et jamais optimiste. */}
+                <div style={{
+                  marginTop: '14px', padding: '16px', borderRadius: '12px', textAlign: 'center',
+                  background: (selectedRecipients?.length || 0) === 0
+                    ? 'rgba(255,255,255,0.05)'
+                    : (bilanDestinataires.joignables === 0 ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)'),
+                  border: (selectedRecipients?.length || 0) === 0
+                    ? '1px solid rgba(255,255,255,0.12)'
+                    : (bilanDestinataires.joignables === 0
+                        ? '1px solid rgba(239,68,68,0.35)' : '1px solid rgba(34,197,94,0.35)')
+                }}>
+                  {(selectedRecipients?.length || 0) === 0 ? (
+                    <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.6)' }}>
+                      Choisis à qui envoyer ci-dessus.
+                    </span>
+                  ) : bilanDestinataires.joignables === null ? (
+                    <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.6)' }}>
+                      {selectedRecipients.length} destinataire(s) — nombre exact indisponible.
+                    </span>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: '20px', fontWeight: 800,
+                                    color: bilanDestinataires.joignables === 0 ? '#fca5a5' : '#86efac' }}>
+                        {bilanDestinataires.joignables === 0
+                          ? '⚠️ Personne ne recevra ce message'
+                          : `✅ ${bilanDestinataires.joignables} personne${bilanDestinataires.joignables > 1 ? 's' : ''} recevr${bilanDestinataires.joignables > 1 ? 'ont' : 'a'} ce message`}
+                      </div>
+                      {bilanDestinataires.sansNumero > 0 && (
+                        <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', marginTop: '4px' }}>
+                          {bilanDestinataires.sansNumero} sans numéro, non contactée{bilanDestinataires.sansNumero > 1 ? 's' : ''}
+                        </div>
+                      )}
+                      <button type="button" onClick={deselectAll}
                         style={{
-                          padding: '5px 11px', borderRadius: '14px', fontSize: '11px', fontWeight: 600,
-                          cursor: groupeDepliage ? 'wait' : 'pointer', color: '#fff',
-                          background: 'rgba(139,92,246,0.22)', border: '1px solid rgba(139,92,246,0.45)'
+                          marginTop: '10px', padding: '5px 12px', borderRadius: '8px', fontSize: '11px',
+                          background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
+                          color: 'rgba(255,255,255,0.75)', cursor: 'pointer'
+                        }}>Recommencer</button>
+                    </>
+                  )}
+                </div>
+
+                {/* Tout l'ancien écran vit ici — replié, jamais supprimé. */}
+                <button type="button"
+                  onClick={() => setOptionsAvancees(v => !v)}
+                  data-testid="options-avancees"
+                  style={{
+                    marginTop: '12px', background: 'none', border: 'none', cursor: 'pointer',
+                    color: 'rgba(255,255,255,0.55)', fontSize: '12px', padding: 0
+                  }}>
+                  {optionsAvancees ? '▾' : '▸'} Options avancées (choisir contact par contact)
+                </button>
+              </div>
+
+              {optionsAvancees && (
+                <div style={{ paddingTop: '4px' }}>
+                {/* Destinataires header + counter */}
+                <div style={{ marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <label style={{ color: '#fff', fontSize: '13px', fontWeight: 500 }}>
+                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="target" size={14} />Destinataires ({selectedRecipients?.length || 0} sélectionnés)</span>
+                    </label>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      {selectedRecipients?.length > 0 && (
+                        <button type="button" onClick={deselectAll} style={{
+                          padding: '4px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 600,
+                          background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
+                          color: '#ef4444', cursor: 'pointer'
+                        }}>Tout désélectionner</button>
+                      )}
+                      {filteredContacts.length > 0 && (
+                        <button type="button" onClick={selectAllVisible} style={{
+                          padding: '4px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 600,
+                          background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)',
+                          color: '#22c55e', cursor: 'pointer'
+                        }}>Tout sélectionner</button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* V364 : SEGMENTS CALCULÉS — un clic déplie les personnes au panier.
+                      Les nombres viennent des routes V363, recalculées à l'ouverture :
+                      ils ne peuvent pas vieillir comme un groupe figé. */}
+                  {segmentsChargement && (
+                    <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', marginBottom: '8px' }}>
+                      Calcul des destinataires joignables…
+                    </div>
+                  )}
+                  {segmentsErreur && (
+                    <div style={{
+                      marginBottom: '8px', padding: '8px 10px', borderRadius: '8px', fontSize: '11px',
+                      background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5'
+                    }}>{segmentsErreur}</div>
+                  )}
+                  {segmentsInfo && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                      {[
+                        { cle: 'demarchable_whatsapp', libelle: 'Joignables WhatsApp' },
+                        { cle: 'abonne_actif', libelle: 'Abonnés actifs' },
+                        { cle: 'abonnement_expire', libelle: 'Abonnements expirés' },
+                        { cle: 'essai_gratuit', libelle: 'Essai gratuit' }
+                      ].filter(s => (segmentsInfo.etiquettes?.[s.cle] || 0) > 0).map(s => (
+                        <button key={s.cle} type="button" disabled={!!groupeDepliage}
+                          onClick={() => ajouterSegment(s.cle)}
+                          title={`Ajouter les ${segmentsInfo.etiquettes[s.cle]} personnes de ce segment`}
+                          style={{
+                            padding: '5px 11px', borderRadius: '14px', fontSize: '11px', fontWeight: 600,
+                            cursor: groupeDepliage ? 'wait' : 'pointer', color: '#fff',
+                            background: 'rgba(139,92,246,0.22)', border: '1px solid rgba(139,92,246,0.45)'
+                          }}>
+                          {groupeDepliage === `segment:${s.cle}` ? 'Ajout…' : `+ ${s.libelle} (${segmentsInfo.etiquettes[s.cle]})`}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* V364 : le nombre EXACT de personnes qui recevront vraiment le message.
+                      Le compteur « sélectionnés » ci-dessus compte des lignes ; celui-ci
+                      compte des envois réels — c'est la différence qui a manqué le 31 juillet. */}
+                  {selectedRecipients?.length > 0 && newCampaign.channels?.whatsapp && (
+                    <div style={{
+                      marginBottom: '10px', padding: '10px 12px', borderRadius: '8px',
+                      background: bilanDestinataires.joignables === null
+                        ? 'rgba(255,255,255,0.05)'
+                        : (bilanDestinataires.joignables === 0 ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.10)'),
+                      border: bilanDestinataires.joignables === null
+                        ? '1px solid rgba(255,255,255,0.12)'
+                        : (bilanDestinataires.joignables === 0
+                            ? '1px solid rgba(239,68,68,0.35)' : '1px solid rgba(34,197,94,0.30)')
+                    }}>
+                      {bilanDestinataires.joignables === null ? (
+                        <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>
+                          Nombre de destinataires joignables indisponible.
+                        </span>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: '13px', fontWeight: 700, color: bilanDestinataires.joignables === 0 ? '#fca5a5' : '#86efac' }}>
+                            {bilanDestinataires.joignables === 0
+                              ? 'Aucune personne ne recevra ce message sur WhatsApp'
+                              : `${bilanDestinataires.joignables} personne${bilanDestinataires.joignables > 1 ? 's' : ''} ${bilanDestinataires.joignables > 1 ? 'seront contactées' : 'sera contactée'} sur WhatsApp`}
+                          </div>
+                          {bilanDestinataires.sansNumero > 0 && (
+                            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.65)', marginTop: '3px' }}>
+                              {bilanDestinataires.joignables} joignable{bilanDestinataires.joignables > 1 ? 's' : ''} / {bilanDestinataires.sansNumero} sans numéro exploitable
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Selected tags (compact view) */}
+                  {selectedRecipients?.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '10px', padding: '8px', borderRadius: '8px', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)', maxHeight: '80px', overflowY: 'auto' }}>
+                      {selectedRecipients.map(r => (
+                        <span key={r.id} style={{
+                          display: 'inline-flex', alignItems: 'center', gap: '3px',
+                          padding: '3px 8px', borderRadius: '12px', fontSize: '11px',
+                          background: r.type === 'group' ? 'rgba(139,92,246,0.25)' : 'rgba(59,130,246,0.25)',
+                          color: '#fff', border: '1px solid rgba(255,255,255,0.1)'
                         }}>
-                        {groupeDepliage === `segment:${s.cle}` ? 'Ajout…' : `+ ${s.libelle} (${segmentsInfo.etiquettes[s.cle]})`}
+                          {r.type === 'group' ? <SvgIcon name="users" size={14} /> : <SvgIcon name="user" size={14} />} {(r.name || '').slice(0, 20)}
+                          <button type="button" aria-label="Retirer ce destinataire" onClick={() => setSelectedRecipients(prev => prev.filter(x => x.id !== r.id))}
+                            style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: '10px', padding: '0 1px', lineHeight: 1 }}><SvgIcon name="close" size={14} /></button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Search + Filter */}
+                <div style={{ marginBottom: '10px' }}>
+                  <input
+                    placeholder="🔍 Rechercher un contact, groupe, email, téléphone..."
+                    value={contactSearch}
+                    onChange={e => setContactSearch(e.target.value)}
+                    style={{
+                      width: '100%', padding: '10px 14px', borderRadius: '8px',
+                      background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(139,92,246,0.3)',
+                      color: '#fff', fontSize: '13px', outline: 'none', boxSizing: 'border-box', marginBottom: '6px'
+                    }}
+                  />
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    {[
+                      { key: 'all', label: 'Tous', count: allContacts.length },
+                      { key: 'group', icon: 'users', label: 'Groupes', count: allContacts.filter(c => c.type === 'group').length },
+                      { key: 'user', icon: 'user', label: 'Contacts', count: allContacts.filter(c => c.type === 'user').length }
+                    ].map(f => (
+                      <button key={f.key} type="button" onClick={() => setContactFilter(f.key)} style={{
+                        padding: '4px 10px', borderRadius: '14px', fontSize: '11px', fontWeight: 500, cursor: 'pointer',
+                        background: contactFilter === f.key ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.05)',
+                        border: contactFilter === f.key ? '1px solid rgba(139,92,246,0.5)' : '1px solid rgba(255,255,255,0.08)',
+                        color: contactFilter === f.key ? '#c4b5fd' : 'rgba(255,255,255,0.5)'
+                      }}>
+                        <span className="inline-flex items-center gap-1.5">{f.icon ? <SvgIcon name={f.icon} size={14} /> : null}{f.label} ({f.count})</span>
                       </button>
                     ))}
                   </div>
-                )}
+                </div>
 
-                {/* V364 : le nombre EXACT de personnes qui recevront vraiment le message.
-                    Le compteur « sélectionnés » ci-dessus compte des lignes ; celui-ci
-                    compte des envois réels — c'est la différence qui a manqué le 31 juillet. */}
-                {selectedRecipients?.length > 0 && newCampaign.channels?.whatsapp && (
-                  <div style={{
-                    marginBottom: '10px', padding: '10px 12px', borderRadius: '8px',
-                    background: bilanDestinataires.joignables === null
-                      ? 'rgba(255,255,255,0.05)'
-                      : (bilanDestinataires.joignables === 0 ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.10)'),
-                    border: bilanDestinataires.joignables === null
-                      ? '1px solid rgba(255,255,255,0.12)'
-                      : (bilanDestinataires.joignables === 0
-                          ? '1px solid rgba(239,68,68,0.35)' : '1px solid rgba(34,197,94,0.30)')
-                  }}>
-                    {bilanDestinataires.joignables === null ? (
-                      <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>
-                        Nombre de destinataires joignables indisponible.
-                      </span>
-                    ) : (
-                      <>
-                        <div style={{ fontSize: '13px', fontWeight: 700, color: bilanDestinataires.joignables === 0 ? '#fca5a5' : '#86efac' }}>
-                          {bilanDestinataires.joignables === 0
-                            ? 'Aucune personne ne recevra ce message sur WhatsApp'
-                            : `${bilanDestinataires.joignables} personne${bilanDestinataires.joignables > 1 ? 's' : ''} ${bilanDestinataires.joignables > 1 ? 'seront contactées' : 'sera contactée'} sur WhatsApp`}
-                        </div>
-                        {bilanDestinataires.sansNumero > 0 && (
-                          <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.65)', marginTop: '3px' }}>
-                            {bilanDestinataires.joignables} joignable{bilanDestinataires.joignables > 1 ? 's' : ''} / {bilanDestinataires.sansNumero} sans numéro exploitable
-                          </div>
-                        )}
-                      </>
+                {/* V154: Category filter for campaign targeting */}
+                {campaignCategories.length > 0 && (
+                  <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                    <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', alignSelf: 'center', marginRight: '2px' }}>Catégories:</span>
+                    {campaignCategories.map(function(cat) {
+                      var isActive = categoryFilter.indexOf(cat.id) !== -1;
+                      return (
+                        <button key={cat.id} type="button" onClick={function() {
+                          setCategoryFilter(function(prev) {
+                            return isActive ? prev.filter(function(id) { return id !== cat.id; }) : prev.concat([cat.id]);
+                          });
+                        }} style={{
+                          padding: '3px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
+                          background: isActive ? cat.color + '30' : 'rgba(255,255,255,0.04)',
+                          border: '1px solid ' + (isActive ? cat.color + '66' : 'rgba(255,255,255,0.08)'),
+                          color: isActive ? cat.color : 'rgba(255,255,255,0.4)'
+                        }}>
+                          {cat.icon} {cat.name}
+                        </button>
+                      );
+                    })}
+                    {categoryFilter.length > 0 && (
+                      <button type="button" onClick={function() { setCategoryFilter([]); }} style={{
+                        padding: '3px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
+                        background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                        color: '#ef4444'
+                      }}>
+                        <span className="inline-flex items-center gap-1.5"><SvgIcon name="close" size={14} />Reset</span>
+                      </button>
                     )}
                   </div>
                 )}
 
-                {/* Selected tags (compact view) */}
-                {selectedRecipients?.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '10px', padding: '8px', borderRadius: '8px', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)', maxHeight: '80px', overflowY: 'auto' }}>
-                    {selectedRecipients.map(r => (
-                      <span key={r.id} style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '3px',
-                        padding: '3px 8px', borderRadius: '12px', fontSize: '11px',
-                        background: r.type === 'group' ? 'rgba(139,92,246,0.25)' : 'rgba(59,130,246,0.25)',
-                        color: '#fff', border: '1px solid rgba(255,255,255,0.1)'
-                      }}>
-                        {r.type === 'group' ? <SvgIcon name="users" size={14} /> : <SvgIcon name="user" size={14} />} {(r.name || '').slice(0, 20)}
-                        <button type="button" aria-label="Retirer ce destinataire" onClick={() => setSelectedRecipients(prev => prev.filter(x => x.id !== r.id))}
-                          style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: '10px', padding: '0 1px', lineHeight: 1 }}><SvgIcon name="close" size={14} /></button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Search + Filter */}
-              <div style={{ marginBottom: '10px' }}>
-                <input
-                  placeholder="🔍 Rechercher un contact, groupe, email, téléphone..."
-                  value={contactSearch}
-                  onChange={e => setContactSearch(e.target.value)}
-                  style={{
-                    width: '100%', padding: '10px 14px', borderRadius: '8px',
-                    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(139,92,246,0.3)',
-                    color: '#fff', fontSize: '13px', outline: 'none', boxSizing: 'border-box', marginBottom: '6px'
-                  }}
-                />
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  {[
-                    { key: 'all', label: 'Tous', count: allContacts.length },
-                    { key: 'group', icon: 'users', label: 'Groupes', count: allContacts.filter(c => c.type === 'group').length },
-                    { key: 'user', icon: 'user', label: 'Contacts', count: allContacts.filter(c => c.type === 'user').length }
-                  ].map(f => (
-                    <button key={f.key} type="button" onClick={() => setContactFilter(f.key)} style={{
-                      padding: '4px 10px', borderRadius: '14px', fontSize: '11px', fontWeight: 500, cursor: 'pointer',
-                      background: contactFilter === f.key ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.05)',
-                      border: contactFilter === f.key ? '1px solid rgba(139,92,246,0.5)' : '1px solid rgba(255,255,255,0.08)',
-                      color: contactFilter === f.key ? '#c4b5fd' : 'rgba(255,255,255,0.5)'
-                    }}>
-                      <span className="inline-flex items-center gap-1.5">{f.icon ? <SvgIcon name={f.icon} size={14} /> : null}{f.label} ({f.count})</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* V154: Category filter for campaign targeting */}
-              {campaignCategories.length > 0 && (
-                <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '10px' }}>
-                  <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', alignSelf: 'center', marginRight: '2px' }}>Catégories:</span>
-                  {campaignCategories.map(function(cat) {
-                    var isActive = categoryFilter.indexOf(cat.id) !== -1;
-                    return (
-                      <button key={cat.id} type="button" onClick={function() {
-                        setCategoryFilter(function(prev) {
-                          return isActive ? prev.filter(function(id) { return id !== cat.id; }) : prev.concat([cat.id]);
-                        });
-                      }} style={{
-                        padding: '3px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
-                        background: isActive ? cat.color + '30' : 'rgba(255,255,255,0.04)',
-                        border: '1px solid ' + (isActive ? cat.color + '66' : 'rgba(255,255,255,0.08)'),
-                        color: isActive ? cat.color : 'rgba(255,255,255,0.4)'
-                      }}>
-                        {cat.icon} {cat.name}
-                      </button>
-                    );
-                  })}
-                  {categoryFilter.length > 0 && (
-                    <button type="button" onClick={function() { setCategoryFilter([]); }} style={{
-                      padding: '3px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
-                      background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
-                      color: '#ef4444'
-                    }}>
-                      <span className="inline-flex items-center gap-1.5"><SvgIcon name="close" size={14} />Reset</span>
-                    </button>
+                {/* Contacts List with Checkboxes */}
+                <div style={{
+                  maxHeight: '220px', overflowY: 'auto',
+                  borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)',
+                  marginBottom: '12px'
+                }}>
+                  {contactsLoading ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}><span className="inline-flex items-center gap-1.5"><SvgIcon name="loader" size={14} className="animate-spin" />Chargement des contacts...</span></div>
+                  ) : filteredContacts.length === 0 ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>
+                      {contactSearch ? 'Aucun résultat' : 'Aucun contact disponible'}
+                    </div>
+                  ) : (
+                    filteredContacts.slice(0, 100).map((c, i) => {
+                      const isChecked = selectedRecipients?.some(r => r.id === c.id);
+                      return (
+                        <div key={c.id || i}
+                          onClick={() => toggleContact(c)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '10px',
+                            padding: '8px 12px', cursor: 'pointer',
+                            borderBottom: '1px solid rgba(255,255,255,0.04)',
+                            background: isChecked ? 'rgba(34,197,94,0.08)' : i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
+                            transition: 'background 0.15s'
+                          }}
+                          onMouseEnter={e => { if (!isChecked) e.currentTarget.style.background = 'rgba(139,92,246,0.08)'; }}
+                          onMouseLeave={e => { if (!isChecked) e.currentTarget.style.background = i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent'; }}
+                        >
+                          {/* Checkbox */}
+                          <div style={{
+                            width: '18px', height: '18px', borderRadius: '4px', flexShrink: 0,
+                            border: isChecked ? '2px solid #22c55e' : '2px solid rgba(255,255,255,0.2)',
+                            background: isChecked ? 'rgba(34,197,94,0.3)' : 'transparent',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            transition: 'all 0.15s'
+                          }}>
+                            {isChecked && <span style={{ color: '#22c55e', fontSize: '12px', fontWeight: 700 }}><SvgIcon name="check" size={12} /></span>}
+                          </div>
+                          {/* Icon */}
+                          <span style={{ fontSize: '14px', width: '20px', textAlign: 'center', flexShrink: 0 }}>
+                            {c.type === 'group'
+                              ? <SvgIcon name="users" size={14} />
+                              : c.source === 'google'
+                                ? <span className="inline-block w-2 h-2 rounded-full bg-blue-500" />
+                                : <SvgIcon name="user" size={14} />}
+                          </span>
+                          {/* Name + details */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: '12px', color: '#fff', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {c.name || 'Sans nom'}
+                            </div>
+                            <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.35)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {c.type === 'group' ? `${c.member_count || 0} membres` : [c.email, c.phone].filter(Boolean).join(' · ') || ''}
+                            </div>
+                          </div>
+                          {/* Source badge */}
+                          <span style={{
+                            padding: '2px 6px', borderRadius: '8px', fontSize: '9px', flexShrink: 0,
+                            background: c.type === 'group' ? 'rgba(139,92,246,0.15)' : c.source === 'google' ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.05)',
+                            color: c.type === 'group' ? '#a855f7' : c.source === 'google' ? '#22c55e' : 'rgba(255,255,255,0.4)'
+                          }}>
+                            {c.type === 'group' ? 'Groupe' : c.source === 'google' ? 'Google' : c.source === 'app' ? 'App' : 'CRM'}
+                          </span>
+                        </div>
+                      );
+                    })
+                  )}
+                  {filteredContacts.length > 100 && (
+                    <div style={{ padding: '8px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>
+                      ... et {filteredContacts.length - 100} autres — affinez la recherche
+                    </div>
                   )}
                 </div>
-              )}
 
-              {/* Contacts List with Checkboxes */}
-              <div style={{
-                maxHeight: '220px', overflowY: 'auto',
-                borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)',
-                marginBottom: '12px'
-              }}>
-                {contactsLoading ? (
-                  <div style={{ padding: '20px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}><span className="inline-flex items-center gap-1.5"><SvgIcon name="loader" size={14} className="animate-spin" />Chargement des contacts...</span></div>
-                ) : filteredContacts.length === 0 ? (
-                  <div style={{ padding: '20px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>
-                    {contactSearch ? 'Aucun résultat' : 'Aucun contact disponible'}
-                  </div>
-                ) : (
-                  filteredContacts.slice(0, 100).map((c, i) => {
-                    const isChecked = selectedRecipients?.some(r => r.id === c.id);
-                    return (
-                      <div key={c.id || i}
-                        onClick={() => toggleContact(c)}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: '10px',
-                          padding: '8px 12px', cursor: 'pointer',
-                          borderBottom: '1px solid rgba(255,255,255,0.04)',
-                          background: isChecked ? 'rgba(34,197,94,0.08)' : i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
-                          transition: 'background 0.15s'
-                        }}
-                        onMouseEnter={e => { if (!isChecked) e.currentTarget.style.background = 'rgba(139,92,246,0.08)'; }}
-                        onMouseLeave={e => { if (!isChecked) e.currentTarget.style.background = i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent'; }}
-                      >
-                        {/* Checkbox */}
-                        <div style={{
-                          width: '18px', height: '18px', borderRadius: '4px', flexShrink: 0,
-                          border: isChecked ? '2px solid #22c55e' : '2px solid rgba(255,255,255,0.2)',
-                          background: isChecked ? 'rgba(34,197,94,0.3)' : 'transparent',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          transition: 'all 0.15s'
-                        }}>
-                          {isChecked && <span style={{ color: '#22c55e', fontSize: '12px', fontWeight: 700 }}><SvgIcon name="check" size={12} /></span>}
-                        </div>
-                        {/* Icon */}
-                        <span style={{ fontSize: '14px', width: '20px', textAlign: 'center', flexShrink: 0 }}>
-                          {c.type === 'group'
-                            ? <SvgIcon name="users" size={14} />
-                            : c.source === 'google'
-                              ? <span className="inline-block w-2 h-2 rounded-full bg-blue-500" />
-                              : <SvgIcon name="user" size={14} />}
-                        </span>
-                        {/* Name + details */}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: '12px', color: '#fff', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {c.name || 'Sans nom'}
-                          </div>
-                          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.35)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {c.type === 'group' ? `${c.member_count || 0} membres` : [c.email, c.phone].filter(Boolean).join(' · ') || ''}
-                          </div>
-                        </div>
-                        {/* Source badge */}
-                        <span style={{
-                          padding: '2px 6px', borderRadius: '8px', fontSize: '9px', flexShrink: 0,
-                          background: c.type === 'group' ? 'rgba(139,92,246,0.15)' : c.source === 'google' ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.05)',
-                          color: c.type === 'group' ? '#a855f7' : c.source === 'google' ? '#22c55e' : 'rgba(255,255,255,0.4)'
-                        }}>
-                          {c.type === 'group' ? 'Groupe' : c.source === 'google' ? 'Google' : c.source === 'app' ? 'App' : 'CRM'}
-                        </span>
-                      </div>
-                    );
-                  })
-                )}
-                {filteredContacts.length > 100 && (
-                  <div style={{ padding: '8px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>
-                    ... et {filteredContacts.length - 100} autres — affinez la recherche
-                  </div>
-                )}
-              </div>
+                </div>
+              )}
 
               {/* Import CSV/vCard */}
               <div style={{ marginBottom: '12px' }}>
