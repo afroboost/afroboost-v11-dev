@@ -913,12 +913,39 @@ export default function OfferWizard({
 
         {form.progressive_pricing && (
           <div className="mt-4 space-y-3">
-            {!form.countdown_date && (
-              <p className="text-xs p-2 rounded" style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)', color: PINK }}>
-                <SvgIcon name="warning" size={14} />{' '}Activez le compte à rebours (étape 2 « Logistique ») : sans date de
-                référence, les paliers ne s'appliquent pas et le prix normal reste affiché.
-              </p>
-            )}
+            {/* V375 : la DATE DE RÉFÉRENCE se saisit ICI, avec les prix.
+                Elle était auparavant enfermée dans le bloc « Compte à rebours » de
+                l'étape Logistique : sans cocher cette case, aucun champ n'existait
+                pour la renseigner, et les trois paliers restaient donc inertes —
+                le prix normal s'affichait, sans que rien ne l'explique.
+                Le moteur de prix (api/pricing.py) ne regarde QUE cette date : il
+                ignore `countdown_enabled`. Renseigner la date sans cocher le compte
+                à rebours applique donc les paliers SANS aucun timer visible. */}
+            <div className="p-2 rounded" style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.08)' }}>
+              <label className="block text-xs mb-1" style={LABEL_STYLE}>
+                <SvgIcon name="calendar" size={14} />{' '}Date de référence de l'événement
+              </label>
+              <input
+                type="date"
+                value={form.countdown_date || ''}
+                onChange={(e) => set('countdown_date', e.target.value)}
+                style={INPUT_STYLE}
+                className="text-sm v224-input"
+                data-testid="prix-date-reference"
+              />
+              {form.countdown_date ? (
+                <p className="text-xs mt-1" style={{ color: '#22c55e' }}>
+                  Paliers actifs : Early Bird jusqu'à 7 jours avant, puis Standard,
+                  puis Last Minute dans les dernières 24 h.
+                  {!form.countdown_enabled && ' Aucun compte à rebours n\'est affiché aux clients.'}
+                </p>
+              ) : (
+                <p className="text-xs mt-1" style={{ color: PINK }}>
+                  <SvgIcon name="warning" size={14} />{' '}Sans cette date, les trois paliers ne
+                  s'appliquent pas : le prix normal reste affiché.
+                </p>
+              )}
+            </div>
             {PROGRESSIVE_TIERS.map(f => (
               <div key={f.key}>
                 <label className="block text-xs mb-1" style={LABEL_STYLE}>
@@ -1065,6 +1092,13 @@ export default function OfferWizard({
             <SvgIcon name="hourglass" size={14} /> COMPTE À REBOURS
           </span>
         </label>
+        {/* V375 : cette case ne pilote QUE l'affichage du minuteur. Les trois paliers
+            de prix dépendent de la « Date de référence » saisie à l'étape Prix — on
+            peut donc avoir les prix échelonnés sans aucun compte à rebours visible. */}
+        <p className="text-xs mt-1 ml-7" style={{ color: 'rgba(255,255,255,0.5)' }}>
+          Affiche un minuteur aux clients. Les 3 paliers de prix, eux, dépendent de la
+          « Date de référence » de l'étape Prix — pas de cette case.
+        </p>
 
         {form.countdown_enabled ? (
           <div className="mt-3 space-y-3">
