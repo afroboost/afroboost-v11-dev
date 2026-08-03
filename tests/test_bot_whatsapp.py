@@ -34,6 +34,7 @@ SERVEUR = os.path.join(RACINE, "api", "server.py")
 
 NOMS = {"_couper", "_formater_prix", "_bloc_tarifs", "_prochaine_seance",
         "construire_fiche_offre", "construire_fiche_cours", "lire_offre", "lire_un_cours",
+        "_lien_offre", "lire_offre_du_cours",
         "lire_cours_de_offre", "LIEN_BOUTIQUE", "_LIBELLE_PALIER", "_cle_tri_cours", "_prix", "_sans_vrai_nom", "_dedoublonner_cours",
         "_cle_numero", "construire_menu_principal", "construire_liste_cours",
         "construire_liste_offres", "construire_repli", "construire_demande_creneau",
@@ -70,9 +71,19 @@ class _Curseur:
 class _Collection:
     def __init__(self, docs=None): self.docs = docs or []
     def find(self, q=None, p=None): return _Curseur(self.docs)
+    @staticmethod
+    def _correspond(doc, cle, valeur):
+        """Reproduit la sémantique MongoDB : un champ TABLEAU correspond si la
+        valeur y figure. Sans ça, `find_one({"linked_course_ids": "c1"})` — la
+        requête qui relie un cours à son offre — ne trouvait jamais rien."""
+        champ = doc.get(cle)
+        if isinstance(champ, list):
+            return valeur in champ
+        return champ == valeur
+
     async def find_one(self, q, p=None):
         for d in self.docs:
-            if all(d.get(k) == v for k, v in q.items()):
+            if all(self._correspond(d, k, v) for k, v in q.items()):
                 return dict(d)
         return None
     async def update_one(self, q, maj, upsert=False):
@@ -229,6 +240,8 @@ def test_fiches_detaillees():
 
         rep, _ = await d(MOI, "", "offre_o1", "Bassi")
         corps = rep["text"]["body"]
+        verifier("le lien de l'offre pointe sur l'offre précise, pas la boutique",
+                 "?offre=o1" in corps and "#offers-slider" not in corps, corps[-120:])
         verifier("sélection d'une offre -> fiche complète (nom, prix, description, lien)",
                  "Cours à l'unité" in corps and "30 CHF" in corps
                  and "cardio-danse afro, intense et joyeuse" in corps
@@ -243,6 +256,12 @@ def test_fiches_detaillees():
         verifier("sélection d'un cours -> fiche complète (nom, jour, lieu, lien)",
                  "Afroboost Silent" in corps and "Auvernier" in corps
                  and "afroboost.com" in corps, corps[:120])
+        # V371 : le cours c1 est rattaché à l'offre o1 -> il hérite de sa description
+        verifier("un cours rattaché hérite de la description de son offre",
+                 "cardio-danse afro, intense et joyeuse" in corps
+                 and "Détail de l'offre" in corps, corps[:200])
+        verifier("le lien mène DIRECTEMENT à l'offre (?offre=<id>)",
+                 "?offre=o1" in corps, corps[-120:])
 
         # Paliers : countdown_date VIDE -> ne PAS annoncer des tarifs inapplicables
         rep, _ = await d(MOI, "", "offre_o2", "Bassi")
@@ -250,6 +269,16 @@ def test_fiches_detaillees():
         verifier("paliers non annoncés quand la date de référence manque",
                  "Dernière minute" not in corps and "25 CHF" in corps,
                  "le client verrait des prix qui ne s'appliquent jamais")
+
+        # V371 : un cours SANS offre ne doit pas provoquer d'erreur ni de ligne vide
+        BOT["db"].courses.docs.append({"id": "orphelin", "name": "Cours orphelin",
+                                       "weekday": 0, "time": "10:00",
+                                       "locationName": "Plage", "visible": True})
+        rep, _ = await d(MOI, "", "cours_orphelin", "Bassi")
+        corps = rep["text"]["body"]
+        verifier("un cours orphelin s'affiche sans erreur et sans description",
+                 "Cours orphelin" in corps and "Détail de l'offre" not in corps
+                 and "None" not in corps, corps[:160])
 
         rep, _ = await d(MOI, "", "offre_inconnue", "Bassi")
         verifier("identifiant inconnu -> repli, jamais d'erreur",

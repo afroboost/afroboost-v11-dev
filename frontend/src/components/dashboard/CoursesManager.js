@@ -21,6 +21,12 @@ const CoursesManager = ({
   t,
   coachEmail
 }) => {
+  // V371 : message d'erreur VISIBLE. Jusqu'ici, un archivage refusé par le serveur
+  // ne partait que dans `console.error` : le coach croyait son cours supprimé alors
+  // que rien n'avait changé en base — constaté sur « Session Cardio », toujours
+  // affiché sur la vitrine après une suppression supposée. Un échec doit se voir.
+  const [actionErreur, setActionErreur] = useState('');
+
   // v88: État pour la demande d'avis
   const [reviewRequestSending, setReviewRequestSending] = useState({});
   const [reviewRequestSuccess, setReviewRequestSuccess] = useState({});
@@ -90,20 +96,35 @@ const CoursesManager = ({
 
   const archiveCourse = async (course) => {
     if (window.confirm(`Archiver le cours "${course.name}" ? Il sera masqué mais récupérable.`)) {
+      setActionErreur('');
       try {
-        await axios.put(`${API}/courses/${course.id}/archive`);
+        // V371 : on RELIT la réponse du serveur au lieu de supposer que ça a marché.
+        const res = await axios.put(`${API}/courses/${course.id}/archive`);
+        const confirme = res && res.data && (res.data.success === true
+                          || (res.data.course && res.data.course.archived === true));
+        if (!confirme) {
+          setActionErreur(`"${course.name}" n'a PAS été archivé : le serveur n'a pas confirmé. Le cours est toujours visible.`);
+          return;
+        }
         setCourses(courses.map(c => c.id === course.id ? { ...c, archived: true } : c));
       } catch (err) {
+        const detail = (err && err.response && err.response.data && err.response.data.detail)
+          || (err && err.message) || 'erreur inconnue';
+        setActionErreur(`Échec de l'archivage de "${course.name}" : ${detail}. Le cours reste visible sur ton site — réessaie ou reconnecte-toi.`);
         console.error("Erreur archivage cours:", err);
       }
     }
   };
 
   const restoreCourse = async (course) => {
+    setActionErreur('');
     try {
       await axios.put(`${API}/courses/${course.id}`, { ...course, archived: false });
       setCourses(courses.map(c => c.id === course.id ? { ...c, archived: false } : c));
     } catch (err) {
+      const detail = (err && err.response && err.response.data && err.response.data.detail)
+        || (err && err.message) || 'erreur inconnue';
+      setActionErreur(`Échec de la restauration de "${course.name}" : ${detail}.`);
       console.error("Erreur restauration cours:", err);
     }
   };
@@ -134,6 +155,30 @@ const CoursesManager = ({
           data-testid="auto-review-toggle"
         />
       </div>
+
+      {/* V371 : un échec d'archivage ou de restauration s'AFFICHE ici. Auparavant il
+          ne partait que dans la console : le coach croyait son cours supprimé alors
+          qu'il restait en ligne sur la vitrine. */}
+      {actionErreur && (
+        <div
+          data-testid="courses-action-error"
+          style={{
+            margin: '0 0 12px', padding: '10px 12px', borderRadius: '8px', fontSize: '12px',
+            background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)',
+            color: '#fca5a5', display: 'flex', alignItems: 'flex-start', gap: '8px'
+          }}
+        >
+          <span style={{ flex: 1 }}>{actionErreur}</span>
+          <button
+            type="button"
+            onClick={() => setActionErreur('')}
+            aria-label="Fermer le message d'erreur"
+            style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', padding: 0 }}
+          >
+            <SvgIcon name="close" size={14} />
+          </button>
+        </div>
+      )}
 
       {/* Liste des cours avec scroll */}
       <div style={{ maxHeight: '600px', overflowY: 'auto', paddingRight: '8px' }} className="custom-scrollbar">

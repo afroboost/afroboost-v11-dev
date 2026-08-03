@@ -257,6 +257,17 @@ def construire_liste_offres(offres):
 
 LIEN_BOUTIQUE = f"{SITE}/#offers-slider"
 
+
+def _lien_offre(offre):
+    """V371 : lien qui ouvre DIRECTEMENT cette offre sur le site.
+
+    Le site sait désormais lire `?offre=<id>` : il fait défiler jusqu'à la carte et
+    la met en évidence. Il ne déclenche AUCUN paiement — un lien ne doit jamais
+    ouvrir un checkout tout seul. Repli sur la boutique si l'offre n'a pas d'id.
+    """
+    identifiant = (offre or {}).get("id")
+    return f"{SITE}/?offre={identifiant}" if identifiant else LIEN_BOUTIQUE
+
 _LIBELLE_PALIER = {"early_bird": "prévente", "standard": "standard",
                    "last_minute": "dernière minute", "regular": "tarif normal"}
 
@@ -341,7 +352,7 @@ def construire_fiche_offre(offre, cours_lies=None):
         if isinstance(stock, int) and stock >= 0:
             lignes.append(f"📦 Stock : {stock}")
 
-    lignes += ["", f"👉 Réserver : {LIEN_BOUTIQUE}", "", "Tape « menu » pour revenir."]
+    lignes += ["", f"👉 Réserver : {_lien_offre(offre)}", "", "Tape « menu » pour revenir."]
     return {"type": "text", "text": {"body": "\n".join(lignes)[:4000], "preview_url": True}}
 
 
@@ -370,8 +381,15 @@ def _prochaine_seance(cours):
     return None
 
 
-def construire_fiche_cours(cours):
-    """Message COMPLET d'un cours : nom, quand, lieu, plan, lien."""
+def construire_fiche_cours(cours, offre=None):
+    """Message COMPLET d'un cours : nom, quand, lieu, plan, description, lien.
+
+    DESCRIPTION : un cours n'a AUCUN champ `description` en base (ses seuls champs
+    sont name, weekday, time, date, locationName, mapsUrl, playlist, audio_tracks).
+    On reprend donc celle de l'OFFRE à laquelle il est rattaché, en le disant
+    (« Détail de l'offre … »). Un cours orphelin — il en reste — affiche simplement
+    nom, date et lieu, sans erreur ni ligne vide.
+    """
     lignes = [f"📅 *{(cours.get('name') or 'Cours').strip()}*", ""]
     quand = _prochaine_seance([cours])
     if quand:
@@ -384,8 +402,24 @@ def construire_fiche_cours(cours):
     plan = (cours.get("mapsUrl") or "").strip()
     if plan.startswith("http"):
         lignes.append(f"🗺️ {plan}")
-    lignes += ["", f"👉 Réserver : {SITE}", "", "Tape « menu » pour revenir."]
+
+    if offre:
+        prix = _bloc_tarifs(offre)
+        if prix:
+            lignes += [""] + prix
+        description = (offre.get("description") or "").strip()
+        if description:
+            lignes += ["", f"_Détail de l'offre « {(offre.get('name') or '').strip()[:60]} » :_",
+                       description[:1500]]
+
+    lien = _lien_offre(offre) if offre else SITE
+    lignes += ["", f"👉 Réserver : {lien}", "", "Tape « menu » pour revenir."]
     return {"type": "text", "text": {"body": "\n".join(lignes)[:4000], "preview_url": True}}
+
+
+async def lire_offre_du_cours(identifiant_cours):
+    """L'offre qui référence ce cours, s'il y en a une (sinon None)."""
+    return await db.offers.find_one({"linked_course_ids": identifiant_cours}, {"_id": 0})
 
 
 async def lire_offre(identifiant):
@@ -580,9 +614,10 @@ async def decider_reponse(telephone: str, texte: str, bouton: str, nom: str = No
             return construire_fiche_offre(offre, await lire_cours_de_offre(offre)), None
         return construire_repli(), None
     if bouton and bouton.startswith("cours_"):
-        cours = await lire_un_cours(bouton[len("cours_"):])
+        identifiant = bouton[len("cours_"):]
+        cours = await lire_un_cours(identifiant)
         if cours:
-            return construire_fiche_cours(cours), None
+            return construire_fiche_cours(cours, await lire_offre_du_cours(identifiant)), None
         return construire_repli(), None
 
     # 5. TOUT LE RESTE : le menu. JAMAIS l'IA — décision du coach (menu seul).

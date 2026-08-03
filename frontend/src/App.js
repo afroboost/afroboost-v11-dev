@@ -2932,6 +2932,43 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
         .filter(Boolean)
     }));
   }, [offers, courses]);
+
+  // === V371 : LIEN PROFOND VERS UNE OFFRE — afroboost.com/?offre=<id> ===
+  //
+  // POURQUOI. Le bot WhatsApp envoie une fiche d'offre complète, mais son lien
+  // « Réserver » ne pouvait pointer que sur la boutique en général : il n'existe
+  // AUCUNE URL par offre, et le paiement se crée par un POST (session Stripe
+  // éphémère). Résultat : la personne arrivait sur la liste et devait retrouver
+  // elle-même l'offre qu'elle venait de consulter.
+  //
+  // CE QUE ÇA FAIT, ET SURTOUT CE QUE ÇA NE FAIT PAS. On fait défiler jusqu'à la
+  // bonne carte et on la met en évidence. On NE clique PAS à la place du
+  // visiteur : un lien ne doit jamais ouvrir un paiement tout seul.
+  // Aucune modification du checkout, aucune session créée.
+  useEffect(() => {
+    if (!offers || offers.length === 0) return;
+    let cible = '';
+    try {
+      cible = new URLSearchParams(window.location.search).get('offre') || '';
+      if (!cible && window.location.hash.includes('offre=')) {
+        cible = new URLSearchParams(window.location.hash.split('?')[1] || '').get('offre') || '';
+      }
+    } catch (e) { return; }
+    if (!cible) return;
+    if (!offers.some(o => o && o.id === cible)) return;   // offre inconnue : on ignore
+
+    const t = setTimeout(() => {
+      const carte = document.querySelector(`[data-testid="offer-card-${cible}"]`);
+      if (!carte) return;
+      carte.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Halo temporaire : la personne voit immédiatement DE QUELLE offre il s'agit.
+      const avant = carte.style.boxShadow;
+      carte.style.transition = 'box-shadow 0.3s';
+      carte.style.boxShadow = '0 0 0 3px var(--primary-color, #D91CD2), 0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.35)';
+      setTimeout(() => { carte.style.boxShadow = avant; }, 6000);
+    }, 600);   // laisse le slider se monter
+    return () => clearTimeout(t);
+  }, [offers]);
   
   // Auto-play effect
   useEffect(() => {
