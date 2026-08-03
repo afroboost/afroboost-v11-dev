@@ -358,8 +358,12 @@ def construire_fiche_offre(offre, cours_lies=None):
         if isinstance(stock, int) and stock >= 0:
             lignes.append(f"📦 Stock : {stock}")
 
-    lignes += ["", f"👉 Réserver : {_lien_offre(offre)}", "", "Tape « menu » pour revenir."]
-    return {"type": "text", "text": {"body": "\n".join(lignes)[:4000], "preview_url": True}}
+    # V374 : PAS de lien « Réserver » dans le texte. La fiche est suivie d'un message
+    # à boutons ; afficher en plus un lien vers le site donnait DEUX appels à
+    # l'action contradictoires — l'un vers la boutique, l'autre vers Stripe. Une
+    # offre, une seule action : le bouton.
+    lignes += ["", "Tape « menu » pour revenir."]
+    return {"type": "text", "text": {"body": "\n".join(lignes)[:4000], "preview_url": False}}
 
 
 def _prochaine_seance(cours):
@@ -520,22 +524,41 @@ async def creer_lien_paiement(telephone, offre, etat):
 
 
 def _message_lien(offre, url):
-    """Le message qui porte le lien — avec ses conditions, dites clairement."""
+    """V374 : le lien de paiement derrière un BOUTON, jamais en texte brut.
+
+    Une URL Stripe fait ~130 caractères d'apparence hostile ; collée dans la
+    conversation, elle donne l'air d'un message frauduleux. Le format `cta_url`
+    affiche un bouton propre qui ouvre l'URL — c'est EXACTEMENT le mécanisme déjà
+    utilisé en production par les campagnes (« Voir sur Instagram », V163.6), avec
+    ici un `body` seul, sans image d'en-tête.
+
+    Contraintes de la plateforme, respectées : `display_text` <= 20 caractères,
+    `body` <= 1024. Si Meta refusait ce format, `envoyer_payload` bascule
+    automatiquement sur un message texte contenant l'URL — la personne ne se
+    retrouve jamais sans moyen de payer.
+    """
     from api.pricing import compute_active_price
     try:
         prix = _formater_prix(compute_active_price(offre).get("price"))
     except Exception:
         prix = _formater_prix(offre.get("price"))
-    corps = [
-        "Voici votre lien de paiement sécurisé 🔒",
-        f"*{(offre.get('name') or '').strip()[:80]}*" + (f" — {prix}" if prix else ""),
-        "",
-        url,
-        "",
-        "⏳ Valable 24 h et à usage unique.",
-        "Un nouveau clic sur « Réserver » régénère un lien.",
-    ]
-    return {"type": "text", "text": {"body": "\n".join(corps)[:4000], "preview_url": True}}
+    nom = (offre.get("name") or "").strip()[:70]
+    corps = (f"🔒 Paiement sécurisé — *{nom}*" + (f", {prix}" if prix else "") + ".\n"
+             "⏳ Valable 24 h et à usage unique.\n"
+             "Un nouveau clic sur « Réserver » régénère un lien.")
+    return {
+        "type": "interactive",
+        "interactive": {
+            "type": "cta_url",
+            "body": {"text": corps[:1024]},
+            "action": {"name": "cta_url", "parameters": {
+                "display_text": _couper("💳 Payer maintenant", MAX_TITRE_BOUTON),
+                "url": url,
+            }},
+        },
+        # Repli utilisé UNIQUEMENT si Meta refuse le format interactif.
+        "_repli_texte": f"{corps}\n\n{url}",
+    }
 
 
 async def lire_offre_du_cours(identifiant_cours):
@@ -793,6 +816,18 @@ async def envoyer_payload(telephone: str, payload: dict) -> dict:
     logger.info(f"[BOT-WA] envoi à …{numero[-4:]} : HTTP {r.status_code}")
     if not ok:
         logger.error(f"[BOT-WA] refus Meta : {r.text[:300]}")
+        # V374 : REPLI. Si le bouton `cta_url` est refusé, on renvoie le lien en
+        # texte : mieux vaut une URL brute qu'une personne sans moyen de payer.
+        if repli:
+            logger.warning("[BOT-WA] bouton refusé — repli sur le lien en texte")
+            async with httpx.AsyncClient(timeout=30.0) as client2:
+                r2 = await client2.post(url, headers={
+                    "Authorization": f"Bearer {config['access_token']}",
+                    "Content-Type": "application/json"}, json={
+                        "messaging_product": "whatsapp", "to": numero,
+                        "type": "text", "text": {"body": repli[:4000], "preview_url": True}})
+            return {"status": "success" if r2.status_code < 400 else "error",
+                    "http": r2.status_code, "repli": True}
     return {"status": "success" if ok else "error", "http": r.status_code}
 
 

@@ -245,15 +245,23 @@ def test_fiches_detaillees():
         # les boutons. La fiche est le premier.
         fiche = rep[0] if isinstance(rep, list) else rep
         corps = fiche["text"]["body"]
-        verifier("le lien de l'offre pointe sur l'offre précise, pas la boutique",
-                 "?offre=o1" in corps and "#offers-slider" not in corps, corps[-120:])
-        verifier("sélection d'une offre -> fiche complète (nom, prix, description, lien)",
+        # V374 : plus AUCUN lien « Réserver » dans le texte de la fiche — l'action
+        # unique est le bouton du message qui suit. Deux « Réserver » qui menaient
+        # à deux endroits différents (site / Stripe) prêtaient à confusion.
+        verifier("la fiche d'offre ne contient AUCUN lien « Réserver » en texte",
+                 "Réserver :" not in corps and "afroboost.com/?offre=" not in corps,
+                 corps[-160:])
+        verifier("l'unique action est le bouton du second message",
+                 isinstance(rep, list) and len(rep) == 2
+                 and rep[1]["interactive"]["action"]["buttons"][0]["reply"]["id"].startswith("payer_"),
+                 str(rep[1]["interactive"]["action"]["buttons"][0] if isinstance(rep, list) else rep))
+        verifier("sélection d'une offre -> fiche complète (nom, prix, description)",
                  "Cours à l'unité" in corps and "30 CHF" in corps
-                 and "cardio-danse afro, intense et joyeuse" in corps
-                 and "afroboost.com" in corps, corps[:120])
+                 and "cardio-danse afro, intense et joyeuse" in corps, corps[:120])
         verifier("la fiche n'est pas tronquée par « … »",
                  "…" not in corps, corps[:160])
-        verifier("l'aperçu de lien est activé", fiche["text"].get("preview_url") is True)
+        verifier("aucun aperçu de lien sur la fiche (elle ne porte plus d'URL)",
+                 fiche["text"].get("preview_url") is False)
         verifier("la fiche tient sous la limite WhatsApp (4096)", len(corps) <= 4000, len(corps))
 
         rep, _ = await d(MOI, "", "cours_c1", "Bassi")
@@ -346,15 +354,29 @@ def test_paiement_aucune_fausse_transaction():
         rep, _ = await d(MOI, "", "payer_o1", "Bassi")
         verifier("un clic « Réserver et payer » crée exactement 1 session",
                  appels["n"] == 1, f"{appels['n']} appel(s)")
-        corps = rep["text"]["body"]
-        verifier("le message porte le lien Stripe et ses conditions",
-                 "checkout.stripe.com" in corps and "24 h" in corps
-                 and "usage unique" in corps, corps[:140])
+        # V374 : le lien est derrière un BOUTON, plus jamais en texte brut.
+        inter = rep.get("interactive", {})
+        params = inter.get("action", {}).get("parameters", {})
+        verifier("le lien de paiement est un bouton cta_url, pas du texte",
+                 rep.get("type") == "interactive" and inter.get("type") == "cta_url",
+                 str(rep)[:140])
+        verifier("le bouton ouvre bien l'URL Stripe",
+                 "checkout.stripe.com" in params.get("url", ""), params.get("url", "")[:80])
+        verifier("le libellé du bouton respecte la limite WhatsApp (20 car.)",
+                 len(params.get("display_text", "")) <= 20, params.get("display_text"))
+        corps = inter.get("body", {}).get("text", "")
+        verifier("le texte reste court et annonce les conditions",
+                 len(corps) <= 1024 and "24 h" in corps and "usage unique" in corps
+                 and "checkout.stripe.com" not in corps, f"{len(corps)} car. — {corps[:90]}")
+        verifier("un repli texte est prévu si Meta refuse le bouton",
+                 "checkout.stripe.com" in rep.get("_repli_texte", ""),
+                 str(rep.get("_repli_texte"))[:80])
 
         # 4) re-clic dans l'heure -> lien RÉUTILISÉ, aucun appel de plus
         rep, _ = await d(MOI, "", "payer_o1", "Bassi")
         verifier("re-cliquer dans l'heure réutilise le lien (pas de doublon)",
-                 appels["n"] == 1 and "cs_test_1" in rep["text"]["body"],
+                 appels["n"] == 1
+                 and "cs_test_1" in rep["interactive"]["action"]["parameters"]["url"],
                  f"{appels['n']} appel(s)")
 
         # 5) offre GRATUITE -> aucun appel, renvoi vers le site
