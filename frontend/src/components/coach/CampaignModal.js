@@ -90,6 +90,24 @@ export default function CampaignModal({
   const [importedContacts, setImportedContacts] = useState([]);
   const [showImportPreview, setShowImportPreview] = useState(false);
 
+  // === V364 : SEGMENTS CALCULÉS + DÉPLIAGE DES GROUPES ===
+  //
+  // Le piège du 31 juillet : cocher un groupe ajoutait au panier l'IDENTIFIANT du
+  // groupe (« grp_xxx »), jamais ses membres. Le canal WhatsApp cherche ensuite un
+  // numéro pour cet identifiant, n'en trouve aucun, et la campagne part à zéro
+  // destinataire — sans le dire. Ici, cocher un groupe ou un segment ajoute
+  // CHAQUE PERSONNE, dépliée. L'identifiant de groupe n'entre plus jamais au panier.
+  //
+  // La joignabilité affichée vient des routes V363 (`/contacts/segment/...`), qui
+  // normalisent les numéros avec la MÊME fonction que le moteur d'envoi : « joignable »
+  // à l'écran veut donc dire « une campagne saura vraiment lui écrire ».
+  const [segmentsInfo, setSegmentsInfo] = useState(null);      // comptes par segment
+  const [idsJoignables, setIdsJoignables] = useState(null);    // Set des ids adressables
+  const [segmentsErreur, setSegmentsErreur] = useState('');    // échec honnête, jamais un 0 muet
+  const [segmentsChargement, setSegmentsChargement] = useState(false);
+  const [groupeDepliage, setGroupeDepliage] = useState('');    // id du groupe en cours de dépliage
+  const [groupesCache, setGroupesCache] = useState(null);      // /chat/groups : lent, chargé une fois
+
   // V154: Category filter for campaign targeting
   const [campaignCategories, setCampaignCategories] = useState([]);
   const [categoryFilter, setCategoryFilter] = useState([]);
@@ -137,6 +155,126 @@ export default function CampaignModal({
     }
   }, [isOpen, step, loadUnifiedContacts, allContacts.length]);
 
+  // V364 : compteurs et liste des joignables (routes de lecture V363, JWT coach).
+  // Deux appels courts (~0,4 s chacun) au moment où l'étape 2 s'ouvre.
+  const chargerSegments = useCallback(async () => {
+    if (!API) return;
+    setSegmentsChargement(true);
+    setSegmentsErreur('');
+    try {
+      const [comptes, joignables] = await Promise.all([
+        axios.get(`${API}/contacts/segments`),
+        axios.get(`${API}/contacts/segment/demarchable_whatsapp`)
+      ]);
+      setSegmentsInfo(comptes.data || null);
+      setIdsJoignables(new Set((joignables.data?.contacts || []).map(c => c.id)));
+    } catch (err) {
+      // Échec HONNÊTE (V345) : on ne montre pas « 0 joignable », qui ferait croire
+      // à une base vide. Sans jeton coach signé, ces routes répondent 403.
+      const code = err?.response?.status;
+      setSegmentsErreur(code === 403 || code === 401
+        ? "Reconnecte-toi à ton espace coach pour afficher le nombre exact de destinataires."
+        : "Impossible de calculer les destinataires joignables pour l'instant.");
+      setSegmentsInfo(null);
+      setIdsJoignables(null);
+    } finally {
+      setSegmentsChargement(false);
+    }
+  }, [API]);
+
+  useEffect(() => {
+    if (isOpen && step === 2 && !segmentsInfo && !segmentsChargement && !segmentsErreur) {
+      chargerSegments();
+    }
+  }, [isOpen, step, segmentsInfo, segmentsChargement, segmentsErreur, chargerSegments]);
+
+  // V364 : ajoute des personnes au panier sans jamais créer de doublon.
+  const ajouterAuPanier = useCallback((personnes) => {
+    setSelectedRecipients(prev => {
+      const dejaLa = new Set((prev || []).map(r => r.id));
+      const nouvelles = personnes.filter(p => p.id && !dejaLa.has(p.id));
+      return [...(prev || []), ...nouvelles];
+    });
+  }, [setSelectedRecipients]);
+
+  // V364 : déplie un SEGMENT (instantané — les routes V363 renvoient les identifiants).
+  const ajouterSegment = useCallback(async (cle) => {
+    if (!API) return;
+    setGroupeDepliage(`segment:${cle}`);
+    try {
+      const res = await axios.get(`${API}/contacts/segment/${cle}`);
+      const ids = res.data?.contacts || [];
+      const parId = new Map(allContacts.map(c => [c.id, c]));
+      ajouterAuPanier(ids.map(c => {
+        const connu = parId.get(c.id);
+        return {
+          id: c.id,
+          name: connu?.name || 'Contact',
+          type: 'user',                       // JAMAIS 'group' : on ajoute des personnes
+          phone: connu?.phone || null,
+          email: connu?.email || null
+        };
+      }));
+      if (res.data?.sans_identifiant > 0 && showCampaignToast) {
+        // Pas de troncature silencieuse : on dit ce qui n'a pas pu être ajouté.
+        showCampaignToast(
+          `${res.data.adressables} personne(s) ajoutée(s) — ${res.data.sans_identifiant} sans identifiant exploitable, non ajoutée(s).`
+        );
+      }
+    } catch (err) {
+      if (showCampaignToast) showCampaignToast("Impossible de charger ce segment.");
+    } finally {
+      setGroupeDepliage('');
+    }
+  }, [API, allContacts, ajouterAuPanier, showCampaignToast]);
+
+  // V364 : déplie un GROUPE existant en ses membres.
+  // `/chat/groups` est lent (~13 s : le backend fait une requête par membre, cf. gotcha
+  // n°2 du projet). On l'appelle donc UNE fois et on garde le résultat en mémoire, avec
+  // un état de chargement visible — jamais un écran figé sans explication.
+  const ajouterGroupeDeplie = useCallback(async (groupe) => {
+    if (!API) return;
+    setGroupeDepliage(groupe.id);
+    try {
+      let groupes = groupesCache;
+      if (!groupes) {
+        const res = await axios.get(`${API}/chat/groups`);
+        groupes = res.data || [];
+        setGroupesCache(groupes);
+      }
+      const trouve = groupes.find(g => g.id === groupe.id || `grp_${(g.id || '').slice(0, 8)}` === groupe.id);
+      const membres = trouve?.members_info || [];
+      if (!membres.length) {
+        if (showCampaignToast) showCampaignToast("Ce groupe ne contient aucun membre exploitable.");
+        return;
+      }
+      const parId = new Map(allContacts.map(c => [c.id, c]));
+      ajouterAuPanier(membres.map(m => {
+        const connu = parId.get(m.id);
+        return {
+          id: m.id,
+          name: m.name || connu?.name || 'Contact',
+          type: 'user',                       // le groupe lui-même n'entre PAS au panier
+          phone: connu?.phone || null,
+          email: m.email || connu?.email || null
+        };
+      }));
+    } catch (err) {
+      if (showCampaignToast) showCampaignToast("Impossible de déplier ce groupe.");
+    } finally {
+      setGroupeDepliage('');
+    }
+  }, [API, groupesCache, allContacts, ajouterAuPanier, showCampaignToast]);
+
+  // V364 : le nombre EXACT, calculé sur le panier réel.
+  // `joignables` = personnes que le moteur d'envoi saura contacter sur WhatsApp.
+  const bilanDestinataires = React.useMemo(() => {
+    const panier = selectedRecipients || [];
+    if (!idsJoignables) return { total: panier.length, joignables: null, sansNumero: null };
+    const joignables = panier.filter(r => idsJoignables.has(r.id)).length;
+    return { total: panier.length, joignables, sansNumero: panier.length - joignables };
+  }, [selectedRecipients, idsJoignables]);
+
   const handleFileImport = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -173,6 +311,12 @@ export default function CampaignModal({
   // v18: Toggle contact selection (checkbox)
   const toggleContact = (contact) => {
     const isSelected = selectedRecipients?.some(r => r.id === contact.id);
+    // V364 : cocher un GROUPE ajoute ses MEMBRES, jamais l'identifiant du groupe —
+    // c'est la correction du piège du 31 juillet (campagne partie à 0 destinataire).
+    if (!isSelected && contact.type === 'group') {
+      ajouterGroupeDeplie(contact);
+      return;
+    }
     if (isSelected) {
       setSelectedRecipients(prev => prev.filter(r => r.id !== contact.id));
     } else {
@@ -190,6 +334,9 @@ export default function CampaignModal({
   const selectAllVisible = () => {
     const existingIds = new Set((selectedRecipients || []).map(r => r.id));
     const newOnes = filteredContacts
+      // V364 : on n'ajoute JAMAIS un identifiant de groupe au panier — il ne produirait
+      // aucun destinataire WhatsApp. Pour un groupe, il faut le déplier (clic dessus).
+      .filter(c => c.type !== 'group')
       .filter(c => !existingIds.has(c.id))
       .map(c => ({
         id: c.id,
@@ -616,6 +763,77 @@ export default function CampaignModal({
                     )}
                   </div>
                 </div>
+
+                {/* V364 : SEGMENTS CALCULÉS — un clic déplie les personnes au panier.
+                    Les nombres viennent des routes V363, recalculées à l'ouverture :
+                    ils ne peuvent pas vieillir comme un groupe figé. */}
+                {segmentsChargement && (
+                  <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', marginBottom: '8px' }}>
+                    Calcul des destinataires joignables…
+                  </div>
+                )}
+                {segmentsErreur && (
+                  <div style={{
+                    marginBottom: '8px', padding: '8px 10px', borderRadius: '8px', fontSize: '11px',
+                    background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5'
+                  }}>{segmentsErreur}</div>
+                )}
+                {segmentsInfo && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                    {[
+                      { cle: 'demarchable_whatsapp', libelle: 'Joignables WhatsApp' },
+                      { cle: 'abonne_actif', libelle: 'Abonnés actifs' },
+                      { cle: 'abonnement_expire', libelle: 'Abonnements expirés' },
+                      { cle: 'essai_gratuit', libelle: 'Essai gratuit' }
+                    ].filter(s => (segmentsInfo.etiquettes?.[s.cle] || 0) > 0).map(s => (
+                      <button key={s.cle} type="button" disabled={!!groupeDepliage}
+                        onClick={() => ajouterSegment(s.cle)}
+                        title={`Ajouter les ${segmentsInfo.etiquettes[s.cle]} personnes de ce segment`}
+                        style={{
+                          padding: '5px 11px', borderRadius: '14px', fontSize: '11px', fontWeight: 600,
+                          cursor: groupeDepliage ? 'wait' : 'pointer', color: '#fff',
+                          background: 'rgba(139,92,246,0.22)', border: '1px solid rgba(139,92,246,0.45)'
+                        }}>
+                        {groupeDepliage === `segment:${s.cle}` ? 'Ajout…' : `+ ${s.libelle} (${segmentsInfo.etiquettes[s.cle]})`}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* V364 : le nombre EXACT de personnes qui recevront vraiment le message.
+                    Le compteur « sélectionnés » ci-dessus compte des lignes ; celui-ci
+                    compte des envois réels — c'est la différence qui a manqué le 31 juillet. */}
+                {selectedRecipients?.length > 0 && newCampaign.channels?.whatsapp && (
+                  <div style={{
+                    marginBottom: '10px', padding: '10px 12px', borderRadius: '8px',
+                    background: bilanDestinataires.joignables === null
+                      ? 'rgba(255,255,255,0.05)'
+                      : (bilanDestinataires.joignables === 0 ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.10)'),
+                    border: bilanDestinataires.joignables === null
+                      ? '1px solid rgba(255,255,255,0.12)'
+                      : (bilanDestinataires.joignables === 0
+                          ? '1px solid rgba(239,68,68,0.35)' : '1px solid rgba(34,197,94,0.30)')
+                  }}>
+                    {bilanDestinataires.joignables === null ? (
+                      <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>
+                        Nombre de destinataires joignables indisponible.
+                      </span>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: '13px', fontWeight: 700, color: bilanDestinataires.joignables === 0 ? '#fca5a5' : '#86efac' }}>
+                          {bilanDestinataires.joignables === 0
+                            ? 'Aucune personne ne recevra ce message sur WhatsApp'
+                            : `${bilanDestinataires.joignables} personne${bilanDestinataires.joignables > 1 ? 's' : ''} ${bilanDestinataires.joignables > 1 ? 'seront contactées' : 'sera contactée'} sur WhatsApp`}
+                        </div>
+                        {bilanDestinataires.sansNumero > 0 && (
+                          <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.65)', marginTop: '3px' }}>
+                            {bilanDestinataires.joignables} joignable{bilanDestinataires.joignables > 1 ? 's' : ''} / {bilanDestinataires.sansNumero} sans numéro exploitable
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {/* Selected tags (compact view) */}
                 {selectedRecipients?.length > 0 && (
@@ -1050,6 +1268,22 @@ export default function CampaignModal({
                     <span style={{ color: 'rgba(255,255,255,0.5)' }}>Destinataires</span>
                     <span style={{ color: '#fff', fontWeight: 500 }}>{selectedRecipients?.length || 0} contact(s)</span>
                   </div>
+                  {/* V364 : dernière ligne avant l'envoi — le nombre d'envois RÉELS.
+                      Une campagne qui contacterait 0 personne doit se voir ici, pas
+                      se découvrir après coup dans l'historique. */}
+                  {newCampaign.channels?.whatsapp && bilanDestinataires.joignables !== null && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                      <span style={{ color: 'rgba(255,255,255,0.5)' }}>Envois WhatsApp réels</span>
+                      <span style={{ fontWeight: 700, color: bilanDestinataires.joignables === 0 ? '#fca5a5' : '#86efac' }}>
+                        {bilanDestinataires.joignables} joignable{bilanDestinataires.joignables > 1 ? 's' : ''}
+                        {bilanDestinataires.sansNumero > 0 && (
+                          <span style={{ color: 'rgba(255,255,255,0.55)', fontWeight: 500 }}>
+                            {' '}/ {bilanDestinataires.sansNumero} sans numéro
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
                     <span style={{ color: 'rgba(255,255,255,0.5)' }}>Canaux</span>
                     <span style={{ color: '#fff', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>

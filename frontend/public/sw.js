@@ -17,7 +17,7 @@
 // rechargement (V358), alors que le correctif etait en ligne depuis longtemps.
 // Bumper CACHE_NAME purge l'ancien cache a l'activation et force tous les appareils
 // a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
-var CACHE_NAME = 'afroboost-v361'; // V361: verification periodique des mises a jour
+var CACHE_NAME = 'afroboost-v364'; // V364: segments et compteur de destinataires dans l'ecran de campagne
 var SW_VERSION = 268;
 
 var PRECACHE_URLS = [
