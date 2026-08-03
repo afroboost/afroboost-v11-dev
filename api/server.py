@@ -57,6 +57,8 @@ from api.routes.boost_routes import (
 from api.routes.contact_categories_routes import category_router, init_category_db
 # V363: Import routes segments de contacts (CALCULÉS, lecture seule, aucune écriture)
 from api.routes.contact_segments_routes import segments_router, init_segments_db
+# V367: Import routes bot WhatsApp — ÉTAPE 1 : APERÇU SEUL, aucun envoi, drapeau OFF
+from api.routes.bot_whatsapp_routes import bot_router, init_bot_db
 # V223: Calcul prix progressif (module pur, sans accès DB)
 from api.pricing import compute_active_price  # V223
 
@@ -1058,6 +1060,10 @@ class FeatureFlags(BaseModel):
     # V349 : verrou de LECTURE du chat (contenu des conversations + routes de groupe).
     # Defaut FALSE = comportement actuel. True = seules les parties prenantes lisent.
     CHAT_READ_STRICT: bool = False
+    # V367 : interrupteur du bot WhatsApp à menu de boutons. Défaut FALSE = le webhook
+    # se comporte exactement comme aujourd'hui. Déclaré maintenant pour que la bascule
+    # se fasse sans redéploiement, le jour où le menu sera branché et testé.
+    BOT_MENU_ENABLED: bool = False
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1071,6 +1077,7 @@ class FeatureFlagsUpdate(BaseModel):
     PUBLICATIONS_NO_EXPIRY: Optional[bool] = None  # V333
     SUPERADMIN_JWT_STRICT: Optional[bool] = None  # V344
     CHAT_READ_STRICT: Optional[bool] = None  # V349
+    BOT_MENU_ENABLED: Optional[bool] = None  # V367
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -13243,7 +13250,7 @@ async def get_feature_flags():
                          ("STREAMING_SERVICE_ENABLED", False), ("SUBSCRIBER_STRICT_ENTRY", False),
                          ("REQUIRE_COACH_JWT", False), ("PAWAPAY_ENABLED", False),
                          ("PUBLICATIONS_NO_EXPIRY", False), ("SUPERADMIN_JWT_STRICT", False),
-                         ("CHAT_READ_STRICT", False)):
+                         ("CHAT_READ_STRICT", False), ("BOT_MENU_ENABLED", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags
@@ -22503,6 +22510,12 @@ init_category_db(db)
 # N'écrit jamais en base et ne touche ni aux campagnes, ni au chemin d'envoi.
 fastapi_app.include_router(segments_router, prefix="/api")
 init_segments_db(db)
+
+# V367: Bot WhatsApp — ÉTAPE 1. Une seule route, en LECTURE SEULE : l'aperçu du menu.
+# Le webhook entrant n'est PAS modifié et rien n'est envoyé : tant que le drapeau
+# BOT_MENU_ENABLED est à OFF (défaut), le bot n'existe pas pour l'extérieur.
+fastapi_app.include_router(bot_router, prefix="/api")
+init_bot_db(db)
 
 # V309 (FIX 4.4) : CORS resserré. `*` autorisait N'IMPORTE QUEL site à appeler l'API
 # depuis un navigateur. On n'autorise que le domaine du site (+ localhost dev). Si

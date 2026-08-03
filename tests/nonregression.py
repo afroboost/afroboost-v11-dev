@@ -854,6 +854,52 @@ def t83_v345_sessions_refus_explicite_pas_liste_vide():
         record(83, "V345 : /chat/sessions refus explicite", False, str(e))
 
 
+def t91_v367_apercu_bot_ferme_et_sans_envoi():
+    """V367 : l'aperçu du menu WhatsApp est une route de LECTURE, réservée au coach.
+
+    Trois affirmations :
+      - refus (401/403) sans jeton signé, et un X-User-Email usurpé n'ouvre rien ;
+      - avec ADMIN_JWT : l'aperçu répond, annonce `aucun_envoi: true`, et le drapeau
+        BOT_MENU_ENABLED reste à FALSE (le bot ne doit pas s'activer tout seul) ;
+      - le menu propose bien 3 boutons et les listes respectent les limites WhatsApp
+        (10 lignes, titres 24, descriptions 72) — un dépassement ferait rejeter
+        l'envoi par Meta le jour du branchement.
+
+    AUCUN message n'est envoyé par ce test : la route ne fait que construire.
+    """
+    try:
+        r_anon = requests.get(_url("/api/bot-whatsapp/apercu"), timeout=TIMEOUT)
+        r_spoof = requests.get(_url("/api/bot-whatsapp/apercu"),
+                               headers={"X-User-Email": ADMIN}, timeout=TIMEOUT)
+        ferme = all(x.status_code in (401, 403) for x in (r_anon, r_spoof))
+        if not ADMIN_JWT:
+            return record(91, "V367 : aperçu du bot fermé sans jeton signé", ferme,
+                          f"anon={r_anon.status_code} usurpé={r_spoof.status_code}")
+        r = requests.get(_url("/api/bot-whatsapp/apercu"),
+                         headers={"Authorization": "Bearer " + ADMIN_JWT}, timeout=TIMEOUT)
+        d = r.json() if r.status_code == 200 else {}
+        p = d.get("payloads_whatsapp", {})
+        boutons = (p.get("menu", {}).get("interactive", {})
+                    .get("action", {}).get("buttons", []))
+        limites_ok = True
+        for cle in ("cours", "offres"):
+            for section in (p.get(cle, {}).get("interactive", {})
+                             .get("action", {}).get("sections", [])):
+                if len(section.get("rows", [])) > 10:
+                    limites_ok = False
+                for ligne in section.get("rows", []):
+                    if len(ligne.get("title", "")) > 24 or len(ligne.get("description", "")) > 72:
+                        limites_ok = False
+        ok = (ferme and r.status_code == 200 and d.get("aucun_envoi") is True
+              and d.get("bot_actif") is False and len(boutons) == 3 and limites_ok)
+        record(91, "V367 : aperçu fermé sans jeton, bot OFF, limites WhatsApp respectées", ok,
+               f"anon={r_anon.status_code} usurpé={r_spoof.status_code} "
+               f"bot_actif={d.get('bot_actif')} boutons={len(boutons)} limites={limites_ok} "
+               f"sources={d.get('sources')}")
+    except Exception as e:
+        record(91, "V367 : aperçu du bot WhatsApp", False, str(e))
+
+
 def t90_v365_membres_de_groupe_identiques_et_rapides():
     """V365 : l'enrichissement des membres passe d'une requête PAR MEMBRE à deux
     requêtes groupées ($in). Seule la vitesse change — la liste doit rester la même.
@@ -1721,6 +1767,7 @@ def main():
                    t84_v346_categories_des_conversations, t85_v348_suppression_conversation_exige_jeton,
                    t86_v349_contenu_des_conversations_ferme, t87_v350_piece_jointe_du_chat, t88_v354_permissions_policy_micro,
                    t89_v363_segments_contacts, t90_v365_membres_de_groupe_identiques_et_rapides,
+                   t91_v367_apercu_bot_ferme_et_sans_envoi,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
