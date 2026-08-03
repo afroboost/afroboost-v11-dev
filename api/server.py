@@ -14023,6 +14023,48 @@ async def handle_meta_whatsapp_webhook(request: Request):
             messages = value.get("messages", [])
             contacts = value.get("contacts", [])
 
+            # === V378 : ENREGISTREMENT DES STATUTS DE LIVRAISON ===
+            #
+            # Meta envoie ici, dans le MÊME webhook que les messages entrants, le sort
+            # de chaque message sorti : sent -> delivered -> read, ou failed avec un
+            # code. Ce bloc les IGNORAIT (`if not messages: continue`), si bien que
+            # les 26 campagnes du 3 août affichaient « sent » sans qu'on sache jamais
+            # qu'elles n'étaient pas distribuées — et sans jamais voir le motif, que
+            # Meta ne donne QUE par cette voie.
+            #
+            # On écrit dans `whatsapp_statuts` (collection neuve, rien d'autre n'en
+            # dépend). Aucun envoi, aucune réponse : on enregistre et on continue.
+            _statuses = value.get("statuses", []) or []
+            for _st in _statuses:
+                try:
+                    _erreurs = []
+                    for _e in (_st.get("errors") or []):
+                        _erreurs.append({
+                            "code": _e.get("code"),
+                            "title": _e.get("title"),
+                            "message": _e.get("message"),
+                            "details": ((_e.get("error_data") or {}).get("details")),
+                            "href": _e.get("href"),
+                        })
+                    await db.whatsapp_statuts.insert_one({
+                        "wamid": _st.get("id"),
+                        "statut": _st.get("status"),
+                        "destinataire": _st.get("recipient_id"),
+                        "horodatage_meta": _st.get("timestamp"),
+                        "conversation": _st.get("conversation"),
+                        "tarification": _st.get("pricing"),
+                        "erreurs": _erreurs,
+                        "recu_le": datetime.now(timezone.utc).isoformat(),
+                    })
+                    if _erreurs:
+                        logger.error(f"[META-STATUT] ❌ {_st.get('status')} vers "
+                                     f"…{str(_st.get('recipient_id'))[-4:]} : {_erreurs}")
+                    else:
+                        logger.info(f"[META-STATUT] {_st.get('status')} vers "
+                                    f"…{str(_st.get('recipient_id'))[-4:]}")
+                except Exception as _e_st:
+                    logger.warning(f"[META-STATUT] enregistrement ignoré : {_e_st}")
+
             # Ignorer les statuts de livraison (pas de messages)
             if not messages:
                 continue
