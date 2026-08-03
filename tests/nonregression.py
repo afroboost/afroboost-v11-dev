@@ -854,6 +854,60 @@ def t83_v345_sessions_refus_explicite_pas_liste_vide():
         record(83, "V345 : /chat/sessions refus explicite", False, str(e))
 
 
+def t90_v365_membres_de_groupe_identiques_et_rapides():
+    """V365 : l'enrichissement des membres passe d'une requête PAR MEMBRE à deux
+    requêtes groupées ($in). Seule la vitesse change — la liste doit rester la même.
+
+    Ce test verrouille l'identité du résultat par ses invariants, ceux-là mêmes que
+    la reconstruction groupée pourrait casser :
+      - autant d'entrées dans `members_info` que d'identifiants dans `member_ids` ;
+      - MÊME ORDRE, position par position (une reconstruction par dictionnaire
+        perdrait l'ordre : c'est le risque n°1 de cette optimisation) ;
+      - mêmes champs exactement : id, name, email ;
+      - aucun membre introuvable ne disparaît (il reste, en « Inconnu »).
+    Et il mesure le temps : la route mettait ~13 s en production avant V365.
+
+    Lecture seule : aucune campagne, aucun envoi. Exige ADMIN_JWT (V349).
+    """
+    if not ADMIN_JWT:
+        return skip(90, "V365 : membres de groupe (identité + vitesse)", "ADMIN_JWT non fourni")
+    try:
+        import time as _t
+        hdr = {"Authorization": "Bearer " + ADMIN_JWT}
+        t0 = _t.perf_counter()
+        r = requests.get(_url("/api/chat/groups"), headers=hdr, timeout=TIMEOUT)
+        duree = _t.perf_counter() - t0
+        if r.status_code != 200:
+            return record(90, "V365 : membres de groupe", False, f"HTTP {r.status_code}")
+        groupes = r.json()
+        if not isinstance(groupes, list) or not groupes:
+            return skip(90, "V365 : membres de groupe", "aucun groupe en base")
+
+        champs_ok = ordre_ok = compte_ok = True
+        total = 0
+        for g in groupes:
+            ids = g.get("member_ids")
+            infos = g.get("members_info")
+            if ids is None or infos is None:
+                continue                      # groupe sans membres exposés : rien à vérifier
+            total += len(infos)
+            if len(ids) != len(infos):
+                compte_ok = False
+            for i, info in enumerate(infos):
+                if set(info.keys()) != {"id", "name", "email"}:
+                    champs_ok = False
+                if i < len(ids) and info.get("id") != ids[i]:
+                    ordre_ok = False          # l'ordre d'origine doit être préservé
+        # Seuil large : on veut prouver la disparition des ~13 s, pas chronométrer le réseau.
+        vitesse_ok = duree < 5.0
+        ok = champs_ok and ordre_ok and compte_ok and vitesse_ok
+        record(90, "V365 : membres de groupe inchangés (ordre, champs, compte) et route rapide",
+               ok, f"{len(groupes)} groupe(s), {total} membre(s) | ordre={ordre_ok} "
+                   f"champs={champs_ok} compte={compte_ok} | {duree:.2f}s (< 5 s attendu)")
+    except Exception as e:
+        record(90, "V365 : membres de groupe", False, str(e))
+
+
 def t89_v363_segments_contacts():
     """V363 : les segments de contacts sont CALCULÉS, jamais stockés.
 
@@ -1666,7 +1720,7 @@ def main():
                    t83_v345_sessions_refus_explicite_pas_liste_vide,
                    t84_v346_categories_des_conversations, t85_v348_suppression_conversation_exige_jeton,
                    t86_v349_contenu_des_conversations_ferme, t87_v350_piece_jointe_du_chat, t88_v354_permissions_policy_micro,
-                   t89_v363_segments_contacts,
+                   t89_v363_segments_contacts, t90_v365_membres_de_groupe_identiques_et_rapides,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

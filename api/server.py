@@ -19299,13 +19299,40 @@ async def get_chat_groups(request: Request):
     groups = await db.chat_groups.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
 
     # v108: Enrichir chaque groupe avec les noms des membres pour l'affichage
+    #
+    # V365 — VITESSE UNIQUEMENT, résultat inchangé. Cette boucle faisait UNE requête
+    # par membre (jusqu'à deux avec le repli sur `users`) : 1 200 membres = 1 200 allers
+    # -retours vers MongoDB, soit ~13 s mesurées en production. C'est le gotcha n°2 du
+    # projet (« ne jamais interroger membre par membre, grouper avec $in »).
+    # On charge désormais TOUS les membres de TOUS les groupes en deux requêtes, puis
+    # on reconstruit la liste dans l'ordre EXACT de `member_ids`.
+    #
+    # Ce qui ne change pas, et qui est vérifié par comparaison sur les 1 200 entrées
+    # réelles : l'ordre, les champs (`id`, `name`, `email`), la priorité
+    # `chat_participants` avant `users`, et les valeurs de repli (« Inconnu », "").
+    tous_les_ids = []
     for g in groups:
-        member_ids = g.get("member_ids", [])
+        tous_les_ids.extend(g.get("member_ids") or [])
+    ids_uniques = list(dict.fromkeys(tous_les_ids))  # dédoublonne sans perdre l'ordre
+
+    par_id = {}
+    if ids_uniques:
+        for p in await db.chat_participants.find(
+                {"id": {"$in": ids_uniques}}, {"_id": 0, "id": 1, "name": 1, "email": 1}
+        ).to_list(len(ids_uniques)):
+            # setdefault = on garde le PREMIER trouvé, exactement comme find_one
+            par_id.setdefault(p.get("id"), p)
+        manquants = [i for i in ids_uniques if i not in par_id]
+        if manquants:
+            for u in await db.users.find(
+                    {"id": {"$in": manquants}}, {"_id": 0, "id": 1, "name": 1, "email": 1}
+            ).to_list(len(manquants)):
+                par_id.setdefault(u.get("id"), u)
+
+    for g in groups:
         members_info = []
-        for mid in member_ids:
-            p = await db.chat_participants.find_one({"id": mid}, {"_id": 0, "name": 1, "email": 1})
-            if not p:
-                p = await db.users.find_one({"id": mid}, {"_id": 0, "name": 1, "email": 1})
+        for mid in g.get("member_ids", []):
+            p = par_id.get(mid)
             if p:
                 members_info.append({"id": mid, "name": p.get("name", ""), "email": p.get("email", "")})
             else:
