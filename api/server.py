@@ -14078,12 +14078,18 @@ async def handle_meta_whatsapp_webhook(request: Request):
                         _reponse_bot, _notif = await _bot_decider(
                             from_phone, incoming_message, bouton_clique, meta_contact_name)
                         if _reponse_bot:
-                            await _bot_envoyer(from_phone, _reponse_bot)
+                            # V372 : le bot peut renvoyer PLUSIEURS messages (fiche
+                            # complète puis boutons) — le corps d'un message à boutons
+                            # est plafonné à 1024 caractères par WhatsApp.
+                            for _msg_bot in (_reponse_bot if isinstance(_reponse_bot, list)
+                                             else [_reponse_bot]):
+                                await _bot_envoyer(from_phone, _msg_bot)
                             await _save_whatsapp_conversation(
                                 from_phone=from_phone,
                                 contact_name=meta_contact_name,
                                 incoming_message=incoming_message,
-                                ai_response=(_reponse_bot.get("text", {}) or {}).get("body")
+                                ai_response=((_reponse_bot[0] if isinstance(_reponse_bot, list)
+                                              else _reponse_bot).get("text", {}) or {}).get("body")
                                             or "[menu WhatsApp]")
                             if _notif:
                                 # Le coach est prévenu : notification + trace écrite.

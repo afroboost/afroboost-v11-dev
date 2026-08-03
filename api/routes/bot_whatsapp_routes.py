@@ -58,6 +58,12 @@ SITE = "https://afroboost.com"
 BOUTON_COURS = "menu_cours"
 BOUTON_OFFRES = "menu_offres"
 BOUTON_COACH = "menu_coach"
+# V372 : préfixe du bouton de paiement. L'identifiant de l'offre suit.
+PREFIXE_PAYER = "payer_"
+# Un lien Stripe déjà généré est REUTILISÉ pendant ce délai : sans cela, une
+# personne indécise qui reclique trois fois crée trois lignes `payment_transactions`
+# en « pending ». Décision du coach : 1 heure.
+MINUTES_REUTILISATION_LIEN = 60
 
 
 def _couper(texte, maximum):
@@ -417,6 +423,121 @@ def construire_fiche_cours(cours, offre=None):
     return {"type": "text", "text": {"body": "\n".join(lignes)[:4000], "preview_url": True}}
 
 
+def construire_boutons_offre(offre, payante):
+    """Boutons envoyés JUSTE APRÈS la fiche.
+
+    Pourquoi un second message : le corps d'un message à boutons est limité à 1024
+    caractères par WhatsApp, alors qu'une description d'offre en fait couramment
+    1500. Tronquer la fiche pour loger un bouton reviendrait à recréer le problème
+    qu'on vient de corriger. On envoie donc la fiche entière, puis les boutons.
+
+    `payante` décide du libellé : on n'écrit jamais « payer » là où le clic mène en
+    réalité sur le site (offre gratuite, ou à variantes qu'on ne peut pas choisir ici).
+    """
+    titre = "💳 Réserver et payer" if payante else "🌐 Voir sur le site"
+    return {
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": "Que souhaitez-vous faire ?"},
+            "action": {"buttons": [
+                {"type": "reply", "reply": {"id": f"{PREFIXE_PAYER}{offre.get('id','')}",
+                                            "title": _couper(titre, MAX_TITRE_BOUTON)}},
+                {"type": "reply", "reply": {"id": BOUTON_OFFRES,
+                                            "title": _couper("🛍️ Autres offres", MAX_TITRE_BOUTON)}},
+            ]}
+        }
+    }
+
+
+def offre_payable_par_lien(offre):
+    """Cette offre peut-elle être payée directement depuis WhatsApp ?
+
+    NON dans deux cas, et le bouton le dit alors honnêtement :
+      - prix nul : le parcours gratuit du site passe par des étapes (formulaire,
+        preuve sociale Instagram) qu'on ne peut pas reproduire ici ;
+      - offre à VARIANTES (taille, couleur) : payer sans choisir produirait une
+        commande inexploitable.
+    C'est la même règle que le site (`v225IsDirectCheckout` : prix > 0).
+    """
+    if offre.get("variants"):
+        return False
+    try:
+        from api.pricing import compute_active_price
+        return float(compute_active_price(offre).get("price") or 0) > 0
+    except Exception:
+        return float(offre.get("price") or 0) > 0
+
+
+async def creer_lien_paiement(telephone, offre, etat):
+    """Crée (ou RÉUTILISE) le lien Stripe de cette offre. Renvoie (payload, cree).
+
+    APPELÉ UNIQUEMENT AU CLIC sur « Réserver et payer » — jamais à l'affichage
+    d'une fiche. Consulter dix offres ne crée donc aucune session ni aucune ligne
+    `payment_transactions`.
+
+    Le montant vient de compute_active_price côté SERVEUR : le bot ne transmet
+    jamais un prix venu du client.
+    """
+    identifiant = offre.get("id") or ""
+    # Réutilisation : même offre, même personne, moins d'une heure.
+    ancien = etat.get("dernier_lien_stripe")
+    if ancien and etat.get("dernier_lien_offre") == identifiant:
+        try:
+            pose = datetime.fromisoformat(str(etat.get("dernier_lien_le")).replace("Z", "+00:00"))
+            if pose.tzinfo is None:
+                pose = pose.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - pose < timedelta(minutes=MINUTES_REUTILISATION_LIEN):
+                logger.info(f"[BOT-WA] lien Stripe réutilisé pour …{telephone[-4:]}")
+                return _message_lien(offre, ancien), False
+        except Exception:
+            pass
+
+    from api.server import create_checkout_session, CreateCheckoutRequest
+    from api.pricing import compute_active_price
+    montant = float(compute_active_price(offre).get("price") or 0)
+    requete = CreateCheckoutRequest(
+        productName=(offre.get("name") or "Offre Afroboost").strip()[:120],
+        amount=montant,
+        originUrl=SITE,
+        offerId=identifiant,
+        quantity=1,
+        reservationData={"source": "bot_whatsapp", "telephone": telephone},
+    )
+    resultat = await create_checkout_session(requete)
+    url = (resultat or {}).get("url") or (resultat or {}).get("checkout_url") or ""
+    if not url:
+        logger.error(f"[BOT-WA] Stripe n'a pas renvoyé d'URL : {str(resultat)[:200]}")
+        return {"type": "text", "text": {"body":
+                "Le lien de paiement n'a pas pu être créé. Réessaie dans un instant, "
+                f"ou passe par {_lien_offre(offre)}", "preview_url": True}}, False
+    await ecrire_etat(telephone, {
+        "dernier_lien_stripe": url,
+        "dernier_lien_offre": identifiant,
+        "dernier_lien_le": datetime.now(timezone.utc).isoformat(),
+    })
+    return _message_lien(offre, url), True
+
+
+def _message_lien(offre, url):
+    """Le message qui porte le lien — avec ses conditions, dites clairement."""
+    from api.pricing import compute_active_price
+    try:
+        prix = _formater_prix(compute_active_price(offre).get("price"))
+    except Exception:
+        prix = _formater_prix(offre.get("price"))
+    corps = [
+        "Voici votre lien de paiement sécurisé 🔒",
+        f"*{(offre.get('name') or '').strip()[:80]}*" + (f" — {prix}" if prix else ""),
+        "",
+        url,
+        "",
+        "⏳ Valable 24 h et à usage unique.",
+        "Un nouveau clic sur « Réserver » régénère un lien.",
+    ]
+    return {"type": "text", "text": {"body": "\n".join(corps)[:4000], "preview_url": True}}
+
+
 async def lire_offre_du_cours(identifiant_cours):
     """L'offre qui référence ce cours, s'il y en a une (sinon None)."""
     return await db.offers.find_one({"linked_course_ids": identifiant_cours}, {"_id": 0})
@@ -608,10 +729,28 @@ async def decider_reponse(telephone: str, texte: str, bouton: str, nom: str = No
     # 4. SÉLECTION D'UNE LIGNE -> fiche détaillée. Les listes WhatsApp coupent à
     #    24/72 caractères ; la fiche donne le texte entier, les tarifs et le lien.
     #    Aucun tunnel d'achat dans WhatsApp : la réservation se fait sur le site.
+    # V372 : CLIC SUR « Réserver et payer ». C'est LE seul endroit qui crée une
+    # session Stripe — donc aucune ligne `payment_transactions` n'apparaît en
+    # consultant une fiche, seulement en demandant explicitement à payer.
+    if bouton and bouton.startswith(PREFIXE_PAYER):
+        offre = await lire_offre(bouton[len(PREFIXE_PAYER):])
+        if not offre:
+            return construire_repli(), None
+        if not offre_payable_par_lien(offre):
+            # Gratuit ou à variantes : on renvoie vers le site, sans rien créer.
+            return {"type": "text", "text": {"body":
+                    f"Cette offre se réserve sur le site 👇\n\n{_lien_offre(offre)}\n\n"
+                    "Tape « menu » pour revenir.", "preview_url": True}}, None
+        message, _ = await creer_lien_paiement(telephone, offre, etat)
+        return message, None
+
     if bouton and bouton.startswith("offre_"):
         offre = await lire_offre(bouton[len("offre_"):])
         if offre:
-            return construire_fiche_offre(offre, await lire_cours_de_offre(offre)), None
+            # Deux messages : la fiche ENTIÈRE, puis les boutons (le corps d'un
+            # message à boutons est plafonné à 1024 caractères par WhatsApp).
+            return [construire_fiche_offre(offre, await lire_cours_de_offre(offre)),
+                    construire_boutons_offre(offre, offre_payable_par_lien(offre))], None
         return construire_repli(), None
     if bouton and bouton.startswith("cours_"):
         identifiant = bouton[len("cours_"):]
