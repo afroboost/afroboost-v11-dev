@@ -1588,7 +1588,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // renommer, les masquer ou les supprimer depuis l'interface.
   // Cette constante ne change que le dashboard du coach : la vitrine publique lit
   // /api/courses et n'a jamais dependu de cet ecran.
-  const SHOW_COURSES_SECTION = true;
+  //
+  // V373 : REFERMEE. L'ecran n'avait ete rouvert que pour reprendre la main sur des
+  // cours orphelins devenus ingerables. Le menage est fait : les 10 cours visibles
+  // sont TOUS rattaches a une offre, donc gerables dans le wizard — verifie un par
+  // un avant cette bascule. Deux ecrans pour la meme chose induisaient en erreur.
+  // Les corrections V371 (echec d'archivage rendu VISIBLE) restent en place : elles
+  // resserviront le jour ou cet ecran sera rouvert.
+  const SHOW_COURSES_SECTION = false;
 
   // v37.2: Auto-scroll + auto-load audio course on sub-tab change
   const handleSubTabChange = (subTabId) => {

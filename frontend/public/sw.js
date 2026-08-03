@@ -17,7 +17,7 @@
 // rechargement (V358), alors que le correctif etait en ligne depuis longtemps.
 // Bumper CACHE_NAME purge l'ancien cache a l'activation et force tous les appareils
 // a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
-var CACHE_NAME = 'afroboost-v371'; // V371: lien profond vers une offre + erreurs visibles dans l ecran des cours
+var CACHE_NAME = 'afroboost-v373'; // V373: fermeture de l ecran Cours (gestion par le wizard)
 var SW_VERSION = 268;
 
 var PRECACHE_URLS = [
