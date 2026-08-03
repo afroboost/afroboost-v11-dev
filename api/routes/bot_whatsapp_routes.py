@@ -309,6 +309,12 @@ def construire_repli():
 # Aucune autre collection n'en dépend. Rollback : db.bot_whatsapp_etat.drop().
 
 COLLECTION_ETAT = "bot_whatsapp_etat"
+
+# V369b : dernière erreur rencontrée par la greffe du webhook, gardée EN MÉMOIRE
+# (aucune écriture en base) et exposée par /api/bot-whatsapp/apercu. Sans accès aux
+# logs du conteneur, une exception avalée est invisible : c'est exactement ce qui a
+# masqué le NameError de V369 pendant un test complet.
+DERNIERE_ERREUR = None
 JOURS_DE_PAUSE = 7          # décision du coach : 7 jours, levée par un bouton
 
 # GARDE-FOU DE TEST : tant que cette liste n'est PAS vide, le bot ne répond QU'À ces
@@ -528,6 +534,7 @@ async def apercu_du_menu(request: Request):
             "repli": lisible(construire_repli()),
         },
         "payloads_whatsapp": {"menu": menu, "cours": liste_c, "offres": liste_o},
+        "derniere_erreur": DERNIERE_ERREUR,     # V369b : None = aucune erreur avalée
         "aucun_envoi": True,
     }
 

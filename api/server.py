@@ -14041,7 +14041,24 @@ async def handle_meta_whatsapp_webhook(request: Request):
                 if not from_phone.startswith("+"):
                     from_phone = f"+{from_phone}"
 
-                # === V369 : BOT À MENU DE BOUTONS ===
+                # Récupérer le nom du contact Meta (si disponible)
+                meta_contact_name = None
+                for contact in contacts:
+                    if contact.get("wa_id") == msg.get("from"):
+                        profile = contact.get("profile", {})
+                        meta_contact_name = profile.get("name")
+                        break
+
+                logger.info(f"[META-WEBHOOK] 📩 Message de {from_phone} ({meta_contact_name}): {incoming_message[:80]}")
+
+                # === V369b : BOT À MENU DE BOUTONS ===
+                #
+                # PLACEMENT : APRÈS la résolution de `meta_contact_name`. En V369 ce
+                # bloc était placé plus haut, AVANT que cette variable existe : chaque
+                # message levait un NameError, avalé par le `except` ci-dessous, et le
+                # flux IA reprenait la main. Le bot semblait actif (drapeau ON) mais
+                # n'était JAMAIS exécuté — symptôme observé le 3 août : l'IA répondait
+                # au lieu du menu.
                 #
                 # Placé APRÈS le STOP (V332), qui reste prioritaire sur tout, et AVANT
                 # le flux IA, qu'il remplace quand il est actif — décision du coach :
@@ -14090,17 +14107,18 @@ async def handle_meta_whatsapp_webhook(request: Request):
                         continue
                 except Exception as _e_bot:
                     # Un souci du bot ne doit JAMAIS empêcher la réception du message.
-                    logger.error(f"[BOT-WA] traitement ignoré ({_e_bot}) — flux habituel")
-
-                # Récupérer le nom du contact Meta (si disponible)
-                meta_contact_name = None
-                for contact in contacts:
-                    if contact.get("wa_id") == msg.get("from"):
-                        profile = contact.get("profile", {})
-                        meta_contact_name = profile.get("name")
-                        break
-
-                logger.info(f"[META-WEBHOOK] 📩 Message de {from_phone} ({meta_contact_name}): {incoming_message[:80]}")
+                    # V369b : on GARDE la dernière erreur en mémoire et on l'expose dans
+                    # /api/bot-whatsapp/apercu. Sans accès aux logs du conteneur, une
+                    # exception avalée ici est invisible — c'est ce qui a masqué le
+                    # NameError de V369 pendant tout un test.
+                    logger.error(f"[BOT-WA] traitement ignoré ({type(_e_bot).__name__}: {_e_bot}) — flux habituel")
+                    try:
+                        import api.routes.bot_whatsapp_routes as _mod_bot
+                        _mod_bot.DERNIERE_ERREUR = {
+                            "type": type(_e_bot).__name__, "message": str(_e_bot)[:300],
+                            "quand": datetime.now(timezone.utc).isoformat()}
+                    except Exception:
+                        pass
 
                 # === RÉUTILISER LE MÊME FLUX QUE LE WEBHOOK TWILIO ===
                 start_time = time.time()

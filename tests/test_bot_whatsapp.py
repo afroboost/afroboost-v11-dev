@@ -118,13 +118,23 @@ def verifier(titre, condition, detail=""):
 # ---------------------------------------------------------------- 1. ordre du webhook
 def test_ordre_des_priorites_dans_le_webhook():
     src = open(SERVEUR, encoding="utf-8").read()
-    pos_stop = src.find("_v332_stop_whatsapp")
-    pos_bot = src.find("V369 : BOT À MENU DE BOUTONS")
+    pos_stop = src.find("await _v332_stop_whatsapp(")   # l'APPEL dans le webhook, pas la définition
+    pos_bot = src.find("BOT À MENU DE BOUTONS")   # marqueur sans numéro de version
     pos_ia = src.find("[META-WEBHOOK] AI disabled")
     verifier("le STOP (V332) est traité AVANT le bot",
              0 < pos_stop < pos_bot, f"stop={pos_stop} bot={pos_bot}")
     verifier("le bot est branché AVANT le flux IA",
              0 < pos_bot < pos_ia, f"bot={pos_bot} ia={pos_ia}")
+    # V369b : LA régression qui a coûté un test complet. Le bloc utilisait
+    # `meta_contact_name` AVANT sa définition -> NameError avalé par le `except`,
+    # et l'IA reprenait la main. Vérifier l'ordre STOP/bot/IA ne suffisait pas :
+    # il faut que les variables utilisées soient DÉFINIES avant.
+    pos_nom = src.find("meta_contact_name = None")
+    verifier("les variables du bloc sont définies AVANT lui (NameError de V369)",
+             0 < pos_nom < pos_bot,
+             f"meta_contact_name défini en {pos_nom}, bloc du bot en {pos_bot}")
+    verifier("les erreurs du bot ne sont plus silencieuses (trace exposée)",
+             "DERNIERE_ERREUR" in src)
     verifier("le bloc du bot est conditionné au drapeau",
              "_bot_actif()" in src and "await _bot_actif() and _bot_numero_ok" in src)
     # On cherche des APPELS et des CHAÎNES, pas des mots : le module mentionne
