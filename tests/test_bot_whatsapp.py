@@ -32,7 +32,9 @@ RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODULE_BOT = os.path.join(RACINE, "api", "routes", "bot_whatsapp_routes.py")
 SERVEUR = os.path.join(RACINE, "api", "server.py")
 
-NOMS = {"_couper", "_cle_tri_cours", "_prix", "_sans_vrai_nom", "_dedoublonner_cours",
+NOMS = {"_couper", "_formater_prix", "_bloc_tarifs", "_prochaine_seance",
+        "construire_fiche_offre", "construire_fiche_cours", "lire_offre", "lire_un_cours",
+        "lire_cours_de_offre", "LIEN_BOUTIQUE", "_LIBELLE_PALIER", "_cle_tri_cours", "_prix", "_sans_vrai_nom", "_dedoublonner_cours",
         "_cle_numero", "construire_menu_principal", "construire_liste_cours",
         "construire_liste_offres", "construire_repli", "construire_demande_creneau",
         "construire_confirmation_creneau", "construire_notification_coach",
@@ -91,7 +93,13 @@ class _Base:
              "locationName": "Auvernier", "visible": True, "archived": False}])
         self.offers = _Collection([
             {"id": "o1", "name": "Cours à l'unité", "price": 30.0,
-             "description": "1h de cardio-danse", "visible": True}])
+             "description": "1h de cardio-danse afro, intense et joyeuse.", "visible": True,
+             "linked_course_ids": ["c1"]},
+            {"id": "o2", "name": "Événement à paliers", "price": 25.0, "visible": True,
+             "progressive_pricing": True, "countdown_date": "", "countdown_time": "23:59",
+             "early_bird_days_before": 7, "price_early_bird": 25.0,
+             "price_standard": 33.0, "price_last_minute": 50.0,
+             "description": "Soirée au bord du lac."}])
         self.feature_flags = _Collection([
             {"id": "feature_flags", "BOT_MENU_ENABLED": bot_actif}])
         self.etat = _Collection([])
@@ -212,8 +220,46 @@ def test_decisions():
     asyncio.run(scenario())
 
 
+# ---------------------------------------------------------------- 4. fiches détaillées
+def test_fiches_detaillees():
+    """Sélectionner une ligne doit donner le message COMPLET, pas la version coupée."""
+    async def scenario():
+        BOT["db"] = _Base()
+        d = BOT["decider_reponse"]
+
+        rep, _ = await d(MOI, "", "offre_o1", "Bassi")
+        corps = rep["text"]["body"]
+        verifier("sélection d'une offre -> fiche complète (nom, prix, description, lien)",
+                 "Cours à l'unité" in corps and "30 CHF" in corps
+                 and "cardio-danse afro, intense et joyeuse" in corps
+                 and "afroboost.com" in corps, corps[:120])
+        verifier("la fiche n'est pas tronquée par « … »",
+                 "…" not in corps, corps[:160])
+        verifier("l'aperçu de lien est activé", rep["text"].get("preview_url") is True)
+        verifier("la fiche tient sous la limite WhatsApp (4096)", len(corps) <= 4000, len(corps))
+
+        rep, _ = await d(MOI, "", "cours_c1", "Bassi")
+        corps = rep["text"]["body"]
+        verifier("sélection d'un cours -> fiche complète (nom, jour, lieu, lien)",
+                 "Afroboost Silent" in corps and "Auvernier" in corps
+                 and "afroboost.com" in corps, corps[:120])
+
+        # Paliers : countdown_date VIDE -> ne PAS annoncer des tarifs inapplicables
+        rep, _ = await d(MOI, "", "offre_o2", "Bassi")
+        corps = rep["text"]["body"]
+        verifier("paliers non annoncés quand la date de référence manque",
+                 "Dernière minute" not in corps and "25 CHF" in corps,
+                 "le client verrait des prix qui ne s'appliquent jamais")
+
+        rep, _ = await d(MOI, "", "offre_inconnue", "Bassi")
+        verifier("identifiant inconnu -> repli, jamais d'erreur",
+                 rep and rep["type"] == "text")
+    asyncio.run(scenario())
+
+
 if __name__ == "__main__":
     test_ordre_des_priorites_dans_le_webhook()
+    test_fiches_detaillees()
     test_liste_blanche()
     test_decisions()
     print("\nV369 :", "tous les tests passent" if not echecs else f"{echecs} échec(s)")

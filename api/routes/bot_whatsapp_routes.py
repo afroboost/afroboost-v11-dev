@@ -246,6 +246,163 @@ def construire_liste_offres(offres):
     }, reste
 
 
+# ---------------------------------------------------------------- fiches détaillées
+#
+# POURQUOI CES FICHES
+# Une ligne de liste WhatsApp est limitée à 24 caractères de titre et 72 de
+# description : « Afroboost Silent avec B… Gratuit · Vivez une expérience uniq… ».
+# Illisible pour décider. Quand la personne SÉLECTIONNE une ligne, on lui envoie
+# donc un message texte COMPLET (limite : 4096 caractères, on est très en dessous).
+# Tout est relu en direct : un prix modifié dans le dashboard est répercuté aussitôt.
+
+LIEN_BOUTIQUE = f"{SITE}/#offers-slider"
+
+_LIBELLE_PALIER = {"early_bird": "prévente", "standard": "standard",
+                   "last_minute": "dernière minute", "regular": "tarif normal"}
+
+
+def _formater_prix(valeur):
+    try:
+        v = float(valeur)
+    except (TypeError, ValueError):
+        return None
+    if v == 0:
+        return "Gratuit"
+    return f"{v:.0f} CHF" if v == int(v) else f"{v:.2f} CHF"
+
+
+def _bloc_tarifs(offre):
+    """Un ou trois paliers, selon la configuration de l'offre.
+
+    Le palier ACTIF est calculé par api.pricing.compute_active_price — la MÊME
+    fonction que le site : le bot ne peut pas annoncer un prix différent de la
+    boutique, ce qui serait le pire des bugs sur un canal de vente.
+    """
+    lignes = []
+    progressif = bool(offre.get("progressive_pricing"))
+    paliers = [("Prévente", offre.get("price_early_bird")),
+               ("Standard", offre.get("price_standard")),
+               ("Dernière minute", offre.get("price_last_minute"))]
+    connus = [(nom, _formater_prix(v)) for nom, v in paliers if v is not None]
+
+    # Les paliers ne sont annoncés QUE s'ils s'appliquent vraiment. Si la date de
+    # référence (`countdown_date`) est absente, compute_active_price retombe sur le
+    # tarif normal : afficher « Standard 33 / Dernière minute 50 » annoncerait alors
+    # au client des prix qui ne seront jamais appliqués. On n'affiche donc que le
+    # prix réellement pratiqué — le même que la boutique.
+    palier_actif = None
+    if progressif:
+        try:
+            from api.pricing import compute_active_price
+            palier_actif = compute_active_price(offre)
+        except Exception as e:
+            logger.warning(f"[BOT-WA] prix actif indisponible : {e}")
+
+    if progressif and connus and palier_actif and palier_actif.get("tier") != "regular":
+        lignes.append("💰 Tarifs :")
+        for nom, prix in connus:
+            lignes.append(f"   • {nom} : {prix}")
+        prix_actif = _formater_prix(palier_actif.get("price"))
+        palier = _LIBELLE_PALIER.get(palier_actif.get("tier"), palier_actif.get("tier"))
+        if prix_actif:
+            lignes.append(f"   ➜ Tarif actuel : {prix_actif} ({palier})")
+    elif palier_actif:
+        prix = _formater_prix(palier_actif.get("price"))
+        if prix:
+            lignes.append(f"💰 {prix}")
+    else:
+        prix = _formater_prix(offre.get("price"))
+        if prix:
+            lignes.append(f"💰 {prix}")
+    return lignes
+
+
+def construire_fiche_offre(offre, cours_lies=None):
+    """Message COMPLET d'une offre : nom, tarifs, description entière, lieu, date, lien."""
+    lignes = [f"🛍️ *{(offre.get('name') or 'Offre').strip()}*", ""]
+    lignes += _bloc_tarifs(offre)
+
+    description = (offre.get("description") or "").strip()
+    if description:
+        lignes += ["", description[:1500]]
+
+    # Lieu et prochaine séance : lus sur les cours RATTACHÉS à l'offre.
+    for c in (cours_lies or []):
+        lieu = (c.get("locationName") or c.get("location") or "").strip()
+        if lieu:
+            lignes += ["", f"📍 {lieu}"]
+            break
+    prochaine = _prochaine_seance(cours_lies or [])
+    if prochaine:
+        lignes.append(f"📅 Prochaine séance : {prochaine}")
+
+    if offre.get("isProduct"):
+        stock = offre.get("stock")
+        if isinstance(stock, int) and stock >= 0:
+            lignes.append(f"📦 Stock : {stock}")
+
+    lignes += ["", f"👉 Réserver : {LIEN_BOUTIQUE}", "", "Tape « menu » pour revenir."]
+    return {"type": "text", "text": {"body": "\n".join(lignes)[:4000], "preview_url": True}}
+
+
+def _prochaine_seance(cours):
+    """Libellé de la prochaine séance : date fixe si elle existe, sinon jour récurrent."""
+    maintenant = datetime.now(timezone.utc)
+    datees = []
+    for c in cours:
+        brut = c.get("date")
+        if not brut:
+            continue
+        try:
+            d = datetime.fromisoformat(str(brut)).replace(tzinfo=timezone.utc)
+            if d.date() >= maintenant.date():
+                datees.append((d, c))
+        except Exception:
+            continue
+    if datees:
+        d, c = sorted(datees)[0]
+        jour = JOURS[(d.weekday() + 1) % 7]
+        return f"{jour} {d.day:02d}/{d.month:02d} à {c.get('time') or ''}".strip()
+    for c in cours:
+        j = c.get("weekday")
+        if isinstance(j, int) and 0 <= j <= 6:
+            return f"tous les {JOURS[j]}s à {c.get('time') or ''}".strip()
+    return None
+
+
+def construire_fiche_cours(cours):
+    """Message COMPLET d'un cours : nom, quand, lieu, plan, lien."""
+    lignes = [f"📅 *{(cours.get('name') or 'Cours').strip()}*", ""]
+    quand = _prochaine_seance([cours])
+    if quand:
+        lignes.append(f"🗓️ {quand}")
+    elif cours.get("time"):
+        lignes.append(f"🗓️ {cours.get('time')}")
+    lieu = (cours.get("locationName") or cours.get("location") or "").strip()
+    if lieu:
+        lignes.append(f"📍 {lieu}")
+    plan = (cours.get("mapsUrl") or "").strip()
+    if plan.startswith("http"):
+        lignes.append(f"🗺️ {plan}")
+    lignes += ["", f"👉 Réserver : {SITE}", "", "Tape « menu » pour revenir."]
+    return {"type": "text", "text": {"body": "\n".join(lignes)[:4000], "preview_url": True}}
+
+
+async def lire_offre(identifiant):
+    return await db.offers.find_one({"id": identifiant}, {"_id": 0})
+
+
+async def lire_un_cours(identifiant):
+    return await db.courses.find_one({"id": identifiant}, {"_id": 0})
+
+
+async def lire_cours_de_offre(offre):
+    ids = offre.get("linked_course_ids") or []
+    if not ids:
+        return []
+    return await db.courses.find({"id": {"$in": ids}}, {"_id": 0}).to_list(50)
+
+
 # ---------------------------------------------------------------- rappel par un coach
 #
 # Déroulé : clic sur « Parler à un coach » -> on demande un créneau -> le message
@@ -414,10 +571,19 @@ async def decider_reponse(telephone: str, texte: str, bouton: str, nom: str = No
         return (construire_confirmation_creneau(texte.strip()),
                 construire_notification_coach(nom or etat.get("nom"), telephone, texte.strip()))
 
-    # 4. Un clic sur une ligne de liste (un cours, une offre) : on renvoie le menu,
-    #    la réservation se fait sur le site. Pas de tunnel d'achat dans WhatsApp.
-    if bouton and (bouton.startswith("cours_") or bouton.startswith("offre_")):
-        return construire_menu_principal(nom or etat.get("nom")), None
+    # 4. SÉLECTION D'UNE LIGNE -> fiche détaillée. Les listes WhatsApp coupent à
+    #    24/72 caractères ; la fiche donne le texte entier, les tarifs et le lien.
+    #    Aucun tunnel d'achat dans WhatsApp : la réservation se fait sur le site.
+    if bouton and bouton.startswith("offre_"):
+        offre = await lire_offre(bouton[len("offre_"):])
+        if offre:
+            return construire_fiche_offre(offre, await lire_cours_de_offre(offre)), None
+        return construire_repli(), None
+    if bouton and bouton.startswith("cours_"):
+        cours = await lire_un_cours(bouton[len("cours_"):])
+        if cours:
+            return construire_fiche_cours(cours), None
+        return construire_repli(), None
 
     # 5. TOUT LE RESTE : le menu. JAMAIS l'IA — décision du coach (menu seul).
     if mot in ("menu", "bonjour", "salut", "hello", "hi", "start", "démarrer", "demarrer"):
