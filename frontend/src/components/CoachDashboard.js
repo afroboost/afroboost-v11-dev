@@ -1579,7 +1579,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // doublon et est neutralisee.
   // RIEN N'EST SUPPRIME : CoursesManager.js reste intact et la section se
   // reaffiche en repassant cette constante a `true`.
-  const SHOW_COURSES_SECTION = false;
+  //
+  // V368 : REACTIVEE. Le raisonnement de V226 tenait tant que TOUS les horaires
+  // etaient rattaches a une offre. Or dix cours crees AVANT V226 ne le sont pas —
+  // dont « Afroboost Silent – Sunday Vibes » et « Cours a l'unite », bien affiches
+  // sur la vitrine. Le wizard d'offre ne montrant que les horaires DE l'offre en
+  // cours d'edition, ces dix-la n'avaient plus AUCUN ecran : impossible de les
+  // renommer, les masquer ou les supprimer depuis l'interface.
+  // Cette constante ne change que le dashboard du coach : la vitrine publique lit
+  // /api/courses et n'a jamais dependu de cet ecran.
+  const SHOW_COURSES_SECTION = true;
 
   // v37.2: Auto-scroll + auto-load audio course on sub-tab change
   const handleSubTabChange = (subTabId) => {
