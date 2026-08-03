@@ -23,7 +23,7 @@
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -301,6 +301,155 @@ def construire_repli():
     }
 
 
+# ================================================================ ÉTAT PAR PERSONNE
+#
+# Collection `bot_whatsapp_etat` : UN document par numéro, validé par le coach.
+#   telephone (clé unique) · nom · etape · creneau_demande · pause_jusqu_a
+#   derniere_interaction_le · mis_a_jour_le
+# Aucune autre collection n'en dépend. Rollback : db.bot_whatsapp_etat.drop().
+
+COLLECTION_ETAT = "bot_whatsapp_etat"
+JOURS_DE_PAUSE = 7          # décision du coach : 7 jours, levée par un bouton
+
+# GARDE-FOU DE TEST : tant que cette liste n'est PAS vide, le bot ne répond QU'À ces
+# numéros. Elle protège même si le drapeau passait à ON par erreur. Comparaison sur
+# les 9 derniers chiffres, comme la déduplication des campagnes (V162).
+NUMEROS_AUTORISES = ["765203363"]     # le numéro du coach, et lui seul
+
+
+def _cle_numero(telephone):
+    chiffres = re.sub(r"\D", "", str(telephone or ""))
+    return chiffres[-9:] if len(chiffres) >= 9 else chiffres
+
+
+def numero_autorise(telephone) -> bool:
+    """Liste blanche de test. Vide = tout le monde (ouverture réelle, plus tard)."""
+    if not NUMEROS_AUTORISES:
+        return True
+    return _cle_numero(telephone) in {_cle_numero(n) for n in NUMEROS_AUTORISES}
+
+
+async def lire_etat(telephone: str) -> dict:
+    try:
+        return await db[COLLECTION_ETAT].find_one({"telephone": telephone}, {"_id": 0}) or {}
+    except Exception as e:
+        logger.warning(f"[BOT-WA] état illisible pour {telephone[-4:]} : {e}")
+        return {}
+
+
+async def ecrire_etat(telephone: str, champs: dict):
+    champs = dict(champs)
+    champs["mis_a_jour_le"] = datetime.now(timezone.utc).isoformat()
+    await db[COLLECTION_ETAT].update_one(
+        {"telephone": telephone}, {"$set": champs}, upsert=True)
+
+
+async def en_pause(etat: dict) -> bool:
+    """La pause l'emporte sur tout (sauf STOP) : décision du coach."""
+    jusqu_a = etat.get("pause_jusqu_a")
+    if not jusqu_a:
+        return False
+    try:
+        dt = datetime.fromisoformat(str(jusqu_a).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt > datetime.now(timezone.utc)
+    except Exception:
+        return False
+
+
+# ================================================================ DÉCISION DU BOT
+
+async def decider_reponse(telephone: str, texte: str, bouton: str, nom: str = None):
+    """Que répondre à ce message ? Fonction de DÉCISION : elle n'envoie rien.
+
+    Renvoie (payload_a_envoyer | None, notification_coach | None).
+    None = le bot se tait (personne en pause, ou message hors liste blanche).
+
+    ORDRE DE PRIORITÉ (le STOP V332 est traité AVANT, dans le webhook) :
+        1. pause coach  ->  silence total
+        2. clic sur un bouton du menu
+        3. attente d'un créneau  ->  le message est pris tel quel
+        4. mot-clé « coach »
+        5. tout le reste  ->  menu, jamais l'IA
+    """
+    etat = await lire_etat(telephone)
+    await ecrire_etat(telephone, {
+        "nom": nom or etat.get("nom"),
+        "derniere_interaction_le": datetime.now(timezone.utc).isoformat(),
+    })
+
+    # 1. PAUSE : le bot se tait, y compris si la personne écrit « menu ».
+    if await en_pause(etat):
+        logger.info(f"[BOT-WA] silence (pause active) pour …{telephone[-4:]}")
+        return None, None
+
+    mot = (texte or "").strip().lower()
+
+    # 2. CLIC SUR UN BOUTON
+    if bouton == BOUTON_COURS:
+        return construire_liste_cours(await lire_cours())[0], None
+    if bouton == BOUTON_OFFRES:
+        return construire_liste_offres(await lire_offres())[0], None
+    if bouton == BOUTON_COACH or mot in ("coach", "humain", "parler a un coach", "parler à un coach"):
+        await ecrire_etat(telephone, {"etape": ETAPE_ATTENTE_CRENEAU})
+        return construire_demande_creneau(), None
+
+    # 3. LE MESSAGE SUIVANT EST LE CRÉNEAU — pris TEL QUEL, aucune interprétation
+    if etat.get("etape") == ETAPE_ATTENTE_CRENEAU and texte:
+        fin_pause = datetime.now(timezone.utc) + timedelta(days=JOURS_DE_PAUSE)
+        await ecrire_etat(telephone, {
+            "etape": "",
+            "creneau_demande": texte.strip()[:300],
+            "pause_jusqu_a": fin_pause.isoformat(),
+        })
+        logger.info(f"[BOT-WA] demande de rappel pour …{telephone[-4:]}, bot en pause "
+                    f"{JOURS_DE_PAUSE} jours")
+        return (construire_confirmation_creneau(texte.strip()),
+                construire_notification_coach(nom or etat.get("nom"), telephone, texte.strip()))
+
+    # 4. Un clic sur une ligne de liste (un cours, une offre) : on renvoie le menu,
+    #    la réservation se fait sur le site. Pas de tunnel d'achat dans WhatsApp.
+    if bouton and (bouton.startswith("cours_") or bouton.startswith("offre_")):
+        return construire_menu_principal(nom or etat.get("nom")), None
+
+    # 5. TOUT LE RESTE : le menu. JAMAIS l'IA — décision du coach (menu seul).
+    if mot in ("menu", "bonjour", "salut", "hello", "hi", "start", "démarrer", "demarrer"):
+        return construire_menu_principal(nom or etat.get("nom")), None
+    return construire_repli(), None
+
+
+async def envoyer_payload(telephone: str, payload: dict) -> dict:
+    """Envoie UN message construit par le bot. N'utilise NI le template des campagnes,
+    NI launch_campaign : appel direct à l'API Meta, sur le chemin des réponses.
+
+    La fenêtre des 24 h est respectée par construction : le bot ne parle QUE pour
+    répondre à un message entrant.
+    """
+    import httpx
+    from api.server import _get_whatsapp_config          # import différé (circularité)
+
+    config = await _get_whatsapp_config()
+    if not config or config.get("api_mode") != "meta":
+        logger.warning("[BOT-WA] pas de config Meta — aucun envoi")
+        return {"status": "error", "error": "config Meta absente"}
+
+    numero = re.sub(r"\D", "", telephone or "")
+    corps = {"messaging_product": "whatsapp", "to": numero}
+    corps.update(payload)
+    url = (f"https://graph.facebook.com/{config.get('api_version', 'v21.0')}"
+           f"/{config['phone_number_id']}/messages")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(url, headers={
+            "Authorization": f"Bearer {config['access_token']}",
+            "Content-Type": "application/json"}, json=corps)
+    ok = r.status_code < 400
+    logger.info(f"[BOT-WA] envoi à …{numero[-4:]} : HTTP {r.status_code}")
+    if not ok:
+        logger.error(f"[BOT-WA] refus Meta : {r.text[:300]}")
+    return {"status": "success" if ok else "error", "http": r.status_code}
+
+
 # ---------------------------------------------------------------- aperçu (lecture seule)
 
 def _coach_email_depuis_jwt(request: Request) -> str:
@@ -381,3 +530,59 @@ async def apercu_du_menu(request: Request):
         "payloads_whatsapp": {"menu": menu, "cours": liste_c, "offres": liste_o},
         "aucun_envoi": True,
     }
+
+
+@bot_router.get("/bot-whatsapp/pauses")
+async def lister_pauses(request: Request):
+    """V369 — qui attend un rappel ? LECTURE SEULE, réservé au coach.
+
+    Alimente le futur bouton « Réactiver le bot » du dashboard. Renvoie le numéro,
+    le nom, le créneau demandé tel qu'écrit, et la fin de pause.
+    """
+    if not _coach_email_depuis_jwt(request):
+        raise HTTPException(status_code=403, detail="Authentification coach requise")
+    maintenant = datetime.now(timezone.utc)
+    sortie = []
+    for e in await db[COLLECTION_ETAT].find({}, {"_id": 0}).to_list(500):
+        actif = False
+        try:
+            if e.get("pause_jusqu_a"):
+                dt = datetime.fromisoformat(str(e["pause_jusqu_a"]).replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                actif = dt > maintenant
+        except Exception:
+            pass
+        if actif:
+            sortie.append({
+                "telephone": e.get("telephone"),
+                "nom": e.get("nom"),
+                "creneau_demande": e.get("creneau_demande"),
+                "pause_jusqu_a": e.get("pause_jusqu_a"),
+            })
+    return {"success": True, "en_pause": len(sortie), "personnes": sortie}
+
+
+@bot_router.post("/bot-whatsapp/reactiver")
+async def reactiver_le_bot(request: Request):
+    """V369 — « Réactiver le bot » : lève la pause pour UNE personne.
+
+    Écrit UNIQUEMENT dans bot_whatsapp_etat, et seulement le champ `pause_jusqu_a`.
+    N'envoie AUCUN message : la personne ne reçoit rien ; le bot répondra simplement
+    à son prochain message. Réservé au coach (jeton signé).
+    """
+    if not _coach_email_depuis_jwt(request):
+        raise HTTPException(status_code=403, detail="Authentification coach requise")
+    corps = await request.json()
+    telephone = (corps.get("telephone") or "").strip()
+    if not telephone:
+        raise HTTPException(status_code=400, detail="telephone requis")
+    r = await db[COLLECTION_ETAT].update_one(
+        {"telephone": telephone},
+        {"$set": {"pause_jusqu_a": None, "etape": "",
+                  "mis_a_jour_le": datetime.now(timezone.utc).isoformat()}})
+    if not r.matched_count:
+        raise HTTPException(status_code=404, detail="Aucun état pour ce numéro")
+    logger.info(f"[BOT-WA] pause levée pour …{telephone[-4:]}")
+    return {"success": True, "telephone": telephone, "pause_levee": True,
+            "aucun_message_envoye": True}

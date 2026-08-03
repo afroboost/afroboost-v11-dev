@@ -13989,6 +13989,7 @@ async def handle_meta_whatsapp_webhook(request: Request):
             for msg in messages:
                 msg_type = msg.get("type", "")
                 from_phone = msg.get("from", "")  # Format: 41767639928 (sans +)
+                bouton_clique = ""                # V369 : rempli si clic sur un bouton
 
                 # Extraire le texte selon le type de message
                 if msg_type == "text":
@@ -14005,6 +14006,15 @@ async def handle_meta_whatsapp_webhook(request: Request):
                     incoming_message = "[Localisation reçue]"
                 elif msg_type == "sticker":
                     incoming_message = "[Sticker reçu]"
+                elif msg_type == "interactive":
+                    # V369 : un CLIC sur un bouton ou une ligne de liste revient ici.
+                    # Sans ce cas, le clic tombait dans le fourre-tout ci-dessous et
+                    # devenait « [Message interactive reçu] » : le bot ne pouvait pas
+                    # savoir ce que la personne avait choisi.
+                    _inter = msg.get("interactive", {}) or {}
+                    _reponse = _inter.get("button_reply") or _inter.get("list_reply") or {}
+                    bouton_clique = _reponse.get("id", "")
+                    incoming_message = _reponse.get("title", "") or "[Choix du menu]"
                 elif msg_type == "reaction":
                     # Ignorer les réactions
                     continue
@@ -14030,6 +14040,57 @@ async def handle_meta_whatsapp_webhook(request: Request):
                 # Ajouter le + au numéro pour normaliser
                 if not from_phone.startswith("+"):
                     from_phone = f"+{from_phone}"
+
+                # === V369 : BOT À MENU DE BOUTONS ===
+                #
+                # Placé APRÈS le STOP (V332), qui reste prioritaire sur tout, et AVANT
+                # le flux IA, qu'il remplace quand il est actif — décision du coach :
+                # menu seul, jamais d'IA (son `systemPrompt` est vide).
+                #
+                # TROIS VERROUS avant qu'un message parte :
+                #   1. drapeau BOT_MENU_ENABLED (défaut OFF -> tout ce bloc est ignoré) ;
+                #   2. liste blanche de numéros (phase de test : le coach, et lui seul) ;
+                #   3. la pause « coach » de la personne, qui impose le silence.
+                # Aucun de ces chemins ne touche aux campagnes : ni template, ni
+                # launch_campaign, ni la boucle V328.
+                try:
+                    from api.routes.bot_whatsapp_routes import (
+                        bot_actif as _bot_actif, numero_autorise as _bot_numero_ok,
+                        decider_reponse as _bot_decider, envoyer_payload as _bot_envoyer)
+                    if await _bot_actif() and _bot_numero_ok(from_phone):
+                        _reponse_bot, _notif = await _bot_decider(
+                            from_phone, incoming_message, bouton_clique, meta_contact_name)
+                        if _reponse_bot:
+                            await _bot_envoyer(from_phone, _reponse_bot)
+                            await _save_whatsapp_conversation(
+                                from_phone=from_phone,
+                                contact_name=meta_contact_name,
+                                incoming_message=incoming_message,
+                                ai_response=(_reponse_bot.get("text", {}) or {}).get("body")
+                                            or "[menu WhatsApp]")
+                            if _notif:
+                                # Le coach est prévenu : notification + trace écrite.
+                                try:
+                                    await send_push_by_email(
+                                        AUTHORIZED_COACH_EMAIL,
+                                        _notif["push"]["titre"], _notif["push"]["corps"])
+                                except Exception as _e_push:
+                                    logger.warning(f"[BOT-WA] push coach échouée: {_e_push}")
+                                try:
+                                    await _save_whatsapp_conversation(
+                                        from_phone=from_phone,
+                                        contact_name=meta_contact_name,
+                                        incoming_message="[demande de rappel]",
+                                        ai_response=_notif["message_messagerie"])
+                                except Exception as _e_msg:
+                                    logger.warning(f"[BOT-WA] trace messagerie échouée: {_e_msg}")
+                        # `None` = la personne est en pause : on n'envoie RIEN, et on
+                        # n'enchaîne pas non plus sur l'IA. Le silence est voulu.
+                        processed += 1
+                        continue
+                except Exception as _e_bot:
+                    # Un souci du bot ne doit JAMAIS empêcher la réception du message.
+                    logger.error(f"[BOT-WA] traitement ignoré ({_e_bot}) — flux habituel")
 
                 # Récupérer le nom du contact Meta (si disponible)
                 meta_contact_name = None

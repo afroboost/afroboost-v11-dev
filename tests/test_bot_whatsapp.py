@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+V369 — bot WhatsApp à menu : priorités et garde-fous.
+
+Test UNITAIRE hors ligne : base simulée en mémoire, AUCUNE connexion à MongoDB,
+AUCUN appel réseau, AUCUN message envoyé.
+
+CE QUI EST VERROUILLÉ
+  1. ORDRE DES PRIORITÉS dans le webhook (vérifié sur le VRAI code source) :
+     le STOP (V332) est traité AVANT le bot, et le bot avant le flux IA.
+     Un « STOP » qui recevrait un menu marketing serait illégal, pas seulement gênant.
+  2. Le bloc du bot est conditionné au drapeau BOT_MENU_ENABLED — tant qu'il est
+     OFF, le webhook se comporte exactement comme avant.
+  3. La liste blanche : seul le numéro du coach obtient une réponse pendant les tests.
+  4. La PAUSE l'emporte : une personne en attente de rappel n'obtient plus rien,
+     même en écrivant « menu ».
+  5. Le créneau est repris TEL QUEL, sans interprétation (menu seul, jamais d'IA).
+  6. Un message inconnu ramène au menu — l'IA n'est jamais appelée.
+
+MODE D'EMPLOI
+    python tests/test_bot_whatsapp.py
+"""
+import ast
+import asyncio
+import os
+import re
+import sys
+from datetime import datetime, timedelta, timezone
+
+RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODULE_BOT = os.path.join(RACINE, "api", "routes", "bot_whatsapp_routes.py")
+SERVEUR = os.path.join(RACINE, "api", "server.py")
+
+NOMS = {"_couper", "_cle_tri_cours", "_prix", "_sans_vrai_nom", "_dedoublonner_cours",
+        "_cle_numero", "construire_menu_principal", "construire_liste_cours",
+        "construire_liste_offres", "construire_repli", "construire_demande_creneau",
+        "construire_confirmation_creneau", "construire_notification_coach",
+        "numero_autorise", "lire_etat", "ecrire_etat", "en_pause", "decider_reponse",
+        "lire_cours", "lire_offres", "JOURS", "SITE", "MAX_LIGNES_LISTE",
+        "MAX_TITRE_LIGNE", "MAX_DESCRIPTION_LIGNE", "MAX_TITRE_BOUTON", "BOUTON_COURS",
+        "BOUTON_OFFRES", "BOUTON_COACH", "ETAPE_ATTENTE_CRENEAU", "COLLECTION_ETAT",
+        "JOURS_DE_PAUSE", "NUMEROS_AUTORISES"}
+
+
+def _charger_bot():
+    """Prélève les fonctions du VRAI module (il importe FastAPI, absent ici)."""
+    src = open(MODULE_BOT, encoding="utf-8").read()
+    arbre = ast.parse(src)
+    gardes = [n for n in arbre.body
+              if (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in NOMS)
+              or (isinstance(n, ast.Assign)
+                  and any(getattr(t, "id", None) in NOMS for t in n.targets))]
+    silencieux = type("L", (), {"info": lambda *a, **k: None, "warning": lambda *a, **k: None,
+                                "error": lambda *a, **k: None})()
+    espace = {"re": re, "datetime": datetime, "timedelta": timedelta,
+              "timezone": timezone, "logger": silencieux}
+    exec(compile(ast.Module(body=gardes, type_ignores=[]), MODULE_BOT, "exec"), espace)
+    return espace
+
+
+# --- base simulée : rien ne sort de la mémoire du test ---
+class _Curseur:
+    def __init__(self, docs): self.docs = docs
+    async def to_list(self, n): return self.docs[:n]
+
+
+class _Collection:
+    def __init__(self, docs=None): self.docs = docs or []
+    def find(self, q=None, p=None): return _Curseur(self.docs)
+    async def find_one(self, q, p=None):
+        for d in self.docs:
+            if all(d.get(k) == v for k, v in q.items()):
+                return dict(d)
+        return None
+    async def update_one(self, q, maj, upsert=False):
+        for d in self.docs:
+            if all(d.get(k) == v for k, v in q.items()):
+                d.update(maj.get("$set", {}))
+                return
+        if upsert:
+            nd = dict(q)
+            nd.update(maj.get("$set", {}))
+            self.docs.append(nd)
+
+
+class _Base:
+    def __init__(self, bot_actif=True):
+        self.courses = _Collection([
+            {"id": "c1", "name": "Afroboost Silent", "weekday": 3, "time": "18:30",
+             "locationName": "Auvernier", "visible": True, "archived": False}])
+        self.offers = _Collection([
+            {"id": "o1", "name": "Cours à l'unité", "price": 30.0,
+             "description": "1h de cardio-danse", "visible": True}])
+        self.feature_flags = _Collection([
+            {"id": "feature_flags", "BOT_MENU_ENABLED": bot_actif}])
+        self.etat = _Collection([])
+    def __getitem__(self, nom):
+        return self.etat if nom == "bot_whatsapp_etat" else _Collection([])
+
+
+BOT = _charger_bot()
+MOI = "+41765203363"
+QUELQUUN_DAUTRE = "+41790000000"
+
+echecs = 0
+
+
+def verifier(titre, condition, detail=""):
+    global echecs
+    if condition:
+        print(f"✅ PASS  {titre}")
+    else:
+        echecs += 1
+        print(f"❌ FAIL  {titre}\n         → {detail}")
+
+
+# ---------------------------------------------------------------- 1. ordre du webhook
+def test_ordre_des_priorites_dans_le_webhook():
+    src = open(SERVEUR, encoding="utf-8").read()
+    pos_stop = src.find("_v332_stop_whatsapp")
+    pos_bot = src.find("V369 : BOT À MENU DE BOUTONS")
+    pos_ia = src.find("[META-WEBHOOK] AI disabled")
+    verifier("le STOP (V332) est traité AVANT le bot",
+             0 < pos_stop < pos_bot, f"stop={pos_stop} bot={pos_bot}")
+    verifier("le bot est branché AVANT le flux IA",
+             0 < pos_bot < pos_ia, f"bot={pos_bot} ia={pos_ia}")
+    verifier("le bloc du bot est conditionné au drapeau",
+             "_bot_actif()" in src and "await _bot_actif() and _bot_numero_ok" in src)
+    # On cherche des APPELS et des CHAÎNES, pas des mots : le module mentionne
+    # « launch_campaign » dans un commentaire, précisément pour dire qu'il ne
+    # l'utilise pas. Un simple `in` donnerait un faux positif.
+    arbre_bot = ast.parse(open(MODULE_BOT, encoding="utf-8").read())
+    appels, chaines = set(), set()
+    for n in ast.walk(arbre_bot):
+        if isinstance(n, ast.Call):
+            f = n.func
+            appels.add(getattr(f, "id", None) or getattr(f, "attr", None))
+        elif isinstance(n, ast.Constant) and isinstance(n.value, str):
+            chaines.add(n.value)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            for a in n.names:
+                appels.add(a.name)
+    verifier("le bot n'appelle NI launch_campaign NI le template des campagnes",
+             "launch_campaign" not in appels
+             and not any("afroboost_campagne" in c for c in chaines),
+             f"appels suspects={appels & {'launch_campaign'}}")
+
+
+# ---------------------------------------------------------------- 2. liste blanche
+def test_liste_blanche():
+    verifier("le numéro du coach est autorisé", BOT["numero_autorise"](MOI) is True)
+    verifier("tout autre numéro est refusé",
+             BOT["numero_autorise"](QUELQUUN_DAUTRE) is False,
+             "un abonné recevrait un message pendant la phase de test")
+    verifier("le format local du même numéro est reconnu",
+             BOT["numero_autorise"]("0765203363") is True)
+
+
+# ---------------------------------------------------------------- 3. décisions
+def test_decisions():
+    async def scenario():
+        BOT["db"] = _Base()
+        d = BOT["decider_reponse"]
+
+        rep, notif = await d(MOI, "bonjour", "", "Bassi")
+        verifier("« bonjour » -> menu à 3 boutons",
+                 rep and len(rep["interactive"]["action"]["buttons"]) == 3)
+
+        rep, _ = await d(MOI, "", BOT["BOUTON_COURS"], "Bassi")
+        verifier("clic « Nos cours » -> liste de cours",
+                 rep and rep["interactive"]["type"] == "list")
+
+        rep, _ = await d(MOI, "n'importe quoi", "", "Bassi")
+        verifier("message inconnu -> repli vers le menu, jamais l'IA",
+                 rep and rep["type"] == "text" and "coach" in rep["text"]["body"])
+
+        rep, _ = await d(MOI, "", BOT["BOUTON_COACH"], "Bassi")
+        verifier("clic « Parler à un coach » -> demande de créneau",
+                 rep and "rappelé" in rep["text"]["body"])
+
+        rep, notif = await d(MOI, "mardi vers 18h si possible", "", "Bassi")
+        verifier("le créneau est repris TEL QUEL, sans interprétation",
+                 rep and "mardi vers 18h si possible" in rep["text"]["body"])
+        verifier("le coach est notifié (push + messagerie)",
+                 notif and "mardi vers 18h si possible" in notif["push"]["corps"]
+                 and "+41765203363" in notif["message_messagerie"])
+
+        rep, _ = await d(MOI, "bonjour ?", "", "Bassi")
+        verifier("APRÈS la demande, la PAUSE impose le silence",
+                 rep is None, "le bot a répondu alors qu'il devait se taire")
+
+        rep, _ = await d(MOI, "menu", "", "Bassi")
+        verifier("« menu » ne contourne pas la pause", rep is None)
+
+        etat = BOT["db"].etat.docs[0]
+        verifier("l'état contient le créneau et la fin de pause",
+                 etat.get("creneau_demande") == "mardi vers 18h si possible"
+                 and etat.get("pause_jusqu_a"), str(etat))
+        verifier("la pause dure 7 jours",
+                 BOT["JOURS_DE_PAUSE"] == 7, str(BOT["JOURS_DE_PAUSE"]))
+    asyncio.run(scenario())
+
+
+if __name__ == "__main__":
+    test_ordre_des_priorites_dans_le_webhook()
+    test_liste_blanche()
+    test_decisions()
+    print("\nV369 :", "tous les tests passent" if not echecs else f"{echecs} échec(s)")
+    sys.exit(1 if echecs else 0)

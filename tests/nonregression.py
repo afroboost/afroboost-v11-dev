@@ -854,6 +854,43 @@ def t83_v345_sessions_refus_explicite_pas_liste_vide():
         record(83, "V345 : /chat/sessions refus explicite", False, str(e))
 
 
+def t92_v369_routes_bot_fermees_et_drapeau_off():
+    """V369 : le bot est branché sur le webhook, mais DÉSACTIVÉ.
+
+    Trois affirmations :
+      - le drapeau BOT_MENU_ENABLED est exposé et vaut FALSE (bot inexistant pour
+        l'extérieur : le webhook se comporte comme avant) ;
+      - les routes du bot refusent (401/403) sans jeton coach signé — y compris
+        POST /reactiver, la seule qui ÉCRIT ;
+      - le webhook entrant reste vérifiable par Meta (GET hub.challenge), donc la
+        greffe n'a pas cassé la réception des messages.
+
+    AUCUN message n'est envoyé par ce test.
+    """
+    try:
+        f = requests.get(_url("/api/feature-flags"), timeout=TIMEOUT).json()
+        drapeau_off = f.get("BOT_MENU_ENABLED") is False
+        pauses = requests.get(_url("/api/bot-whatsapp/pauses"), timeout=TIMEOUT)
+        react = requests.post(_url("/api/bot-whatsapp/reactiver"),
+                              json={"telephone": "+41000000000"}, timeout=TIMEOUT)
+        react_spoof = requests.post(_url("/api/bot-whatsapp/reactiver"),
+                                    headers={"X-User-Email": ADMIN},
+                                    json={"telephone": "+41000000000"}, timeout=TIMEOUT)
+        fermees = all(x.status_code in (401, 403) for x in (pauses, react, react_spoof))
+        verif = requests.get(_url("/api/webhook/whatsapp-meta"), timeout=TIMEOUT,
+                             params={"hub.mode": "subscribe",
+                                     "hub.verify_token": "afroboost_webhook_2024",
+                                     "hub.challenge": "NONREG"})
+        webhook_ok = verif.status_code == 200 and "NONREG" in (verif.text or "")
+        ok = drapeau_off and fermees and webhook_ok
+        record(92, "V369 : bot OFF, routes fermées sans jeton, webhook toujours vérifiable", ok,
+               f"drapeau_off={drapeau_off} pauses={pauses.status_code} "
+               f"reactiver={react.status_code} usurpé={react_spoof.status_code} "
+               f"webhook={verif.status_code}")
+    except Exception as e:
+        record(92, "V369 : bot OFF et routes fermées", False, str(e))
+
+
 def t91_v367_apercu_bot_ferme_et_sans_envoi():
     """V367 : l'aperçu du menu WhatsApp est une route de LECTURE, réservée au coach.
 
@@ -1767,7 +1804,7 @@ def main():
                    t84_v346_categories_des_conversations, t85_v348_suppression_conversation_exige_jeton,
                    t86_v349_contenu_des_conversations_ferme, t87_v350_piece_jointe_du_chat, t88_v354_permissions_policy_micro,
                    t89_v363_segments_contacts, t90_v365_membres_de_groupe_identiques_et_rapides,
-                   t91_v367_apercu_bot_ferme_et_sans_envoi,
+                   t91_v367_apercu_bot_ferme_et_sans_envoi, t92_v369_routes_bot_fermees_et_drapeau_off,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
