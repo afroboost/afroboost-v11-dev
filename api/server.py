@@ -3818,6 +3818,35 @@ async def _save_campaign_chat_message(
     logger.info(f"[CAMPAIGN-CHAT] Message {channel} enregistré dans chat_messages pour {contact_id}")
 
 
+# V379 : mots qui ne sont PAS des prénoms. Les contacts importés portent un préfixe
+# de fichier (« Afroboost 2019 Ecoutin Hélène », « Afroboost3 Nicole Belle Wald ») :
+# prendre le premier mot donnait « Bonjour Afroboost » à 21 personnes du groupe.
+_V379_NON_PRENOMS = {
+    "afroboost", "afroboost1", "afroboost2", "afroboost3", "afroboost4",
+    "mme", "mr", "m", "mlle", "dr", "pr", "madame", "monsieur",
+    "client", "contact", "assistant", "test", "the", "la", "le", "les",
+}
+
+
+def _v379_prenom_plausible(nom: str) -> str:
+    """Premier mot qui ressemble VRAIMENT à un prénom, sinon chaîne vide.
+
+    Écarte les préfixes d'import, les années et les mots d'une seule lettre.
+    Renvoyer "" est un choix : mieux vaut « Bonjour » tout court qu'un
+    « Bonjour Afroboost3 » qui trahit un fichier mal importé.
+    """
+    for mot in (nom or "").split():
+        propre = mot.strip(".,;:-_()").strip()
+        if len(propre) < 2:
+            continue
+        if propre.lower() in _V379_NON_PRENOMS:
+            continue
+        if any(c.isdigit() for c in propre):      # « 2019 », « Afroboost3 »
+            continue
+        return propre
+    return ""
+
+
 def substitute_campaign_variables(message: str, contact: dict) -> str:
     """
     Remplace les variables {prénom}, {nom}, {email}, {prenom}, {name} dans le message.
@@ -3827,7 +3856,7 @@ def substitute_campaign_variables(message: str, contact: dict) -> str:
         return message
 
     name = contact.get("name", "")
-    first_name = name.split()[0] if name else ""
+    first_name = _v379_prenom_plausible(name)
     email = contact.get("email", "")
     phone = contact.get("whatsapp", "") or contact.get("phone", "")
 
@@ -14840,9 +14869,22 @@ async def _send_whatsapp_campaign_template(to_phone: str, campaign_message: str,
     # V171.1: Retirer SEULEMENT le protocole (https://www.) mais GARDER le domaine
     # "https://www.afroboost.com/?link=15e88d" → "afroboost.com/?link=15e88d" (cliquable!)
     template_var = re_tpl.sub(r'https?://(www\.)?', '', template_var)
-    # Remplacer sauts de ligne par " - " (V168.1 qui marchait)
-    template_var = re_tpl.sub(r'\n{2,}', ' - ', template_var)
-    template_var = template_var.replace('\n', ' ')
+    # V379 : PONCTUATION plutôt que tirets. Une variable de template ne peut
+    # contenir ni saut de ligne ni tabulation (Meta rejette le message) : il faut
+    # donc aplatir le texte. Le remplacement par « - » donnait une bouillie
+    # (« en beauté ! - Petit changement : - Mise à jour… »). On regarde désormais
+    # ce qui PRÉCÈDE le saut de ligne : si la phrase est déjà ponctuée, un simple
+    # espace suffit ; sinon on ferme par un point. Le sens et le rythme sont
+    # conservés, sans caractère parasite.
+    # On capture le dernier caractère NON BLANC avant le saut de ligne : les emojis
+    # ayant déjà été retirés, il reste souvent une espace, et « Bonjour Marie \n »
+    # serait devenu « Bonjour Marie . » (espace avant le point) sans cette précaution.
+    def _v379_recoller(m):
+        avant = m.group(1)
+        if avant and avant in ".!?:;…":
+            return avant + " "
+        return (avant or "") + ". "
+    template_var = re_tpl.sub(r'([^\s]?)[ \t]*\n+[ \t]*', _v379_recoller, template_var)
     # Remplacer tirets spéciaux
     template_var = template_var.replace('—', '-').replace('–', '-')
     # Remplacer les caractères gras Unicode par leurs équivalents ASCII
