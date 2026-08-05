@@ -610,7 +610,12 @@ async def checkout_stripe_webhook(request: Request):
             # `request` est relisible : Starlette met le corps en cache après le
             # premier `await request.body()` — le gestionnaire principal le relit
             # sans que le flux soit consommé.
+            # L'événement est transmis PAR L'ÉTAT de la requête, et non relu :
+            # Stripe l'a signé avec le secret de CET endpoint, pas avec celui
+            # qu'attend le gestionnaire client. Le lui faire re-vérifier
+            # renverrait 400 sur chaque paiement (voir V384 dans server.py).
             from api.server import stripe_webhook as _webhook_client
+            request.state.afroboost_event_verifie = event_data
             resultat = await _webhook_client(request)
             logger.info(
                 f"[CHECKOUT-WEBHOOK] Evenement non-vitrine transmis au "

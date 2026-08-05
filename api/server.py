@@ -5165,8 +5165,19 @@ async def stripe_webhook(request: Request):
         # utilisée par /api/stripe/webhook (stripe_routes.py), et Stripe génère
         # un secret DIFFÉRENT par endpoint. Réutiliser la même ferait échouer la
         # signature ici, donc rejeter TOUS les paiements clients en 400.
+        # V384 : événement DÉJÀ lu par l'endpoint déclaré chez Stripe
+        # (/api/checkout/webhook/stripe) qui nous le transmet. Il ne faut SURTOUT
+        # pas re-vérifier la signature ici : Stripe génère un secret DIFFÉRENT
+        # par endpoint, et le corps a été signé avec celui de l'endpoint
+        # d'arrivée — pas avec STRIPE_WEBHOOK_SECRET_CHECKOUT. Re-vérifier
+        # renverrait 400 sur CHAQUE paiement réel, Stripe réessaierait en boucle
+        # puis finirait par désactiver l'endpoint, ce qui casserait aussi la
+        # vitrine. La confiance porte sur l'appelant interne, pas sur le corps.
+        _relais = getattr(request.state, "afroboost_event_verifie", None)
         _wh_secret = os.environ.get('STRIPE_WEBHOOK_SECRET_CHECKOUT')
-        if _wh_secret:
+        if _relais is not None:
+            event = stripe.Event.construct_from(_relais, stripe.api_key)
+        elif _wh_secret:
             _sig = request.headers.get('stripe-signature', '')
             try:
                 event = stripe.Webhook.construct_event(body, _sig, _wh_secret)
