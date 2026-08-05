@@ -585,8 +585,38 @@ async def checkout_stripe_webhook(request: Request):
         metadata = session.get("metadata", {})
 
         if metadata.get("type") != "vitrine_purchase":
-            # Pas un achat vitrine, ignorer (géré par les autres webhooks)
-            return {"status": "ignored"}
+            # ================= V384 — CAUSE RACINE D'UN PAIEMENT PERDU =================
+            # C'est CETTE URL qui est déclarée dans le tableau de bord Stripe
+            # (https://afroboost.com/api/checkout/webhook/stripe), et elle ne sait
+            # traiter QUE les achats vitrine. Pour tout le reste — les achats
+            # clients, l'immense majorité — elle répondait « ignored » avec un
+            # HTTP **200**. Stripe considérait donc la livraison RÉUSSIE, ne
+            # réessayait pas, et le paiement n'était jamais honoré : aucun code,
+            # aucune souscription, aucun e-mail, aucune notification. Silencieux
+            # des deux côtés. C'est ce qui est arrivé le 5 août 2026 à un
+            # paiement client de 150 CHF (113 transactions en base, 7 seulement
+            # avec `webhook_received_at`, et ces 7 rattrapées à la main).
+            #
+            # Le vrai gestionnaire existe et fonctionne : `/api/webhook/stripe`
+            # (api/server.py). Il n'est simplement PAS déclaré chez Stripe. On lui
+            # transmet donc l'événement ici, plutôt que de dépendre d'une
+            # configuration externe qu'un déploiement ne peut ni vérifier ni
+            # corriger.
+            #
+            # Import TARDIF : `api.server` importe déjà ce module, un import en
+            # tête de fichier créerait un cycle. Même motif que `payment_activation`
+            # avec `boost_routes`.
+            #
+            # `request` est relisible : Starlette met le corps en cache après le
+            # premier `await request.body()` — le gestionnaire principal le relit
+            # sans que le flux soit consommé.
+            from api.server import stripe_webhook as _webhook_client
+            resultat = await _webhook_client(request)
+            logger.info(
+                f"[CHECKOUT-WEBHOOK] Evenement non-vitrine transmis au "
+                f"gestionnaire client: {metadata.get('product_name', '')}"
+            )
+            return resultat
 
         transaction_id = metadata.get("transaction_id")
         if not transaction_id:

@@ -5192,7 +5192,18 @@ async def stripe_webhook(request: Request):
             session = event.data.object
             metadata = session.metadata or {}
             payment_type = metadata.get("type", "client_payment")
-            
+
+            # V384 : un achat VITRINE a son propre gestionnaire
+            # (`/api/checkout/webhook/stripe`, checkout_routes.py) qui crée déjà
+            # sa réservation et ses e-mails. Sans cette garde, il tomberait dans
+            # la branche « client » ci-dessous et serait honoré DEUX FOIS — deux
+            # codes, deux souscriptions — le jour où cet endpoint sera lui aussi
+            # déclaré chez Stripe. Le sens de transmission est l'inverse (voir
+            # V384 dans checkout_routes.py) : c'est la vitrine qui nous délègue.
+            if payment_type == "vitrine_purchase":
+                logger.info("[WEBHOOK] Achat vitrine — laissé à /api/checkout/webhook/stripe")
+                return {"status": "ignored", "reason": "vitrine_purchase"}
+
             # v13.0: Achat de crédits par partenaire existant
             if payment_type == "credit_purchase":
                 coach_email = metadata.get("customer_email", "").lower().strip()
@@ -5468,8 +5479,33 @@ async def stripe_webhook(request: Request):
                     sessions_count = sessions_count * purchased_qty
                     logger.info(f"[V225] {purchased_qty} unites achetees -> {sessions_count} credits")
 
+                # V384 — IDEMPOTENCE. Ce webhook n'en avait aucune : rejoué pour
+                # la même session, il créait un SECOND code et une SECONDE
+                # souscription. C'était sans conséquence tant qu'il n'était
+                # jamais appelé ; maintenant qu'il l'est (délégation depuis
+                # /api/checkout/webhook/stripe), Stripe REJOUE tout événement
+                # dont la réponse tarde ou échoue — le doublon deviendrait la
+                # norme. Même garde que /api/admin/reconcile-stripe-payments :
+                # un code portant déjà ce `session_id` signe un paiement traité.
+                _deja = await db.discount_codes.find_one({"session_id": session.id}, {"_id": 0, "code": 1})
+                if _deja:
+                    logger.info(f"[PAYMENT] Session {session.id} deja traitee (code {_deja.get('code')}) — rien refait")
+                    return {"status": "already_processed", "code": _deja.get("code")}
+
                 new_code = f"AFR-{str(uuid.uuid4())[:6].upper()}"
-                discount_doc = {"id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100, "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0, "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(), "source": "stripe_payment", "session_id": session.id}
+                # V384 : `stripe_amount` = le montant réellement payé. Le champ
+                # existe déjà dans le schéma (les codes créés à la main le
+                # portent) mais restait vide sur les codes automatiques, si bien
+                # que la page « Code promo / partenaire » ne pouvait pas afficher
+                # le prix du forfait. `type`/`value` ne bougent PAS : ils pilotent
+                # la remise à l'utilisation du code, les modifier changerait ce
+                # que le client paie.
+                _montant_paye = None
+                try:
+                    _montant_paye = float(session.amount_total or 0) / 100.0
+                except Exception:
+                    _montant_paye = None
+                discount_doc = {"id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100, "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0, "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(), "source": "stripe_payment", "session_id": session.id, "stripe_amount": _montant_paye, "paid_currency": (session.currency or "chf").upper()}
                 await db.discount_codes.insert_one(discount_doc)
                 logger.info(f"[PAYMENT] Code {new_code} cree pour {customer_email} ({sessions_count} seances)")
                 # v95.2: Auto-créer la subscription après paiement Stripe

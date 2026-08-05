@@ -199,17 +199,33 @@ async def activate_after_payment(
             access_code = f"AFR-{uuid.uuid4().hex[:6].upper()}"
             sessions_count = (local_tx.get("metadata") or {}).get("sessions", 10)
 
+            # V384 : les noms de champs sont ceux que lit RÉELLEMENT la page
+            # « Code promo / partenaire » — `assignedEmail`, `used`, `active`.
+            # Cette insertion écrivait `assignedTo`, `usedCount`, `isActive` :
+            # aucun des 33 codes existants ne porte ces noms-là, donc le code
+            # créé par un paiement Mobile Money serait bien en base mais
+            # INVISIBLE (ou vide) dans la page. Le bug n'avait jamais été vu
+            # parce qu'aucun paiement PawaPay n'avait encore abouti.
             await db.discount_codes.insert_one({
+                "id": str(uuid.uuid4()),
                 "code": access_code,
                 "type": "100%",
-                "maxUses": sessions_count,
-                "sessions": sessions_count,
-                "usedCount": 0,
-                "assignedTo": customer_email,
+                "value": 100,
+                "assignedEmail": customer_email,
                 "assignedName": local_tx.get("customer_name", ""),
+                "maxUses": sessions_count,
+                "used": 0,
+                "active": True,
+                "courses": [],
+                "targetCategories": [],
+                "multi_member": False,
+                "shared_sessions": True,
+                "coach_id": None,
+                # Montant réellement payé, dans la devise locale du client.
+                "stripe_amount": amount,
+                "paid_currency": currency,
                 "source": provider,
                 "transaction_id": transaction_ref,
-                "isActive": True,
                 "created_at": datetime.now(timezone.utc).isoformat()
             })
 
