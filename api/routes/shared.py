@@ -208,3 +208,38 @@ def get_coach_filter(email: str) -> dict:
     if is_super_admin(email):
         return {}
     return {"coach_id": email.lower().strip()}
+
+
+# === V385 : DURÉE DE VALIDITÉ DES CODES CRÉÉS AUTOMATIQUEMENT ===
+#
+# Un code créé après paiement doit porter la MÊME durée que ceux créés à la main
+# depuis « Code promo / partenaire » : DEUX MOIS. Référence mesurée en base —
+# `AFR-53F288` (source `admin_manual`) expire exactement 60 jours après sa
+# création.
+#
+# Avant V385, les deux chemins automatiques (Stripe et Mobile Money) n'écrivaient
+# AUCUN `expiresAt`. Le code était donc valable indéfiniment, ce qui n'est ni la
+# règle commerciale ni ce que montrent les codes existants.
+#
+# Constante PARTAGÉE, et c'est le point : Stripe et PawaPay créent leurs codes
+# dans deux fichiers différents (`server.py` et `payment_activation.py`). Deux
+# valeurs écrites séparément auraient divergé à la première évolution — c'est
+# exactement ainsi que les noms de champs des codes avaient divergé (V384).
+#
+# Les 6 mois du code `AmandaBoost-26` sont une EXCEPTION MANUELLE du 5 août 2026
+# (rattrapage d'un paiement perdu) et ne doivent pas servir de référence.
+DUREE_VALIDITE_CODE_MOIS = 2
+
+
+def date_expiration_code(depuis=None) -> str:
+    """
+    Date d'expiration d'un code créé maintenant, au format `AAAA-MM-JJ` — celui
+    qu'utilisent tous les codes existants (`expiresAt`).
+
+    Mois CALENDAIRES et non 60 jours fixes : un achat du 31 décembre expire le
+    28 février, pas le 1er mars. `relativedelta` gère les fins de mois et les
+    années bissextiles.
+    """
+    from dateutil.relativedelta import relativedelta
+    base = depuis or datetime.now(timezone.utc)
+    return (base + relativedelta(months=+DUREE_VALIDITE_CODE_MOIS)).strftime("%Y-%m-%d")

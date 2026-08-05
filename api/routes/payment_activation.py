@@ -26,6 +26,8 @@ import logging
 from datetime import datetime, timezone
 
 from api.routes.shared import get_primary_color, hex_to_rgb_triplet
+# V385 : meme duree de validite que les codes crees a la main (2 mois).
+from api.routes.shared import date_expiration_code
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +228,7 @@ async def activate_after_payment(
                 "paid_currency": currency,
                 "source": provider,
                 "transaction_id": transaction_ref,
+                "expiresAt": date_expiration_code(),
                 "created_at": datetime.now(timezone.utc).isoformat()
             })
 

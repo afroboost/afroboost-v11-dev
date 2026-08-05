@@ -5511,12 +5511,16 @@ async def stripe_webhook(request: Request):
                 # le prix du forfait. `type`/`value` ne bougent PAS : ils pilotent
                 # la remise à l'utilisation du code, les modifier changerait ce
                 # que le client paie.
+                # V385 : durée de validité = celle des codes créés à la main (2 mois).
+                # Constante PARTAGÉE avec le chemin Mobile Money, pour que les deux
+                # ne puissent pas diverger.
+                from api.routes.shared import date_expiration_code as _date_expiration_code
                 _montant_paye = None
                 try:
                     _montant_paye = float(session.amount_total or 0) / 100.0
                 except Exception:
                     _montant_paye = None
-                discount_doc = {"id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100, "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0, "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(), "source": "stripe_payment", "session_id": session.id, "stripe_amount": _montant_paye, "paid_currency": (session.currency or "chf").upper()}
+                discount_doc = {"id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100, "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0, "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(), "source": "stripe_payment", "session_id": session.id, "stripe_amount": _montant_paye, "paid_currency": (session.currency or "chf").upper(), "expiresAt": _date_expiration_code()}
                 await db.discount_codes.insert_one(discount_doc)
                 logger.info(f"[PAYMENT] Code {new_code} cree pour {customer_email} ({sessions_count} seances)")
                 # v95.2: Auto-créer la subscription après paiement Stripe
