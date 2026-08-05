@@ -5520,7 +5520,15 @@ async def stripe_webhook(request: Request):
                     _montant_paye = float(session.amount_total or 0) / 100.0
                 except Exception:
                     _montant_paye = None
-                discount_doc = {"id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100, "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0, "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(), "source": "stripe_payment", "session_id": session.id, "stripe_amount": _montant_paye, "paid_currency": (session.currency or "chf").upper(), "expiresAt": _date_expiration_code()}
+                discount_doc = {"id": str(uuid.uuid4()), "code": new_code, "type": "100%", "value": 100, "assignedEmail": customer_email, "maxUses": sessions_count, "used": 0, "active": True, "courses": [], "created_at": datetime.now(timezone.utc).isoformat(), "source": "stripe_payment", "session_id": session.id, "stripe_amount": _montant_paye, "paid_currency": (session.currency or "chf").upper(), "expiresAt": _date_expiration_code(),
+                                 # V385 : mêmes champs que les codes créés à la main et que
+                                 # le chemin Mobile Money — un seul « formulaire » de code.
+                                 # Valeurs STRICTEMENT identiques aux défauts de lecture
+                                 # (`multi_member` -> False, `shared_sessions` -> True) :
+                                 # les écrire ne change donc aucun comportement, cela rend
+                                 # seulement le document complet et lisible tel quel.
+                                 "multi_member": False, "shared_sessions": True,
+                                 "targetCategories": [], "coach_id": None}
                 await db.discount_codes.insert_one(discount_doc)
                 logger.info(f"[PAYMENT] Code {new_code} cree pour {customer_email} ({sessions_count} seances)")
                 # v95.2: Auto-créer la subscription après paiement Stripe
