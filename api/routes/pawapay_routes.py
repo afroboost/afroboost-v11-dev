@@ -336,8 +336,15 @@ def frontend_url() -> str:
 
 
 def callback_url() -> str:
-    """URL à déclarer côté tableau de bord PawaPay pour recevoir les callbacks."""
-    return os.environ.get('PAWAPAY_CALLBACK_URL', f"{frontend_url()}/api/pawapay/webhook")
+    """
+    URL à déclarer côté tableau de bord PawaPay pour recevoir les callbacks.
+
+    V381 : `/api/pawapay/callback` — point d'entrée UNIQUE qui répartit entre ce
+    site et Afroboost Live (voir le bloc « répartiteur » en fin de fichier).
+    C'est le chemin réglé dans le tableau de bord PawaPay de production.
+    `/api/pawapay/webhook` reste servi à l'identique.
+    """
+    return os.environ.get('PAWAPAY_CALLBACK_URL', f"{frontend_url()}/api/pawapay/callback")
 
 
 async def create_pawapay_deposit(
@@ -853,3 +860,90 @@ async def pawapay_webhook(request: Request):
     else:
         logger.info(f"[PAWAPAY_WEBHOOK] Paiement en attente ({payment_status}): {deposit_id}")
         return {"status": "ok", "message": f"Status: {payment_status}"}
+
+
+# ============================================================================
+# V381 — RÉPARTITEUR : POINT D'ENTRÉE UNIQUE DES CALLBACKS PAWAPAY
+# ============================================================================
+# PawaPay n'accepte qu'UNE seule URL de callback par compte, alors que DEUX
+# applications attendent des notifications : ce site et Afroboost Live
+# (api-live.afroboost.com, route `POST /pawapay/callback`). Le tableau de bord
+# PawaPay de PRODUCTION est réglé sur https://afroboost.com/api/pawapay/callback
+# — tout arrive donc ici, et c'est d'ici qu'on répartit.
+#
+# Avant V381 ce chemin n'existait pas : il tombait sur le catch-all SPA, qui
+# refuse le POST (405). Tout callback de production aurait été PERDU — paiement
+# encaissé chez l'opérateur, accès jamais accordé.
+#
+# Le callback ne porte que le `depositId` : le propriétaire du dépôt se déduit
+# donc de la base. Connu ici -> traitement local (logique du webhook, inchangée).
+# Inconnu ici -> il appartient au live, on le lui transmet tel quel.
+#
+# `/api/pawapay/webhook` reste servi à l'identique : aucun dépôt déjà en vol
+# n'est orphelin, et rien de ce qui marchait ne change.
+
+PAWAPAY_LIVE_CALLBACK_URL = os.environ.get(
+    "PAWAPAY_LIVE_CALLBACK_URL",
+    "https://api-live.afroboost.com/pawapay/callback",
+)
+
+
+@router.post("/callback")
+async def pawapay_callback(request: Request):
+    """Point d'entrée unique des callbacks PawaPay — répartit site / live."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    if not isinstance(body, dict):
+        body = {}
+
+    deposit_id = body.get("depositId") or (body.get("data") or {}).get("depositId") or ""
+
+    if not deposit_id:
+        logger.warning("[PAWAPAY_CALLBACK] Pas de depositId reçu")
+        return {"status": "error", "message": "Missing depositId"}
+
+    # À qui appartient ce dépôt ? La base fait foi.
+    local_tx = None
+    if db is not None:
+        try:
+            local_tx = await db.pawapay_transactions.find_one({"depositId": deposit_id})
+        except Exception as e:
+            # Un hoquet de la base ne doit pas faire disparaître la notification :
+            # on la traite localement — le webhook re-vérifie de toute façon le
+            # statut auprès de PawaPay avant d'accorder quoi que ce soit.
+            logger.error(f"[PAWAPAY_CALLBACK] Lecture base impossible ({deposit_id}): {e}")
+            return await pawapay_webhook(request)
+
+    # === DÉPÔT DE CE SITE ===
+    # `request.json()` est mis en cache par Starlette : le webhook peut relire le
+    # corps sans que le flux soit déjà consommé.
+    if local_tx:
+        logger.info(f"[PAWAPAY_CALLBACK] Dépôt du site: {deposit_id}")
+        return await pawapay_webhook(request)
+
+    # === DÉPÔT INCONNU ICI -> IL APPARTIENT À AFROBOOST LIVE ===
+    logger.info(f"[PAWAPAY_CALLBACK] Inconnu du site, transmission au live: {deposit_id}")
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            reponse = await client.post(
+                PAWAPAY_LIVE_CALLBACK_URL,
+                json=body,
+                headers={"Content-Type": "application/json"},
+            )
+        logger.info(
+            f"[PAWAPAY_CALLBACK] Live a répondu {reponse.status_code} pour {deposit_id}"
+        )
+        return {
+            "status": "ok",
+            "message": "Forwarded to live",
+            "live_status": reponse.status_code,
+        }
+    except Exception as e:
+        # Panne de transport vers le live (et NON un refus du live) : on renvoie
+        # une erreur pour que PawaPay REJOUE le callback plus tard. Répondre 200
+        # ici perdrait définitivement la notification d'un paiement encaissé.
+        logger.error(f"[PAWAPAY_CALLBACK] Transmission au live impossible ({deposit_id}): {e}")
+        raise HTTPException(status_code=502, detail="Live callback unreachable")
