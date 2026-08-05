@@ -1533,6 +1533,15 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // Portee LOCALE a la carte, comme `v225Qty` / `v230Open` ci-dessus.
   const [v255ShowAllSchedules, setV255ShowAllSchedules] = useState(false);
   const v230IsOpen = (key) => Boolean(v230Open[key]);
+
+  // V383 : les panneaux deplies (quantite, tailles) sont le « formulaire » du
+  // parcours Stripe direct — le carrousel faisait glisser la carte pendant le
+  // choix. Meme signal que la modale Mobile Money, donc meme pause.
+  useEffect(() => {
+    if (!Object.values(v230Open).some(Boolean)) return undefined;
+    window.dispatchEvent(new CustomEvent('afroboost:paiement-formulaire-ouvert'));
+    return () => window.dispatchEvent(new CustomEvent('afroboost:paiement-formulaire-ferme'));
+  }, [v230Open]);
   const v230Toggle = (key) => setV230Open(prev => ({ ...prev, [key]: !prev[key] }));
 
   // V230.1: bascule commune a la quantite et a chaque dimension de variante.
@@ -2877,6 +2886,32 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
   const sliderRef = useRef(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  // V383 : verrou SEPARE de `isPaused`, et c'est volontaire. `handleMouseLeave`
+  // remet `isPaused` a false ; or l'ouverture d'une modale plein ecran fait
+  // justement sortir le pointeur du carrousel et declenche ce mouseleave. Un
+  // simple setIsPaused(true) serait donc annule dans la foulee. Ce drapeau-ci
+  // n'est leve que par la fermeture du formulaire.
+  // COMPTEUR et non booleen : plusieurs formulaires peuvent se chevaucher (une
+  // carte qui replie sa quantite pendant qu'une autre ouvre sa modale). Avec un
+  // booleen, la fermeture de l'un relancerait le defilement alors que l'autre
+  // est encore ouvert. On ne repart que lorsque le compteur retombe a zero.
+  const [v383Formulaires, setV383Formulaires] = useState(0);
+
+  // V383 : le formulaire Mobile Money vit dans PawaPayOfferButton, deux niveaux
+  // plus bas (OffersSliderAutoPlay > OfferCardSlider > PawaPayOfferButton).
+  // On passe par un evenement plutot que par deux etages de props : c'est le
+  // motif deja utilise ailleurs dans le projet (`afroboost:publications-changed`)
+  // et cela evite de toucher la signature de OfferCardSlider.
+  useEffect(() => {
+    const ouvrir = () => setV383Formulaires((n) => n + 1);
+    const fermer = () => setV383Formulaires((n) => Math.max(0, n - 1));
+    window.addEventListener('afroboost:paiement-formulaire-ouvert', ouvrir);
+    window.addEventListener('afroboost:paiement-formulaire-ferme', fermer);
+    return () => {
+      window.removeEventListener('afroboost:paiement-formulaire-ouvert', ouvrir);
+      window.removeEventListener('afroboost:paiement-formulaire-ferme', fermer);
+    };
+  }, []);
   // v159: Afficher les flèches comme indice visuel temporaire + au survol
   const [showArrows, setShowArrows] = useState(false);
   const [hasShownHint, setHasShownHint] = useState(false);
@@ -2981,7 +3016,7 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
   
   // Auto-play effect
   useEffect(() => {
-    if (!offers || offers.length <= 1 || isPaused || selectedOffer) return;
+    if (!offers || offers.length <= 1 || isPaused || v383Formulaires > 0 || selectedOffer) return;   // V383
     
     const interval = setInterval(() => {
       setCurrentIndex(prev => {
@@ -2998,7 +3033,7 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
     }, AUTO_PLAY_INTERVAL);
     
     return () => clearInterval(interval);
-  }, [offers, isPaused, selectedOffer]);
+  }, [offers, isPaused, v383Formulaires, selectedOffer]);   // V383
   
   // Reset auto-play when offers change
   useEffect(() => {
@@ -3186,7 +3221,7 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
       )}
       
       {/* Indicateur visuel d'auto-play actif */}
-      {offers.length > 1 && !selectedOffer && !isPaused && (
+      {offers.length > 1 && !selectedOffer && !isPaused && v383Formulaires === 0 && (   /* V383 */
         <div className="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded-full bg-black/50 text-xs text-white/70">
           <span className="w-1.5 h-1.5 rounded-full bg-pink-500 animate-pulse"></span>
           Auto

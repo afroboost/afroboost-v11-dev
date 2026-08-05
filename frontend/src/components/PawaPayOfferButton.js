@@ -50,6 +50,22 @@ const PawaPayOfferButton = ({ offer, priceChf, disabled = false }) => {
     return () => { vivant = false; };
   }, []);
 
+  // V383 : le carrousel des offres défile tout seul toutes les 3,5 s. Pendant la
+  // saisie de ce formulaire, il faisait glisser la carte sous les doigts de
+  // l'acheteur. On previent donc le carrousel de se mettre en pause.
+  //
+  // Le signal de fermeture est emis par le NETTOYAGE de l'effet, pas par chaque
+  // bouton : il part donc pour TOUS les chemins de sortie — « Annuler », clic
+  // hors de la modale, redirection vers PawaPay, ou demontage de la carte —
+  // sans qu'aucun ne puisse etre oublie et laisser le carrousel fige.
+  useEffect(() => {
+    if (!ouvert) return undefined;
+    window.dispatchEvent(new CustomEvent('afroboost:paiement-formulaire-ouvert'));
+    return () => window.dispatchEvent(new CustomEvent('afroboost:paiement-formulaire-ferme'));
+  }, [ouvert]);
+
+  // ATTENTION : ce retour anticipé doit rester APRÈS tous les hooks ci-dessus —
+  // un hook placé plus bas ne serait pas appelé à chaque rendu (règles de React).
   if (!dispo || !priceChf || priceChf <= 0) return null;
 
   const payer = async () => {
