@@ -237,6 +237,8 @@ du conteneur.
 | `JWT_SECRET` | Auth retombe sur `X-User-Email` (falsifiable). `/api/debug/config` → `jwt_secret_set: false` |
 | `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | La purge 48 h (V261) retire les publications de la base mais laisse les fichiers chez Cloudinary |
 | `REACT_APP_*` | Inlinées **au build** par CRA : une variable posée seulement à l'exécution n'atteint jamais le bundle |
+| `PAWAPAY_API_TOKEN` / `PAWAPAY_BASE_URL` | Mobile Money inerte. **Le mode se lit dans l'URL** : `https://api.pawapay.io` = production, `https://api.sandbox.pawapay.io` = bac à sable. Un jeton de prod sur l'URL sandbox renvoie 401 |
+| `PAWAPAY_DEFAULT_COUNTRY` | **V381 — chaque paiement échoue en 400** « Mobile Money indisponible pour ce pays ». Le compte a 12 pays ouverts, ni le frontend ni `resoudre_pays()` ne peuvent trancher tout seuls. ⚠️ Cette variable est prioritaire sur le pays demandé : elle FORCE le pays pour tout le monde. À retirer le jour où le frontend proposera un sélecteur de pays |
 
 ### ⚠️ Activer `JWT_SECRET` — procédure (V265)
 Poser `JWT_SECRET` bascule l'authentification en mode signé. **Ne l'activer
