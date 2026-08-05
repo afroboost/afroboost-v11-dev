@@ -16,6 +16,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
 
+import PawaPayCountrySelect from '../PawaPayCountrySelect'; // V382
+
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
 
@@ -200,6 +202,8 @@ const ModaleBoost = ({ pubId, subscriberCode, prix, onClose }) => {
   const [cible, setCible] = useState('');
   const [moyen, setMoyen] = useState('');
   const [telephone, setTelephone] = useState('');
+  // V382 : pays du client, pilote la devise. Vide = repli serveur.
+  const [paysPawapay, setPaysPawapay] = useState('');
   const [occupe, setOccupe] = useState(false);
   // V343 (POUVOIR B) : succès de l'apparition GRATUITE (super-admin), sans
   // redirection vers une page de paiement — il n'y en a pas.
@@ -243,6 +247,9 @@ const ModaleBoost = ({ pubId, subscriberCode, prix, onClose }) => {
       if (!gratuit) corps.provider = moyen;
       if (subscriberCode) corps.subscriber_code = subscriberCode;
       if (!gratuit && moyen === 'pawapay' && telephone) corps.customer_phone = telephone;
+      // V382 : sans pays, le serveur ne peut pas choisir la devise parmi les
+      // 12 pays ouverts — il retombe alors sur PAWAPAY_DEFAULT_COUNTRY.
+      if (!gratuit && moyen === 'pawapay' && paysPawapay) corps.country = paysPawapay;
       const r = await axios.post(`${API}/publications/${pubId}/boost/checkout`, corps);
 
       // V343 : réponse gratuite -> l'apparition est DÉJÀ accordée, on ne
@@ -383,6 +390,14 @@ const ModaleBoost = ({ pubId, subscriberCode, prix, onClose }) => {
                     </button>
                   ))}
                 </div>
+
+                {moyen === 'pawapay' ? (
+                  <PawaPayCountrySelect
+                    value={paysPawapay}
+                    onChange={setPaysPawapay}
+                    disabled={occupe}
+                  />
+                ) : null}
 
                 {moyen === 'pawapay' ? (
                   <input

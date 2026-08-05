@@ -140,6 +140,7 @@ import CoachLoginModal from "./components/CoachLoginModal";
 import PaymentSuccessPage from "./components/PaymentSuccessPage";
 import MediaViewer from "./components/MediaViewer";
 import BecomeCoachPage from "./components/BecomeCoachPage";
+import PawaPayOfferButton from "./components/PawaPayOfferButton"; // V382
 import SuperAdminPanel from "./components/SuperAdminPanel";
 import { CoachSearchModal } from "./components/CoachSearch";
 // v160.3: CoachVitrine n'est plus rendu (layout unifie via App.js) mais l'import est retire pour eviter l'ambiguite
@@ -2852,6 +2853,14 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                       ? `Réserver — ${v225FormatAmount(v223UnitPrice(offer) * v225Qty)} CHF (${v225Qty}x)`
                       : 'Réserver'}
               </button>
+              {/* V382 : bouton STRICTEMENT ADDITIF. Il ne rend rien tant que
+                  PawaPay est desactive, et ne touche a aucun etat du parcours
+                  Stripe ci-dessus, qui reste identique au caractere pres. */}
+              <PawaPayOfferButton
+                offer={offer}
+                priceChf={v223UnitPrice(offer) * (v225IsDirectCheckout(offer) ? v225Qty : 1)}
+                disabled={checkoutBusy || v226BlockedByVariant}
+              />
             </div>
           </div>
         </div>

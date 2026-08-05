@@ -5,6 +5,7 @@
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import PaymentMethodSelector from "./PaymentMethodSelector";
+import PawaPayCountrySelect from "./PawaPayCountrySelect"; // V382
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -35,6 +36,9 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
   // V325: + pawapay = PawaPay (mobile money panafricain), affiché seulement si activé
   const [paymentMethod, setPaymentMethod] = useState('card');
   const [pawapayEnabled, setPawapayEnabled] = useState(false);
+  // V382 : pays du client pour Mobile Money. Vide = repli serveur
+  // (PAWAPAY_DEFAULT_COUNTRY), donc comportement identique a V381.
+  const [pawapayCountry, setPawapayCountry] = useState('');
 
   // v11.6: Mot de passe + CGU
   const [showPassword, setShowPassword] = useState(false);
@@ -202,7 +206,11 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
             pack_id: selectedPack.id,
             customer_email: email,
             customer_name: name,
-            customer_phone: formData.phone
+            customer_phone: formData.phone,
+            // V382 : le pays choisi pilote la devise et l'opérateur. Absent, le
+            // serveur retombe sur PAWAPAY_DEFAULT_COUNTRY — le parcours reste
+            // donc identique à V381 pour qui ne touche pas au sélecteur.
+            country: pawapayCountry || ''
           });
 
           if (response.data.payment_url) {
@@ -562,6 +570,16 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                     priceXof={selectedPack.price_xof}
                     disabled={submitting}
                     showPawapay={pawapayEnabled}
+                  />
+                )}
+
+                {/* V382 : le pays n'est demande QUE si Mobile Money PawaPay est
+                    retenu — inutile d'encombrer un paiement par carte. */}
+                {selectedPack.price > 0 && paymentMethod === 'pawapay' && (
+                  <PawaPayCountrySelect
+                    value={pawapayCountry}
+                    onChange={setPawapayCountry}
+                    disabled={submitting}
                   />
                 )}
 

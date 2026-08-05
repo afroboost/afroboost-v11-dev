@@ -54,7 +54,14 @@ def init_db(database):
 
 class PawaPayCheckoutRequest(BaseModel):
     """Requête pour créer un paiement PawaPay"""
-    amount: int  # Montant en unité MAJEURE (pas de centimes pour Mobile Money)
+    amount: int = 0  # Montant DÉJÀ en devise locale, unité MAJEURE (pas de centimes)
+    # V382 : prix en CHF. Quand il est fourni, c'est LUI qui fait foi et le
+    # serveur convertit vers la devise du pays choisi (montant_dans_devise).
+    # Indispensable dès qu'il y a un sélecteur de pays : le navigateur ne peut
+    # pas connaître les taux, et le laisser envoyer un montant en devise locale
+    # reviendrait à le laisser fixer le prix. `amount` reste accepté pour les
+    # appelants existants qui envoient déjà un montant local.
+    amount_chf: Optional[float] = None
     currency: str = "XOF"
     description: str = "Paiement Afroboost"
     customer_name: str = ""
@@ -184,13 +191,52 @@ async def get_supported_countries(token: str, base_url: str) -> dict:
     return pays
 
 
+# V382 : taux FIXES par défaut, une entrée par devise des 12 pays ouverts.
+#
+# Méthode retenue — « le même produit coûte le même prix partout » :
+# `XOF = 400` est le taux commercial HISTORIQUE du site, inchangé depuis
+# toujours (15 CHF de Boost = 6000 XOF). Les sept autres devises en sont
+# DÉDUITES, de sorte qu'un client kenyan paie la même valeur réelle qu'un
+# client ivoirien. C'est un prix d'accessibilité, volontairement plus bas que
+# le taux de change du marché — pas une erreur de conversion.
+#
+# Le XAF vaut exactement le XOF (les deux francs CFA sont arrimés à l'euro au
+# même taux, 655,957) : 400 des deux côtés, sans approximation.
+#
+# ⚠️ Les six autres sont des ARRONDIS de parités qui bougent. Ils ne se
+# mettent PAS à jour tout seuls. À revalider avant tout volume important —
+# via PAWAPAY_RATES, une variable Coolify, sans redéploiement ni code.
+TAUX_PAR_DEFAUT = {
+    "XOF": 400.0,      # Bénin, Côte d'Ivoire, Sénégal — taux historique du site
+    "XAF": 400.0,      # Cameroun, Congo, Gabon — même arrimage que le XOF
+    "CDF": 2000.0,     # RD Congo
+    "KES": 90.0,       # Kenya
+    "RWF": 1000.0,     # Rwanda
+    "SLE": 16.0,       # Sierra Leone (nouveau leone)
+    "UGX": 2600.0,     # Ouganda
+    "ZMW": 20.0,       # Zambie
+}
+
+
+# V382 : noms en français des pays PawaPay, pour le sélecteur du client.
+# Volontairement plus large que les 12 pays ouverts aujourd'hui : si un marché
+# s'ouvre sur le compte, il s'affiche correctement sans toucher au code.
+NOMS_PAYS = {
+    "BEN": "Bénin", "BFA": "Burkina Faso", "CIV": "Côte d'Ivoire",
+    "CMR": "Cameroun", "COD": "RD Congo", "COG": "Congo-Brazzaville",
+    "GAB": "Gabon", "GHA": "Ghana", "KEN": "Kenya", "MWI": "Malawi",
+    "NGA": "Nigeria", "RWA": "Rwanda", "SEN": "Sénégal", "SLE": "Sierra Leone",
+    "TZA": "Tanzanie", "UGA": "Ouganda", "ZMB": "Zambie",
+}
+
+
 def taux_par_devise() -> dict:
     """
     Taux de conversion depuis le CHF, configurables sans redéploiement via
-    PAWAPAY_RATES (ex. « XOF=400,KES=140,GHS=15 »). XOF=400 par défaut, qui est
-    le taux déjà utilisé par le site.
+    PAWAPAY_RATES (ex. « XOF=400,KES=140 »). Les valeurs de PAWAPAY_RATES
+    ÉCRASENT les défauts, devise par devise.
     """
-    taux = {"XOF": 400.0}
+    taux = dict(TAUX_PAR_DEFAUT)
     brut = (os.environ.get("PAWAPAY_RATES", "") or "").strip()
     for morceau in brut.split(","):
         if "=" in morceau:
@@ -206,9 +252,14 @@ async def resoudre_pays(token: str, base_url: str, demande: str) -> tuple:
     """
     Choisit le pays à envoyer à PawaPay et renvoie (pays, devise).
 
-    Ordre : PAWAPAY_DEFAULT_COUNTRY -> pays demandé -> unique pays activé.
+    Ordre : pays demandé -> PAWAPAY_DEFAULT_COUNTRY -> unique pays activé.
     Si rien ne colle, on lève une 400 EXPLICITE qui nomme les pays disponibles,
     au lieu de laisser PawaPay répondre un « UNSUPPORTED_PARAMETER » opaque.
+
+    V382 : le pays DEMANDÉ passe désormais en PREMIER. Avant, la variable
+    d'environnement gagnait toujours — elle forçait donc la Côte d'Ivoire pour
+    les douze pays, et le sélecteur du client n'aurait servi à rien.
+    PAWAPAY_DEFAULT_COUNTRY reste utile comme REPLI, quand rien n'est choisi.
     """
     pays_ok = await get_supported_countries(token, base_url)
     if not pays_ok:
@@ -217,13 +268,25 @@ async def resoudre_pays(token: str, base_url: str, demande: str) -> tuple:
             detail="Mobile Money indisponible : configuration du compte PawaPay illisible."
         )
 
-    candidats = [
-        normalize_country(os.environ.get("PAWAPAY_DEFAULT_COUNTRY", "")),
-        normalize_country(demande),
-    ]
-    for c in candidats:
-        if c and c in pays_ok:
-            return c, pays_ok[c]
+    dispo = ", ".join(sorted(pays_ok.keys()))
+
+    # V382 : un pays EXPLICITEMENT demandé est honoré, ou refusé — jamais
+    # remplacé en silence. Retomber sur le repli ferait payer un Kényan en XOF
+    # ivoirien : un montant faux, encaissé sans que personne ne s'en aperçoive.
+    choisi = normalize_country(demande)
+    if choisi:
+        if choisi in pays_ok:
+            return choisi, pays_ok[choisi]
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Mobile Money indisponible pour le pays {choisi}. "
+                    f"Pays ouverts sur le compte : {dispo}")
+        )
+
+    # Rien de choisi -> repli d'environnement, puis pays unique du compte.
+    repli = normalize_country(os.environ.get("PAWAPAY_DEFAULT_COUNTRY", ""))
+    if repli and repli in pays_ok:
+        return repli, pays_ok[repli]
 
     if len(pays_ok) == 1:
         seul = next(iter(pays_ok))
@@ -231,8 +294,7 @@ async def resoudre_pays(token: str, base_url: str, demande: str) -> tuple:
 
     raise HTTPException(
         status_code=400,
-        detail=("Mobile Money indisponible pour ce pays. Pays ouverts sur le compte : "
-                + ", ".join(sorted(pays_ok.keys())))
+        detail="Mobile Money indisponible pour ce pays. Pays ouverts sur le compte : " + dispo
     )
 
 
@@ -549,6 +611,14 @@ async def pawapay_available():
         pays = await get_supported_countries(token, base_url)
         reponse["countries"] = sorted(pays.keys())
         reponse["currencies"] = pays
+        # V382 : la liste prête à afficher dans le sélecteur de pays. Les noms
+        # sont servis par le BACKEND et non figés dans le bundle : le jour où un
+        # pays s'ouvre sur le compte PawaPay, il apparaît sans redéployer le
+        # frontend. Un pays sans nom connu retombe sur son code ISO.
+        reponse["countries_detail"] = [
+            {"code": c, "currency": pays[c], "label": NOMS_PAYS.get(c, c)}
+            for c in sorted(pays.keys(), key=lambda x: NOMS_PAYS.get(x, x))
+        ]
     return reponse
 
 
@@ -564,17 +634,62 @@ async def create_pawapay_checkout(request: PawaPayCheckoutRequest):
     country, devise = await resoudre_pays(token, base_url, request.country)
     return_url = request.success_url or f"{frontend_url()}/?payment=success&provider=pawapay&tid={deposit_id}"
 
+    # V382 : le prix en CHF fait foi quand il est fourni — la conversion est
+    # faite ICI, jamais dans le navigateur. Sans cela, un sélecteur de pays
+    # obligerait le client à calculer lui-même le montant en devise locale.
+    montant = montant_dans_devise(request.amount_chf, None, devise) \
+        if request.amount_chf is not None else request.amount
+
+    if not montant or montant <= 0:
+        raise HTTPException(status_code=400, detail="Montant de paiement invalide.")
+
+    # V382 : le nombre de SÉANCES accordées est relu EN BASE depuis `offer_id`,
+    # jamais accepté du client. Même raisonnement que V223 côté Stripe : cet
+    # endpoint est public, et recevoir `sessions` du navigateur permettrait de
+    # payer une séance pour en obtenir mille. On retire donc systématiquement la
+    # valeur envoyée, puis on la repose depuis l'offre.
+    meta = dict(request.metadata or {})
+    meta.pop("sessions", None)
+    offer_id = meta.get("offer_id") or ""
+    if offer_id:
+        try:
+            offre = await db.offers.find_one({"id": offer_id}, {"_id": 0})
+        except Exception as e:
+            offre = None
+            logger.warning(f"[PAWAPAY] Lecture de l'offre {offer_id} échouée: {e}")
+        if offre:
+            brut = offre.get("pack_sessions")
+            try:
+                if brut is not None and int(float(brut)) > 0:
+                    meta["sessions"] = int(float(brut))
+            except (TypeError, ValueError):
+                pass
+        else:
+            # Offre introuvable (archivée entre l'affichage et le paiement) : on
+            # NE bloque PAS l'encaissement, comme V223. L'activation retombera
+            # sur son défaut plutôt que de refuser un client qui veut payer.
+            logger.warning(f"[PAWAPAY] Offre {offer_id} introuvable — paiement poursuivi")
+
+    # Sans e-mail, `activate_after_payment` n'a personne à qui accorder l'accès :
+    # le paiement serait encaissé et RIEN ne serait délivré. Mieux vaut refuser.
+    if not (request.customer_email or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Votre e-mail est nécessaire pour recevoir votre code d'accès."
+        )
+
     # Sauvegarder la transaction en attente AVANT l'appel réseau (recommandation PawaPay)
     await db.pawapay_transactions.insert_one({
         "depositId": deposit_id,
-        "amount": request.amount,
+        "amount": montant,
+        "amount_chf": request.amount_chf,
         "currency": devise or request.currency,
         "country": country,
         "description": request.description,
         "customer_name": request.customer_name,
         "customer_email": request.customer_email,
         "customer_phone": request.customer_phone,
-        "metadata": request.metadata or {},
+        "metadata": meta,
         "status": "pending",
         "created_at": datetime.now(timezone.utc).isoformat()
     })
@@ -584,7 +699,7 @@ async def create_pawapay_checkout(request: PawaPayCheckoutRequest):
             token=token,
             base_url=base_url,
             deposit_id=deposit_id,
-            amount=request.amount,
+            amount=montant,
             country=country,
             reason=request.description,
             return_url=return_url,
