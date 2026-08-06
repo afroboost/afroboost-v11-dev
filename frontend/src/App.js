@@ -7502,6 +7502,23 @@ function App() {
             href="/rencontre"
             data-testid="nav-rencontre"
             title="Spordateur — trouver un partenaire de sport"
+            /* V387 — pont « une seule clé ». On demande d'abord un jeton de
+               passage : s'il arrive, on entre dans Rencontre déjà connecté.
+               Sinon on laisse le lien faire son travail et Spordate proposera
+               son login normal. Le `href` reste donc VRAI : clic milieu,
+               « ouvrir dans un nouvel onglet » et navigation sans JS
+               continuent de fonctionner. */
+            onClick={async (e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+              e.preventDefault();
+              try {
+                const r = await axios.post(`${API}/spordate/access`, {});
+                window.location.href = (r.data && r.data.url) || '/rencontre';
+              } catch (err) {
+                // 403 (non reconnu) ou 503 (pont non configuré) : parcours normal.
+                window.location.href = '/rencontre';
+              }
+            }}
             className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all"
             style={{
               background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.14)',

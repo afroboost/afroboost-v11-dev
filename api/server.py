@@ -45,6 +45,7 @@ from api.routes.stripe_routes import router as stripe_router, init_db as init_st
 from api.routes.cinetpay_routes import router as cinetpay_router, init_db as init_cinetpay_db
 # V325: Import routes PawaPay (mobile money, derrière le drapeau PAWAPAY_ENABLED)
 from api.routes.pawapay_routes import router as pawapay_router, init_db as init_pawapay_db
+from api.routes.spordate_routes import router as spordate_router, init_db as init_spordate_db  # V387
 # v15.0: Import routes paiement multi-vendeurs
 from api.routes.payment_config_routes import router as payment_config_router, init_db as init_payment_config_db
 from api.routes.checkout_routes import router as checkout_router, init_db as init_checkout_db
@@ -22815,6 +22816,9 @@ init_cinetpay_db(db)
 # PAWAPAY_ENABLED (OFF par défaut) et renvoie 404 tant qu'il n'est pas activé.
 fastapi_app.include_router(pawapay_router)
 init_pawapay_db(db)
+# V387 : pont « une seule cle » vers Spordate (afroboost.com/rencontre)
+fastapi_app.include_router(spordate_router)
+init_spordate_db(db)
 
 # v15.0: Include multi-vendor payment routes
 fastapi_app.include_router(payment_config_router)
