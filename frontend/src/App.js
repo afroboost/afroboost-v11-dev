@@ -7492,6 +7492,35 @@ function App() {
               <span>{tab.label}</span>
             </button>
           ))}
+
+          {/* V386 : entrée vers Spordateur, servi sous afroboost.com/rencontre.
+              Volontairement DISTINCT des pastilles au-dessus : celles-ci filtrent
+              la page, celui-ci NAVIGUE ailleurs — d'où la bordure pleine plutôt
+              qu'un fond. Couleur de marque via la variable, jamais en dur : les
+              deux marques partagent #D91CD2. Icône SVG inline (règle du projet). */}
+          <a
+            href="/rencontre"
+            data-testid="nav-rencontre"
+            title="Spordateur — trouver un partenaire de sport"
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all"
+            style={{
+              background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.14)',
+              border: '1px solid var(--primary-color, #D91CD2)',
+              color: 'var(--primary-color, #D91CD2)',
+              textDecoration: 'none',
+              flexShrink: 0
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+              <circle cx="9" cy="7" r="4" />
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+            <span>Spordateur</span>
+          </a>
+
           {/* V106: Barre de recherche universelle dans la sticky nav */}
           <div style={{ position: 'relative', marginLeft: 'auto', minWidth: '140px', maxWidth: '200px' }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(var(--primary-rgb, 217, 28, 210), 0.5)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
