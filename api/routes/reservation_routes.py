@@ -1256,7 +1256,11 @@ async def _qr_scan_validate_inner(request: Request):
                                 "courseName": reservation.get("courseName", "")}}
 
     # CAS B : code d'abonnement
-    subscription = await db.subscriptions.find_one({"code": code, "status": "active"}, {"_id": 0})
+    # V391 : le scan du QR à l'entrée DÉBITE une séance — il doit donc débiter le
+    # BON forfait. Avec un code à doublons, il piochait dans le plus ancien (souvent
+    # périmé) et refusait l'entrée d'un abonné à jour.
+    from api.routes.shared import lire_abonnement_par_code as _v391_lire
+    subscription = await _v391_lire(db, code)
     if not subscription:
         any_sub = await db.subscriptions.find_one({"code": code}, {"_id": 0})
         if any_sub:

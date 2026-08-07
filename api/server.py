@@ -6626,9 +6626,9 @@ async def _v261_resolve_subscriber(code: str):
     # n'est pas un `code` : il n'y matchera jamais, donc aucune régression de sécu.
     if not code or len(code) < 3:
         return False, "", None
-    sub = await db.subscriptions.find_one(
-        {"code": code, "status": "active"}, {"_id": 0, "name": 1, "email": 1, "coach_id": 1}
-    )
+    # V391 : même sélection que partout ailleurs (le plus récent utilisable).
+    from api.routes.shared import lire_abonnement_par_code as _v391_lire3
+    sub = await _v391_lire3(db, code)
     if sub:
         name = sub.get("name") or (sub.get("email") or "").split("@")[0] or "Abonné"
         return True, name, (sub.get("coach_id") or DEFAULT_COACH_ID)
@@ -9219,10 +9219,9 @@ async def _bt_subscriber_credit(code: str):
     # (Même correction que V293 sur _v261_resolve_subscriber, publication.)
     if not code or len(code) < 3:
         return None
-    sub = await db.subscriptions.find_one(
-        {"code": code, "status": "active"},
-        {"_id": 0, "name": 1, "email": 1, "remaining_sessions": 1}
-    )
+    # V391 : idem — un crédit live lu sur le mauvais document refusait l'entrée.
+    from api.routes.shared import lire_abonnement_par_code as _v391_lire4
+    sub = await _v391_lire4(db, code)
     if sub:
         return {
             "code": code,
@@ -10359,9 +10358,11 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     logger.info(f"[V202] subscriber/space code={code_upper}, member_slug={m}")
 
     # V201: Lookup case-insensitive + fallback sans filtre status
-    subscription = await db.subscriptions.find_one(
-        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "status": "active"}, {"_id": 0}
-    )
+    # V391 : le PLUS RÉCENT NON EXPIRÉ AYANT DES SÉANCES, au lieu du premier en
+    # ordre naturel (= le plus ancien). C'est ce choix-là qui servait un forfait
+    # mort à un abonné dont le forfait valide existait juste à côté.
+    from api.routes.shared import lire_abonnement_par_code as _v391_lire
+    subscription = await _v391_lire(db, code_upper)
     # V201: Si pas trouvé avec status active, chercher sans filtre status
     if not subscription:
         sub_any = await db.subscriptions.find_one(
@@ -11109,9 +11110,10 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         raise HTTPException(status_code=403, detail="Ton accès a été suspendu. Contacte le responsable du groupe.")
 
     # V202: Chercher subscription (fallback case-insensitive)
-    subscription = await db.subscriptions.find_one(
-        {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}, "status": "active"}, {"_id": 0}
-    )
+    # V391 : même règle qu'à l'affichage de l'espace — sans quoi l'écran montrait
+    # un forfait et la réservation en débitait un AUTRE.
+    from api.routes.shared import lire_abonnement_par_code as _v391_lire2
+    subscription = await _v391_lire2(db, code_upper)
     if not subscription:
         # V202: Fallback — subscription avec n'importe quel status
         subscription = await db.subscriptions.find_one(

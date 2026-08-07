@@ -768,15 +768,37 @@ async def get_subscription_status(request: Request, email: str = "", code: str =
     seen_codes = set()  # Déduplication par code
     user_email = email.lower().strip() if email else ""
 
+    # V391 — DÉDUPLICATION PAR CODE : on garde LE PLUS RÉCENT NON EXPIRÉ AYANT DES
+    # SÉANCES, et non plus « le premier = le plus ancien ». C'est ici que le forfait
+    # valide de BASSBOOSTX-11 (45 séances, 2027) était JETÉ au profit du forfait mort
+    # (1 séance, expiré le 13/07) : la réponse ne contenait plus que le mauvais.
+    # On pré-calcule le gagnant de chaque code, puis la boucle ne retient que lui —
+    # les contrôles v151 (code actif, assigné au bon e-mail) restent inchangés
+    # et s'appliquent exactement comme avant au document retenu.
+    from api.routes.shared import choisir_abonnement as _v391_choisir
+    _par_code = {}
+    for _s in all_subs:
+        _c = (_s.get("code") or "").upper()
+        if _c:
+            _par_code.setdefault(_c, []).append(_s)
+    _gagnants = {}
+    for _c, _lot in _par_code.items():
+        _mien = [d for d in _lot if (d.get("email") or "").strip().lower() == (email.lower().strip() if email else "")]
+        _g = _v391_choisir(_mien or _lot)
+        if _g:
+            _gagnants[_c] = _g.get("id")
+
     for sub in all_subs:
         sub_code = sub.get("code", "")
         if not sub_code:
             continue
 
-        # Déduplier par code (garder le premier = le plus ancien)
+        # Déduplier par code (V391 : le gagnant, plus « le premier rencontré »)
         code_key = sub_code.upper()
         if code_key in seen_codes:
             continue
+        if _gagnants.get(code_key) is not None and sub.get("id") != _gagnants[code_key]:
+            continue  # ce n'est pas le document retenu pour ce code
 
         # Vérifier que le discount_code existe et est encore actif
         discount = await _db.discount_codes.find_one({

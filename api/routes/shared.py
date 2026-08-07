@@ -243,3 +243,127 @@ def date_expiration_code(depuis=None) -> str:
     from dateutil.relativedelta import relativedelta
     base = depuis or datetime.now(timezone.utc)
     return (base + relativedelta(months=+DUREE_VALIDITE_CODE_MOIS)).strftime("%Y-%m-%d")
+
+
+# =====================================================================
+# V391 — QUEL ABONNEMENT UN CODE DÉSIGNE-T-IL ?  (cause de fond des doublons)
+# =====================================================================
+# Un même `code` porte PLUSIEURS documents dans `subscriptions` (renouvellements
+# successifs, imports, synchronisations manuelles). Jusqu'ici, six endroits
+# différents tranchaient avec `find_one({"code": …, "status": "active"})` — qui
+# renvoie le PREMIER document en ordre naturel Mongo, donc en pratique le PLUS
+# ANCIEN. Et `/subscriptions/status` déduplicait explicitement en « gardant le
+# premier = le plus ancien ».
+#
+# Conséquence mesurée en production le 7 août 2026 sur BASSBOOSTX-11 : le forfait
+# servi était celui expiré le 13/07 avec 1 séance, au lieu du forfait valide
+# jusqu'en 2027 avec 45 séances. L'espace abonné affichait un abonnement mort et
+# la réservation était refusée, alors que les séances étaient payées.
+#
+# RÈGLE UNIQUE, appliquée partout : **le plus RÉCENT, NON EXPIRÉ, ayant encore des
+# séances**. Les replis successifs garantissent qu'on ne renvoie JAMAIS `None` là
+# où l'ancien code renvoyait un document — aucun parcours ne peut donc régresser :
+#   1. actif + non expiré + séances restantes   -> le plus récent   (cas nominal)
+#   2. actif + non expiré                        -> le plus récent   (forfait épuisé)
+#   3. actif                                     -> le plus récent   (tout expiré)
+#   4. n'importe quel statut                     -> le plus récent   (dernier repli)
+
+
+def _v391_est_expire(valeur, maintenant=None) -> bool:
+    """`expires_at` est-il dépassé ? Absent/illisible -> JAMAIS expiré.
+
+    Volontairement indulgent : une date au format inattendu ne doit pas couper
+    l'accès d'un abonné qui a payé. On préfère servir un forfait douteux que
+    d'en refuser un valide (même parti pris que `_v200_parse_expiry`).
+    """
+    if not valeur:
+        return False
+    maintenant = maintenant or datetime.now(timezone.utc)
+    try:
+        if isinstance(valeur, datetime):
+            dt = valeur
+        else:
+            texte = str(valeur).strip().replace("Z", "+00:00")
+            dt = datetime.fromisoformat(texte)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt < maintenant
+    except (ValueError, TypeError):
+        return False
+
+
+def _v391_seances_restantes(sub) -> int:
+    """Séances restantes, tolérant aux champs absents ou stockés en texte/flottant."""
+    for cle in ("remaining_sessions",):
+        brut = (sub or {}).get(cle)
+        if brut is not None:
+            try:
+                return int(float(brut))
+            except (TypeError, ValueError):
+                pass
+    try:
+        total = int(float((sub or {}).get("total_sessions") or 0))
+        utilisees = int(float((sub or {}).get("used_sessions") or 0))
+        return max(0, total - utilisees)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _v391_date_creation(sub) -> str:
+    """Clé de tri « le plus récent ». Chaîne ISO -> tri lexicographique correct.
+    Un document sans date passe en dernier (chaîne vide), jamais en premier.
+    """
+    return str((sub or {}).get("created_at") or "")
+
+
+def choisir_abonnement(candidats):
+    """Applique la règle V391 à une liste de documents `subscriptions` déjà lus.
+
+    Version SYNCHRONE, pour les appelants qui ont déjà la liste en main.
+    Renvoie `None` seulement si `candidats` est vide.
+    """
+    docs = [d for d in (candidats or []) if d]
+    if not docs:
+        return None
+    maintenant = datetime.now(timezone.utc)
+    actifs = [d for d in docs if (d.get("status") or "").lower() == "active"]
+    vivants = [d for d in actifs if not _v391_est_expire(d.get("expires_at"), maintenant)]
+    avec_seances = [d for d in vivants if _v391_seances_restantes(d) > 0]
+
+    for lot in (avec_seances, vivants, actifs, docs):
+        if lot:
+            return sorted(lot, key=_v391_date_creation, reverse=True)[0]
+    return None
+
+
+async def lire_abonnement_par_code(db, code, email=None, filtre_supplementaire=None):
+    """Le BON abonnement pour ce `code` (règle V391), ou `None` si le code n'en a aucun.
+
+    Remplace `find_one({"code": …, "status": "active"})`. Recherche insensible à la
+    casse, comme les appels qu'elle remplace.
+
+    `email` — QUAND L'APPELANT SAIT QUI DEMANDE, on ne doit pas lui servir le
+    document de quelqu'un d'autre. Certains codes portent des documents à des
+    e-mails DIFFÉRENTS (relevé en production : `BASS` et `NADIABOOST-26` en ont 3
+    chacun). « Le plus récent » y resterait un choix arbitraire entre plusieurs
+    personnes. Si l'e-mail fourni correspond à au moins un document, on choisit
+    PARMI CEUX-LÀ ; sinon on retombe sur l'ensemble (l'e-mail n'est alors qu'un
+    indice, jamais un filtre bloquant — un abonné dont la fiche porte une adresse
+    mal saisie garde son accès).
+    """
+    import re as _re
+    code_norm = (code or "").strip().upper()
+    if not code_norm:
+        return None
+    requete = {"code": {"$regex": f"^{_re.escape(code_norm)}$", "$options": "i"}}
+    if filtre_supplementaire:
+        requete.update(filtre_supplementaire)
+    # Plafond volontaire : un code légitime a une poignée de documents. 50 borne
+    # le coût sans jamais tronquer un cas réel (le maximum observé est 3).
+    candidats = await db.subscriptions.find(requete, {"_id": 0}).to_list(50)
+    if email:
+        _e = str(email).strip().lower()
+        _miens = [d for d in candidats if (d.get("email") or "").strip().lower() == _e]
+        if _miens:
+            candidats = _miens
+    return choisir_abonnement(candidats)
