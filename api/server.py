@@ -18652,7 +18652,27 @@ async def smart_chat_entry(request: Request):
                 _t = _sub_from_req(request)
                 _pe = (existing_participant.get("email") or "").lower()
                 if _t and _pe and (_t.get("email") or "").lower() == _pe:
-                    _may_write = True
+                    # V390 (défense en profondeur) — l'e-mail du jeton ne suffit PAS :
+                    # il faut que le CODE qu'il porte appartienne bien à cet e-mail.
+                    # Sans ce contrôle, un jeton forgé AVANT le correctif de
+                    # `/subscriber/token` (validité 90 jours) continuerait d'ouvrir le
+                    # compte d'autrui. On revérifie donc à l'USAGE, pas seulement à
+                    # l'émission. Un code sans `assignedEmail` (code collectif) reste
+                    # accepté : il ne désigne personne en particulier.
+                    _tc = (_t.get("code") or "").strip().upper()
+                    if _tc:
+                        _tdc = await db.discount_codes.find_one(
+                            {"code": {"$regex": f"^{re.escape(_tc)}$", "$options": "i"}},
+                            {"_id": 0, "assignedEmail": 1},
+                        )
+                        _ta = ((_tdc or {}).get("assignedEmail") or "").strip().lower()
+                        if _ta and _ta != _pe:
+                            logger.warning(
+                                f"[V390] Jeton REJETE a l'usage : code {_tc} assigne a "
+                                f"{_ta}, presente pour {_pe}"
+                            )
+                        else:
+                            _may_write = True
         except Exception:
             _may_write = False
 
@@ -22300,9 +22320,24 @@ async def v296_subscriber_token(request: Request):
     """Délivre un jeton d'appareil pour un abonné dont le CODE est valide et actif.
 
     Le code est lu dans le CORPS (POST), pas en query string, pour ne pas finir
-    dans les journaux/Referer. L'email éventuel n'est qu'un attribut du jeton :
-    c'est la POSSESSION du code valide qui fait foi (modèle « capability »,
-    identique à tout l'espace abonné)."""
+    dans les journaux/Referer.
+
+    V390 — PRISE DE COMPTE (3e porte, la plus grave). L'e-mail était traité comme
+    « un simple attribut du jeton », NON VÉRIFIÉ. On signait donc n'importe quel
+    couple (code valide, e-mail arbitraire). Or `/chat/smart-entry` fait ensuite
+    confiance à `token.email` pour accorder l'accès (`_may_write`). Conséquence,
+    prouvée en production le 7 août 2026 : **tout abonné légitime pouvait entrer
+    chez n'importe quel autre** en présentant SON PROPRE code avec l'ADRESSE de sa
+    victime — il lui suffisait de connaître son e-mail.
+        POST /subscriber/token {code: <son code à lui>, email: <victime>} -> 200
+        POST /chat/smart-entry  + ce jeton                                -> COMPTE OUVERT
+    Le « modèle capability » ne tenait plus dès lors que le jeton portait une
+    IDENTITÉ : une capacité ne doit jamais désigner quelqu'un d'autre que soi.
+
+    Le code et l'e-mail doivent désormais désigner LA MÊME personne : si le code
+    porte un `assignedEmail`, il doit correspondre. Même règle que
+    `/discount-codes/validate` (« Code réservé à un autre compte »), qui, lui,
+    faisait déjà cette vérification — d'où l'incohérence."""
     try:
         body = await request.json()
     except Exception:
@@ -22312,6 +22347,21 @@ async def v296_subscriber_token(request: Request):
     ok, name, _cid = await _v261_resolve_subscriber(code)
     if not ok:
         raise HTTPException(status_code=403, detail="Code abonné invalide ou inactif")
+
+    # V390 : le code doit APPARTENIR à l'e-mail demandé. Un code non assigné
+    # (`assignedEmail` vide) reste utilisable tel quel — c'est le cas des codes
+    # collectifs, et il n'ouvre alors le compte de personne en particulier.
+    if email:
+        _dc = await db.discount_codes.find_one(
+            {"code": {"$regex": f"^{re.escape(code)}$", "$options": "i"}},
+            {"_id": 0, "assignedEmail": 1},
+        )
+        _assigne = ((_dc or {}).get("assignedEmail") or "").strip().lower()
+        if _assigne and _assigne != email:
+            logger.warning(
+                f"[V390] Jeton REFUSE : code {code} assigne a {_assigne}, demande pour {email}"
+            )
+            raise HTTPException(status_code=403, detail="Code réservé à un autre compte")
     from api.routes.shared import make_subscriber_token, jwt_secret_is_set
     token = make_subscriber_token(code, email)
     # secret absent -> token '' : le frontend garde le chemin actuel, rien ne casse.
