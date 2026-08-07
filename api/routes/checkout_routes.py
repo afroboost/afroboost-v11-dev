@@ -710,6 +710,22 @@ async def checkout_stripe_webhook(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid payload")
 
+    # V404 — RAPPEL AVANT DEBIT : `invoice.upcoming` est transmis au gestionnaire
+    # client, qui porte le texte valide (V400) et la seule brique d'envoi du parc
+    # (Resend). Le LIVE, lui, n'a ni Resend ni SMTP ni push : c'est donc afroboost
+    # qui porte le rappel pour les deux — option (b) retenue par le proprietaire.
+    #
+    # ⚠️ SANS CE BLOC, RIEN N'ARRIVE. Cette URL est la seule declaree chez Stripe
+    # pour afroboost, et elle ne deleguait QUE `checkout.session.completed` : un
+    # `invoice.upcoming` y serait tombe dans le vide avec un 200, exactement le
+    # piege du paiement perdu de V384.
+    if event_data.get("type") == "invoice.upcoming":
+        from api.server import stripe_webhook as _webhook_client
+        request.state.afroboost_event_verifie = event_data
+        resultat = await _webhook_client(request)
+        logger.info("[CHECKOUT-WEBHOOK] V404 invoice.upcoming transmis au rappel")
+        return resultat
+
     if event_data.get("type") == "checkout.session.completed":
         session = event_data["data"]["object"]
         metadata = session.get("metadata", {})
