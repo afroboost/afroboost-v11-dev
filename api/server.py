@@ -6146,6 +6146,25 @@ async def check_subscriber_exists(email: str = ""):
     Vérifie si un abonné existe pour cet email (code promo actif assigné).
     Contrairement à /subscriber/recover : pas d'envoi d'email, pas de rate-limit.
     Utilisé par le flow email-first du ChatWidget pour router abonné/visiteur.
+
+    V389 — PRISE DE COMPTE. Cette route renvoyait le CODE D'ACCÈS EN CLAIR à tout
+    appelant connaissant l'e-mail — sans authentification et sans limite de débit.
+    Or le code EST le mot de passe de l'abonné (modèle « capability ») : le donner
+    contre un e-mail revient à publier le mot de passe. Chaîne d'attaque mesurée en
+    production le 7 août 2026, depuis un navigateur vierge :
+        /subscriber/check?email=X   -> le code
+        /subscriber-info/<code>     -> nom, WhatsApp, e-mail, date de naissance
+        /discount-codes/validate    -> valide
+        /subscriber/token           -> jeton d'appareil
+        /chat/smart-entry           -> COMPTE OUVERT (séances, QR, réservations)
+    Le widget enchaînait ces appels TOUT SEUL : saisir l'e-mail de quelqu'un
+    suffisait à entrer chez lui, sans jamais taper le moindre code.
+
+    On ne renvoie donc plus QUE l'existence. `code` et `name` sont retirés : le
+    premier est le secret lui-même, le second est une donnée personnelle qui n'a
+    pas à sortir sans preuve. Le formulaire réclame maintenant le code à l'abonné,
+    et c'est `/subscriber-info/{code}` — protégé par la connaissance du code — qui
+    fournit ensuite le nom pour le pré-remplissage.
     """
     try:
         email = (email or "").lower().strip()
@@ -6160,9 +6179,8 @@ async def check_subscriber_exists(email: str = ""):
         if not discount:
             return {"found": False}
 
-        code = discount.get("code", "").upper()
-        name = discount.get("name", email.split("@")[0])
-        return {"found": True, "code": code, "name": name}
+        # V389 : EXISTENCE SEULE. Ne jamais rajouter `code` ni `name` ici.
+        return {"found": True}
     except Exception as e:
         logger.error(f"[SUBSCRIBER-CHECK] Error: {e}")
         # En cas d'erreur, on ne bloque pas : l'utilisateur sera traité comme visiteur
@@ -11962,15 +11980,27 @@ async def recover_subscriber_access(request: Request):
                 logger.warning(f"[SUBSCRIBER-RECOVER] Email send error: {e}")
                 # Continue anyway - code info will be returned
 
+        # V389 — PRISE DE COMPTE (2e porte). Cette route ENVOIE le code par e-mail
+        # à son propriétaire — c'est son but — mais elle le renvoyait AUSSI dans la
+        # réponse HTTP, à l'appelant. N'importe qui connaissant l'e-mail d'un abonné
+        # récupérait donc son code à l'écran, sans jamais accéder à sa boîte mail.
+        # La limite de débit (3 / 10 min) ne protège rien : une seule tentative
+        # suffit pour un compte donné.
+        # Le secret part désormais UNIQUEMENT par e-mail, vers l'adresse enregistrée.
+        # L'e-mail de destination est MASQUÉ dans la réponse : il confirme à la
+        # personne où regarder, sans révéler l'adresse à un inconnu.
+        try:
+            _u, _d = (found_email or "").split("@", 1)
+            _masque = (_u[:2] + "•" * max(1, len(_u) - 2)) + "@" + _d
+        except ValueError:
+            _masque = ""
         return {
             "success": True,
-            "code": code,
-            "email": found_email,
-            "name": name,
-            "sessions_remaining": remaining,
-            "sessions_total": max_uses,
-            "qr_code_url": qr_url,
-            "sent_to_chat": False
+            "email_masked": _masque,
+            "email_sent": True,
+            "sent_to_chat": False,
+            # V389 : `code`, `name`, `sessions_*` et `qr_code_url` RETIRÉS —
+            # tous dérivés du secret ou personnels. Ne jamais les remettre ici.
         }
 
     except HTTPException:

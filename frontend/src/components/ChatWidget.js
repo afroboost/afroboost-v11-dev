@@ -3986,16 +3986,17 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         whatsapp: whatsapp.trim() || undefined
       });
 
-      if (res.data?.code) {
+      // V389 : la réponse ne porte PLUS ni code, ni QR, ni solde de séances — le
+      // secret part par e-mail uniquement. On se cale donc sur `success`, et on
+      // n'affiche que l'adresse masquée. NE JAMAIS journaliser le code ici : la
+      // console d'un navigateur partagé le rendrait de nouveau lisible.
+      if (res.data?.success) {
         setRecoverResult({
           success: true,
-          code: res.data.code,
-          qr_code_url: res.data.qr_code_url,
-          sessions_remaining: res.data.sessions_remaining,
-          offer_name: res.data.offer_name,
+          email_masked: res.data.email_masked || '',
           email_sent: res.data.email_sent
         });
-        console.log('[RECOVER] Accès récupéré:', res.data.code);
+        console.log('[RECOVER] Code envoyé par e-mail');
       } else {
         setRecoverError('Aucun abonnement trouvé avec ces informations.');
       }
@@ -4033,29 +4034,28 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     try {
       // V215: Vérification légère (pas d'envoi d'email, pas de rate-limit)
       var res = await axios.get(API + '/subscriber/check', { params: { email: emailVal } });
-      if (res.data && res.data.found && res.data.code) {
-        // Abonné trouvé → pré-remplir le formulaire abonné
+      // V389 : la réponse ne contient PLUS que `found`. On ne teste donc plus
+      // `res.data.code` — il n'existe plus, et c'est précisément le correctif.
+      if (res.data && res.data.found) {
+        // Abonné trouvé → afficher le formulaire, CODE VIDE : il doit être saisi.
         setIsKnownSubscriber(true);
-        // V294 : compléter avec les infos BACKEND (source de vérité) — surtout la
-        // date de naissance, sinon le formulaire la redemandait sur chaque appareil.
-        var info294 = await v294FetchSubscriberInfo(res.data.code);
-        if (info294) v294CacheSubscriberInfo(info294);
-        // Si le backend a déjà TOUT : connexion directe, aucun formulaire.
-        if (info294 && info294.exists && info294.name && info294.whatsapp && info294.birthday) {
-          var okDirect = await connectSubscriberWithData({
-            name: info294.name, whatsapp: info294.whatsapp, email: emailVal,
-            code: res.data.code, birthday: info294.birthday
-          });
-          if (okDirect) { setEmailChecking(false); return; }
-        }
+        // V389 — PRISE DE COMPTE FERMÉE. Ce bloc appelait `/subscriber-info/<code>`
+        // avec le code que `/subscriber/check` venait de livrer, puis, si le backend
+        // connaissait déjà nom + WhatsApp + anniversaire, appelait DIRECTEMENT
+        // connectSubscriberWithData : saisir l'e-mail de quelqu'un ouvrait son
+        // compte, sans qu'aucun code ne soit jamais tapé. Prouvé en production le
+        // 7 août 2026 depuis un navigateur vierge.
+        // La connexion automatique est SUPPRIMÉE, et le champ Code part VIDE.
+        // Le nom/WhatsApp/anniversaire ne sont plus pré-remplis depuis le serveur
+        // sur la seule foi de l'e-mail : ce qui reste vient du localStorage de CET
+        // appareil (donc d'une connexion déjà prouvée ici), jamais du réseau.
         setSubscriberFormData(function(prev) {
           return {
-            name: (info294 && info294.name) || res.data.name || prev.name || '',
-            whatsapp: (info294 && info294.whatsapp) || res.data.whatsapp || prev.whatsapp || '',
+            name: prev.name || '',
+            whatsapp: prev.whatsapp || '',
             email: emailVal,
-            code: res.data.code,
-            // V294 : préserver / restaurer l'anniversaire (backend puis état courant)
-            birthday: (info294 && info294.birthday) || prev.birthday || ''
+            code: '',
+            birthday: prev.birthday || ''
           };
         });
         setEmailCheckDone(true);
@@ -8310,7 +8310,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           Accès retrouvé !
                         </p>
 
-                        {/* Code abonné */}
+                        {/* V389 — PRISE DE COMPTE : le CODE, le QR et le solde de
+                            séances ne s'affichent PLUS ici. Cet écran était atteignable
+                            avec le seul e-mail de la personne : il montrait donc son code
+                            (= son mot de passe) à n'importe qui. Le secret part désormais
+                            uniquement par e-mail, vers l'adresse enregistrée — que seul
+                            le propriétaire peut consulter. */}
                         <div style={{
                           background: 'rgba(147, 51, 234, 0.2)',
                           border: '1px solid rgba(147, 51, 234, 0.4)',
@@ -8318,55 +8323,27 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           padding: '12px',
                           marginTop: '12px'
                         }}>
-                          <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px' }}>
-                            Votre code abonné
+                          <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '13px', lineHeight: '1.5' }}>
+                            Ton code d'accès vient d'être envoyé par e-mail
+                            {recoverResult.email_masked ? ' à ' : ''}
+                            {recoverResult.email_masked && (
+                              <strong style={{ color: 'var(--primary-color, #D91CD2)' }}>
+                                {recoverResult.email_masked}
+                              </strong>
+                            )}
+                            .
                           </p>
-                          <p style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '22px', fontWeight: '800', letterSpacing: '3px', marginTop: '4px' }}>
-                            {recoverResult.code}
+                          <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', marginTop: '8px' }}>
+                            Ouvre ta boîte mail, puis reviens le saisir ici. Pense à regarder
+                            dans les indésirables.
                           </p>
-                          {recoverResult.offer_name && (
-                            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', marginTop: '4px' }}>
-                              {recoverResult.offer_name} — {recoverResult.sessions_remaining ?? '∞'} séance(s) restante(s)
-                            </p>
-                          )}
                         </div>
 
-                        {/* QR Code */}
-                        {recoverResult.qr_code_url && (
-                          <div style={{ marginTop: '12px' }}>
-                            <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '11px', marginBottom: '8px' }}>
-                              Votre QR Code d'accès :
-                            </p>
-                            <img
-                              src={recoverResult.qr_code_url}
-                              alt="QR Code abonné"
-                              style={{
-                                width: '180px',
-                                height: '180px',
-                                borderRadius: '12px',
-                                background: '#fff',
-                                padding: '8px',
-                                margin: '0 auto',
-                                display: 'block'
-                              }}
-                            />
-                            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', marginTop: '8px' }}>
-                              Faites une capture d'écran pour le garder sur votre téléphone
-                            </p>
-                          </div>
-                        )}
-
-                        {recoverResult.email_sent && (
-                          <p style={{ color: '#22c55e', fontSize: '11px', marginTop: '8px' }}>
-                            Un email de rappel a aussi été envoyé
-                          </p>
-                        )}
-
-                        {/* Bouton pour s'identifier directement */}
+                        {/* Bouton retour vers le formulaire — CODE VIDE, à saisir */}
                         <button
                           type="button"
                           onClick={() => {
-                            setSubscriberFormData(prev => ({ ...prev, code: recoverResult.code }));
+                            setSubscriberFormData(prev => ({ ...prev, code: '' }));
                             setShowRecoverForm(false);
                             setShowSubscriberForm(true);
                             setRecoverResult(null);
@@ -8384,7 +8361,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                             fontSize: '13px'
                           }}
                         >
-                          S'identifier avec ce code
+                          Saisir mon code
                         </button>
                       </div>
                     )}
