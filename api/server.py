@@ -6010,6 +6010,61 @@ async def stripe_webhook(request: Request):
                             logger.warning(f"[PUSH-V180] notif vente coach échec: {_pe}")
                     except Exception as notify_err:
                         logger.warning(f"[PAYMENT] Coach notification error: {notify_err}")
+        elif event.type == 'invoice.upcoming':
+            # V400 — ÉCHÉANCE À VENIR : c'est le déclencheur du rappel J-3.
+            #
+            # ⚠️ DEUX CHOSES À SAVOIR, ET ELLES COMPTENT.
+            # 1. Stripe n'émet `invoice.upcoming` QUE pour un abonnement RÉCURRENT
+            #    (`mode="subscription"`). Ce dépôt ne crée aujourd'hui que des
+            #    paiements uniques (`mode="payment"`) : cet événement n'arrivera
+            #    donc JAMAIS tant que les offres n'auront pas été passées en
+            #    récurrent. Le brancher maintenant ne casse rien et évite d'avoir
+            #    à y repenser le jour de la bascule.
+            # 2. LE DÉLAI N'EST PAS DANS CE CODE. Stripe décide combien de jours
+            #    à l'avance il envoie cet événement — réglage « Upcoming invoice »
+            #    du tableau de bord Billing. Il faut l'y poser à 3 JOURS pour que
+            #    ce chemin tienne la promesse J-3. C'est pourquoi le balayage
+            #    interne (`/cron/rappel-renouvellement`) reste la voie de secours :
+            #    lui calcule J-3 lui-même et ne dépend d'aucun réglage externe.
+            #
+            # Le rappel part par le MÊME texte que le balayage interne — une seule
+            # source, donc pas de divergence entre les deux chemins.
+            try:
+                facture = event.data.object
+                _email = (facture.get("customer_email") or "").strip().lower()
+                if not _email:
+                    logger.info("[V400] invoice.upcoming sans e-mail client — ignore")
+                elif not (RESEND_AVAILABLE and RESEND_API_KEY):
+                    logger.warning("[V400] Resend indisponible — rappel non envoye")
+                else:
+                    _sub = await db.subscriptions.find_one(
+                        {"email": _email, "status": "active"}, {"_id": 0}
+                    )
+                    _ts = facture.get("next_payment_attempt") or facture.get("period_end")
+                    _dt = (datetime.fromtimestamp(int(_ts), tz=timezone.utc)
+                           if _ts else datetime.now(timezone.utc) + timedelta(days=V398_DELAI_JOURS))
+                    _lisible = _dt.strftime("%d.%m.%Y")
+                    _prix = float(facture.get("amount_due") or 0) / 100.0
+                    _montant = f"{_prix:.2f}".rstrip("0").rstrip(".") or "0"
+                    _prenom = ((_sub or {}).get("name") or _email.split("@")[0]).split(" ")[0]
+                    _code = (_sub or {}).get("code") or ""
+                    await asyncio.to_thread(resend.Emails.send, {
+                        "from": "Afroboost <notifications@afroboost.com>",
+                        "to": [_email],
+                        "subject": V398_SUJET,
+                        "html": _v398_corps_rappel(
+                            _prenom,
+                            (_sub or {}).get("offer_name") or "Afroboost",
+                            _lisible,
+                            _montant,
+                            f"https://afroboost.com/espace/{_code}" if _code else "https://afroboost.com",
+                        ),
+                    })
+                    logger.info(f"[V400] Rappel de reconduction envoye a {_email} pour le {_lisible}")
+            except Exception as _e400:
+                # Un rappel manqué ne doit jamais faire échouer le webhook : Stripe
+                # rejouerait alors tout l'événement, et pourrait ré-envoyer l'e-mail.
+                logger.warning(f"[V400] Rappel invoice.upcoming ignore: {_e400}")
         elif event.type == 'checkout.session.expired':
             session = event.data.object
             await db.payment_transactions.update_one({"session_id": session.id}, {"$set": {"status": "expired", "webhook_received_at": datetime.now(timezone.utc).isoformat()}})
@@ -11775,44 +11830,58 @@ async def _v195_auto_renew(sub: dict) -> bool:
 V398_DELAI_JOURS = 3  # rappel 3 jours avant l'échéance
 
 
-def _v398_corps_rappel(prenom, date_echeance, montant, devise, seances, lien_annulation):
-    """Le texte EXACT du rappel. Trois obligations : dire que ça va être reconduit
-    (date + montant), dire qu'il n'y a AUCUN remboursement après, et donner le moyen
-    d'annuler AVANT."""
-    return f"""<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#0a0a0a;color:#fff;border-radius:16px;overflow:hidden;">
-  <div style="background:linear-gradient(135deg,#D91CD2,#8b5cf6);padding:22px;text-align:center;">
-    <h1 style="color:#fff;margin:0;font-size:20px;">Ton abonnement Afroboost sera reconduit</h1>
-  </div>
-  <div style="padding:24px;">
-    <p style="font-size:15px;margin:0 0 16px;">Bonjour {prenom},</p>
-    <p style="font-size:14px;line-height:1.6;margin:0 0 18px;">
-      Ton abonnement arrive à échéance. Sauf annulation de ta part, il sera
-      <strong>reconduit automatiquement</strong> :
-    </p>
-    <div style="background:rgba(217,28,210,0.12);border:1px solid rgba(217,28,210,0.35);border-radius:12px;padding:16px;margin:0 0 18px;">
-      <table style="width:100%;font-size:14px;">
-        <tr><td style="color:#bbb;padding:5px 0;">Date de reconduction</td><td style="text-align:right;color:#fff;font-weight:bold;">{date_echeance}</td></tr>
-        <tr><td style="color:#bbb;padding:5px 0;">Montant prélevé</td><td style="text-align:right;color:#fff;font-weight:bold;">{montant} {devise}</td></tr>
-        <tr><td style="color:#bbb;padding:5px 0;">Séances incluses</td><td style="text-align:right;color:#fff;font-weight:bold;">{seances}</td></tr>
-        <tr><td style="color:#bbb;padding:5px 0;">Validité</td><td style="text-align:right;color:#fff;">2 mois</td></tr>
-      </table>
-    </div>
-    <div style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);border-radius:12px;padding:14px;margin:0 0 18px;">
-      <p style="color:#fca5a5;font-size:14px;font-weight:bold;margin:0 0 6px;">Aucun remboursement après le renouvellement.</p>
-      <p style="color:#e2e8f0;font-size:13px;line-height:1.5;margin:0;">
-        Une fois le prélèvement effectué, le montant n'est plus remboursable. Si tu ne
-        souhaites pas reconduire, annule <strong>avant le {date_echeance}</strong>.
-      </p>
-    </div>
-    <div style="text-align:center;margin:0 0 8px;">
-      <a href="{lien_annulation}" style="display:inline-block;background:transparent;color:#D91CD2;border:1px solid #D91CD2;padding:13px 30px;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">Annuler la reconduction</a>
-      <p style="color:#777;font-size:12px;margin:10px 0 0;">Tu gardes tes séances déjà payées jusqu'à leur date de validité.</p>
-    </div>
-    <p style="color:#666;font-size:11px;text-align:center;margin:22px 0 0;line-height:1.5;">
-      Tu reçois ce message {V398_DELAI_JOURS} jours avant l'échéance, pour avoir le temps de décider.<br>
-      Une question ? Réponds simplement à cet e-mail.
-    </p>
-  </div>
+V398_SUJET = "Ton abonnement Afroboost se renouvelle bientôt \U0001F514"
+
+
+def _v398_corps_rappel(prenom, nom_forfait, date_echeance, montant, lien_annulation):
+    """Le texte VALIDÉ du rappel, mot pour mot.
+
+    ⚠️ NE PAS REFORMULER. Ce texte a été relu et validé tel quel par le
+    propriétaire ; les cinq crochets d'origine — [Prénom], [nom du forfait],
+    [date], [montant], [lien] — sont les SEULES parties variables. La mention de
+    non-remboursement en particulier a une portée contractuelle : la réécrire,
+    même « mieux », changerait ce à quoi le client a consenti.
+
+    Les emojis sont ceux du texte validé. La règle « SVG et jamais d'emoji » du
+    dépôt vise les ICÔNES DE L'INTERFACE, pas la prose d'un e-mail — et la
+    contrainte « pas d'emoji » de Meta ne concerne que les gabarits WhatsApp.
+
+    `date_echeance` apparaît DEUX FOIS (reconduction et date limite d'annulation)
+    et c'est voulu : c'est la même date, répétée pour que la limite soit lue.
+    """
+    return f"""<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;padding:28px 24px;background:#0a0a0a;color:#e9e9e9;border-radius:16px;font-size:15px;line-height:1.65;">
+  <p style="margin:0 0 18px;">Bonjour {prenom},</p>
+
+  <p style="margin:0 0 18px;">
+    Petit rappel amical : ton abonnement <strong style="color:#fff;">{nom_forfait}</strong>
+    sera reconduit automatiquement le <strong style="color:#fff;">{date_echeance}</strong>,
+    pour <strong style="color:#fff;">{montant} CHF</strong>.
+  </p>
+
+  <p style="margin:0 0 18px;">
+    Tu n'as rien à faire si tu veux continuer — tes séances repartent pour un nouveau cycle. \U0001F4AA
+  </p>
+
+  <p style="margin:0 0 6px;">
+    Si tu ne souhaites pas reconduire, tu peux annuler avant le {date_echeance} ici :
+  </p>
+  <p style="margin:0 0 20px;">
+    \U0001F449 <a href="{lien_annulation}" style="color:#D91CD2;font-weight:bold;">{lien_annulation}</a>
+  </p>
+
+  <p style="margin:0 0 18px;padding:14px;background:rgba(239,68,68,0.10);border:1px solid rgba(239,68,68,0.35);border-radius:10px;">
+    \u26A0\uFE0F À noter : une fois le renouvellement effectué, <strong>aucun remboursement n'est possible</strong>.
+    Pense donc à annuler avant la date si tu ne veux pas continuer.
+  </p>
+
+  <p style="margin:0 0 18px;">
+    Une question ? Réponds simplement à cet e-mail, je suis là. \U0001F64F
+  </p>
+
+  <p style="margin:0;">
+    À très vite,<br>
+    <strong style="color:#fff;">Coach Bassi — Afroboost</strong>
+  </p>
 </div>"""
 
 
@@ -11860,13 +11929,20 @@ async def v398_rappel_renouvellement(request: Request, apercu: bool = True):
             lisible = f"{j}.{m}.{a}"
         except ValueError:
             lisible = jour
+        # Le montant sans décimales inutiles : « 250 CHF », pas « 250.00 CHF ».
+        _prix = float(sub.get("renewal_price") or 0)
+        _montant = f"{_prix:.2f}".rstrip("0").rstrip(".") or "0"
         lettres.append({
             "destinataire": sub.get("email"),
-            "sujet": f"Ton abonnement Afroboost sera reconduit le {lisible}",
+            "sujet": V398_SUJET,
             "html": _v398_corps_rappel(
-                prenom or "toi", lisible,
-                f"{float(sub.get('renewal_price') or 0):.2f}", "CHF",
-                int(sub.get("renewal_sessions") or 0),
+                prenom or "toi",
+                sub.get("offer_name") or "Afroboost",
+                lisible,
+                _montant,
+                # Le lien d'annulation EST l'espace abonné : c'est là que vit
+                # l'interrupteur de reconduction (`auto_renew`), et l'abonné y
+                # entre par simple possession de son code.
                 f"https://afroboost.com/espace/{sub.get('code')}",
             ),
             "subscription_id": sub.get("id"),
