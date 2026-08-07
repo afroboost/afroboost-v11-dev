@@ -61,7 +61,53 @@ async def activate_after_payment(
         transaction_ref : référence de la transaction chez le prestataire
         log_prefix      : préfixe des logs, pour tracer quel webhook a appelé
     """
-    tx_type = local_tx.get("type", "")
+    tx_type = local_tx.get("type", "") or (local_tx.get("metadata") or {}).get("type", "")
+
+    # --- V401 : achat du PANIER de la vitrine ---
+    #
+    # ⚠️ CE CHEMIN NE PASSE PAS PAR L'ACTIVATION GÉNÉRIQUE, ET C'EST VOULU. Le
+    # panier a la sienne (`_process_successful_payment`) : elle crée le code, la
+    # souscription, les RÉSERVATIONS des articles de type « course », et envoie
+    # les deux e-mails (client + vendeur). L'activation générique plus bas ne fait
+    # rien de tout cela — un panier honoré par elle sortirait sans réservation et
+    # sans e-mail au vendeur.
+    #
+    # Import TARDIF : `checkout_routes` importe déjà ce module, un import en tête
+    # de fichier créerait un cycle.
+    if tx_type == "vitrine_purchase":
+        meta = local_tx.get("metadata") or {}
+        try:
+            from api.routes.checkout_routes import _process_successful_payment, CheckoutItem
+            articles = [CheckoutItem(**a) for a in (meta.get("items") or [])]
+            await _process_successful_payment(
+                transaction_id=meta.get("checkout_transaction_id") or transaction_ref,
+                coach_email=meta.get("coach_email", ""),
+                customer_name=local_tx.get("customer_name", ""),
+                customer_email=(local_tx.get("customer_email", "") or "").lower(),
+                customer_phone=local_tx.get("customer_phone", ""),
+                items=articles,
+                # Le montant facturé au client reste le prix CHF de la vitrine :
+                # `amount` est en devise LOCALE et n'a pas de sens dans le code
+                # d'accès ni dans l'e-mail du vendeur.
+                total=float(meta.get("total_chf") or local_tx.get("amount_chf") or 0),
+                currency="CHF",
+                payment_method=provider,
+                discount_code=meta.get("discount_code"),
+            )
+            await db["checkout_transactions"].update_one(
+                {"transaction_id": meta.get("checkout_transaction_id")},
+                {"$set": {"status": "completed",
+                          "paid_amount_local": amount,
+                          "paid_currency": currency,
+                          "provider_ref": transaction_ref,
+                          "completed_at": datetime.now(timezone.utc).isoformat()}},
+            )
+            logger.info(f"[{log_prefix}] V401 panier vitrine honore: {meta.get('checkout_transaction_id')}")
+        except Exception as e:
+            # Le paiement est DÉJÀ encaissé : on journalise fort et on ne relève
+            # pas — relever ferait rejouer tout le webhook par le prestataire.
+            logger.error(f"[{log_prefix}] V401 ECHEC activation panier vitrine: {e}")
+        return
 
     # --- Inscription Partenaire ---
     if tx_type == "coach_registration":

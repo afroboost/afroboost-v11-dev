@@ -1,6 +1,10 @@
 // v15.0: Integrated Checkout for Partner Vitrine
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+// V401 : le MEME selecteur de pays que les offres a l'unite et le Boost. Sa
+// liste vient du backend (`/api/pawapay/available`), donc un pays qui s'ouvre
+// sur le compte pawaPay apparait ici sans redeployer le frontend.
+import PawaPayCountrySelect from './PawaPayCountrySelect';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -22,6 +26,9 @@ const VitrineCheckout = ({
   const [selectedMethod, setSelectedMethod] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  // V401 : pays du Mobile Money pawaPay. Vide = le backend tranche
+  // (`resoudre_pays`), exactement comme les autres points de paiement.
+  const [paysPawapay, setPaysPawapay] = useState('');
 
   // Charger les méthodes de paiement disponibles du partenaire
   useEffect(() => {
@@ -102,7 +109,10 @@ const VitrineCheckout = ({
         customer_email: customerEmail,
         customer_phone: customerPhone || '',
         discount_code: appliedDiscount?.code || null,
-        discount_amount: discountAmount > 0 ? discountAmount : null
+        discount_amount: discountAmount > 0 ? discountAmount : null,
+        // V401 : ignore par tous les autres moyens (champ optionnel cote
+        // backend), donc aucun parcours existant ne change.
+        ...(selectedMethod === 'pawapay' && paysPawapay ? { country: paysPawapay } : null)
       });
 
       if (res.data.free) {
@@ -149,10 +159,36 @@ const VitrineCheckout = ({
     position: 'relative'
   });
 
+  // V401 : icones SVG INLINE. La regle du depot l'exige (« ALL icons must be SVG
+  // inline — never use emoji Unicode characters as icons »), et les trois
+  // premieres etaient encore en emoji : elles sont converties ici, le libelle et
+  // le sous-titre restent mot pour mot.
+  const Ico = ({ d }) => (
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
+         strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {d}
+    </svg>
+  );
   const methodConfig = {
-    card: { icon: '💳', label: 'Carte / TWINT', subtitle: 'Visa, Mastercard, TWINT' },
-    paypal: { icon: '🅿️', label: 'PayPal', subtitle: 'Paiement sécurisé' },
-    mobile_money: { icon: '📱', label: 'Mobile Money', subtitle: 'MTN, Orange, Moov' }
+    card: {
+      icon: <Ico d={<><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20" /></>} />,
+      label: 'Carte / TWINT', subtitle: 'Visa, Mastercard, TWINT'
+    },
+    paypal: {
+      icon: <Ico d={<><path d="M6 20l2-14h5a4 4 0 010 8H9" /><path d="M9 20h4a4 4 0 000-8" /></>} />,
+      label: 'PayPal', subtitle: 'Paiement sécurisé'
+    },
+    mobile_money: {
+      icon: <Ico d={<><rect x="6" y="2" width="12" height="20" rx="2" /><path d="M11 18h2" /></>} />,
+      label: 'Mobile Money', subtitle: 'MTN, Orange, Moov'
+    },
+    // V401 : le moyen qui manquait au panier. pawaPay est configure et ouvert sur
+    // 12 pays ; il n'etait branche que sur les offres a l'unite, les packs
+    // partenaire et le Boost.
+    pawapay: {
+      icon: <Ico d={<><rect x="6" y="2" width="12" height="20" rx="2" /><path d="M9 6h6" /><path d="M11 18h2" /></>} />,
+      label: 'Mobile Money', subtitle: 'MTN, Orange, Airtel, Moov'
+    }
   };
 
   // === RENDER ===
@@ -263,13 +299,30 @@ const VitrineCheckout = ({
                     <span style={{ color: 'white', fontSize: '11px' }}>✓</span>
                   </div>
                 )}
-                <div style={{ fontSize: '28px', marginBottom: '6px' }}>{cfg.icon}</div>
+                <div style={{ marginBottom: '6px', display: 'flex', justifyContent: 'center', color: 'var(--primary-color, #D91CD2)' }}>{cfg.icon}</div>
                 <div style={{ color: 'white', fontSize: '14px', fontWeight: '600' }}>{cfg.label}</div>
                 <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px', marginTop: '2px' }}>{cfg.subtitle}</div>
               </div>
             );
           })}
         </div>
+
+        {/* V401 — SELECTEUR DE PAYS, uniquement pour pawaPay.
+            Sans lui, `resoudre_pays` retombe sur le pays par defaut du compte et
+            un client ivoirien pouvait se voir proposer des operateurs d'un autre
+            pays. Le composant est celui des offres a l'unite : meme liste, servie
+            par le backend, donc un pays qui s'ouvre apparait sans redeployer. */}
+        {selectedMethod === 'pawapay' && (
+          <div style={{ marginTop: '14px' }}>
+            <PawaPayCountrySelect
+              value={paysPawapay}
+              onChange={setPaysPawapay}
+            />
+            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px', margin: '6px 0 0' }}>
+              Le montant est converti dans la devise du pays choisi.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Erreur */}

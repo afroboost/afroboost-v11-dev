@@ -49,6 +49,11 @@ class CreateCheckoutRequest(BaseModel):
     discount_amount: Optional[float] = None  # Montant de réduction appliqué
     success_url: Optional[str] = None
     cancel_url: Optional[str] = None
+    # V401 : pays du Mobile Money pawaPay (« CIV », « SEN »…). Optionnel et
+    # ignoré par tous les autres moyens : aucun appelant existant ne le passe,
+    # donc aucun parcours actuel ne change. Absent, `resoudre_pays` retombe sur
+    # la configuration du compte pawaPay comme partout ailleurs.
+    country: Optional[str] = None
 
     class Config:
         populate_by_name = True
@@ -172,10 +177,19 @@ async def create_checkout_session(req: CreateCheckoutRequest):
             "message": "Réservation confirmée gratuitement !"
         }
 
-    # Récupérer les clés du vendeur
-    keys, error = await get_payment_keys(req.coach_email, req.payment_method)
-    if error:
-        raise HTTPException(status_code=400, detail=error)
+    # Récupérer les clés du vendeur.
+    #
+    # V401 : pawaPay est SAUTÉ ici, et c'est délibéré. `get_payment_keys` résout
+    # des clés PAR VENDEUR (Stripe, PayPal, CinetPay du partenaire) ; l'intégration
+    # pawaPay est GLOBALE — un seul compte, un seul jeton, une seule URL de
+    # callback déjà déclarée chez pawaPay. La faire passer par ce résolveur
+    # obligerait chaque partenaire à saisir des clés qu'il n'a pas, et ferait
+    # échouer le moyen pour tout le monde sauf l'admin.
+    keys = {}
+    if req.payment_method != "pawapay":
+        keys, error = await get_payment_keys(req.coach_email, req.payment_method)
+        if error:
+            raise HTTPException(status_code=400, detail=error)
 
     transaction_id = f"txn_{uuid.uuid4().hex[:12]}"
     items_desc = ", ".join([f"{item.name} x{item.quantity}" for item in req.items])
@@ -454,6 +468,113 @@ async def create_checkout_session(req: CreateCheckoutRequest):
             raise
         except Exception as e:
             logger.error(f"[CHECKOUT] Erreur CinetPay: {e}")
+            raise HTTPException(status_code=500, detail=f"Erreur Mobile Money: {str(e)[:200]}")
+
+    # ===== MOBILE MONEY (pawaPay) — V401 =====
+    #
+    # Le panier de la vitrine n'avait qu'un Mobile Money : CinetPay, inerte en
+    # production. pawaPay, lui, est configuré et ouvert sur 12 pays — mais n'était
+    # branché QUE sur les offres à l'unité, les packs partenaire et le Boost.
+    # Cette branche l'ajoute au panier, À CÔTÉ des trois moyens existants, sans en
+    # modifier aucun.
+    #
+    # ⚠️ L'ACTIVATION RESTE CELLE DE LA VITRINE. On ne réutilise pas l'activation
+    # générique de pawaPay : le panier a la sienne (`_process_successful_payment`),
+    # qui crée le code, l'abonnement, les RÉSERVATIONS des articles de type
+    # « course » et envoie les deux e-mails. Le webhook pawaPay reconnaît le type
+    # `vitrine_purchase` et rebranche dessus (voir `payment_activation.py`).
+    elif req.payment_method == "pawapay":
+        try:
+            # Imports TARDIFS : `pawapay_routes` importe déjà ce module au
+            # chargement (chaîne checkout -> pawapay), un import en tête créerait
+            # un cycle. Même motif que `payment_activation` avec `boost_routes`.
+            from api.routes.pawapay_routes import (
+                require_pawapay, resoudre_pays, montant_dans_devise,
+                create_pawapay_deposit, normalize_msisdn,
+            )
+
+            token, base_url = await require_pawapay()
+            pays, devise = await resoudre_pays(token, base_url, req.country)
+            # Le prix en CHF fait foi : la conversion se fait ICI, jamais dans le
+            # navigateur — même règle que `create-checkout` (V382).
+            montant = montant_dans_devise(total, None, devise)
+            if not montant or montant <= 0:
+                raise HTTPException(status_code=400, detail="Montant de paiement invalide.")
+
+            # Le dépôt porte le MÊME identifiant que la transaction du panier :
+            # un seul numéro à rapprocher entre les deux collections, et le
+            # webhook retrouve le panier sans table de correspondance.
+            deposit_id = transaction_id
+
+            # Tout ce dont l'activation aura besoin est figé MAINTENANT, côté
+            # serveur. Le webhook ne recevra que le `depositId` : sans cela, il
+            # n'aurait aucun moyen de savoir quoi délivrer.
+            await db["pawapay_transactions"].insert_one({
+                "depositId": deposit_id,
+                "amount": montant,
+                "amount_chf": total,
+                "currency": devise,
+                "country": pays,
+                "description": items_desc[:255],
+                "customer_name": req.customer_name,
+                "customer_email": req.customer_email,
+                "customer_phone": req.customer_phone,
+                "type": "vitrine_purchase",
+                "metadata": {
+                    "type": "vitrine_purchase",
+                    "checkout_transaction_id": transaction_id,
+                    "coach_email": req.coach_email,
+                    "items": [i.dict() for i in req.items],
+                    "total_chf": total,
+                    "discount_code": req.discount_code,
+                },
+                "status": "pending",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+
+            await db["checkout_transactions"].insert_one({
+                "transaction_id": transaction_id,
+                "coach_email": req.coach_email,
+                "customer_email": req.customer_email,
+                "customer_name": req.customer_name,
+                "customer_phone": req.customer_phone,
+                "items": [i.dict() for i in req.items],
+                "total": total,
+                "total_local": montant,
+                "currency": devise,
+                "country": pays,
+                "payment_method": "pawapay",
+                "status": "pending",
+                "discount_code": req.discount_code,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+
+            payment_url = await create_pawapay_deposit(
+                token=token, base_url=base_url, deposit_id=deposit_id,
+                amount=montant, country=pays, reason=items_desc[:255],
+                return_url=success_url,
+                msisdn=normalize_msisdn(req.customer_phone), currency=devise,
+            )
+
+            logger.info(
+                f"[CHECKOUT] V401 pawaPay session creee: {transaction_id} "
+                f"pour {req.coach_email} ({montant} {devise}, {pays})"
+            )
+            return {
+                "success": True,
+                "payment_url": payment_url,
+                "transaction_id": transaction_id,
+                "method": "pawapay",
+                "currency": devise,
+                "amount_local": montant,
+                "country": pays,
+                "recipient": req.coach_email,
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"[CHECKOUT] V401 erreur pawaPay: {e}")
             raise HTTPException(status_code=500, detail=f"Erreur Mobile Money: {str(e)[:200]}")
 
     else:
