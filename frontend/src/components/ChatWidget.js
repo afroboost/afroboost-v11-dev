@@ -2153,6 +2153,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       .catch(() => { /* silencieux — repli localStorage */ });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCoachMode]);
+
   const [coachSessions, setCoachSessions] = useState([]); // Liste des sessions pour le coach
   // V345 : motif d'échec du chargement des conversations. '' = aucun échec.
   // 'expiree' = 401/403 (session périmée ou non signée) ; 'reseau' = tout le reste.
@@ -2578,6 +2579,62 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     } catch { return null; }
   });
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  // === V388 : REVALIDER LE CODE EN CACHE À CHAQUE MONTAGE ===
+  // `getInitialStep()` ouvre le chat sur la SEULE présence d'un profil en
+  // localStorage — aucune vérification serveur. Un rafraîchissement « connectait »
+  // donc sans qu'aucun code valide n'ait jamais été prouvé, et un abonnement
+  // révoqué/expiré gardait son accès indéfiniment.
+  //
+  // On revérifie ici le code mémorisé auprès du serveur. `/subscriber/token` est le
+  // bon outil : il ne fait AUCUNE écriture, n'a pas de limite de débit (contrairement
+  // à smart-entry : 30 appels / 10 min / IP, qu'une salle en wifi partagé saturerait),
+  // et répond 403 précisément quand le code n'est plus un abonnement valide et actif.
+  //
+  // RÈGLE DE PRUDENCE : SEUL un 403 (refus EXPLICITE) retire l'accès. Une panne
+  // réseau, un 500, un time-out ne déconnectent JAMAIS personne — sans quoi un
+  // hoquet d'Atlas éjecterait tous les abonnés connectés.
+  useEffect(function () {
+    var prof = getStoredProfile();
+    var code = ((prof && prof.code) || '').trim();
+    if (!code) return;  // visiteur sans code : rien à revalider, parcours inchangé
+    var annule = false;
+    axios.post(API + '/subscriber/token', { code: code, email: ((prof && prof.email) || '').trim() })
+      .then(function (res) {
+        if (annule) return;
+        // Code toujours valide : on rafraîchit le jeton d'appareil au passage.
+        var tok = res && res.data && res.data.token;
+        if (tok) { try { localStorage.setItem('afroboost_subscriber_token', tok); } catch (e) { /* silencieux */ } }
+      })
+      .catch(function (err) {
+        if (annule) return;
+        var st = err && err.response && err.response.status;
+        if (st !== 403) return;  // incident technique -> on ne déconnecte pas
+        console.warn('[V388] Code en cache refuse par le serveur -> acces retire');
+        try {
+          localStorage.removeItem(AFROBOOST_PROFILE_KEY);
+          localStorage.removeItem('afroboost_subscriber_token');
+          localStorage.removeItem(CHAT_SESSION_KEY);
+        } catch (e) { /* silencieux */ }
+        setAfroboostProfile(null);
+        setIsFullscreen(false);
+        setSubscriberFormData(function (prev) {
+          return {
+            name: (prof && prof.name) || prev.name || '',
+            whatsapp: (prof && prof.whatsapp) || prev.whatsapp || '',
+            email: (prof && prof.email) || prev.email || '',
+            code: '',
+            birthday: (prof && prof.birthday) || prev.birthday || ''
+          };
+        });
+        setEmailCheckDone(true);
+        setShowSubscriberForm(true);
+        setStep('form');
+        setError('Ton code d\'accès n\'est plus valide. Entre-le à nouveau pour te reconnecter.');
+      });
+    return function () { annule = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   
   // === v76: ZOOM PHOTO PROFIL (crop supprimé définitivement) ===
   const [zoomedChatPhoto, setZoomedChatPhoto] = useState(null);
@@ -3814,6 +3871,38 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         savedAt: new Date().toISOString()
       };
 
+      // V388 — LE SERVEUR TRANCHE AVANT QU'ON ÉCRIVE QUOI QUE CE SOIT EN LOCAL.
+      // Auparavant le profil était posé dans le localStorage ICI, avant l'appel à
+      // smart-entry. Quand celui-ci refusait (`proof_required`), l'utilisateur
+      // voyait « Entre ton code d'accès… » — MAIS le profil restait écrit. Au
+      // rafraîchissement suivant, `getInitialStep()` le relisait et ouvrait le chat
+      // DIRECTEMENT : d'où « le code ne connecte pas, mais si je rafraîchis je suis
+      // connecté ». L'accès était donc accordé par le CACHE, sans preuve.
+      // On inverse l'ordre : jeton -> smart-entry -> et on ne persiste QUE si le
+      // serveur a dit oui. Un refus ne laisse plus aucune trace locale.
+      var _subTok = null;
+      try { _subTok = await v296EnsureSubscriberToken(profile.code, profile.email); } catch (e) { /* silencieux */ }
+
+      var _entree = await handleSmartEntry({
+        firstName: profile.name,
+        whatsapp: profile.whatsapp,
+        email: profile.email
+      }, null, _subTok);
+
+      // ATTENTION au détail : handleSmartEntry renvoie `undefined` sur refus
+      // (`proof_required`, jeton coach manquant) MAIS `{success:false}` sur erreur
+      // réseau — un OBJET, donc TRUTHY. Tester la seule vérité de `_entree`
+      // prendrait une panne réseau pour un succès et réintroduirait le demi-état.
+      if (!_entree || _entree.success === false) {
+        // Refus serveur : on nettoie le jeton qu'on vient d'émettre pour ne pas
+        // laisser un demi-état, et on laisse le message d'erreur posé par
+        // handleSmartEntry. Aucun profil n'a été écrit -> un rafraîchissement
+        // ramène le formulaire, il ne connecte pas.
+        try { localStorage.removeItem('afroboost_subscriber_token'); } catch (e) { /* silencieux */ }
+        setValidatingCode(false);
+        return false;
+      }
+
       // V294 : fusion (jamais d'écrasement par du vide) au lieu d'un remplacement
       // brut -> whatsapp/birthday déjà présents ne sont plus perdus.
       v294MergeProfile(profile);
@@ -3857,22 +3946,11 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
 
       console.log('[SUBSCRIBER] Profil abonné validé et sauvegardé:', profile.name);
 
-      // Activer le mode plein écran et passer au chat
+      // V388 : smart-entry a DÉJÀ été appelé et accepté plus haut. On ne fait ici
+      // que basculer l'interface — l'ordre « serveur d'abord » est ce qui empêche
+      // le demi-état persistant décrit ci-dessus.
       setIsFullscreen(true);
       setShowSubscriberForm(false);
-
-      // V315/V318 : POSER le jeton d'appareil AVANT de relancer smart-entry (awaité) ET
-      // le passer DIRECTEMENT à la relance (V318) -> plus besoin de rafraîchir. Émis sur
-      // profile.email = l'email que smart-entry a matché. Idempotent, best-effort.
-      var _subTok = null;
-      try { _subTok = await v296EnsureSubscriberToken(profile.code, profile.email); } catch (e) { /* silencieux */ }
-
-      // Démarrer le chat avec smart-entry (jeton transmis directement)
-      await handleSmartEntry({
-        firstName: profile.name,
-        whatsapp: profile.whatsapp,
-        email: profile.email
-      }, null, _subTok);
       return true;
     } catch (err) {
       console.error('[SUBSCRIBER] Erreur validation:', err);

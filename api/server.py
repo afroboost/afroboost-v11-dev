@@ -18571,7 +18571,29 @@ async def smart_chat_entry(request: Request):
     # trivialement devinable). L'identité ne se résout QUE par email ou WhatsApp
     # (des informations que la personne a elle-même fournies). Un visiteur qui ne
     # donne qu'un nom -> nouveau participant, aucune reconnaissance d'un autre compte.
-    if search_query["$or"]:
+    #
+    # V388 — L'E-MAIL PRIME SUR LE WHATSAPP. `find_one` sur un `$or` renvoie le
+    # PREMIER document en ordre naturel, sans préférence entre les deux branches.
+    # Un numéro WhatsApp partagé (couple, numéro ressaisi, fiche de test) faisait
+    # donc atterrir sur la fiche de QUELQU'UN D'AUTRE, alors que l'e-mail fourni
+    # désignait sans ambiguïté la bonne. Deux conséquences, l'une bloquante :
+    #   1. sous SUBSCRIBER_STRICT_ENTRY, le jeton d'appareil prouve
+    #      `bassicustomshoes@…` mais la fiche retenue porte `contact.artboost@…`
+    #      -> `_may_write` False -> `proof_required` -> le formulaire redemande le
+    #      code À L'INFINI : AUCUN code ne peut satisfaire cette comparaison,
+    #      puisqu'elle porte sur le mauvais participant ;
+    #   2. hors mode strict, on rattachait l'appelant à la conversation d'un tiers.
+    # Mesuré en production le 7 août 2026 : 3 fiches partagent le 0765203363, et
+    # `find_one` renvoyait celle de `contact.artboost@gmail.com`.
+    # L'e-mail est l'identifiant le plus discriminant : on le teste SEUL d'abord,
+    # et on ne retombe sur le `$or` (donc sur le WhatsApp) que s'il ne donne rien.
+    # STRICTEMENT ADDITIF : quand l'e-mail ne matche aucune fiche — le cas de tout
+    # visiteur nouveau — la recherche `$or` d'origine s'applique inchangée.
+    if email:
+        existing_participant = await db.chat_participants.find_one(
+            {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0}
+        )
+    if not existing_participant and search_query["$or"]:
         existing_participant = await db.chat_participants.find_one(search_query, {"_id": 0})
     
     # Déterminer la source
