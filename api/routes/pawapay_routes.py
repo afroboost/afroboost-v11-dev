@@ -1002,6 +1002,12 @@ PAWAPAY_LIVE_CALLBACK_URL = os.environ.get(
     "https://api-live.afroboost.com/pawapay/callback",
 )
 
+# V406 : troisième destinataire — Spordateur.
+PAWAPAY_SPORDATE_CALLBACK_URL = os.environ.get(
+    "PAWAPAY_SPORDATE_CALLBACK_URL",
+    "https://spordateur.com/api/pawapay/callback",
+)
+
 
 @router.post("/callback")
 async def pawapay_callback(request: Request):
@@ -1039,26 +1045,61 @@ async def pawapay_callback(request: Request):
         logger.info(f"[PAWAPAY_CALLBACK] Dépôt du site: {deposit_id}")
         return await pawapay_webhook(request)
 
-    # === DÉPÔT INCONNU ICI -> IL APPARTIENT À AFROBOOST LIVE ===
-    logger.info(f"[PAWAPAY_CALLBACK] Inconnu du site, transmission au live: {deposit_id}")
+    # === DÉPÔT INCONNU ICI -> IL APPARTIENT AU LIVE OU À SPORDATEUR ===
+    #
+    # V406 : TROISIÈME destinataire. pawaPay n'accepte qu'UNE URL de callback par
+    # compte, et c'est celle-ci ; chaque nouvelle app qui encaisse en Mobile Money
+    # doit donc être servie d'ici. On essaie les destinations l'une après l'autre
+    # et on s'arrête à la PREMIÈRE qui reconnaît le dépôt (réponse 2xx dont le
+    # `status` n'est pas « ignored ») : un dépôt n'appartient qu'à une seule app.
+    #
+    # ⚠️ CONTREPARTIE ASSUMÉE : un incident sur afroboost coupe la confirmation
+    # des paiements Mobile Money des TROIS apps. C'est le prix de la contrainte
+    # pawaPay, pas un choix d'architecture.
+    destinations = [
+        ("live", PAWAPAY_LIVE_CALLBACK_URL),
+        ("spordate", PAWAPAY_SPORDATE_CALLBACK_URL),
+    ]
+    dernier_echec = None
+    for nom, url in destinations:
+        if not url:
+            continue
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                reponse = await client.post(url, json=body, headers={"Content-Type": "application/json"})
+        except Exception as e:
+            # Panne de TRANSPORT vers cette destination : on note et on essaie la
+            # suivante, plutôt que d'abandonner un dépôt qui appartient peut-être
+            # à une autre app encore joignable.
+            dernier_echec = e
+            logger.error(f"[PAWAPAY_CALLBACK] {nom} injoignable ({deposit_id}): {e}")
+            continue
+        try:
+            _corps = reponse.json()
+        except Exception:
+            _corps = {}
+        _ignore = isinstance(_corps, dict) and _corps.get("status") == "ignored"
+        logger.info(f"[PAWAPAY_CALLBACK] {nom} a répondu {reponse.status_code} pour {deposit_id}"
+                    + (" (ne le connaît pas)" if _ignore else ""))
+        if 200 <= reponse.status_code < 300 and not _ignore:
+            return {"status": "ok", "message": f"Forwarded to {nom}", "forwarded_to": nom,
+                    "downstream_status": reponse.status_code}
+        if reponse.status_code >= 500:
+            # La destination reconnaît peut-être le dépôt mais a échoué : on veut
+            # que PawaPay REJOUE, pas qu'on essaie la suivante et perde la trace.
+            dernier_echec = Exception(f"{nom} HTTP {reponse.status_code}")
+            break
+
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            reponse = await client.post(
-                PAWAPAY_LIVE_CALLBACK_URL,
-                json=body,
-                headers={"Content-Type": "application/json"},
-            )
-        logger.info(
-            f"[PAWAPAY_CALLBACK] Live a répondu {reponse.status_code} pour {deposit_id}"
-        )
-        return {
-            "status": "ok",
-            "message": "Forwarded to live",
-            "live_status": reponse.status_code,
-        }
+        if dernier_echec:
+            raise dernier_echec
+        # Aucune destination ne connaît ce dépôt. 200 volontaire : le rejouer
+        # indéfiniment ne le ferait pas apparaître.
+        logger.warning(f"[PAWAPAY_CALLBACK] Dépôt {deposit_id} inconnu de toutes les apps")
+        return {"status": "ignored", "message": "Unknown deposit"}
     except Exception as e:
         # Panne de transport vers le live (et NON un refus du live) : on renvoie
         # une erreur pour que PawaPay REJOUE le callback plus tard. Répondre 200
         # ici perdrait définitivement la notification d'un paiement encaissé.
         logger.error(f"[PAWAPAY_CALLBACK] Transmission au live impossible ({deposit_id}): {e}")
-        raise HTTPException(status_code=502, detail="Live callback unreachable")
+        raise HTTPException(status_code=502, detail="Callback downstream unreachable")
