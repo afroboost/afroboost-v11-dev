@@ -623,9 +623,13 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
         
         if subscription:
             remaining = subscription.get("remaining_sessions", 0)
-            if remaining <= 0:
-                logger.warning(f"[RESERVATION] {user_email} - Plus de séances disponibles")
-                raise HTTPException(status_code=400, detail="Plus de séances disponibles dans votre abonnement")
+            # V393 — expiré OU épuisé -> refus. Ce chemin ne testait que l'épuisement :
+            # un forfait périmé restait réservable depuis la vitrine et le chat.
+            from api.routes.shared import forfait_utilisable as _v393_ok
+            _ok, _pourquoi = _v393_ok(subscription, 1)
+            if not _ok:
+                logger.warning(f"[V393] Reservation refusee pour {user_email} : {_pourquoi}")
+                raise HTTPException(status_code=400, detail=_pourquoi)
             
             # Déduire 1 séance
             new_remaining = remaining - 1
@@ -1261,6 +1265,14 @@ async def _qr_scan_validate_inner(request: Request):
     # périmé) et refusait l'entrée d'un abonné à jour.
     from api.routes.shared import lire_abonnement_par_code as _v391_lire
     subscription = await _v391_lire(db, code)
+    # V393 — le scan a l'entree DEBITE une seance : expiré ou épuisé -> refus net,
+    # affiché au staff qui scanne. Sans ce garde, un forfait périmé passait la porte.
+    if subscription:
+        from api.routes.shared import forfait_utilisable as _v393_ok
+        _ok, _pourquoi = _v393_ok(subscription, 1)
+        if not _ok:
+            logger.info(f"[V393] Scan refuse sur {code} : {_pourquoi}")
+            raise HTTPException(status_code=400, detail=_pourquoi)
     if not subscription:
         any_sub = await db.subscriptions.find_one({"code": code}, {"_id": 0})
         if any_sub:

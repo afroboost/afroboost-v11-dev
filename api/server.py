@@ -10729,6 +10729,15 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     except Exception as e:
         logger.warning(f"[V211c] Reservations lookup failed: {e}")
 
+    # V393 : ce forfait autorise-t-il encore une réservation ? Calculé sur les
+    # MÊMES valeurs que celles renvoyées ci-dessous, pour que l'écran et le serveur
+    # ne puissent pas dire deux choses différentes.
+    from api.routes.shared import forfait_utilisable as _v393_ok
+    _v393_valide, _v393_message = _v393_ok(
+        {"expires_at": expires_at, "remaining_sessions": remaining_sessions}, 1
+    )
+    _v393_bloque = not _v393_valide
+
     return {
         "success": True,
         "multi_member": is_multi,
@@ -10770,7 +10779,16 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
             "thumbnail": offer.get("thumbnail") if offer else "",
         } if offer else None,
         "coach": coach_payload,
-        "upcoming_courses": occurrences,
+        # V393 : un forfait EXPIRÉ ou ÉPUISÉ ne propose plus AUCUN créneau. Le
+        # serveur refuse déjà la réservation (garde V393) ; ne rien proposer évite
+        # au client de choisir une date pour se voir refuser au dernier clic — et
+        # évite surtout de laisser croire que des séances lui restent dues.
+        # `forfait_bloque` / `forfait_message` disent au frontend POURQUOI la liste
+        # est vide : sans eux, un forfait mort serait indiscernable d'un planning
+        # sans cours à venir.
+        "upcoming_courses": [] if _v393_bloque else occurrences,
+        "forfait_bloque": _v393_bloque,
+        "forfait_message": _v393_message,
         "reservations": reservations_raw,
         "stripe_amount": stripe_amount,
         "stripe_product": stripe_product,
@@ -11151,13 +11169,22 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     else:
         remaining = subscription.get("remaining_sessions", 0)
 
-    if remaining <= 0:
-        raise HTTPException(status_code=400, detail="Plus de séances disponibles")
-    if remaining < quantity:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Séances insuffisantes : {remaining} restantes, {quantity} demandées"
-        )
+    # V393 — GARDE UNIQUE : expiré OU épuisé -> refus. Ce chemin ne testait QUE
+    # `remaining <= 0` : un forfait expiré depuis 93 jours mais avec des séances au
+    # compteur restait pleinement réservable. C'est par ici qu'une séance non payée
+    # a été prise le 05/08 sur un forfait expiré le 03/08.
+    # Le forfait de référence est celui que V391 a choisi (`subscription`), sauf en
+    # quota individuel de groupe où le compteur du membre prime — d'où le `_ref`.
+    from api.routes.shared import forfait_utilisable as _v393_ok
+    _ref = dict(subscription or {})
+    if member and not shared_mode:
+        _ref["remaining_sessions"] = remaining   # quota individuel du membre
+    else:
+        _ref["remaining_sessions"] = remaining
+    _ok, _pourquoi = _v393_ok(_ref, quantity)
+    if not _ok:
+        logger.info(f"[V393] Reservation refusee sur {code_upper} : {_pourquoi}")
+        raise HTTPException(status_code=400, detail=_pourquoi)
 
     course = await db.courses.find_one({"id": course_id}, {"_id": 0})
     if not course or course.get("archived"):

@@ -367,3 +367,51 @@ async def lire_abonnement_par_code(db, code, email=None, filtre_supplementaire=N
         if _miens:
             candidats = _miens
     return choisir_abonnement(candidats)
+
+
+# =====================================================================
+# V393 — UN FORFAIT EXPIRÉ OU ÉPUISÉ NE PERMET JAMAIS DE RÉSERVER
+# =====================================================================
+# Constat du 7 août 2026 : AUCUN des trois chemins d'écriture ne testait
+# `expires_at`. Ils ne regardaient que `remaining <= 0`. Résultat : 22 codes
+# expirés — 365 séances, dont 200 chez 16 vrais clients — restaient réservables.
+# Ce n'est pas théorique : une cliente a réservé le 05/08 une séance du 05/08
+# alors que son forfait expirait le 03/08. Chaque séance ainsi prise est une
+# séance non payée.
+#
+# Le garde vit ICI, en un seul endroit, pour que les trois chemins ne puissent
+# plus diverger : espace abonné, vitrine, et scan du QR à l'entrée du cours.
+
+def forfait_utilisable(sub, quantite=1):
+    """(ok, message) — ce forfait autorise-t-il `quantite` réservation(s) ?
+
+    Refus EXPLICITE et lisible par le client : il doit comprendre pourquoi, et le
+    coach doit pouvoir le lui confirmer sans lire les journaux.
+    Un forfait sans `expires_at` n'expire pas (codes à durée libre) — inchangé.
+    """
+    if not sub:
+        return False, "Abonnement introuvable"
+
+    expiration = sub.get("expires_at")
+    if _v391_est_expire(expiration):
+        try:
+            jour = str(expiration)[:10]
+            j, m, a = jour.split("-")[2], jour.split("-")[1], jour.split("-")[0]
+            lisible = f"{j}.{m}.{a}"
+        except (IndexError, ValueError, AttributeError):
+            lisible = str(expiration)[:10]
+        return False, (
+            f"Ton abonnement a expiré le {lisible}. "
+            "Contacte le coach pour le renouveler."
+        )
+
+    restant = _v391_seances_restantes(sub)
+    if restant <= 0:
+        return False, (
+            "Toutes les séances de ton abonnement ont été utilisées. "
+            "Contacte le coach pour le renouveler."
+        )
+    if restant < quantite:
+        return False, f"Séances insuffisantes : {restant} restante(s), {quantite} demandée(s)"
+
+    return True, ""
