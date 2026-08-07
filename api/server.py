@@ -5516,6 +5516,8 @@ async def stripe_webhook(request: Request):
                 # Constante PARTAGÉE avec le chemin Mobile Money, pour que les deux
                 # ne puissent pas diverger.
                 from api.routes.shared import date_expiration_code as _date_expiration_code
+                from api.routes.shared import expiration_forfait as _v397_expiration
+                from api.routes.shared import cloturer_anciens_forfaits as _v397_cloturer
                 _montant_paye = None
                 try:
                     _montant_paye = float(session.amount_total or 0) / 100.0
@@ -5590,7 +5592,14 @@ async def stripe_webhook(request: Request):
                     "total_sessions": sessions_count,
                     "used_sessions": 0,
                     "remaining_sessions": sessions_count,
-                    "expires_at": None,
+                    # V397 : `expires_at` n'est PLUS JAMAIS nul. Il valait None ici
+                    # alors que le `discount_codes` correspondant portait bien une
+                    # date (+2 mois) : le forfait n'expirait donc JAMAIS côté espace
+                    # abonné. Constaté chez une cliente le 07/08/2026 — 10 séances
+                    # valables indéfiniment pour un pack de 2 mois payé.
+                    # Même constante que le code (`DUREE_VALIDITE_CODE_MOIS`) : les
+                    # deux ne peuvent plus diverger.
+                    "expires_at": _v397_expiration(),
                     "status": "active",
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -5606,6 +5615,20 @@ async def stripe_webhook(request: Request):
                 }
                 await db.subscriptions.insert_one(subscription_data)
                 logger.info(f"[PAYMENT] Subscription auto-creee: {customer_email} - {product_name} ({sessions_count} seances) auto_renew={subscription_data['auto_renew']}")
+
+                # V397 : le renouvellement FERME l'ancien forfait du meme client.
+                # Portee etroite : uniquement les forfaits deja EXPIRES ou EPUISES.
+                # Un forfait encore valide avec des seances au compteur n'est jamais
+                # touche — le client l'a paye. Non bloquant : un echec ici ne doit
+                # pas faire echouer un webhook dont le paiement est deja encaisse.
+                try:
+                    _fermes = await _v397_cloturer(
+                        db, customer_email, subscription_data["id"], log_prefix="V397-STRIPE"
+                    )
+                    if _fermes:
+                        logger.info(f"[V397-STRIPE] {len(_fermes)} ancien(s) forfait(s) ferme(s) pour {customer_email}")
+                except Exception as _e397:
+                    logger.warning(f"[V397-STRIPE] Cloture des anciens forfaits ignoree: {_e397}")
 
                 # V226: la commande physique revient dans l'onglet Reservations.
                 #
@@ -11729,6 +11752,142 @@ async def _v195_auto_renew(sub: dict) -> bool:
     )
     logger.info(f"[V195 RENEW] OK pour {sub.get('email')} (+{sessions_count} séances, {price} CHF)")
     return True
+
+
+# =====================================================================
+# V398 — RAPPEL AVANT RECONDUCTION (par défaut : APERÇU, n'envoie RIEN)
+# =====================================================================
+# ⚠️ FAIT ÉTABLI LE 07/08/2026 — AUCUNE RECONDUCTION AUTOMATIQUE N'EXISTE :
+#   - aucun `mode="subscription"` dans le dépôt -> aucun abonnement récurrent Stripe ;
+#   - `invoice.upcoming` n'est écouté nulle part, et ne PEUT PAS arriver : cet
+#     événement n'existe que pour les abonnements Stripe, qu'on n'émet pas ;
+#   - le mécanisme interne V195 existe mais son déclencheur
+#     `/api/cron/check-subscription-renewal` n'est déclaré que dans `vercel.json`,
+#     jamais exécuté sur Coolify ;
+#   - en base : 0 abonnement avec `auto_renew: true`, 0 `stripe_customer_id`.
+# Conclusion : personne ne peut être débité par surprise aujourd'hui. Ce rappel est
+# donc posé EN AVANCE de l'activation, prêt à servir, et volontairement INERTE.
+#
+# GARDE-FOU : l'envoi réel exige DEUX conditions simultanées — le drapeau
+# `RAPPEL_RENOUVELLEMENT_ACTIF` en base ET `apercu=false` explicite. Tant que le
+# drapeau n'existe pas, cet endpoint ne peut RIEN envoyer, même appelé par erreur.
+
+V398_DELAI_JOURS = 3  # rappel 3 jours avant l'échéance
+
+
+def _v398_corps_rappel(prenom, date_echeance, montant, devise, seances, lien_annulation):
+    """Le texte EXACT du rappel. Trois obligations : dire que ça va être reconduit
+    (date + montant), dire qu'il n'y a AUCUN remboursement après, et donner le moyen
+    d'annuler AVANT."""
+    return f"""<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#0a0a0a;color:#fff;border-radius:16px;overflow:hidden;">
+  <div style="background:linear-gradient(135deg,#D91CD2,#8b5cf6);padding:22px;text-align:center;">
+    <h1 style="color:#fff;margin:0;font-size:20px;">Ton abonnement Afroboost sera reconduit</h1>
+  </div>
+  <div style="padding:24px;">
+    <p style="font-size:15px;margin:0 0 16px;">Bonjour {prenom},</p>
+    <p style="font-size:14px;line-height:1.6;margin:0 0 18px;">
+      Ton abonnement arrive à échéance. Sauf annulation de ta part, il sera
+      <strong>reconduit automatiquement</strong> :
+    </p>
+    <div style="background:rgba(217,28,210,0.12);border:1px solid rgba(217,28,210,0.35);border-radius:12px;padding:16px;margin:0 0 18px;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="color:#bbb;padding:5px 0;">Date de reconduction</td><td style="text-align:right;color:#fff;font-weight:bold;">{date_echeance}</td></tr>
+        <tr><td style="color:#bbb;padding:5px 0;">Montant prélevé</td><td style="text-align:right;color:#fff;font-weight:bold;">{montant} {devise}</td></tr>
+        <tr><td style="color:#bbb;padding:5px 0;">Séances incluses</td><td style="text-align:right;color:#fff;font-weight:bold;">{seances}</td></tr>
+        <tr><td style="color:#bbb;padding:5px 0;">Validité</td><td style="text-align:right;color:#fff;">2 mois</td></tr>
+      </table>
+    </div>
+    <div style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);border-radius:12px;padding:14px;margin:0 0 18px;">
+      <p style="color:#fca5a5;font-size:14px;font-weight:bold;margin:0 0 6px;">Aucun remboursement après le renouvellement.</p>
+      <p style="color:#e2e8f0;font-size:13px;line-height:1.5;margin:0;">
+        Une fois le prélèvement effectué, le montant n'est plus remboursable. Si tu ne
+        souhaites pas reconduire, annule <strong>avant le {date_echeance}</strong>.
+      </p>
+    </div>
+    <div style="text-align:center;margin:0 0 8px;">
+      <a href="{lien_annulation}" style="display:inline-block;background:transparent;color:#D91CD2;border:1px solid #D91CD2;padding:13px 30px;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">Annuler la reconduction</a>
+      <p style="color:#777;font-size:12px;margin:10px 0 0;">Tu gardes tes séances déjà payées jusqu'à leur date de validité.</p>
+    </div>
+    <p style="color:#666;font-size:11px;text-align:center;margin:22px 0 0;line-height:1.5;">
+      Tu reçois ce message {V398_DELAI_JOURS} jours avant l'échéance, pour avoir le temps de décider.<br>
+      Une question ? Réponds simplement à cet e-mail.
+    </p>
+  </div>
+</div>"""
+
+
+@api_router.get("/cron/rappel-renouvellement")
+async def v398_rappel_renouvellement(request: Request, apercu: bool = True):
+    """Rappel J-3 avant reconduction. APERÇU PAR DÉFAUT — n'envoie rien.
+
+    `apercu=true`  (défaut) : renvoie EXACTEMENT ce qui partirait, sans rien envoyer.
+    `apercu=false`           : envoi réel, MAIS refusé tant que le drapeau
+                               `RAPPEL_RENOUVELLEMENT_ACTIF` n'est pas posé.
+    """
+    cible = datetime.now(timezone.utc) + timedelta(days=V398_DELAI_JOURS)
+    debut, fin = cible.strftime("%Y-%m-%d"), cible.strftime("%Y-%m-%dT23:59:59")
+
+    # Seuls les abonnements RÉELLEMENT en reconduction automatique sont concernés.
+    concernes = await db.subscriptions.find(
+        {"status": "active", "auto_renew": True,
+         "expires_at": {"$gte": debut, "$lte": fin}},
+        {"_id": 0},
+    ).to_list(500)
+
+    lettres = []
+    for sub in concernes:
+        prenom = (sub.get("name") or (sub.get("email") or "").split("@")[0] or "").split(" ")[0]
+        jour = str(sub.get("expires_at"))[:10]
+        try:
+            a, m, j = jour.split("-")
+            lisible = f"{j}.{m}.{a}"
+        except ValueError:
+            lisible = jour
+        lettres.append({
+            "destinataire": sub.get("email"),
+            "sujet": f"Ton abonnement Afroboost sera reconduit le {lisible}",
+            "html": _v398_corps_rappel(
+                prenom or "toi", lisible,
+                f"{float(sub.get('renewal_price') or 0):.2f}", "CHF",
+                int(sub.get("renewal_sessions") or 0),
+                f"https://afroboost.com/espace/{sub.get('code')}",
+            ),
+            "subscription_id": sub.get("id"),
+        })
+
+    if apercu:
+        return {"apercu": True, "envoye": 0, "delai_jours": V398_DELAI_JOURS,
+                "echeance_ciblee": debut, "nombre": len(lettres), "lettres": lettres}
+
+    # --- ENVOI RÉEL : deux verrous ---
+    try:
+        drapeaux = await get_feature_flags()
+    except Exception:
+        drapeaux = {}
+    if not drapeaux.get("RAPPEL_RENOUVELLEMENT_ACTIF"):
+        raise HTTPException(
+            status_code=403,
+            detail="Envoi refusé : le drapeau RAPPEL_RENOUVELLEMENT_ACTIF n'est pas activé.",
+        )
+    if not (RESEND_AVAILABLE and RESEND_API_KEY):
+        raise HTTPException(status_code=503, detail="Resend indisponible")
+    envoyes = 0
+    for lettre in lettres:
+        try:
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": "Afroboost <notifications@afroboost.com>",
+                "to": [lettre["destinataire"]],
+                "subject": lettre["sujet"],
+                "html": lettre["html"],
+            })
+            await db.subscriptions.update_one(
+                {"id": lettre["subscription_id"]},
+                {"$push": {"renewal_warnings_sent": f"rappel_j{V398_DELAI_JOURS}"}},
+            )
+            envoyes += 1
+        except Exception as e:
+            logger.warning(f"[V398] Rappel non envoye a {lettre['destinataire']}: {e}")
+    return {"apercu": False, "envoye": envoyes, "nombre": len(lettres)}
 
 
 @api_router.get("/cron/check-subscription-renewal")

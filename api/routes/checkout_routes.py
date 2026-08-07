@@ -6,6 +6,10 @@ from datetime import datetime, timezone
 import os
 import uuid
 import logging
+from api.routes.shared import (
+    expiration_forfait as _v397_expiration,
+    cloturer_anciens_forfaits as _v397_cloturer,
+)
 import httpx
 import json
 
@@ -916,7 +920,8 @@ async def _process_successful_payment(
         "total_sessions": sessions_count,
         "used_sessions": 0,
         "remaining_sessions": sessions_count,
-        "expires_at": None,
+        # V397 : +2 mois, JAMAIS nul — même règle que Stripe et Mobile Money.
+        "expires_at": _v397_expiration(),
         "status": "active",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -928,6 +933,15 @@ async def _process_successful_payment(
         "renewal_warnings_sent": [],
     })
     logger.info(f"[CHECKOUT] Code {access_code} + subscription crees pour {customer_email} ({sessions_count} seances)")
+
+    # V397 : ferme l'ancien forfait (expiré ou épuisé) du même client. Non bloquant :
+    # le paiement est déjà encaissé, une erreur ici ne doit rien faire échouer.
+    try:
+        _fermes = await _v397_cloturer(db, customer_email, subscription_id, log_prefix="V397-VITRINE")
+        if _fermes:
+            logger.info(f"[V397-VITRINE] {len(_fermes)} ancien(s) forfait(s) ferme(s) pour {customer_email}")
+    except Exception as _e397:
+        logger.warning(f"[V397-VITRINE] Cloture ignoree: {_e397}")
 
     # 4. Créer les réservations pour chaque item de type "course"
     for item in items:

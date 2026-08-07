@@ -436,3 +436,80 @@ def forfait_utilisable(sub, quantite=1):
         return False, f"Séances insuffisantes : {restant} restante(s), {quantite} demandée(s)"
 
     return True, ""
+
+
+# =====================================================================
+# V397 — UN RENOUVELLEMENT FERME L'ANCIEN FORFAIT
+# =====================================================================
+# Jusqu'ici, un paiement CRÉAIT un forfait sans jamais fermer le précédent. D'où
+# des clients porteurs de plusieurs `subscriptions` actives sur le même e-mail —
+# la source même des doublons qui ont fait afficher un forfait mort à une cliente
+# alors que son forfait valide existait juste à côté.
+
+async def cloturer_anciens_forfaits(db, email, id_nouveau, log_prefix="V397"):
+    """Ferme (`superseded`) les forfaits ACTIFS antérieurs de ce client.
+
+    PORTÉE VOLONTAIREMENT ÉTROITE — on ne ferme QUE ce qui est déjà sans valeur :
+    un forfait EXPIRÉ ou ÉPUISÉ. Un forfait encore valide avec des séances au
+    compteur n'est JAMAIS touché : le client l'a payé, et certains détiennent
+    légitimement deux packs en parallèle. Fermer large ici détruirait de la valeur
+    payée — c'est l'erreur exactement inverse de celle qu'on corrige.
+
+    Renvoie la liste des `id` fermés (pour le journal et le rollback).
+    """
+    if db is None or not email:
+        return []
+    email_norm = str(email).strip().lower()
+    if not email_norm:
+        return []
+    fermes = []
+    try:
+        candidats = await db.subscriptions.find(
+            {"email": {"$regex": f"^{__import__('re').escape(email_norm)}$", "$options": "i"},
+             "status": "active"},
+            {"_id": 0},
+        ).to_list(50)
+    except Exception as e:
+        logger.warning(f"[{log_prefix}] Lecture des anciens forfaits impossible: {e}")
+        return []
+
+    for anc in candidats:
+        if anc.get("id") == id_nouveau:
+            continue  # jamais le forfait qu'on vient de créer
+        perime = _v391_est_expire(anc.get("expires_at"))
+        epuise = _v391_seances_restantes(anc) <= 0
+        if not (perime or epuise):
+            continue  # encore valide ET avec des séances -> on n'y touche pas
+        try:
+            r = await db.subscriptions.update_one(
+                {"id": anc.get("id"), "status": "active"},
+                {"$set": {"status": "superseded",
+                          "superseded_at": datetime.now(timezone.utc).isoformat(),
+                          "superseded_by": id_nouveau}},
+            )
+            if r.modified_count == 1:
+                fermes.append(anc.get("id"))
+                logger.info(
+                    f"[{log_prefix}] Ancien forfait ferme: {anc.get('id')} "
+                    f"({anc.get('code')}, {'expire' if perime else 'epuise'}) -> superseded"
+                )
+        except Exception as e:
+            logger.warning(f"[{log_prefix}] Fermeture de {anc.get('id')} echouee: {e}")
+    return fermes
+
+
+def expiration_forfait(depuis=None) -> str:
+    """`expires_at` d'un forfait créé maintenant : +2 mois, format ISO complet.
+
+    Contrepartie de `date_expiration_code()` (qui produit `AAAA-MM-JJ` pour
+    `discount_codes.expiresAt`). Les deux dérivent de la MÊME constante
+    `DUREE_VALIDITE_CODE_MOIS`, pour qu'un code et son forfait ne puissent pas
+    expirer à deux dates différentes — l'incohérence trouvée chez une cliente dont
+    le code expirait le 06.10 et le forfait JAMAIS (`expires_at: null`).
+    """
+    from dateutil.relativedelta import relativedelta
+    base = depuis or datetime.now(timezone.utc)
+    fin = (base + relativedelta(months=+DUREE_VALIDITE_CODE_MOIS)).replace(
+        hour=23, minute=59, second=59, microsecond=0
+    )
+    return fin.isoformat()

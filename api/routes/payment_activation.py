@@ -232,6 +232,52 @@ async def activate_after_payment(
                 "created_at": datetime.now(timezone.utc).isoformat()
             })
 
+            # V397 — LE FORFAIT MANQUAIT PUREMENT ET SIMPLEMENT.
+            # Cette voie créait le `discount_codes` mais AUCUN document
+            # `subscriptions`, contrairement à Stripe qui crée les deux. Le client
+            # recevait donc son code, mais son abonnement n'existait pas dans la
+            # collection que lisent l'espace abonné, le dashboard et le décompte des
+            # séances. Jamais vu en production parce qu'aucun paiement Mobile Money
+            # n'avait encore abouti — le premier serait tombé dedans.
+            from api.routes.shared import (
+                expiration_forfait as _v397_expiration,
+                cloturer_anciens_forfaits as _v397_cloturer,
+            )
+            _sub_id = str(uuid.uuid4())
+            await db.subscriptions.insert_one({
+                "id": _sub_id,
+                "email": customer_email,
+                "name": local_tx.get("customer_name", "") or customer_email.split("@")[0],
+                "whatsapp": local_tx.get("customer_phone", "") or "",
+                "code": access_code,
+                "offer_name": local_tx.get("pack_name") or "Abonnement Afroboost",
+                "total_sessions": sessions_count,
+                "used_sessions": 0,
+                "remaining_sessions": sessions_count,
+                # Même règle que Stripe : +2 mois, JAMAIS nul.
+                "expires_at": _v397_expiration(),
+                "status": "active",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "source": provider,
+                "coach_id": None,
+                "auto_renew": False,
+                "renewal_price": amount,
+                "renewal_sessions": sessions_count,
+                "renewal_warnings_sent": [],
+            })
+            logger.info(
+                f"[{log_prefix}] V397 forfait cree: {customer_email} - {access_code} "
+                f"({sessions_count} seances, +2 mois)"
+            )
+            # Le renouvellement ferme l'ancien forfait (expiré ou épuisé seulement).
+            try:
+                _fermes = await _v397_cloturer(db, customer_email, _sub_id, log_prefix=f"V397-{provider.upper()}")
+                if _fermes:
+                    logger.info(f"[{log_prefix}] V397 {len(_fermes)} ancien(s) forfait(s) ferme(s)")
+            except Exception as _e397:
+                logger.warning(f"[{log_prefix}] V397 cloture ignoree: {_e397}")
+
             # Envoyer email avec QR Code
             try:
                 import resend
