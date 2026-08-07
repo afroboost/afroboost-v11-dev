@@ -10729,6 +10729,31 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     except Exception as e:
         logger.warning(f"[V211c] Reservations lookup failed: {e}")
 
+    # V394 — PLAFOND DUR : l'espace abonné ne peut JAMAIS afficher plus de séances
+    # que la page admin « Code promo ». Les deux écrans lisent deux collections
+    # différentes — `subscriptions` ici, `discount_codes` là-bas — et ces deux
+    # compteurs dérivent (doublons, incréments perdus sur `{"id": None}`). Tant
+    # qu'ils dérivent, on retient TOUJOURS le plus petit : une divergence coûte
+    # alors une séance au client, jamais une séance non payée au coach.
+    # Le plafond ne s'applique que si le document admin existe ET porte un maxUses
+    # exploitable — sinon on ne dispose d'aucune référence et on ne touche à rien.
+    try:
+        _adm = discount or {}
+        _adm_max = int(float(_adm.get("maxUses") or 0))
+        _adm_use = int(float(_adm.get("used") or 0))
+        if _adm_max > 0:
+            _adm_restant = max(0, _adm_max - _adm_use)
+            if _adm_restant < (remaining_sessions or 0):
+                logger.info(
+                    f"[V394] {code_upper} : espace {remaining_sessions} > admin "
+                    f"{_adm_restant} -> plafonne a {_adm_restant}"
+                )
+                used_sessions = _adm_use
+                total_sessions = _adm_max
+                remaining_sessions = _adm_restant
+    except (TypeError, ValueError) as _e_cap:
+        logger.warning(f"[V394] Plafond admin ignore pour {code_upper}: {_e_cap}")
+
     # V393 : ce forfait autorise-t-il encore une réservation ? Calculé sur les
     # MÊMES valeurs que celles renvoyées ci-dessous, pour que l'écran et le serveur
     # ne puissent pas dire deux choses différentes.

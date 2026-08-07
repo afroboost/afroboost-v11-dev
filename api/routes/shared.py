@@ -330,9 +330,30 @@ def choisir_abonnement(candidats):
     vivants = [d for d in actifs if not _v391_est_expire(d.get("expires_at"), maintenant)]
     avec_seances = [d for d in vivants if _v391_seances_restantes(d) > 0]
 
+    # V394 — DÉPARTAGE PAR LA CONSOMMATION, PLUS PAR LA DATE.
+    # V391 départageait sur `created_at` décroissant. Or entre deux doublons créés
+    # au même instant (CHRISTOUX10 : 7 MICROSECONDES d'écart, double-clic à la
+    # création), « le plus récent » désigne le document VIERGE — le fantôme, celui
+    # qui n'a jamais suivi la moindre réservation. Résultat mesuré : l'espace
+    # affichait 10 séances restantes au lieu de 6, soit 4 séances non payées
+    # offertes.
+    # Le document qui fait foi est celui que le système a réellement DÉBITÉ. On
+    # départage donc sur `used_sessions` DÉCROISSANT, la date ne servant plus que
+    # de second critère à consommation égale.
+    # ⚠️ Ce choix suppose qu'un renouvellement FERME l'ancien forfait (V395) :
+    # sans cela, un ancien forfait presque épuisé mais encore valide primerait sur
+    # un forfait neuf. Aucun code en production n'est dans ce cas aujourd'hui
+    # (vérifié), et V395 garantit qu'il n'y en aura pas.
+    def _cle(d):
+        try:
+            consomme = int(float(d.get("used_sessions") or 0))
+        except (TypeError, ValueError):
+            consomme = 0
+        return (consomme, _v391_date_creation(d))
+
     for lot in (avec_seances, vivants, actifs, docs):
         if lot:
-            return sorted(lot, key=_v391_date_creation, reverse=True)[0]
+            return sorted(lot, key=_cle, reverse=True)[0]
     return None
 
 
