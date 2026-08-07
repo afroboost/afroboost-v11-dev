@@ -501,10 +501,13 @@ async def create_checkout_session(req: CreateCheckoutRequest):
             if not montant or montant <= 0:
                 raise HTTPException(status_code=400, detail="Montant de paiement invalide.")
 
-            # Le dépôt porte le MÊME identifiant que la transaction du panier :
-            # un seul numéro à rapprocher entre les deux collections, et le
-            # webhook retrouve le panier sans table de correspondance.
-            deposit_id = transaction_id
+            # ⚠️ LE `depositId` DOIT ÊTRE UN UUID. pawaPay le valide et refuse
+            # tout autre format : réutiliser le `txn_xxxxx` du panier renvoyait
+            # « INVALID_PARAMETER / Value for parameter 'depositId' is invalid »
+            # (constaté en production sur la première sonde). Le lien entre les
+            # deux mondes passe donc par `metadata.checkout_transaction_id`, et
+            # par `deposit_id` recopié dans la transaction du panier ci-dessous.
+            deposit_id = str(uuid.uuid4())
 
             # Tout ce dont l'activation aura besoin est figé MAINTENANT, côté
             # serveur. Le webhook ne recevra que le `depositId` : sans cela, il
@@ -534,6 +537,8 @@ async def create_checkout_session(req: CreateCheckoutRequest):
 
             await db["checkout_transactions"].insert_one({
                 "transaction_id": transaction_id,
+                # Le pont vers `pawapay_transactions`, dans les deux sens.
+                "deposit_id": deposit_id,
                 "coach_email": req.coach_email,
                 "customer_email": req.customer_email,
                 "customer_name": req.customer_name,
