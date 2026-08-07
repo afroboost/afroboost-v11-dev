@@ -11823,7 +11823,24 @@ async def v398_rappel_renouvellement(request: Request, apercu: bool = True):
     `apercu=true`  (défaut) : renvoie EXACTEMENT ce qui partirait, sans rien envoyer.
     `apercu=false`           : envoi réel, MAIS refusé tant que le drapeau
                                `RAPPEL_RENOUVELLEMENT_ACTIF` n'est pas posé.
+
+    V398b — AUTHENTIFICATION OBLIGATOIRE, Y COMPRIS EN APERÇU. Livré sans garde,
+    cet endpoint renvoyait à un appelant ANONYME la liste des abonnés concernés
+    avec leur e-mail, leur nom, leur CODE d'accès et le montant prélevé. Le code
+    étant le mot de passe de l'abonné (cf. V389/V390), c'était exactement la faille
+    de prise de compte qu'on venait de fermer, rouverte par une autre porte. Elle
+    ne fuitait rien aujourd'hui — 0 abonnement en reconduction — mais aurait fuité
+    dès l'activation. Même garde que `/cron/check-campaigns` (V330) : secret de cron
+    OU super-admin prouvé par jeton SIGNÉ. `X-User-Email` ne participe pas.
     """
+    _auth = request.headers.get("Authorization", "")
+    _secret = os.environ.get("CRON_SECRET", "")
+    _est_cron = bool(_secret) and _auth == f"Bearer {_secret}"
+    _jwt_email = _v311_coach_email_from_jwt(request)
+    _est_admin = bool(_jwt_email) and is_super_admin(_jwt_email)
+    if not _est_cron and not _est_admin:
+        raise HTTPException(status_code=401, detail="Unauthorized - Cron access only")
+
     cible = datetime.now(timezone.utc) + timedelta(days=V398_DELAI_JOURS)
     debut, fin = cible.strftime("%Y-%m-%d"), cible.strftime("%Y-%m-%dT23:59:59")
 
