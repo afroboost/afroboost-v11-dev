@@ -7515,7 +7515,13 @@ function App() {
                 const r = await axios.post(`${API}/spordate/access`, {});
                 window.location.href = (r.data && r.data.url) || '/rencontre';
               } catch (err) {
-                // 403 (non reconnu) ou 503 (pont non configuré) : parcours normal.
+                // V403 — ON VA TOUJOURS SUR /rencontre, JAMAIS SUR UN ECRAN DE
+                // CONNEXION. 403 (non reconnu) ou 503 (pont non configure) sont
+                // des cas NORMAUX : Spordate propose alors son propre login.
+                // Ce qu'il ne faut surtout pas faire ici, c'est ouvrir la
+                // connexion coach d'afroboost — c'est ce qui envoyait
+                // l'utilisateur sur l'ecran d'une marque tierce au lieu de la
+                // page Rencontre.
                 window.location.href = '/rencontre';
               }
             }}

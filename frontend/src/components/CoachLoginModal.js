@@ -1,8 +1,8 @@
 /**
- * CoachLoginModal Component v10.0 - Google OAuth + Email/Password
+ * CoachLoginModal Component v10.0 - Email/Password
+ * V403 : l'authentification Google (via auth.emergentagent.com) a ete retiree.
  *
  * Authentification multi-méthodes pour les Partenaires et Super Admin
- * - Google OAuth (existant, fiabilisé avec retry)
  * - Email/Password classique (nouveau)
  *
  * REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
@@ -12,17 +12,6 @@ import axios from 'axios';
 
 const API = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
 
-// Icône Google officielle
-const GoogleIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
-    <g fill="none" fillRule="evenodd">
-      <path d="M17.64 9.205c0-.639-.057-1.252-.164-1.841H9v3.481h4.844a4.14 4.14 0 01-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
-      <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 009 18z" fill="#34A853"/>
-      <path d="M3.964 10.71A5.41 5.41 0 013.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 000 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
-      <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 00.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
-    </g>
-  </svg>
-);
 
 // Icône Email
 const EmailIcon = () => (
@@ -94,73 +83,8 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
     checkExistingAuth();
   }, [onLogin]);
 
-  // Traiter le session_id dans l'URL (callback OAuth)
-  useEffect(() => {
-    const processOAuthCallback = async () => {
-      if (hasProcessedRef.current) return;
-
-      const hash = window.location.hash;
-      if (!hash.includes('session_id=')) return;
-
-      hasProcessedRef.current = true;
-      setIsLoading(true);
-      setError("");
-
-      const sessionId = hash.split('session_id=')[1]?.split('&')[0];
-      if (!sessionId) {
-        setError("Session invalide");
-        setIsLoading(false);
-        return;
-      }
-
-      window.history.replaceState(null, '', window.location.pathname);
-
-      // Retry logic for Google OAuth
-      let lastError = null;
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          const response = await axios.post(`${API}/auth/google/session`,
-            { session_id: sessionId },
-            { withCredentials: true, timeout: 8000 }
-          );
-
-          if (response.data.success) {
-            console.log('✅ Authentification Google réussie:', response.data.user.email);
-            // V133: Stocker le JWT signé pour les requêtes sécurisées
-            if (response.data.token) {
-              localStorage.setItem('afroboost_jwt', response.data.token);
-            }
-            onLogin(response.data.user);
-            return;
-          } else {
-            setError(response.data.message || "Accès refusé");
-            setIsLoading(false);
-            return;
-          }
-        } catch (err) {
-          lastError = err;
-          console.warn(`⚠️ Tentative ${attempt}/3 échouée:`, err.message);
-          if (attempt < 3) await new Promise(r => setTimeout(r, 1000));
-        }
-      }
-
-      console.error('❌ Erreur OAuth après 3 tentatives:', lastError);
-      setError("La connexion Google a échoué. Réessayez ou utilisez votre email.");
-      setIsLoading(false);
-    };
-
-    processOAuthCallback();
-  }, [onLogin]);
-
-  // Lancer l'authentification Google
-  const handleGoogleLogin = () => {
-    setIsLoading(true);
-    setError("");
-
-    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    const redirectUrl = window.location.origin + window.location.pathname;
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
-  };
+  // V403 : le traitement du retour OAuth Emergent (`session_id` dans le
+  // fragment d'URL) est retire avec le bouton qui le declenchait.
 
   // Connexion Email/Password
   const handleEmailLogin = async (e) => {
@@ -375,7 +299,7 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
           </div>
         )}
 
-        {/* === V214: MODE CHOIX — Email par défaut, Google en secondaire === */}
+        {/* === MODE CHOIX — Email, puis « Devenir Partenaire » (V403 : plus de Google) === */}
         {authMode === 'choice' && (
           <>
             <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', textAlign: 'center', marginBottom: '12px' }}>Connectez-vous à votre espace</p>
@@ -400,30 +324,13 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
               <span>Se connecter avec Email</span>
             </button>
 
-            {/* Bouton Google (secondaire) */}
-            <button
-              onClick={handleGoogleLogin}
-              disabled={isLoading}
-              style={{
-                ...primaryBtnStyle,
-                background: 'rgba(255,255,255,0.08)',
-                color: 'rgba(255,255,255,0.7)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '10px',
-                border: '1px solid rgba(255,255,255,0.15)',
-                marginBottom: '0'
-              }}
-              data-testid="google-login-btn"
-            >
-              {isLoading ? (
-                <div style={{ width: '20px', height: '20px', border: '2px solid #999', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
-              ) : (
-                <GoogleIcon />
-              )}
-              <span>{isLoading ? 'Connexion...' : 'Google'}</span>
-            </button>
+            {/* V403 — LE BOUTON « GOOGLE » A ETE RETIRE.
+                Il n'ouvrait pas Google mais `auth.emergentagent.com`, la
+                plateforme sur laquelle ce projet a ete construit : l'utilisateur
+                tombait sur un ecran de consentement d'une marque tierce, en
+                plein parcours Afroboost. Verifie avant retrait : les 11 comptes
+                de `users_auth` sont TOUS en `email_password` avec un mot de
+                passe — personne ne s'y connectait. */}
 
             {/* Séparateur */}
             <div style={{ display: 'flex', alignItems: 'center', margin: '20px 0' }}>

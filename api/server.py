@@ -9299,8 +9299,19 @@ async def _bt_subscriber_credit(code: str):
         return None
     # V391 : idem — un crédit live lu sur le mauvais document refusait l'entrée.
     from api.routes.shared import lire_abonnement_par_code as _v391_lire4
+    from api.routes.shared import forfait_utilisable as _v402_ok
     sub = await _v391_lire4(db, code)
     if sub:
+        # V402 — LE MÊME GARDE QUE LES RÉSERVATIONS (V393). Cette fonction ne
+        # testait que `remaining > 0`, JAMAIS `expires_at` : un abonné dont le
+        # forfait avait expiré entrait donc GRATUITEMENT au live, indéfiniment.
+        # Mesuré le 07/08/2026 : CHRISTOUX10, expiré le 03/08 et bloqué en
+        # réservation par V393, obtenait encore un jeton d'accès au live.
+        # C'est exactement le trou que V393 a bouché côté séances, resté ouvert ici.
+        _ok, _pourquoi = _v402_ok(sub, 1)
+        if not _ok:
+            logger.info(f"[V402] Acces live refuse pour {code} : {_pourquoi}")
+            return None
         return {
             "code": code,
             "name": sub.get("name") or (sub.get("email") or "").split("@")[0] or "Abonné",
@@ -9309,10 +9320,18 @@ async def _bt_subscriber_credit(code: str):
         }
     dc = await db.discount_codes.find_one(
         {"code": code, "active": True},
-        {"_id": 0, "name": 1, "assignedEmail": 1, "maxUses": 1, "used": 1}
+        {"_id": 0, "name": 1, "assignedEmail": 1, "maxUses": 1, "used": 1, "expiresAt": 1}
     )
     if dc:
         rem = int(dc.get("maxUses") or 0) - int(dc.get("used") or 0)
+        # V402 : même règle sur le repli `discount_codes`. Sans elle, un code
+        # expiré sans document `subscriptions` passerait encore par cette porte.
+        _ok, _pourquoi = _v402_ok(
+            {"expires_at": dc.get("expiresAt"), "remaining_sessions": rem}, 1
+        )
+        if not _ok:
+            logger.info(f"[V402] Acces live refuse pour {code} (repli code) : {_pourquoi}")
+            return None
         return {
             "code": code,
             "name": dc.get("name") or (dc.get("assignedEmail") or "").split("@")[0] or "Abonné",

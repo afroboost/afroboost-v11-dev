@@ -142,174 +142,24 @@ def validate_email(email: str) -> bool:
 # === ROUTES GOOGLE OAUTH ===
 @auth_router.post("/google/session")
 async def process_google_session(request: Request, response: Response):
+    """V403 — RETIRÉ. Cette route appelait `demobackend.emergentagent.com` pour
+    résoudre une session « Google » qui n'en était pas une : c'était l'OAuth de
+    la plateforme Emergent, sur laquelle ce projet a été construit. L'utilisateur
+    voyait un écran de consentement d'une marque tierce en plein parcours
+    Afroboost.
+
+    Le bouton qui l'appelait a été retiré de `CoachLoginModal`. La route est
+    conservée mais NEUTRALISÉE plutôt que supprimée : un ancien onglet resté
+    ouvert, ou un signet portant `#session_id=…`, la trouverait encore. Un 410
+    explicite lui dit quoi faire ; un 404 muet laisserait croire à une panne.
+
+    Vérifié avant retrait : les 11 comptes de `users_auth` sont TOUS en
+    `email_password` avec un mot de passe — personne ne se connectait par là.
     """
-    Traite le session_id reçu après authentification Google.
-    Vérifie que l'email est autorisé (coach@afroboost.com).
-
-    REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    """
-    try:
-        body = await request.json()
-        session_id = body.get("session_id")
-
-        if not session_id:
-            raise HTTPException(status_code=400, detail="session_id requis")
-
-        # Appeler l'API Emergent pour récupérer les données de session avec retry logic
-        max_retries = 3
-        retry_delay = 1
-        user_data = None
-
-        for attempt in range(max_retries):
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    emergent_response = await client.get(
-                        "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-                        headers={"X-Session-ID": session_id}
-                    )
-
-                    if emergent_response.status_code == 200:
-                        user_data = emergent_response.json()
-                        logger.info(f"[AUTH] Google session verified on attempt {attempt + 1}")
-                        break
-                    else:
-                        logger.warning(f"[AUTH] Google session API returned {emergent_response.status_code} on attempt {attempt + 1}")
-
-                        if attempt < max_retries - 1:
-                            import asyncio
-                            await asyncio.sleep(retry_delay)
-                        else:
-                            raise HTTPException(status_code=401, detail="Session invalide ou expirée")
-            except httpx.TimeoutException:
-                logger.warning(f"[AUTH] Google session API timeout on attempt {attempt + 1}")
-                if attempt < max_retries - 1:
-                    import asyncio
-                    await asyncio.sleep(retry_delay)
-                else:
-                    raise HTTPException(status_code=408, detail="Délai d'attente dépassé avec l'API d'authentification")
-            except httpx.RequestError as e:
-                logger.warning(f"[AUTH] Google session API request error on attempt {attempt + 1}: {e}")
-                if attempt < max_retries - 1:
-                    import asyncio
-                    await asyncio.sleep(retry_delay)
-                else:
-                    raise HTTPException(status_code=503, detail="Service d'authentification indisponible")
-
-        if not user_data:
-            raise HTTPException(status_code=401, detail="Session invalide ou expirée")
-        
-        email = user_data.get("email", "").lower()
-        name = user_data.get("name", "")
-        picture = user_data.get("picture", "")
-        session_token = user_data.get("session_token", "")
-        
-        # v9.2.2: Permettre l'accès à tous les emails (Super Admin + Partenaires)
-        # Le Super Admin (contact.artboost@gmail.com ou afroboost.bassi@gmail.com) a des privilèges spéciaux
-        is_super_admin = is_super_admin_email(email)
-        
-        # Créer ou mettre à jour l'utilisateur Google
-        user_id = f"coach_{uuid.uuid4().hex[:12]}"
-        existing_user = await _db.google_users.find_one({"email": email}, {"_id": 0})
-        
-        if existing_user:
-            user_id = existing_user.get("user_id", user_id)
-            await _db.google_users.update_one(
-                {"email": email},
-                {"$set": {
-                    "name": name,
-                    "picture": picture,
-                    "last_login": datetime.now(timezone.utc).isoformat()
-                }}
-            )
-        else:
-            await _db.google_users.insert_one({
-                "user_id": user_id,
-                "email": email,
-                "name": name,
-                "picture": picture,
-                "is_coach": True,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "last_login": datetime.now(timezone.utc).isoformat()
-            })
-        
-        # v9.2.2: Créer automatiquement un profil coach si inexistant (sauf Super Admin)
-        if not is_super_admin:
-            existing_coach = await _db.coaches.find_one({"email": email})
-            if not existing_coach:
-                # Créer un profil coach minimal avec 0 crédits
-                new_coach = {
-                    "id": str(uuid.uuid4()),
-                    "email": email,
-                    "name": name,
-                    "phone": "",
-                    "bio": "",
-                    "photo_url": picture,
-                    "role": "coach",
-                    "credits": 0,  # Crédits initiaux à 0, doit acheter un pack
-                    "pack_id": None,
-                    "stripe_customer_id": None,
-                    "stripe_connect_id": None,
-                    "is_active": True,
-                    "platform_name": None,
-                    "logo_url": None,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                    "updated_at": None,
-                    "last_login": datetime.now(timezone.utc).isoformat()
-                }
-                await _db.coaches.insert_one(new_coach)
-                logger.info(f"[AUTH] Nouveau coach créé automatiquement: {email}")
-            else:
-                # Mettre à jour last_login pour les coachs existants
-                await _db.coaches.update_one(
-                    {"email": email},
-                    {"$set": {"last_login": datetime.now(timezone.utc).isoformat()}}
-                )
-        
-        # Créer la session
-        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-        await _db.coach_sessions.delete_many({"user_id": user_id})  # Supprimer les anciennes sessions
-        await _db.coach_sessions.insert_one({
-            "session_id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "email": email,
-            "name": name,
-            "session_token": session_token,
-            "expires_at": expires_at.isoformat(),
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
-        
-        # Définir le cookie httpOnly
-        response.set_cookie(
-            key="coach_session_token",
-            value=session_token,
-            httponly=True,
-            secure=True,
-            samesite="none",
-            max_age=7 * 24 * 60 * 60,  # 7 jours
-            path="/"
-        )
-        
-        # V133: Générer JWT signé pour l'utilisateur
-        role = "super_admin" if is_super_admin else "coach"
-        jwt_token = generate_jwt_token(email, role)
-
-        return {
-            "success": True,
-            "token": jwt_token,
-            "user": {
-                "user_id": user_id,
-                "email": email,
-                "name": name,
-                "picture": picture,
-                "is_coach": True
-            }
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Google auth error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    raise HTTPException(
+        status_code=410,
+        detail="La connexion Google a été retirée. Connectez-vous avec votre e-mail et mot de passe.",
+    )
 
 
 @auth_router.get("/me")
