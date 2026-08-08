@@ -82,8 +82,17 @@ axios.interceptors.response.use(
       const res = error && error.response;
       const reason = res && res.headers && (res.headers['x-auth-reason'] || res.headers['X-Auth-Reason']);
 
+      // V410 : le pont Spordateur répond 403 « identity_required » PAR CONCEPTION
+      // à tout visiteur non reconnu — ce n'est PAS une session morte. Sans cette
+      // exemption, un membre au jeton expiré qui cliquait simplement sur
+      // « Spordateur » recevait une alerte BLOQUANTE et perdait son jeton, au lieu
+      // d'arriver sur /rencontre. La sécurité ne bouge pas : seul le serveur juge,
+      // et l'alerte V345 continue de couvrir toutes les autres routes.
+      const urlAppel = (error && error.config && error.config.url) || '';
+      const estPontSpordate = urlAppel.indexOf('/spordate/access') !== -1;
+
       // V345 : refus (401/403) ET jeton expiré -> la session est morte, on le dit.
-      if (res && (res.status === 401 || res.status === 403) && !reason) {
+      if (res && (res.status === 401 || res.status === 403) && !reason && !estPontSpordate) {
         const jeton = localStorage.getItem('afroboost_jwt');
         if (jeton && jetonExpire(jeton)) {
           // Une seule alerte par session de navigation : ces refus arrivent souvent
@@ -7511,9 +7520,28 @@ function App() {
             onClick={async (e) => {
               if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
               e.preventDefault();
+              // V410 — LE CLIC DOIT TOUJOURS ABOUTIR SUR /rencontre.
+              // Le `preventDefault()` ci-dessus supprime la navigation native du
+              // `href` TOUT DE SUITE. Tout reposait ensuite sur la suite
+              // asynchrone : si elle n'allait pas au bout, plus rien ne faisait
+              // partir l'utilisateur et le bouton paraissait MORT. Deux facons
+              // d'en arriver la, toutes deux reelles :
+              //   1. `axios` attend SANS LIMITE par defaut (timeout: 0) — un POST
+              //      qui ne se termine jamais (mobile qui decroche, portail
+              //      captif, hoquet Cloudflare) gelait le clic indefiniment ;
+              //   2. une `alert()` bloquante pouvait s'intercaler avant le rejet.
+              // On garantit donc le depart, quoi qu'il arrive.
+              let parti = false;
+              const aller = (url) => {
+                if (parti) return;          // une seule navigation, jamais deux
+                parti = true;
+                window.location.href = url || '/rencontre';
+              };
+              // Filet : meme si la promesse ne se resout JAMAIS, on part.
+              const filet = setTimeout(() => aller('/rencontre'), 2500);
               try {
-                const r = await axios.post(`${API}/spordate/access`, {});
-                window.location.href = (r.data && r.data.url) || '/rencontre';
+                const r = await axios.post(`${API}/spordate/access`, {}, { timeout: 2500 });
+                aller((r.data && r.data.url) || '/rencontre');
               } catch (err) {
                 // V403 — ON VA TOUJOURS SUR /rencontre, JAMAIS SUR UN ECRAN DE
                 // CONNEXION. 403 (non reconnu) ou 503 (pont non configure) sont
@@ -7522,7 +7550,9 @@ function App() {
                 // connexion coach d'afroboost — c'est ce qui envoyait
                 // l'utilisateur sur l'ecran d'une marque tierce au lieu de la
                 // page Rencontre.
-                window.location.href = '/rencontre';
+                aller('/rencontre');
+              } finally {
+                clearTimeout(filet);
               }
             }}
             className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all"
