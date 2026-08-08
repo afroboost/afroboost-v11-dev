@@ -1651,6 +1651,38 @@ def t20_new_visitor_ok():
         record(20, "Nouveau visiteur -> inscription", False, str(e))
 
 
+def t93_v410_pont_spordateur():
+    """V410 : le bouton « Spordateur » de la vitrine doit TOUJOURS aboutir sur
+    /rencontre. Deux conditions, toutes deux vérifiées ici :
+
+      a) le pont /api/spordate/access RÉPOND (il ne pend pas) et, pour un appelant
+         anonyme, répond 403 « identity_required » — une réponse NORMALE, pas une
+         panne : le frontend retombe alors sur /rencontre, où Spordate propose son
+         propre login. Un 5xx signalerait au contraire un pont cassé ;
+      b) /rencontre existe vraiment et sert la page Spordateur.
+
+    Sans (b), le repli du bouton mènerait à une page morte ; sans (a), le clic
+    pourrait geler — c'est exactement la panne que V410 corrige."""
+    try:
+        r = requests.post(_url("/api/spordate/access"), json={}, timeout=TIMEOUT)
+        pont_ok = r.status_code in (200, 403, 503)
+        detail_a = f"pont HTTP {r.status_code}"
+        if r.status_code >= 500 and r.status_code != 503:
+            pont_ok = False
+    except Exception as e:
+        pont_ok, detail_a = False, f"pont injoignable : {e}"
+
+    try:
+        p = requests.get(_url("/rencontre"), timeout=TIMEOUT)
+        page_ok = p.status_code == 200 and "spordate" in (p.text or "").lower()
+        detail_b = f"/rencontre HTTP {p.status_code}, {len(p.content)} octets"
+    except Exception as e:
+        page_ok, detail_b = False, f"/rencontre injoignable : {e}"
+
+    record(93, "V410 pont Spordateur : /spordate/access répond ET /rencontre sert la page",
+           pont_ok and page_ok, f"{detail_a} | {detail_b}")
+
+
 TEST_CAPTION_MARK = "TEST non-régression"
 
 
@@ -1805,6 +1837,7 @@ def main():
                    t86_v349_contenu_des_conversations_ferme, t87_v350_piece_jointe_du_chat, t88_v354_permissions_policy_micro,
                    t89_v363_segments_contacts, t90_v365_membres_de_groupe_identiques_et_rapides,
                    t91_v367_apercu_bot_ferme_et_sans_envoi, t92_v369_routes_bot_fermees_et_drapeau_off,
+                   t93_v410_pont_spordateur,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
