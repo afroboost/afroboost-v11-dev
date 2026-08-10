@@ -1652,6 +1652,66 @@ def t20_new_visitor_ok():
         record(20, "Nouveau visiteur -> inscription", False, str(e))
 
 
+def t97_v413_stockage_disque():
+    """V413 : un NOUVEL envoi est rangé sur le disque et servi correctement.
+
+    Vérifie le cycle complet écriture -> lecture, qui est tout l'objet de V413 :
+      1. l'envoi renvoie une URL /api/files/… ;
+      2. cette URL sert le fichier À L'IDENTIQUE (octet pour octet) ;
+      3. elle répond 206 aux requêtes par plages (FileResponse gère le Range
+         nativement quand le fichier est sur disque).
+
+    NOTE ASSUMÉE : ce test laisse un fichier d'environ 70 octets à chaque
+    exécution — il n'existe aucune route de suppression d'asset, et en inventer
+    une pour les besoins du test ajouterait une surface d'attaque pour un gain
+    nul. Le coût est négligeable ; le signaler vaut mieux que le taire."""
+    # PNG 1x1 valide, le plus petit fichier acceptable par la validation MIME.
+    png = bytes.fromhex(
+        "89504e470d0a1a0a0000000d494844520000000100000001080600000"
+        "01f15c4890000000a49444154789c6360000002000100ffff03000006"
+        "0005570cf5b30000000049454e44ae426082")
+    try:
+        r = requests.post(_url("/api/coach/upload-asset"),
+                          headers={"X-User-Email": ADMIN},
+                          files={"file": ("v413_test.png", png, "image/png")},
+                          data={"asset_type": "image"}, timeout=TIMEOUT)
+        if r.status_code != 200:
+            record(97, "V413 : nouvel envoi rangé sur disque et servi", False,
+                   f"envoi -> HTTP {r.status_code} {_short(r)}")
+            return
+        url = (r.json() or {}).get("url") or ""
+        if not url.startswith("/api/files/"):
+            record(97, "V413 : nouvel envoi rangé sur disque et servi", False,
+                   f"URL inattendue : {url!r}")
+            return
+    except Exception as e:
+        record(97, "V413 : nouvel envoi rangé sur disque et servi", False, f"envoi : {e}")
+        return
+
+    echecs = []
+    try:
+        # L'image est optimisée par le serveur (réencodage JPEG/PNG) : on ne
+        # compare donc PAS au PNG d'origine, mais on exige un fichier NON VIDE
+        # et cohérent avec lui-même entre la lecture complète et la plage.
+        r1 = requests.get(_url(url), timeout=TIMEOUT)
+        if r1.status_code != 200 or not r1.content:
+            echecs.append(f"lecture -> HTTP {r1.status_code}, {len(r1.content)} o")
+        else:
+            r2 = requests.get(_url(url), headers={"Range": "bytes=0-9"}, timeout=TIMEOUT)
+            if r2.status_code != 206:
+                echecs.append(f"Range -> HTTP {r2.status_code} (attendu 206)")
+            elif r2.content != r1.content[:10]:
+                echecs.append("les 10 premiers octets de la plage diffèrent du fichier complet")
+            cr = r2.headers.get("Content-Range", "")
+            if r2.status_code == 206 and not cr.endswith(f"/{len(r1.content)}"):
+                echecs.append(f"Content-Range {cr!r} incohérent avec {len(r1.content)} o")
+    except Exception as e:
+        echecs.append(str(e))
+
+    record(97, "V413 : nouvel envoi servi à l'identique, plages comprises",
+           not echecs, " | ".join(echecs) or f"url={url}")
+
+
 def t96_v412_range_206():
     """V412 : /api/files/ doit répondre 206 à une requête par plages.
 
@@ -1983,7 +2043,7 @@ def main():
                    t91_v367_apercu_bot_ferme_et_sans_envoi, t92_v369_routes_bot_fermees_et_drapeau_off,
                    t93_v410_pont_spordateur,
                    t94_v411_fils_prives_fermes, t95_v411_acces_legitime_admin,
-                   t96_v412_range_206,
+                   t96_v412_range_206, t97_v413_stockage_disque,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

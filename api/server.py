@@ -1911,6 +1911,90 @@ async def delete_user(user_id: str):
     
     return {"success": True, "message": "Contact supprimé et références nettoyées"}
 
+# === V413 : LES MÉDIAS VONT SUR LE DISQUE, PLUS DANS MONGODB ===
+#
+# POURQUOI. Jusqu'ici chaque fichier était un document MongoDB portant son binaire
+# dans un champ `data`. Trois plafonds en découlaient :
+#   1. 16 Mo par document (limite DURE de MongoDB) — une vidéo un peu longue ne
+#      pouvait tout simplement pas être stockée ;
+#   2. une lecture à froid depuis Atlas plafonne à ~75 Ko/s (mesuré) : 12,7 Mo
+#      mettaient 178 s et dépassaient la limite de 100 s de Cloudflare -> 524 ;
+#   3. l'espace d'Atlas est précieux et payant, celui du disque ne l'est pas.
+#
+# CE QUI NE CHANGE PAS. Les fichiers DÉJÀ en base y restent et continuent d'être
+# servis exactement comme avant : les URL existantes ne peuvent pas casser. Le
+# disque est essayé d'abord, MongoDB reste le repli — dans les deux sens (lecture
+# ET écriture : si le disque est absent ou non inscriptible, on retombe sur le
+# comportement historique plutôt que de perdre un envoi).
+#
+# LES MÉTADONNÉES RESTENT EN BASE (sans le binaire) : le type de contenu, le nom
+# d'origine et le propriétaire servent au reste de l'application. Seuls les octets
+# déménagent.
+_V413_MEDIA_DIR = os.environ.get("MEDIA_DIR", "/app/media")
+# `file_id` et `filename` viennent de l'URL publique : un `..` y ouvrirait tout le
+# système de fichiers. On n'accepte donc qu'un identifiant simple, et on retire
+# toute composante de chemin du nom.
+_V413_ID_VALIDE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _v413_chemin(file_id: str, filename: str):
+    """Chemin disque d'un média, ou None si l'identifiant est suspect."""
+    if not _V413_ID_VALIDE.match(file_id or ""):
+        return None
+    nom = os.path.basename((filename or "").replace("\\", "/")).strip()
+    if not nom or nom in (".", ".."):
+        return None
+    return os.path.join(_V413_MEDIA_DIR, file_id, nom)
+
+
+def _v413_disque_pret() -> bool:
+    """Le disque est-il réellement utilisable ? On ne se fie pas à l'existence du
+    dossier : sans droit d'écriture, l'envoi serait perdu en silence."""
+    try:
+        os.makedirs(_V413_MEDIA_DIR, exist_ok=True)
+        return os.access(_V413_MEDIA_DIR, os.W_OK)
+    except Exception:
+        return False
+
+
+def _v413_ecrire(file_id: str, filename: str, data: bytes) -> bool:
+    """Écrit le binaire sur le disque. Renvoie False si quoi que ce soit empêche
+    l'écriture — l'appelant retombe alors sur MongoDB, sans perdre le fichier."""
+    chemin = _v413_chemin(file_id, filename)
+    if not chemin or not _v413_disque_pret():
+        return False
+    try:
+        os.makedirs(os.path.dirname(chemin), exist_ok=True)
+        # Écriture en deux temps : un lecteur ne peut jamais tomber sur un fichier
+        # à moitié écrit, et un plantage en cours ne laisse pas de média tronqué.
+        provisoire = chemin + ".part"
+        with open(provisoire, "wb") as f:
+            f.write(data)
+        os.replace(provisoire, chemin)
+        logger.info(f"[V413] media ecrit sur disque : {chemin} ({len(data)} o)")
+        return True
+    except Exception as e:
+        logger.error(f"[V413] ecriture disque impossible ({type(e).__name__}: {e}) "
+                     f"-> repli MongoDB")
+        return False
+
+
+async def _v413_enregistrer_media(file_id: str, filename: str, data: bytes,
+                                  base_doc: dict) -> dict:
+    """Range un média : disque si possible, MongoDB sinon. Renvoie le document
+    inséré (le binaire n'y figure QUE dans le cas du repli)."""
+    from bson.binary import Binary  # importé localement, comme partout ailleurs ici
+    doc = dict(base_doc)
+    doc["size"] = len(data)
+    if _v413_ecrire(file_id, filename, data):
+        doc["storage"] = "disk"          # marqueur explicite, lisible en base
+    else:
+        doc["storage"] = "mongo"
+        doc["data"] = Binary(data)
+    await db.uploaded_files.insert_one(doc)
+    return doc
+
+
 # --- Photo de profil (MOTEUR D'UPLOAD RÉEL) ---
 @api_router.post("/users/upload-photo")
 async def upload_user_photo(file: UploadFile = File(...), participant_id: str = Form(...)):
@@ -1958,19 +2042,17 @@ async def upload_user_photo(file: UploadFile = File(...), participant_id: str = 
         file_id = uuid.uuid4().hex[:16]
         filename = f"profile_{participant_id}_{file_id}.jpg"
 
-        # Stocker dans MongoDB (comme coach/upload-asset)
-        file_doc = {
+        # V413 : disque si possible, MongoDB en repli (le binaire n'est plus
+        # placé ici — `_v413_enregistrer_media` s'en charge selon la destination).
+        file_doc = await _v413_enregistrer_media(file_id, filename, file_bytes, {
             "file_id": file_id,
             "filename": filename,
             "original_name": file.filename or "profile.jpg",
             "content_type": "image/jpeg",
             "asset_type": "profile_photo",
             "participant_id": participant_id,
-            "data": Binary(file_bytes),
-            "size": len(file_bytes),
             "created_at": datetime.utcnow()
-        }
-        await db.uploaded_files.insert_one(file_doc)
+        })
 
         # URL publique via le endpoint /api/files/ existant
         photo_url = f"/api/files/{file_id}/{filename}"
@@ -2074,21 +2156,16 @@ async def upload_coach_asset(
             img.save(buf, "JPEG" if ext == ".jpg" else "PNG", quality=85)
             file_bytes = buf.getvalue()
 
-        # Stocker dans MongoDB
-        from bson.binary import Binary
-        file_doc = {
+        # V413 : disque si possible, MongoDB en repli.
+        file_doc = await _v413_enregistrer_media(file_id, filename, file_bytes, {
             "file_id": file_id,
             "filename": filename,
             "original_name": file.filename,
             "content_type": file.content_type,
             "asset_type": asset_type,
             "coach_email": coach_email,
-            "data": Binary(file_bytes),
-            "size": len(file_bytes),
             "created_at": datetime.utcnow()
-        }
-
-        await db.uploaded_files.insert_one(file_doc)
+        })
 
         # URL publique via API endpoint
         asset_url = f"/api/files/{file_id}/{filename}"
@@ -2174,18 +2251,16 @@ async def upload_chunk(
     file_id = uuid.uuid4().hex[:16]
     filename = f"{asset_type}_{file_id}{ext}"
 
-    file_doc = {
+    # V413 : disque si possible, MongoDB en repli.
+    file_doc = await _v413_enregistrer_media(file_id, filename, file_bytes, {
         "file_id": file_id,
         "filename": filename,
         "original_name": original_name,
         "content_type": content_type,
         "asset_type": asset_type,
         "coach_email": coach_email,
-        "data": Binary(file_bytes),
-        "size": len(file_bytes),
         "created_at": datetime.utcnow()
-    }
-    await db.uploaded_files.insert_one(file_doc)
+    })
 
     asset_url = f"/api/files/{file_id}/{filename}"
     logger.info(f"[CHUNK-UPLOAD] ✅ Fichier assemblé: {filename} ({len(file_bytes)} bytes, {total_chunks} chunks)")
@@ -2451,6 +2526,33 @@ async def serve_uploaded_file(file_id: str, filename: str, request: Request):
         if not file_doc:
             logger.warning(f"[FILE-SERVE] ❌ Fichier non trouvé: {file_id}")
             raise HTTPException(status_code=404, detail="Fichier non trouvé")
+
+        # === V413 : LE DISQUE D'ABORD ===
+        #
+        # `FileResponse` gère les requêtes par plages NATIVEMENT (206, Content-Range,
+        # reprise) et diffuse depuis le disque local au lieu de tirer le fichier
+        # entier depuis Atlas à ~75 Ko/s. C'est ce qui lève d'un coup la limite des
+        # 16 Mo et celle des 100 s de Cloudflare.
+        #
+        # On teste l'EXISTENCE du fichier, pas seulement le marqueur `storage` : un
+        # document mal étiqueté (ou un média copié à la main) doit quand même être
+        # servi. Et si le fichier n'est pas là, on retombe sur MongoDB juste en
+        # dessous — les URL déjà en circulation ne peuvent pas casser.
+        _chemin_disque = _v413_chemin(file_id, filename)
+        if _chemin_disque and os.path.isfile(_chemin_disque):
+            from fastapi.responses import FileResponse as _FR
+            _ct = file_doc.get("content_type", "application/octet-stream")
+            _nom = (file_doc.get("original_name") or filename)
+            _nom = _nom.encode('ascii', 'replace').decode('ascii').replace('?', '_')
+            logger.info(f"[FILE-SERVE] disque -> {_chemin_disque}")
+            return _FR(
+                _chemin_disque,
+                media_type=_ct,
+                headers={
+                    "Cache-Control": "public, max-age=31536000, immutable",
+                    "Content-Disposition": f'inline; filename="{_nom}"',
+                },
+            )
 
         # Extraire les données binaires
         raw_data = file_doc.get("data")
