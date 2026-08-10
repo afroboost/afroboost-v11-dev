@@ -73,11 +73,27 @@ const webpackConfig = {
       // EN MÊME TEMPS = pic mémoire fatal -> le noyau tue le build (OOM-kill,
       // exit 255 sans message) sur ce serveur 7,6 Go partagé entre plusieurs
       // conteneurs. En série, le build est un peu plus lent mais ne meurt plus.
+      // V424 : `parallel = 1` NE SUFFISAIT PAS. Avec la valeur 1, Terser lance
+      // quand meme UN PROCESSUS WORKER (jest-worker) : l'arbre syntaxique du
+      // fichier en cours existe alors EN DOUBLE — dans le worker ET dans le
+      // processus parent qui lui transmet la source. Plusieurs centaines de Mo
+      // de plus au pic, precisement ce qui manquait le 10 aout.
+      //
+      // `parallel = false` minifie DANS LE PROCESSUS COURANT : un seul arbre en
+      // memoire, aucun worker, aucune serialisation. Un peu plus lent ; ne se
+      // fait plus tuer.
+      //
+      // COROLLAIRE : AUGMENTER `--max-old-space-size` serait CONTRE-PRODUCTIF.
+      // La trace de l'echec (`failed to read oom_kill event`) montre que c'est
+      // le NOYAU qui tue le processus sur sa memoire RESIDENTE — pas Node qui
+      // epuise son tas (il dirait « JavaScript heap out of memory »). Un tas
+      // plus grand laisse Node repousser ses ramasse-miettes, donc GONFLE la
+      // memoire residente : exactement ce que le noyau surveille.
       try {
         if (webpackConfig.optimization && Array.isArray(webpackConfig.optimization.minimizer)) {
           webpackConfig.optimization.minimizer.forEach((m) => {
             if (m && m.options && typeof m.options === 'object') {
-              m.options.parallel = 1;
+              m.options.parallel = false;
             }
           });
         }

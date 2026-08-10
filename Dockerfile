@@ -35,8 +35,25 @@ ARG FRONTEND_CACHEBUST=v318-20260728
 # V308b : la limite mémoire Node de 512 Mo était trop juste pour des fichiers de
 # 10 000+ lignes (ChatWidget.js, App.js, CoachDashboard.js) -> build tué par OOM
 # (exit 255, ~10 s après « Creating an optimized production build… »). Portée à
-# 2048 Mo (VPS Hetzner). Si un futur build OOM encore, monter à 3072 selon la RAM.
-RUN rm -rf node_modules/.cache && NODE_OPTIONS="--max-old-space-size=2048" GENERATE_SOURCEMAP=false CI=false npx craco build
+# 2048 Mo (VPS Hetzner).
+#
+# V424 — NE PAS MONTER CETTE VALEUR. L'ancien conseil (« monter à 3072 ») est
+# FAUX pour la panne réellement observée. Trace du build tué le 10 août 2026 :
+#     [frontend-build 7/7] RUN … npx craco build
+#     failed to read oom_kill event … memory.events: no such file or directory
+# Le cgroup avait déjà disparu : c'est le NOYAU qui a tué le processus sur sa
+# mémoire RÉSIDENTE. Node, lui, aurait dit « JavaScript heap out of memory ».
+# Un tas plus grand laisse Node repousser ses ramasse-miettes, donc AUGMENTE la
+# mémoire résidente — on aggraverait la panne en croyant la corriger.
+# Les deux leviers qui marchent RÉDUISENT le pic — mesurés sur un build complet :
+#   parallel=1,     heap 2048  ->  1476 Mo   (configuration d'origine)
+#   parallel=false, heap 2048  ->  1367 Mo
+#   parallel=false, heap 1536  ->  1019 Mo   <- RETENU (-31 %)
+#   parallel=false, heap 1024  ->   955 Mo   (marge trop juste si le code grossit)
+# Un tas PLUS PETIT force Node à ramasser plus tôt : la mémoire résidente baisse,
+# alors même que le plafond du tas descend. C'est l'inverse de l'intuition, et
+# c'est ce que la mesure montre. Voir aussi `parallel = false` (craco.config.js).
+RUN rm -rf node_modules/.cache && NODE_OPTIONS="--max-old-space-size=1536" GENERATE_SOURCEMAP=false CI=false npx craco build
 
 FROM python:3.11-slim AS production
 WORKDIR /app
