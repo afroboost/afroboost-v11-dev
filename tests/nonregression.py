@@ -1688,10 +1688,19 @@ def t96_v412_range_206():
         skip(96, "V412 : /api/files/ répond 206", "aucune vidéo /api/files/ référencée")
         return
 
+    # ON INTERROGE L'ORIGINE, PAS L'URL PUBLIQUE. Cloudflare répond aux requêtes
+    # par plages depuis SON cache : sur l'URL publique il renvoie 200 quoi que
+    # fasse l'application, ce qui masquerait totalement la régression qu'on veut
+    # détecter. La technique (forcer l'en-tête `Host` sur l'IP d'origine) est
+    # celle que CLAUDE.md impose pour distinguer l'origine du proxy.
+    ORIGINE = "http://178.105.201.62"
+    hote = {"Host": "afroboost.com"}
+
     echecs = []
     try:
         # 1) plage explicite -> 206 + Content-Range + bonne longueur
-        r = requests.get(_url(cible), headers={"Range": "bytes=0-1023"}, timeout=TIMEOUT)
+        r = requests.get(ORIGINE + cible,
+                         headers={**hote, "Range": "bytes=0-1023"}, timeout=TIMEOUT)
         if r.status_code != 206:
             echecs.append(f"Range 0-1023 -> HTTP {r.status_code} (attendu 206)")
         else:
@@ -1701,13 +1710,15 @@ def t96_v412_range_206():
             if not cr.startswith("bytes 0-1023/"):
                 echecs.append(f"Content-Range inattendu : {cr!r}")
 
-        # 2) plage hors fichier -> 416
-        r2 = requests.get(_url(cible), headers={"Range": "bytes=999999999-"}, timeout=TIMEOUT)
+        # 2) plage hors fichier -> 416 (et pas un 200 qui renverrait tout)
+        r2 = requests.get(ORIGINE + cible,
+                          headers={**hote, "Range": "bytes=999999999-"}, timeout=TIMEOUT)
         if r2.status_code != 416:
             echecs.append(f"plage hors fichier -> HTTP {r2.status_code} (attendu 416)")
 
-        # 3) NON-RÉGRESSION : sans Range, 200 + fichier complet
-        r3 = requests.get(_url(cible), timeout=TIMEOUT)
+        # 3) NON-RÉGRESSION : sans Range, 200 + fichier COMPLET. C'est le chemin
+        #    qu'empruntent les images et les vidéos déjà en ligne.
+        r3 = requests.get(ORIGINE + cible, headers=hote, timeout=max(TIMEOUT, 120))
         if r3.status_code != 200:
             echecs.append(f"sans Range -> HTTP {r3.status_code} (attendu 200)")
         elif r2.status_code == 416:
@@ -1715,9 +1726,9 @@ def t96_v412_range_206():
             if total.isdigit() and len(r3.content) != int(total):
                 echecs.append(f"sans Range : {len(r3.content)} o != taille annoncée {total}")
     except Exception as e:
-        echecs.append(str(e))
+        echecs.append(f"origine injoignable ({e})")
 
-    record(96, "V412 : /api/files/ répond 206 (et 200 complet sans Range)",
+    record(96, "V412 : origine répond 206 aux plages, 416 hors plage, 200 complet sans Range",
            not echecs, " | ".join(echecs))
 
 
