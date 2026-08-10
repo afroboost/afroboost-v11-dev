@@ -17,7 +17,7 @@
 // rechargement (V358), alors que le correctif etait en ligne depuis longtemps.
 // Bumper CACHE_NAME purge l'ancien cache a l'activation et force tous les appareils
 // a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
-var CACHE_NAME = 'afroboost-v410'; // V410: le bouton Spordateur part toujours vers /rencontre
+var CACHE_NAME = 'afroboost-v417'; // V417: medias auto-heberges — purge des anciens caches
 var SW_VERSION = 268;
 
 var PRECACHE_URLS = [

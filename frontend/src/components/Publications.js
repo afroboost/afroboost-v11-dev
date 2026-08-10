@@ -909,14 +909,50 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
     return new Promise((res) => canvas.toBlob(b => res(b), 'image/jpeg', 0.9));
   };
 
+  // V419 — ATTENDRE QUE LA FRAME EXISTE VRAIMENT.
+  //
+  // `onseeked` signale que le DEPLACEMENT est fait, PAS que l'image est decodee
+  // et peignable. Comme cette capture part de `onLoadedMetadata` (readyState 1 =
+  // metadonnees seules, aucune donnee d'image), `drawImage` peignait un cadre
+  // NOIR : c'est l'origine de la miniature noire.
+  //
+  // `requestVideoFrameCallback` est l'API faite pour ca (Chrome, Safari) : elle
+  // ne se declenche QU'UNE FOIS une frame reellement presentee. La ou elle
+  // manque (Firefox), on attend `readyState >= 2` (HAVE_CURRENT_DATA) puis un
+  // tour de rendu. Delai de securite pour ne jamais rester bloque.
+  const v419AttendreFrame = (v) => new Promise((res) => {
+    let fini = false;
+    const finir = () => { if (!fini) { fini = true; res(); } };
+    const secours = setTimeout(finir, 1200);
+    const terminer = () => { clearTimeout(secours); finir(); };
+    if (typeof v.requestVideoFrameCallback === 'function') {
+      v.requestVideoFrameCallback(() => terminer());
+      return;
+    }
+    const verifier = () => {
+      if (fini) return;
+      if (v.readyState >= 2) {
+        requestAnimationFrame(() => requestAnimationFrame(terminer));
+      } else {
+        setTimeout(verifier, 60);
+      }
+    };
+    verifier();
+  });
+
   // Capture par defaut a 1 s, des que la video est prete (si l'utilisateur ne
   // capture rien lui-meme, on a toujours une miniature).
   const handleVideoLoaded = async (e) => {
     const v = e.target;
     setDuration(v.duration || 0);
     try {
-      v.currentTime = Math.min(1, (v.duration || 1) - 0.05);
+      // V419 : sur une video tres courte, `min(1, duree-0.05)` peut tomber a
+      // ~0 s — souvent une frame noire d'amorce. On vise 1 s, ou 25 % de la
+      // duree si la video dure moins de 2 s.
+      const duree = v.duration || 0;
+      v.currentTime = duree > 2 ? 1 : Math.max(0.1, duree * 0.25);
       await new Promise((res) => { v.onseeked = res; });
+      await v419AttendreFrame(v);          // <- LE correctif de la miniature noire
       setCurrentTime(v.currentTime);
       const blob = await captureCurrentFrame();
       if (blob) {
@@ -935,6 +971,11 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
 
   // V270 (F3) — « Capturer » ouvre le recadrage sur le frame choisi.
   const captureAndCrop = async () => {
+    // V419 : meme attente que pour la capture automatique. Un utilisateur qui
+    // deplace le curseur puis clique tout de suite capturait, lui aussi, une
+    // frame pas encore decodee — donc noire.
+    const v = videoPreviewRef.current;
+    if (v) await v419AttendreFrame(v);
     const blob = await captureCurrentFrame();
     if (!blob) return;
     openCropper(URL.createObjectURL(blob), 'thumb');

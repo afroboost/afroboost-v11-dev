@@ -6854,6 +6854,15 @@ V261_MEDIA_PREFIX = "https://res.cloudinary.com/"
 # suppression : tout ce qui vit ailleurs (affiches `events/`, visuels d'offres,
 # logos) est hors d'atteinte de la purge, quoi qu'annonce le client.
 V261_FOLDER = "publications/"
+# V418 : nos propres medias, servis par `/api/files/{id}/{nom}` depuis le disque
+# (V413). C'est un CHEMIN RELATIF : il ne peut designer que notre serveur, ce qui
+# en fait une garde plus stricte que le prefixe Cloudinary qu'il complete.
+# Consequence a connaitre : la purge 48 h supprime le DOCUMENT de la publication
+# mais laisse le fichier sur le disque (l'ancienne purge s'appuyait sur
+# `cloudinary_public_id`, absent ici). Un nettoyage des fichiers orphelins reste
+# a faire — il n'a PAS ete greffe sur ce chemin, qui s'execute a chaque lecture
+# de la vitrine : y ajouter un balayage inter-collections serait risque et lent.
+V418_MEDIA_LOCAL = "/api/files/"
 
 
 def _v261_public_id_from_url(media_url: str) -> str:
@@ -7424,7 +7433,28 @@ async def create_publication(request: Request):
     # V261b: le media doit non seulement venir de Cloudinary, mais vivre dans le
     # dossier `publications/`. C'est ce qui cantonne la purge automatique a ce
     # dossier et met les medias du coach hors de sa portee.
-    if not media_url.startswith(V261_MEDIA_PREFIX) or ("/" + V261_FOLDER) not in media_url:
+    #
+    # V418 : ON ACCEPTE AUSSI NOS PROPRES MEDIAS (`/api/files/...`). Depuis que
+    # les envois vont sur notre disque (V413/V414), plus AUCUNE publication ne
+    # pouvait aboutir : la video se lisait dans l'apercu, puis cette garde la
+    # refusait en « Média invalide ». Meme piege que dans Publications.js — une
+    # garde ecrite pour Cloudinary devenue un mur apres la migration.
+    #
+    # LA SECURITE N'EST PAS AFFAIBLIE, elle est RENFORCEE : on n'accepte qu'un
+    # CHEMIN RELATIF commencant par `/api/files/`. Une telle valeur ne peut, par
+    # construction, designer que notre propre serveur — la ou l'ancienne regle
+    # laissait passer n'importe quelle URL du domaine `res.cloudinary.com`, y
+    # compris un compte tiers. On refuse explicitement `//` et `http`, qui
+    # feraient d'un chemin apparemment relatif une URL externe.
+    _v418_maison = (
+        media_url.startswith(V418_MEDIA_LOCAL)
+        and not media_url.startswith("//")
+        and "://" not in media_url
+    )
+    _v418_cloudinary = (
+        media_url.startswith(V261_MEDIA_PREFIX) and ("/" + V261_FOLDER) in media_url
+    )
+    if not (_v418_maison or _v418_cloudinary):
         raise HTTPException(status_code=400, detail="Média invalide")
     media_type = "video" if body.get("media_type") == "video" else "image"
 
@@ -7437,7 +7467,14 @@ async def create_publication(request: Request):
     # `src` public et servira d'argument a destroy() a la purge : on n'accepte
     # qu'une URL Cloudinary du dossier publications/. Vide sinon.
     thumb = (body.get("thumbnail_url") or "").strip()
-    if not (thumb.startswith(V261_MEDIA_PREFIX) and ("/" + V261_FOLDER) in thumb):
+    # V418 : meme ouverture que pour `media_url` ci-dessus, mêmes garde-fous.
+    # Sans cela, la miniature d'une video auto-hebergee etait SILENCIEUSEMENT
+    # jetee : la publication passait, mais s'affichait avec un cadre noir.
+    _v418_thumb_ok = (
+        (thumb.startswith(V418_MEDIA_LOCAL) and not thumb.startswith("//") and "://" not in thumb)
+        or (thumb.startswith(V261_MEDIA_PREFIX) and ("/" + V261_FOLDER) in thumb)
+    )
+    if not _v418_thumb_ok:
         thumb = ""
 
     # V268b: nom affiche sur le post public, editable par l'auteur. Defaut = le
