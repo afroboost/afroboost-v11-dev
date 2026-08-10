@@ -25,12 +25,67 @@
 import React, { useRef, useState } from 'react';
 import SvgIcon from './SvgIcon';
 
-const CLOUD_NAME = process.env.REACT_APP_CLOUDINARY_CLOUD_NAME;
-const UPLOAD_PRESET = process.env.REACT_APP_CLOUDINARY_UPLOAD_PRESET;
+// === V414 : LES ENVOIS VONT SUR NOTRE SERVEUR, PLUS SUR CLOUDINARY ===
+//
+// Le compte Cloudinary `dtm0r7hwq` est DESACTIVE : toute requete d'envoi y
+// repond `401 — cloud_name dtm0r7hwq is disabled`. Chaque photo et chaque video
+// deposee depuis le dashboard echouait donc, et les 23 medias deja heberges la
+// sont devenus inaccessibles d'un coup.
+//
+// On envoie desormais vers `/api/coach/upload-asset`, qui range le fichier sur
+// le DISQUE du serveur (V413) et renvoie une URL `/api/files/...` servie par
+// nous — sans compte tiers, sans quota, sans desactivation possible.
+//
+// LE NOM DU FICHIER ET DES FONCTIONS EST CONSERVE A DESSEIN : six ecrans les
+// importent (ConceptEditor, OffersManager, OfferWizard, BrandingManager,
+// CampaignModal, Publications). Renommer aurait multiplie les points de
+// rupture pour un gain cosmetique ; seul l'INTERIEUR change.
+const API_BASE = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
 
-/** V229 — true si le build embarque bien la configuration Cloudinary. */
+// Limites du serveur (`/coach/upload-asset`) : les refleter ici permet de
+// prevenir l'utilisateur AVANT l'envoi plutot que de lui renvoyer un 400 sec.
+const PLAFONDS_MO = { image: 5, video: 15, logo: 2, audio: 15 };
+
+/** Type d'asset attendu par le serveur, deduit du fichier. */
+function typeAsset(file) {
+  const mime = (file && file.type) || '';
+  if (mime.indexOf('video/') === 0) return 'video';
+  if (mime.indexOf('audio/') === 0) return 'audio';
+  return 'image';
+}
+
+/**
+ * V414 — identite du coach pour l'en-tete `X-User-Email`.
+ * On reproduit la logique de l'intercepteur global d'App.js : ce composant
+ * utilise `fetch`, qui ne passe PAS par les intercepteurs axios.
+ */
+function emailCoach() {
+  try {
+    const brut = localStorage.getItem('afroboost_coach_user');
+    if (brut) {
+      const parse = JSON.parse(brut);
+      if (parse && parse.email) return String(parse.email).toLowerCase().trim();
+    }
+  } catch (e) { /* ignore */ }
+  try {
+    const idBrut = localStorage.getItem('afroboost_identity') || localStorage.getItem('af_chat_client');
+    if (idBrut) {
+      const id = JSON.parse(idBrut);
+      if (id && id.email) return String(id.email).toLowerCase().trim();
+    }
+  } catch (e) { /* ignore */ }
+  try {
+    return (localStorage.getItem('afroboost_admin_persist') || '').toLowerCase().trim();
+  } catch (e) { return ''; }
+}
+
+/**
+ * V414 — l'envoi est desormais TOUJOURS disponible : il ne depend plus d'une
+ * configuration externe, seulement de notre propre serveur. Le nom est conserve
+ * parce que ConceptEditor s'en sert pour decider d'afficher le bouton.
+ */
 export function isCloudinaryConfigured() {
-  return Boolean(CLOUD_NAME && UPLOAD_PRESET);
+  return true;
 }
 
 /**
@@ -46,67 +101,55 @@ export function isCloudinaryConfigured() {
  * @throws {Error} message deja lisible par un humain (affichable tel quel)
  */
 export async function uploadToCloudinary(file, opts = {}) {
-  const { folder = 'offers', maxSizeMB = 10, maxSizeMBVideo } = opts;
+  // `folder`, `maxSizeMB` et `maxSizeMBVideo` restent acceptes pour ne casser
+  // aucun appelant, mais les plafonds reels sont ceux du SERVEUR : annoncer
+  // 100 Mo alors qu'il en refuse 15 ne ferait que deplacer l'echec plus loin.
+  const asset = typeAsset(file);
+  const plafond = PLAFONDS_MO[asset] || 5;
 
-  // V351 — LA LIMITE DOIT DEPENDRE DU TYPE. Une meme valeur pour les images et
-  // les videos condamnait la video : un plafond raisonnable pour une photo (10 a
-  // 50 Mo) est franchi par la moindre video de telephone. Mesure faite sur le
-  // preset `afroboost` : un envoi de 60 Mo est ACCEPTE (refuse seulement pour
-  // format invalide, jamais pour la taille) — le plafond du compte est donc bien
-  // au-dela. On retient 100 Mo pour la video, le maximum du plan Cloudinary.
-  const estVideo = (file.type || '').indexOf('video/') === 0;
-  const plafond = estVideo ? (maxSizeMBVideo || 100) : maxSizeMB;
-
-  if (!isCloudinaryConfigured()) {
-    throw new Error("Upload non configure. Collez un lien a la place.");
-  }
   if (file.size > plafond * 1024 * 1024) {
     const mb = (file.size / 1024 / 1024).toFixed(1);
-    throw new Error(`Fichier trop lourd (${mb} Mo, maximum ${plafond} Mo pour ${estVideo ? 'une vidéo' : 'une image'}).`);
+    const quoi = asset === 'video' ? 'une vidéo' : (asset === 'audio' ? 'un audio' : 'une image');
+    throw new Error(`Fichier trop lourd (${mb} Mo, maximum ${plafond} Mo pour ${quoi}).`);
+  }
+
+  const email = emailCoach();
+  if (!email) {
+    throw new Error("Session non reconnue : reconnectez-vous pour envoyer un fichier.");
   }
 
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('upload_preset', UPLOAD_PRESET);
-  formData.append('folder', folder);
+  formData.append('asset_type', asset);
 
-  // `auto` laisse Cloudinary determiner image / video / raw d'apres le fichier.
-  const res = await fetch(
-    `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/auto/upload`,
-    { method: 'POST', body: formData }
-  );
+  const res = await fetch(`${API_BASE}/coach/upload-asset`, {
+    method: 'POST',
+    headers: { 'X-User-Email': email },   // pas de Content-Type : le navigateur
+    body: formData                        // pose lui-meme la frontiere multipart
+  });
 
   const data = await res.json().catch(function () { return {}; });
 
   if (!res.ok) {
-    // Cloudinary renvoie { error: { message } } — bien plus utile qu'un code
-    // HTTP nu pour diagnostiquer un preset mal configure.
-    throw new Error(data?.error?.message || `Echec de l'upload (${res.status}).`);
+    // Le serveur renvoie { detail: "..." } — message deja lisible (type MIME
+    // refuse, fichier trop lourd, session absente).
+    throw new Error((data && data.detail) || `Echec de l'envoi (${res.status}).`);
   }
-  if (!data.secure_url) {
-    throw new Error("Reponse inattendue de Cloudinary (URL absente).");
+  if (!data.url) {
+    throw new Error("Réponse inattendue du serveur (URL absente).");
   }
 
   return {
-    url: buildOptimizedUrl(data.secure_url, data.resource_type),
-    resourceType: data.resource_type || 'image',
-    originalUrl: data.secure_url
+    url: data.url,                        // /api/files/<id>/<nom>
+    resourceType: asset === 'audio' ? 'raw' : asset,
+    originalUrl: data.url
   };
 }
 
-/**
- * V229 — Insere `q_auto,f_auto` (qualite et format automatiques) dans l'URL.
- *
- * ATTENTION : ces transformations n'existent QUE pour les ressources `image` et
- * `video`. Un fichier classe `raw` par Cloudinary (PDF, zip, format inconnu)
- * recevrait une URL invalide et ne se chargerait plus du tout. On renvoie donc
- * l'URL brute dans ce cas.
- */
-function buildOptimizedUrl(secureUrl, resourceType) {
-  if (resourceType !== 'image' && resourceType !== 'video') return secureUrl;
-  // `/upload/` apparait une seule fois dans une URL de livraison Cloudinary.
-  return secureUrl.replace('/upload/', '/upload/q_auto,f_auto/');
-}
+// V414 : `buildOptimizedUrl` a ete RETIREE. Elle inserait `q_auto,f_auto` dans
+// une URL Cloudinary — une transformation qui n'a aucun sens sur une URL
+// `/api/files/...` servie par nous. La laisser en place aurait entretenu
+// l'illusion qu'un traitement d'image subsiste.
 
 /**
  * V229 — Bouton d'upload autonome, a poser A COTE d'un champ URL existant.

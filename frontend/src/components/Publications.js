@@ -21,33 +21,75 @@ const API = `${BACKEND_URL}/api`;
 //   - XHR nu ne porte AUCUN de ces en-tetes -> requete simple, pas de preflight.
 // `onProgress(percent)` est optionnel. Renvoie la reponse Cloudinary complete
 // (on y lit secure_url ET duration pour la limite video).
+// V414 : DESTINATION CHANGEE — notre serveur, plus Cloudinary. Le compte
+// `dtm0r7hwq` est desactive (401 « cloud_name is disabled ») : plus aucune
+// publication avec media ne pouvait aboutir. On poste sur
+// `/api/coach/upload-asset`, qui range le fichier sur le disque (V413).
+//
+// XHR est CONSERVE : c'est le seul moyen d'avoir la progression d'envoi
+// (`fetch` ne la remonte pas). La raison historique de l'eviter — le preflight
+// CORS refuse par Cloudillary — disparait ici : la requete est SAME-ORIGIN,
+// donc l'en-tete `X-User-Email` ne declenche aucun preflight.
+//
+// La reponse conserve la forme `{ secure_url, duration }` attendue par les
+// appelants. `duration` est desormais MESUREE ICI pour les videos : sans elle,
+// la « double garde » des 60 s (V269 Fix 3) serait devenue inerte en silence.
+function v269MesurerDuree(fileOrBlob) {
+  return new Promise((resolve) => {
+    try {
+      const sonde = document.createElement('video');
+      sonde.preload = 'metadata';
+      const url = URL.createObjectURL(fileOrBlob);
+      const finir = (d) => { try { URL.revokeObjectURL(url); } catch (e) {} resolve(d); };
+      sonde.onloadedmetadata = () => finir(sonde.duration);
+      sonde.onerror = () => finir(undefined);
+      sonde.src = url;
+    } catch (e) { resolve(undefined); }
+  });
+}
+
 function v269UploadToCloudinary(fileOrBlob, kind, onProgress) {
   return new Promise((resolve, reject) => {
-    const fd = new FormData();
-    fd.append('file', fileOrBlob);
-    fd.append('upload_preset', 'afroboost');
-    fd.append('folder', 'publications');
-    const endpoint = kind === 'video'
-      ? 'https://api.cloudinary.com/v1_1/dtm0r7hwq/video/upload'
-      : 'https://api.cloudinary.com/v1_1/dtm0r7hwq/image/upload';
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', endpoint);
-    if (onProgress) {
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
-      };
-    }
-    xhr.onload = () => {
-      let data = {};
-      try { data = JSON.parse(xhr.responseText); } catch (e) { /* ignore */ }
-      if (xhr.status >= 200 && xhr.status < 300 && data.secure_url) {
-        resolve(data);
-      } else {
-        reject(new Error((data.error && data.error.message) || "L'envoi du média a échoué."));
+    const envoyer = (duree) => {
+      const fd = new FormData();
+      fd.append('file', fileOrBlob);
+      fd.append('asset_type', kind === 'video' ? 'video' : 'image');
+
+      let email = '';
+      try {
+        const brut = localStorage.getItem('afroboost_coach_user');
+        if (brut) { const p = JSON.parse(brut); email = (p && p.email) || ''; }
+        if (!email) email = localStorage.getItem('afroboost_admin_persist') || '';
+      } catch (e) { /* ignore */ }
+      if (!email) {
+        reject(new Error("Session non reconnue : reconnectez-vous pour publier un média."));
+        return;
       }
+
+      const base = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', base + '/coach/upload-asset');
+      xhr.setRequestHeader('X-User-Email', String(email).toLowerCase().trim());
+      if (onProgress) {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+        };
+      }
+      xhr.onload = () => {
+        let data = {};
+        try { data = JSON.parse(xhr.responseText); } catch (e) { /* ignore */ }
+        if (xhr.status >= 200 && xhr.status < 300 && data.url) {
+          resolve({ secure_url: data.url, duration: duree });
+        } else {
+          reject(new Error(data.detail || "L'envoi du média a échoué."));
+        }
+      };
+      xhr.onerror = () => reject(new Error("L'envoi du média a échoué."));
+      xhr.send(fd);
     };
-    xhr.onerror = () => reject(new Error("L'envoi du média a échoué."));
-    xhr.send(fd);
+
+    if (kind === 'video') v269MesurerDuree(fileOrBlob).then(envoyer);
+    else envoyer(undefined);
   });
 }
 

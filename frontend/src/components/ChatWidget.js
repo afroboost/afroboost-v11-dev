@@ -3176,15 +3176,17 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
           try {
             const fd = new FormData();
             fd.append('file', file);
-            fd.append('upload_preset', 'afroboost');
+            // V414 : destination = notre serveur (disque), plus Cloudinary.
+            fd.append('asset_type', 'image');
             const photoUrl = await new Promise((resolve, reject) => {
               const xhr = new XMLHttpRequest();
-              xhr.open('POST', 'https://api.cloudinary.com/v1_1/dtm0r7hwq/image/upload');
+              xhr.open('POST', API + '/coach/upload-asset');
+              xhr.setRequestHeader('X-User-Email', getCoachEmail());
               xhr.onload = () => {
                 if (xhr.status === 200) {
-                  try { resolve(JSON.parse(xhr.responseText).secure_url); }
-                  catch (e) { reject(new Error('Réponse Cloudinary invalide')); }
-                } else { reject(new Error('Upload Cloudinary échoué')); }
+                  try { resolve(JSON.parse(xhr.responseText).url); }
+                  catch (e) { reject(new Error('Réponse serveur invalide')); }
+                } else { reject(new Error('Envoi de la photo échoué')); }
               };
               xhr.onerror = () => reject(new Error('Erreur réseau'));
               xhr.send(fd);
@@ -5941,16 +5943,16 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     try {
       const fd = new FormData();
       fd.append('file', file);
-      fd.append('upload_preset', 'afroboost');
-      // V352 : dossier `chat/` OBLIGATOIRE. La purge refuse de supprimer quoi que ce
-      // soit hors de ce dossier (garde anti-effacement d'un média tiers) : sans lui,
-      // le fichier serait indéboulonnable et le stockage se remplirait.
-      fd.append('folder', 'chat');
-      const r = await fetch('https://api.cloudinary.com/v1_1/dtm0r7hwq/auto/upload',
-        { method: 'POST', body: fd });
+      // V414 : destination = notre serveur (disque), plus Cloudinary. Le dossier
+      // `chat/` de la V352 n'a plus lieu d'etre : chaque fichier reçoit son propre
+      // repertoire `/app/media/<id>/`, il est donc toujours identifiable et
+      // supprimable — la garde anti-effacement d'un media tiers reste satisfaite.
+      fd.append('asset_type', estImage ? 'image' : 'audio');
+      const r = await fetch(API + '/coach/upload-asset',
+        { method: 'POST', body: fd, headers: { 'X-User-Email': getCoachEmail() } });
       const d = await r.json();
-      if (!r.ok || !d.secure_url) throw new Error(d && d.error && d.error.message);
-      setV350Piece({ url: d.secure_url, kind: estImage ? 'image' : 'file', name: file.name });
+      if (!r.ok || !d.url) throw new Error((d && d.detail) || 'upload');
+      setV350Piece({ url: d.url, kind: estImage ? 'image' : 'file', name: file.name });
     } catch (e) {
       // Échec honnête : on le DIT, plutôt que de laisser l'utilisateur cliquer
       // sur « envoyer » avec une pièce jointe qui n'existe pas.
@@ -6074,16 +6076,21 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
     setV350PieceErr('');
     try {
       const fd = new FormData();
-      // Nom explicite : Cloudinary s'en sert pour deviner le type.
+      // Nom explicite : le serveur s'en sert pour l'extension du fichier stocké.
       fd.append('file', blob, 'note-vocale.' + ((blob.type || '').indexOf('mp4') !== -1 ? 'm4a' : 'webm'));
-      fd.append('upload_preset', 'afroboost');
-      fd.append('folder', 'chat');   // V352 : indispensable pour que la purge puisse supprimer
-      const r = await fetch('https://api.cloudinary.com/v1_1/dtm0r7hwq/auto/upload',
-        { method: 'POST', body: fd });
+      // V414 : destination = notre serveur (disque), plus Cloudinary.
+      fd.append('asset_type', 'audio');
+      const r = await fetch(API + '/coach/upload-asset',
+        { method: 'POST', body: fd, headers: { 'X-User-Email': getCoachEmail() } });
       const d = await r.json();
-      if (!r.ok || !d.secure_url) throw new Error('upload');
-      setV350Piece({ url: d.secure_url, kind: 'audio', name: 'Note vocale' });
+      if (!r.ok || !d.url) throw new Error((d && d.detail) || 'upload');
+      setV350Piece({ url: d.url, kind: 'audio', name: 'Note vocale' });
     } catch (e) {
+      // V414 — LIMITE CONNUE : le serveur n'accepte pas encore `audio/webm`
+      // (liste MIME de /coach/upload-asset). Chrome et Android enregistrent dans
+      // ce format, iOS en `audio/mp4` qui passe. La note vocale etait DEJA
+      // cassee (compte Cloudinary desactive) ; elle fonctionne desormais sur
+      // iOS, et le message ci-dessous est honnete sur l'echec ailleurs.
       setV350PieceErr("Envoi de la note vocale impossible. Réessayez.");
     }
     setV350Televersement(false);
