@@ -1652,6 +1652,75 @@ def t20_new_visitor_ok():
         record(20, "Nouveau visiteur -> inscription", False, str(e))
 
 
+def t96_v412_range_206():
+    """V412 : /api/files/ doit répondre 206 à une requête par plages.
+
+    Avant V412 la route annonçait `Accept-Ranges: bytes` mais renvoyait
+    invariablement 200 avec le fichier entier : un navigateur ne pouvait ni
+    avancer dans une vidéo, ni démarrer la lecture d'un gros fichier. Le 206
+    que l'on croyait fonctionnel venait de Cloudflare, pas de l'application.
+
+    On vérifie AUSSI la non-régression : sans en-tête `Range`, la réponse doit
+    rester un 200 complet — c'est ce qui garantit qu'images et anciennes vidéos
+    (« PULSE x10 ») ne changent pas de comportement."""
+    # On découvre une vidéo servie par /api/files/ depuis les offres publiques,
+    # plutôt que de coder en dur un identifiant qui peut disparaître.
+    cible = None
+    try:
+        r = requests.get(_url("/api/offers"), timeout=TIMEOUT)
+        offres = r.json()
+        if isinstance(offres, dict):
+            offres = offres.get("offers", [])
+        for o in offres:
+            for champ in ("videoUrl", "thumbnail"):
+                v = (o.get(champ) or "")
+                if v.startswith("/api/files/") and v.endswith(".mp4"):
+                    cible = v
+                    break
+            if cible:
+                break
+    except Exception as e:
+        record(96, "V412 : /api/files/ répond 206 aux requêtes par plages", False,
+               f"découverte impossible : {e}")
+        return
+
+    if not cible:
+        skip(96, "V412 : /api/files/ répond 206", "aucune vidéo /api/files/ référencée")
+        return
+
+    echecs = []
+    try:
+        # 1) plage explicite -> 206 + Content-Range + bonne longueur
+        r = requests.get(_url(cible), headers={"Range": "bytes=0-1023"}, timeout=TIMEOUT)
+        if r.status_code != 206:
+            echecs.append(f"Range 0-1023 -> HTTP {r.status_code} (attendu 206)")
+        else:
+            if len(r.content) != 1024:
+                echecs.append(f"206 mais {len(r.content)} octets (attendu 1024)")
+            cr = r.headers.get("Content-Range", "")
+            if not cr.startswith("bytes 0-1023/"):
+                echecs.append(f"Content-Range inattendu : {cr!r}")
+
+        # 2) plage hors fichier -> 416
+        r2 = requests.get(_url(cible), headers={"Range": "bytes=999999999-"}, timeout=TIMEOUT)
+        if r2.status_code != 416:
+            echecs.append(f"plage hors fichier -> HTTP {r2.status_code} (attendu 416)")
+
+        # 3) NON-RÉGRESSION : sans Range, 200 + fichier complet
+        r3 = requests.get(_url(cible), timeout=TIMEOUT)
+        if r3.status_code != 200:
+            echecs.append(f"sans Range -> HTTP {r3.status_code} (attendu 200)")
+        elif r2.status_code == 416:
+            total = r2.headers.get("Content-Range", "*/0").split("/")[-1]
+            if total.isdigit() and len(r3.content) != int(total):
+                echecs.append(f"sans Range : {len(r3.content)} o != taille annoncée {total}")
+    except Exception as e:
+        echecs.append(str(e))
+
+    record(96, "V412 : /api/files/ répond 206 (et 200 complet sans Range)",
+           not echecs, " | ".join(echecs))
+
+
 def t94_v411_fils_prives_fermes():
     """V411 : les fils WhatsApp du coach ne sont plus lisibles sans jeton signé.
 
@@ -1903,6 +1972,7 @@ def main():
                    t91_v367_apercu_bot_ferme_et_sans_envoi, t92_v369_routes_bot_fermees_et_drapeau_off,
                    t93_v410_pont_spordateur,
                    t94_v411_fils_prives_fermes, t95_v411_acces_legitime_admin,
+                   t96_v412_range_206,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

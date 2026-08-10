@@ -2433,11 +2433,12 @@ def mp4_faststart(data: bytes) -> bytes:
 
 # === v17.5: SERVING FICHIERS DEPUIS MONGODB ===
 @api_router.get("/files/{file_id}/{filename}")
-async def serve_uploaded_file(file_id: str, filename: str):
+async def serve_uploaded_file(file_id: str, filename: str, request: Request):
     """
     Sert un fichier uploadé depuis MongoDB.
     v18.3: Faststart MP4 automatique + StreamingResponse pour gros fichiers
     Cache-Control: 1 an (les fichiers sont immutables via leur ID unique)
+    V412: répond aux requêtes par plages (Range -> 206), cf. bloc plus bas.
     """
     from fastapi.responses import Response, StreamingResponse
     import io
@@ -2478,6 +2479,76 @@ async def serve_uploaded_file(file_id: str, filename: str):
         file_size = len(file_bytes)
 
         logger.info(f"[FILE-SERVE] ✅ Servant {original_name}: {file_size} bytes, type={content_type}")
+
+        # === V412 : REQUÊTES PAR PLAGES (Range) -> 206 Partial Content ===
+        #
+        # POURQUOI. Un navigateur qui lit une vidéo n'envoie pas un GET simple : il
+        # demande des PLAGES d'octets (`Range: bytes=...`) et attend un `206`. Cette
+        # route répondait invariablement 200 avec le fichier ENTIER, tout en
+        # annonçant `Accept-Ranges: bytes` — elle promettait donc une capacité
+        # qu'elle n'avait pas. Conséquences : pas d'avance rapide, et pour un
+        # fichier lourd une réponse qui n'aboutit jamais dans le délai imparti.
+        #
+        # Le 206 observé sur les anciennes vidéos venait de CLOUDFLARE, depuis sa
+        # copie en cache — jamais de l'application (vérifié en interrogeant
+        # l'origine en direct : 200 + Range ignoré, pour TOUS les fichiers). Ce
+        # repli disparaît dès que le cache expire : c'est cette dépendance qu'on
+        # supprime ici.
+        #
+        # PRUDENCE — RÈGLE DE NON-RÉGRESSION : SANS en-tête `Range`, le
+        # comportement est INCHANGÉ (200 + corps complet, mêmes en-têtes, mêmes
+        # deux branches qu'avant). Les images et les vidéos qui fonctionnent
+        # aujourd'hui empruntent exactement le même chemin qu'avant cette version.
+        entete_range = (request.headers.get("range") or "").strip()
+        if entete_range.lower().startswith("bytes=") and file_size > 0:
+            spec = entete_range[6:].strip()
+            # Une requête multi-plages (virgules) est rare et bien plus complexe à
+            # servir (multipart/byteranges) : on retombe alors sur la réponse
+            # complète, qui reste une réponse VALIDE au sens de la norme.
+            if "," not in spec:
+                debut_txt, _, fin_txt = spec.partition("-")
+                debut_txt, fin_txt = debut_txt.strip(), fin_txt.strip()
+                debut = fin = None
+                try:
+                    if debut_txt == "" and fin_txt:
+                        # `bytes=-500` = les 500 DERNIERS octets.
+                        longueur = int(fin_txt)
+                        if longueur > 0:
+                            debut = max(0, file_size - longueur)
+                            fin = file_size - 1
+                    elif debut_txt:
+                        # `bytes=0-` (le cas courant des navigateurs) ou `bytes=a-b`
+                        debut = int(debut_txt)
+                        fin = int(fin_txt) if fin_txt else file_size - 1
+                except ValueError:
+                    debut = fin = None
+
+                if debut is not None and fin is not None:
+                    fin = min(fin, file_size - 1)
+                    if debut > fin or debut >= file_size:
+                        # Plage hors du fichier -> 416, comme l'exige la norme.
+                        return Response(
+                            status_code=416,
+                            headers={
+                                "Content-Range": f"bytes */{file_size}",
+                                "Accept-Ranges": "bytes",
+                            },
+                        )
+                    morceau = file_bytes[debut:fin + 1]
+                    logger.info(f"[FILE-SERVE] 206 {debut}-{fin}/{file_size} "
+                                f"({len(morceau)} o) pour {file_id}")
+                    return Response(
+                        content=morceau,
+                        status_code=206,
+                        media_type=content_type,
+                        headers={
+                            "Cache-Control": "public, max-age=31536000, immutable",
+                            "Content-Disposition": f'inline; filename="{original_name}"',
+                            "Content-Range": f"bytes {debut}-{fin}/{file_size}",
+                            "Content-Length": str(len(morceau)),
+                            "Accept-Ranges": "bytes",
+                        },
+                    )
 
         # Pour les fichiers > 3MB, utiliser StreamingResponse
         if file_size > 3 * 1024 * 1024:
