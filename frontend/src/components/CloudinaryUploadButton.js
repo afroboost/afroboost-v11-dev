@@ -91,6 +91,92 @@ export function isCloudinaryConfigured() {
   return true;
 }
 
+/** V420 — un POST simple, avec progression. XHR : `fetch` ne remonte pas l'avancement. */
+function v420Poster(url, formData, email, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('X-User-Email', email);
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(e.loaded, e.total);
+      };
+    }
+    xhr.onload = () => {
+      let d = {};
+      try { d = JSON.parse(xhr.responseText); } catch (e) { /* ignore */ }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(d);
+      else reject(new Error((d && d.detail) || `Echec de l'envoi (${xhr.status}).`));
+    };
+    xhr.onerror = () => reject(new Error("Connexion interrompue pendant l'envoi."));
+    xhr.send(formData);
+  });
+}
+
+/** V420 — envoi monobloc (petits fichiers). */
+async function v420EnvoiSimple(file, asset, email, onProgress) {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('asset_type', asset);
+  return v420Poster(`${API_BASE}/coach/upload-asset`, fd, email,
+    onProgress ? (l, t) => onProgress(Math.round((l / t) * 100)) : null);
+}
+
+/**
+ * V420 — envoi PAR MORCEAUX de 4 Mo.
+ *
+ * La progression est calculee sur l'ENSEMBLE du fichier (morceaux deja envoyes
+ * + avancement du morceau courant) : une barre qui repartirait de zero a chaque
+ * morceau serait pire que pas de barre du tout.
+ *
+ * Chaque morceau est reessaye deux fois : sur un reseau mobile, une coupure
+ * ponctuelle ne doit pas condamner un envoi de plusieurs minutes.
+ */
+async function v420EnvoiParMorceaux(file, asset, email, onProgress) {
+  const TAILLE = 4 * 1024 * 1024;
+  const total = Math.ceil(file.size / TAILLE);
+  // Identifiant simple : le serveur s'en sert comme NOM DE DOSSIER et refuse
+  // tout ce qui sort de [A-Za-z0-9_-].
+  const uploadId = (Date.now().toString(36) + Math.random().toString(36).slice(2, 8))
+    .replace(/[^A-Za-z0-9_-]/g, '');
+
+  let reponse = {};
+  for (let i = 0; i < total; i++) {
+    const debut = i * TAILLE;
+    const morceau = file.slice(debut, Math.min(debut + TAILLE, file.size));
+    const fd = new FormData();
+    fd.append('file', morceau, `part_${i}`);
+    fd.append('upload_id', uploadId);
+    fd.append('chunk_index', String(i));
+    fd.append('total_chunks', String(total));
+    fd.append('original_name', file.name || 'media');
+    fd.append('content_type', file.type || 'application/octet-stream');
+    fd.append('asset_type', asset);
+
+    let derniere = null;
+    for (let essai = 0; essai < 3; essai++) {
+      try {
+        reponse = await v420Poster(`${API_BASE}/coach/upload-chunk`, fd, email,
+          onProgress ? (l) => {
+            const fait = debut + l;
+            onProgress(Math.min(99, Math.round((fait / file.size) * 100)));
+          } : null);
+        derniere = null;
+        break;
+      } catch (e) {
+        derniere = e;
+        // Un refus du serveur (taille, type) ne se reessaie pas : il se
+        // reproduirait a l'identique. Seules les coupures reseau valent un essai.
+        if (/trop volumineux|invalide|Email coach/i.test(e.message || '')) throw e;
+        await new Promise((r) => setTimeout(r, 800 * (essai + 1)));
+      }
+    }
+    if (derniere) throw derniere;
+  }
+  if (onProgress) onProgress(100);
+  return reponse;
+}
+
 /**
  * V229 — Envoie un fichier a Cloudinary et renvoie l'URL CDN optimisee.
  *
@@ -121,23 +207,18 @@ export async function uploadToCloudinary(file, opts = {}) {
     throw new Error("Session non reconnue : reconnectez-vous pour envoyer un fichier.");
   }
 
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('asset_type', asset);
+  // === V420 : AU-DELA DE 8 Mo, ON ENVOIE PAR MORCEAUX ===
+  //
+  // Un envoi monobloc se heurte a DEUX murs, tous deux mesures en production sur
+  // un fichier de 199,8 Mo :
+  //   - Cloudflare -> 413 apres 1,5 Mo envoyes (limite de corps : 100 Mo) ;
+  //   - origine    -> 499 apres 92 Mo et 60,4 s (delai d'environ 60 s).
+  // Decoupe en morceaux de 4 Mo, chaque requete dure une seconde ou deux : elle
+  // ne s'approche d'aucune des deux limites. C'est la seule voie fiable.
+  const data = file.size > 8 * 1024 * 1024
+    ? await v420EnvoiParMorceaux(file, asset, email, opts.onProgress)
+    : await v420EnvoiSimple(file, asset, email, opts.onProgress);
 
-  const res = await fetch(`${API_BASE}/coach/upload-asset`, {
-    method: 'POST',
-    headers: { 'X-User-Email': email },   // pas de Content-Type : le navigateur
-    body: formData                        // pose lui-meme la frontiere multipart
-  });
-
-  const data = await res.json().catch(function () { return {}; });
-
-  if (!res.ok) {
-    // Le serveur renvoie { detail: "..." } — message deja lisible (type MIME
-    // refuse, fichier trop lourd, session absente).
-    throw new Error((data && data.detail) || `Echec de l'envoi (${res.status}).`);
-  }
   if (!data.url) {
     throw new Error("Réponse inattendue du serveur (URL absente).");
   }

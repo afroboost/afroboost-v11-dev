@@ -2245,74 +2245,159 @@ async def upload_chunk(
     content_type: str = Form("audio/mpeg"),
     asset_type: str = Form("audio")
 ):
-    """Upload un chunk de fichier. Quand tous les chunks sont reçus, assemble et stocke."""
+    """Upload un fichier PAR MORCEAUX. Le dernier morceau declenche l'assemblage.
+
+    === V420 : POURQUOI CETTE ROUTE DEVIENT LE CHEMIN NORMAL DES VIDEOS ===
+
+    Un envoi MONOBLOC ne peut pas marcher pour une video longue. Mesure faite en
+    production sur un fichier de 199,8 Mo (2 min) :
+
+      via Cloudflare  -> 413 Payload Too Large apres 1,5 Mo envoyes (0,96 s).
+                         Cloudflare refuse des qu'il lit `Content-Length` : sa
+                         limite de corps de requete est de 100 Mo sur ce plan.
+      origine directe -> 499 Client Closed Request apres 92 Mo et 60,4 s.
+                         Coupure a ~44 % du fichier, sur un delai d'environ 60 s.
+
+    Deux murs INDEPENDANTS, aucun contournable depuis le client. Decoupe en
+    morceaux de quelques Mo, chaque requete dure une seconde ou deux : elle ne
+    s'approche ni de la limite de taille, ni du delai. C'est la seule voie fiable.
+
+    Une compression cote navigateur (ffmpeg.wasm) aurait ete l'autre option :
+    ecartee, elle ajoute ~25 Mo de telechargement, s'effondre en memoire sur
+    iOS, et ne garantit RIEN — une video de 5 min compressee peut encore
+    depasser 100 Mo. Elle reste un confort possible plus tard, pas une solution.
+
+    === V420 : LES MORCEAUX VONT SUR LE DISQUE, PLUS DANS MONGODB ===
+
+    Ils etaient stockes en base. Une video de 200 Mo y aurait donc transite
+    integralement — sur un cluster dont l'espace total est de 512 Mo, et dont
+    78,9 Mo sont deja pris. Deux envois simultanes suffisaient a le saturer.
+    Et l'assemblage concatenait tout EN MEMOIRE (`file_bytes += ...`), soit
+    200 Mo de RAM par envoi.
+
+    Desormais chaque morceau est un fichier dans `<MEDIA>/.uploads/<id>/`, et
+    l'assemblage RECOPIE morceau par morceau vers la destination : la memoire
+    utilisee ne depasse jamais la taille d'un morceau. Repli MongoDB conserve
+    si le disque est indisponible — on ne perd jamais un envoi.
+    """
     import uuid
+    import shutil
     from bson.binary import Binary
 
     coach_email = request.headers.get('X-User-Email', '').lower().strip()
     if not coach_email:
         raise HTTPException(status_code=401, detail="Email coach requis")
 
+    # `upload_id` vient du client et sert de NOM DE DOSSIER : sans ce filtre, un
+    # `../` y ouvrirait le systeme de fichiers. Meme regle que pour `file_id`.
+    if not _V413_ID_VALIDE.match(upload_id or ""):
+        raise HTTPException(status_code=400, detail="Identifiant d'envoi invalide")
+    if total_chunks < 1 or chunk_index < 0 or chunk_index >= total_chunks:
+        raise HTTPException(status_code=400, detail="Indice de morceau invalide")
+
     contents = await file.read()
-    logger.info(f"[CHUNK-UPLOAD] Chunk {chunk_index + 1}/{total_chunks} pour {upload_id} ({len(contents)} bytes)")
+    logger.info(f"[CHUNK-UPLOAD] morceau {chunk_index + 1}/{total_chunks} "
+                f"pour {upload_id} ({len(contents)} o)")
 
-    # Stocker le chunk
-    await db.upload_chunks.update_one(
-        {"upload_id": upload_id, "chunk_index": chunk_index},
-        {"$set": {
-            "upload_id": upload_id,
-            "chunk_index": chunk_index,
-            "total_chunks": total_chunks,
-            "data": Binary(contents),
-            "coach_email": coach_email,
-            "original_name": original_name,
-            "content_type": content_type,
-            "asset_type": asset_type,
-            "created_at": datetime.utcnow()
-        }},
-        upsert=True
-    )
+    dossier = os.path.join(_V413_MEDIA_DIR, ".uploads", upload_id)
+    sur_disque = _v413_disque_pret()
+    if sur_disque:
+        try:
+            os.makedirs(dossier, exist_ok=True)
+            with open(os.path.join(dossier, f"{chunk_index:06d}.part"), "wb") as f:
+                f.write(contents)
+        except Exception as e:
+            logger.error(f"[CHUNK-UPLOAD] disque indisponible ({e}) -> repli MongoDB")
+            sur_disque = False
 
-    # Vérifier si tous les chunks sont arrivés
-    received = await db.upload_chunks.count_documents({"upload_id": upload_id})
-    if received < total_chunks:
-        return {"success": True, "status": "chunk_received", "received": received, "total": total_chunks}
+    if not sur_disque:
+        await db.upload_chunks.update_one(
+            {"upload_id": upload_id, "chunk_index": chunk_index},
+            {"$set": {
+                "upload_id": upload_id,
+                "chunk_index": chunk_index,
+                "total_chunks": total_chunks,
+                "data": Binary(contents),
+                "coach_email": coach_email,
+                "original_name": original_name,
+                "content_type": content_type,
+                "asset_type": asset_type,
+                "created_at": datetime.utcnow()
+            }},
+            upsert=True
+        )
 
-    # Tous les chunks reçus — assembler le fichier
-    chunks = await db.upload_chunks.find(
-        {"upload_id": upload_id}
-    ).sort("chunk_index", 1).to_list(length=total_chunks)
+    # Tous les morceaux sont-ils arrives ?
+    if sur_disque:
+        recus = len([n for n in os.listdir(dossier) if n.endswith(".part")])
+    else:
+        recus = await db.upload_chunks.count_documents({"upload_id": upload_id})
+    if recus < total_chunks:
+        return {"success": True, "status": "chunk_received",
+                "received": recus, "total": total_chunks}
 
-    file_bytes = b""
-    for chunk in chunks:
-        file_bytes += bytes(chunk["data"])
-
-    # Nettoyer les chunks
-    await db.upload_chunks.delete_many({"upload_id": upload_id})
-
-    # Stocker le fichier assemblé (même logique que upload-asset)
+    # === ASSEMBLAGE ===
     ext_map = {
         "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/wav": ".wav",
         "audio/ogg": ".ogg", "audio/aac": ".aac", "audio/mp4": ".m4a",
-        "image/jpeg": ".jpg", "image/png": ".png", "video/mp4": ".mp4"
+        "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+        # V420 : `.mov` et `.webm` MANQUAIENT. Un envoi de ce type recevait
+        # l'extension `.bin`, et le frontend — qui reconnait une video a son
+        # extension — ne l'affichait plus comme une video. Bug silencieux.
+        "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm"
     }
     ext = ext_map.get(content_type, ".bin")
     file_id = uuid.uuid4().hex[:16]
     filename = f"{asset_type}_{file_id}{ext}"
 
-    # V413 : disque si possible, MongoDB en repli.
-    file_doc = await _v413_enregistrer_media(file_id, filename, file_bytes, {
-        "file_id": file_id,
-        "filename": filename,
-        "original_name": original_name,
-        "content_type": content_type,
-        "asset_type": asset_type,
-        "coach_email": coach_email,
-        "created_at": datetime.utcnow()
-    })
+    # Plafond applique sur le TOTAL assemble : sans lui, la decoupe en morceaux
+    # permettrait de contourner la limite de `/coach/upload-asset`.
+    plafond = {"image": 25*1024*1024, "video": 200*1024*1024,
+               "logo": 5*1024*1024, "audio": 50*1024*1024}.get(asset_type, 25*1024*1024)
+
+    if sur_disque:
+        morceaux = sorted(n for n in os.listdir(dossier) if n.endswith(".part"))
+        total = sum(os.path.getsize(os.path.join(dossier, n)) for n in morceaux)
+        if total > plafond:
+            shutil.rmtree(dossier, ignore_errors=True)
+            raise HTTPException(status_code=400,
+                                detail=f"Fichier trop volumineux (max {plafond//1024//1024} Mo)")
+        cible = _v413_chemin(file_id, filename)
+        os.makedirs(os.path.dirname(cible), exist_ok=True)
+        provisoire = cible + ".part"
+        # Recopie morceau par morceau : la memoire ne depasse jamais un morceau.
+        with open(provisoire, "wb") as sortie:
+            for n in morceaux:
+                with open(os.path.join(dossier, n), "rb") as entree:
+                    shutil.copyfileobj(entree, sortie, 1024 * 1024)
+        os.replace(provisoire, cible)
+        shutil.rmtree(dossier, ignore_errors=True)
+        await db.uploaded_files.insert_one({
+            "file_id": file_id, "filename": filename,
+            "original_name": original_name, "content_type": content_type,
+            "asset_type": asset_type, "coach_email": coach_email,
+            "size": total, "storage": "disk", "created_at": datetime.utcnow()
+        })
+        taille = total
+    else:
+        chunks = await db.upload_chunks.find(
+            {"upload_id": upload_id}).sort("chunk_index", 1).to_list(length=total_chunks)
+        file_bytes = b"".join(bytes(c["data"]) for c in chunks)
+        await db.upload_chunks.delete_many({"upload_id": upload_id})
+        if len(file_bytes) > plafond:
+            raise HTTPException(status_code=400,
+                                detail=f"Fichier trop volumineux (max {plafond//1024//1024} Mo)")
+        await _v413_enregistrer_media(file_id, filename, file_bytes, {
+            "file_id": file_id, "filename": filename,
+            "original_name": original_name, "content_type": content_type,
+            "asset_type": asset_type, "coach_email": coach_email,
+            "created_at": datetime.utcnow()
+        })
+        taille = len(file_bytes)
 
     asset_url = f"/api/files/{file_id}/{filename}"
-    logger.info(f"[CHUNK-UPLOAD] ✅ Fichier assemblé: {filename} ({len(file_bytes)} bytes, {total_chunks} chunks)")
+    logger.info(f"[CHUNK-UPLOAD] assemble : {filename} ({taille} o, "
+                f"{total_chunks} morceaux, {'disque' if sur_disque else 'mongo'})")
 
     return {
         "success": True,
@@ -2320,8 +2405,9 @@ async def upload_chunk(
         "url": asset_url,
         "filename": filename,
         "asset_type": asset_type,
-        "size": len(file_bytes)
+        "size": taille
     }
+
 
 # === v44: CRUD PISTES AUDIO AUTONOMES (indépendant des cours) ===
 # Collection MongoDB: audio_tracks — chaque piste est un document indépendant

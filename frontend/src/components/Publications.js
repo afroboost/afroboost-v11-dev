@@ -21,6 +21,13 @@ const API = `${BACKEND_URL}/api`;
 //   - XHR nu ne porte AUCUN de ces en-tetes -> requete simple, pas de preflight.
 // `onProgress(percent)` est optionnel. Renvoie la reponse Cloudinary complete
 // (on y lit secure_url ET duration pour la limite video).
+// V421 — PLAFOND DE DUREE D'UNE VIDEO PUBLIEE, en secondes.
+// Passe de 60 s a 5 min : les 60 s dataient de l'envoi monobloc vers Cloudinary.
+// Une seule constante, utilisee par les DEUX gardes (sonde locale et controle a
+// l'envoi) — les voir diverger serait la meilleure facon de creer un refus
+// incomprehensible.
+const V421_DUREE_MAX_S = 300;
+
 // V414 : DESTINATION CHANGEE — notre serveur, plus Cloudinary. Le compte
 // `dtm0r7hwq` est desactive (401 « cloud_name is disabled ») : plus aucune
 // publication avec media ne pouvait aboutir. On poste sur
@@ -67,25 +74,69 @@ function v269UploadToCloudinary(fileOrBlob, kind, onProgress) {
       }
 
       const base = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', base + '/coach/upload-asset');
-      xhr.setRequestHeader('X-User-Email', String(email).toLowerCase().trim());
-      if (onProgress) {
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
-        };
-      }
-      xhr.onload = () => {
-        let data = {};
-        try { data = JSON.parse(xhr.responseText); } catch (e) { /* ignore */ }
-        if (xhr.status >= 200 && xhr.status < 300 && data.url) {
-          resolve({ secure_url: data.url, duration: duree });
-        } else {
-          reject(new Error(data.detail || "L'envoi du média a échoué."));
+      const entete = String(email).toLowerCase().trim();
+
+      // V420 : au-dela de 8 Mo, envoi PAR MORCEAUX. Un monobloc se heurte a deux
+      // murs mesures en production : Cloudflare repond 413 des 1,5 Mo envoyes
+      // (limite de corps 100 Mo), et l'origine coupe en 499 apres ~60 s. C'est
+      // exactement le « blocage a 56 % » d'une video longue.
+      const poster = (url, corps, surAvancement) => new Promise((res, rej) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', url);
+        xhr.setRequestHeader('X-User-Email', entete);
+        if (surAvancement) {
+          xhr.upload.onprogress = (e) => { if (e.lengthComputable) surAvancement(e.loaded); };
         }
-      };
-      xhr.onerror = () => reject(new Error("L'envoi du média a échoué."));
-      xhr.send(fd);
+        xhr.onload = () => {
+          let d = {};
+          try { d = JSON.parse(xhr.responseText); } catch (e) { /* ignore */ }
+          if (xhr.status >= 200 && xhr.status < 300) res(d);
+          else rej(new Error(d.detail || "L'envoi du média a échoué."));
+        };
+        xhr.onerror = () => rej(new Error("Connexion interrompue pendant l'envoi."));
+        xhr.send(corps);
+      });
+
+      const taille = (fileOrBlob && fileOrBlob.size) || 0;
+      if (taille <= 8 * 1024 * 1024) {
+        poster(base + '/coach/upload-asset', fd,
+          onProgress ? (l) => onProgress(Math.round((l / taille) * 100)) : null)
+          .then((d) => {
+            if (d && d.url) resolve({ secure_url: d.url, duration: duree });
+            else reject(new Error("L'envoi du média a échoué."));
+          })
+          .catch(reject);
+        return;
+      }
+
+      (async () => {
+        const TAILLE = 4 * 1024 * 1024;
+        const total = Math.ceil(taille / TAILLE);
+        const uploadId = (Date.now().toString(36) + Math.random().toString(36).slice(2, 8))
+          .replace(/[^A-Za-z0-9_-]/g, '');
+        let derniereReponse = {};
+        for (let i = 0; i < total; i++) {
+          const debut = i * TAILLE;
+          const part = fileOrBlob.slice(debut, Math.min(debut + TAILLE, taille));
+          const f = new FormData();
+          f.append('file', part, 'part_' + i);
+          f.append('upload_id', uploadId);
+          f.append('chunk_index', String(i));
+          f.append('total_chunks', String(total));
+          f.append('original_name', (fileOrBlob && fileOrBlob.name) || 'media');
+          f.append('content_type', (fileOrBlob && fileOrBlob.type) || 'video/mp4');
+          f.append('asset_type', kind === 'video' ? 'video' : 'image');
+          derniereReponse = await poster(base + '/coach/upload-chunk', f,
+            onProgress ? (l) => onProgress(Math.min(99, Math.round(((debut + l) / taille) * 100))) : null);
+        }
+        if (onProgress) onProgress(100);
+        return derniereReponse;
+      })()
+        .then((d) => {
+          if (d && d.url) resolve({ secure_url: d.url, duration: duree });
+          else reject(new Error("L'envoi du média a échoué."));
+        })
+        .catch(reject);
     };
 
     if (kind === 'video') v269MesurerDuree(fileOrBlob).then(envoyer);
@@ -860,8 +911,12 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
     setCroppedBlob(null); setThumbnailBlob(null); setThumbnailPreview(null);
 
     if (f.type.startsWith('video/')) {
-      // V269 Fix 3 — limite 1 min. On lit d'abord la duree via un element video
-      // « metadata only » ; on ne procede QUE si <= 60 s.
+      // V269 Fix 3 — limite de duree. On lit d'abord la duree via un element
+      // video « metadata only » ; on ne procede QUE sous le plafond.
+      // V421 : plafond porte de 60 s a 5 MINUTES. Les 60 s dataient de l'epoque
+      // ou tout passait par Cloudinary en un seul envoi ; depuis la decoupe en
+      // morceaux (V420), une video longue passe sans probleme. Le plafond reste
+      // pour eviter qu'un fichier demesure parte par inadvertance.
       const probe = document.createElement('video');
       probe.preload = 'metadata';
       const probeUrl = URL.createObjectURL(f);
@@ -869,8 +924,9 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
       probe.onloadedmetadata = () => {
         const dur = probe.duration;
         URL.revokeObjectURL(probeUrl);
-        if (isFinite(dur) && dur > 60) {
-          setError('La vidéo ne doit pas dépasser 1 minute (60 s). La vôtre fait ' + Math.round(dur) + ' s.');
+        if (isFinite(dur) && dur > V421_DUREE_MAX_S) {
+          setError('La vidéo ne doit pas dépasser ' + Math.round(V421_DUREE_MAX_S / 60)
+            + ' minutes. La vôtre fait ' + Math.round(dur) + ' s.');
           if (fileInputRef.current) fileInputRef.current.value = '';
           return;
         }
@@ -1022,11 +1078,12 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
       const mediaData = await v269UploadToCloudinary(media, mediaType, setUploadPct);
       const mediaUrl = mediaData.secure_url;
 
-      // V269 Fix 3 (double garde serveur cote client) : Cloudinary renvoie la
-      // duree ; si > 60 s, on refuse plutot que de publier une video trop
+      // V269 Fix 3 (double garde) : la duree est mesuree a l'envoi ; si elle
+      // depasse le plafond, on refuse plutot que de publier une video trop
       // longue passee entre les mailles de la sonde locale.
-      if (mediaType === 'video' && isFinite(mediaData.duration) && mediaData.duration > 60) {
-        throw new Error('La vidéo dépasse 1 minute (60 s).');
+      if (mediaType === 'video' && isFinite(mediaData.duration)
+          && mediaData.duration > V421_DUREE_MAX_S) {
+        throw new Error('La vidéo dépasse ' + Math.round(V421_DUREE_MAX_S / 60) + ' minutes.');
       }
 
       // V270 : miniature video CHOISIE (capture libre eventuellement recadree),
