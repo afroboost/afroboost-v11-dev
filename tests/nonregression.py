@@ -1665,11 +1665,13 @@ def t97_v413_stockage_disque():
     exécution — il n'existe aucune route de suppression d'asset, et en inventer
     une pour les besoins du test ajouterait une surface d'attaque pour un gain
     nul. Le coût est négligeable ; le signaler vaut mieux que le taire."""
-    # PNG 1x1 valide, le plus petit fichier acceptable par la validation MIME.
+    # PNG 1x1 rouge, 69 octets, CRC corrects. Le serveur le RÉOUVRE avec Pillow
+    # pour l'optimiser : un PNG approximatif y échoue en 500 (« broken data
+    # stream »). Ces octets-ci ont été validés contre le vrai point d'entrée.
     png = bytes.fromhex(
-        "89504e470d0a1a0a0000000d494844520000000100000001080600000"
-        "01f15c4890000000a49444154789c6360000002000100ffff03000006"
-        "0005570cf5b30000000049454e44ae426082")
+        "89504e470d0a1a0a0000000d49484452000000010000000108020000"
+        "00907753de0000000c49444154789c63f8cfc0000003010100c9fe92"
+        "ef0000000049454e44ae426082")
     try:
         r = requests.post(_url("/api/coach/upload-asset"),
                           headers={"X-User-Email": ADMIN},
