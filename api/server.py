@@ -1937,6 +1937,43 @@ _V413_MEDIA_DIR = os.environ.get("MEDIA_DIR", "/app/media")
 _V413_ID_VALIDE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
+def _v412_plage(entete_range: str, taille: int):
+    """V412/V413 — interprète un en-tête `Range`. Renvoie :
+         None          -> pas de plage demandée (ou illisible) : servir tout ;
+         416           -> plage hors du fichier ;
+         (debut, fin)  -> bornes INCLUSES à servir.
+
+    Factorisé pour que le chemin DISQUE et le chemin MONGODB partagent exactement
+    la même interprétation. En V413 la branche disque court-circuitait ce calcul
+    et retombait sur un 200 : les vidéos servies depuis le disque perdaient donc
+    l'avance rapide que V412 venait d'apporter. D'où cette mise en commun."""
+    e = (entete_range or "").strip()
+    if not e.lower().startswith("bytes=") or taille <= 0:
+        return None
+    spec = e[6:].strip()
+    if "," in spec:          # multi-plages : on sert le fichier entier (réponse valide)
+        return None
+    debut_txt, _, fin_txt = spec.partition("-")
+    debut_txt, fin_txt = debut_txt.strip(), fin_txt.strip()
+    debut = fin = None
+    try:
+        if debut_txt == "" and fin_txt:
+            longueur = int(fin_txt)          # `bytes=-n` : les n derniers octets
+            if longueur > 0:
+                debut, fin = max(0, taille - longueur), taille - 1
+        elif debut_txt:
+            debut = int(debut_txt)
+            fin = int(fin_txt) if fin_txt else taille - 1
+    except ValueError:
+        return None
+    if debut is None or fin is None:
+        return None
+    fin = min(fin, taille - 1)
+    if debut > fin or debut >= taille:
+        return 416
+    return (debut, fin)
+
+
 def _v413_chemin(file_id: str, filename: str):
     """Chemin disque d'un média, ou None si l'identifiant est suspect."""
     if not _V413_ID_VALIDE.match(file_id or ""):
@@ -2544,15 +2581,34 @@ async def serve_uploaded_file(file_id: str, filename: str, request: Request):
             _ct = file_doc.get("content_type", "application/octet-stream")
             _nom = (file_doc.get("original_name") or filename)
             _nom = _nom.encode('ascii', 'replace').decode('ascii').replace('?', '_')
-            logger.info(f"[FILE-SERVE] disque -> {_chemin_disque}")
-            return _FR(
-                _chemin_disque,
-                media_type=_ct,
-                headers={
-                    "Cache-Control": "public, max-age=31536000, immutable",
-                    "Content-Disposition": f'inline; filename="{_nom}"',
-                },
-            )
+            _entetes = {
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "Content-Disposition": f'inline; filename="{_nom}"',
+                "Accept-Ranges": "bytes",
+            }
+            _taille = os.path.getsize(_chemin_disque)
+            _p = _v412_plage(request.headers.get("range"), _taille)
+
+            if _p == 416:
+                return Response(status_code=416,
+                                headers={"Content-Range": f"bytes */{_taille}",
+                                         "Accept-Ranges": "bytes"})
+            if _p:
+                # PLAGE : on ne lit QUE le morceau demandé (seek + read), sans
+                # charger le fichier entier — c'est tout l'intérêt du disque.
+                # `FileResponse` de cette version de Starlette IGNORE `Range` et
+                # renverrait 200 : mesuré en production avant ce correctif.
+                _debut, _fin = _p
+                with open(_chemin_disque, "rb") as _f:
+                    _f.seek(_debut)
+                    _morceau = _f.read(_fin - _debut + 1)
+                logger.info(f"[FILE-SERVE] disque 206 {_debut}-{_fin}/{_taille}")
+                _entetes["Content-Range"] = f"bytes {_debut}-{_fin}/{_taille}"
+                return Response(content=_morceau, status_code=206,
+                                media_type=_ct, headers=_entetes)
+
+            logger.info(f"[FILE-SERVE] disque -> {_chemin_disque} ({_taille} o)")
+            return _FR(_chemin_disque, media_type=_ct, headers=_entetes)
 
         # Extraire les données binaires
         raw_data = file_doc.get("data")
@@ -2601,56 +2657,31 @@ async def serve_uploaded_file(file_id: str, filename: str, request: Request):
         # comportement est INCHANGÉ (200 + corps complet, mêmes en-têtes, mêmes
         # deux branches qu'avant). Les images et les vidéos qui fonctionnent
         # aujourd'hui empruntent exactement le même chemin qu'avant cette version.
-        entete_range = (request.headers.get("range") or "").strip()
-        if entete_range.lower().startswith("bytes=") and file_size > 0:
-            spec = entete_range[6:].strip()
-            # Une requête multi-plages (virgules) est rare et bien plus complexe à
-            # servir (multipart/byteranges) : on retombe alors sur la réponse
-            # complète, qui reste une réponse VALIDE au sens de la norme.
-            if "," not in spec:
-                debut_txt, _, fin_txt = spec.partition("-")
-                debut_txt, fin_txt = debut_txt.strip(), fin_txt.strip()
-                debut = fin = None
-                try:
-                    if debut_txt == "" and fin_txt:
-                        # `bytes=-500` = les 500 DERNIERS octets.
-                        longueur = int(fin_txt)
-                        if longueur > 0:
-                            debut = max(0, file_size - longueur)
-                            fin = file_size - 1
-                    elif debut_txt:
-                        # `bytes=0-` (le cas courant des navigateurs) ou `bytes=a-b`
-                        debut = int(debut_txt)
-                        fin = int(fin_txt) if fin_txt else file_size - 1
-                except ValueError:
-                    debut = fin = None
-
-                if debut is not None and fin is not None:
-                    fin = min(fin, file_size - 1)
-                    if debut > fin or debut >= file_size:
-                        # Plage hors du fichier -> 416, comme l'exige la norme.
-                        return Response(
-                            status_code=416,
-                            headers={
-                                "Content-Range": f"bytes */{file_size}",
-                                "Accept-Ranges": "bytes",
-                            },
-                        )
-                    morceau = file_bytes[debut:fin + 1]
-                    logger.info(f"[FILE-SERVE] 206 {debut}-{fin}/{file_size} "
-                                f"({len(morceau)} o) pour {file_id}")
-                    return Response(
-                        content=morceau,
-                        status_code=206,
-                        media_type=content_type,
-                        headers={
-                            "Cache-Control": "public, max-age=31536000, immutable",
-                            "Content-Disposition": f'inline; filename="{original_name}"',
-                            "Content-Range": f"bytes {debut}-{fin}/{file_size}",
-                            "Content-Length": str(len(morceau)),
-                            "Accept-Ranges": "bytes",
-                        },
-                    )
+        _p = _v412_plage(request.headers.get("range"), file_size)
+        if _p == 416:
+            # Plage hors du fichier -> 416, comme l'exige la norme.
+            return Response(
+                status_code=416,
+                headers={"Content-Range": f"bytes */{file_size}",
+                         "Accept-Ranges": "bytes"},
+            )
+        if _p:
+            debut, fin = _p
+            morceau = file_bytes[debut:fin + 1]
+            logger.info(f"[FILE-SERVE] mongo 206 {debut}-{fin}/{file_size} "
+                        f"({len(morceau)} o) pour {file_id}")
+            return Response(
+                content=morceau,
+                status_code=206,
+                media_type=content_type,
+                headers={
+                    "Cache-Control": "public, max-age=31536000, immutable",
+                    "Content-Disposition": f'inline; filename="{original_name}"',
+                    "Content-Range": f"bytes {debut}-{fin}/{file_size}",
+                    "Content-Length": str(len(morceau)),
+                    "Accept-Ranges": "bytes",
+                },
+            )
 
         # Pour les fichiers > 3MB, utiliser StreamingResponse
         if file_size > 3 * 1024 * 1024:
