@@ -177,11 +177,25 @@ function v268cGetCroppedImg(imageSrc, pixelCrop) {
 // V268b — Fix C : plus de barre visuelle ni du mot « restantes ». Juste « 47h »,
 // dans la couleur DYNAMIQUE du coach (var(--primary-color), pilotee par le
 // concept, V259) — jamais une couleur fixe.
-const V268Remaining = ({ remaining }) => {
+// V422 — UNE PUBLICATION SANS DURÉE LIMITÉE N'AFFICHE PLUS 876576h.
+//
+// Une publication super-admin « sans durée limitée » ne porte pas une absence
+// d'échéance : le serveur lui pose une date à +100 ans
+// (`V331_EXPIRATION_LOINTAINE_ANNEES`). `remaining_hours` vaut donc ~876 000, et
+// ce composant l'affichait tel quel — d'où le « 876576h » absurde.
+//
+// DEUX GARDES, volontairement. `no_expiry` est le signal juste, mais il n'est
+// renseigné que depuis V343 : les publications permanentes CRÉÉES AVANT ne le
+// portent pas. Le plafond de durée attrape ces cas-là. S'en remettre au seul
+// drapeau laisserait l'ancien historique afficher des nombres géants.
+const V422_SEUIL_ILLIMITE_H = 24 * 365;   // au-delà d'un an : ce n'est pas un compte à rebours
+
+const V268Remaining = ({ remaining, noExpiry }) => {
   const h = Math.floor(remaining || 0);
+  const illimite = Boolean(noExpiry) || h >= V422_SEUIL_ILLIMITE_H;
   return (
     <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '0.7rem', fontWeight: 600 }}>
-      {h >= 1 ? h + 'h' : '< 1h'}
+      {illimite ? 'illimité' : (h >= 1 ? h + 'h' : '< 1h')}
     </span>
   );
 };
@@ -431,7 +445,7 @@ const V268PublicationCard = ({ pub, onOpen }) => {
             </p>
           </div>
           {/* V268b Fix C : « 47h » seul, couleur dynamique du coach. */}
-          <V268Remaining remaining={pub.remaining_hours} />
+          <V268Remaining remaining={pub.remaining_hours} noExpiry={pub.no_expiry} />
         </div>
         {pub.caption ? (
           <p
@@ -681,7 +695,7 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
                           : 'Programmée'}
                       </span>
                     ) : (
-                      <V268Remaining remaining={p.remaining_hours} />
+                      <V268Remaining remaining={p.remaining_hours} noExpiry={p.no_expiry} />
                     )}
                   </p>
                   {confirmDel === p.id && (
