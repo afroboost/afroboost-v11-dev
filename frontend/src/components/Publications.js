@@ -190,12 +190,19 @@ function v268cGetCroppedImg(imageSrc, pixelCrop) {
 // drapeau laisserait l'ancien historique afficher des nombres géants.
 const V422_SEUIL_ILLIMITE_H = 24 * 365;   // au-delà d'un an : ce n'est pas un compte à rebours
 
+/** V423 — une publication sans durée limitée n'affiche RIEN : ni durée, ni badge. */
+const v422EstIllimite = (remaining, noExpiry) =>
+  Boolean(noExpiry) || Math.floor(remaining || 0) >= V422_SEUIL_ILLIMITE_H;
+
+// V423 : `null` plutôt qu'un texte. Une publication permanente n'a pas de durée
+// à annoncer — afficher « illimité » revenait à occuper l'emplacement pour ne
+// rien dire d'utile. Le compte à rebours des publications 48 h est INCHANGÉ.
 const V268Remaining = ({ remaining, noExpiry }) => {
+  if (v422EstIllimite(remaining, noExpiry)) return null;
   const h = Math.floor(remaining || 0);
-  const illimite = Boolean(noExpiry) || h >= V422_SEUIL_ILLIMITE_H;
   return (
     <span style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '0.7rem', fontWeight: 600 }}>
-      {illimite ? 'illimité' : (h >= 1 ? h + 'h' : '< 1h')}
+      {h >= 1 ? h + 'h' : '< 1h'}
     </span>
   );
 };
@@ -678,6 +685,10 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
                   ) : null}
                   {/* V327 : une publication programmée n'est pas en ligne — on affiche
                       l'heure de sortie prévue au lieu d'un temps restant trompeur. */}
+                  {/* V423 : le paragraphe ENTIER disparait pour une publication
+                      illimitee. Laisser un <p> vide aurait conserve sa marge de
+                      4 px — un espace residuel visible la ou l'on veut du vide. */}
+                  {(p.scheduled || !v422EstIllimite(p.remaining_hours, p.no_expiry)) && (
                   <p style={{ margin: '4px 0 0' }}>
                     {p.scheduled ? (
                       <span style={{
@@ -698,6 +709,7 @@ const V268MyPublications = ({ subscriberCode, refreshKey }) => {
                       <V268Remaining remaining={p.remaining_hours} noExpiry={p.no_expiry} />
                     )}
                   </p>
+                  )}
                   {confirmDel === p.id && (
                     <div style={{ marginTop: 6, background: 'rgba(229,62,62,0.1)', borderRadius: 8, padding: 8 }}>
                       <p style={{ color: '#fca5a5', fontSize: '0.75rem', margin: '0 0 6px' }}>Supprimer cette publication ?</p>
