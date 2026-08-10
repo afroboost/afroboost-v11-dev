@@ -122,6 +122,65 @@ axios.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+// === V416 : PLUS JAMAIS D'ICONE « IMAGE CASSEE » ===
+//
+// POURQUOI. Le compte Cloudinary `dtm0r7hwq` est desactive : ses 23 medias
+// repondent 401. Chaque `<img>` qui les pointe affiche l'icone de fichier brise
+// du navigateur — sur l'accueil, les cartes d'offre, les publications et les
+// avatars. C'est laid, et surtout ca donne l'impression que le site est casse
+// alors que le reste fonctionne.
+//
+// POURQUOI UN GESTIONNAIRE GLOBAL plutot qu'un `onError` par composant : les
+// medias sont rendus depuis une quinzaine d'endroits (OfferCard x2, Publications,
+// CoachVitrine, ChatWidget, carrousels, avatars...). En traiter un seul par un
+// laisserait forcement des oublis, et chaque nouveau composant reintroduirait le
+// probleme. Ici, une seule regle couvre tout ce qui existe ET tout ce qui viendra.
+//
+// L'evenement `error` d'un media NE REMONTE PAS (il ne bouillonne pas) : il faut
+// donc l'ecouter en phase de CAPTURE (3e argument `true`). C'est le detail qui
+// fait que ce genre de gestionnaire « ne marche pas » quand on l'ecrit sans.
+//
+// AUCUN MEDIA VALIDE N'EST TOUCHE : par construction, ce code ne s'execute que
+// sur un echec REEL de chargement. Une image qui s'affiche ne declenche jamais
+// `error`.
+if (typeof document !== 'undefined' && !window.__v416_installe) {
+  window.__v416_installe = true;
+  // GIF transparent 1x1 : remplace la source morte SANS laisser l'icone brisee
+  // et SANS faire s'effondrer la mise en page (l'element garde sa taille).
+  const V416_VIDE = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+  const V416_FOND = 'linear-gradient(135deg, #0a0a14 0%, rgba(var(--primary-rgb, 217, 28, 210), 0.35) 100%)';
+
+  document.addEventListener('error', (e) => {
+    const el = e && e.target;
+    if (!el || !el.tagName) return;
+    const balise = el.tagName.toUpperCase();
+
+    // Une source de <video> qui echoue : c'est le <video> parent qu'il faut habiller.
+    const cible = balise === 'SOURCE' ? el.parentElement : el;
+    if (!cible || !cible.tagName) return;
+    const t = cible.tagName.toUpperCase();
+    if (t !== 'IMG' && t !== 'VIDEO') return;
+
+    // Garde anti-boucle : certains composants ont deja un `onError` qui repositionne
+    // `src`. Sans ce marqueur, on pourrait boucler indefiniment.
+    if (cible.dataset && cible.dataset.v416 === '1') return;
+    if (cible.dataset) cible.dataset.v416 = '1';
+
+    try {
+      cible.style.background = V416_FOND;
+      cible.style.objectFit = 'cover';
+      if (t === 'IMG') {
+        cible.removeAttribute('srcset');
+        cible.src = V416_VIDE;      // efface l'icone brisee, conserve les dimensions
+        cible.alt = '';             // pas de texte de remplacement disgracieux
+      } else {
+        cible.removeAttribute('poster');
+        cible.removeAttribute('controls');
+      }
+    } catch (err) { /* jamais bloquer le rendu pour un media */ }
+  }, true);  // <- CAPTURE : indispensable, `error` ne bouillonne pas
+}
+
 console.log("🚀 V72 : Icône interactive avec compteur et animation Pulse activée");
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";

@@ -2161,8 +2161,20 @@ async def upload_coach_asset(
 
     contents = await file.read()
 
-    # Limite de taille: 15MB max pour MongoDB document storage
-    max_sizes = {"image": 5*1024*1024, "video": 15*1024*1024, "logo": 2*1024*1024, "audio": 15*1024*1024}
+    # V415 : PLAFONDS RELEVES. Les anciennes valeurs (video 15 Mo) venaient de la
+    # limite DURE de 16 Mo par document MongoDB — contrainte DISPARUE depuis que
+    # les medias vont sur le disque (V413). Elles condamnaient la moindre video de
+    # telephone sans aucune raison technique restante.
+    #
+    # Marge verifiee avant de relever : 14 Go libres sur le disque, 12 Mo de
+    # medias stockes. Meme cent videos de 100 Mo tiendraient.
+    #
+    # PLAFOND REEL EN AMONT : Cloudflare refuse les corps de requete au-dela de
+    # 100 Mo sur ce plan. Annoncer davantage cote serveur ne servirait a rien —
+    # l'envoi serait coupe avant de nous atteindre. 100 Mo est donc le maximum
+    # utile, pas une valeur choisie au hasard.
+    max_sizes = {"image": 25*1024*1024, "video": 100*1024*1024,
+                 "logo": 5*1024*1024, "audio": 50*1024*1024}
     if len(contents) > max_sizes.get(asset_type, 5*1024*1024):
         raise HTTPException(status_code=400, detail=f"Fichier trop volumineux (max {max_sizes[asset_type]//1024//1024}MB)")
 

@@ -44,7 +44,10 @@ const API_BASE = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
 
 // Limites du serveur (`/coach/upload-asset`) : les refleter ici permet de
 // prevenir l'utilisateur AVANT l'envoi plutot que de lui renvoyer un 400 sec.
-const PLAFONDS_MO = { image: 5, video: 15, logo: 2, audio: 15 };
+// V415 : relevees en meme temps que celles du serveur (la contrainte des 16 Mo
+// par document MongoDB a disparu avec le passage au disque). Ces valeurs
+// DOIVENT rester alignees sur `max_sizes` d'api/server.py.
+const PLAFONDS_MO = { image: 25, video: 100, logo: 5, audio: 50 };
 
 /** Type d'asset attendu par le serveur, deduit du fichier. */
 function typeAsset(file) {
