@@ -18137,11 +18137,69 @@ async def admin_change_identity(request: Request):
 
 # === MESSAGERIE PRIVÉE (MP) - ISOLÉE DE L'IA ===
 
+# === V411 — FERMETURE DES FILS PRIVÉS DU COACH (fuite de données personnelles) ===
+#
+# Les routes /private/* n'exigeaient RIEN. Or `_save_whatsapp_conversation` y range
+# tous les échanges WhatsApp entrants : au 8 août 2026, les 14 fils de la collection
+# `private_conversations` étaient TOUS des fils WhatsApp (numéros + contenus de vrais
+# membres). Comme l'identifiant `admin_afroboost` est en clair dans le bundle public,
+# un simple `curl` sans le moindre en-tête suffisait à tout lire :
+#     GET /api/private/conversations/admin_afroboost  -> 200, les 14 fils
+#     GET /api/private/messages/<id>                  -> 200, le contenu intégral
+# C'est contraire à la règle « AUCUNE DONNÉE PERSONNELLE SANS AUTHENTIFICATION » et,
+# s'agissant de numéros de téléphone, au RGPD.
+#
+# PORTÉE VOLONTAIREMENT ÉTROITE (leçon V310c) : on n'exige le jeton QUE sur les fils
+# qui touchent la messagerie du coach ou un correspondant WhatsApp. La messagerie
+# membre-à-membre du ChatWidget garde EXACTEMENT son comportement : elle n'a produit
+# aucune conversation à ce jour, mais la casser « au passage » serait une régression.
+
+def _v411_id_reserve_admin(participant_id: str) -> bool:
+    """V411 : cet identifiant désigne-t-il la boîte du coach ou un correspondant
+    WhatsApp ? Ce sont les seuls fils porteurs de données personnelles."""
+    pid = (participant_id or "").strip()
+    return pid == "admin_afroboost" or pid.startswith("whatsapp_")
+
+
+def _v411_exiger_super_admin(request: Request, quoi: str) -> str:
+    """V411 : SEUL un JWT SIGNÉ de super-admin ouvre ces fils. `X-User-Email` ne vaut
+    rien ici — c'est un en-tête que n'importe qui écrit (cf. V344/V348)."""
+    appelant = _v311_coach_email_from_jwt(request)
+    if not appelant or not is_super_admin(appelant):
+        revendique = (request.headers.get("X-User-Email", "") or "").lower().strip()
+        logger.warning(f"[V411] REFUS {quoi} — « {revendique or 'anonyme'} » sans JWT super-admin")
+        raise HTTPException(
+            status_code=403,
+            detail="Super-admin requis : reconnectez-vous pour consulter ces conversations.",
+        )
+    return appelant
+
+
+async def _v411_fil_reserve(conversation_id: str) -> bool:
+    """V411 : ce fil relève-t-il de la boîte du coach (WhatsApp ou admin) ?
+    Un fil INCONNU renvoie False : inutile de réclamer un jeton pour un identifiant
+    qui n'existe pas — la route répondra simplement une liste vide."""
+    conv = await db.private_conversations.find_one(
+        {"id": conversation_id},
+        {"_id": 0, "participant_1_id": 1, "participant_2_id": 1, "channel": 1})
+    if not conv:
+        return False
+    if (conv.get("channel") or "").lower() == "whatsapp":
+        return True
+    return (_v411_id_reserve_admin(conv.get("participant_1_id"))
+            or _v411_id_reserve_admin(conv.get("participant_2_id")))
+
+
 @api_router.post("/private/conversations")
 async def create_or_get_private_conversation(request: Request):
     """
     Crée ou récupère une conversation privée entre deux participants.
     Les MP sont stockées dans une collection séparée et INVISIBLES pour l'IA.
+
+    V411 : cette route RENVOIE la conversation existante quand elle en trouve une —
+    donc son `id`. Sans le verrou ci-dessous, il suffisait de la réclamer avec
+    `admin_afroboost` pour obtenir l'identifiant d'un fil WhatsApp, puis d'aller
+    lire son contenu. Fermer la seule lecture n'aurait donc rien fermé du tout.
     """
     body = await request.json()
     participant_1_id = body.get("participant_1_id")
@@ -18151,7 +18209,11 @@ async def create_or_get_private_conversation(request: Request):
     
     if not all([participant_1_id, participant_2_id]):
         raise HTTPException(status_code=400, detail="IDs des participants requis")
-    
+
+    # V411 : dès qu'un des deux bouts touche la boîte du coach, jeton signé exigé.
+    if _v411_id_reserve_admin(participant_1_id) or _v411_id_reserve_admin(participant_2_id):
+        _v411_exiger_super_admin(request, "ouverture d'un fil réservé")
+
     # Vérifier si une conversation existe déjà (dans les deux sens)
     existing = await db.private_conversations.find_one({
         "$or": [
@@ -18176,10 +18238,17 @@ async def create_or_get_private_conversation(request: Request):
     return conversation.model_dump()
 
 @api_router.get("/private/conversations/{participant_id}")
-async def get_private_conversations(participant_id: str):
+async def get_private_conversations(participant_id: str, request: Request):
     """
     Récupère toutes les conversations privées d'un participant.
+
+    V411 : c'est LA route qui fuyait. `admin_afroboost` étant en clair dans le
+    bundle public, elle livrait les 14 fils WhatsApp — noms, numéros et aperçus —
+    à qui la demandait, sans le moindre en-tête.
     """
+    if _v411_id_reserve_admin(participant_id):
+        _v411_exiger_super_admin(request, f"lecture des fils de « {participant_id} »")
+
     conversations = await db.private_conversations.find({
         "$or": [
             {"participant_1_id": participant_id},
@@ -18203,7 +18272,13 @@ async def send_private_message(request: Request):
     
     if not all([conversation_id, sender_id, content]):
         raise HTTPException(status_code=400, detail="Données manquantes")
-    
+
+    # V411 : écrire dans un fil réservé exige le jeton signé. Sans ce verrou, un tiers
+    # pouvait glisser un message dans le fil WhatsApp d'un membre — il s'y serait
+    # affiché comme venant d'Afroboost.
+    if await _v411_fil_reserve(conversation_id):
+        _v411_exiger_super_admin(request, f"écriture dans le fil {conversation_id}")
+
     # Créer le message privé
     message = PrivateMessage(
         conversation_id=conversation_id,
@@ -18232,10 +18307,16 @@ async def send_private_message(request: Request):
     return message.model_dump()
 
 @api_router.get("/private/messages/{conversation_id}")
-async def get_private_messages(conversation_id: str, limit: int = 100):
+async def get_private_messages(conversation_id: str, request: Request, limit: int = 100):
     """
     Récupère les messages d'une conversation privée.
+
+    V411 : second maillon de la fuite — une fois l'identifiant d'un fil connu, elle
+    en livrait le contenu intégral (messages reçus des membres) sans authentification.
     """
+    if await _v411_fil_reserve(conversation_id):
+        _v411_exiger_super_admin(request, f"lecture du fil {conversation_id}")
+
     messages = await db.private_messages.find(
         {"conversation_id": conversation_id, "is_deleted": {"$ne": True}},
         {"_id": 0}
@@ -18243,10 +18324,17 @@ async def get_private_messages(conversation_id: str, limit: int = 100):
     return messages
 
 @api_router.put("/private/messages/read/{conversation_id}")
-async def mark_private_messages_read(conversation_id: str, reader_id: str):
+async def mark_private_messages_read(conversation_id: str, reader_id: str, request: Request):
     """
     Marque tous les messages d'une conversation comme lus par un participant.
+
+    V411 : écriture sur un fil réservé -> même exigence que la lecture. Sans cela,
+    un tiers pouvait marquer « lus » les messages entrants du coach et les lui faire
+    manquer.
     """
+    if await _v411_fil_reserve(conversation_id):
+        _v411_exiger_super_admin(request, f"marquage lu du fil {conversation_id}")
+
     result = await db.private_messages.update_many(
         {"conversation_id": conversation_id, "recipient_id": reader_id, "is_read": False},
         {"$set": {"is_read": True}}
@@ -18254,10 +18342,16 @@ async def mark_private_messages_read(conversation_id: str, reader_id: str):
     return {"success": True, "marked_read": result.modified_count}
 
 @api_router.get("/private/unread/{participant_id}")
-async def get_unread_private_count(participant_id: str):
+async def get_unread_private_count(participant_id: str, request: Request):
     """
     Compte les messages privés non lus pour un participant.
+
+    V411 : ne divulgue qu'un compteur, mais c'est déjà un signal sur l'activité
+    privée du coach — et rien ne justifie de l'ouvrir.
     """
+    if _v411_id_reserve_admin(participant_id):
+        _v411_exiger_super_admin(request, f"compteur non lus de « {participant_id} »")
+
     count = await db.private_messages.count_documents({
         "recipient_id": participant_id,
         "is_read": False,

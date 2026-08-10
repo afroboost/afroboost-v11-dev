@@ -28,6 +28,7 @@ RÈGLES
 Dépendance : `requests` (pip install requests).
 """
 import os
+import re          # V411 : détection d'un numéro qui filtrerait dans un refus
 import sys
 import json
 
@@ -1651,6 +1652,69 @@ def t20_new_visitor_ok():
         record(20, "Nouveau visiteur -> inscription", False, str(e))
 
 
+def t94_v411_fils_prives_fermes():
+    """V411 : les fils WhatsApp du coach ne sont plus lisibles sans jeton signé.
+
+    Avant V411, ces routes n'exigeaient RIEN : `admin_afroboost` étant en clair dans
+    le bundle public, un `curl` sans en-tête listait les 14 fils (noms + numéros de
+    membres) puis leur contenu intégral. Fuite de données personnelles.
+
+    On vérifie les QUATRE portes, y compris l'usurpation par `X-User-Email` (que
+    n'importe qui peut écrire) — un 200 sur l'une d'elles rouvrirait toute la fuite.
+    """
+    echecs = []
+
+    def _refuse(nom, faire):
+        try:
+            r = faire()
+            if r.status_code not in (401, 403):
+                echecs.append(f"{nom} -> HTTP {r.status_code} (attendu 401/403)")
+                return
+            # Un refus qui laisserait quand même filtrer des données serait pire
+            # qu'inutile : on vérifie que le corps ne contient aucun numéro.
+            if re.search(r"\+?\d{9,}", r.text or ""):
+                echecs.append(f"{nom} -> refus MAIS un numéro apparaît dans la réponse")
+        except Exception as e:
+            echecs.append(f"{nom} -> exception {e}")
+
+    _refuse("GET /private/conversations/admin_afroboost (anonyme)",
+            lambda: requests.get(_url("/api/private/conversations/admin_afroboost"), timeout=TIMEOUT))
+    _refuse("GET /private/conversations/admin_afroboost (X-User-Email usurpé)",
+            lambda: requests.get(_url("/api/private/conversations/admin_afroboost"),
+                                 headers={"X-User-Email": ADMIN}, timeout=TIMEOUT))
+    _refuse("GET /private/unread/admin_afroboost (anonyme)",
+            lambda: requests.get(_url("/api/private/unread/admin_afroboost"), timeout=TIMEOUT))
+    _refuse("POST /private/conversations vers admin_afroboost (anonyme)",
+            lambda: requests.post(_url("/api/private/conversations"),
+                                  json={"participant_1_id": "whatsapp_000000000",
+                                        "participant_2_id": "admin_afroboost"}, timeout=TIMEOUT))
+
+    record(94, "V411 : fils privés du coach fermés sans jeton signé (4 portes)",
+           not echecs, " | ".join(echecs))
+
+
+def t95_v411_acces_legitime_admin():
+    """V411 — CONTREPARTIE OBLIGATOIRE de t94 (règle V310c du dépôt) : durcir sans
+    prouver que le propriétaire garde l'accès, c'est ce qui a vidé le dashboard en
+    V310. Avec un JWT super-admin, la liste DOIT revenir en 200.
+
+    SKIP si ADMIN_JWT n'est pas fourni — et ce SKIP est un AVERTISSEMENT, pas un
+    feu vert : le parcours légitime n'est alors pas couvert."""
+    jeton = os.environ.get("ADMIN_JWT", "").strip()
+    if not jeton:
+        skip(95, "V411 : accès légitime super-admin -> 200",
+             "ADMIN_JWT non fourni — parcours légitime NON couvert ici")
+        return
+    try:
+        r = requests.get(_url("/api/private/conversations/admin_afroboost"),
+                         headers={"Authorization": f"Bearer {jeton}"}, timeout=TIMEOUT)
+        ok = r.status_code == 200 and isinstance(r.json(), list)
+        record(95, "V411 : accès légitime super-admin -> 200 + liste des fils", ok,
+               f"HTTP {r.status_code}, {len(r.json()) if ok else '?'} fil(s)")
+    except Exception as e:
+        record(95, "V411 : accès légitime super-admin -> 200", False, str(e))
+
+
 def t93_v410_pont_spordateur():
     """V410 : le bouton « Spordateur » de la vitrine doit TOUJOURS aboutir sur
     /rencontre. Deux conditions, toutes deux vérifiées ici :
@@ -1838,6 +1902,7 @@ def main():
                    t89_v363_segments_contacts, t90_v365_membres_de_groupe_identiques_et_rapides,
                    t91_v367_apercu_bot_ferme_et_sans_envoi, t92_v369_routes_bot_fermees_et_drapeau_off,
                    t93_v410_pont_spordateur,
+                   t94_v411_fils_prives_fermes, t95_v411_acces_legitime_admin,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
