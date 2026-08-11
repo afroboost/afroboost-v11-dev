@@ -5247,7 +5247,68 @@ async def create_checkout_session(request: CreateCheckoutRequest):
     # modifie jamais. Les prix en base restent intacts.
     _v428c_prix_serveur = None
     _v428c_amount_source = "client_legacy"
-    if _offer is not None and request.quantity is not None:
+    _v428c_price_source = None
+
+    # V428C-A2-3 — PAIEMENT PAR LIEN INTELLIGENT.
+    #
+    # `ChatWidget.js:490` envoie un montant qui, lorsque le coach n'en a
+    # configure aucun, est SAISI PAR LE VISITEUR LUI-MEME (`customAmount`,
+    # ChatWidget.js:470). Le prix reel est en base : le tunnel porte une action
+    # finale de paiement, `chat_sessions.end_actions[type="payment"].config.amount`.
+    # Le `link_token` transite deja dans `reservationData` — aucun changement
+    # frontend n'est necessaire.
+    #
+    # AUCUNE EXCEPTION « MONTANT LIBRE ». L'inventaire des actions de paiement ne
+    # connait que deux cles, `amount` et `description` : il n'existe aujourd'hui
+    # AUCUNE propriete metier declarant une contribution a montant libre. Faute de
+    # cette propriete, le montant serveur est obligatoire et l'absence de montant
+    # configure fait REFUSER le checkout — plutot que d'inferer une gratuite ou
+    # une donation par heuristique.
+    #
+    # Impact mesure : 3 actions de paiement sur 4 portent un montant ; la
+    # quatrieme n'est meme pas un lien intelligent, et AUCUN paiement n'est jamais
+    # passe par ce chemin (0 transaction portant un link_token).
+    _v428c_link_token = ""
+    if request.reservationData:
+        try:
+            _v428c_link_token = (request.reservationData.get("link_token") or "").strip()
+        except AttributeError:
+            _v428c_link_token = ""
+
+    if _v428c_link_token:
+        _v428c_sess = await db.chat_sessions.find_one(
+            {"link_token": _v428c_link_token}, {"_id": 0, "end_actions": 1}
+        )
+        _v428c_montant_lien = None
+        for _a in ((_v428c_sess or {}).get("end_actions") or []):
+            if (_a or {}).get("type") != "payment":
+                continue
+            try:
+                _m = float(((_a.get("config") or {}).get("amount")) or 0)
+            except (TypeError, ValueError):
+                _m = 0.0
+            if _m > 0:
+                _v428c_montant_lien = _m
+                break
+        if _v428c_montant_lien is None:
+            logger.warning(
+                f"[V428C-A2-3] checkout refuse : aucun montant configure pour le "
+                f"lien {_v428c_link_token} (montant client {request.amount} ignore)"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="Ce lien n'a pas de montant configuré. Contacte le coach.",
+            )
+        if abs(float(request.amount or 0) - _v428c_montant_lien) > 0.01:
+            logger.warning(
+                f"[V428C-A2-3] montant client ignore : {request.amount} -> "
+                f"{_v428c_montant_lien} (lien {_v428c_link_token})"
+            )
+        amount_cents = round(_v428c_montant_lien * 100)
+        _v428c_prix_serveur = _v428c_montant_lien
+        _v428c_amount_source = "server"
+        _v428c_price_source = "smart_link"
+    elif _offer is not None and request.quantity is not None:
         _v428c_prix_serveur = float(compute_active_price(_offer)["price"])
         if abs(float(request.amount or 0) - _v428c_prix_serveur) > 0.01:
             logger.warning(
@@ -5256,6 +5317,7 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             )
         amount_cents = round(_v428c_prix_serveur * 100)
         _v428c_amount_source = "server"
+        _v428c_price_source = "offer"
     else:
         amount_cents = round(request.amount * 100)
 
@@ -5383,6 +5445,10 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                       else (request.amount or 0)) * safe_quantity, 2
             ),
             "amount_source": _v428c_amount_source,
+            # V428C-A2-3 : d'ou vient le prix serveur — « offer » (compute_active_price)
+            # ou « smart_link » (end_actions du tunnel). None quand le montant est
+            # encore celui du client.
+            "price_source": _v428c_price_source,
             "payment_status": "pending",
             "payment_methods": payment_methods,
             "created_at": datetime.now(timezone.utc).isoformat()
