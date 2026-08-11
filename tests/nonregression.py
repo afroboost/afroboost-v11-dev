@@ -1652,6 +1652,27 @@ def t20_new_visitor_ok():
         record(20, "Nouveau visiteur -> inscription", False, str(e))
 
 
+def t98_v425_orphelins_ferme():
+    """V425 : l'inventaire des fichiers orphelins est réservé au super-admin signé.
+
+    Cette route dit QUELS fichiers ne sont référencés nulle part — donc lesquels
+    vont disparaître. C'est une carte du stockage : ouverte, elle renseignerait un
+    tiers sur la structure interne et sur ce qui est sur le point d'être supprimé.
+    On vérifie l'anonyme ET l'usurpation par `X-User-Email`, falsifiable."""
+    echecs = []
+    for nom, entetes in (("anonyme", {}), ("X-User-Email usurpé", {"X-User-Email": ADMIN})):
+        try:
+            r = requests.get(_url("/api/admin/orphelins"), headers=entetes, timeout=TIMEOUT)
+            if r.status_code not in (401, 403):
+                echecs.append(f"{nom} -> HTTP {r.status_code} (attendu 401/403)")
+            elif re.search(r"[0-9a-f]{16}", r.text or ""):
+                echecs.append(f"{nom} -> refus MAIS un identifiant de fichier apparaît")
+        except Exception as e:
+            echecs.append(f"{nom} -> {e}")
+    record(98, "V425 : inventaire des orphelins fermé sans jeton super-admin",
+           not echecs, " | ".join(echecs))
+
+
 def t97_v413_stockage_disque():
     """V413 : un NOUVEL envoi est rangé sur le disque et servi correctement.
 
@@ -2045,7 +2066,7 @@ def main():
                    t91_v367_apercu_bot_ferme_et_sans_envoi, t92_v369_routes_bot_fermees_et_drapeau_off,
                    t93_v410_pont_spordateur,
                    t94_v411_fils_prives_fermes, t95_v411_acces_legitime_admin,
-                   t96_v412_range_206, t97_v413_stockage_disque,
+                   t96_v412_range_206, t97_v413_stockage_disque, t98_v425_orphelins_ferme,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

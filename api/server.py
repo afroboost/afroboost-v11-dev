@@ -7208,6 +7208,147 @@ async def _v261_purge_expired() -> int:
     return len(expired)
 
 
+# === V425 : NETTOYAGE DES FICHIERS ORPHELINS SUR LE DISQUE ===
+#
+# POURQUOI. Depuis le passage au disque (V413), plus rien ne supprime les
+# FICHIERS. Les purges existantes s'appuyaient sur `cloudinary_public_id` /
+# `media_public_id`, vides pour nos URL : la purge 48 h efface le document de la
+# publication, le fichier reste. Idem pour les medias de chat expires, et pour
+# les envois interrompus dans `.uploads/` (mesure du 10 aout : 84 Mo bloques par
+# UN seul envoi abandonne).
+#
+# === LA REGLE DE SURETE, ET POURQUOI ELLE EST STRICTE ===
+#
+# Un fichier n'est supprime QUE si son identifiant n'apparait dans AUCUN
+# document, de AUCUNE collection. Le balayage est EXHAUSTIF (`list_collection_names`)
+# et non une liste ecrite a la main : une liste figee oublierait la prochaine
+# collection ajoutee, et c'est exactement ainsi qu'on efface un media valide.
+#
+# DELAI DE GRACE — le garde-fou le plus important. Un fichier vient d'etre
+# televerse mais pas encore rattache a une offre : son URL n'est nulle part en
+# base, elle attend dans le formulaire du navigateur. Le supprimer serait une
+# perte de donnees causee PAR le nettoyage. On ne touche donc a rien qui ait
+# moins de 48 h. Constate le 11 aout : 445 Mo de fichiers non references
+# dataient tous de la veille — sans ce delai, le nettoyage aurait pu emporter
+# des videos en cours de mise en ligne.
+_V425_GRACE_MEDIA_H = 48      # un media doit avoir au moins 48 h pour etre juge orphelin
+_V425_GRACE_UPLOADS_H = 6     # un envoi interrompu depuis 6 h ne reprendra pas
+
+
+async def _v425_orphelins(grace_media_h: int = _V425_GRACE_MEDIA_H,
+                          grace_uploads_h: int = _V425_GRACE_UPLOADS_H) -> dict:
+    """Recense les orphelins SANS RIEN SUPPRIMER. Sert au mode a blanc comme au
+    nettoyage reel : une seule logique, donc ce qui est annonce est exactement ce
+    qui sera supprime."""
+    import time as _t
+    resultat = {"medias": [], "uploads": [], "octets": 0, "erreur": ""}
+    if not _v413_disque_pret():
+        resultat["erreur"] = "disque indisponible"
+        return resultat
+    maintenant = _t.time()
+
+    # 1) Envois interrompus
+    dossier_up = os.path.join(_V413_MEDIA_DIR, ".uploads")
+    if os.path.isdir(dossier_up):
+        for nom in os.listdir(dossier_up):
+            chemin = os.path.join(dossier_up, nom)
+            if not os.path.isdir(chemin):
+                continue
+            age_h = (maintenant - os.path.getmtime(chemin)) / 3600
+            if age_h >= grace_uploads_h:
+                taille = sum(os.path.getsize(os.path.join(chemin, f))
+                             for f in os.listdir(chemin)
+                             if os.path.isfile(os.path.join(chemin, f)))
+                resultat["uploads"].append({"id": nom, "octets": taille, "age_h": round(age_h, 1)})
+                resultat["octets"] += taille
+
+    # 2) Medias assembles, hors delai de grace
+    candidats = {}
+    for nom in os.listdir(_V413_MEDIA_DIR):
+        if nom.startswith("."):
+            continue
+        d = os.path.join(_V413_MEDIA_DIR, nom)
+        if not os.path.isdir(d) or not _V413_ID_VALIDE.match(nom):
+            continue
+        fichiers = [f for f in os.listdir(d) if os.path.isfile(os.path.join(d, f))]
+        if not fichiers:
+            continue
+        age_h = (maintenant - max(os.path.getmtime(os.path.join(d, f)) for f in fichiers)) / 3600
+        if age_h < grace_media_h:
+            continue
+        candidats[nom] = {"octets": sum(os.path.getsize(os.path.join(d, f)) for f in fichiers),
+                          "age_h": round(age_h, 1)}
+    if not candidats:
+        return resultat
+
+    # 3) Balayage EXHAUSTIF des references. `uploaded_files` est exclue : elle
+    #    porte la fiche du fichier, pas un USAGE — s'y fier rendrait tout fichier
+    #    eternellement « reference » et le nettoyage totalement inoperant.
+    exclues = {"uploaded_files", "upload_chunks"}
+    referencees = set()
+    for col in await db.list_collection_names():
+        if col in exclues:
+            continue
+        try:
+            async for doc in db[col].find({}, {"data": 0}):
+                texte = str(doc)
+                for fid in candidats:
+                    if fid in texte:
+                        referencees.add(fid)
+        except Exception as e:
+            # Une collection illisible = doute. On ARRETE : mieux vaut ne rien
+            # supprimer que supprimer sur un inventaire incomplet.
+            resultat["erreur"] = f"collection {col} illisible ({e}) — nettoyage annule"
+            resultat["medias"] = []
+            return resultat
+
+    for fid, info in candidats.items():
+        if fid not in referencees:
+            resultat["medias"].append({"id": fid, **info})
+            resultat["octets"] += info["octets"]
+    return resultat
+
+
+async def _v425_nettoyer(a_blanc: bool = True) -> dict:
+    """Supprime les orphelins. `a_blanc=True` (defaut) ne fait que les lister."""
+    import shutil
+    rapport = await _v425_orphelins()
+    if rapport["erreur"] or a_blanc:
+        return rapport
+    supprimes = 0
+    for u in rapport["uploads"]:
+        try:
+            shutil.rmtree(os.path.join(_V413_MEDIA_DIR, ".uploads", u["id"]), ignore_errors=True)
+            supprimes += 1
+        except Exception as e:
+            logger.warning(f"[V425] envoi interrompu {u['id']} non supprime : {e}")
+    for m in rapport["medias"]:
+        try:
+            shutil.rmtree(os.path.join(_V413_MEDIA_DIR, m["id"]), ignore_errors=True)
+            await db.uploaded_files.delete_one({"file_id": m["id"]})
+            supprimes += 1
+        except Exception as e:
+            logger.warning(f"[V425] media {m['id']} non supprime : {e}")
+    if supprimes:
+        logger.info(f"[V425] nettoyage : {supprimes} element(s), "
+                    f"{rapport['octets']/1048576:.1f} Mo liberes")
+    rapport["supprimes"] = supprimes
+    return rapport
+
+
+@api_router.get("/admin/orphelins")
+async def v425_lister_orphelins(request: Request):
+    """V425 — inventaire A BLANC des orphelins. Lecture seule, super-admin signe.
+    Permet de VOIR ce que le nettoyage automatique supprimerait, avant qu'il ne
+    le fasse."""
+    appelant = _v311_coach_email_from_jwt(request)
+    if not appelant or not is_super_admin(appelant):
+        raise HTTPException(status_code=403, detail="Super-admin requis")
+    r = await _v425_orphelins()
+    return {**r, "mo": round(r["octets"] / 1048576, 1),
+            "grace_media_h": _V425_GRACE_MEDIA_H, "grace_uploads_h": _V425_GRACE_UPLOADS_H}
+
+
 async def _v276_periodic_purge():
     """V276 (Option B) : purge de fond, toutes les heures.
 
@@ -7222,6 +7363,16 @@ async def _v276_periodic_purge():
             n = await _v261_purge_expired()
             if n:
                 logger.info(f"[V276] Purge periodique : {n} publication(s) supprimee(s)")
+            # V425 : nettoyage des fichiers orphelins, dans la MEME boucle horaire.
+            # Greffe ici plutot que sur la purge paresseuse : celle-ci s'execute a
+            # CHAQUE lecture de la vitrine, et un balayage de toutes les
+            # collections y serait lent et repete pour rien.
+            try:
+                r = await _v425_nettoyer(a_blanc=False)
+                if r.get("erreur"):
+                    logger.warning(f"[V425] nettoyage annule : {r['erreur']}")
+            except Exception as e:
+                logger.warning(f"[V425] nettoyage ignore : {e}")
         except Exception as e:
             logger.warning(f"[V276] Purge periodique ignoree : {e}")
         await asyncio.sleep(3600)  # toutes les heures
