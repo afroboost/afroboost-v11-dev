@@ -662,3 +662,94 @@ async def purger_assigned_email(db, filtre: dict, motif: str = "") -> dict:
         )
         vides += 1
     return {"vides": vides, "proteges": proteges}
+
+
+# =====================================================================
+# C9-A — INSTRUMENTATION POSTHOG, CÔTÉ SERVEUR
+# =====================================================================
+# POURQUOI CÔTÉ SERVEUR. Le navigateur ne prouve rien : la page de succès
+# s'affiche même si le paiement échoue ensuite, et `us.i.posthog.com` est
+# bloqué par une part notable des bloqueurs de publicité. Les CONVERSIONS sont
+# donc émises depuis le backend, au moment où l'action métier est confirmée en
+# base. Les événements d'INTENTION (pageview, clic) restent au frontend.
+#
+# TROIS RÈGLES ABSOLUES :
+#   1. NON BLOQUANT. Aucune exception ne remonte : ni configuration absente, ni
+#      timeout, ni panne PostHog ne doit faire échouer une réservation, une
+#      présence ou un paiement. Tout est avalé et journalisé.
+#   2. ÉTEINT PAR DÉFAUT. `POSTHOG_SERVER_ENABLED` vaut false tant qu'on ne
+#      l'allume pas explicitement — même logique que les drapeaux V344.
+#   3. AUCUNE DONNÉE PERSONNELLE. Jamais d'e-mail, de téléphone, de nom, de
+#      contenu de conversation, de code promo ni d'identifiant Stripe. La
+#      personne est désignée par un pseudonyme dérivé, non réversible.
+
+def posthog_actif() -> bool:
+    """Lu EN DIRECT à chaque appel : l'interrupteur se change dans Coolify sans
+    redéploiement, et sert de coupe-circuit immédiat."""
+    return (os.environ.get("POSTHOG_SERVER_ENABLED", "") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def posthog_id(email: str) -> str:
+    """Pseudonyme STABLE dérivé de l'e-mail : sha256(sel + e-mail normalisé),
+    tronqué à 32 caractères.
+
+    Stable — la même personne produit toujours le même identifiant, donc le
+    funnel tient d'un événement à l'autre. Non réversible — PostHog ne reçoit
+    jamais l'adresse. Le frontend calculera le MÊME identifiant au moment
+    d'appeler `identify()`, ce qui raccrochera la visite anonyme au parcours
+    d'achat (lot C9-B).
+    """
+    import hashlib
+    e = (email or "").strip().lower()
+    if not e:
+        return ""
+    sel = os.environ.get("POSTHOG_ID_SALT", "afroboost-c9")
+    return hashlib.sha256((sel + "|" + e).encode("utf-8")).hexdigest()[:32]
+
+
+async def posthog_capture(event: str, email: str = "", props: dict = None,
+                          distinct_id: str = "") -> bool:
+    """Émet un événement PostHog. Renvoie True si envoyé, False sinon.
+    NE LÈVE JAMAIS. L'appelant peut ignorer le retour.
+
+    `email` sert UNIQUEMENT à calculer le pseudonyme : il n'est pas transmis.
+    """
+    try:
+        if not posthog_actif():
+            return False
+        cle = (os.environ.get("POSTHOG_API_KEY", "") or "").strip()
+        if not cle:
+            logger.info("[C9] POSTHOG_API_KEY absente — aucun envoi")
+            return False
+        did = (distinct_id or "").strip() or posthog_id(email)
+        if not did:
+            logger.info(f"[C9] {event} ignoré — aucun identifiant exploitable")
+            return False
+
+        # Filet de sécurité : même si un appelant se trompe, ces clés ne
+        # partiront jamais. La minimisation ne dépend pas de la vigilance.
+        _INTERDIT = {"email", "phone", "whatsapp", "name", "userName", "userEmail",
+                     "customer_email", "promoCode", "promo_code", "code",
+                     "session_id", "payment_intent", "stripe_customer_id", "message"}
+        charge = {k: v for k, v in (props or {}).items() if k not in _INTERDIT}
+        retires = sorted(set(props or {}) & _INTERDIT)
+        if retires:
+            logger.warning(f"[C9] {event} : propriétés interdites retirées {retires}")
+
+        hote = (os.environ.get("POSTHOG_HOST", "") or "https://us.i.posthog.com").rstrip("/")
+        import httpx
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.post(
+                hote + "/i/v0/e/",
+                json={"api_key": cle, "event": event, "distinct_id": did,
+                      "properties": {**charge, "$lib": "afroboost-server"}},
+            )
+        if r.status_code >= 300:
+            logger.warning(f"[C9] {event} refusé par PostHog : HTTP {r.status_code}")
+            return False
+        logger.info(f"[C9] {event} envoyé (id={did[:8]}…)")
+        return True
+    except Exception as e:
+        # Volontairement muet pour le métier : analytics ne casse jamais rien.
+        logger.warning(f"[C9] {event} échoué, ignoré — {type(e).__name__}: {e}")
+        return False

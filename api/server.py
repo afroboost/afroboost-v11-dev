@@ -6254,6 +6254,29 @@ async def stripe_webhook(request: Request):
                 await db.subscriptions.insert_one(subscription_data)
                 logger.info(f"[PAYMENT] Subscription auto-creee: {customer_email} - {product_name} ({sessions_count} seances) auto_renew={subscription_data['auto_renew']}")
 
+                # C9-A : `pulse_purchased` — la SEULE preuve d'achat acceptable.
+                # Placé ici, donc APRÈS la garde d'idempotence V384 (server.py:6090,
+                # « session deja traitee -> return ») : un webhook rejoué par Stripe
+                # ressort avant d'arriver ici et ne peut pas doubler la conversion.
+                #
+                # `member_purchased` n'est PAS émis : la Carte Membre n'existe pas
+                # encore comme objet métier (PROMPT 43-44). Une donnée manquante mais
+                # vraie vaut mieux qu'une métrique ambiguë — décision explicite.
+                try:
+                    from api.routes.shared import posthog_capture as _c9
+                    _c9_offer = str((metadata or {}).get("offer_id") or "")
+                    _C9_PULSE = ("a687ce86", "484c4519")   # 250 initial / 150 renouvellement
+                    if _c9_offer.startswith(_C9_PULSE):
+                        await _c9("pulse_purchased", email=customer_email, props={
+                            "offer_id": _c9_offer,
+                            "amount": float(_montant_paye or 0),
+                            "currency": (session.get("currency") or "chf").upper(),
+                            "sessions": int(sessions_count or 0),
+                            "is_initial_250": _c9_offer.startswith("a687ce86"),
+                        })
+                except Exception as _c9e:
+                    logger.warning(f"[C9] pulse_purchased ignore: {_c9e}")
+
                 # V397 : le renouvellement FERME l'ancien forfait du meme client.
                 # Portee etroite : uniquement les forfaits deja EXPIRES ou EPUISES.
                 # Un forfait encore valide avec des seances au compteur n'est jamais

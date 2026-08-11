@@ -739,6 +739,22 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
     reservation_data.pop("_id", None)
     logger.info(f"[RESERVATION] Créée: {reservation_data.get('reservationCode')} pour {user_email}")
 
+    # C9-A : `trial_booked` — émis APRÈS l'insertion réelle, jamais au clic.
+    # `posthog_capture` n'échoue jamais ; ce try n'est qu'une ceinture de plus.
+    try:
+        from api.routes.shared import posthog_capture as _c9
+        await _c9("trial_booked", email=user_email, props={
+            "course_id": getattr(reservation, "courseId", None) or reservation_data.get("courseId"),
+            "offer_name_present": bool(reservation_data.get("offerName")),
+            "total_price": float(reservation_data.get("totalPrice") or 0),
+            "quantity": int(reservation_data.get("quantity") or 1),
+            "is_product": bool(reservation_data.get("isProduct")),
+            "has_promo": bool(promo_code),
+            "source": reservation_data.get("source") or "website",
+        })
+    except Exception as _c9e:
+        logger.warning(f"[C9] trial_booked ignoré: {_c9e}")
+
     # V285: enregistrer la date de naissance (MM-DD) dans le profil, pour les
     # anniversaires. Optionnel — n'echoue jamais la reservation.
     try:
@@ -812,16 +828,56 @@ async def update_reservation_tracking(reservation_id: str, request: Request):
     updated = await db.reservations.find_one({"id": reservation_id}, {"_id": 0})
     return {"success": True, "reservation": updated}
 
+async def _c9_presence(reservation: dict, etait_deja_validee: bool):
+    """C9-A — `attendance_checked_in`, et `second_class_attended` le cas échéant.
+
+    APPELÉ PAR LES TROIS CHEMINS DE VALIDATION (scan direct, staff, groupe) : il
+    n'y a pas un seul endroit où une présence se confirme, et en oublier un
+    rendrait le funnel faux sans que rien ne le signale.
+
+    `etait_deja_validee` porte l'idempotence. `/reservations/{code}/validate`
+    n'a AUCUNE garde de re-scan : sans ce drapeau, repasser le même QR gonflerait
+    les présences. On n'émet donc que sur la TRANSITION non-validé -> validé.
+
+    La 2e présence est comptée sur les réservations `validated` de la même
+    adresse. Fiabilité vérifiée sur les données de production : 9 présences sur
+    9 portent un e-mail ET un `validatedAt`, donc le rang est déterminable.
+    Aucune présence anonyme n'existe aujourd'hui ; si une apparaissait, elle
+    serait simplement ignorée (pas d'identifiant -> pas d'événement).
+    """
+    try:
+        if etait_deja_validee:
+            return
+        from api.routes.shared import posthog_capture as _c9
+        email = (reservation.get("userEmail") or "").strip().lower()
+        if not email:
+            return
+        rang = await db.reservations.count_documents({"userEmail": email, "validated": True})
+        await _c9("attendance_checked_in", email=email, props={
+            "course_id": reservation.get("courseId"),
+            "attendance_rank": rang,
+            "is_product": bool(reservation.get("isProduct")),
+        })
+        if rang == 2:
+            await _c9("second_class_attended", email=email, props={
+                "course_id": reservation.get("courseId"),
+            })
+    except Exception as _e:
+        logger.warning(f"[C9] presence ignoree: {_e}")
+
+
 @reservation_router.post("/reservations/{reservation_code}/validate")
 async def validate_reservation(reservation_code: str):
     """Validate a reservation by QR code scan"""
     reservation = await db.reservations.find_one({"reservationCode": reservation_code}, {"_id": 0})
     if not reservation:
         raise HTTPException(status_code=404, detail="Réservation non trouvée")
+    _c9_deja = bool(reservation.get("validated"))   # C9-A : lu AVANT l'écriture
     await db.reservations.update_one(
         {"reservationCode": reservation_code},
         {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
     )
+    await _c9_presence(reservation, _c9_deja)
     return {"success": True, "message": "Réservation validée", "reservation": reservation}
 
 @reservation_router.delete("/reservations/{reservation_id}")
@@ -1084,6 +1140,9 @@ async def staff_validate_reservation(request: Request):
         {"reservationCode": code},
         {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
     )
+    # C9-A : ce chemin refuse déjà les re-scans plus haut (« Déjà validé »),
+    # on arrive donc toujours sur une vraie transition.
+    await _c9_presence(reservation, False)
     return {"success": True, "message": "Réservation validée", "userName": reservation.get("userName", ""), "courseName": reservation.get("courseName", "")}
 
 
@@ -1126,6 +1185,9 @@ async def _validate_discount_code_presence(code: str, discount: dict, member_slu
                     {"id": r.get("id")},
                     {"$set": {"validated": True, "validatedAt": datetime.now(timezone.utc).isoformat()}}
                 )
+                # C9-A : la requête ci-dessus filtre déjà `validated != True`,
+                # chaque tour de boucle est donc une transition réelle.
+                await _c9_presence(r, False)
                 names.append(r.get("userName", "?"))
             logger.info(f"[QR-SCAN-V213] Groupe {code}: {len(today_reservations)} présences validées")
             return {"success": True, "type": "subscription",
