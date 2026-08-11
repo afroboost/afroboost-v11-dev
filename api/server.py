@@ -1890,8 +1890,18 @@ async def update_user(user_id: str, user: UserCreate):
     return updated
 
 @api_router.delete("/users/{user_id}")
-async def delete_user(user_id: str):
+async def delete_user(user_id: str, request: Request):
     """Supprime un utilisateur/contact et nettoie les références dans les codes promo"""
+    # V432 : cette route SUPPRIMAIT un contact sans demander la moindre identité.
+    # Un simple `curl -X DELETE` suffisait. Même garde que les autres endpoints
+    # touchant des données personnelles (V309) : `require_auth` accepte le JWT
+    # signé ET le repli `X-User-Email` de la transition V265 — c'est ce repli que
+    # le tableau de bord emprunte, il ne casse donc pas.
+    _v432_appelant = require_auth(request)
+    if not await _v309_is_coach_or_admin(_v432_appelant):
+        logger.warning(f"[V432] DELETE /users/{user_id} refusé pour {_v432_appelant or 'anonyme'}")
+        raise HTTPException(status_code=403, detail="Accès refusé")
+
     # 1. Récupérer l'email de l'utilisateur avant suppression
     user = await db.users.find_one({"id": user_id}, {"_id": 0})
     if not user:
@@ -3903,12 +3913,26 @@ Notification automatique Afroboost"""
 # === SANITIZE DATA (Nettoyage des données fantômes) ===
 
 @api_router.post("/sanitize-data")
-async def sanitize_data():
+async def sanitize_data(request: Request):
     """
     Nettoie automatiquement les données fantômes:
     - Retire des codes promo les IDs d'offres/cours qui n'existent plus
     - Retire des codes promo les emails de bénéficiaires qui n'existent plus
+
+    V432 : la fonction ne recevait même pas `request` — elle était donc ouverte à
+    tout le monde, alors qu'elle ÉCRIT dans `discount_codes` de TOUS les coachs.
+    Portée globale -> réservée au super-admin, comme la route de nettoyage voisine
+    `/admin/cleanup-ghost-users` (server.py:3200), dont c'est exactement le patron.
+    `require_auth` accepte le JWT signé ET le repli `X-User-Email` (V265) : le
+    tableau de bord, qui emprunte ce repli, continue de passer. Ses quatre points
+    d'appel sont tous dans un `try/catch`, un refus éventuel resterait sans effet
+    visible.
     """
+    _v432_appelant = require_auth(request)
+    if not is_super_admin(_v432_appelant):
+        logger.warning(f"[V432] POST /sanitize-data refusé pour {_v432_appelant or 'anonyme'}")
+        raise HTTPException(status_code=403, detail="Réservé à l'admin")
+
     # 1. Récupérer tous les IDs valides
     valid_offer_ids = set()
     valid_course_ids = set()
