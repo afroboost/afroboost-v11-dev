@@ -513,3 +513,84 @@ def expiration_forfait(depuis=None) -> str:
         hour=23, minute=59, second=59, microsecond=0
     )
     return fin.isoformat()
+
+
+# === V430 : « un code assigné n'appartient qu'à son propriétaire » ===
+#
+# Règle unique, écrite ICI et nulle part ailleurs, appelée par les trois routes
+# qui ACCORDENT quelque chose contre un code (remise au checkout, validation,
+# incrément du compteur à la réservation).
+#
+# La faille fermée : partout le contrôle s'écrivait
+#     if assigne and email_fourni and assigne != email_fourni: refus
+# Le `and email_fourni` faisait qu'un e-mail ABSENT ou VIDE désactivait le
+# contrôle. Il suffisait donc de retirer `customerEmail` du corps de la requête
+# pour utiliser le code de quelqu'un d'autre. C'est un REFUS PAR DÉFAUT ici.
+#
+# EXCEPTION PROUVÉE — LES CODES DE GROUPE. `assignedEmail` désigne la personne
+# qui a PAYÉ, pas la seule qui a le droit de s'en servir. En production, 7
+# réservations réelles d'un groupe de 6 ont été posées par 5 membres dont
+# l'adresse diffère de `assignedEmail`. L'identité autorisée d'un code
+# `multi_member` est donc l'ENSEMBLE {assignedEmail} ∪ {code_members.email}.
+# Sans cette exception, ce groupe serait mis dehors.
+
+def normaliser_email(valeur) -> str:
+    """Trim + minuscules. Rien d'autre : pas de `contains`, pas de comparaison
+    partielle, pas de tolérance floue. Tout ce qui n'est pas une chaîne vaut ''.
+
+    Vérifié sur les 38 documents de `discount_codes` : les 24 valeurs
+    `assignedEmail` existantes sont DÉJÀ trim+minuscules et bien formées — cette
+    normalisation n'en modifie aucune."""
+    if not isinstance(valeur, str):
+        return ""
+    return valeur.strip().lower()
+
+
+async def email_autorise_pour_code(db, doc: dict, email_fourni) -> tuple:
+    """(autorisé: bool, motif: str) — le porteur de `email_fourni` a-t-il le droit
+    d'utiliser ce `discount_code` ?
+
+    - pas d'`assignedEmail`      -> autorisé (« code_non_assigne »), inchangé ;
+    - e-mail absent/vide         -> REFUS (« email_absent ») ;
+    - égalité normalisée         -> autorisé (« proprietaire ») ;
+    - code de groupe + membre    -> autorisé (« membre_du_groupe ») ;
+    - sinon                      -> REFUS (« autre_compte »).
+    """
+    assigne = normaliser_email(doc.get("assignedEmail"))
+    if not assigne:
+        return True, "code_non_assigne"
+
+    fourni = normaliser_email(email_fourni)
+    if not fourni:
+        return False, "email_absent"
+    if fourni == assigne:
+        return True, "proprietaire"
+
+    if doc.get("multi_member"):
+        import re as _re
+        _code = (doc.get("code") or "").strip()
+        if _code:
+            try:
+                membres = await db.code_members.find(
+                    {"code": {"$regex": f"^{_re.escape(_code)}$", "$options": "i"}},
+                    {"_id": 0, "email": 1, "blocked": 1},
+                ).to_list(300)
+            except Exception as e:
+                # Base injoignable : on NE relâche PAS le contrôle.
+                logger.warning(f"[V430] Lecture code_members impossible pour {_code}: {e}")
+                return False, "membres_illisibles"
+            for m in membres:
+                if normaliser_email(m.get("email")) == fourni:
+                    if m.get("blocked"):
+                        return False, "membre_bloque"
+                    return True, "membre_du_groupe"
+
+    return False, "autre_compte"
+
+
+# Message unique montré à l'utilisateur. Aucun détail interne : ne dit ni à qui
+# le code appartient, ni lequel des motifs a joué.
+V430_MESSAGE_REFUS = (
+    "Ce code est lié à un compte précis. "
+    "Vérifie l'adresse utilisée ou contacte Afroboost."
+)

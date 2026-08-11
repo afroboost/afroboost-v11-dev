@@ -574,6 +574,34 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
     promo_code = reservation.promoCode or reservation.discountCode
     user_email = reservation.userEmail.lower().strip() if reservation.userEmail else ""
 
+    # === V430 : un code assigné n'appartient qu'à son propriétaire ===
+    #
+    # Ce chemin ne vérifiait RIEN : un inconnu qui connaissait un code assigné
+    # faisait grimper son compteur `used` (plus bas) — il brûlait le quota d'un
+    # client sans jamais toucher son abonnement, la déduction étant, elle, filtrée
+    # par `email`. Les membres d'un code de groupe restent autorisés : 7
+    # réservations réelles en production passent par là.
+    #
+    # ⚠️ PLACÉ ICI, AVANT TOUTE ÉCRITURE. Refuser plus bas — au moment de
+    # l'incrément — laisserait la séance DÉJÀ déduite de l'abonnement : le client
+    # perdrait une séance sans obtenir de réservation.
+    if promo_code:
+        _v430_doc = await db.discount_codes.find_one(
+            {"code": {"$regex": f"^{re.escape(promo_code)}$", "$options": "i"}, "active": True},
+            {"_id": 0, "code": 1, "assignedEmail": 1, "multi_member": 1},
+        )
+        if _v430_doc:
+            from api.routes.shared import (
+                email_autorise_pour_code as _v430_autorise,
+                V430_MESSAGE_REFUS as _V430_MSG,
+            )
+            _v430_ok, _v430_motif = await _v430_autorise(db, _v430_doc, user_email)
+            if not _v430_ok:
+                logger.warning(
+                    f"[V430] Reservation refusee : code {promo_code} ({_v430_motif})"
+                )
+                raise HTTPException(status_code=403, detail=_V430_MSG)
+
     # === v158: Règle 24h à l'avance pour les séances suivantes d'un pack ===
     # La 1ère séance (achat initial) peut être n'importe quand.
     # Les séances suivantes (via abonnement actif existant) doivent être >= 24h dans le futur.
@@ -677,6 +705,8 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
     if promo_code:
         discount = await db.discount_codes.find_one({"code": {"$regex": f"^{re.escape(promo_code)}$", "$options": "i"}, "active": True}, {"_id": 0})
         if discount:
+            # V430 : l'autorisation a été vérifiée EN TÊTE de route, avant toute
+            # écriture. Rien à refaire ici.
             # v95: Incrémenter le compteur d'utilisation du code promo
             await db.discount_codes.update_one(
                 {"id": discount.get("id")},

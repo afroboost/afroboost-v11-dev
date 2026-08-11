@@ -5241,9 +5241,16 @@ async def _v429_remise_serveur(code_promo: str, offer: dict, course_id: str, ema
     _cs = doc.get("courses") or []
     if course_id and _cs and course_id not in _cs:
         meta["quota_guard_result"] = "non_applicable"; return (None, 0.0), meta
-    _ass = (doc.get("assignedEmail") or "").strip().lower()
-    if _ass and email and _ass != (email or "").strip().lower():
-        meta["quota_guard_result"] = "autre_compte"; return (None, 0.0), meta
+    # V430 : le contrôle s'écrivait `if _ass and email and ...` — un e-mail ABSENT
+    # désactivait donc la garde. Refus par défaut désormais. Sûr ici : les deux
+    # appelants A2-1/A2-2 envoient toujours `customerEmail`, et `App.js:6237`
+    # interdit la soumission tant que l'adresse est vide.
+    from api.routes.shared import email_autorise_pour_code as _v430_autorise
+    _v430_ok, _v430_motif = await _v430_autorise(db, doc, email)
+    if not _v430_ok:
+        meta["quota_guard_result"] = _v430_motif
+        logger.warning(f"[V430] {code.upper()} : remise refusée ({_v430_motif})")
+        return (None, 0.0), meta
 
     # GARDE-FOU QUOTA
     _subs = await db.subscriptions.find(
