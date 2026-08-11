@@ -701,9 +701,50 @@ async def checkout_stripe_webhook(request: Request):
     payload = await request.body()
     sig = request.headers.get("stripe-signature", "")
 
-    # Note: Pour les paiements partenaires, on ne peut pas vérifier la signature
-    # car chaque partenaire a sa propre clé webhook.
-    # On vérifie plutôt via le metadata.transaction_id en base.
+    # V428B — VERIFICATION DE SIGNATURE, EN FAIL-CLOSED.
+    #
+    # Cette URL est la SEULE declaree chez Stripe (endpoint dont le signing
+    # secret se termine par « XmuY »). Elle acceptait jusqu'ici n'importe quel
+    # POST anonyme : `sig` etait lue puis JAMAIS utilisee. Un evenement forge
+    # etait relaye au gestionnaire client via `request.state` — chemin qui saute
+    # volontairement la verification (server.py:5481) — donc code AFR-*, e-mail
+    # et abonnement crees SANS aucun paiement.
+    #
+    # `STRIPE_WEBHOOK_SECRET_CHECKOUT` est bien le secret de CET endpoint :
+    # suffixe `XmuY`, verifie au tableau de bord Stripe ET dans l'environnement
+    # du conteneur de production. Le commentaire de server.py:5492, qui pretend
+    # qu'elle porte le secret de /api/webhook/stripe, est FAUX.
+    #
+    # FAIL-CLOSED assume : un webhook de paiement ne doit jamais devenir anonyme
+    # parce qu'une variable manque. 503 et non 500, car Stripe reessaie les 5xx
+    # pendant plusieurs jours : une mauvaise configuration se rattrape, une
+    # faille silencieuse non.
+    #
+    # Ce bloc est un PORTILLON : `event_data` reste produit par `json.loads`
+    # ci-dessous, donc aucune ligne en aval ne change — ni la branche vitrine,
+    # ni le relais, ni `invoice.upcoming`.
+    _wh_secret = os.environ.get("STRIPE_WEBHOOK_SECRET_CHECKOUT")
+    if not _wh_secret:
+        logger.error(
+            "[CHECKOUT-WEBHOOK] V428B REFUS : STRIPE_WEBHOOK_SECRET_CHECKOUT "
+            "absent du runtime. Aucun evenement traite. Poser le signing secret "
+            "de l'endpoint /api/checkout/webhook/stripe (Stripe > Webhooks)."
+        )
+        raise HTTPException(status_code=503, detail="Webhook non configuré")
+    try:
+        _evt = stripe_lib.Webhook.construct_event(payload, sig, _wh_secret)
+        logger.info(
+            f"[CHECKOUT-WEBHOOK] V428B signature valide "
+            f"(id={getattr(_evt, 'id', '?')}, type={getattr(_evt, 'type', '?')})"
+        )
+    except Exception as _sig_err:
+        # On journalise le TYPE de l'exception, jamais son message : celui-ci
+        # peut contenir la signature recue.
+        logger.warning(
+            f"[CHECKOUT-WEBHOOK] V428B signature INVALIDE, rejet — "
+            f"{type(_sig_err).__name__} (corps : {len(payload)} o)"
+        )
+        raise HTTPException(status_code=400, detail="Signature invalide")
 
     try:
         event_data = json.loads(payload)
