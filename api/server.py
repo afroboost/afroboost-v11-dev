@@ -5222,7 +5222,42 @@ async def create_checkout_session(request: CreateCheckoutRequest):
 
     # Montant en centimes (Stripe utilise les plus petites unités).
     # round() et non int() : int(0.29 * 100) vaut 28 en virgule flottante.
-    amount_cents = round(request.amount * 100)
+    #
+    # V428C-A1 — LE SERVEUR FAIT AUTORITÉ SUR LE MONTANT.
+    #
+    # Jusqu'ici `request.amount` partait tel quel chez Stripe : un client pouvait
+    # poster 1 CHF pour un billet à 10 et recevoir malgré tout les bons crédits,
+    # `pack_sessions` étant déjà calculé serveur (V223). La faiblesse était connue
+    # et documentée ci-dessus depuis V223 ; elle est fermée ici.
+    #
+    # PÉRIMÈTRE : uniquement quand `offerId` ET `quantity` sont fournis. C'est la
+    # signature du parcours progressif (App.js:6010), le seul appelant à envoyer
+    # un prix UNITAIRE. Les trois autres — App.js:6414, App.js:6464 et
+    # ChatWidget.js:490 — envoient un TOTAL déjà calculé (dates × prix − promo) ou
+    # un montant libre de lien intelligent : le serveur ne peut pas les recalculer
+    # sans le nombre de dates ni le code promo, ils restent donc INCHANGÉS.
+    #
+    # ON IMPOSE, ON NE BLOQUE PAS. `active_price` est figé au chargement de la
+    # page : une bascule de palier entre-temps ferait échouer un client légitime,
+    # et App.js:6023 ne sait afficher qu'un « réessayer » générique qui renverrait
+    # le même prix périmé — boucle sans issue. Stripe Checkout affiche le montant
+    # réel avant tout débit : imposer le prix serveur ne cache aucun prélèvement.
+    #
+    # Aucune donnée n'est écrite : `compute_active_price` lit l'offre, ne la
+    # modifie jamais. Les prix en base restent intacts.
+    _v428c_prix_serveur = None
+    _v428c_amount_source = "client_legacy"
+    if _offer is not None and request.quantity is not None:
+        _v428c_prix_serveur = float(compute_active_price(_offer)["price"])
+        if abs(float(request.amount or 0) - _v428c_prix_serveur) > 0.01:
+            logger.warning(
+                f"[V428C-A1] montant client ignore : {request.amount} -> "
+                f"{_v428c_prix_serveur} (offre {request.offerId}, palier {server_tier})"
+            )
+        amount_cents = round(_v428c_prix_serveur * 100)
+        _v428c_amount_source = "server"
+    else:
+        amount_cents = round(request.amount * 100)
 
     # V225: 1..5. Un client peut poster ce qu'il veut ; le plafond est ici.
     safe_quantity = max(1, min(5, int(request.quantity or 1)))
@@ -5336,6 +5371,18 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             # amount x quantity. Sans cette ligne, l'ecart entre la transaction
             # et le versement Stripe n'est pas reconciliable a la main.
             "quantity": safe_quantity,
+            # V428C-A1 : tracabilite du prix. `amount_source` dit d'ou vient le
+            # montant facture — « server » quand le serveur l'a impose, sinon
+            # « client_legacy » pour les appelants qui envoient encore un total.
+            # Permet de mesurer la couverture avant de durcir les autres chemins,
+            # et de reconcilier une transaction sans relire le code.
+            "server_unit_price": _v428c_prix_serveur,
+            "pricing_tier": server_tier or None,
+            "expected_amount": round(
+                float(_v428c_prix_serveur if _v428c_prix_serveur is not None
+                      else (request.amount or 0)) * safe_quantity, 2
+            ),
+            "amount_source": _v428c_amount_source,
             "payment_status": "pending",
             "payment_methods": payment_methods,
             "created_at": datetime.now(timezone.utc).isoformat()
