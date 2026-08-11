@@ -1903,13 +1903,21 @@ async def delete_user(user_id: str):
     await db.users.delete_one({"id": user_id})
     
     # 3. Nettoyer les références dans les codes promo (retirer l'email des assignedEmail)
+    #
+    # V431 : ce nettoyage vidait `assignedEmail` SANS CONDITION. Supprimer un
+    # contact rendait donc son code encore valide utilisable par n'importe qui —
+    # la suppression d'une donnée personnelle ouvrait un droit d'accès payé.
+    # Désormais on épargne les codes encore utilisables ; les autres sont nettoyés
+    # comme avant. La suppression du contact lui-même n'est pas touchée.
+    _v431 = {"vides": 0, "proteges": 0}
     if user_email:
-        await db.discount_codes.update_many(
-            {"assignedEmail": user_email},
-            {"$set": {"assignedEmail": None}}
+        from api.routes.shared import purger_assigned_email as _v431_purger
+        _v431 = await _v431_purger(
+            db, {"assignedEmail": user_email}, motif=f"suppression du contact {user_id}"
         )
-    
-    return {"success": True, "message": "Contact supprimé et références nettoyées"}
+
+    return {"success": True, "message": "Contact supprimé et références nettoyées",
+            "codes_liberes": _v431["vides"], "codes_proteges": _v431["proteges"]}
 
 # === V413 : LES MÉDIAS VONT SUR LE DISQUE, PLUS DANS MONGODB ===
 #
@@ -3927,6 +3935,19 @@ async def sanitize_data():
     discount_codes = await db.discount_codes.find({}, {"_id": 0}).to_list(1000)
     cleaned_count = 0
     
+    # V431 : cette boucle vidait `assignedEmail` dès que l'adresse était absente
+    # de `db.users`. Deux problèmes cumulés :
+    #   1. `db.users` (41 adresses) n'est PAS le CRM où atterrissent les acheteurs
+    #      Stripe — le webhook écrit dans `chat_participants` (1267 documents).
+    #      Tout acheteur en ligne était donc « inconnu » et perdait sa protection.
+    #   2. la route est appelée AUTOMATIQUEMENT à chaque chargement du tableau de
+    #      bord (CoachDashboard.js:2140), pas seulement à la demande.
+    # Deux billets ZP1 payés ont été déprotégés le jour même de leur achat.
+    #
+    # On ne touche PAS au périmètre de la route (elle continue de nettoyer les
+    # mêmes codes) : on refuse seulement de désarmer un code encore utilisable.
+    from api.routes.shared import code_encore_utilisable as _v431_utilisable
+    proteges = 0
     for code in discount_codes:
         updates = {}
         if code.get("courses"):
@@ -3934,12 +3955,17 @@ async def sanitize_data():
             if len(valid) != len(code["courses"]):
                 updates["courses"] = valid
         if code.get("assignedEmail") and code["assignedEmail"] not in valid_user_emails:
-            updates["assignedEmail"] = None
+            if _v431_utilisable(code):
+                proteges += 1
+                logger.info(f"[V431] {code.get('code')} : assignedEmail CONSERVE — "
+                            f"code encore utilisable (sanitize-data)")
+            else:
+                updates["assignedEmail"] = None
         if updates:
             await db.discount_codes.update_one({"id": code["id"]}, {"$set": updates})
             cleaned_count += 1
-    
-    return {"success": True, "codes_cleaned": cleaned_count}
+
+    return {"success": True, "codes_cleaned": cleaned_count, "codes_proteges": proteges}
 
 @api_router.post("/campaigns")
 async def create_campaign(campaign: CampaignCreate, request: Request = None):

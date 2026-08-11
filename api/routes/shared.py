@@ -594,3 +594,71 @@ V430_MESSAGE_REFUS = (
     "Ce code est lié à un compte précis. "
     "Vérifie l'adresse utilisée ou contacte Afroboost."
 )
+
+
+# === V431 : un nettoyage de contacts ne doit pas OUVRIR un code encore valide ===
+#
+# `assignedEmail` porte DEUX rôles à la fois : une donnée personnelle, et la clé
+# de contrôle d'accès lue par V430. Les routes de nettoyage ne voyaient que le
+# premier rôle et vidaient le champ — transformant un code personnel en code
+# libre, utilisable par n'importe qui.
+#
+# Constaté en production : `POST /api/sanitize-data` est appelé AUTOMATIQUEMENT
+# à chaque chargement du tableau de bord (CoachDashboard.js:2140), et il vide
+# `assignedEmail` dès que l'adresse est absente de `db.users`. Or les acheteurs
+# Stripe ne sont jamais écrits dans `db.users` (le webhook alimente
+# `chat_participants`, 1267 documents, pas `users`, 41 adresses). Deux billets
+# ZP1 payés ont ainsi perdu leur protection le jour même de leur achat.
+#
+# La règle : on ne vide `assignedEmail` que sur un code qui n'ouvre PLUS AUCUN
+# droit. Tant qu'il en ouvre un, l'adresse n'est pas une donnée superflue — elle
+# EST le droit d'accès. Une fois le code éteint, le nettoyage reprend son cours :
+# la minimisation des données est différée, pas abandonnée.
+
+def code_encore_utilisable(doc: dict, aujourdhui: str = "") -> bool:
+    """Ce code peut-il encore ouvrir un droit ? actif ET non expiré ET non épuisé.
+
+    Prudence délibérée : tout ce qui n'est pas une expiration ISO clairement
+    dépassée est traité comme NON expiré. Une date au format inattendu ne doit
+    jamais provoquer l'effacement d'une protection — se tromper dans ce sens
+    ouvre un code payé, se tromper dans l'autre ne fait que retarder un ménage.
+    """
+    if not doc.get("active"):
+        return False
+    _exp = doc.get("expiresAt")
+    if isinstance(_exp, str):
+        _exp = _exp.strip()[:10]
+        # uniquement AAAA-MM-JJ : une comparaison de chaînes sur « 11.10.2026 »
+        # conclurait « expiré » à tort.
+        if len(_exp) == 10 and _exp[4] == "-" and _exp[7] == "-" and _exp[:4].isdigit():
+            _auj = aujourdhui or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if _exp < _auj:
+                return False
+    try:
+        _max = int(doc.get("maxUses") or 0)
+        _used = int(doc.get("used") or 0)
+    except (TypeError, ValueError):
+        return True                      # compteurs illisibles -> on ne touche à rien
+    if _max and _used >= _max:
+        return False
+    return True
+
+
+async def purger_assigned_email(db, filtre: dict, motif: str = "") -> dict:
+    """Vide `assignedEmail` sur les documents de `filtre`, SAUF ceux encore
+    utilisables. Renvoie {vides, proteges}. Met à jour par `id` — jamais par
+    `code`, qui porte des doublons en production."""
+    vides, proteges = 0, 0
+    for _d in await db.discount_codes.find(filtre, {"_id": 0}).to_list(500):
+        if code_encore_utilisable(_d):
+            proteges += 1
+            logger.info(
+                f"[V431] {_d.get('code')} : assignedEmail CONSERVE — code encore "
+                f"utilisable (actif, non expiré, non épuisé){' — ' + motif if motif else ''}"
+            )
+            continue
+        await db.discount_codes.update_one(
+            {"id": _d.get("id")}, {"$set": {"assignedEmail": None}}
+        )
+        vides += 1
+    return {"vides": vides, "proteges": proteges}
