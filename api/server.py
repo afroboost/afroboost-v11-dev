@@ -10933,6 +10933,57 @@ async def fix_all_stripe_amounts():
     return {"success": True, "unique_codes": len(code_groups), "fixed": fixed_count, "results": results}
 
 
+async def _v426_offre_de_labonnement(offer_name: str, code_upper: str):
+    """V426 — resout l'offre d'un abonnement, en trois etapes DETERMINISTES :
+
+    1. nom exact ; 2. nom desaccentue (repli V252) ; 3. PREUVE D'ACHAT.
+
+    L'etape 3 existe parce que `offer_name` stocke le `product_name` Stripe — un
+    libelle commercial, pas un nom d'offre. « PULSE x10 cours (Membres) » ne
+    resout ni en exact ni en slug, alors que la transaction encaissee porte
+    `metadata.offer_id`. Ce n'est pas une heuristique : c'est le lien
+    paiement -> offre, ecrit au checkout.
+
+    Partage par l'espace abonne ET par la reservation : l'affichage et le
+    controle d'eligibilite ne peuvent donc pas diverger.
+    """
+    offer = await db.offers.find_one({"name": offer_name}, {"_id": 0}) if offer_name else None
+    if not offer and offer_name:
+        _target_slug = _v252_slug_name(offer_name)
+        for _o in await db.offers.find({}, {"_id": 0}).to_list(200):
+            if _v252_slug_name(_o.get("name")) == _target_slug:
+                offer = _o
+                break
+    if not offer and code_upper:
+        _dc = await db.discount_codes.find_one(
+            {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"},
+             "session_id": {"$exists": True, "$ne": ""}},
+            {"_id": 0, "session_id": 1},
+        )
+        if _dc and _dc.get("session_id"):
+            _tx = await db.payment_transactions.find_one(
+                {"session_id": _dc["session_id"]}, {"_id": 0, "metadata": 1}
+            )
+            _oid = ((_tx or {}).get("metadata") or {}).get("offer_id")
+            if _oid:
+                offer = await db.offers.find_one({"id": _oid}, {"_id": 0})
+                if offer:
+                    logger.info(f"[V426] {code_upper} : offre resolue par preuve d'achat ({_oid})")
+    return offer
+
+
+async def _v426_recurrents_de_loffre(linked_ids: list) -> list:
+    """V426 — parmi les activites liees a l'offre, celles qui figurent a l'agenda
+    abonne bien que masquees du public (`agenda_abonne`). Non vide => FORFAIT."""
+    if not linked_ids:
+        return []
+    return [
+        r["id"] for r in await db.courses.find(
+            {"id": {"$in": linked_ids}, "agenda_abonne": True}, {"_id": 0, "id": 1}
+        ).to_list(50)
+    ]
+
+
 @api_router.get("/subscriber/space/{access_code}")
 async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     """V184: Données complètes de la page d'accès rapide d'un abonné.
@@ -11144,38 +11195,42 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
             }
 
     # Offer details (optionnel)
-    offer = await db.offers.find_one({"name": offer_name}, {"_id": 0}) if offer_name else None
-
-    # V252: repli TOLERANT aux accents/apostrophes/ponctuation. Les souscriptions
-    # historiques (checkout gratuit, imports) stockent parfois un offer_name
-    # DESACCENTUE — « Cours a l unite test » — qui ne matche pas le nom exact de
-    # l'offre en base — « Cours a l'unite test » (avec accents et apostrophe).
-    # Sans ce repli, `offer` reste None, `linked_ids` vide, et l'espace retombe
-    # sur TOUS les cours du coach (le bug de lieu V252). Le repli couvre tous les
-    # codes AFR-/AFF- deja emis, sans toucher aux donnees. La recherche exacte
-    # ci-dessus reste prioritaire (aucun cout ajoute au cas nominal).
-    if not offer and offer_name:
-        _target_slug = _v252_slug_name(offer_name)
-        _all_offers = await db.offers.find({}, {"_id": 0}).to_list(200)
-        for _o in _all_offers:
-            if _v252_slug_name(_o.get("name")) == _target_slug:
-                offer = _o
-                break
+    # V252 : repli tolerant aux accents/apostrophes. V426 : repli par preuve
+    # d'achat. Les deux vivent desormais dans `_v426_offre_de_labonnement`,
+    # partage avec la reservation pour que les deux ne divergent jamais.
+    offer = await _v426_offre_de_labonnement(offer_name, code_upper)
 
     # V250: l'offre porte les cours qui lui sont rattaches (`linked_course_ids`).
     # Jusqu'ici ce champ etait ignore : l'espace affichait TOUS les cours du
     # coach, y compris ceux d'autres offres/lieux. On filtre desormais dessus.
     linked_ids = (offer or {}).get("linked_course_ids") or []
 
+    # V426 : un acces est un FORFAIT si, et seulement si, son offre rattache au
+    # moins une activite marquee `agenda_abonne`. Regle DETERMINISTE, sans
+    # heuristique : rattacher un cours recurrent a une offre la declare offre
+    # d'abonnement. Un billet d'evenement (ZP1) ne lie que des dates fixes, il
+    # reste donc sur le chemin V250 d'origine, inchange.
+    _v426_recurrents = await _v426_recurrents_de_loffre(linked_ids)
+    _v426_forfait = bool(_v426_recurrents)
+
     # Prochaines occurrences sur 14 jours, filtrées par coach quand connu
-    course_query = {"archived": {"$ne": True}, "visible": {"$ne": False}}
+    course_query = {"visible": {"$ne": False}}
     coach_email_for_courses = (coach or {}).get("email") or coach_id_hint
     if coach_email_for_courses:
         course_query["coach_id"] = coach_email_for_courses
-    # V250: offre avec cours lies -> uniquement ceux-la. Offre sans lien ->
-    # comportement inchange (tous les cours du coach), retrocompatible.
-    if linked_ids:
-        course_query["id"] = {"$in": linked_ids}
+    if _v426_forfait:
+        # ABONNE : l'agenda montre les activites normales ET ses cours recurrents
+        # (masques du public par `archived`). `linked_course_ids` n'EXCLUT plus —
+        # il ANNOTE l'eligibilite plus bas.
+        course_query["$or"] = [
+            {"archived": {"$ne": True}},
+            {"id": {"$in": _v426_recurrents}},
+        ]
+    else:
+        # V250 INCHANGE : billet d'evenement ou offre non resolue.
+        course_query["archived"] = {"$ne": True}
+        if linked_ids:
+            course_query["id"] = {"$in": linked_ids}
     courses_raw = await db.courses.find(course_query, {"_id": 0}).to_list(200)
 
     occurrences = []
@@ -11235,7 +11290,10 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     # V251: afficher le nom de l'OFFRE (« Cours a l'unite test ») plutot que
     # celui du cours (« Nouveau cours »). Fait APRES la deduplication V250, qui a
     # besoin des noms d'origine pour distinguer deux vrais cours au meme creneau.
-    if offer and offer.get("name"):
+    # V426 : NEUTRALISE en mode forfait. L'agenda d'un abonne MELANGE cours
+    # recurrents et evenements : renommer toutes les occurrences du nom de
+    # l'offre afficherait « PULSE x10 cours » sur le Laff Festival.
+    if offer and offer.get("name") and not _v426_forfait:
         _offer_display = offer["name"]
         for occ in occurrences:
             occ["name"] = _offer_display
@@ -11246,7 +11304,9 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     # lien -> tous les cours du coach), on GARDE le lieu reel de chaque cours —
     # sinon une date d'un cours de Lausanne serait faussement etiquetee du lieu
     # de l'offre. Repli : lieu de l'offre, sinon celui du premier cours lie.
-    if linked_ids and occurrences:
+    # V426 : NEUTRALISE en mode forfait — sinon le Laff Festival de Lausanne
+    # serait etiquete du lieu de l'offre Pulse (Auvernier).
+    if linked_ids and occurrences and not _v426_forfait:
         _offer_loc = (offer or {}).get("location") or (offer or {}).get("locationName") or ""
         if not _offer_loc and courses_raw:
             _offer_loc = courses_raw[0].get("locationName") or courses_raw[0].get("location") or ""
@@ -11263,7 +11323,10 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
     # meme (datetime, lieu) est le meme creneau pour le client : on le garde une
     # seule fois. Ne s'active que sous filtrage par cours lies (occurrences toutes
     # de la meme offre) — hors de ce cas, le comportement reste strictement V250.
-    if linked_ids and occurrences:
+    # V426 : NEUTRALISE en mode forfait. Cette passe fusionne sur (datetime,
+    # lieu) : le dimanche 23/08 a Auvernier et l'evenement de Vidy du meme jour
+    # seraient fondus en une seule ligne — une seance disparaitrait en silence.
+    if linked_ids and occurrences and not _v426_forfait:
         _seen2 = set()
         _dedup2 = []
         for o in occurrences:
@@ -11273,6 +11336,26 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
             _seen2.add(k2)
             _dedup2.append(o)
         occurrences = _dedup2
+
+    # V426 : ANNOTATION D'ELIGIBILITE. `linked_course_ids` cesse d'etre un filtre
+    # visuel (son role d'origine, V159.3, etait l'affichage cote vitrine) pour
+    # devenir ce qu'il decrit reellement : les activites couvertes par l'offre.
+    # Le frontend s'en sert pour proposer « Reserver » ou « Voir l'evenement ».
+    # Offre non resolue (`linked_ids` vide) -> tout reste `True` : comportement
+    # historique strictement conserve, aucun droit retire a personne.
+    _v426_offres_evt = {}
+    if _v426_forfait:
+        for _oe in await db.offers.find(
+            {"visible": {"$ne": False}}, {"_id": 0, "id": 1, "linked_course_ids": 1}
+        ).to_list(200):
+            for _cid in (_oe.get("linked_course_ids") or []):
+                _v426_offres_evt.setdefault(_cid, _oe.get("id"))
+    for occ in occurrences:
+        _inclus = (not linked_ids) or (occ.get("course_id") in linked_ids)
+        occ["inclus_abonnement"] = _inclus
+        occ["type_acces"] = "INCLUDED" if _inclus else "EVENT_SEPARATE"
+        if not _inclus:
+            occ["offer_id"] = _v426_offres_evt.get(occ.get("course_id"))
 
     # V208c: Historique de réservations — par member_slug pour les groupes, par email sinon
     import re as _re_mod
@@ -11799,8 +11882,39 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         raise HTTPException(status_code=400, detail=_pourquoi)
 
     course = await db.courses.find_one({"id": course_id}, {"_id": 0})
-    if not course or course.get("archived"):
+    if not course:
         raise HTTPException(status_code=404, detail="Cours introuvable")
+
+    # V426 — ELIGIBILITE. Deux controles, dans cet ordre :
+    #
+    # 1) Un cours archive reste invisible/injoignable, SAUF s'il figure a
+    #    l'agenda abonne (`agenda_abonne`) ET qu'il est rattache a l'offre de
+    #    CET abonne. Sans cette exception, les cours recurrents seraient
+    #    affiches par l'espace mais refuses en 404 a la reservation.
+    # 2) Une activite non couverte par l'offre ne peut JAMAIS decrementer une
+    #    seance : c'est un evenement a billet separe. Refus AVANT toute ecriture,
+    #    donc `used_sessions`, `remaining_sessions`, `discount_codes.used` et
+    #    `reservations` restent intacts.
+    #
+    # Offre non resolue (`_v426_linked` vide) -> aucun refus : le comportement
+    # historique est strictement conserve, aucun droit n'est retire.
+    _v426_offer = await _v426_offre_de_labonnement(subscription.get("offer_name"), code_upper)
+    _v426_linked = (_v426_offer or {}).get("linked_course_ids") or []
+    _v426_inclus = (not _v426_linked) or (course_id in _v426_linked)
+
+    # NB : on exige l'appartenance EXPLICITE a `_v426_linked`, pas `_v426_inclus`
+    # (qui vaut True par defaut quand l'offre n'est pas resolue). Un acces legacy
+    # non prouve garde donc le 404 d'origine sur les cours archives : aucun
+    # decompte non prouve, aucun droit nouveau accorde sans preuve.
+    if course.get("archived") and course_id not in _v426_linked:
+        raise HTTPException(status_code=404, detail="Cours introuvable")
+
+    if _v426_linked and not _v426_inclus:
+        logger.info(f"[V426] reservation refusee sur {code_upper} : {course_id} hors forfait")
+        raise HTTPException(
+            status_code=400,
+            detail="Cette activité n'est pas incluse dans ton forfait — elle se réserve avec un billet séparé.",
+        )
 
     # V202: Utiliser l'identité du membre si disponible, sinon celle de la subscription
     if member:

@@ -1061,6 +1061,30 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                     );
                   })() : (
                     <>
+                      {/* V426 : une activite NON incluse dans le forfait ne doit
+                          jamais passer par « Reserver » — elle consommerait une
+                          seance pour un evenement a billet separe. Le test
+                          `=== false` est volontaire : tant que le backend V426
+                          n'est pas deploye le champ est `undefined`, et le
+                          parcours d'origine s'affiche a l'identique. */}
+                      {occ.inclus_abonnement === false ? (
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-xs" style={{ color: "rgba(255,255,255,0.65)" }}>
+                            Événement — billet séparé
+                          </span>
+                          <a
+                            href={occ.offer_id ? `/?offre=${encodeURIComponent(occ.offer_id)}` : "/"}
+                            className="text-xs font-semibold px-4 py-2 rounded-lg"
+                            style={{
+                              background: "rgba(255,255,255,0.10)",
+                              color: "white",
+                              border: `1px solid ${COLORS.primary}`,
+                            }}
+                            data-testid={`event-${occ.course_id}`}>
+                            Voir l'événement
+                          </a>
+                        </div>
+                      ) : (
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-2" data-testid={`qty-${occ.course_id}`}>
                           <button type="button" onClick={dec}
@@ -1085,8 +1109,9 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                           {isBusy ? "…" : qty > 1 ? `Réserver ${qty} places` : "Réserver"}
                         </button>
                       </div>
+                      )}
 
-                      {qty > 1 && (
+                      {occ.inclus_abonnement !== false && qty > 1 && (
                         <ol className="mt-3 space-y-1 text-xs text-white/70">
                           <li className="flex items-center gap-2">
                             <span className="w-4 text-white/40">1.</span>
