@@ -6419,8 +6419,14 @@ function App() {
           // V223: le serveur relit pack_sessions et le palier depuis cette
           // offre en base. On n'envoie jamais le nombre de crédits nous-mêmes.
           offerId: selectedOffer?.id || null,
+          // V429 : le serveur recalcule le TOTAL (prix du palier x dates - remise
+          // revalidee en base). `amount` reste envoye pour compatibilite mais
+          // n'est plus une source de verite.
+          quantity: reservation.quantity,
+          promoCode: reservation.discountCode || null,
           reservationData: {
             id: reservation.userId,
+            courseId: reservation.courseId,
             courseName: reservation.courseName,
             offerName: reservation.offerName
           }
@@ -6466,8 +6472,15 @@ function App() {
         amount: pendingReservation.totalPrice,
         customerEmail: pendingReservation.userEmail,
         originUrl: window.location.origin,
+        // V429 : `offerId` etait ABSENT de ce point d'appel — le serveur n'avait
+        // donc aucun moyen de recalculer. Il est desormais transmis, avec la
+        // quantite et le code promo, tous trois deja portes par `pendingReservation`.
+        offerId: pendingReservation.offerId || null,
+        quantity: pendingReservation.quantity,
+        promoCode: pendingReservation.discountCode || null,
         reservationData: {
           id: pendingReservation.userId,
+          courseId: pendingReservation.courseId,
           courseName: pendingReservation.courseName,
           offerName: pendingReservation.offerName
         }

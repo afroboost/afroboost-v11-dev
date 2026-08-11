@@ -5098,6 +5098,10 @@ class CreateCheckoutRequest(BaseModel):
     # endpoint est public, et l'accepter du client permettrait de payer 1 CHF
     # en demandant 1000 crédits.
     offerId: Optional[str] = None
+    # V429 : code promo du parcours CLASSIQUE (A2-1/A2-2). Le serveur le revalide
+    # lui-meme et calcule la remise ; le navigateur ne transmet plus de montant
+    # faisant foi. Absent du parcours progressif, qui delegue a Stripe (V224).
+    promoCode: Optional[str] = None
     # V224: affiche le champ « Code promo » de Stripe Checkout.
     #
     # Réservé au parcours progressif, qui n'a pas de formulaire et donc aucun
@@ -5144,6 +5148,121 @@ class CreateCheckoutRequest(BaseModel):
     # Reservations, alors qu'avant la V226 `handleSubmit` y creait une ligne
     # « Achat Audio ».
     isAudioPurchase: bool = False
+
+def _v429_resoudre_code(docs: list):
+    """V429 — quel document fait foi pour ce code promo ?
+
+    A) exactement un `canonical: true`  -> lui
+    B) plusieurs `canonical: true`      -> (None, 'indetermine') : on ne devine pas
+    C) aucun `canonical: true`          -> comportement LEGACY inchange (1er actif),
+       et `canonical: false` n'exclut rien tant qu'aucun `true` n'existe.
+    """
+    vrais = [d for d in docs if d.get("canonical") is True]
+    if len(vrais) == 1:
+        return vrais[0], "canonical"
+    if len(vrais) > 1:
+        return None, "indetermine"
+    actifs = [d for d in docs if d.get("active")]
+    if len(docs) == 1:
+        return (docs[0] if docs[0].get("active") else None), "unique"
+    return (actifs[0] if actifs else None), "legacy"
+
+
+def _v429_quota_coherent(doc: dict, subs_actifs: list):
+    """V429 — GARDE-FOU. L'invariant n'est PAS « nombre de reservations == used » :
+    les annulations sont destructives, les quantites varient, les accompagnants
+    existent. L'invariant est la CONSOMMATION elle-meme.
+
+    `discount_codes.used` et `subscriptions.used_sessions` sont incrementes
+    ENSEMBLE par les deux routes qui creent une reservation (server.py ~12113 et
+    reservation_routes.py:678). Ils doivent donc etre EGAUX. Toute divergence
+    signale un increment perdu (garde `_is_virtual`) ou detourne (`update_one` sur
+    un code en doublon). Egalite STRICTE : aucun seuil arbitraire.
+
+    Le quota INITIAL peut legitimement differer entre les deux collections
+    (maxUses 9 vs total_sessions 10 constate en production) : ce n'est pas une
+    derive de comptage, et cela ne doit PAS bloquer. On ne compare donc que la
+    consommation, jamais le restant.
+
+    Les groupes a quota individuel (`shared_sessions: false`) sont exclus : leur
+    restant vit dans `code_members`, l'invariant ne s'y applique pas.
+    """
+    if not subs_actifs:
+        return True, "aucun_abonnement_actif"
+    if doc.get("shared_sessions") is False:
+        return True, "quota_individuel_hors_perimetre"
+    try:
+        u_dc = int(float(doc.get("used") or 0))
+        u_sub = max(int(float(s.get("used_sessions") or 0)) for s in subs_actifs)
+    except (TypeError, ValueError):
+        return False, "compteurs_illisibles"
+    if u_dc != u_sub:
+        return False, f"consommation_divergente_{u_dc}_vs_{u_sub}"
+    return True, "coherent"
+
+
+async def _v429_remise_serveur(code_promo: str, offer: dict, course_id: str, email: str):
+    """V429 — la remise est calculee ICI, jamais recue du navigateur.
+
+    Renvoie (remise_chf, meta). Une remise refusee vaut 0.0 : le client peut
+    toujours payer plein tarif, le checkout n'est jamais bloque.
+    AUCUNE ECRITURE : ni `used`, ni compteur, ni desactivation.
+    """
+    meta = {"promo_code": None, "promo_source": None,
+            "promo_canonical_id": None, "quota_guard_result": None}
+    code = (code_promo or "").strip()
+    if not code:
+        return (None, 0.0), meta
+    meta["promo_code"] = code.upper()
+
+    docs = await db.discount_codes.find(
+        {"code": {"$regex": f"^{re.escape(code)}$", "$options": "i"}}, {"_id": 0}
+    ).to_list(50)
+    if not docs:
+        meta["quota_guard_result"] = "code_inconnu"
+        return (None, 0.0), meta
+
+    doc, voie = _v429_resoudre_code(docs)
+    meta["promo_source"] = voie
+    if doc is None:
+        meta["quota_guard_result"] = "indetermine"
+        logger.warning(f"[V429] {code.upper()} : document indetermine ({voie}) — remise refusee")
+        return (None, 0.0), meta
+    meta["promo_canonical_id"] = doc.get("id")
+
+    # Controles existants (memes regles que promo_routes.py), rejoues ici.
+    if not doc.get("active"):
+        meta["quota_guard_result"] = "inactif"; return (None, 0.0), meta
+    _exp = str(doc.get("expiresAt") or "")[:10]
+    if _exp and _exp < datetime.now(timezone.utc).strftime("%Y-%m-%d"):
+        meta["quota_guard_result"] = "expire"; return (None, 0.0), meta
+    if doc.get("maxUses") and int(doc.get("used") or 0) >= int(doc["maxUses"]):
+        meta["quota_guard_result"] = "epuise"; return (None, 0.0), meta
+    _cs = doc.get("courses") or []
+    if course_id and _cs and course_id not in _cs:
+        meta["quota_guard_result"] = "non_applicable"; return (None, 0.0), meta
+    _ass = (doc.get("assignedEmail") or "").strip().lower()
+    if _ass and email and _ass != (email or "").strip().lower():
+        meta["quota_guard_result"] = "autre_compte"; return (None, 0.0), meta
+
+    # GARDE-FOU QUOTA
+    _subs = await db.subscriptions.find(
+        {"code": {"$regex": f"^{re.escape(code)}$", "$options": "i"}, "status": "active"},
+        {"_id": 0, "used_sessions": 1},
+    ).to_list(50)
+    _ok, _motif = _v429_quota_coherent(doc, _subs)
+    meta["quota_guard_result"] = _motif
+    if not _ok:
+        logger.warning(f"[V429] {code.upper()} : quota incoherent ({_motif}) — remise refusee, aucune ecriture")
+        return (None, 0.0), meta
+
+    # La remise s'applique au TOTAL (comme `calculateTotal` cote client) : on
+    # renvoie donc le TYPE et la VALEUR, et le total est calcule par l'appelant,
+    # seul a connaitre la quantite. Evite toute multiplication de la remise.
+    meta["promo_type"] = doc.get("type")
+    meta["promo_value"] = float(doc.get("value") or 0)
+    return (doc.get("type"), float(doc.get("value") or 0)), meta
+
 
 @api_router.post("/create-checkout-session")
 async def create_checkout_session(request: CreateCheckoutRequest):
@@ -5248,6 +5367,10 @@ async def create_checkout_session(request: CreateCheckoutRequest):
     _v428c_prix_serveur = None
     _v428c_amount_source = "client_legacy"
     _v428c_price_source = None
+    # V429 : vrai quand le montant envoye a Stripe est deja un TOTAL
+    # (parcours classique) -> la ligne Stripe doit alors porter quantity: 1.
+    _v429_total_absolu = False
+    _v429_meta = {}
 
     # V428C-A2-3 — PAIEMENT PAR LIEN INTELLIGENT.
     #
@@ -5308,6 +5431,44 @@ async def create_checkout_session(request: CreateCheckoutRequest):
         _v428c_prix_serveur = _v428c_montant_lien
         _v428c_amount_source = "server"
         _v428c_price_source = "smart_link"
+    elif _offer is not None and request.quantity is not None and request.reservationData:
+        # V429 — A2-1 / A2-2 : parcours CLASSIQUE (reservation avec dates choisies).
+        # Se distingue du progressif par la presence de `reservationData` : le
+        # progressif n'en envoie jamais (commentaire V224, App.js:6008).
+        #
+        # Ici le client envoyait un TOTAL (dates x prix - remise). Le serveur le
+        # recalcule entierement : prix du palier actif x quantite, moins la remise
+        # QU'IL revalide lui-meme. Le navigateur ne decide plus ni du prix, ni de
+        # la remise.
+        #
+        # Stripe recoit le TOTAL en `unit_amount` et `quantity: 1` — sans quoi une
+        # remise forfaitaire serait multipliee par le nombre de dates.
+        _v428c_prix_serveur = float(compute_active_price(_offer)["price"])
+        _v429_qte = max(1, min(5, int(request.quantity or 1)))
+        _v429_base = _v428c_prix_serveur * _v429_qte
+        (_pt, _pv), _v429_meta = await _v429_remise_serveur(
+            request.promoCode, _offer,
+            (request.reservationData or {}).get("courseId") or "",
+            request.customerEmail,
+        )
+        if _pt == "100%" or (_pt == "%" and _pv >= 100):
+            _v429_total = 0.0
+        elif _pt == "%":
+            _v429_total = _v429_base * (1 - _pv / 100.0)
+        elif _pt == "CHF":
+            _v429_total = max(0.0, _v429_base - _pv)
+        else:
+            _v429_total = _v429_base
+        if abs(float(request.amount or 0) - _v429_total) > 0.01:
+            logger.warning(
+                f"[V429] total client ignore : {request.amount} -> {round(_v429_total, 2)} "
+                f"(offre {request.offerId}, {_v428c_prix_serveur} x {_v429_qte}, "
+                f"promo={_v429_meta.get('promo_code')} garde={_v429_meta.get('quota_guard_result')})"
+            )
+        amount_cents = round(_v429_total * 100)
+        _v429_total_absolu = True
+        _v428c_amount_source = "server"
+        _v428c_price_source = "offer"
     elif _offer is not None and request.quantity is not None:
         _v428c_prix_serveur = float(compute_active_price(_offer)["price"])
         if abs(float(request.amount or 0) - _v428c_prix_serveur) > 0.01:
@@ -5393,7 +5554,7 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                     },
                     'unit_amount': amount_cents,
                 },
-                'quantity': safe_quantity,  # V225
+                'quantity': 1 if _v429_total_absolu else safe_quantity,  # V225 + V429
             }],
             mode='payment',
             success_url=success_url,
@@ -5449,6 +5610,11 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             # ou « smart_link » (end_actions du tunnel). None quand le montant est
             # encore celui du client.
             "price_source": _v428c_price_source,
+            # V429 : tracabilite de la promo et du garde-fou quota.
+            "promo_code": _v429_meta.get("promo_code"),
+            "promo_source": _v429_meta.get("promo_source"),
+            "promo_canonical_id": _v429_meta.get("promo_canonical_id"),
+            "quota_guard_result": _v429_meta.get("quota_guard_result"),
             "payment_status": "pending",
             "payment_methods": payment_methods,
             "created_at": datetime.now(timezone.utc).isoformat()
@@ -5479,7 +5645,7 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                         },
                         'unit_amount': amount_cents,
                     },
-                    'quantity': safe_quantity,  # V225: identique au chemin nominal
+                    'quantity': 1 if _v429_total_absolu else safe_quantity,  # V225 + V429: identique au chemin nominal
                 }],
                 mode='payment',
                 success_url=success_url,
