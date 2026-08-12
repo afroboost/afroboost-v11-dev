@@ -20381,9 +20381,57 @@ async def smart_chat_entry(request: Request):
             except Exception:
                 _strict = False
             if _strict:
+                # C2-F — LE LEAD D'ACQUISITION EST UNE DONNÉE, PAS UN ACCÈS.
+                #
+                # Constaté en production le 12 août 2026 : un prospect venu du tunnel
+                # « Essai Gratuit » répondait aux 7 questions, puis ce `return` sortait
+                # AVANT l'enregistrement du lead (plus bas dans cette fonction). Résultat :
+                # ni lead, ni participant, ni session — le prospect était intégralement
+                # perdu, et se voyait réclamer un code d'abonné qu'il n'a pas. Le cas
+                # frappe quiconque a déjà un e-mail ou un numéro en base : les visiteurs
+                # qui REVIENNENT, c'est-à-dire exactement ceux qu'une publicité ramène.
+                #
+                # V315 protège l'ACCÈS à une conversation existante. Elle n'a jamais eu
+                # vocation à empêcher d'ENREGISTRER une demande d'essai. On sépare donc
+                # les deux : la demande est conservée, l'accès reste refusé.
+                #
+                # ⚠️ CE QUI N'EST PAS ACCORDÉ, ET NE DOIT JAMAIS L'ÊTRE :
+                #   - aucun `participant_id`, aucun `session_id`, aucun `chat_history` ;
+                #   - le lead est écrit SANS `participant_id` : on ne le rattache PAS à la
+                #     fiche trouvée, puisque justement l'identité n'est PAS prouvée. Le
+                #     rattacher reviendrait à écrire dans le dossier de quelqu'un d'autre ;
+                #   - aucun champ d'identité n'est modifié sur la fiche existante ;
+                #   - `proof_required` reste renvoyé : le formulaire de code est toujours
+                #     exigé pour récupérer une conversation.
+                #
+                # Portée volontairement étroite : uniquement si l'appel vient d'un tunnel
+                # (`link_token` présent) ET porte des réponses. Une tentative de récupération
+                # de conversation n'a ni l'un ni l'autre et ne déclenche donc rien.
+                _c2f_acq = False
+                if link_token and tunnel_answers and isinstance(tunnel_answers, (list, dict)):
+                    try:
+                        await db.leads.insert_one({
+                            "id": str(uuid.uuid4()),
+                            "participant_id": None,          # JAMAIS rattaché sans preuve
+                            "session_id": None,
+                            "link_token": link_token,
+                            "name": name,
+                            "email": email,
+                            "whatsapp": whatsapp,
+                            "answers": tunnel_answers,
+                            "source": source,
+                            "acquisition_only": True,        # collecté sans identité prouvée
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                        })
+                        _c2f_acq = True
+                        logger.info(f"[C2-F] Lead d'acquisition conservé malgré proof_required (link={link_token})")
+                    except Exception as _e:
+                        # L'acquisition ne doit jamais faire échouer la réponse.
+                        logger.warning(f"[C2-F] Enregistrement du lead ignoré: {_e}")
                 return {
                     "proof_required": True,
                     "reason": "subscriber_code",
+                    "acquisition_saved": _c2f_acq,
                     "message": "Entre ton code d'accès pour retrouver ta conversation.",
                 }
 
