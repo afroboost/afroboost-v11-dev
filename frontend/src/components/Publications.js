@@ -435,7 +435,8 @@ const V268Lightbox = ({ pub, onClose, actions }) => {
                 ref={videoRef}
                 src={pub.media_url}
                 autoPlay loop playsInline muted={muted}
-                style={{ display: 'block', maxWidth: '100%', maxHeight: '78vh', borderRadius: 12, background: '#000' }}
+                className={avisOuverts ? 'max-h-[38vh] md:max-h-[78vh]' : 'max-h-[78vh]'}
+                style={{ display: 'block', maxWidth: '100%', borderRadius: 12, background: '#000' }}
               />
               <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
                 <V268MuteButton muted={muted} onToggle={toggleMute} size={26} />
@@ -445,7 +446,8 @@ const V268Lightbox = ({ pub, onClose, actions }) => {
             <img
               src={pub.media_url}
               alt={`Publication de ${pub.display_name || pub.subscriber_name || 'un abonné'}`}
-              style={{ display: 'block', maxWidth: '100%', maxHeight: '78vh', borderRadius: 12, objectFit: 'contain', background: '#000' }}
+              className={avisOuverts ? 'max-h-[38vh] md:max-h-[78vh]' : 'max-h-[78vh]'}
+              style={{ display: 'block', maxWidth: '100%', borderRadius: 12, objectFit: 'contain', background: '#000' }}
             />
           )}
 
@@ -470,12 +472,31 @@ const V268Lightbox = ({ pub, onClose, actions }) => {
         {avisOuverts && (
           <div
             data-testid="uipub4-avis"
+            onWheel={(e) => e.stopPropagation()}
+            onTouchMove={(e) => e.stopPropagation()}
+            className={
+              // UI-PUB5 : le panneau faisait une bande. Trois causes cumulees :
+              //   1. `flex: 1 1 300px` -> `flex-shrink: 1`, il passait SOUS le media
+              //      des que la largeur manquait, en pleine largeur ecrasee ;
+              //   2. AUCUN `min-height` : la boite ne faisait que la hauteur de son
+              //      contenu — trois avis = une bande de 100 px ;
+              //   3. le media gardait `78vh`, ne laissant presque rien en dessous.
+              // Corrige en Tailwind (responsif SANS ecouteur de resize) :
+              //   - mobile  : bottom-sheet pleine largeur, 45vh a 55vh ;
+              //   - desktop : colonne laterale FIXE de 360 px, haute.
+              'w-full min-h-[45vh] max-h-[55vh] ' +
+              'md:w-[360px] md:flex-none md:shrink-0 md:min-h-[420px] md:max-h-[78vh] ' +
+              'overflow-y-auto'
+            }
             style={{
-              flex: '1 1 300px', minWidth: 0, maxHeight: '78vh', overflowY: 'auto',
               background: 'rgba(20,20,32,0.96)', borderRadius: 12,
-              padding: '12px 14px', WebkitOverflowScrolling: 'touch'
+              padding: '14px 16px', WebkitOverflowScrolling: 'touch'
             }}
           >
+            {/* Poignee : repere visuel du bottom-sheet, masquee sur desktop. */}
+            <div className="md:hidden" style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
+              <span style={{ width: 38, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.28)' }} />
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
               <span style={{ color: '#fff', fontSize: 14, fontWeight: 700 }}>
                 Avis {actions && actions.commentsCount ? `(${actions.commentsCount})` : ''}
@@ -490,15 +511,21 @@ const V268Lightbox = ({ pub, onClose, actions }) => {
               </button>
             </div>
             {(actions && actions.comments ? actions.comments : []).map((c) => (
-              <div key={c.id} style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+              <div key={c.id} style={{
+                display: 'flex', gap: 11, padding: '10px 0',
+                borderTop: '1px solid rgba(255,255,255,0.07)'
+              }}>
                 <img
                   src={c.profile_photo || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(c.user_name || 'user')}&backgroundColor=8B5CF6`}
                   alt=""
-                  style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+                  style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
                 />
                 <div style={{ minWidth: 0 }}>
-                  <p style={{ color: '#fff', fontSize: 13, fontWeight: 600, margin: 0 }}>{c.user_name}</p>
-                  <p style={{ color: 'rgba(255,255,255,0.78)', fontSize: 13, margin: '2px 0 0', wordBreak: 'break-word' }}>{c.text}</p>
+                  <p style={{ color: '#fff', fontSize: 14, fontWeight: 600, margin: 0 }}>{c.user_name}</p>
+                  <p style={{
+                    color: 'rgba(255,255,255,0.82)', fontSize: 14, lineHeight: 1.5,
+                    margin: '3px 0 0', wordBreak: 'break-word', whiteSpace: 'pre-wrap'
+                  }}>{c.text}</p>
                 </div>
               </div>
             ))}
