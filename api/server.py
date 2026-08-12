@@ -12414,6 +12414,82 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     except Exception as e:
         logger.warning(f"[V209] Erreur push réservation: {e}")
 
+    # === V436 : confirmation par e-mail au CLIENT ===
+    #
+    # Ce chemin — l'espace abonné — represente 67 des 125 reservations (54 %).
+    # Il prevenait le COACH (bloc V209 ci-dessus) et JAMAIS le client : 16
+    # personnes distinctes ont reserve sans recevoir la moindre confirmation.
+    # Seul `create_reservation` en envoyait une.
+    #
+    # POURQUOI PAS `_send_reservation_email` : cette fonction existante expedie
+    # le code d'acces permanent AFRO-XXXX en gros caracteres, un QR qui le
+    # contient, et le code d'abonnement. Or ce code EST le mot de passe de
+    # l'espace abonne. On envoie donc un message MINIMAL, sans aucun code.
+    #
+    # PAS DE CODE DE RESERVATION NON PLUS : `POST /reservations/{code}/validate`
+    # n'a AUCUNE authentification et pose `validated: True` avec le seul code.
+    # Le diffuser permettrait a quiconque de valider une presence sans venir —
+    # et fausserait la future garde anti-double-essai, qui s'appuie dessus.
+    #
+    # NON BLOQUANT : tache detachee, apres l'insertion. Une panne d'e-mail ne
+    # peut ni annuler ni annuler-partiellement une reservation reussie.
+    #
+    # IDEMPOTENT : `confirmation_sent_at` n'est pose qu'APRES un envoi reussi,
+    # et sa presence interdit tout second envoi. Un rejeu du frontend, un retry
+    # backend ou un rechargement de page ne peuvent pas produire deux e-mails.
+    async def _v436_confirmer_par_email():
+        try:
+            if not user_email or not RESEND_AVAILABLE or not RESEND_API_KEY:
+                return
+            _frais = await db.reservations.find_one(
+                {"id": reservation_doc["id"]}, {"_id": 0, "confirmation_sent_at": 1}
+            )
+            if not _frais or _frais.get("confirmation_sent_at"):
+                return  # deja confirmee : on ne renvoie jamais
+            _prenom = (user_name or "").strip().split(" ")[0][:40] or "Bonjour"
+            _cours = course.get("name") or "ta séance"
+            _heure = course.get("time") or ""
+            _lieu = course.get("location") or ""
+            _jour = ""
+            try:
+                _d = datetime.fromisoformat(str(occurrence_iso).replace("Z", "+00:00"))
+                _jour = _d.strftime("%d.%m.%Y")
+            except Exception:
+                _jour = str(occurrence_iso or "")[:10]
+            _lignes = "".join(
+                f'<tr><td style="color:#888;padding:6px 0;">{_l}</td>'
+                f'<td style="color:#fff;font-weight:600;">{_v}</td></tr>'
+                for _l, _v in (
+                    ("Cours", _cours), ("Date", _jour),
+                    ("Heure", _heure), ("Lieu", _lieu),
+                ) if _v
+            )
+            _html = (
+                '<div style="background:#111;padding:28px;font-family:Arial,sans-serif;">'
+                f'<h2 style="color:#D91CD2;margin:0 0 6px;">Réservation confirmée</h2>'
+                f'<p style="color:#ddd;margin:0 0 18px;">Salut {_prenom}, ta place est réservée.</p>'
+                f'<table style="width:100%;max-width:420px;font-size:14px;">{_lignes}</table>'
+                '<p style="color:#888;font-size:12px;margin-top:22px;">'
+                'Un empêchement ? Préviens-nous, une autre personne pourra en profiter.</p>'
+                '<p style="color:#666;font-size:12px;">À très vite — Afroboost</p></div>'
+            )
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": "Afroboost <notifications@afroboost.com>",
+                "to": [user_email],
+                "subject": f"Réservation confirmée — {_cours}",
+                "html": _html,
+            })
+            await db.reservations.update_one(
+                {"id": reservation_doc["id"], "confirmation_sent_at": {"$exists": False}},
+                {"$set": {"confirmation_sent_at": datetime.now(timezone.utc).isoformat()}},
+            )
+            logger.info(f"[V436] confirmation envoyée (résa {reservation_doc['id'][:8]})")
+        except Exception as _e:
+            # La reservation reste valide quoi qu'il arrive.
+            logger.warning(f"[V436] confirmation non envoyée: {type(_e).__name__}: {_e}")
+
+    asyncio.create_task(_v436_confirmer_par_email())
+
     return {
         "success": True,
         "reservation": reservation_doc,
