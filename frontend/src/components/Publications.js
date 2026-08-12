@@ -271,9 +271,79 @@ const V268Caption = ({ caption, light }) => {
     </p>
   );
 };
+// === UI-PUB2 : COLONNE D'ACTIONS PARTAGEE (carte ET vue agrandie) ===
+// Un SEUL composant pour les deux rendus : sans cela, deux logiques auraient
+// diverge des la premiere retouche. Style « Reel » : icone SVG fine, compteur
+// discret dessous, AUCUNE capsule, AUCUN fond, AUCUNE pastille. La zone tactile
+// fait 44 px mais reste INVISIBLE (bouton transparent) — seule l'icone se voit.
+//
+// Les compteurs sont ceux de la PAGE, volontairement identiques sur toutes les
+// cartes : ce lot est un positionnement visuel, assume comme tel. Aucun etat
+// n'est cree ici — tout vient de App.js par props, donc aucune concurrence
+// d'etat malgre la repetition du rendu.
+//
+// `stopPropagation` sur chaque bouton, indispensable DANS LES DEUX VUES :
+//   - sur la carte, le clic ouvrirait AUSSI la lightbox ;
+//   - dans la lightbox, il pourrait la FERMER (l'overlay ferme au clic).
+const UiPub2Action = ({ nom, valeur, onClick, actif, aria }) => (
+  <button
+    type="button"
+    aria-label={aria}
+    onClick={(e) => { e.stopPropagation(); if (onClick) onClick(); }}
+    style={{
+      width: 44, height: 44, padding: 0, border: 'none', background: 'transparent',
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      justifyContent: 'center', gap: 1, cursor: 'pointer',
+      color: actif ? 'var(--primary-color, #D91CD2)' : '#fff',
+      filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.9))'
+    }}
+  >
+    <SvgIcon name={nom} size={21} />
+    {valeur !== null && valeur !== undefined && (
+      <span style={{ fontSize: 10, fontWeight: 600, lineHeight: 1, letterSpacing: '.2px' }}>
+        {valeur}
+      </span>
+    )}
+  </button>
+);
+
+const UiPub2Colonne = ({ actions, ancre = 8 }) => {
+  if (!actions) return null;
+  return (
+    <div
+      data-testid="uipub2-actions"
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        position: 'absolute', right: ancre, top: '50%',
+        transform: 'translateY(-50%)', zIndex: 5,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2
+      }}
+    >
+      <UiPub2Action
+        nom="heart" aria="J'aime"
+        valeur={actions.likesCount}
+        actif={actions.liked}
+        onClick={actions.onLike}
+      />
+      {actions.commentsCount > 0 && (
+        <UiPub2Action
+          nom="messageCircle" aria="Voir les avis"
+          valeur={actions.commentsCount}
+          onClick={actions.onComments}
+        />
+      )}
+      <UiPub2Action
+        nom="calendar" aria="Réserver"
+        valeur="Réserver"
+        onClick={actions.onReserve}
+      />
+    </div>
+  );
+};
+
 
 // V268 (F2): plein écran d'une publication au clic.
-const V268Lightbox = ({ pub, onClose }) => {
+const V268Lightbox = ({ pub, onClose, actions }) => {
   const videoRef = useRef(null);
   // V268b Fix B3 : en plein ecran, la video demarre AVEC le son. La lightbox
   // s'ouvre sur un clic (geste utilisateur), ce qui autorise la lecture non
@@ -354,6 +424,16 @@ const V268Lightbox = ({ pub, onClose }) => {
               style={{ display: 'block', maxWidth: '100%', maxHeight: '78vh', borderRadius: 12, objectFit: 'contain', background: '#000' }}
             />
           )}
+
+          {/* UI-PUB2 : MEMES actions dans la vue agrandie, meme composant, memes
+              handlers, memes compteurs. Ancrees sur ce conteneur `relative` qui
+              enveloppe le media : elles ne peuvent etre coupees ni par
+              `object-fit`, ni par la modale. Retrait de 12 px (media plus grand),
+              centrees verticalement — donc bien au-dessus du bouton son, qui est
+              en bas a droite. `zIndex: 5` passe au-dessus du media sans jamais
+              masquer la croix de fermeture (`zIndex` 2 sur l'overlay, mais rendue
+              APRES dans un autre conteneur). */}
+          <UiPub2Colonne actions={actions} ancre={12} />
         </div>
         <div style={{ padding: '4px 4px 0' }}>
           {/* V282 : avatar auteur (cliquable -> mini-profil si author_id) + nom. */}
@@ -379,39 +459,6 @@ const V268Lightbox = ({ pub, onClose }) => {
 
 // V268: une carte du carrousel. Composant séparé pour porter l'état local
 // (son de la vidéo) sans le partager entre cartes.
-// === UI-PUB2 : colonne d'actions verticale sur le bord droit de la carte ===
-// Style « Reel » : icone SVG fine, compteur discret dessous, AUCUNE capsule,
-// AUCUN fond, AUCUNE pastille. La zone tactile fait 44 px mais reste INVISIBLE
-// (bouton transparent) — seule l'icone se voit.
-//
-// Les compteurs sont ceux de la PAGE, volontairement identiques sur toutes les
-// cartes : ce lot est un positionnement visuel, assume comme tel. Aucun etat
-// n'est cree ici — tout vient de App.js par props, donc aucune concurrence
-// d'etat malgre la repetition du rendu.
-//
-// `stopPropagation` sur chaque bouton : sans lui, le clic ouvrirait AUSSI la
-// lightbox du media, qui englobe cette colonne.
-const UiPub2Action = ({ nom, valeur, onClick, actif, aria }) => (
-  <button
-    type="button"
-    aria-label={aria}
-    onClick={(e) => { e.stopPropagation(); if (onClick) onClick(); }}
-    style={{
-      width: 44, height: 44, padding: 0, border: 'none', background: 'transparent',
-      display: 'flex', flexDirection: 'column', alignItems: 'center',
-      justifyContent: 'center', gap: 1, cursor: 'pointer',
-      color: actif ? 'var(--primary-color, #D91CD2)' : '#fff',
-      filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.9))'
-    }}
-  >
-    <SvgIcon name={nom} size={21} />
-    {valeur !== null && valeur !== undefined && (
-      <span style={{ fontSize: 10, fontWeight: 600, lineHeight: 1, letterSpacing: '.2px' }}>
-        {valeur}
-      </span>
-    )}
-  </button>
-);
 
 const V268PublicationCard = ({ pub, onOpen, actions }) => {
   // V268c Fix 2 : plus de bouton son sur la carte — la video du carrousel est
@@ -466,37 +513,8 @@ const V268PublicationCard = ({ pub, onOpen, actions }) => {
 
         {/* UI-PUB2 : actions SUPERPOSEES au media, a l'interieur de la carte.
             Le conteneur parent est deja `position: relative` avec
-            `borderRadius: 12` et `overflow: hidden` : rien ne depasse du cadre.
-            Retrait de 8 px du bord droit, centre verticalement. */}
-        {actions && (
-          <div
-            data-testid="uipub2-actions"
-            style={{
-              position: 'absolute', right: 8, top: '50%',
-              transform: 'translateY(-50%)', zIndex: 3,
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2
-            }}
-          >
-            <UiPub2Action
-              nom="heart" aria="J'aime"
-              valeur={actions.likesCount}
-              actif={actions.liked}
-              onClick={actions.onLike}
-            />
-            {actions.commentsCount > 0 && (
-              <UiPub2Action
-                nom="messageCircle" aria="Voir les avis"
-                valeur={actions.commentsCount}
-                onClick={actions.onComments}
-              />
-            )}
-            <UiPub2Action
-              nom="calendar" aria="Réserver"
-              valeur="Réserver"
-              onClick={actions.onReserve}
-            />
-          </div>
-        )}
+            `borderRadius: 12` et `overflow: hidden` : rien ne depasse du cadre. */}
+        <UiPub2Colonne actions={actions} />
       </div>
       {/* Bloc d'infos SOUS le media, jamais en superposition. */}
       <div style={{ padding: '6px 2px 0' }}>
@@ -571,7 +589,7 @@ export const PublicationsCarousel = ({ publications, actions }) => {
           Le PORTAL vers document.body la sort de ce contexte d'empilement : son
           `position: fixed` se cale enfin sur le viewport. */}
       {lightbox && createPortal(
-        <V268Lightbox pub={lightbox} onClose={() => setLightbox(null)} />,
+        <V268Lightbox pub={lightbox} onClose={() => setLightbox(null)} actions={actions} />,
         document.body
       )}
     </div>
