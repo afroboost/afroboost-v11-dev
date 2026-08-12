@@ -161,10 +161,19 @@ def apercu(corps, variables):
 # --- Construction de l'appel (PURE : ni réseau, ni base) ---------------------
 
 def normaliser_numero(telephone):
-    """Format attendu par Meta : chiffres seuls, indicatif compris."""
+    """Format attendu par Meta : chiffres seuls, indicatif compris.
+
+    L'ORDRE DES DEUX CAS COMPTE. « 00 » est le préfixe international : il faut
+    le retirer AVANT de traiter le « 0 » national, sinon `0041795105694`
+    devient `41041795105694` — un numéro inexistant, vers lequel le message
+    part sans erreur visible. C'est le défaut qu'avait la première version de
+    cette fonction, trouvé en imprimant les trois écritures côte à côte.
+    """
     n = re.sub(r"\D", "", str(telephone or ""))
+    if n.startswith("00"):
+        return n[2:]              # 0041… -> 41…
     if n.startswith("0"):
-        n = "41" + n[1:]          # numéro suisse noté 0xx
+        return "41" + n[1:]       # 079…  -> 4179…  (numéro suisse)
     return n
 
 
