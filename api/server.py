@@ -21885,7 +21885,17 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
             continue
         _endpoint = subscription_info.get("endpoint", "")
         try:
-            webpush(subscription_info=subscription_info, data=payload, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"})
+            # V434: TTL EXPLICITE. pywebpush 2.2.0 met `ttl=0` par defaut et
+            # envoie bel et bien l'en-tete `TTL: 0` (__init__.py:349-351,
+            # "Generating TTL of 0..."). Or TTL 0 signifie « livre a cet instant
+            # precis ou jette » : quand la veille profonde de Samsung ou le Doze
+            # d'Android deconnecte le telephone de FCM, Google accepte le message
+            # (201 Created) puis le SUPPRIME sans jamais le livrer. Mesure du
+            # 12/08/2026 sur le S24 Ultra de Bassi : abonnement valide, VAPID
+            # valide, FCM 201 — et aucune notification affichee. 3600 s couvre
+            # ces fenetres de veille sans conserver un message devenu inutile
+            # pendant des heures.
+            webpush(subscription_info=subscription_info, data=payload, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"}, ttl=3600)
             any_sent = True
             break  # un device notifie suffit
         except WebPushException as e:
