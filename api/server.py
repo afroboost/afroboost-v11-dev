@@ -22458,15 +22458,57 @@ async def send_push_to_participant(request: Request):
         "send_email_backup": true
     }
     """
+    # === C17-K : AUTHENTIFICATION + AUTORISATION + ISOLATION ===
+    # Cette route etait OUVERTE : n'importe qui pouvait viser un participant_id,
+    # pousser du texte arbitraire, et — pire — declencher `send_backup_email`,
+    # qui envoie un VRAI e-mail Resend aux couleurs d'Afroboost contenant le
+    # texte de l'appelant. Il suffisait de viser quelqu'un sans abonnement push
+    # actif pour forcer ce repli : c'etait un vecteur d'usurpation par e-mail.
+    #
+    # Aucun chemin interne ne passe par ici : les notifications backend
+    # (C17-D new_lead, messages de chat, diffusions) appellent
+    # `send_push_notification()` EN DIRECT. Fermer la route ne peut donc
+    # regresser ni C17-D, ni V433 (tri), ni V434 (TTL).
+    #
+    # Deux appelants legitimes, et deux seulement :
+    #   1. super-admin SIGNE  -> diagnostic complet, texte libre, e-mail possible
+    #   2. abonne SIGNE       -> auto-test sur SON PROPRE participant uniquement,
+    #                            texte impose par le serveur, jamais d'e-mail
+    # Aucune branche « JWT coach » n'est ajoutee : le JWT coach est casse
+    # (`[V319] identite coach REFUSEE` en boucle en production) et la reparer
+    # n'appartient pas a ce lot.
+    from api.routes.shared import super_admin_signe, subscriber_from_request, normaliser_email
+
     body = await request.json()
-    participant_id = body.get("participant_id")
-    title = body.get("title", "Afroboost")
-    message_body = body.get("body", "Vous avez un nouveau message")
-    send_email_backup = body.get("send_email_backup", True)
-    
+    participant_id = (body.get("participant_id") or "").strip()
     if not participant_id:
         raise HTTPException(status_code=400, detail="participant_id requis")
-    
+
+    _admin = super_admin_signe(request)
+    if _admin:
+        # Usage diagnostic : le super-admin garde la main complete.
+        title = body.get("title", "Afroboost")
+        message_body = body.get("body", "Vous avez un nouveau message")
+        # V-defaut inverse : l'e-mail de secours ne part plus JAMAIS tout seul.
+        send_email_backup = bool(body.get("send_email_backup", False))
+    else:
+        _abonne = subscriber_from_request(request)
+        if not _abonne:
+            logger.warning("[C17-K] /push/send refuse — aucune identite signee")
+            raise HTTPException(status_code=403, detail="Authentification requise")
+        # ISOLATION : l'abonne ne peut viser que SON propre participant. On ne
+        # fait jamais confiance au participant_id fourni : on le RESOUT contre
+        # l'e-mail prouve par le jeton signe.
+        _email_jeton = normaliser_email(_abonne.get("email"))
+        _p = await db.chat_participants.find_one({"id": participant_id}, {"_id": 0, "email": 1})
+        if not _email_jeton or not _p or normaliser_email(_p.get("email")) != _email_jeton:
+            logger.warning("[C17-K] /push/send refuse — le participant vise n'appartient pas a l'abonne")
+            raise HTTPException(status_code=403, detail="Destinataire non autorise")
+        # Texte IMPOSE : aucun contenu fourni par le client n'est relaye.
+        title = "Afroboost"
+        message_body = "Notifications activees. Tu es bien connecte."
+        send_email_backup = False
+
     # Essayer d'envoyer la notification push
     push_sent = await send_push_notification(participant_id, title, message_body)
     
