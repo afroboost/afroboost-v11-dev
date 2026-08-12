@@ -764,9 +764,11 @@ async def posthog_capture(event: str, email: str = "", props: dict = None,
 # arrive, ses prospects partiraient chez Bassi. On resout donc le proprietaire
 # REEL de l'evenement, jamais une constante.
 #
-# CE LOT NE FAIT QUE DEUX CHOSES : resoudre le coach, et ecrire une trace dans
-# `db.notifications`. AUCUN envoi — ni push, ni e-mail. Les canaux viendront
-# dans des lots separes, une fois la resolution prouvee.
+# C17-C ne faisait que deux choses : resoudre le coach, et ecrire une trace dans
+# `db.notifications` — aucun envoi. C17-D ajoute LE SEUL canal push, et rien
+# d'autre : pas d'e-mail, pas de SMS. L'emetteur est INJECTE par l'appelant
+# (parametre `envoyer_push`) plutot qu'importe ici : `shared.py` n'importe rien
+# de `server.py`, et un import direct creerait un cycle server -> shared -> server.
 
 async def resoudre_coach_du_lead(db, lead: dict) -> str:
     """Coach REELLEMENT proprietaire d'un lead, ou '' si indeterminable.
@@ -803,8 +805,9 @@ async def resoudre_coach_du_lead(db, lead: dict) -> str:
     return ""
 
 
-async def notifier_nouveau_prospect(db, lead: dict) -> bool:
+async def notifier_nouveau_prospect(db, lead: dict, envoyer_push=None) -> bool:
     """C17-C — trace « nouveau prospect » pour le coach proprietaire.
+    C17-D — et, si `envoyer_push` est fourni, previent ce coach sur son telephone.
 
     NON BLOQUANTE : ne leve jamais. Une panne de notification ne doit pas
     empecher l'enregistrement d'un prospect — c'est l'inverse qui compte.
@@ -825,7 +828,7 @@ async def notifier_nouveau_prospect(db, lead: dict) -> bool:
             logger.info(f"[C17-C] lead {lead_id[:8]} sans coach resolu — aucune notification")
             return False
         prenom = (lead.get("name") or "").strip().split(" ")[0][:40] or "Un visiteur"
-        await db.notifications.update_one(
+        _res = await db.notifications.update_one(
             {"id": f"lead_{lead_id}"},
             {"$setOnInsert": {
                 "id": f"lead_{lead_id}",
@@ -842,6 +845,28 @@ async def notifier_nouveau_prospect(db, lead: dict) -> bool:
             upsert=True,
         )
         logger.info(f"[C17-C] notification nouveau prospect creee (lead={lead_id[:8]}, coach={coach[:24]})")
+        # C17-D : push vers le coach PROPRIETAIRE resolu ci-dessus — jamais une
+        # constante globale, sinon les prospects d'un partenaire sonneraient chez
+        # Bassi. Le pid `coach_<email>` est la convention deja utilisee par
+        # `push_subscriptions` pour les comptes coach.
+        #
+        # Trois garanties :
+        #   1. NON BLOQUANT — try/except dedie : un push en panne ne doit jamais
+        #      empecher l'enregistrement du prospect, qui est le seul enjeu reel.
+        #   2. IDEMPOTENT — on n'envoie que si l'upsert a REELLEMENT insere
+        #      (`upserted_id`). Un rejeu ne fait pas re-sonner le telephone.
+        #   3. PUSH SEUL — aucun e-mail de secours : `send_push_notification`
+        #      n'en envoie pas (contrairement a la route /push/send).
+        if envoyer_push is not None and getattr(_res, "upserted_id", None) is not None:
+            try:
+                _ok = await envoyer_push(
+                    f"coach_{coach}",
+                    "🎯 Nouveau prospect",
+                    f"{prenom} vient de terminer le tunnel.",
+                )
+                logger.info(f"[C17-D] push coach={coach[:24]} envoye={bool(_ok)}")
+            except Exception as e:
+                logger.warning(f"[C17-D] push ignore, le prospect reste enregistre — {type(e).__name__}: {e}")
         return True
     except Exception as e:
         logger.warning(f"[C17-C] notification ignoree, le prospect reste enregistre — {type(e).__name__}: {e}")

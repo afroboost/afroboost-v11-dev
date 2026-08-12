@@ -20432,7 +20432,9 @@ async def smart_chat_entry(request: Request):
                         # `link_token` (ce lead n'a volontairement pas de participant).
                         try:
                             from api.routes.shared import notifier_nouveau_prospect as _c17c
-                            await _c17c(db, _c2f_lead)
+                            # C17-D : l'emetteur push est injecte ici (shared.py
+                            # ne peut pas importer server.py — cycle).
+                            await _c17c(db, _c2f_lead, envoyer_push=send_push_notification)
                         except Exception as _c17e:
                             logger.warning(f"[C17-C] notification ignoree: {type(_c17e).__name__}")
                     except Exception as _e:
@@ -20611,7 +20613,9 @@ async def smart_chat_entry(request: Request):
         # deja enregistre juste au-dessus quoi qu'il arrive.
         try:
             from api.routes.shared import notifier_nouveau_prospect as _c17c
-            await _c17c(db, lead_doc)
+            # C17-D : l'emetteur push est injecte ici (shared.py ne peut pas
+            # importer server.py — cycle).
+            await _c17c(db, lead_doc, envoyer_push=send_push_notification)
         except Exception as _c17e:
             logger.warning(f"[C17-C] notification ignoree: {type(_c17e).__name__}")
         # Aussi stocker dans la session pour accès rapide côté coach
