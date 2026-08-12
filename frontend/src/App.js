@@ -7496,6 +7496,81 @@ function App() {
           onShowComments={() => setShowCommentsPanel(true)}
         />
         {/* v75: Icône AVIS intégrée dans la barre d'actions PartnersCarousel */}
+
+        {/* ================= C1 — HERO DE CONVERSION =================
+            La 1re vue etait un media SANS AUCUN TEXTE : le visiteur ne pouvait
+            savoir ni ce qu'est Afroboost, ni quoi faire. On pose donc le message
+            et UNE action, par-dessus le media existant.
+
+            CE QUI N'EST PAS FAIT, VOLONTAIREMENT : rien n'est supprime, aucune
+            couleur, structure ni navigation n'est touchee, le carrousel garde
+            tout son comportement.
+
+            ⚠️ `pointer-events: none` sur le conteneur : le carrousel occupe
+            `inset-0` avec ses propres zones cliquables (lecture/pause au centre,
+            barres en `bottom-6/20/28` et `top-16`). Sans cela, ce hero volerait
+            tous les clics. Seul le bouton reactive `pointer-events`.
+
+            Position centrale : les bas et hauts sont deja occupes par le
+            carrousel, le centre est la seule bande libre.
+
+            AUCUNE ville, AUCUN jour, AUCUN horaire en dur : multi-lieux et
+            planning variable, ces informations vivent dans le tunnel. */}
+        <div
+          className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center"
+          style={{ pointerEvents: 'none', zIndex: 5 }}
+        >
+          <h1
+            className="text-white font-extrabold leading-tight"
+            style={{ fontSize: 'clamp(1.75rem, 6vw, 3rem)', textShadow: '0 2px 14px rgba(0,0,0,0.75)' }}
+          >
+            Danse. Transpire. Lâche prise.
+          </h1>
+          <p
+            className="text-white/90 mt-3 max-w-md"
+            style={{ fontSize: 'clamp(0.95rem, 3.4vw, 1.1rem)', textShadow: '0 2px 10px rgba(0,0,0,0.7)' }}
+          >
+            Vis l'expérience Afroboost : danse afrobeat et fitness au casque, même si tu n'as jamais dansé.
+          </p>
+          <p
+            className="mt-2 font-semibold"
+            style={{ color: 'var(--primary-color, #D91CD2)', textShadow: '0 2px 10px rgba(0,0,0,0.8)' }}
+          >
+            Ton premier cours est gratuit.
+          </p>
+
+          {/* Vrai <a> : si le JavaScript du clic echoue, la navigation se fait
+              quand meme. La mesure est un BONUS, jamais une condition. */}
+          <a
+            href="/?link=b83914b4-c5a"
+            onClick={() => {
+              // C1 : `trial_cta_click` explicite. `autocapture` reste a false —
+              // la configuration globale de PostHog n'est pas touchee.
+              // Enveloppe dans un try : une erreur ou une lenteur de PostHog ne
+              // doit JAMAIS empecher le visiteur d'entrer dans le tunnel.
+              try {
+                if (window.posthog && typeof window.posthog.capture === 'function') {
+                  window.posthog.capture('trial_cta_click', { source: 'homepage_hero' });
+                }
+              } catch (e) { /* mesure best-effort, on n'interrompt rien */ }
+            }}
+            className="mt-6 inline-flex items-center gap-2 font-bold rounded-full"
+            style={{
+              pointerEvents: 'auto',
+              background: 'var(--primary-color, #D91CD2)',
+              color: '#fff',
+              padding: '14px 26px',
+              fontSize: 'clamp(0.95rem, 3.6vw, 1.05rem)',
+              textDecoration: 'none',
+              boxShadow: '0 6px 24px rgba(var(--primary-rgb, 217, 28, 210), 0.45)'
+            }}
+            data-testid="c1-hero-cta"
+          >
+            <SvgIcon name="headphones" size={18} />
+            Réserver mon 1er cours gratuit
+          </a>
+        </div>
+        {/* =============== FIN C1 =============== */}
       </div>
 
       {/* v160: Overlay CoachVitrine SUPPRIMÉ — la vitrine coach utilise maintenant
