@@ -69,6 +69,18 @@ function IconeTelephone({ size = 14 }) {
   );
 }
 
+function IconePoubelle({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <line x1="10" y1="11" x2="10" y2="17" />
+      <line x1="14" y1="11" x2="14" y2="17" />
+    </svg>
+  );
+}
+
 function Chevron({ ouvert }) {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -85,6 +97,12 @@ export default function MessagesWhatsApp() {
   const [erreur, setErreur] = useState("");
   const [refus, setRefus] = useState(false);    // 403 = session non signée
   const [ouvert, setOuvert] = useState(null);
+  const [suppression, setSuppression] = useState(null); // id du fil en cours de suppression
+
+  /** V433 : au-delà de ce nombre de fils, la liste défile au lieu de pousser la
+   *  page. En dessous, on ne met AUCUNE contrainte de hauteur : encadrer trois
+   *  conversations dans une zone qui défile ferait un cadre vide et inutile. */
+  const SEUIL_DEFILEMENT = 6;
 
   const charger = useCallback(async () => {
     setErreur(""); setRefus(false); setFils(null);
@@ -132,6 +150,38 @@ export default function MessagesWhatsApp() {
       setMessages((prev) => ({ ...prev, [fil.id]: Array.isArray(rm.data) ? rm.data : [] }));
     } catch (e) {
       setMessages((prev) => ({ ...prev, [fil.id]: [] }));
+    }
+  };
+
+  /** V433 : supprime DÉFINITIVEMENT un fil et ses messages.
+   *
+   *  La confirmation nomme le contact : « Supprimer définitivement cette
+   *  conversation ? » tout court laisse le doute sur LAQUELLE, et cette action
+   *  ne se rattrape pas. Le serveur revérifie le jeton super-admin de son côté —
+   *  cette garde-ci n'est qu'un confort, jamais une sécurité. */
+  const supprimer = async (fil) => {
+    const nom = nomPropre(fil.participant_1_name, fil.phone);
+    const nb = (messages[fil.id] || []).length;
+    const detail = nb ? ` (${nb} message${nb > 1 ? "s" : ""})` : "";
+    if (!window.confirm(
+      `Supprimer définitivement cette conversation ?\n\n${nom}${detail}\n\n` +
+      `Le fil et ses messages seront effacés. Cette action est irréversible.`
+    )) return;
+
+    setSuppression(fil.id);
+    try {
+      await axios.delete(`${API}/private/conversations/${fil.id}`);
+      // Retrait local : on évite de recharger toute la liste pour une ligne.
+      setFils((prev) => (prev || []).filter((f) => f.id !== fil.id));
+      setMessages((prev) => { const c = { ...prev }; delete c[fil.id]; return c; });
+      if (ouvert === fil.id) setOuvert(null);
+    } catch (e) {
+      const code = e?.response?.status;
+      setErreur(code === 401 || code === 403
+        ? "Suppression refusée : session non signée. Reconnectez-vous."
+        : `Suppression impossible (HTTP ${code || "réseau"}).`);
+    } finally {
+      setSuppression(null);
     }
   };
 
@@ -194,20 +244,28 @@ export default function MessagesWhatsApp() {
         </div>
       )}
 
+      <div style={fils.length > SEUIL_DEFILEMENT
+        ? { maxHeight: "60vh", overflowY: "auto", overflowX: "hidden", paddingRight: 4 }
+        : undefined}>
       {fils.map((fil) => {
         const msgs = messages[fil.id];
         const nom = nomPropre(fil.participant_1_name, fil.phone);
         const estOuvert = ouvert === fil.id;
+        const enCours = suppression === fil.id;
         return (
           <div key={fil.id} style={{
             border: estOuvert ? `1px solid ${PRIMAIRE}` : BORDURE,
             borderRadius: 10, marginBottom: 8, overflow: "hidden",
             background: "rgba(255,255,255,0.03)",
           }}>
+            {/* V433 : le bouton « supprimer » est un FRÈRE du bouton d'ouverture,
+                jamais un enfant — un <button> dans un <button> est du HTML
+                invalide, et le clic y devient imprévisible selon le navigateur. */}
+            <div style={{ display: "flex", alignItems: "center" }}>
             <button
               onClick={() => basculer(fil)}
               style={{
-                width: "100%", display: "flex", alignItems: "center", gap: 10,
+                flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10,
                 padding: "10px 12px", background: "transparent", border: "none",
                 cursor: "pointer", textAlign: "left",
               }}
@@ -232,6 +290,24 @@ export default function MessagesWhatsApp() {
                 <Chevron ouvert={estOuvert} />
               </span>
             </button>
+
+            <button
+              onClick={() => supprimer(fil)}
+              disabled={enCours}
+              title="Supprimer cette conversation"
+              aria-label={`Supprimer la conversation avec ${nom}`}
+              data-testid={`supprimer-fil-${fil.id}`}
+              style={{
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                width: 34, height: 34, marginRight: 8, flexShrink: 0,
+                borderRadius: 8, border: BORDURE, background: "rgba(255,255,255,0.04)",
+                color: enCours ? "rgba(255,255,255,0.35)" : "rgba(255,128,128,0.85)",
+                cursor: enCours ? "default" : "pointer",
+              }}
+            >
+              <IconePoubelle size={14} />
+            </button>
+            </div>
 
             {estOuvert && (
               <div style={{ padding: "4px 12px 12px", borderTop: BORDURE }}>
@@ -282,6 +358,7 @@ export default function MessagesWhatsApp() {
           </div>
         );
       })}
+      </div>
     </div>
   );
 }

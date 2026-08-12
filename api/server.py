@@ -1065,6 +1065,11 @@ class FeatureFlags(BaseModel):
     # se comporte exactement comme aujourd'hui. Déclaré maintenant pour que la bascule
     # se fasse sans redéploiement, le jour où le menu sera branché et testé.
     BOT_MENU_ENABLED: bool = False
+    # V433 : relance automatique UNIQUE d'une intention d'achat restée sans
+    # paiement. Défaut FALSE, et volontairement laissé éteint à la livraison :
+    # c'est le propriétaire qui l'allumera, une fois le texte relu. Éteint, la
+    # trace des intentions continue d'être écrite — seul l'ENVOI est bloqué.
+    RELANCE_ACHAT_ENABLED: bool = False
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1079,6 +1084,7 @@ class FeatureFlagsUpdate(BaseModel):
     SUPERADMIN_JWT_STRICT: Optional[bool] = None  # V344
     CHAT_READ_STRICT: Optional[bool] = None  # V349
     BOT_MENU_ENABLED: Optional[bool] = None  # V367
+    RELANCE_ACHAT_ENABLED: Optional[bool] = None  # V433
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -14698,7 +14704,8 @@ async def get_feature_flags():
                          ("STREAMING_SERVICE_ENABLED", False), ("SUBSCRIBER_STRICT_ENTRY", False),
                          ("REQUIRE_COACH_JWT", False), ("PAWAPAY_ENABLED", False),
                          ("PUBLICATIONS_NO_EXPIRY", False), ("SUPERADMIN_JWT_STRICT", False),
-                         ("CHAT_READ_STRICT", False), ("BOT_MENU_ENABLED", False)):
+                         ("CHAT_READ_STRICT", False), ("BOT_MENU_ENABLED", False),
+                         ("RELANCE_ACHAT_ENABLED", False)):   # V433 : défaut OFF
         if _k not in flags:
             flags[_k] = _default
     return flags
@@ -15344,9 +15351,15 @@ async def handle_whatsapp_webhook(webhook: WhatsAppWebhook):
             max_tokens=1000
         )
         ai_response = response.choices[0].message.content
-        
+
+        # V433 : même filet que sur le webhook Meta. Ce chemin Twilio n'est plus
+        # le chemin de production, mais il reste monté : le laisser capable de
+        # signer « [Votre Nom] » serait une porte ouverte oubliée.
+        from api.routes.vente_whatsapp import assainir as _v433_assainir_twilio
+        ai_response = _v433_assainir_twilio(ai_response)
+
         response_time = time.time() - start_time
-        
+
         # Sauvegarder le log
         log_entry = AILog(
             fromPhone=from_phone,
@@ -15616,6 +15629,55 @@ async def handle_meta_whatsapp_webhook(request: Request):
                     except Exception:
                         pass
 
+                # === V433 : INTENTION D'ACHAT -> LIEN DE PAIEMENT, SANS L'IA ===
+                #
+                # PLACÉ ICI, ET PAS AILLEURS : après le STOP (V332), qui prime sur
+                # tout, après le bot à menus (V369b), qui garde la main sur les
+                # numéros de sa liste blanche — et AVANT le flux IA, qui est
+                # précisément ce qui a fait perdre la vente du 10 août.
+                #
+                # POURQUOI NE PAS SIMPLEMENT MIEUX INSTRUIRE L'IA : un prompt est
+                # une suggestion faite à un modèle. Pour la seule chose qui
+                # rapporte de l'argent — envoyer le bon lien — on ne dépend pas
+                # d'une suggestion. Le texte et le lien sont construits par du
+                # code déterministe ; l'IA garde tout le reste.
+                #
+                # Le prix vient de `compute_active_price` côté serveur et le lien
+                # de la session Stripe : rien n'est écrit en dur ici, une hausse
+                # de tarif se propage sans toucher à ce fichier.
+                try:
+                    from api.routes.vente_whatsapp import (
+                        intention_achat as _v433_intention,
+                        repondre_achat as _v433_repondre,
+                        noter_intention as _v433_noter)
+                    if _v433_intention(incoming_message):
+                        _payloads, _texte, _sid = await _v433_repondre(
+                            from_phone, meta_contact_name)
+                        if _payloads:
+                            from api.routes.bot_whatsapp_routes import (
+                                envoyer_payload as _v433_envoyer)
+                            for _p in _payloads:
+                                await _v433_envoyer(from_phone, _p)
+                            await _save_whatsapp_conversation(
+                                from_phone=from_phone,
+                                contact_name=meta_contact_name,
+                                incoming_message=incoming_message,
+                                ai_response=_texte)
+                            # Mémorise l'intérêt pour une éventuelle relance. La
+                            # trace s'écrit toujours ; l'ENVOI, lui, reste sous
+                            # drapeau (éteint par défaut).
+                            await _v433_noter(from_phone, meta_contact_name,
+                                              session_id=_sid)
+                            logger.info(f"[V433] lien de paiement envoyé à "
+                                        f"…{from_phone[-4:]}")
+                            processed += 1
+                            continue
+                        # `None` = offre introuvable : on ne laisse PAS la personne
+                        # sans réponse, on retombe simplement sur l'IA ci-dessous.
+                except Exception as _e_v433:
+                    logger.error(f"[V433] réponse d'achat ignorée "
+                                 f"({type(_e_v433).__name__}: {_e_v433}) — repli IA")
+
                 # === RÉUTILISER LE MÊME FLUX QUE LE WEBHOOK TWILIO ===
                 start_time = time.time()
 
@@ -15653,7 +15715,18 @@ async def handle_meta_whatsapp_webhook(request: Request):
                 if last_media:
                     context += f"\n\nNote: Tu as récemment envoyé un média à ce client: {last_media}. Tu peux lui demander s'il l'a bien reçu."
 
-                full_system_prompt = ai_config.get("systemPrompt", "") + context
+                # V433 : l'identité d'Afroboost est imposée en CODE, en TÊTE du
+                # prompt. Mesuré le 12/08 : `ai_config.systemPrompt` est VIDE en
+                # base — le modèle répondait donc sans savoir qui il représente,
+                # d'où « contactez l'organisateur » (Afroboost EST l'organisateur)
+                # et la signature « [Votre Nom] » envoyée à une vraie cliente.
+                # Poser ce texte en base l'exposerait à disparaître au premier
+                # enregistrement depuis le dashboard ; en code, il est versionné.
+                # Ce que le coach écrit dans le dashboard reste respecté : son
+                # prompt vient APRÈS et peut préciser, pas effacer l'identité.
+                from api.routes.vente_whatsapp import PROMPT_BASE as _V433_PROMPT
+                full_system_prompt = (
+                    _V433_PROMPT + "\n\n" + (ai_config.get("systemPrompt", "") or "") + context)
 
                 # 4. Appeler l'IA
                 try:
@@ -15684,6 +15757,14 @@ async def handle_meta_whatsapp_webhook(request: Request):
                         max_tokens=1000
                     )
                     ai_response = response.choices[0].message.content
+
+                    # V433 : dernier filet. Un prompt reste une SUGGESTION faite à
+                    # un modèle : ce qui doit être impossible doit l'être par le
+                    # code. Retire les placeholders ([Votre Nom]…), remplace la
+                    # formule épistolaire par « L'équipe Afroboost » et neutralise
+                    # tout renvoi vers « l'organisateur » ou un site tiers.
+                    from api.routes.vente_whatsapp import assainir as _v433_assainir
+                    ai_response = _v433_assainir(ai_response)
 
                     response_time = time.time() - start_time
 
@@ -19286,6 +19367,48 @@ async def get_private_messages(conversation_id: str, request: Request, limit: in
     ).sort("created_at", 1).to_list(limit)
     return messages
 
+@api_router.delete("/private/conversations/{conversation_id}")
+async def v433_supprimer_conversation(conversation_id: str, request: Request):
+    """V433 : supprime UN fil et SES messages. Rien d'autre.
+
+    PROTECTION : la même que la lecture (V411) — un JWT SIGNÉ de super-admin.
+    `X-User-Email` ne vaut rien ici : c'est un en-tête que n'importe qui écrit.
+    Une suppression étant IRRÉVERSIBLE, la porte ne peut pas être plus faible
+    que celle de la simple consultation.
+
+    PORTÉE, VOLONTAIREMENT ÉTROITE — les deux suppressions sont filtrées sur CET
+    identifiant et lui seul :
+      - `private_messages` : `{"conversation_id": <ce fil>}` ;
+      - `private_conversations` : `{"id": <ce fil>}`.
+    Aucun filtre sur le numéro, le nom ou le participant : deux fils du même
+    contact restent indépendants. Aucun volume, aucun média, aucun abonnement
+    n'est touché — cette route ne connaît que ces deux collections.
+
+    ORDRE : messages d'abord, fil ensuite. Si la seconde suppression échouait,
+    on laisserait un fil vide (visible, réparable) plutôt que des messages
+    orphelins rattachés à un fil disparu (invisibles, impossibles à retrouver).
+    """
+    appelant = _v411_exiger_super_admin(request, f"suppression du fil {conversation_id}")
+
+    conv = await db.private_conversations.find_one({"id": conversation_id}, {"_id": 0})
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation introuvable.")
+
+    res_msg = await db.private_messages.delete_many({"conversation_id": conversation_id})
+    res_conv = await db.private_conversations.delete_one({"id": conversation_id})
+
+    logger.warning(
+        f"[V433] SUPPRESSION du fil {conversation_id} par {appelant} — "
+        f"{res_msg.deleted_count} message(s), {res_conv.deleted_count} fil(s)")
+
+    return {
+        "success": True,
+        "conversation_id": conversation_id,
+        "messages_supprimes": res_msg.deleted_count,
+        "fils_supprimes": res_conv.deleted_count,
+    }
+
+
 @api_router.put("/private/messages/read/{conversation_id}")
 async def mark_private_messages_read(conversation_id: str, reader_id: str, request: Request):
     """
@@ -19303,6 +19426,23 @@ async def mark_private_messages_read(conversation_id: str, reader_id: str, reque
         {"$set": {"is_read": True}}
     )
     return {"success": True, "marked_read": result.modified_count}
+
+@api_router.get("/vente/relances/apercu")
+async def v433_apercu_relances(request: Request):
+    """V433 : QUI serait relancé, et avec QUEL texte. N'ENVOIE RIEN.
+
+    Route de LECTURE, mais elle expose des noms : elle exige donc le même jeton
+    super-admin que les fils (règle « aucune donnée personnelle sans
+    authentification »). Les numéros sont tronqués aux 4 derniers chiffres — un
+    aperçu n'a pas besoin de plus.
+    """
+    _v411_exiger_super_admin(request, "aperçu des relances d'achat")
+    from api.routes.vente_whatsapp import envoyer_relances, relance_active, DRAPEAU_RELANCE
+    resultat = await envoyer_relances(apercu=True)
+    resultat["drapeau"] = DRAPEAU_RELANCE
+    resultat["relance_active"] = await relance_active()
+    return resultat
+
 
 @api_router.get("/private/unread/{participant_id}")
 async def get_unread_private_count(participant_id: str, request: Request):
@@ -24329,6 +24469,13 @@ init_segments_db(db)
 fastapi_app.include_router(bot_router, prefix="/api")
 init_bot_db(db)
 
+# V433 : réponses de VENTE sur WhatsApp (lien de paiement réel) + assainissement
+# de la signature. Le module ne fait qu'OUTILLER : il ne s'abonne à aucun
+# événement et n'envoie rien de lui-même — c'est le webhook, plus bas, qui
+# décide. Sa relance automatique est éteinte par défaut (RELANCE_ACHAT_ENABLED).
+from api.routes.vente_whatsapp import init_vente_db as _init_vente_db  # V433
+_init_vente_db(db)
+
 # V309 (FIX 4.4) : CORS resserré. `*` autorisait N'IMPORTE QUEL site à appeler l'API
 # depuis un navigateur. On n'autorise que le domaine du site (+ localhost dev). Si
 # CORS_ORIGINS est posé et différent de « * », on l'utilise ; sinon on force la liste sûre.
@@ -24496,6 +24643,30 @@ async def _v307_resolve_jwt_secret():
     logger.warning("[V307] JWT_SECRET absent (env/fichier/mongo) — masquage des codes INACTIF")
 
 
+async def _v433_boucle_relances():
+    """V433 — relance d'achat : la boucle TOURNE, mais elle n'ENVOIE rien.
+
+    Même motif que `_campaign_scheduler_loop` (V328) : une tâche asyncio native,
+    car les crons de `vercel.json` ne s'exécutent pas sur Coolify.
+
+    Le drapeau n'est PAS testé ici mais dans `envoyer_relances`, au plus près de
+    l'envoi. Le tester ici laisserait croire, en lisant ce fichier, que la garde
+    est unique : elle doit tenir même si un jour on appelle la fonction depuis
+    un autre endroit. Tant que RELANCE_ACHAT_ENABLED est absent ou faux, chaque
+    passage se termine sans qu'aucun message ne parte.
+    """
+    await asyncio.sleep(90)   # laisser l'application finir de démarrer
+    while True:
+        try:
+            from api.routes.vente_whatsapp import envoyer_relances
+            r = await envoyer_relances(apercu=False)
+            if r.get("envoyees"):
+                logger.info(f"[V433] {r['envoyees']} relance(s) envoyée(s)")
+        except Exception as e:
+            logger.warning(f"[V433] passage de relance ignoré : {e}")
+        await asyncio.sleep(30 * 60)
+
+
 @fastapi_app.on_event("startup")
 async def startup_db():
     """Initialize database indexes on startup (APScheduler disabled in Vercel Serverless)."""
@@ -24589,6 +24760,12 @@ async def startup_db():
         logger.info("[SCHEDULER-CAMPAGNE] Boucle d'envoi automatique demarree (60s)")
     except Exception as e:
         logger.warning(f"[SCHEDULER-CAMPAGNE] Demarrage ignore: {e}")
+
+    try:
+        asyncio.create_task(_v433_boucle_relances())
+        logger.info("[V433] Boucle de relance d'achat demarree (30 min, drapeau OFF)")
+    except Exception as e:
+        logger.warning(f"[V433] Demarrage relance ignore: {e}")
 
     logger.info("[SYSTEM] Database indexes initialized")
 
