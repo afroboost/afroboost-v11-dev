@@ -372,7 +372,31 @@ const V268Lightbox = ({ pub, onClose, actions }) => {
       });
     }
   }, [pub]);
-  const toggleMute = v268ToggleSound(videoRef, setMuted); // V268b Fix B2
+  const toggleMute = v268ToggleSound(videoRef, setMuted); // V268b Fix B
+
+  // === UI-PUB4 : commentaires DANS le viewer, video qui continue ===
+  // Le panneau global d'App.js est en `z-50` alors que cette lightbox est a
+  // `zIndex: 2147483000` : il s'ouvrait DERRIERE, invisible. On rend donc les
+  // memes commentaires ici, a partir des MEMES donnees (`actions.comments`),
+  // sans creer le moindre systeme parallele.
+  const [avisOuverts, setAvisOuverts] = useState(false);
+
+  // Les handlers du viewer derivent de ceux d'App.js — jamais reecrits :
+  //   - `onComments` bascule le panneau LOCAL au lieu du panneau global ;
+  //   - `onReserve` FERME d'abord, puis delegue au handler d'origine. L'ordre
+  //     compte : scroller pendant que la modale couvre l'ecran laisserait
+  //     l'utilisateur au mauvais endroit. Le viewer ne verrouille pas le scroll
+  //     du body (verifie), il n'y a donc rien a restaurer — un simple tour de
+  //     boucle suffit pour que le portail soit demonte.
+  //   - `onLike` est repris TEL QUEL : il ne doit rien fermer.
+  const actionsViewer = actions ? {
+    ...actions,
+    onComments: () => setAvisOuverts((o) => !o),
+    onReserve: () => {
+      onClose();
+      setTimeout(() => { if (actions.onReserve) actions.onReserve(); }, 60);
+    },
+  } : null;2
   return (
     // V268d : z-index tres eleve pour passer AU-DESSUS de tout (menu inclus).
     // Combine au portal vers document.body (voir le rendu du carrousel), la
@@ -404,7 +428,7 @@ const V268Lightbox = ({ pub, onClose, actions }) => {
         onClick={(e) => e.stopPropagation()}
         style={{ position: 'relative', maxWidth: 'min(92vw, 480px)', width: '100%', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }}
       >
-        <div style={{ position: 'relative', display: 'flex', justifyContent: 'center' }}>
+        <div style={{ flex: '1 1 320px', minWidth: 0, position: 'relative', display: 'flex', justifyContent: 'center' }}>
           {pub.media_type === 'video' ? (
             <>
               <video
@@ -433,9 +457,58 @@ const V268Lightbox = ({ pub, onClose, actions }) => {
               en bas a droite. `zIndex: 5` passe au-dessus du media sans jamais
               masquer la croix de fermeture (`zIndex` 2 sur l'overlay, mais rendue
               APRES dans un autre conteneur). */}
-          <UiPub2Colonne actions={actions} ancre={12} />
+          <UiPub2Colonne actions={actionsViewer} ancre={12} />
         </div>
-        <div style={{ padding: '4px 4px 0' }}>
+
+        {/* UI-PUB4 : panneau d'avis, FRERE du media et jamais son parent.
+            C'est le point critique : envelopper le media dans un nouveau
+            conteneur le REMONTERAIT, et la video repartirait a zero. Ici sa
+            position dans l'arbre (1er enfant) ne change pas — React conserve
+            donc l'element <video>, sa lecture et sa position.
+            Mise en page sans ecouteur de resize : `flexWrap` fait passer le
+            panneau A COTE quand la largeur le permet, et EN DESSOUS sinon. */}
+        {avisOuverts && (
+          <div
+            data-testid="uipub4-avis"
+            style={{
+              flex: '1 1 300px', minWidth: 0, maxHeight: '78vh', overflowY: 'auto',
+              background: 'rgba(20,20,32,0.96)', borderRadius: 12,
+              padding: '12px 14px', WebkitOverflowScrolling: 'touch'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <span style={{ color: '#fff', fontSize: 14, fontWeight: 700 }}>
+                Avis {actions && actions.commentsCount ? `(${actions.commentsCount})` : ''}
+              </span>
+              <button
+                type="button"
+                aria-label="Fermer les avis"
+                onClick={(e) => { e.stopPropagation(); setAvisOuverts(false); }}
+                style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 4, display: 'inline-flex' }}
+              >
+                <SvgIcon name="close" size={18} />
+              </button>
+            </div>
+            {(actions && actions.comments ? actions.comments : []).map((c) => (
+              <div key={c.id} style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+                <img
+                  src={c.profile_photo || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(c.user_name || 'user')}&backgroundColor=8B5CF6`}
+                  alt=""
+                  style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+                />
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ color: '#fff', fontSize: 13, fontWeight: 600, margin: 0 }}>{c.user_name}</p>
+                  <p style={{ color: 'rgba(255,255,255,0.78)', fontSize: 13, margin: '2px 0 0', wordBreak: 'break-word' }}>{c.text}</p>
+                </div>
+              </div>
+            ))}
+            {(!actions || !actions.comments || actions.comments.length === 0) && (
+              <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, margin: 0 }}>Aucun avis pour le moment.</p>
+            )}
+          </div>
+        )}
+
+        <div style={{ padding: '4px 4px 0', flexBasis: '100%' }}>
           {/* V282 : avatar auteur (cliquable -> mini-profil si author_id) + nom. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '10px 0 0' }}>
             <img

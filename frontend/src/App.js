@@ -7726,6 +7726,10 @@ function App() {
             onLike: uipubLiker,
             commentsCount: socialTotalCount || socialComments.length,
             onComments: () => setShowCommentsPanel(true),
+            // UI-PUB4 : MEMES donnees que le panneau global. La vue agrandie les
+            // rend elle-meme, parce que ce panneau est en `z-50` alors que la
+            // lightbox est a `zIndex: 2147483000` — il s'ouvrait derriere.
+            comments: socialComments,
             onReserve: uipubReserver,
           }}
           publications={
