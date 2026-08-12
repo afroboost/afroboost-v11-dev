@@ -4500,6 +4500,54 @@ function App() {
   const [socialComments, setSocialComments] = useState([]);
   const [socialTotalCount, setSocialTotalCount] = useState(0); // v106.8: vrai total commentaires (pas plafonné à 100)
   const [showCommentsPanel, setShowCommentsPanel] = useState(false);
+
+  // === UI-PUB : likes de PAGE, deplaces depuis PartnersCarousel ===
+  // Meme compteur GLOBAL qu'avant (`GET /page-likes`, `POST /page-like`), meme
+  // memorisation locale, meme animation. Rien n'est cree ni migre : l'etat vit
+  // ici parce que la barre d'actions est desormais rendue a cote de la section
+  // Publications, qui est une soeur du carrousel hero — pas son enfant.
+  const [uipubLikes, setUipubLikes] = useState(0);
+  const [uipubDejaLike, setUipubDejaLike] = useState(false);
+  const [uipubAnime, setUipubAnime] = useState(false);
+
+  useEffect(() => {
+    axios.get(`${API}/page-likes?coach_email=contact.artboost@gmail.com`)
+      .then(res => setUipubLikes(res.data?.count || 0))
+      .catch(() => {});
+    try {
+      // Meme cle qu'avant : un visiteur ayant deja like reste marque.
+      const brut = localStorage.getItem('afroboost_partner_likes');
+      if (brut && Object.keys(JSON.parse(brut) || {}).length > 0) setUipubDejaLike(true);
+    } catch (e) { /* localStorage indisponible */ }
+  }, []);
+
+  const uipubLiker = useCallback(() => {
+    // Increment optimiste + animation 600 ms, comme l'implementation d'origine.
+    setUipubLikes(prev => prev + 1);
+    setUipubAnime(true);
+    setTimeout(() => setUipubAnime(false), 600);
+    setUipubDejaLike(true);
+    try {
+      const brut = localStorage.getItem('afroboost_partner_likes');
+      const etat = brut ? JSON.parse(brut) : {};
+      etat['page'] = true;
+      localStorage.setItem('afroboost_partner_likes', JSON.stringify(etat));
+    } catch (e) { /* silencieux */ }
+    axios.post(`${API}/page-like`, { coach_email: 'contact.artboost@gmail.com' })
+      .then(res => { if (res.data?.count) setUipubLikes(res.data.count); })
+      .catch(() => {});
+  }, []);
+
+  // « Reserver » : sur l'accueil, le bouton d'origine tombait TOUJOURS dans la
+  // branche « scroll vers les offres » (video super-admin / vitrine courante).
+  // On reproduit exactement ce comportement, sans dependre d'une diapo.
+  const uipubReserver = useCallback(() => {
+    const cible = document.getElementById('offers-section')
+      || document.getElementById('sessions-section')
+      || document.getElementById('courses-section');
+    if (cible) cible.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
   const [zoomedPhoto, setZoomedPhoto] = useState(null); // v74: Zoom photo profil
 
   // === v9.2.8: PLATFORM SETTINGS - Contrôles globaux ===
@@ -7656,6 +7704,82 @@ function App() {
           (Tout/Sessions/Offres/Shop), comme demande. Filtre par la recherche
           quand elle est active. Le composant se rend null si la liste est vide. */}
       <div className="max-w-4xl mx-auto px-4">
+        {/* === UI-PUB : titre + barre d'actions GLOBALE ===
+            Le titre « Publications » vivait DANS `PublicationsCarousel`, qui se
+            rend `null` quand le mur est vide (les publications expirent en 48 h).
+            Titre et barre sont donc remontes ici : les actions survivent a un mur
+            vide, au lieu de disparaitre sans explication.
+            Les compteurs restent GLOBAUX a la page — jamais rattaches a une carte.
+            Memes handlers, memes donnees, memes destinations qu'avant. */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
+          <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex', flexShrink: 0 }}>
+            <SvgIcon name="users" size={18} />
+          </span>
+          <span style={{ color: '#fff', fontSize: '18px', fontWeight: 600 }}>Publications</span>
+        </div>
+        <div
+          data-testid="uipub-actions"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexWrap: 'wrap', gap: '10px', marginBottom: '18px'
+          }}
+        >
+          {/* Commentaires — meme condition qu'avant : masque si aucun avis. */}
+          {(socialTotalCount || socialComments.length) > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowCommentsPanel(true)}
+              data-testid="comments-btn"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '7px',
+                minHeight: '44px', padding: '0 16px', borderRadius: '22px',
+                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.14)',
+                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
+                color: '#fff', fontSize: '14px', fontWeight: 600, cursor: 'pointer'
+              }}
+            >
+              <SvgIcon name="messageCircle" size={18} />
+              {socialTotalCount || socialComments.length}
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={uipubLiker}
+            data-testid="like-btn-page"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '7px',
+              minHeight: '44px', padding: '0 16px', borderRadius: '22px',
+              background: uipubDejaLike
+                ? 'var(--primary-color, #D91CD2)'
+                : 'rgba(var(--primary-rgb, 217, 28, 210), 0.14)',
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
+              color: '#fff', fontSize: '14px', fontWeight: 600, cursor: 'pointer',
+              transform: uipubAnime ? 'scale(1.08)' : 'scale(1)',
+              transition: 'all 0.3s ease'
+            }}
+          >
+            <SvgIcon name="heart" size={18} />
+            {uipubLikes}
+          </button>
+
+          <button
+            type="button"
+            onClick={uipubReserver}
+            data-testid="reserve-btn-page"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '7px',
+              minHeight: '44px', padding: '0 16px', borderRadius: '22px',
+              background: 'var(--primary-color, #D91CD2)',
+              border: 'none', color: '#fff', fontSize: '14px', fontWeight: 700,
+              cursor: 'pointer'
+            }}
+          >
+            <SvgIcon name="calendar" size={18} />
+            {t('bookBtn')}
+          </button>
+        </div>
+
         <PublicationsCarousel
           publications={
             searchQuery.trim()

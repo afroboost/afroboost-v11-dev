@@ -473,17 +473,10 @@ export const PublicationsCarousel = ({ publications }) => {
   if (!publications || publications.length === 0) return null;
   return (
     <div className="mb-8 fade-in-section" data-testid="publications-carousel">
-      {/* V271 Fix 1 : titre centre. */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--primary-color, #D91CD2)', flexShrink: 0 }} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-          <circle cx="9" cy="7" r="4" />
-          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-        </svg>
-        {/* V268 (F4): plus de compteur « (N) » a cote du titre. */}
-        <span style={{ color: '#fff', fontSize: '18px', fontWeight: 600 }}>Publications</span>
-      </div>
+      {/* UI-PUB : le titre « Publications » est desormais rendu par App.js, avec
+          la barre d'actions globale. Il vivait ici, mais ce composant se rend
+          `null` quand le mur est vide (expiration 48 h) : titre et actions
+          auraient disparu avec lui. Les cartes restent inchangees. */}
       {/* V271 Fix 1 : cartes centrees. `safe center` centre quand elles
           tiennent, et retombe sur le debut (donc reste ACCESSIBLE au scroll)
           quand elles debordent — evite le bug classique du `center` qui coupe

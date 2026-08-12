@@ -1050,118 +1050,13 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
           }}
         />
         
-        {/* === v10.0: BARRE D'ACTIONS STYLE INSTAGRAM - DROITE === */}
-        {/* v94.1: z-10 ajouté — les icônes restent toujours au-dessus de la vidéo et du gradient */}
-        <div
-          className="absolute right-3 bottom-28 flex flex-col items-center gap-5 z-10"
-          data-testid="reels-action-bar"
-        >
-          {/* v75: Bouton Avis/Commentaires — même taille que Like et Réserver */}
-          {socialCommentsCount > 0 && onShowComments && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onShowComments();
-              }}
-              className="flex flex-col items-center transition-all hover:scale-110 active:scale-95"
-              data-testid="comments-btn"
-            >
-              <div
-                style={{
-                  width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: 'var(--primary-color, #D91CD2)',
-                  border: 'none',
-                  boxShadow: '0 0 14px rgba(var(--primary-rgb, 217, 28, 210), 0.6), 0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.3), 0 4px 15px rgba(var(--primary-rgb, 217, 28, 210), 0.4)'
-                }}
-              >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="rgba(255,255,255,0.95)" stroke="white" strokeWidth="0.5">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                </svg>
-              </div>
-              <span
-                className="text-xs mt-1 font-medium"
-                style={{
-                  color: '#fff',
-                  textShadow: '0 1px 3px rgba(0,0,0,0.8)'
-                }}
-              >
-                {socialCommentsCount}
-              </span>
-            </button>
-          )}
-
-          {/* v80: Bouton Like avec compteur réel + animation */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onLike();
-            }}
-            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: 0, transition: 'transform 0.2s ease' }}
-            data-testid={`like-btn-${partner.id || partner.email}`}
-          >
-            <div
-              style={{
-                width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'var(--primary-color, #D91CD2)',
-                border: 'none',
-                boxShadow: isLiked ? '0 0 20px rgba(var(--primary-rgb, 217, 28, 210), 0.8), 0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.4), 0 4px 15px rgba(var(--primary-rgb, 217, 28, 210), 0.4)' : '0 0 14px rgba(var(--primary-rgb, 217, 28, 210), 0.6), 0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.3), 0 4px 15px rgba(var(--primary-rgb, 217, 28, 210), 0.4)',
-                transform: likeAnimating ? 'scale(1.3)' : 'scale(1)',
-                transition: 'all 0.3s ease'
-              }}
-            >
-              <svg
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill={isLiked ? 'white' : 'none'}
-                stroke="white"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{
-                  filter: isLiked ? 'drop-shadow(0 0 8px rgba(255,255,255,0.8))' : 'none',
-                  transition: 'all 0.3s ease'
-                }}
-              >
-                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-              </svg>
-            </div>
-            <span
-              style={{
-                fontSize: '12px', fontWeight: 600, marginTop: '4px',
-                color: 'white',
-                textShadow: '0 1px 3px rgba(0,0,0,0.9)',
-                transition: 'all 0.3s ease',
-                transform: likeAnimating ? 'scale(1.2)' : 'scale(1)'
-              }}
-            >
-              {pageLikesCount}
-            </span>
-          </button>
-          
-          {/* Bouton Réserver */}
-          {!isBlocked && (
-            <button
-              onClick={handleReserve}
-              className="flex flex-col items-center transition-all hover:scale-110"
-              data-testid={`reserve-btn-${partner.id || partner.email}`}
-            >
-              <div
-                style={{
-                  width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: 'var(--primary-color, #D91CD2)',
-                  border: 'none',
-                  boxShadow: '0 0 14px rgba(var(--primary-rgb, 217, 28, 210), 0.6), 0 0 30px rgba(var(--primary-rgb, 217, 28, 210), 0.3), 0 4px 15px rgba(var(--primary-rgb, 217, 28, 210), 0.4)'
-                }}
-              >
-                <CalendarIcon />
-              </div>
-              <span className="text-white text-xs mt-1" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}>
-                {t('bookBtn', lang)}
-              </span>
-            </button>
-          )}
-        </div>
+        {/* === UI-PUB : la colonne d'actions verticale a ete DEPLACEE ===
+            Elle empietait sur le hero, surtout sur mobile. Commentaires, likes
+            et « Reserver » sont desormais rendus par App.js, dans une barre
+            horizontale sous le titre « Publications ». Ce sont EXACTEMENT les
+            memes actions, les memes compteurs globaux et les memes
+            destinations : seul l'emplacement change. Le hero ne garde que le
+            media, le titre, le sous-titre et le CTA « 1er cours gratuit ». */}
         
         {/* === v10.0: BLOC BAS GAUCHE - Photo + Nom + Légende (Style Instagram) === */}
         <div 
