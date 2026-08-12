@@ -3069,17 +3069,33 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
     if (!cible) return;
     if (!offers.some(o => o && o.id === cible)) return;   // offre inconnue : on ignore
 
-    const t = setTimeout(() => {
+    // V434 — ON RÉESSAIE JUSQU'À CE QUE LA CARTE EXISTE.
+    //
+    // Mesuré le 12/08 en production : le délai unique de 600 ms tombait AVANT
+    // que le slider n'ait monté ses cartes. `carte` était donc `null`, l'effet
+    // sortait — et comme `offers` ne changeait plus, il ne repassait jamais. Le
+    // visiteur restait en haut de la page d'accueil, exactement ce que ce lien
+    // devait éviter : le halo et le défilement n'ont jamais fonctionné.
+    //
+    // On sonde donc toutes les 200 ms pendant 8 s au plus. La sonde s'arrête au
+    // PREMIER succès, et le `clearInterval` du démontage évite qu'elle survive
+    // à un changement de page.
+    let restant = 40;
+    const t = setInterval(() => {
       const carte = document.querySelector(`[data-testid="offer-card-${cible}"]`);
-      if (!carte) return;
+      if (!carte) {
+        if (--restant <= 0) clearInterval(t);
+        return;
+      }
+      clearInterval(t);
       carte.scrollIntoView({ behavior: 'smooth', block: 'center' });
       // Halo temporaire : la personne voit immédiatement DE QUELLE offre il s'agit.
       const avant = carte.style.boxShadow;
       carte.style.transition = 'box-shadow 0.3s';
       carte.style.boxShadow = '0 0 0 3px var(--primary-color, #D91CD2), 0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.35)';
       setTimeout(() => { carte.style.boxShadow = avant; }, 6000);
-    }, 600);   // laisse le slider se monter
-    return () => clearTimeout(t);
+    }, 200);   // sonde : le slider peut mettre plusieurs secondes à monter
+    return () => clearInterval(t);
   }, [offers]);
   
   // Auto-play effect
