@@ -16368,8 +16368,17 @@ async def send_whatsapp_message(request: SendWhatsAppRequest):
     )
 
 @api_router.post("/send-whatsapp-template")
-async def send_whatsapp_template(data: dict):
-    """V163.8: Envoyer un message template WhatsApp (requis pour les premiers messages business)"""
+async def send_whatsapp_template(data: dict, request: Request):
+    """V163.8: Envoyer un message template WhatsApp (requis pour les premiers messages business)
+
+    V435 — CETTE ROUTE ÉTAIT OUVERTE À TOUT LE MONDE. Vérifié en production le
+    12/08 : un `curl` anonyme atteignait la validation (`400 Numéro 'to' requis`),
+    donc un appel complet aurait ENVOYÉ un WhatsApp depuis le numéro business
+    d'Afroboost. Conséquences possibles : spam facturé au compte, et surtout
+    suspension du WABA par Meta — ce qui couperait la campagne en cours.
+    On exige désormais le même jeton super-admin signé que les fils privés.
+    """
+    _v411_exiger_super_admin(request, "envoi de modèle WhatsApp (route héritée)")
     import httpx
     to_phone = data.get("to", "")
     template_name = data.get("template", "hello_world")
@@ -16433,8 +16442,16 @@ async def send_whatsapp_template(data: dict):
 
 # --- Endpoint pour tester l'IA manuellement ---
 @api_router.post("/create-whatsapp-template")
-async def create_whatsapp_template(data: dict):
-    """V163.8: Créer un template WhatsApp via Meta Graph API"""
+async def create_whatsapp_template(data: dict, request: Request):
+    """V163.8: Créer un template WhatsApp via Meta Graph API
+
+    V435 — OUVERTE ELLE AUSSI. Vérifié le 12/08 : un `curl` anonyme a fait
+    parvenir un appel jusqu'à Meta et en a reçu l'erreur — c'est donc le jeton
+    business d'Afroboost qui servait à un inconnu. Soumettre des modèles au nom
+    du compte peut faire baisser sa note de qualité, voire le faire suspendre.
+    Jeton super-admin signé exigé.
+    """
+    _v411_exiger_super_admin(request, "création de modèle WhatsApp")
     import httpx
     import json as json_ct
 
@@ -19454,6 +19471,130 @@ async def v434_envoyer(corps: V434Envoi, request: Request):
 
     logger.info(f"[V434] message manuel envoyé à …{telephone[-4:]} par {appelant}")
     return {"success": True, "statut": statut, "envoye_le": horodatage}
+
+
+# === V435 — MODÈLES WhatsApp (recontacter hors de la fenêtre de 24 h) ===
+
+class V435EnvoiModele(BaseModel):
+    conversation_id: str
+    modele: str
+    langue: str = "fr"
+    variables: Optional[list] = None
+    suffixe_bouton: Optional[str] = None
+    index_bouton: int = 0
+    # DÉFAUT À TRUE, volontairement : pour envoyer, il faut le demander.
+    simulation: bool = True
+
+
+@api_router.get("/private/whatsapp/modeles")
+async def v435_lister_modeles(request: Request):
+    """V435 : les modèles du compte WhatsApp, avec leur statut. N'envoie rien."""
+    _v411_exiger_super_admin(request, "liste des modèles WhatsApp")
+    config = await _get_whatsapp_config()
+    if not config or config.get("api_mode") != "meta":
+        return {"success": False, "erreur": "Le compte n'est pas en mode Meta Cloud API."}
+    from api.routes.modeles_whatsapp import lister_modeles
+    modeles, erreur = await lister_modeles(config)
+    if erreur:
+        return {"success": False, "erreur": erreur}
+    return {"success": True, "modeles": modeles}
+
+
+@api_router.post("/private/whatsapp/modele/envoyer")
+async def v435_envoyer_modele(corps: V435EnvoiModele, request: Request):
+    """V435 : envoie un MODÈLE approuvé. `simulation: true` (défaut) n'envoie rien.
+
+    Deux vérifications AVANT de déranger Meta, parce qu'un refus consommé chez
+    eux pèse sur la note de qualité du compte :
+      - le modèle existe et il est APPROUVÉ ;
+      - le nombre de variables fournies correspond exactement au modèle.
+    """
+    appelant = _v411_exiger_super_admin(request, "envoi de modèle WhatsApp")
+
+    config = await _get_whatsapp_config()
+    if not config or config.get("api_mode") != "meta":
+        raise HTTPException(status_code=400,
+                            detail="Le compte n'est pas en mode Meta Cloud API.")
+
+    conv = await db.private_conversations.find_one({"id": corps.conversation_id}, {"_id": 0})
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation introuvable.")
+
+    telephone = (conv.get("phone") or "").strip()
+    if not telephone:
+        for pid in (conv.get("participant_1_id"), conv.get("participant_2_id")):
+            if str(pid or "").startswith("whatsapp_"):
+                telephone = "+" + str(pid)[len("whatsapp_"):]
+                break
+    if not telephone:
+        raise HTTPException(status_code=400, detail="Ce fil ne porte aucun numéro WhatsApp.")
+
+    from api.routes.modeles_whatsapp import lister_modeles, envoyer_modele, apercu
+
+    modeles, erreur = await lister_modeles(config)
+    if erreur:
+        return {"success": False, "erreur": erreur}
+
+    choisi = next((m for m in modeles
+                   if m["nom"] == corps.modele and m["langue"] == corps.langue), None)
+    if not choisi:
+        dispo = ", ".join(sorted({m["nom"] for m in modeles if m["statut"] == "APPROVED"})) or "aucun"
+        return {"success": False, "erreur":
+                f"Le modèle « {corps.modele} » ({corps.langue}) n'existe pas sur le "
+                f"compte WhatsApp. Modèles approuvés disponibles : {dispo}. "
+                f"Un modèle doit être créé PUIS approuvé par Meta avant tout envoi."}
+
+    if choisi["statut"] != "APPROVED":
+        return {"success": False, "erreur":
+                f"Le modèle « {corps.modele} » est au statut {choisi['statut']}, "
+                f"pas APPROVED : Meta refusera l'envoi. "
+                + ("Il a été REFUSÉ — il faut le corriger et le resoumettre."
+                   if choisi["statut"] == "REJECTED" else
+                   "Attendez la fin de la revue par Meta.")}
+
+    fournies = len(corps.variables or [])
+    if fournies != choisi["variables"]:
+        return {"success": False, "erreur":
+                f"Ce modèle attend {choisi['variables']} variable(s), "
+                f"{fournies} fournie(s). Meta refuserait l'envoi (code 132000)."}
+
+    resultat = await envoyer_modele(
+        config, telephone, corps.modele, corps.langue,
+        variables=corps.variables, suffixe_bouton=corps.suffixe_bouton,
+        index_bouton=corps.index_bouton, simulation=corps.simulation,
+        appelant=appelant, conversation_id=corps.conversation_id)
+
+    resultat["apercu"] = apercu(choisi["corps"], corps.variables)
+
+    # Envoi réel abouti : on range le message dans le fil, pour qu'il y figure
+    # comme les autres. En simulation on n'écrit RIEN — un aperçu ne doit pas
+    # laisser de trace qui ressemble à un message envoyé.
+    if resultat.get("success") and not corps.simulation:
+        horodatage = datetime.now(timezone.utc).isoformat()
+        await db.private_messages.insert_one({
+            "id": str(uuid.uuid4()),
+            "conversation_id": corps.conversation_id,
+            "sender_id": "admin_afroboost",
+            "sender_name": "Afroboost (modèle)",
+            "recipient_id": (conv.get("participant_1_id")
+                             if str(conv.get("participant_1_id") or "").startswith("whatsapp_")
+                             else conv.get("participant_2_id")),
+            "recipient_name": conv.get("participant_1_name") or telephone,
+            "content": resultat["apercu"],
+            "created_at": horodatage,
+            "is_deleted": False,
+            "channel": "whatsapp",
+            "manuel": True,
+            "modele": corps.modele,
+            "wamid": resultat.get("wamid"),
+            "envoye_par": appelant,
+        })
+        await db.private_conversations.update_one(
+            {"id": corps.conversation_id},
+            {"$set": {"last_message": resultat["apercu"][:100],
+                      "last_message_at": horodatage}})
+
+    return resultat
 
 
 @api_router.put("/private/messages/read/{conversation_id}")
@@ -24505,6 +24646,12 @@ init_bot_db(db)
 # décide. Sa relance automatique est éteinte par défaut (RELANCE_ACHAT_ENABLED).
 from api.routes.vente_whatsapp import init_vente_db as _init_vente_db  # V433
 _init_vente_db(db)
+
+# V435 : modèles WhatsApp approuvés (recontact hors fenêtre de 24 h). Comme
+# ci-dessus, le module n'a aucun appelant automatique : seules deux routes du
+# dashboard, protégées par jeton super-admin, l'utilisent — sur un clic.
+from api.routes.modeles_whatsapp import init_modeles_db as _init_modeles_db  # V435
+_init_modeles_db(db)
 
 # V309 (FIX 4.4) : CORS resserré. `*` autorisait N'IMPORTE QUEL site à appeler l'API
 # depuis un navigateur. On n'autorise que le domaine du site (+ localhost dev). Si

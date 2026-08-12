@@ -105,6 +105,14 @@ export default function MessagesWhatsApp() {
   const [occupe, setOccupe] = useState({});           // { conversation_id: "proposer"|"ameliorer"|"envoi" }
   const [avis, setAvis] = useState({});               // { conversation_id: {type, texte} }
 
+  // V435 — modèles approuvés (recontact hors de la fenêtre de 24 h).
+  const [modeles, setModeles] = useState(null);       // null = pas encore chargés
+  const [erreurModeles, setErreurModeles] = useState("");
+  const [panneau, setPanneau] = useState({});         // { conversation_id: bool }
+  const [choix, setChoix] = useState({});             // { conversation_id: "nom|langue" }
+  const [varsModele, setVarsModele] = useState({});   // { conversation_id: [texte, …] }
+  const [simulation, setSimulation] = useState({});   // { conversation_id: objet }
+
   /** V433 : au-delà de ce nombre de fils, la liste défile au lieu de pousser la
    *  page. En dessous, on ne met AUCUNE contrainte de hauteur : encadrer trois
    *  conversations dans une zone qui défile ferait un cadre vide et inutile. */
@@ -257,6 +265,83 @@ export default function MessagesWhatsApp() {
         texte: code === 401 || code === 403
           ? "Session non signée. Reconnecte-toi."
           : e?.response?.data?.detail || `Envoi impossible (HTTP ${code || "réseau"}).` } }));
+    } finally {
+      setOccupe((p) => ({ ...p, [fil.id]: null }));
+    }
+  };
+
+  /** V435 : le texte tel que le client le lira — calculé côté navigateur, à
+   *  l'identique du serveur, pour que la relecture soit immédiate. */
+  const apercuModele = (m, vars) => {
+    let t = (m && m.corps) || "";
+    (vars || []).forEach((v, i) => { t = t.split(`{{${i + 1}}}`).join(v || `{{${i + 1}}}`); });
+    return t;
+  };
+
+  const modeleDe = (fil) => {
+    const cle = choix[fil.id];
+    if (!cle || !modeles) return null;
+    return modeles.find((m) => `${m.nom}|${m.langue}` === cle) || null;
+  };
+
+  /** Ouvre le panneau et charge la liste des modèles (une seule fois). */
+  const ouvrirModeles = async (fil) => {
+    setPanneau((p) => ({ ...p, [fil.id]: !p[fil.id] }));
+    if (modeles || panneau[fil.id]) return;
+    setErreurModeles("");
+    try {
+      const r = await axios.get(`${API}/private/whatsapp/modeles`);
+      if (r.data?.success) setModeles(r.data.modeles || []);
+      else setErreurModeles(r.data?.erreur || "Liste indisponible.");
+    } catch (e) {
+      const code = e?.response?.status;
+      setErreurModeles(code === 401 || code === 403
+        ? "Session non signée. Reconnecte-toi."
+        : `Liste indisponible (HTTP ${code || "réseau"}).`);
+    }
+  };
+
+  /** `simuler = true` -> montre l'appel construit, n'envoie RIEN. */
+  const envoyerModele = async (fil, simuler) => {
+    const m = modeleDe(fil);
+    if (!m) return;
+    const vars = (varsModele[fil.id] || []).slice(0, m.variables);
+
+    if (!simuler) {
+      if (!window.confirm(
+        `Envoyer le modèle « ${m.nom} » sur WhatsApp à ` +
+        `${nomPropre(fil.participant_1_name, fil.phone)} (${fil.phone || "—"}) ?\n\n` +
+        `${apercuModele(m, vars)}\n\nCe message part immédiatement.`
+      )) return;
+    }
+
+    setOccupe((p) => ({ ...p, [fil.id]: simuler ? "simulation" : "modele" }));
+    setAvis((p) => ({ ...p, [fil.id]: null }));
+    try {
+      const r = await axios.post(`${API}/private/whatsapp/modele/envoyer`, {
+        conversation_id: fil.id, modele: m.nom, langue: m.langue,
+        variables: vars, simulation: simuler,
+      });
+      if (simuler) {
+        setSimulation((p) => ({ ...p, [fil.id]: r.data }));
+        setAvis((p) => ({ ...p, [fil.id]: { type: "info",
+          texte: "Simulation : aucun appel n'a été envoyé à WhatsApp." } }));
+      } else if (r.data?.success) {
+        setSimulation((p) => ({ ...p, [fil.id]: null }));
+        setAvis((p) => ({ ...p, [fil.id]: { type: "ok",
+          texte: r.data.avertissement || "Modèle envoyé." } }));
+        setMessages((p) => ({ ...p, [fil.id]: [...(p[fil.id] || []), {
+          id: `local-${Date.now()}`, sender_id: "admin_afroboost",
+          content: r.data.apercu, created_at: new Date().toISOString(), manuel: true,
+        }] }));
+      } else {
+        setAvis((p) => ({ ...p, [fil.id]: { type: "erreur",
+          texte: r.data?.erreur || "WhatsApp a refusé le modèle." } }));
+      }
+    } catch (e) {
+      const code = e?.response?.status;
+      setAvis((p) => ({ ...p, [fil.id]: { type: "erreur",
+        texte: e?.response?.data?.detail || `Échec (HTTP ${code || "réseau"}).` } }));
     } finally {
       setOccupe((p) => ({ ...p, [fil.id]: null }));
     }
@@ -514,6 +599,151 @@ export default function MessagesWhatsApp() {
                       }}>
                         {avis[fil.id].texte}
                       </span>
+                    )}
+                  </div>
+
+                  {/* V435 — MODÈLE APPROUVÉ.
+                      Nécessaire dès que le client n'a plus écrit depuis 24 h :
+                      Meta refuse alors tout texte libre. */}
+                  <div style={{ marginTop: 10, paddingTop: 8, borderTop: BORDURE }}>
+                    <button
+                      onClick={() => ouvrirModeles(fil)}
+                      data-testid={`ouvrir-modeles-${fil.id}`}
+                      style={{
+                        padding: "5px 10px", borderRadius: 8, fontSize: 11.5,
+                        border: BORDURE, background: "rgba(255,255,255,0.05)",
+                        color: "rgba(255,255,255,0.75)", cursor: "pointer",
+                      }}
+                    >
+                      {panneau[fil.id] ? "Masquer les modèles" : "Envoyer le modèle"}
+                    </button>
+
+                    {panneau[fil.id] && (
+                      <div style={{ marginTop: 8 }}>
+                        <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11,
+                                      lineHeight: 1.5, marginBottom: 6 }}>
+                          À utiliser quand le client n'a pas écrit depuis plus de 24 h :
+                          WhatsApp n'accepte alors qu'un modèle approuvé à l'avance.
+                        </div>
+
+                        {erreurModeles && (
+                          <div style={{ color: "#ff8080", fontSize: 11.5 }}>{erreurModeles}</div>
+                        )}
+                        {!modeles && !erreurModeles && (
+                          <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 12 }}>Chargement…</div>
+                        )}
+
+                        {modeles && (
+                          <>
+                            <select
+                              value={choix[fil.id] || ""}
+                              onChange={(e) => {
+                                setChoix((p) => ({ ...p, [fil.id]: e.target.value }));
+                                setSimulation((p) => ({ ...p, [fil.id]: null }));
+                                // Premier champ pré-rempli avec le prénom : c'est
+                                // la variable attendue dans presque tous les cas.
+                                setVarsModele((p) => ({ ...p,
+                                  [fil.id]: [nomPropre(fil.participant_1_name, "").split(" ")[0] || ""] }));
+                              }}
+                              data-testid={`choix-modele-${fil.id}`}
+                              style={{
+                                width: "100%", padding: "7px 9px", borderRadius: 8,
+                                border: BORDURE, background: "rgba(0,0,0,0.3)",
+                                color: "rgba(255,255,255,0.9)", fontSize: 12.5,
+                              }}
+                            >
+                              <option value="">— choisir un modèle —</option>
+                              {modeles.map((m) => (
+                                <option key={`${m.nom}|${m.langue}`} value={`${m.nom}|${m.langue}`}
+                                        disabled={m.statut !== "APPROVED"}>
+                                  {m.nom} ({m.langue}) — {m.statut === "APPROVED"
+                                    ? `${m.variables} variable(s)` : m.statut}
+                                </option>
+                              ))}
+                            </select>
+
+                            {modeleDe(fil) && (
+                              <div style={{ marginTop: 8 }}>
+                                {Array.from({ length: modeleDe(fil).variables }).map((_, i) => (
+                                  <input
+                                    key={i}
+                                    value={(varsModele[fil.id] || [])[i] || ""}
+                                    onChange={(e) => setVarsModele((p) => {
+                                      const v = [...(p[fil.id] || [])];
+                                      v[i] = e.target.value;
+                                      return { ...p, [fil.id]: v };
+                                    })}
+                                    placeholder={i === 0 ? "Variable 1 (prénom)" : `Variable ${i + 1}`}
+                                    data-testid={`var-${i}-${fil.id}`}
+                                    style={{
+                                      width: "100%", padding: "6px 9px", marginBottom: 6,
+                                      borderRadius: 8, border: BORDURE,
+                                      background: "rgba(0,0,0,0.25)",
+                                      color: "rgba(255,255,255,0.9)", fontSize: 12.5,
+                                    }}
+                                  />
+                                ))}
+
+                                <div style={{
+                                  padding: "8px 10px", borderRadius: 8, border: BORDURE,
+                                  background: "rgba(var(--primary-rgb, 217, 28, 210), 0.07)",
+                                  color: "rgba(255,255,255,0.85)", fontSize: 12.5,
+                                  whiteSpace: "pre-wrap", lineHeight: 1.45,
+                                }}>
+                                  {apercuModele(modeleDe(fil), varsModele[fil.id])}
+                                  {(modeleDe(fil).boutons || []).map((b, i) => (
+                                    <div key={i} style={{
+                                      marginTop: 6, paddingTop: 6, borderTop: BORDURE,
+                                      color: PRIMAIRE, fontSize: 12, fontWeight: 600,
+                                    }}>
+                                      [ {b.texte} ] {b.url ? `→ ${b.url}` : ""}
+                                    </div>
+                                  ))}
+                                </div>
+
+                                <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                                  <button
+                                    onClick={() => envoyerModele(fil, true)}
+                                    disabled={!!occupe[fil.id]}
+                                    data-testid={`simuler-${fil.id}`}
+                                    style={{
+                                      padding: "6px 12px", borderRadius: 8, fontSize: 12,
+                                      border: BORDURE, background: "rgba(255,255,255,0.05)",
+                                      color: "rgba(255,255,255,0.75)", cursor: "pointer",
+                                    }}
+                                  >
+                                    {occupe[fil.id] === "simulation" ? "…" : "Voir l'appel (sans envoyer)"}
+                                  </button>
+                                  <button
+                                    onClick={() => envoyerModele(fil, false)}
+                                    disabled={!!occupe[fil.id]}
+                                    data-testid={`envoyer-modele-${fil.id}`}
+                                    style={{
+                                      padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                                      border: "none", color: "#fff",
+                                      background: occupe[fil.id] ? "rgba(255,255,255,0.12)"
+                                        : "linear-gradient(135deg, var(--primary-color, #D91CD2), rgba(139,92,246,0.9))",
+                                      cursor: occupe[fil.id] ? "default" : "pointer",
+                                    }}
+                                  >
+                                    {occupe[fil.id] === "modele" ? "Envoi…" : "Envoyer le modèle"}
+                                  </button>
+                                </div>
+
+                                {simulation[fil.id] && (
+                                  <pre style={{
+                                    marginTop: 8, padding: 8, borderRadius: 8, border: BORDURE,
+                                    background: "rgba(0,0,0,0.35)", color: "rgba(255,255,255,0.7)",
+                                    fontSize: 10.5, overflowX: "auto", maxHeight: 220,
+                                  }}>
+{JSON.stringify(simulation[fil.id], null, 2)}
+                                  </pre>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
