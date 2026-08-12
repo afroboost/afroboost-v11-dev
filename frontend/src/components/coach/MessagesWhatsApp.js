@@ -99,6 +99,12 @@ export default function MessagesWhatsApp() {
   const [ouvert, setOuvert] = useState(null);
   const [suppression, setSuppression] = useState(null); // id du fil en cours de suppression
 
+  // V434 — réponse manuelle. `brouillons` est indexé par fil : passer d'une
+  // conversation à l'autre ne fait pas perdre ce qu'on était en train d'écrire.
+  const [brouillons, setBrouillons] = useState({});   // { conversation_id: texte }
+  const [occupe, setOccupe] = useState({});           // { conversation_id: "proposer"|"ameliorer"|"envoi" }
+  const [avis, setAvis] = useState({});               // { conversation_id: {type, texte} }
+
   /** V433 : au-delà de ce nombre de fils, la liste défile au lieu de pousser la
    *  page. En dessous, on ne met AUCUNE contrainte de hauteur : encadrer trois
    *  conversations dans une zone qui défile ferait un cadre vide et inutile. */
@@ -185,6 +191,77 @@ export default function MessagesWhatsApp() {
     }
   };
 
+  /** V434 : demande un brouillon à l'assistant. N'ENVOIE RIEN — le texte
+   *  atterrit dans le champ de saisie, où il reste modifiable. */
+  const assister = async (fil, mode) => {
+    setOccupe((p) => ({ ...p, [fil.id]: mode }));
+    setAvis((p) => ({ ...p, [fil.id]: null }));
+    try {
+      const r = await axios.post(`${API}/private/whatsapp/brouillon`, {
+        conversation_id: fil.id,
+        mode,
+        brouillon: brouillons[fil.id] || "",
+      });
+      if (r.data?.success && r.data?.texte) {
+        setBrouillons((p) => ({ ...p, [fil.id]: r.data.texte }));
+        setAvis((p) => ({ ...p, [fil.id]: { type: "info",
+          texte: "Brouillon proposé — relis-le et modifie-le avant d'envoyer." } }));
+      } else {
+        setAvis((p) => ({ ...p, [fil.id]: { type: "erreur",
+          texte: r.data?.erreur || "L'assistant n'a rien renvoyé." } }));
+      }
+    } catch (e) {
+      const code = e?.response?.status;
+      setAvis((p) => ({ ...p, [fil.id]: { type: "erreur",
+        texte: code === 401 || code === 403
+          ? "Session non signée. Reconnecte-toi."
+          : `Assistant indisponible (HTTP ${code || "réseau"}).` } }));
+    } finally {
+      setOccupe((p) => ({ ...p, [fil.id]: null }));
+    }
+  };
+
+  /** V434 : envoie le message. SEUL endroit du composant qui écrit au client,
+   *  et il n'est atteint que par un clic sur « Envoyer » suivi d'une
+   *  confirmation. L'assistant ne peut pas l'appeler. */
+  const envoyer = async (fil) => {
+    const texte = (brouillons[fil.id] || "").trim();
+    if (!texte) return;
+    const nom = nomPropre(fil.participant_1_name, fil.phone);
+    if (!window.confirm(
+      `Envoyer ce message sur WhatsApp à ${nom} (${fil.phone || "—"}) ?\n\n` +
+      `${texte.slice(0, 400)}${texte.length > 400 ? "…" : ""}`
+    )) return;
+
+    setOccupe((p) => ({ ...p, [fil.id]: "envoi" }));
+    setAvis((p) => ({ ...p, [fil.id]: null }));
+    try {
+      const r = await axios.post(`${API}/private/whatsapp/envoyer`, {
+        conversation_id: fil.id, texte,
+      });
+      if (r.data?.success) {
+        setBrouillons((p) => ({ ...p, [fil.id]: "" }));
+        setAvis((p) => ({ ...p, [fil.id]: { type: "ok", texte: "Message envoyé." } }));
+        // Affichage immédiat, sans recharger tout le fil.
+        setMessages((p) => ({ ...p, [fil.id]: [...(p[fil.id] || []), {
+          id: `local-${Date.now()}`, sender_id: "admin_afroboost",
+          content: texte, created_at: r.data.envoye_le, manuel: true,
+        }] }));
+      } else {
+        setAvis((p) => ({ ...p, [fil.id]: { type: "erreur",
+          texte: r.data?.erreur || "WhatsApp a refusé le message." } }));
+      }
+    } catch (e) {
+      const code = e?.response?.status;
+      setAvis((p) => ({ ...p, [fil.id]: { type: "erreur",
+        texte: code === 401 || code === 403
+          ? "Session non signée. Reconnecte-toi."
+          : e?.response?.data?.detail || `Envoi impossible (HTTP ${code || "réseau"}).` } }));
+    } finally {
+      setOccupe((p) => ({ ...p, [fil.id]: null }));
+    }
+  };
+
   if (refus) {
     return (
       <div style={{ padding: 16, borderRadius: 10, border: BORDURE, background: "rgba(255,255,255,0.03)" }}>
@@ -230,8 +307,9 @@ export default function MessagesWhatsApp() {
         border: BORDURE, background: "rgba(255,255,255,0.03)",
         color: "rgba(255,255,255,0.55)", fontSize: 11, lineHeight: 1.5,
       }}>
-        Lecture seule. « Envoyé » désigne la réponse automatique (IA ou menu du bot) —
-        les envois de campagnes n'apparaissent pas ici.
+        « Envoyé » désigne soit la réponse automatique (IA ou menu du bot), soit un
+        message que vous avez écrit ici. Les envois de campagnes n'apparaissent pas
+        dans ces fils. Aucun message ne part sans votre clic sur « Envoyer ».
       </div>
 
       {erreur && (
@@ -341,7 +419,8 @@ export default function MessagesWhatsApp() {
                           fontSize: 10, fontWeight: 700, marginBottom: 3,
                           textTransform: "uppercase", letterSpacing: ".04em",
                         }}>
-                          {sortant ? "Envoyé" : "Reçu"} · {dateHeure(m.created_at)}
+                          {sortant ? (m.manuel ? "Envoyé par vous" : "Envoyé (auto)") : "Reçu"}
+                          {" · "}{dateHeure(m.created_at)}
                         </div>
                         <div style={{
                           color: "rgba(255,255,255,0.9)", fontSize: 13,
@@ -353,6 +432,91 @@ export default function MessagesWhatsApp() {
                     </div>
                   );
                 })}
+
+                {/* V434 — RÉPONDRE SOI-MÊME.
+                    Le texte de l'assistant atterrit dans CE champ : il reste
+                    modifiable, et rien ne part tant que « Envoyer » n'est pas
+                    cliqué puis confirmé. */}
+                <div style={{ marginTop: 12, paddingTop: 10, borderTop: BORDURE }}>
+                  <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+                    <button
+                      onClick={() => assister(fil, "proposer")}
+                      disabled={!!occupe[fil.id]}
+                      data-testid={`ia-proposer-${fil.id}`}
+                      style={{
+                        padding: "5px 10px", borderRadius: 8, fontSize: 11.5,
+                        border: `1px solid ${PRIMAIRE}`, background: "rgba(var(--primary-rgb, 217, 28, 210), 0.12)",
+                        color: PRIMAIRE, cursor: occupe[fil.id] ? "default" : "pointer",
+                        opacity: occupe[fil.id] ? 0.5 : 1,
+                      }}
+                    >
+                      {occupe[fil.id] === "proposer" ? "Rédaction…" : "Proposer une réponse"}
+                    </button>
+                    <button
+                      onClick={() => assister(fil, "ameliorer")}
+                      disabled={!!occupe[fil.id] || !(brouillons[fil.id] || "").trim()}
+                      title={!(brouillons[fil.id] || "").trim()
+                        ? "Écris d'abord un brouillon" : "Reformuler et corriger"}
+                      data-testid={`ia-ameliorer-${fil.id}`}
+                      style={{
+                        padding: "5px 10px", borderRadius: 8, fontSize: 11.5,
+                        border: BORDURE, background: "rgba(255,255,255,0.05)",
+                        color: "rgba(255,255,255,0.75)",
+                        cursor: (occupe[fil.id] || !(brouillons[fil.id] || "").trim())
+                          ? "default" : "pointer",
+                        opacity: (occupe[fil.id] || !(brouillons[fil.id] || "").trim()) ? 0.45 : 1,
+                      }}
+                    >
+                      {occupe[fil.id] === "ameliorer" ? "Correction…" : "Améliorer"}
+                    </button>
+                  </div>
+
+                  <textarea
+                    value={brouillons[fil.id] || ""}
+                    onChange={(e) => setBrouillons((p) => ({ ...p, [fil.id]: e.target.value }))}
+                    placeholder="Écris ta réponse, ou demande une proposition à l'assistant…"
+                    rows={4}
+                    data-testid={`saisie-${fil.id}`}
+                    style={{
+                      width: "100%", padding: "8px 10px", borderRadius: 8,
+                      border: BORDURE, background: "rgba(0,0,0,0.25)",
+                      color: "rgba(255,255,255,0.92)", fontSize: 13, lineHeight: 1.45,
+                      resize: "vertical", fontFamily: "inherit",
+                    }}
+                  />
+
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
+                    <button
+                      onClick={() => envoyer(fil)}
+                      disabled={!!occupe[fil.id] || !(brouillons[fil.id] || "").trim()}
+                      data-testid={`envoyer-${fil.id}`}
+                      style={{
+                        padding: "7px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: 700,
+                        border: "none", color: "#fff",
+                        background: (occupe[fil.id] || !(brouillons[fil.id] || "").trim())
+                          ? "rgba(255,255,255,0.12)"
+                          : "linear-gradient(135deg, var(--primary-color, #D91CD2), rgba(139,92,246,0.9))",
+                        cursor: (occupe[fil.id] || !(brouillons[fil.id] || "").trim())
+                          ? "default" : "pointer",
+                      }}
+                    >
+                      {occupe[fil.id] === "envoi" ? "Envoi…" : "Envoyer"}
+                    </button>
+                    <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 11 }}>
+                      {(brouillons[fil.id] || "").length}/4096
+                    </span>
+                    {avis[fil.id] && (
+                      <span style={{
+                        fontSize: 11.5, flex: 1,
+                        color: avis[fil.id].type === "erreur" ? "#ff8080"
+                             : avis[fil.id].type === "ok" ? "#7ee08a"
+                             : "rgba(255,255,255,0.6)",
+                      }}>
+                        {avis[fil.id].texte}
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </div>

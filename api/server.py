@@ -1065,11 +1065,6 @@ class FeatureFlags(BaseModel):
     # se comporte exactement comme aujourd'hui. Déclaré maintenant pour que la bascule
     # se fasse sans redéploiement, le jour où le menu sera branché et testé.
     BOT_MENU_ENABLED: bool = False
-    # V433 : relance automatique UNIQUE d'une intention d'achat restée sans
-    # paiement. Défaut FALSE, et volontairement laissé éteint à la livraison :
-    # c'est le propriétaire qui l'allumera, une fois le texte relu. Éteint, la
-    # trace des intentions continue d'être écrite — seul l'ENVOI est bloqué.
-    RELANCE_ACHAT_ENABLED: bool = False
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1084,7 +1079,6 @@ class FeatureFlagsUpdate(BaseModel):
     SUPERADMIN_JWT_STRICT: Optional[bool] = None  # V344
     CHAT_READ_STRICT: Optional[bool] = None  # V349
     BOT_MENU_ENABLED: Optional[bool] = None  # V367
-    RELANCE_ACHAT_ENABLED: Optional[bool] = None  # V433
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -14704,8 +14698,7 @@ async def get_feature_flags():
                          ("STREAMING_SERVICE_ENABLED", False), ("SUBSCRIBER_STRICT_ENTRY", False),
                          ("REQUIRE_COACH_JWT", False), ("PAWAPAY_ENABLED", False),
                          ("PUBLICATIONS_NO_EXPIRY", False), ("SUPERADMIN_JWT_STRICT", False),
-                         ("CHAT_READ_STRICT", False), ("BOT_MENU_ENABLED", False),
-                         ("RELANCE_ACHAT_ENABLED", False)):   # V433 : défaut OFF
+                         ("CHAT_READ_STRICT", False), ("BOT_MENU_ENABLED", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags
@@ -15351,15 +15344,9 @@ async def handle_whatsapp_webhook(webhook: WhatsAppWebhook):
             max_tokens=1000
         )
         ai_response = response.choices[0].message.content
-
-        # V433 : même filet que sur le webhook Meta. Ce chemin Twilio n'est plus
-        # le chemin de production, mais il reste monté : le laisser capable de
-        # signer « [Votre Nom] » serait une porte ouverte oubliée.
-        from api.routes.vente_whatsapp import assainir as _v433_assainir_twilio
-        ai_response = _v433_assainir_twilio(ai_response)
-
+        
         response_time = time.time() - start_time
-
+        
         # Sauvegarder le log
         log_entry = AILog(
             fromPhone=from_phone,
@@ -15629,55 +15616,6 @@ async def handle_meta_whatsapp_webhook(request: Request):
                     except Exception:
                         pass
 
-                # === V433 : INTENTION D'ACHAT -> LIEN DE PAIEMENT, SANS L'IA ===
-                #
-                # PLACÉ ICI, ET PAS AILLEURS : après le STOP (V332), qui prime sur
-                # tout, après le bot à menus (V369b), qui garde la main sur les
-                # numéros de sa liste blanche — et AVANT le flux IA, qui est
-                # précisément ce qui a fait perdre la vente du 10 août.
-                #
-                # POURQUOI NE PAS SIMPLEMENT MIEUX INSTRUIRE L'IA : un prompt est
-                # une suggestion faite à un modèle. Pour la seule chose qui
-                # rapporte de l'argent — envoyer le bon lien — on ne dépend pas
-                # d'une suggestion. Le texte et le lien sont construits par du
-                # code déterministe ; l'IA garde tout le reste.
-                #
-                # Le prix vient de `compute_active_price` côté serveur et le lien
-                # de la session Stripe : rien n'est écrit en dur ici, une hausse
-                # de tarif se propage sans toucher à ce fichier.
-                try:
-                    from api.routes.vente_whatsapp import (
-                        intention_achat as _v433_intention,
-                        repondre_achat as _v433_repondre,
-                        noter_intention as _v433_noter)
-                    if _v433_intention(incoming_message):
-                        _payloads, _texte, _sid = await _v433_repondre(
-                            from_phone, meta_contact_name)
-                        if _payloads:
-                            from api.routes.bot_whatsapp_routes import (
-                                envoyer_payload as _v433_envoyer)
-                            for _p in _payloads:
-                                await _v433_envoyer(from_phone, _p)
-                            await _save_whatsapp_conversation(
-                                from_phone=from_phone,
-                                contact_name=meta_contact_name,
-                                incoming_message=incoming_message,
-                                ai_response=_texte)
-                            # Mémorise l'intérêt pour une éventuelle relance. La
-                            # trace s'écrit toujours ; l'ENVOI, lui, reste sous
-                            # drapeau (éteint par défaut).
-                            await _v433_noter(from_phone, meta_contact_name,
-                                              session_id=_sid)
-                            logger.info(f"[V433] lien de paiement envoyé à "
-                                        f"…{from_phone[-4:]}")
-                            processed += 1
-                            continue
-                        # `None` = offre introuvable : on ne laisse PAS la personne
-                        # sans réponse, on retombe simplement sur l'IA ci-dessous.
-                except Exception as _e_v433:
-                    logger.error(f"[V433] réponse d'achat ignorée "
-                                 f"({type(_e_v433).__name__}: {_e_v433}) — repli IA")
-
                 # === RÉUTILISER LE MÊME FLUX QUE LE WEBHOOK TWILIO ===
                 start_time = time.time()
 
@@ -15715,18 +15653,7 @@ async def handle_meta_whatsapp_webhook(request: Request):
                 if last_media:
                     context += f"\n\nNote: Tu as récemment envoyé un média à ce client: {last_media}. Tu peux lui demander s'il l'a bien reçu."
 
-                # V433 : l'identité d'Afroboost est imposée en CODE, en TÊTE du
-                # prompt. Mesuré le 12/08 : `ai_config.systemPrompt` est VIDE en
-                # base — le modèle répondait donc sans savoir qui il représente,
-                # d'où « contactez l'organisateur » (Afroboost EST l'organisateur)
-                # et la signature « [Votre Nom] » envoyée à une vraie cliente.
-                # Poser ce texte en base l'exposerait à disparaître au premier
-                # enregistrement depuis le dashboard ; en code, il est versionné.
-                # Ce que le coach écrit dans le dashboard reste respecté : son
-                # prompt vient APRÈS et peut préciser, pas effacer l'identité.
-                from api.routes.vente_whatsapp import PROMPT_BASE as _V433_PROMPT
-                full_system_prompt = (
-                    _V433_PROMPT + "\n\n" + (ai_config.get("systemPrompt", "") or "") + context)
+                full_system_prompt = ai_config.get("systemPrompt", "") + context
 
                 # 4. Appeler l'IA
                 try:
@@ -15757,14 +15684,6 @@ async def handle_meta_whatsapp_webhook(request: Request):
                         max_tokens=1000
                     )
                     ai_response = response.choices[0].message.content
-
-                    # V433 : dernier filet. Un prompt reste une SUGGESTION faite à
-                    # un modèle : ce qui doit être impossible doit l'être par le
-                    # code. Retire les placeholders ([Votre Nom]…), remplace la
-                    # formule épistolaire par « L'équipe Afroboost » et neutralise
-                    # tout renvoi vers « l'organisateur » ou un site tiers.
-                    from api.routes.vente_whatsapp import assainir as _v433_assainir
-                    ai_response = _v433_assainir(ai_response)
 
                     response_time = time.time() - start_time
 
@@ -19409,6 +19328,134 @@ async def v433_supprimer_conversation(conversation_id: str, request: Request):
     }
 
 
+# === V434 — RÉPONDRE SOI-MÊME, AVEC UNE AIDE À LA RÉDACTION ===
+#
+# Ces deux routes sont les SEULS appelants de `api.routes.vente_whatsapp`. Le
+# webhook n'y touche pas : le bot IA automatique garde exactement le
+# comportement qu'il avait — même prompt, mêmes réponses, même signature.
+#
+# La séparation est nette et voulue :
+#   /brouillon  -> fabrique du TEXTE, n'envoie rien, n'écrit rien en base ;
+#   /envoyer    -> envoie CE QUE L'ADMIN A DANS SON CHAMP, et rien d'autre.
+# Aucune route ne fait les deux. Un brouillon ne peut donc pas partir tout seul,
+# même si le navigateur enchaînait les appels par erreur : le texte envoyé est
+# celui du corps de la requête d'envoi, pas celui qu'a produit l'assistant.
+
+class V434Brouillon(BaseModel):
+    conversation_id: str
+    mode: str = "proposer"          # « proposer » ou « ameliorer »
+    brouillon: Optional[str] = ""
+
+
+class V434Envoi(BaseModel):
+    conversation_id: str
+    texte: str
+
+
+@api_router.post("/private/whatsapp/brouillon")
+async def v434_brouillon(corps: V434Brouillon, request: Request):
+    """V434 : propose ou améliore un brouillon. N'ENVOIE RIEN.
+
+    Même verrou que la lecture du fil (V411) : cette route lit la conversation
+    d'un membre pour en tirer le contexte, elle expose donc des données
+    personnelles au modèle et à l'écran. Jeton super-admin signé exigé.
+    """
+    _v411_exiger_super_admin(request, "rédaction assistée WhatsApp")
+
+    conv = await db.private_conversations.find_one(
+        {"id": corps.conversation_id}, {"_id": 0, "id": 1})
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation introuvable.")
+
+    if corps.mode not in ("proposer", "ameliorer"):
+        raise HTTPException(status_code=400, detail="Mode inconnu.")
+
+    from api.routes.vente_whatsapp import rediger
+    texte, erreur = await rediger(corps.conversation_id, corps.mode,
+                                  corps.brouillon or "")
+    if erreur:
+        return {"success": False, "erreur": erreur}
+    return {"success": True, "texte": texte}
+
+
+@api_router.post("/private/whatsapp/envoyer")
+async def v434_envoyer(corps: V434Envoi, request: Request):
+    """V434 : envoie le message QUE L'ADMIN A ÉCRIT. Un clic = un message.
+
+    Rien n'est ajouté au texte reçu — ni signature, ni lien, ni mise en forme :
+    ce que l'admin a relu à l'écran est exactement ce qui part. Réécrire le
+    texte ici rendrait la relecture mensongère.
+
+    Le message est ensuite rangé dans le fil comme un message SORTANT, marqué
+    `manuel: True`, pour qu'on distingue plus tard ce que l'équipe a écrit de ce
+    que le bot a répondu tout seul.
+    """
+    appelant = _v411_exiger_super_admin(request, "envoi WhatsApp manuel")
+
+    texte = (corps.texte or "").strip()
+    if not texte:
+        raise HTTPException(status_code=400, detail="Message vide : rien à envoyer.")
+    if len(texte) > 4096:
+        raise HTTPException(status_code=400, detail="Message trop long (4096 caractères max).")
+
+    conv = await db.private_conversations.find_one({"id": corps.conversation_id}, {"_id": 0})
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation introuvable.")
+
+    # Le numéro : le champ `phone` du fil, sinon reconstruit depuis l'identifiant
+    # `whatsapp_<numéro>` — les fils les plus anciens n'ont pas toujours `phone`.
+    telephone = (conv.get("phone") or "").strip()
+    if not telephone:
+        for pid in (conv.get("participant_1_id"), conv.get("participant_2_id")):
+            if str(pid or "").startswith("whatsapp_"):
+                telephone = "+" + str(pid)[len("whatsapp_"):]
+                break
+    if not telephone:
+        raise HTTPException(status_code=400,
+                            detail="Ce fil ne porte aucun numéro WhatsApp.")
+
+    resultat = await send_whatsapp_direct(to_phone=telephone, message=texte)
+    statut = (resultat or {}).get("status")
+
+    if statut not in ("sent", "success", "queued", "simulated"):
+        # On ne range RIEN dans le fil quand l'envoi a échoué : y faire figurer
+        # un message jamais reçu ferait croire à une réponse envoyée.
+        # Cas le plus fréquent : la fenêtre de 24 h de Meta est fermée (aucun
+        # message du client depuis 24 h) — un texte libre est alors refusé, seul
+        # un template approuvé passe.
+        logger.warning(f"[V434] envoi refusé vers …{telephone[-4:]} : {str(resultat)[:200]}")
+        return {"success": False, "statut": statut,
+                "erreur": (resultat or {}).get("error")
+                          or (resultat or {}).get("message")
+                          or "WhatsApp a refusé le message. Si le client n'a pas "
+                             "écrit depuis plus de 24 h, Meta n'autorise plus le "
+                             "texte libre : il faut attendre qu'il réponde."}
+
+    horodatage = datetime.now(timezone.utc).isoformat()
+    await db.private_messages.insert_one({
+        "id": str(uuid.uuid4()),
+        "conversation_id": corps.conversation_id,
+        "sender_id": "admin_afroboost",
+        "sender_name": "Afroboost (équipe)",
+        "recipient_id": (conv.get("participant_1_id")
+                         if str(conv.get("participant_1_id") or "").startswith("whatsapp_")
+                         else conv.get("participant_2_id")),
+        "recipient_name": conv.get("participant_1_name") or telephone,
+        "content": texte,
+        "created_at": horodatage,
+        "is_deleted": False,
+        "channel": "whatsapp",
+        "manuel": True,              # V434 : écrit par un humain, pas par le bot
+        "envoye_par": appelant,
+    })
+    await db.private_conversations.update_one(
+        {"id": corps.conversation_id},
+        {"$set": {"last_message": texte[:100], "last_message_at": horodatage}})
+
+    logger.info(f"[V434] message manuel envoyé à …{telephone[-4:]} par {appelant}")
+    return {"success": True, "statut": statut, "envoye_le": horodatage}
+
+
 @api_router.put("/private/messages/read/{conversation_id}")
 async def mark_private_messages_read(conversation_id: str, reader_id: str, request: Request):
     """
@@ -19426,23 +19473,6 @@ async def mark_private_messages_read(conversation_id: str, reader_id: str, reque
         {"$set": {"is_read": True}}
     )
     return {"success": True, "marked_read": result.modified_count}
-
-@api_router.get("/vente/relances/apercu")
-async def v433_apercu_relances(request: Request):
-    """V433 : QUI serait relancé, et avec QUEL texte. N'ENVOIE RIEN.
-
-    Route de LECTURE, mais elle expose des noms : elle exige donc le même jeton
-    super-admin que les fils (règle « aucune donnée personnelle sans
-    authentification »). Les numéros sont tronqués aux 4 derniers chiffres — un
-    aperçu n'a pas besoin de plus.
-    """
-    _v411_exiger_super_admin(request, "aperçu des relances d'achat")
-    from api.routes.vente_whatsapp import envoyer_relances, relance_active, DRAPEAU_RELANCE
-    resultat = await envoyer_relances(apercu=True)
-    resultat["drapeau"] = DRAPEAU_RELANCE
-    resultat["relance_active"] = await relance_active()
-    return resultat
-
 
 @api_router.get("/private/unread/{participant_id}")
 async def get_unread_private_count(participant_id: str, request: Request):
@@ -24643,30 +24673,6 @@ async def _v307_resolve_jwt_secret():
     logger.warning("[V307] JWT_SECRET absent (env/fichier/mongo) — masquage des codes INACTIF")
 
 
-async def _v433_boucle_relances():
-    """V433 — relance d'achat : la boucle TOURNE, mais elle n'ENVOIE rien.
-
-    Même motif que `_campaign_scheduler_loop` (V328) : une tâche asyncio native,
-    car les crons de `vercel.json` ne s'exécutent pas sur Coolify.
-
-    Le drapeau n'est PAS testé ici mais dans `envoyer_relances`, au plus près de
-    l'envoi. Le tester ici laisserait croire, en lisant ce fichier, que la garde
-    est unique : elle doit tenir même si un jour on appelle la fonction depuis
-    un autre endroit. Tant que RELANCE_ACHAT_ENABLED est absent ou faux, chaque
-    passage se termine sans qu'aucun message ne parte.
-    """
-    await asyncio.sleep(90)   # laisser l'application finir de démarrer
-    while True:
-        try:
-            from api.routes.vente_whatsapp import envoyer_relances
-            r = await envoyer_relances(apercu=False)
-            if r.get("envoyees"):
-                logger.info(f"[V433] {r['envoyees']} relance(s) envoyée(s)")
-        except Exception as e:
-            logger.warning(f"[V433] passage de relance ignoré : {e}")
-        await asyncio.sleep(30 * 60)
-
-
 @fastapi_app.on_event("startup")
 async def startup_db():
     """Initialize database indexes on startup (APScheduler disabled in Vercel Serverless)."""
@@ -24760,12 +24766,6 @@ async def startup_db():
         logger.info("[SCHEDULER-CAMPAGNE] Boucle d'envoi automatique demarree (60s)")
     except Exception as e:
         logger.warning(f"[SCHEDULER-CAMPAGNE] Demarrage ignore: {e}")
-
-    try:
-        asyncio.create_task(_v433_boucle_relances())
-        logger.info("[V433] Boucle de relance d'achat demarree (30 min, drapeau OFF)")
-    except Exception as e:
-        logger.warning(f"[V433] Demarrage relance ignore: {e}")
 
     logger.info("[SYSTEM] Database indexes initialized")
 

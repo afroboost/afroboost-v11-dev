@@ -519,11 +519,6 @@ async def creer_lien_paiement(telephone, offre, etat):
         "dernier_lien_stripe": url,
         "dernier_lien_offre": identifiant,
         "dernier_lien_le": datetime.now(timezone.utc).isoformat(),
-        # V433 : on garde AUSSI l'identifiant de session Stripe. C'est lui qui
-        # permet plus tard de savoir si la personne a payé — sans quoi une
-        # relance pourrait partir vers quelqu'un qui a déjà réglé. Champ
-        # purement additif : rien de ce qui existait ne le lit.
-        "dernier_lien_session": (resultat or {}).get("sessionId"),
     })
     return _message_lien(offre, url), True
 

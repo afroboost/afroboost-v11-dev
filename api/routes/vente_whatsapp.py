@@ -1,44 +1,40 @@
 """
-V433 — WhatsApp : répondre à une intention d'ACHAT par un VRAI lien de paiement,
-et ne plus jamais signer « [Votre Nom] ».
+V434 — Assistant de RÉPONSE MANUELLE dans le viewer WhatsApp du dashboard.
 
-CE QUI S'EST PASSÉ (fil « Deborah Akaya », 10/08/2026, mesuré en base)
----------------------------------------------------------------------
-La cliente demandait la prévente du casque Silent (21-22 août, Montbenon) et
-« le lien pour faire le nécessaire ». La réponse partie automatiquement :
-
-    « … je vous recommande de visiter le site officiel de l'événement ou de
-      contacter directement l'organisateur … Cordialement, [Votre Nom] »
-
-Vente perdue, et un placeholder de brouillon envoyé à une vraie cliente.
-
-LA CAUSE, VÉRIFIÉE — ce n'est PAS le bot à menus
+CE MODULE N'ENVOIE RIEN ET NE RÉPOND À PERSONNE.
 ------------------------------------------------
-Le bot à boutons (`bot_whatsapp_routes`) ne répond qu'aux numéros de sa liste
-blanche (le coach seul) : il n'a jamais vu ce message. C'est le flux IA du
-webhook Meta qui a répondu — et `ai_config.systemPrompt` est **VIDE** en base.
-GPT-4o-mini recevait donc le message d'une cliente sans la moindre instruction :
-il ignorait qu'il EST Afroboost, d'où « contactez l'organisateur » (Afroboost
-est l'organisateur) et la signature de brouillon.
+Il ne fabrique que du TEXTE, à la demande de l'admin, pour qu'il le relise, le
+corrige et décide lui-même de l'envoyer. Aucune de ces fonctions n'est appelée
+par le webhook : le bot IA automatique garde EXACTEMENT le comportement qu'il
+avait, mêmes réponses, même signature, même prompt.
 
-TROIS COUCHES, DE LA PLUS SÛRE À LA PLUS GÉNÉRALE
--------------------------------------------------
-1. `intention_achat()` + `repondre_achat()` — DÉTERMINISTE, sans IA. Un message
-   qui parle d'achat reçoit le lien de paiement réel de l'offre. Aucune
-   formulation n'est laissée au hasard : c'est la couche qui rattrape la vente.
-2. `PROMPT_BASE` — l'identité qui manquait, imposée en CODE et non en base.
-   Posée en base, elle serait perdue au premier enregistrement du dashboard ;
-   ici elle est versionnée et revient avec un `git revert`.
-3. `assainir()` — dernier filet sur la sortie de l'IA : plus aucun placeholder
-   ni « contactez l'organisateur » ne peut sortir, quoi qu'ait produit le modèle.
+    webhook Meta  ─── STOP (V332) ─── bot à menus (V369b) ─── flux IA
+                                                               (inchangé)
 
-Aucune de ces couches n'envoie quoi que ce soit toute seule : elles CONSTRUISENT
-des textes. L'envoi reste au webhook, exactement là où il était.
+    dashboard ─── « Proposer une réponse » / « Améliorer » ─── texte affiché
+                                                               à l'admin
+                                                                   │
+                                                     l'admin relit et clique
+                                                                   ▼
+                                                              envoi manuel
+
+POURQUOI CETTE SÉPARATION EST STRICTE
+-------------------------------------
+Une fonction qui sait rédiger un message ET qui est joignable depuis le webhook
+finit tôt ou tard par répondre toute seule — au premier refactor, à la première
+ligne ajoutée « pour bien faire ». Ici, aucun appelant automatique n'existe :
+les deux seuls points d'entrée sont des routes du dashboard protégées par un
+jeton super-admin signé, déclenchées par un clic.
+
+CONNAISSANCE MÉTIER
+-------------------
+Le contexte donné au modèle (offres, dates, prix, lien) est LU EN BASE à chaque
+appel : aucun prix ni aucune date n'est écrit en dur ici. Une modification faite
+dans le dashboard se reflète immédiatement dans les brouillons.
 """
-import os
 import re
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -50,119 +46,116 @@ def init_vente_db(database):
     db = database
 
 
-# L'offre « Afroboost Silent avec Bassi » — casque Silent du Laff Festival.
-OFFRE_SILENT = "76a78f31-614a-415a-876b-9d2d1a4b441c"
-
 SITE = "https://afroboost.com"
 
 SIGNATURE = "L'équipe Afroboost"
 
-# Drapeau de la relance (point 3). ABSENT de la base = OFF : la relance ne peut
-# pas s'allumer par accident, il faut un geste explicite du propriétaire.
-DRAPEAU_RELANCE = "RELANCE_ACHAT_ENABLED"
+# L'offre « Afroboost Silent avec Bassi » — casque Silent du Laff Festival.
+OFFRE_SILENT = "76a78f31-614a-415a-876b-9d2d1a4b441c"
 
-COLLECTION_RELANCES = "relances_achat"
-
-# Délai avant la relance, et fenêtre au-delà de laquelle on renonce : relancer
-# quelqu'un une semaine après serait du démarchage, pas un rappel.
-HEURES_AVANT_RELANCE = 24
-HEURES_ABANDON = 96
-
-# Un paiement peut être marqué de plusieurs façons selon le chemin (Stripe
-# direct, pawaPay, boost). On les accepte toutes : se tromper ici enverrait une
-# relance à quelqu'un qui a DÉJÀ payé — la faute la plus grave de ce module.
-STATUTS_PAYES = {"paid", "completed", "complete", "succeeded", "success"}
+MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet",
+        "août", "septembre", "octobre", "novembre", "décembre"]
 
 
-# ---------------------------------------------------------------------------
-# 1. DÉTECTION DE L'INTENTION D'ACHAT
-# ---------------------------------------------------------------------------
+def lien_offre(offre_id):
+    """Lien de réservation STABLE vers une offre précise.
 
-# Mots qui, à eux seuls, disent l'intention d'acheter ou de réserver.
-_MOTS_ACHAT = [
-    "acheter", "achat", "acheté", "achete",
-    "prévente", "prevente", "pré-vente", "pre-vente", "prévendre",
-    "précommande", "precommande", "pré-commande",
-    "réserver", "reserver", "réservation", "reservation", "réserve",
-    "payer", "paiement", "paypal", "twint", "carte",
-    "billet", "billets", "ticket", "tickets", "place", "places",
-    "inscrire", "inscription", "commander", "commande",
-    "casque", "silent", "prix", "combien", "tarif", "coûte", "coute",
-]
-
-# « lien » seul est ambigu (on peut demander le lien d'une vidéo). On ne le
-# retient donc QUE s'il accompagne un mot de contexte — sauf « le lien pour »,
-# tournure du message réel de Deborah, qui ne laisse aucun doute.
-_MOTS_LIEN = ["lien", "link", "url"]
-_CONTEXTE_LIEN = ["pour", "afin", "réserv", "reserv", "achat", "acheter", "payer",
-                  "paiement", "inscri", "casque", "silent", "prévente", "prevente",
-                  "commande", "billet", "place", "nécessaire", "necessaire"]
-
-
-def _sans_accents_minuscule(texte):
-    """Compare sans accents : « réserver » et « reserver » doivent matcher pareil."""
-    t = (texte or "").lower()
-    for avant, apres in (("à", "a"), ("â", "a"), ("ä", "a"), ("é", "e"), ("è", "e"),
-                         ("ê", "e"), ("ë", "e"), ("î", "i"), ("ï", "i"), ("ô", "o"),
-                         ("ö", "o"), ("ù", "u"), ("û", "u"), ("ü", "u"), ("ç", "c")):
-        t = t.replace(avant, apres)
-    return t
-
-
-def intention_achat(texte) -> bool:
-    """Ce message parle-t-il d'acheter, de réserver, ou demande-t-il « le lien » ?
-
-    Volontairement LARGE : le coût d'un faux positif est d'envoyer poliment un
-    lien de réservation à quelqu'un qui n'achetait pas. Le coût d'un faux
-    négatif, lui, est une vente perdue — c'est exactement ce qui vient
-    d'arriver. L'asymétrie commande de pencher du côté large.
+    Pourquoi ce lien plutôt qu'une URL de paiement Stripe : une session Stripe
+    est à USAGE UNIQUE et expire en 24 h. Glissée dans un brouillon que l'admin
+    relit, corrige, puis envoie une heure plus tard — ou renvoie le lendemain à
+    quelqu'un d'autre — elle serait morte à l'arrivée. Ce lien-ci ouvre la carte
+    de l'offre (V371 : le site lit `?offre=<id>`, y fait défiler et la met en
+    évidence), d'où le bouton « Réserver » mène au paiement. Il reste valable
+    indéfiniment et se partage sans risque.
     """
-    if not texte:
-        return False
-    t = _sans_accents_minuscule(texte)
-
-    # Un « STOP » ne doit JAMAIS être lu comme une intention d'achat : il est
-    # traité en amont (V332), mais une garde ici coûte une ligne et évite une
-    # catastrophe si l'ordre des blocs changeait un jour.
-    if t.strip() in ("stop", "stop!", "arret", "arreter", "desabonnement"):
-        return False
-
-    for mot in _MOTS_ACHAT:
-        if _sans_accents_minuscule(mot) in t:
-            return True
-
-    if any(m in t for m in _MOTS_LIEN):
-        if any(_sans_accents_minuscule(c) in t for c in _CONTEXTE_LIEN):
-            return True
-
-    return False
+    return f"{SITE}/?offre={offre_id}" if offre_id else SITE
 
 
-# ---------------------------------------------------------------------------
-# 2. L'IDENTITÉ QUI MANQUAIT À L'IA
-# ---------------------------------------------------------------------------
+async def _seances(offre):
+    """Dates et lieu, lus des cours liés — jamais inventés."""
+    lignes, lieu = [], (offre.get("location") or "").strip()
+    for cid in (offre.get("linked_course_ids") or [])[:4]:
+        try:
+            c = await db.courses.find_one({"id": cid},
+                                          {"_id": 0, "date": 1, "time": 1, "location": 1})
+        except Exception:
+            c = None
+        if not c:
+            continue
+        if not lieu:
+            lieu = (c.get("location") or "").strip()
+        d = str(c.get("date") or "")
+        try:
+            j = datetime.strptime(d, "%Y-%m-%d")
+            d = f"{j.day} {MOIS[j.month - 1]}"
+        except Exception:
+            pass
+        lignes.append(f"{d} à {c.get('time')}" if c.get("time") else d)
+    return lignes, lieu
 
-PROMPT_BASE = f"""Tu es l'assistant WhatsApp officiel d'AFROBOOST (afroboost.com),
-studio de fitness et de danse afrobeat basé en Suisse, à Lausanne.
 
-RÈGLES ABSOLUES :
+async def contexte_afroboost():
+    """Ce que le modèle doit savoir pour rédiger. Lu en base, à chaque appel."""
+    morceaux = []
+
+    offre = await db.offers.find_one({"id": OFFRE_SILENT}, {"_id": 0})
+    if offre:
+        try:
+            from api.pricing import compute_active_price
+            calcul = compute_active_price(offre) or {}
+            prix = calcul.get("price")
+            palier = {"early_bird": "prévente", "standard": "tarif standard",
+                      "last_minute": "dernière minute"}.get(calcul.get("tier") or "", "")
+        except Exception:
+            prix, palier = offre.get("price"), ""
+
+        seances, lieu = await _seances(offre)
+        morceaux.append(
+            "OFFRE PHARE — « Afroboost Silent avec Bassi » (casque Silent) :\n"
+            f"  · prix actuel : {prix} CHF" + (f" ({palier})" if palier else "") + "\n"
+            + (f"  · dates : {' et '.join(seances)}\n" if seances else "")
+            + (f"  · lieu : {lieu}\n" if lieu else "")
+            + "  · le COURS EST OFFERT : la réservation couvre le casque Silent.\n"
+            f"  · lien de réservation à donner : {lien_offre(OFFRE_SILENT)}"
+        )
+
+    # Les autres offres visibles, en une ligne chacune : de quoi répondre à
+    # « vous avez quoi d'autre ? » sans inventer.
+    try:
+        autres = await db.offers.find(
+            {"visible": True, "id": {"$ne": OFFRE_SILENT}},
+            {"_id": 0, "id": 1, "name": 1, "price": 1}).to_list(12)
+        if autres:
+            lignes = [f"  · {(o.get('name') or '').strip()[:70]} — "
+                      f"{o.get('price')} CHF — {lien_offre(o.get('id'))}"
+                      for o in autres]
+            morceaux.append("AUTRES OFFRES :\n" + "\n".join(lignes))
+    except Exception as e:
+        logger.warning(f"[V434] autres offres non lues : {e}")
+
+    return "\n\n".join(morceaux)
+
+
+PROMPT_ASSISTANT = f"""Tu aides l'équipe AFROBOOST (afroboost.com), studio de
+fitness et de danse afrobeat à Lausanne, à répondre sur WhatsApp.
+
+Tu n'écris PAS au client : tu proposes un brouillon que l'humain va relire,
+corriger et envoyer lui-même.
+
+RÈGLES :
 - Afroboost EST l'organisateur de ses événements. Ne dis JAMAIS « contactez
-  l'organisateur », « le site officiel de l'événement » ou « renseignez-vous
-  auprès des organisateurs » : c'est à TOI que la personne s'adresse.
-- Ne renvoie jamais vers un site tiers. Le seul site est {SITE}.
-- N'invente jamais un prix, une date ni un lieu. Si tu ne sais pas, dis-le
-  simplement et propose de faire suivre au coach.
-- Termine TOUJOURS par la signature exacte : « {SIGNATURE} ».
-- N'écris JAMAIS de champ à compléter entre crochets ([Votre Nom], [Nom],
-  [Signature]…). Tu écris un message envoyé tel quel à un vrai client.
-- Réponds en français, chaleureusement, en 6 lignes maximum. WhatsApp, pas une
-  lettre administrative : pas de « Cordialement », pas d'objet.
+  l'organisateur » ni « le site officiel de l'événement ».
+- N'invente aucun prix, aucune date, aucun lieu : utilise UNIQUEMENT le contexte
+  fourni. Si l'information manque, propose de vérifier plutôt que de deviner.
+- Quand la personne veut acheter ou réserver, donne le lien de réservation tel
+  quel, sans le raccourcir ni le modifier.
+- Écris en français, chaleureusement, comme un message WhatsApp : 6 lignes
+  maximum, pas d'objet, pas de « Cordialement ».
+- N'écris JAMAIS de champ à compléter entre crochets ([Votre Nom], [Nom]…).
+- Termine par la signature exacte : « {SIGNATURE} ».
+- Réponds UNIQUEMENT par le texte du message, sans commentaire ni guillemets.
 """
 
-
-# ---------------------------------------------------------------------------
-# 3. ASSAINISSEMENT DE LA SORTIE
-# ---------------------------------------------------------------------------
 
 # Placeholders explicitement listés — on ne supprime PAS tout ce qui est entre
 # crochets : « [Image reçue] » et consorts sont légitimes dans ce produit.
@@ -173,343 +166,106 @@ _PLACEHOLDERS = re.compile(
     r"[^\]]{0,30}\]",
     re.IGNORECASE)
 
-# Formules de politesse épistolaires, avec ou sans placeholder derrière.
 _FORMULES = re.compile(
     r"(?:^|\n)\s*(?:bien\s+)?(?:cordialement|sinc[èe]rement|amicalement|"
     r"salutations(?:\s+distingu[ée]es)?|bien\s+[àa]\s+vous|"
     r"respectueusement|best\s+regards|regards)\s*[,.!]?\s*",
     re.IGNORECASE)
 
-# Le renvoi vers un tiers — le cœur de la vente perdue.
-_RENVOIS_TIERS = [
-    (re.compile(r"contact(?:er|ez)?\s+(?:directement\s+)?(?:l['’]|les?\s+)?organisateur[s]?", re.I),
-     "nous écrire ici"),
-    (re.compile(r"(?:le\s+)?site\s+officiel\s+de\s+l['’][ée]v[ée]nement", re.I),
-     SITE),
-    # Le « via » est avalé avec le groupe : sans lui, « nous écrire ici via ce
-    # numéro WhatsApp » reste redondant une fois la première règle appliquée.
-    (re.compile(r"\s*(?:via|par)\s+(?:leurs?|ses)\s+canaux\s+de\s+communication", re.I),
-     ""),
-]
-
 
 def assainir(texte):
-    """Dernier filet avant l'envoi : ni placeholder, ni renvoi vers un tiers.
+    """Nettoie le BROUILLON avant de l'afficher à l'admin.
 
-    Ce filet existe parce qu'un `systemPrompt`, si bien écrit soit-il, reste une
-    SUGGESTION faite à un modèle : rien ne garantit qu'il l'applique à chaque
-    fois. Ce qui doit être impossible doit être rendu impossible par le code.
+    Ne s'applique qu'à ce que le modèle vient d'écrire, jamais à un message déjà
+    parti ni à une réponse du bot automatique.
     """
     if not texte:
         return texte
+    t = str(texte).strip()
 
-    t = str(texte)
-
-    for motif, remplacement in _RENVOIS_TIERS:
-        t = motif.sub(remplacement, t)
+    # Le modèle encadre parfois sa réponse de guillemets ou de ```.
+    t = re.sub(r"^```[a-z]*\n?|```$", "", t).strip()
+    if len(t) > 1 and t[0] in "«\"'" and t[-1] in "»\"'":
+        t = t[1:-1].strip()
 
     t = _PLACEHOLDERS.sub("", t)
     t = _FORMULES.sub("\n", t)
 
-    # Nettoyage des blancs laissés par les suppressions.
-    # Uniquement la virgule et le point : en français, l'espace AVANT « ! » « ? »
-    # « : » « ; » est correcte, la retirer serait une faute de typographie.
-    t = re.sub(r"[ \t]+([,.])", r"\1", t)      # « ici . » -> « ici. »
+    # En français l'espace avant « ! » « ? » « : » « ; » est correcte : on ne
+    # recolle QUE la virgule et le point.
+    t = re.sub(r"[ \t]+([,.])", r"\1", t)
     t = re.sub(r"[ \t]{2,}", " ", t)
     t = re.sub(r"[ \t]+\n", "\n", t)
     t = re.sub(r"\n{3,}", "\n\n", t).strip()
 
-    # La signature, une seule fois, à la fin.
     if SIGNATURE.lower() not in t.lower():
         t = f"{t}\n\n{SIGNATURE}" if t else SIGNATURE
-
     return t
 
 
-# ---------------------------------------------------------------------------
-# 4. LA RÉPONSE D'ACHAT : LE VRAI LIEN DE PAIEMENT
-# ---------------------------------------------------------------------------
-
-def _prenom(nom):
-    """« Deborah Akaya » -> « Deborah ». Sert à ouvrir le message chaleureusement."""
-    propre = re.sub(r"^\s*[\U0001F300-\U0001FAFF☀-➿]\s*", "", str(nom or "")).strip()
-    return propre.split(" ")[0] if propre else ""
-
-
-def _formater_prix(valeur):
+async def _historique(conversation_id, limite=12):
+    """Les derniers messages du fil, du plus ancien au plus récent."""
     try:
-        v = float(valeur)
-    except (TypeError, ValueError):
-        return ""
-    return f"{v:.2f} CHF".replace(".00 ", ".– ")
-
-
-_LIBELLE_PALIER = {"early_bird": "prévente", "standard": "tarif standard",
-                   "last_minute": "dernière minute", "regular": "tarif normal"}
-
-
-async def _seances_de_offre(offre):
-    """Dates et lieu, lus des cours liés — jamais inventés (règle du PROMPT_BASE)."""
-    lignes, lieu = [], (offre.get("location") or "").strip()
-    for cid in (offre.get("linked_course_ids") or [])[:4]:
-        try:
-            c = await db.courses.find_one({"id": cid}, {"_id": 0, "date": 1, "time": 1, "location": 1})
-        except Exception:
-            c = None
-        if not c:
-            continue
-        if not lieu:
-            lieu = (c.get("location") or "").strip()
-        d = str(c.get("date") or "")
-        try:
-            jour = datetime.strptime(d, "%Y-%m-%d")
-            d = f"{jour.day} {['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'][jour.month - 1]}"
-        except Exception:
-            pass
-        lignes.append(f"{d} à {c.get('time')}" if c.get("time") else d)
-    return lignes, lieu
-
-
-async def construire_texte_achat(offre, nom=None):
-    """Le message qui accompagne le lien. Prix et dates viennent du SERVEUR."""
-    from api.pricing import compute_active_price
-
-    calcul = compute_active_price(offre) or {}
-    prix = _formater_prix(calcul.get("price"))
-    palier = _LIBELLE_PALIER.get(calcul.get("tier") or "", "")
-
-    seances, lieu = await _seances_de_offre(offre)
-    prenom = _prenom(nom)
-
-    lignes = [f"Bonjour {prenom} 👋" if prenom else "Bonjour 👋", ""]
-    lignes.append("Oui, la réservation est ouverte — c'est nous qui organisons, "
-                  "tout se fait ici. 🎧")
-    lignes.append("")
-    if seances:
-        lignes.append("📅 " + " et ".join(seances))
-    if lieu:
-        lignes.append("📍 " + lieu)
-    if prix:
-        lignes.append(f"🎟️ {prix}" + (f" ({palier})" if palier else ""))
-    lignes.append("")
-    lignes.append("Le cours est offert : la réservation couvre le casque Silent.")
-    lignes.append("Le lien de paiement est juste en dessous 👇")
-    lignes.append("")
-    lignes.append(SIGNATURE)
-    return "\n".join(lignes)
-
-
-async def repondre_achat(telephone, nom=None, offre_id=OFFRE_SILENT):
-    """Construit la réponse complète : le message + le LIEN DE PAIEMENT RÉEL.
-
-    Renvoie `(payloads, texte_pour_la_messagerie, session_id)` ou `(None, ...)`
-    si l'offre est introuvable — auquel cas l'appelant retombe sur l'IA plutôt
-    que de laisser la personne sans réponse.
-
-    N'ENVOIE RIEN : c'est l'appelant qui envoie. Cette séparation est ce qui
-    rend le module testable hors ligne, sans jamais écrire à un vrai numéro.
-    """
-    offre = await db.offers.find_one({"id": offre_id}, {"_id": 0})
-    if not offre:
-        logger.warning(f"[V433] offre {offre_id[:8]} introuvable — repli sur l'IA")
-        return None, None, None
-
-    texte = await construire_texte_achat(offre, nom)
-
-    from api.routes.bot_whatsapp_routes import (
-        lire_etat, ecrire_etat, creer_lien_paiement, offre_payable_par_lien, _lien_offre)
-
-    payloads = [{"type": "text", "text": {"body": texte[:4096], "preview_url": False}}]
-    session_id = None
-
-    if offre_payable_par_lien(offre):
-        etat = await lire_etat(telephone)
-        # `creer_lien_paiement` REUTILISE le lien de la dernière heure pour la même
-        # personne et la même offre : deux messages d'affilée ne créent pas deux
-        # sessions Stripe. C'est le comportement déjà en service pour le bouton du bot.
-        payload_lien, _cree = await creer_lien_paiement(telephone, offre, etat)
-        payloads.append(payload_lien)
-        etat_apres = await lire_etat(telephone)
-        session_id = etat_apres.get("dernier_lien_session")
-    else:
-        # Prix nul ou offre à variantes : pas de paiement direct possible. On
-        # envoie alors le lien PROFOND vers la carte de l'offre (V371) — surtout
-        # pas la page d'accueil, qui est précisément ce qu'il fallait éviter.
-        payloads.append({"type": "text", "text": {
-            "body": f"Pour réserver : {_lien_offre(offre)}", "preview_url": True}})
-
-    return payloads, texte, session_id
-
-
-# ---------------------------------------------------------------------------
-# 5. RELANCE AUTOMATIQUE — CONSTRUITE, MAIS ÉTEINTE
-# ---------------------------------------------------------------------------
-
-async def relance_active() -> bool:
-    """Drapeau ABSENT = OFF. La relance ne s'allume que par un geste explicite."""
-    try:
-        f = await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0}) or {}
-        return f.get(DRAPEAU_RELANCE) is True
-    except Exception:
-        return False
-
-
-async def noter_intention(telephone, nom=None, offre_id=OFFRE_SILENT, session_id=None):
-    """Mémorise « cette personne a demandé le lien » — pour une éventuelle relance.
-
-    Écrit TOUJOURS, même drapeau éteint : la trace ne coûte rien et permet, le
-    jour de l'activation, de savoir qui relancer. Ce qui est sous drapeau, c'est
-    l'ENVOI, jamais la mémoire.
-
-    `_id` = téléphone + offre : une personne ne peut pas accumuler dix relances
-    en écrivant dix fois. C'est le verrou anti-spam, porté par la base plutôt
-    que par du code qui pourrait oublier de vérifier.
-    """
-    cle = f"{telephone}|{offre_id}"
-    maintenant = datetime.now(timezone.utc)
-    try:
-        await db[COLLECTION_RELANCES].update_one(
-            {"_id": cle},
-            {"$setOnInsert": {
-                "telephone": telephone,
-                "offre_id": offre_id,
-                "nom": nom,
-                "cree_le": maintenant.isoformat(),
-                "cree_dt": maintenant,
-                "relance_envoyee": False,
-                "relance_le": None,
-            },
-             "$set": {"session_id": session_id or None,
-                      "dernier_interet_le": maintenant.isoformat()}},
-            upsert=True)
+        msgs = await db.private_messages.find(
+            {"conversation_id": conversation_id, "is_deleted": {"$ne": True}},
+            {"_id": 0, "sender_id": 1, "content": 1, "created_at": 1}
+        ).sort("created_at", -1).to_list(limite)
     except Exception as e:
-        logger.warning(f"[V433] trace de relance non écrite : {e}")
-
-
-async def _a_paye(ligne) -> bool:
-    """Cette personne a-t-elle payé ? En cas de DOUTE, on répond OUI.
-
-    Se tromper dans ce sens ne coûte qu'une relance non envoyée. Se tromper dans
-    l'autre envoie « tu n'as pas payé » à quelqu'un qui a payé.
-    """
-    sid = ligne.get("session_id")
-    if sid:
-        try:
-            t = await db.payment_transactions.find_one({"session_id": sid},
-                                                       {"_id": 0, "payment_status": 1})
-            if t and str(t.get("payment_status") or "").lower() in STATUTS_PAYES:
-                return True
-        except Exception:
-            return True   # doute -> on s'abstient de relancer
-
-    # Filet : un paiement passé par un AUTRE chemin (site, lien partagé) pour la
-    # même offre, après la marque d'intérêt.
-    try:
-        depuis = ligne.get("cree_dt") or datetime.now(timezone.utc) - timedelta(days=30)
-        recentes = await db.payment_transactions.find(
-            {"metadata.offer_id": ligne.get("offre_id")},
-            {"_id": 0, "payment_status": 1, "created_at": 1, "metadata": 1}
-        ).sort("created_at", -1).to_list(200)
-        tel = re.sub(r"\D", "", str(ligne.get("telephone") or ""))[-9:]
-        for t in recentes:
-            if str(t.get("payment_status") or "").lower() not in STATUTS_PAYES:
-                continue
-            brut = re.sub(r"\D", "", str(t.get("metadata") or ""))
-            if tel and tel in brut:
-                return True
-    except Exception:
-        return True
-
-    return False
-
-
-def construire_texte_relance(nom=None):
-    """UNE relance, courte, sans culpabilisation, avec le lien juste après."""
-    prenom = _prenom(nom)
-    return "\n".join([
-        f"Coucou {prenom} 👋" if prenom else "Coucou 👋",
-        "",
-        "Ta place n'est pas encore réservée — on garde le casque au chaud ! 🎧",
-        "Si tu veux toujours venir, le lien est juste en dessous.",
-        "",
-        "Si ce n'est plus d'actualité, ignore simplement ce message : "
-        "on ne te relancera pas une deuxième fois.",
-        "",
-        SIGNATURE,
-    ])
-
-
-async def relances_dues(maintenant=None):
-    """Les personnes à relancer MAINTENANT. Lecture seule — n'envoie rien."""
-    maintenant = maintenant or datetime.now(timezone.utc)
-    debut = maintenant - timedelta(hours=HEURES_ABANDON)
-    fin = maintenant - timedelta(hours=HEURES_AVANT_RELANCE)
-
-    try:
-        candidats = await db[COLLECTION_RELANCES].find(
-            {"cree_dt": {"$gte": debut, "$lte": fin}}).limit(200).to_list(200)
-    except Exception as e:
-        logger.warning(f"[V433] lecture des relances impossible : {e}")
+        logger.warning(f"[V434] historique illisible : {e}")
         return []
-
-    dues = []
-    for ligne in candidats:
-        if ligne.get("relance_envoyee"):
-            continue
-        if await _a_paye(ligne):
-            continue
-        dues.append(ligne)
-    return dues
+    msgs.reverse()
+    return msgs
 
 
-async def envoyer_relances(apercu=True):
-    """Relance ceux qui n'ont pas payé. `apercu=True` (DÉFAUT) n'envoie RIEN.
+async def rediger(conversation_id, mode="proposer", brouillon="", modele=None):
+    """Produit un brouillon. `mode` = « proposer » ou « ameliorer ».
 
-    Trois verrous avant qu'un message parte :
-      1. `apercu=False` demandé explicitement par l'appelant ;
-      2. le drapeau RELANCE_ACHAT_ENABLED, absent par défaut ;
-      3. `relance_envoyee`, marqué AVANT l'envoi — une panne au milieu ne peut
-         pas produire un second message au passage suivant.
+    Renvoie `(texte, erreur)`. N'ENVOIE RIEN, n'écrit rien en base : le résultat
+    part vers l'écran de l'admin et nulle part ailleurs.
     """
-    dues = await relances_dues()
-    resultat = {"apercu": apercu, "candidats": len(dues), "envoyees": 0, "lettres": []}
+    import os
+    cle = os.environ.get("OPENAI_API_KEY")
+    if not cle:
+        return None, "Clé OpenAI absente sur le serveur."
 
-    if apercu:
-        for l in dues[:20]:
-            resultat["lettres"].append({
-                "telephone": "…" + str(l.get("telephone") or "")[-4:],
-                "texte": construire_texte_relance(l.get("nom")),
-            })
-        return resultat
+    if mode == "ameliorer" and not (brouillon or "").strip():
+        return None, "Écris d'abord un brouillon à améliorer."
 
-    if not await relance_active():
-        resultat["raison"] = f"{DRAPEAU_RELANCE} éteint — aucun envoi"
-        return resultat
+    contexte = await contexte_afroboost()
+    historique = await _historique(conversation_id)
 
-    from api.routes.bot_whatsapp_routes import (
-        envoyer_payload, lire_etat, creer_lien_paiement, offre_payable_par_lien)
+    lignes = []
+    for m in historique:
+        qui = "AFROBOOST" if str(m.get("sender_id") or "").startswith("admin") else "CLIENT"
+        lignes.append(f"{qui} : {(m.get('content') or '').strip()[:600]}")
+    fil = "\n".join(lignes) or "(aucun message)"
 
-    for ligne in dues:
-        tel = ligne.get("telephone")
-        try:
-            # Marqué AVANT l'envoi : au pire une relance est perdue, jamais doublée.
-            await db[COLLECTION_RELANCES].update_one(
-                {"_id": ligne["_id"]},
-                {"$set": {"relance_envoyee": True,
-                          "relance_le": datetime.now(timezone.utc).isoformat()}})
+    if mode == "ameliorer":
+        consigne = (
+            "Voici le brouillon écrit par l'équipe. Corrige l'orthographe et la "
+            "grammaire, rends-le plus clair et plus chaleureux, SANS changer le "
+            "sens ni ajouter d'information qui n'y est pas.\n\n"
+            f"BROUILLON :\n{brouillon.strip()}")
+    else:
+        consigne = ("Propose la réponse à envoyer au CLIENT, en te fondant sur "
+                    "le dernier message reçu et sur le contexte ci-dessus.")
 
-            await envoyer_payload(tel, {"type": "text", "text": {
-                "body": construire_texte_relance(ligne.get("nom")), "preview_url": False}})
+    contenu = (f"CONTEXTE AFROBOOST\n{contexte}\n\n"
+               f"CONVERSATION (du plus ancien au plus récent)\n{fil}\n\n"
+               f"TÂCHE\n{consigne}")
 
-            offre = await db.offers.find_one({"id": ligne.get("offre_id")}, {"_id": 0})
-            if offre and offre_payable_par_lien(offre):
-                etat = await lire_etat(tel)
-                payload_lien, _ = await creer_lien_paiement(tel, offre, etat)
-                await envoyer_payload(tel, payload_lien)
-
-            resultat["envoyees"] += 1
-            logger.info(f"[V433] relance envoyée à …{str(tel)[-4:]}")
-        except Exception as e:
-            logger.error(f"[V433] relance échouée pour …{str(tel)[-4:]} : {e}")
-
-    return resultat
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=cle, timeout=25.0, max_retries=1)
+        import asyncio
+        reponse = await asyncio.to_thread(
+            client.chat.completions.create,
+            model=modele or "gpt-4o-mini",
+            messages=[{"role": "system", "content": PROMPT_ASSISTANT},
+                      {"role": "user", "content": contenu}],
+            max_tokens=500,
+            temperature=0.6)
+        return assainir(reponse.choices[0].message.content), None
+    except Exception as e:
+        logger.error(f"[V434] rédaction impossible : {type(e).__name__}: {e}")
+        return None, f"L'assistant n'a pas répondu ({type(e).__name__})."
