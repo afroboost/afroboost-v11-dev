@@ -1031,12 +1031,32 @@ async def _process_successful_payment(
     import re as _re_checkout
     sessions_count = 0
     items_product_name = ""
+    # ESSAI-0 : on RETIENT aussi l'identifiant de l'article, pas seulement son nom.
+    # `db.subscriptions` ne portait jusqu'ici que `offer_name` — une chaine libre,
+    # qui a DEJA derive en production : les deux libelles des essais historiques
+    # (« Essai gratuit! », « Cours gratuit! ») ne correspondent plus a aucune offre
+    # du catalogue. Toute regle metier batie dessus se desarmerait en silence au
+    # prochain renommage. On persiste donc l'identifiant stable.
+    #
+    # PORTEE : la souscription n'est creee qu'ICI, dans ce helper partage. Y ajouter
+    # le champ est donc la seule facon d'en doter les achats gratuits ; le restreindre
+    # a un appelant demanderait un `if` artificiel, pour aucun gain. Le champ est
+    # purement ADDITIF et n'est lu par personne aujourd'hui : aucun appelant ne
+    # change de comportement.
+    #
+    # AUCUN BACKFILL : les 54 souscriptions existantes restent sans `offer_id`. Ce
+    # n'est pas un manque — la future garde anti-double-essai ne bloque que sur un
+    # essai VALIDE, et il n'en existe aucun. Toute preuve qu'elle lira sera creee
+    # a partir de maintenant.
+    items_offer_id = ""
     for item in items:
         item_data = item.dict() if hasattr(item, 'dict') else item
         item_name = item_data.get("name", "")
         item_qty = int(item_data.get("quantity", 1))
         if not items_product_name:
             items_product_name = item_name
+            # Meme article que le nom retenu : les deux decrivent la meme ligne.
+            items_offer_id = str(item_data.get("id") or "").strip()
 
         item_pack = None
         item_id = item_data.get("id")
@@ -1100,6 +1120,8 @@ async def _process_successful_payment(
         "whatsapp": customer_phone or "",  # V251: evite de redemander le numero dans l'espace abonne
         "code": access_code,
         "offer_name": items_product_name or "Achat Afroboost",
+        # ESSAI-0 : identifiant STABLE de l'offre, a cote du nom (qui, lui, derive).
+        "offer_id": items_offer_id,
         "total_sessions": sessions_count,
         "used_sessions": 0,
         "remaining_sessions": sessions_count,
