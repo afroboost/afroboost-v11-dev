@@ -3088,7 +3088,14 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
         return;
       }
       clearInterval(t);
-      carte.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // V434b — DÉFILEMENT INSTANTANÉ, PAS ANIMÉ.
+      // Mesuré : `behavior: 'smooth'` finit systématiquement à y=0 sur cette
+      // page. L'animation dure plusieurs centaines de millisecondes, pendant
+      // lesquelles le contenu au-dessus (héros, carrousel de publications,
+      // images sans hauteur réservée) continue de se mettre en page et remet le
+      // défilement à zéro. Le même appel en `'auto'` atteint la carte et y
+      // reste. On ne cherche pas à faire joli : on cherche à y arriver.
+      carte.scrollIntoView({ behavior: 'auto', block: 'center' });
       // Halo temporaire : la personne voit immédiatement DE QUELLE offre il s'agit.
       const avant = carte.style.boxShadow;
       carte.style.transition = 'box-shadow 0.3s';
