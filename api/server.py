@@ -19647,7 +19647,8 @@ async def upload_profile_photo_legacy(file: UploadFile = File(...), participant_
 async def get_unread_notifications(
     target: str = "coach",  # "coach" ou "client"
     session_id: Optional[str] = None,
-    include_ai: bool = False  # Inclure les réponses IA dans les notifications coach
+    include_ai: bool = False,  # Inclure les réponses IA dans les notifications coach
+    request: Request = None,
 ):
     """
     Récupère les messages non notifiés pour le coach ou un client.
@@ -19663,11 +19664,27 @@ async def get_unread_notifications(
     - messages: Liste des messages (max 10, triés par date décroissante)
     - target: Target demandé
     """
+    # === C17-M : AUTHENTIFICATION + ISOLATION MULTI-COACH ===
+    # Cette route etait OUVERTE et renvoyait le CONTENU des conversations
+    # privees. Mesure du 12/08/2026, en appel ANONYME depuis Internet :
+    #   GET /api/notifications/unread?target=client -> 200, count=2256
+    # avec `content`, `sender_name` et `session_id` de chaque message. Le
+    # parametre `session_id` permettait en plus de cibler une conversation
+    # precise, et les `session_id` renvoyes servaient a enumerer les suivantes.
+    # Le fait qu'un appel `target=coach` renvoyait 0 n'etait PAS une protection,
+    # seulement un hasard de donnees (7 messages `user` seulement) : `target`
+    # est un simple parametre d'URL.
+    #
+    # Meme garde que V319/C17-K : jeton coach SIGNE exige, aucun repli sur
+    # `X-User-Email` (falsifiable). Le role coach/admin n'est jamais decide par
+    # le navigateur.
+    _c17m_email = await _v309_require_coach_or_admin(request)
+
     query = {
         "is_deleted": {"$ne": True},
         "notified": {"$ne": True}
     }
-    
+
     if target == "coach":
         if include_ai:
             # Messages utilisateurs + réponses IA (pour suivi)
@@ -19678,10 +19695,30 @@ async def get_unread_notifications(
     else:
         # Messages de l'IA ou du coach destinés aux clients
         query["sender_type"] = {"$in": ["ai", "coach"]}
-    
-    if session_id:
+
+    # ISOLATION : un coach ne voit QUE les messages de SES conversations. Le
+    # super-admin garde une vue complete (`get_coach_filter` renvoie {}).
+    # On resout ses sessions AVANT de lire les messages : le `session_id`
+    # eventuellement fourni doit appartenir a cet ensemble, sinon il serait
+    # possible de lire la conversation d'un autre coach en la nommant.
+    _c17m_filtre = get_coach_filter(_c17m_email)
+    if _c17m_filtre:
+        _c17m_sessions = await db.chat_sessions.find(
+            _c17m_filtre, {"_id": 0, "id": 1}
+        ).to_list(5000)
+        _c17m_ids = [s.get("id") for s in _c17m_sessions if s.get("id")]
+        if len(_c17m_ids) >= 5000:
+            # Pas de troncature silencieuse : si la limite est atteinte, on le dit.
+            logger.warning("[C17-M] plafond de 5000 sessions atteint pour %s — couverture partielle", _c17m_email[:24])
+        if session_id:
+            if session_id not in _c17m_ids:
+                raise HTTPException(status_code=403, detail="Conversation non autorisée")
+            query["session_id"] = session_id
+        else:
+            query["session_id"] = {"$in": _c17m_ids}
+    elif session_id:
         query["session_id"] = session_id
-    
+
     # Compter le nombre total (limité pour performance)
     count = await db.chat_messages.count_documents(query)
     
