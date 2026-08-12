@@ -21849,9 +21849,18 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
     # fraiche, aurait pu aboutir. On les essaie TOUTES et on s'arrete au premier
     # succes ; chaque endpoint mort (404/410) est desactive individuellement par
     # son propre endpoint, pas en bloc sur le participant_id.
+    # V433: sans tri, MongoDB rend l'ordre naturel (= ordre d'insertion), donc
+    # `.to_list(20)` ne retenait que les 20 souscriptions les PLUS ANCIENNES.
+    # Mesure du 12/08/2026 sur le compte coach (183 souscriptions actives) :
+    # les 20 essayees avaient 120 a 151 jours, toutes mortes, tandis que la plus
+    # fraiche (0 jour) n'etait JAMAIS tentee -> aucune notification ne partait.
+    # On trie donc du plus recent au plus ancien. Le filtre est inchange : seul
+    # l'ORDRE D'ESSAI change, pas l'ensemble des souscriptions retenues. Les
+    # documents sans `updated_at` sont classes en dernier par MongoDB, ce qui
+    # est le repli voulu (essayes apres ceux qui sont dates).
     subs = await db.push_subscriptions.find(
         {"participant_id": participant_id, "active": True}, {"_id": 0}
-    ).to_list(20)
+    ).sort("updated_at", -1).to_list(20)
     if not subs:
         return False
     # V274: le Service Worker lit `url` et `session_id` au niveau RACINE du
