@@ -2364,6 +2364,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   const [showOnboardingTunnel, setShowOnboardingTunnel] = useState(false); // Tunnel actif
   const [currentLinkToken, setCurrentLinkToken] = useState(null); // Token du lien actuel
 
+  // C2-G : ecran de confirmation du tunnel officiel « Essai Gratuit ».
+  // Le token est en dur, volontairement : la branche ne doit s'appliquer qu'a CE
+  // parcours d'acquisition, jamais aux autres liens intelligents (dont certains
+  // vendent). Meme constante que le CTA du hero d'accueil (App.js).
+  const C2G_LIEN_ESSAI = 'b83914b4-c5a';
+  const [showTrialConfirm, setShowTrialConfirm] = useState(false);
+
   // === V218: ÉCRAN DE PAIEMENT POST-TUNNEL (end_actions.payment) ===
   const [showPaymentScreen, setShowPaymentScreen] = useState(false);
   const [paymentClientData, setPaymentClientData] = useState(null); // {firstName, email, whatsapp, participantId, sessionId, linkData}
@@ -6203,6 +6210,31 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       // affiche le message, jamais un « 0 conversation » silencieux. (Dormant tant que
       // le drapeau SUBSCRIBER_STRICT_ENTRY est OFF -> aucun changement pour les abonnés.)
       if (response.data && response.data.proof_required) {
+        // C2-G — LE PROSPECT D'ESSAI N'EST PAS UN ABONNE.
+        //
+        // Jusqu'ici, un visiteur deja connu (e-mail ou numero deja en base) qui
+        // terminait le tunnel « Essai Gratuit » se voyait reclamer un CODE PROMO
+        // qu'il n'a pas. C'est le cas de tous ceux qui REVIENNENT — precisement
+        // ceux qu'une publicite ramene.
+        //
+        // Le backend C2-F renvoie `acquisition_saved: true` quand il a bien
+        // enregistre la demande. On s'appuie sur CE signal, pas sur une deduction :
+        // il n'est vrai que si l'appel venait d'un tunnel AVEC des reponses.
+        //
+        // ⚠️ V315 N'EST PAS CONTOURNEE : on n'a recu ni `participant_id`, ni
+        // `session_id`, ni historique, et on n'en demande pas. On se contente de
+        // DIRE LA VERITE au prospect — sa demande est enregistree — au lieu de lui
+        // opposer un formulaire d'abonne. Toute tentative de recuperer une
+        // conversation existante (sans tunnel, sans reponses) garde exactement le
+        // comportement d'avant : `acquisition_saved` est faux, on tombe dans la
+        // branche historique juste en dessous.
+        if (response.data.acquisition_saved === true && linkToken === C2G_LIEN_ESSAI) {
+          setShowOnboardingTunnel(false);
+          setShowSubscriberForm(false);
+          setError('');
+          setShowTrialConfirm(true);
+          return;
+        }
         setIsKnownSubscriber(true);
         setSubscriberFormData(function (prev) {
           return {
@@ -8227,6 +8259,49 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       }
                     }}
                   />
+                ) : showTrialConfirm ? (
+                  /* === C2-G : CONFIRMATION DU TUNNEL « ESSAI GRATUIT » ===
+                     Place AVANT `showSubscriberForm` pour primer sur lui.
+                     Le texte ne dit JAMAIS « ta seance est reservee » : a ce stade
+                     aucune reservation n'existe, la confirmation du creneau se fait
+                     humainement sur WhatsApp. Promettre une reservation serait faux.
+                     Aucun upsell, aucune Carte Membre, aucune information demandee. */
+                  <div style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'center',
+                    justifyContent: 'center', textAlign: 'center', gap: '14px',
+                    padding: '24px 16px', minHeight: '220px'
+                  }}>
+                    <p style={{
+                      color: '#fff', fontSize: 'clamp(15px, 4.5vw, 18px)', fontWeight: 700,
+                      margin: 0, lineHeight: 1.35
+                    }}>
+                      🎉 Ta demande est bien enregistrée !
+                    </p>
+                    <p style={{
+                      color: 'rgba(255,255,255,0.78)', fontSize: 'clamp(13px, 3.8vw, 15px)',
+                      margin: 0, lineHeight: 1.5, maxWidth: '270px'
+                    }}>
+                      On te confirme ton cours d'essai sur WhatsApp.
+                    </p>
+                    <p style={{
+                      color: 'var(--primary-color, #D91CD2)', fontSize: 'clamp(13px, 3.8vw, 15px)',
+                      fontWeight: 600, margin: 0
+                    }}>
+                      À très vite chez Afroboost 🎧🔥
+                    </p>
+                    <a
+                      href="/"
+                      style={{
+                        marginTop: '6px', display: 'inline-block', textDecoration: 'none',
+                        background: 'var(--primary-color, #D91CD2)', color: '#fff',
+                        fontWeight: 700, fontSize: '14px', padding: '11px 22px',
+                        borderRadius: '999px', maxWidth: '240px'
+                      }}
+                      data-testid="c2g-retour-accueil"
+                    >
+                      Retour à Afroboost
+                    </a>
+                  </div>
                 ) : showSubscriberForm ? (
                   /* === FORMULAIRE ABONNÉ (4 champs avec code promo) === */
                   <SubscriberForm
