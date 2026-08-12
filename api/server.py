@@ -19734,6 +19734,75 @@ async def get_unread_notifications(
         "target": target
     }
 
+# === C17-J : CENTRE DE NOTIFICATIONS DU COACH (socle backend) ===
+#
+# `db.notifications` etait ecrite (C17-D pour `new_lead`, les annulations de
+# reservation depuis V216) et lue NULLE PART : aucune route ne la servait.
+# Ces deux routes ouvrent enfin la lecture, avec le meme garde que
+# /api/chat/sessions — jeton coach SIGNE, aucun repli sur `X-User-Email`.
+#
+# PERIMETRE VOLONTAIREMENT ETROIT — `type: "new_lead"` uniquement :
+#   1. les 17 annulations historiques portent `user_email` ET un code dans leur
+#      champ `message` ; les exposer demanderait d'assainir ce texte d'abord ;
+#   2. elles sont toutes `read: False` et datent de mai a juillet : un badge les
+#      comptant afficherait 17 alertes perimees des le premier affichage.
+# Le badge demarre donc a zero, et les annulations pourront etre rouvertes plus
+# tard, une fois leur message assaini.
+#
+# ISOLATION : `get_coach_filter` — {} pour le super-admin (vue complete), sinon
+# {"coach_id": <son email>}. Un coach ne voit jamais les prospects d'un autre.
+
+C17J_PROJECTION = {
+    "_id": 0, "id": 1, "type": 1, "title": 1,
+    "message": 1, "created_at": 1, "read": 1,
+}
+
+
+@api_router.get("/coach/notifications")
+async def c17j_lister_notifications_coach(limit: int = 50, request: Request = None):
+    """C17-J — notifications « nouveau prospect » du coach authentifie.
+
+    Renvoie `unread_count` dans la MEME reponse : le dashboard sonde deja
+    beaucoup, on ne lui ajoute pas une seconde route rien que pour un compteur.
+    """
+    _email = await _v309_require_coach_or_admin(request)
+    _filtre = {"type": "new_lead", **get_coach_filter(_email)}
+    try:
+        _limite = max(1, min(int(limit), 50))
+    except (TypeError, ValueError):
+        _limite = 50
+    _items = await db.notifications.find(
+        _filtre, C17J_PROJECTION
+    ).sort("created_at", -1).to_list(_limite)
+    _non_lues = await db.notifications.count_documents({**_filtre, "read": {"$ne": True}})
+    return {"notifications": _items, "unread_count": _non_lues, "limit": _limite}
+
+
+@api_router.post("/coach/notifications/{notification_id}/read")
+async def c17j_marquer_notification_lue(notification_id: str, request: Request = None):
+    """C17-J — marque UNE notification comme lue.
+
+    L'appartenance est verifiee DANS le filtre de mise a jour, pas avant : il n'y
+    a donc aucune fenetre entre le controle et l'ecriture. Une notification
+    inexistante et une notification appartenant a un autre coach renvoient le
+    MEME 403 — on ne revele pas au demandeur ce qui existe chez les autres.
+    """
+    _email = await _v309_require_coach_or_admin(request)
+    _filtre = {
+        "id": (notification_id or "").strip(),
+        "type": "new_lead",
+        **get_coach_filter(_email),
+    }
+    _res = await db.notifications.update_one(
+        _filtre,
+        {"$set": {"read": True, "read_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    if _res.matched_count == 0:
+        logger.warning("[C17-J] marquage refuse pour %s — notification absente ou d'un autre coach", _email[:24])
+        raise HTTPException(status_code=403, detail="Notification non autorisée")
+    return {"ok": True, "id": notification_id, "read": True}
+
+
 # === EMOJIS PERSONNALISÉS DU COACH ===
 @api_router.get("/custom-emojis/list")
 async def list_custom_emojis():
