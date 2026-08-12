@@ -7571,9 +7571,36 @@ function App() {
               // la configuration globale de PostHog n'est pas touchee.
               // Enveloppe dans un try : une erreur ou une lenteur de PostHog ne
               // doit JAMAIS empecher le visiteur d'entrer dans le tunnel.
+              //
+              // C16-pre — POURQUOI `transport: 'sendBeacon'`.
+              // L'evenement n'arrivait JAMAIS dans PostHog alors que les
+              // `$pageview` passaient. Cause constatee dans la page en direct :
+              // `config.request_batching === true`. Le SDK met l'evenement en
+              // FILE et l'envoie un peu plus tard ; or ce clic declenche
+              // immediatement la navigation native vers le tunnel, ce qui
+              // annule la requete en vol. Un `$pageview` ne souffre pas de ca :
+              // aucune navigation ne le suit.
+              //
+              // `sendBeacon` est justement concu pour survivre au dechargement
+              // de la page : le navigateur prend l'envoi a sa charge et le
+              // termine apres la navigation.
+              //
+              // API VERIFIEE dans la version reellement chargee, pas supposee :
+              // `capture.length === 3` (event, properties, options) et un appel
+              // avec `{transport:'sendBeacon'}` produit bien une requete
+              // `initiatorType: "beacon"` vers `/i/v0/e/`.
+              //
+              // ⚠️ On NE fait toujours PAS de `preventDefault` : la navigation
+              // reste native et immediate. Zero attente, zero retard — la mesure
+              // ne conditionne rien. Si PostHog est bloque (adblock) ou absent,
+              // le `try` avale et le lien fonctionne comme avant.
               try {
                 if (window.posthog && typeof window.posthog.capture === 'function') {
-                  window.posthog.capture('trial_cta_click', { source: 'homepage_hero' });
+                  window.posthog.capture(
+                    'trial_cta_click',
+                    { source: 'homepage_hero' },
+                    { transport: 'sendBeacon' }
+                  );
                 }
               } catch (e) { /* mesure best-effort, on n'interrompt rien */ }
             }}
