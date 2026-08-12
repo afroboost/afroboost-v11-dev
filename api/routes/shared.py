@@ -753,3 +753,96 @@ async def posthog_capture(event: str, email: str = "", props: dict = None,
         # Volontairement muet pour le métier : analytics ne casse jamais rien.
         logger.warning(f"[C9] {event} échoué, ignoré — {type(e).__name__}: {e}")
         return False
+
+
+# =====================================================================
+# C17-B — SOCLE DE NOTIFICATION : RESOUDRE LE BON DESTINATAIRE
+# =====================================================================
+# Le systeme est destine a etre MULTI-COACH. Or plusieurs notifications
+# visaient encore une CONSTANTE GLOBALE (`COACH_EMAIL`, `SUPER_ADMIN_EMAIL`) :
+# tant qu'il n'y a qu'un coach cela fonctionne, mais le jour ou un partenaire
+# arrive, ses prospects partiraient chez Bassi. On resout donc le proprietaire
+# REEL de l'evenement, jamais une constante.
+#
+# CE LOT NE FAIT QUE DEUX CHOSES : resoudre le coach, et ecrire une trace dans
+# `db.notifications`. AUCUN envoi — ni push, ni e-mail. Les canaux viendront
+# dans des lots separes, une fois la resolution prouvee.
+
+async def resoudre_coach_du_lead(db, lead: dict) -> str:
+    """Coach REELLEMENT proprietaire d'un lead, ou '' si indeterminable.
+
+    Chaine mesuree sur les 133 leads de production :
+        lead.coach_id                        -> 59 resolus
+        puis chat_sessions[link_token].coach_id -> +32
+        puis participant.coach_id               -> +0 (mais garde le jour ou les
+                                                   sessions porteront le champ)
+        sinon                                   -> 42 restent orphelins
+
+    ⚠️ ON NE DEVINE PAS. Un lead orphelin renvoie '' et ne genere AUCUNE
+    notification : mieux vaut ne prevenir personne que prevenir le mauvais coach.
+    C'est la regle absolue du multi-coach — evenement du coach A, jamais au B.
+    """
+    try:
+        c = (lead.get("coach_id") or "").strip()
+        if c:
+            return c
+        jeton = (lead.get("link_token") or "").strip()
+        if jeton:
+            s = await db.chat_sessions.find_one({"link_token": jeton}, {"_id": 0, "coach_id": 1})
+            c = ((s or {}).get("coach_id") or "").strip()
+            if c:
+                return c
+        pid = (lead.get("participant_id") or "")
+        if pid:
+            p = await db.chat_participants.find_one({"id": pid}, {"_id": 0, "coach_id": 1})
+            c = ((p or {}).get("coach_id") or "").strip()
+            if c:
+                return c
+    except Exception as e:
+        logger.warning(f"[C17-B] resolution coach impossible: {type(e).__name__}")
+    return ""
+
+
+async def notifier_nouveau_prospect(db, lead: dict) -> bool:
+    """C17-C — trace « nouveau prospect » pour le coach proprietaire.
+
+    NON BLOQUANTE : ne leve jamais. Une panne de notification ne doit pas
+    empecher l'enregistrement d'un prospect — c'est l'inverse qui compte.
+
+    IDEMPOTENTE : l'identifiant derive du lead (`lead_<id>`), et l'ecriture est
+    un upsert. Un rejeu ne cree pas de doublon.
+
+    AUCUNE DONNEE SENSIBLE EN JOURNAL : on trace l'identifiant du lead et le
+    coach, jamais l'e-mail, le telephone ni les reponses du prospect.
+    """
+    try:
+        lead_id = (lead.get("id") or "").strip()
+        if not lead_id:
+            return False
+        coach = await resoudre_coach_du_lead(db, lead)
+        if not coach:
+            # Orphelin : on prefere le silence a une notification mal adressee.
+            logger.info(f"[C17-C] lead {lead_id[:8]} sans coach resolu — aucune notification")
+            return False
+        prenom = (lead.get("name") or "").strip().split(" ")[0][:40] or "Un visiteur"
+        await db.notifications.update_one(
+            {"id": f"lead_{lead_id}"},
+            {"$setOnInsert": {
+                "id": f"lead_{lead_id}",
+                "type": "new_lead",
+                "target": "coach",
+                "title": "🎯 Nouveau prospect",
+                "message": f"{prenom} vient de terminer le tunnel.",
+                "coach_id": coach,
+                "lead_id": lead_id,
+                "link_token": lead.get("link_token"),
+                "read": False,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+        logger.info(f"[C17-C] notification nouveau prospect creee (lead={lead_id[:8]}, coach={coach[:24]})")
+        return True
+    except Exception as e:
+        logger.warning(f"[C17-C] notification ignoree, le prospect reste enregistre — {type(e).__name__}: {e}")
+        return False

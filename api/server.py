@@ -20410,7 +20410,7 @@ async def smart_chat_entry(request: Request):
                 _c2f_acq = False
                 if link_token and tunnel_answers and isinstance(tunnel_answers, (list, dict)):
                     try:
-                        await db.leads.insert_one({
+                        _c2f_lead = {
                             "id": str(uuid.uuid4()),
                             "participant_id": None,          # JAMAIS rattaché sans preuve
                             "session_id": None,
@@ -20422,9 +20422,19 @@ async def smart_chat_entry(request: Request):
                             "source": source,
                             "acquisition_only": True,        # collecté sans identité prouvée
                             "created_at": datetime.now(timezone.utc).isoformat(),
-                        })
+                        }
+                        await db.leads.insert_one(_c2f_lead)
                         _c2f_acq = True
                         logger.info(f"[C2-F] Lead d'acquisition conservé malgré proof_required (link={link_token})")
+                        # C17-C : ce prospect-la est le PLUS important a signaler —
+                        # il vient d'etre bloque par la garde V315 et n'ira pas plus
+                        # loin seul. Le coach doit le rappeler. Resolution par le
+                        # `link_token` (ce lead n'a volontairement pas de participant).
+                        try:
+                            from api.routes.shared import notifier_nouveau_prospect as _c17c
+                            await _c17c(db, _c2f_lead)
+                        except Exception as _c17e:
+                            logger.warning(f"[C17-C] notification ignoree: {type(_c17e).__name__}")
                     except Exception as _e:
                         # L'acquisition ne doit jamais faire échouer la réponse.
                         logger.warning(f"[C2-F] Enregistrement du lead ignoré: {_e}")
@@ -20596,6 +20606,14 @@ async def smart_chat_entry(request: Request):
         }
         await db.leads.insert_one(lead_doc)
         logger.info(f"[V100] 📋 Lead sauvegardé: {name} ({email}) — {len(tunnel_answers) if isinstance(tunnel_answers, list) else 1} réponses")
+        # C17-C : prevenir le coach PROPRIETAIRE du lead — jamais une constante
+        # globale. Non bloquant : la fonction avale ses erreurs, et le lead est
+        # deja enregistre juste au-dessus quoi qu'il arrive.
+        try:
+            from api.routes.shared import notifier_nouveau_prospect as _c17c
+            await _c17c(db, lead_doc)
+        except Exception as _c17e:
+            logger.warning(f"[C17-C] notification ignoree: {type(_c17e).__name__}")
         # Aussi stocker dans la session pour accès rapide côté coach
         await db.chat_sessions.update_one(
             {"id": session["id"]},
