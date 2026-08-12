@@ -7516,9 +7516,29 @@ function App() {
 
             AUCUNE ville, AUCUN jour, AUCUN horaire en dur : multi-lieux et
             planning variable, ces informations vivent dans le tunnel. */}
+        {/* C1-FIX (mobile) — SEPARATION SPATIALE, PAS D'EMPILEMENT.
+            La barre d'actions du carrousel (`reels-action-bar`) est en
+            `right-3 bottom-28` avec des boutons de 44 px : elle occupe donc
+            12 + 44 = 56 px depuis le bord droit, sur toute une colonne. Le hero
+            etant centre verticalement, il passait DESSOUS.
+
+            On DEGAGE cette colonne (`pr-24` = 96 px sur mobile, soit 56 px de
+            barre + 40 px de securite), et on revient a `px-6` a partir de `md`
+            ou l'ecran est large — le bureau n'est donc pas touche.
+
+            ⚠️ On ne resout PAS le chevauchement par z-index : le hero reste en
+            `zIndex: 5`, SOUS le `z-10` de la barre. La barre garde sa position,
+            sa taille et ses clics.
+
+            Le degrade est un scrim LOCAL au hero, pour detacher le texte de
+            l'image sans toucher a l'image source. */}
         <div
-          className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center"
-          style={{ pointerEvents: 'none', zIndex: 5 }}
+          className="absolute inset-0 flex flex-col items-center justify-center text-center pl-6 pr-24 md:px-6"
+          style={{
+            pointerEvents: 'none',
+            zIndex: 5,
+            background: 'linear-gradient(to bottom, rgba(0,0,0,0) 12%, rgba(0,0,0,0.5) 34%, rgba(0,0,0,0.5) 66%, rgba(0,0,0,0) 88%)'
+          }}
         >
           <h1
             className="text-white font-extrabold leading-tight"
@@ -7532,9 +7552,12 @@ function App() {
           >
             Vis l'expérience Afroboost : danse afrobeat et fitness au casque, même si tu n'as jamais dansé.
           </p>
+          {/* C1-FIX : le rose de marque sur une photo etait illisible. Passage
+              en blanc — le CTA porte deja la couleur de marque juste en dessous,
+              la ligne d'offre n'a pas besoin de la repeter. Texte inchange. */}
           <p
-            className="mt-2 font-semibold"
-            style={{ color: 'var(--primary-color, #D91CD2)', textShadow: '0 2px 10px rgba(0,0,0,0.8)' }}
+            className="mt-2 font-semibold text-white"
+            style={{ textShadow: '0 2px 12px rgba(0,0,0,0.9)' }}
           >
             Ton premier cours est gratuit.
           </p>
@@ -7554,7 +7577,7 @@ function App() {
                 }
               } catch (e) { /* mesure best-effort, on n'interrompt rien */ }
             }}
-            className="mt-6 inline-flex items-center gap-2 font-bold rounded-full"
+            className="mt-6 inline-flex items-center justify-center gap-2 font-bold rounded-full w-full max-w-[260px] md:w-auto md:max-w-none"
             style={{
               pointerEvents: 'auto',
               background: 'var(--primary-color, #D91CD2)',
