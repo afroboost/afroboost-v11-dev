@@ -12438,13 +12438,31 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     # et sa presence interdit tout second envoi. Un rejeu du frontend, un retry
     # backend ou un rechargement de page ne peuvent pas produire deux e-mails.
     async def _v436_confirmer_par_email():
+        # V436-DIAG : traces d'observation UNIQUEMENT. Aucune logique metier n'est
+        # modifiee, aucun envoi supplementaire, aucune donnee personnelle
+        # journalisee (ni e-mail, ni nom, ni contenu du message).
+        #
+        # Contexte : une reservation reelle du 12/08/2026 a 14:46:18 a bien ete
+        # traitee par le conteneur portant V436, et n'a produit AUCUNE trace —
+        # ni succes, ni exception. Les seules sorties possibles sans trace sont
+        # les deux `return` silencieux ci-dessous ; s'ils ne se declenchent pas
+        # non plus, c'est que la tache n'a jamais demarre.
+        logger.info("[V436-DIAG] tache demarree")
         try:
             if not user_email or not RESEND_AVAILABLE or not RESEND_API_KEY:
+                logger.info(
+                    "[V436-DIAG] sortie A — email_client=%s resend_dispo=%s cle=%s",
+                    bool(user_email), RESEND_AVAILABLE, bool(RESEND_API_KEY)
+                )
                 return
             _frais = await db.reservations.find_one(
                 {"id": reservation_doc["id"]}, {"_id": 0, "confirmation_sent_at": 1}
             )
             if not _frais or _frais.get("confirmation_sent_at"):
+                logger.info(
+                    "[V436-DIAG] sortie B — resa_relue=%s deja_confirmee=%s",
+                    bool(_frais), bool((_frais or {}).get("confirmation_sent_at"))
+                )
                 return  # deja confirmee : on ne renvoie jamais
             _prenom = (user_name or "").strip().split(" ")[0][:40] or "Bonjour"
             _cours = course.get("name") or "ta séance"
