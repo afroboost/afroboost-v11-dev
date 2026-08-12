@@ -4125,6 +4125,59 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [toastNotifications, setToastNotifications] = useState([]); // Fallback toasts
   const lastNotifiedIdsRef = useRef(new Set());
+
+  // === C17-J : centre de notifications du coach (nouveaux prospects) ===
+  // `unreadCount` juste au-dessus compte les MESSAGES de chat non notifies —
+  // rien a voir. On ne le touche pas : ce compteur-ci est independant.
+  //
+  // AUCUN SONDAGE AJOUTE. On charge au montage, a l'ouverture du panneau et
+  // apres un marquage. Le temps reel est deja assure par C17-D, qui pousse la
+  // notification sur le telephone du coach des qu'un prospect arrive : le badge
+  // du dashboard n'a pas besoin d'interroger le serveur en boucle.
+  const [c17jNotifs, setC17jNotifs] = useState([]);
+  const [c17jNonLues, setC17jNonLues] = useState(0);
+  const [c17jOuvert, setC17jOuvert] = useState(false);
+  const [c17jIndisponible, setC17jIndisponible] = useState(false);
+
+  const c17jCharger = useCallback(async () => {
+    try {
+      // Le JWT coach est pose par l'intercepteur global (App.js). On ne
+      // fabrique aucune en-tete ici : jamais de repli X-User-Email.
+      const res = await axios.get(`${API}/coach/notifications`);
+      setC17jNotifs(Array.isArray(res?.data?.notifications) ? res.data.notifications : []);
+      setC17jNonLues(Number(res?.data?.unread_count) || 0);
+      setC17jIndisponible(false);
+    } catch (e) {
+      // 403 (jeton expire) ou panne reseau : on n'affiche RIEN plutot que de
+      // casser le dashboard. Le reste de la page reste utilisable.
+      setC17jNotifs([]);
+      setC17jNonLues(0);
+      setC17jIndisponible(true);
+    }
+  }, []);
+
+  useEffect(() => { c17jCharger(); }, [c17jCharger]);
+
+  const c17jMarquerLue = useCallback(async (id) => {
+    if (!id) return;
+    // Mise a jour optimiste : l'interface repond tout de suite, sans rechargement.
+    setC17jNotifs(prev => prev.map(n => (n.id === id ? { ...n, read: true } : n)));
+    setC17jNonLues(prev => (prev > 0 ? prev - 1 : 0));
+    try {
+      await axios.post(`${API}/coach/notifications/${encodeURIComponent(id)}/read`);
+      await c17jCharger();               // on resynchronise sur la verite serveur
+    } catch (e) {
+      await c17jCharger();               // echec : on revient a l'etat reel, sans casser
+    }
+  }, [c17jCharger]);
+
+  const c17jDate = (v) => {
+    try {
+      const d = new Date(v);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleString('fr-CH', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    } catch (e) { return ''; }
+  };
   
   // Ajouter un toast de notification (fallback quand les notifications browser sont bloquées)
   const addToastNotification = useCallback((message) => {
@@ -6631,7 +6684,111 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         </div>
 
 
-          {showDashOnboarding && !isSuperAdmin && (
+          {/* === C17-J : cloche + zone notifications ===
+            Bloc AUTONOME, insere apres la navigation : il ne touche ni `tabs`,
+            ni `setTab`, ni aucun onglet existant. Masque entierement si la route
+            est indisponible (jeton expire, panne) — jamais d'erreur affichee au
+            coach, jamais de dashboard casse. */}
+        {!c17jIndisponible && (
+          <div style={{ marginBottom: '20px' }} data-testid="c17j-notifications">
+            <button
+              type="button"
+              onClick={() => { const o = !c17jOuvert; setC17jOuvert(o); if (o) c17jCharger(); }}
+              aria-expanded={c17jOuvert}
+              data-testid="c17j-toggle"
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
+                padding: '10px 14px', borderRadius: '10px',
+                background: c17jNonLues > 0
+                  ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)'
+                  : 'rgba(255,255,255,0.04)',
+                border: c17jNonLues > 0
+                  ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.4)'
+                  : '1px solid rgba(255,255,255,0.08)',
+                color: '#fff', cursor: 'pointer'
+              }}
+            >
+              <SvgIcon name="bell" size={18} />
+              <span style={{ flex: 1, textAlign: 'left', fontSize: '14px', fontWeight: 600 }}>
+                Notifications
+              </span>
+              {/* Pas de pastille « 0 » : le badge n'existe que s'il y a du neuf. */}
+              {c17jNonLues > 0 && (
+                <span
+                  data-testid="c17j-badge"
+                  style={{
+                    minWidth: '20px', height: '20px', padding: '0 6px', borderRadius: '10px',
+                    background: 'var(--primary-color, #D91CD2)', color: '#fff',
+                    fontSize: '12px', fontWeight: 700,
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center'
+                  }}
+                >
+                  {c17jNonLues}
+                </span>
+              )}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2"
+                style={{ transform: c17jOuvert ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s ease', flexShrink: 0 }}>
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+
+            {c17jOuvert && (
+              <div style={{
+                marginTop: '6px', background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px',
+                padding: '6px', maxHeight: '320px', overflowY: 'auto'
+              }}>
+                {c17jNotifs.length === 0 ? (
+                  <div style={{ padding: '18px 14px', textAlign: 'center', color: 'rgba(255,255,255,0.55)', fontSize: '13px' }}
+                    data-testid="c17j-vide">
+                    Aucune nouvelle notification
+                  </div>
+                ) : (
+                  c17jNotifs.map(n => (
+                    <button
+                      key={n.id}
+                      type="button"
+                      onClick={() => { if (!n.read) c17jMarquerLue(n.id); }}
+                      data-testid="c17j-item"
+                      style={{
+                        width: '100%', textAlign: 'left', border: 'none', cursor: n.read ? 'default' : 'pointer',
+                        background: n.read ? 'transparent' : 'rgba(var(--primary-rgb, 217, 28, 210), 0.10)',
+                        borderRadius: '8px', padding: '10px 12px', marginBottom: '4px',
+                        display: 'flex', alignItems: 'flex-start', gap: '10px'
+                      }}
+                    >
+                      <span style={{ color: 'var(--primary-color, #D91CD2)', flexShrink: 0, marginTop: '2px' }}>
+                        <SvgIcon name="target" size={16} />
+                      </span>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        {/* Libelle FIXE cote client : `new_lead` est le seul type
+                            servi par la route. On n'affiche jamais d'e-mail, de
+                            WhatsApp, de code ni d'identifiant. */}
+                        <span style={{ display: 'block', color: '#fff', fontSize: '13px', fontWeight: n.read ? 500 : 700 }}>
+                          Nouveau prospect
+                        </span>
+                        <span style={{ display: 'block', color: 'rgba(255,255,255,0.75)', fontSize: '12px', marginTop: '2px', wordBreak: 'break-word' }}>
+                          {n.message}
+                        </span>
+                        <span style={{ display: 'block', color: 'rgba(255,255,255,0.45)', fontSize: '11px', marginTop: '3px' }}>
+                          {c17jDate(n.created_at)}
+                        </span>
+                      </span>
+                      {!n.read && (
+                        <span style={{
+                          width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0, marginTop: '5px',
+                          background: 'var(--primary-color, #D91CD2)'
+                        }} />
+                      )}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {showDashOnboarding && !isSuperAdmin && (
           <div style={{
             background: 'linear-gradient(135deg, rgba(var(--primary-rgb, 217, 28, 210), 0.12), rgba(120,40,200,0.08))',
             border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.35)',
