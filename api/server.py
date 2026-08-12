@@ -22096,14 +22096,69 @@ async def push_broadcast(request: Request):
 async def cron_reservation_reminders():
     """V183: Cron horaire — envoie un rappel 1h avant chaque cours réservé."""
     from datetime import timedelta as _td
+    from zoneinfo import ZoneInfo as _ZoneInfo
     now = datetime.now(timezone.utc)
-    target_start = (now + _td(minutes=45)).isoformat()
-    target_end = (now + _td(minutes=75)).isoformat()
+
+    # === V435 : le rappel partait APRES le debut du cours ===
+    #
+    # L'ancienne requete comparait des CHAINES : les bornes etaient construites
+    # en UTC (`(now+45min).isoformat()`) et confrontees telles quelles au champ
+    # `datetime`. Or deux formats coexistent en base (mesure du 12/08/2026 sur
+    # les 125 reservations) :
+    #     57  « 2026-03-11T17:01:14.738Z »  -> UTC explicite
+    #     67  « 2026-05-13T18:30:00 »       -> NAIF, en heure suisse
+    # Les dates naives etaient donc lues comme de l'UTC : decalage de 2 h, et le
+    # rappel « 1 h avant » atterrissait 90 MINUTES APRES le debut du cours. Les
+    # 67 concernees etaient toutes dans ce cas, sans exception.
+    #
+    # Un decalage fixe ne suffirait pas : il serait faux la moitie de l'annee.
+    # On interprete donc une date naive dans `Europe/Zurich`, qui gere seule le
+    # passage ete/hiver, avant de comparer de VRAIS instants.
+    #
+    # Second defaut, independant : la fenetre faisait 30 min alors que le cron
+    # passe toutes les 60 min — une reservation sur deux pouvait tomber entre
+    # deux passages. Elle fait desormais 60 min, exactement la periode du cron :
+    # couverture continue, sans recouvrement. Delai reel : 30 a 90 min.
+    #
+    # La borne basse est TOUJOURS dans le futur (`now + 30 min`) : un cours deja
+    # commence ne peut jamais etre rattrape.
+    _zurich = _ZoneInfo("Europe/Zurich")
+    fenetre_debut = now + _td(minutes=30)
+    fenetre_fin = now + _td(minutes=90)
+
+    def _v435_instant_du_cours(valeur):
+        """Instant REEL du cours en UTC, ou None si la date est inexploitable."""
+        if not isinstance(valeur, str) or not valeur.strip():
+            return None
+        try:
+            dt = datetime.fromisoformat(valeur.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_zurich)
+        return dt.astimezone(timezone.utc)
+
     try:
-        reservations = await db.reservations.find({
-            "datetime": {"$gte": target_start, "$lte": target_end},
+        # Pre-filtre large cote base (les deux formats commencent par AAAA-MM-JJ,
+        # la comparaison de prefixe est donc sure) : on ne remonte que les jours
+        # utiles, puis on tranche en Python sur de vraies dates.
+        _plancher = (now - _td(days=1)).strftime("%Y-%m-%d")
+        _candidates = await db.reservations.find({
+            "datetime": {"$gte": _plancher},
             "reminder_sent": {"$ne": True}
-        }, {"_id": 0}).to_list(500)
+        }, {"_id": 0}).to_list(2000)
+        if len(_candidates) >= 2000:
+            # Pas de troncature silencieuse.
+            logger.warning("[REMINDER-V435] plafond de 2000 candidats atteint — couverture partielle")
+        reservations = []
+        for _r in _candidates:
+            _quand = _v435_instant_du_cours(_r.get("datetime"))
+            # Borne haute EXCLUE : sans cela, un cours tombant pile sur la limite
+            # est selectionne par deux passages consecutifs (borne haute de l'un,
+            # borne basse du suivant). Semi-ouverte, chaque cours appartient a un
+            # seul creneau — verifie par test.
+            if _quand and fenetre_debut <= _quand < fenetre_fin:
+                reservations.append(_r)
     except Exception as e:
         logger.error(f"[REMINDER-V183] erreur lecture résa: {e}")
         return {"checked": 0, "sent": 0, "error": str(e)}
@@ -22125,9 +22180,14 @@ async def cron_reservation_reminders():
                 f"{course_name}" + (f" à {course_time}" if course_time else "") + " — prépare-toi !",
                 {"type": "course_reminder", "reservation_id": r.get("id")}
             )
+            # V435 : le drapeau n'est pose QUE si l'envoi a reellement abouti.
+            # Avant, il l'etait dans tous les cas — un push en echec (appareil
+            # hors ligne, abonnement expire) etait definitivement perdu, sans
+            # jamais etre reessaye. Il reste desormais candidat au passage
+            # suivant, tant que le cours est dans la fenetre.
             if ok:
                 sent += 1
-            await db.reservations.update_one({"id": r.get("id")}, {"$set": {"reminder_sent": True, "reminder_sent_at": now.isoformat()}})
+                await db.reservations.update_one({"id": r.get("id")}, {"$set": {"reminder_sent": True, "reminder_sent_at": now.isoformat()}})
         except Exception as e:
             logger.warning(f"[REMINDER-V183] résa {r.get('id')}: {e}")
     logger.info(f"[REMINDER-V183] {sent}/{len(reservations)} rappels envoyés")
