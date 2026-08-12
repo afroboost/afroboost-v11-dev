@@ -7593,9 +7593,12 @@ function App() {
             12 + 44 = 56 px depuis le bord droit, sur toute une colonne. Le hero
             etant centre verticalement, il passait DESSOUS.
 
-            On DEGAGE cette colonne (`pr-24` = 96 px sur mobile, soit 56 px de
-            barre + 40 px de securite), et on revient a `px-6` a partir de `md`
-            ou l'ecran est large — le bureau n'est donc pas touche.
+            UI-PUB2 : ce degagement N'A PLUS LIEU D'ETRE. La colonne sociale a
+            ete retiree du hero ; le padding asymetrique qu'elle justifiait
+            (`pr-24` = 96 px a droite contre 24 a gauche) DECENTRAIT le bloc sur
+            mobile — titre, sous-titre et CTA etaient pousses vers la gauche.
+            On revient a `px-6` symetrique sur toutes les tailles : le bloc est
+            geometriquement centre, et non pas seulement centre en texte.
 
             ⚠️ On ne resout PAS le chevauchement par z-index : le hero reste en
             `zIndex: 5`, SOUS le `z-10` de la barre. La barre garde sa position,
@@ -7604,7 +7607,7 @@ function App() {
             Le degrade est un scrim LOCAL au hero, pour detacher le texte de
             l'image sans toucher a l'image source. */}
         <div
-          className="absolute inset-0 flex flex-col items-center justify-center text-center pl-6 pr-24 md:px-6"
+          className="absolute inset-0 flex flex-col items-center justify-center text-center px-6"
           style={{
             pointerEvents: 'none',
             zIndex: 5,
@@ -7704,83 +7707,27 @@ function App() {
           (Tout/Sessions/Offres/Shop), comme demande. Filtre par la recherche
           quand elle est active. Le composant se rend null si la liste est vide. */}
       <div className="max-w-4xl mx-auto px-4">
-        {/* === UI-PUB : titre + barre d'actions GLOBALE ===
-            Le titre « Publications » vivait DANS `PublicationsCarousel`, qui se
-            rend `null` quand le mur est vide (les publications expirent en 48 h).
-            Titre et barre sont donc remontes ici : les actions survivent a un mur
-            vide, au lieu de disparaitre sans explication.
-            Les compteurs restent GLOBAUX a la page — jamais rattaches a une carte.
-            Memes handlers, memes donnees, memes destinations qu'avant. */}
+        {/* === UI-PUB2 : titre seul. La barre horizontale globale a ete RETIREE —
+            elle n'etait pas l'emplacement demande. Les actions sont desormais
+            SUPERPOSEES au media de chaque carte (voir Publications.js), style
+            Reel. Le titre reste ici : `PublicationsCarousel` se rend `null`
+            quand le mur est vide (expiration 48 h), il aurait disparu avec. */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
           <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex', flexShrink: 0 }}>
             <SvgIcon name="users" size={18} />
           </span>
           <span style={{ color: '#fff', fontSize: '18px', fontWeight: 600 }}>Publications</span>
         </div>
-        <div
-          data-testid="uipub-actions"
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexWrap: 'wrap', gap: '10px', marginBottom: '18px'
-          }}
-        >
-          {/* Commentaires — meme condition qu'avant : masque si aucun avis. */}
-          {(socialTotalCount || socialComments.length) > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowCommentsPanel(true)}
-              data-testid="comments-btn"
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: '7px',
-                minHeight: '44px', padding: '0 16px', borderRadius: '22px',
-                background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.14)',
-                border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
-                color: '#fff', fontSize: '14px', fontWeight: 600, cursor: 'pointer'
-              }}
-            >
-              <SvgIcon name="messageCircle" size={18} />
-              {socialTotalCount || socialComments.length}
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={uipubLiker}
-            data-testid="like-btn-page"
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: '7px',
-              minHeight: '44px', padding: '0 16px', borderRadius: '22px',
-              background: uipubDejaLike
-                ? 'var(--primary-color, #D91CD2)'
-                : 'rgba(var(--primary-rgb, 217, 28, 210), 0.14)',
-              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
-              color: '#fff', fontSize: '14px', fontWeight: 600, cursor: 'pointer',
-              transform: uipubAnime ? 'scale(1.08)' : 'scale(1)',
-              transition: 'all 0.3s ease'
-            }}
-          >
-            <SvgIcon name="heart" size={18} />
-            {uipubLikes}
-          </button>
-
-          <button
-            type="button"
-            onClick={uipubReserver}
-            data-testid="reserve-btn-page"
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: '7px',
-              minHeight: '44px', padding: '0 16px', borderRadius: '22px',
-              background: 'var(--primary-color, #D91CD2)',
-              border: 'none', color: '#fff', fontSize: '14px', fontWeight: 700,
-              cursor: 'pointer'
-            }}
-          >
-            <SvgIcon name="calendar" size={18} />
-            {t('bookBtn')}
-          </button>
-        </div>
 
         <PublicationsCarousel
+          actions={{
+            likesCount: uipubLikes,
+            liked: uipubDejaLike,
+            onLike: uipubLiker,
+            commentsCount: socialTotalCount || socialComments.length,
+            onComments: () => setShowCommentsPanel(true),
+            onReserve: uipubReserver,
+          }}
           publications={
             searchQuery.trim()
               ? v261Publications.filter(p => {

@@ -9,6 +9,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom'; // V268d
 import axios from 'axios';
 import Cropper from 'react-easy-crop'; // V268c (F1)
+import SvgIcon from './SvgIcon'; // UI-PUB2 : icones des actions sur les cartes
 import { PrixBoost, BoutonBoost, estSuperAdmin } from './publications/Boost'; // V342 : Boost payant / V343 : pouvoirs super-admin
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
@@ -378,7 +379,41 @@ const V268Lightbox = ({ pub, onClose }) => {
 
 // V268: une carte du carrousel. Composant séparé pour porter l'état local
 // (son de la vidéo) sans le partager entre cartes.
-const V268PublicationCard = ({ pub, onOpen }) => {
+// === UI-PUB2 : colonne d'actions verticale sur le bord droit de la carte ===
+// Style « Reel » : icone SVG fine, compteur discret dessous, AUCUNE capsule,
+// AUCUN fond, AUCUNE pastille. La zone tactile fait 44 px mais reste INVISIBLE
+// (bouton transparent) — seule l'icone se voit.
+//
+// Les compteurs sont ceux de la PAGE, volontairement identiques sur toutes les
+// cartes : ce lot est un positionnement visuel, assume comme tel. Aucun etat
+// n'est cree ici — tout vient de App.js par props, donc aucune concurrence
+// d'etat malgre la repetition du rendu.
+//
+// `stopPropagation` sur chaque bouton : sans lui, le clic ouvrirait AUSSI la
+// lightbox du media, qui englobe cette colonne.
+const UiPub2Action = ({ nom, valeur, onClick, actif, aria }) => (
+  <button
+    type="button"
+    aria-label={aria}
+    onClick={(e) => { e.stopPropagation(); if (onClick) onClick(); }}
+    style={{
+      width: 44, height: 44, padding: 0, border: 'none', background: 'transparent',
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      justifyContent: 'center', gap: 1, cursor: 'pointer',
+      color: actif ? 'var(--primary-color, #D91CD2)' : '#fff',
+      filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.9))'
+    }}
+  >
+    <SvgIcon name={nom} size={21} />
+    {valeur !== null && valeur !== undefined && (
+      <span style={{ fontSize: 10, fontWeight: 600, lineHeight: 1, letterSpacing: '.2px' }}>
+        {valeur}
+      </span>
+    )}
+  </button>
+);
+
+const V268PublicationCard = ({ pub, onOpen, actions }) => {
   // V268c Fix 2 : plus de bouton son sur la carte — la video du carrousel est
   // TOUJOURS muette (autoplay silencieux). Le son n'existe qu'en lightbox.
   // Plus besoin de ref ni d'etat muet ici.
@@ -428,6 +463,40 @@ const V268PublicationCard = ({ pub, onOpen }) => {
             style={{ display: 'block', width: '100%', height: '250px', objectFit: 'cover', borderRadius: 12 }}
           />
         )}
+
+        {/* UI-PUB2 : actions SUPERPOSEES au media, a l'interieur de la carte.
+            Le conteneur parent est deja `position: relative` avec
+            `borderRadius: 12` et `overflow: hidden` : rien ne depasse du cadre.
+            Retrait de 8 px du bord droit, centre verticalement. */}
+        {actions && (
+          <div
+            data-testid="uipub2-actions"
+            style={{
+              position: 'absolute', right: 8, top: '50%',
+              transform: 'translateY(-50%)', zIndex: 3,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2
+            }}
+          >
+            <UiPub2Action
+              nom="heart" aria="J'aime"
+              valeur={actions.likesCount}
+              actif={actions.liked}
+              onClick={actions.onLike}
+            />
+            {actions.commentsCount > 0 && (
+              <UiPub2Action
+                nom="messageCircle" aria="Voir les avis"
+                valeur={actions.commentsCount}
+                onClick={actions.onComments}
+              />
+            )}
+            <UiPub2Action
+              nom="calendar" aria="Réserver"
+              valeur="Réserver"
+              onClick={actions.onReserve}
+            />
+          </div>
+        )}
       </div>
       {/* Bloc d'infos SOUS le media, jamais en superposition. */}
       <div style={{ padding: '6px 2px 0' }}>
@@ -467,7 +536,7 @@ const V268PublicationCard = ({ pub, onOpen }) => {
   );
 };
 
-export const PublicationsCarousel = ({ publications }) => {
+export const PublicationsCarousel = ({ publications, actions }) => {
   // V268 (F2): publication ouverte en plein ecran, ou null.
   const [lightbox, setLightbox] = useState(null);
   if (!publications || publications.length === 0) return null;
@@ -490,7 +559,7 @@ export const PublicationsCarousel = ({ publications }) => {
         }}
       >
         {publications.map(pub => (
-          <V268PublicationCard key={pub.id} pub={pub} onOpen={setLightbox} />
+          <V268PublicationCard key={pub.id} pub={pub} onOpen={setLightbox} actions={actions} />
         ))}
       </div>
       {/* V268d — LE FIX. La lightbox etait rendue ICI, a l'interieur de
