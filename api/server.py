@@ -22185,6 +22185,53 @@ async def push_broadcast(request: Request):
     return {"success": True, "sent": sent, "total": len(subs)}
 
 
+# === N1B-1 : SOCLE — un marqueur d'envoi PAR RAPPEL ===
+#
+# `reminder_sent` est un BOOLEEN UNIQUE par reservation. Il suffisait tant qu'il
+# n'existait qu'un seul rappel, mais il rend tout second rappel impossible : le
+# premier envoi bloquerait definitivement le suivant (24 h avant PUIS le jour du
+# cours, par exemple).
+#
+# On introduit donc `reminders_sent`, un DICTIONNAIRE {cle_de_rappel: horodatage}.
+# Chaque rappel configure portera sa propre cle, ce qui rend l'idempotence
+# independante rappel par rappel.
+#
+# CE LOT NE CHANGE AUCUN COMPORTEMENT. Il pose la structure et rien d'autre :
+#   - le rappel historique garde la cle `defaut` ;
+#   - l'ancien booleen CONTINUE d'etre ecrit pour cette cle, donc toute requete
+#     ou tout code qui le lit se comporte exactement comme avant ;
+#   - une reservation d'AVANT ce lot, qui ne porte que le booleen, est reconnue
+#     comme deja envoyee (retrocompatibilite verifiee sur les 2 documents
+#     concernes en base).
+# Les nouveaux modes (X heures avant, jour J a HH:MM) ne sont PAS branches ici.
+N1B_CLE_HERITEE = "defaut"
+
+
+def n1b_deja_envoye(reservation: dict, cle: str) -> bool:
+    """Ce rappel precis a-t-il deja ete envoye pour cette reservation ?"""
+    _envois = reservation.get("reminders_sent")
+    if isinstance(_envois, dict) and _envois.get(cle):
+        return True
+    # Retrocompat : avant N1B-1, seul le booleen existait.
+    if cle == N1B_CLE_HERITEE and reservation.get("reminder_sent") is True:
+        return True
+    return False
+
+
+async def n1b_marquer_envoye(reservation_id: str, cle: str, quand: str) -> None:
+    """Marque CE rappel comme envoye, sans toucher aux autres.
+
+    Le point-cle de la retrocompatibilite : pour la cle historique, on continue
+    d'ecrire `reminder_sent` / `reminder_sent_at` a l'identique. Aucune lecture
+    existante ne change de resultat.
+    """
+    _maj = {f"reminders_sent.{cle}": quand}
+    if cle == N1B_CLE_HERITEE:
+        _maj["reminder_sent"] = True
+        _maj["reminder_sent_at"] = quand
+    await db.reservations.update_one({"id": reservation_id}, {"$set": _maj})
+
+
 # V183: Cron rappel 1h avant un cours réservé
 @api_router.get("/cron/reservation-reminders")
 async def cron_reservation_reminders():
@@ -22237,15 +22284,20 @@ async def cron_reservation_reminders():
         # la comparaison de prefixe est donc sure) : on ne remonte que les jours
         # utiles, puis on tranche en Python sur de vraies dates.
         _plancher = (now - _td(days=1)).strftime("%Y-%m-%d")
+        # N1B-1 : l'exclusion ne peut plus se faire sur le seul booleen — elle
+        # depend desormais de la CLE du rappel. On remonte donc les candidats par
+        # date, et on tranche en Python via `n1b_deja_envoye`. Le resultat est
+        # identique a l'ancien filtre pour la cle historique.
         _candidates = await db.reservations.find({
-            "datetime": {"$gte": _plancher},
-            "reminder_sent": {"$ne": True}
+            "datetime": {"$gte": _plancher}
         }, {"_id": 0}).to_list(2000)
         if len(_candidates) >= 2000:
             # Pas de troncature silencieuse.
             logger.warning("[REMINDER-V435] plafond de 2000 candidats atteint — couverture partielle")
         reservations = []
         for _r in _candidates:
+            if n1b_deja_envoye(_r, N1B_CLE_HERITEE):
+                continue
             _quand = _v435_instant_du_cours(_r.get("datetime"))
             # Borne haute EXCLUE : sans cela, un cours tombant pile sur la limite
             # est selectionne par deux passages consecutifs (borne haute de l'un,
@@ -22281,7 +22333,7 @@ async def cron_reservation_reminders():
             # suivant, tant que le cours est dans la fenetre.
             if ok:
                 sent += 1
-                await db.reservations.update_one({"id": r.get("id")}, {"$set": {"reminder_sent": True, "reminder_sent_at": now.isoformat()}})
+                await n1b_marquer_envoye(r.get("id"), N1B_CLE_HERITEE, now.isoformat())
         except Exception as e:
             logger.warning(f"[REMINDER-V183] résa {r.get('id')}: {e}")
     logger.info(f"[REMINDER-V183] {sent}/{len(reservations)} rappels envoyés")
