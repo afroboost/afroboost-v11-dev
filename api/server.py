@@ -22210,6 +22210,157 @@ async def n1b_marquer_envoye(reservation_id: str, cle: str, quand: str) -> None:
     await db.reservations.update_one({"id": reservation_id}, {"$set": _maj})
 
 
+# === N1B-2 : LE MOTEUR SAIT LIRE PLUSIEURS REGLES DE RAPPEL ===
+#
+# Deux familles de regles, volontairement distinctes :
+#   A. `relative` — X minutes AVANT le cours (60, 180, 1440, 2880).
+#   B. `same_day` — a heure fixe le JOUR du cours, en Europe/Zurich (07:00...).
+# Exemple metier : cours mardi 19:00 -> rappel lundi 19:00 (relative 1440)
+# PUIS rappel mardi 07:00 (same_day 7). Deux cles distinctes, deux envois
+# independants, aucun ecrasement.
+#
+# CE LOT NE CHANGE RIEN EN PRODUCTION. Aucun coach ne possede de configuration ;
+# la regle par defaut est le rappel historique, et sa cle reste `defaut` — donc
+# les reservations deja notifiees ne peuvent pas etre re-notifiees.
+# Le reglage par le coach viendra avec N1B-3 ; ici, rien ne l'ecrit.
+N1B2_MAX_REGLES = 2
+N1B2_DELAIS_AUTORISES = (60, 180, 1440, 2880)   # 1 h, 3 h, 24 h, 48 h
+N1B2_REGLES_DEFAUT = ({"type": "relative", "minutes": 60},)
+# Demi-fenetre : le cron passe toutes les 60 min, la fenetre fait donc 60 min
+# (+/- 30). Toute precision plus fine serait une illusion tant que la frequence
+# du cron n'a pas change — ce sera la question de N1B-3.
+N1B2_DEMI_FENETRE_MIN = 30
+# Au-dela, aucune regle ne peut se declencher : 48 h + la demi-fenetre.
+N1B2_HORIZON_MIN = 2880 + N1B2_DEMI_FENETRE_MIN
+
+
+def n1b2_cle(regle: dict) -> str:
+    """Cle d'idempotence d'une regle — stable, et unique par regle.
+
+    Le delai de 60 min garde la cle HISTORIQUE `defaut`. C'est le point qui
+    evite un second rappel sur toutes les reservations deja traitees.
+    """
+    if regle.get("type") == "same_day":
+        return "same_day:%02d:00" % int(regle.get("heure", 0))
+    _m = int(regle.get("minutes", 0))
+    if _m == 60:
+        return N1B_CLE_HERITEE
+    return "relative:%dm" % _m
+
+
+def n1b2_titre(cle: str) -> str:
+    """Titre du push. Celui de la cle historique est INCHANGE, au caractere pres.
+
+    Les autres libelles sont derives mecaniquement ; ils sont inatteignables
+    tant qu'aucune regle n'est configurable (N1B-3).
+    """
+    if cle.startswith("same_day:"):
+        return "📅 Ton cours, c'est aujourd'hui"
+    return {
+        N1B_CLE_HERITEE: "📅 Ton cours commence dans 1h",
+        "relative:180m": "📅 Ton cours commence dans 3h",
+        "relative:1440m": "📅 Ton cours, c'est demain",
+        "relative:2880m": "📅 Ton cours, c'est après-demain",
+    }.get(cle, "📅 Ton cours commence dans 1h")
+
+
+def n1b2_corps(cle: str, nom: str, heure: str) -> str:
+    """Corps du push. Celui de la cle historique est INCHANGE, au caractere pres.
+
+    Chaque message est autonome : il porte le jour ET l'heure, pour rester juste
+    meme lu seul sur un ecran verrouille, ou le titre est souvent tronque.
+    Quand `courseTime` est vide, la portion horaire disparait sans laisser de
+    ponctuation orpheline — d'ou le morceau ` a HH:MM` assemble, jamais colle.
+    """
+    _h = (" à %s" % heure) if heure else ""
+    if cle == N1B_CLE_HERITEE:
+        return "%s%s — prépare-toi !" % (nom, _h)
+    if cle.startswith("same_day:"):
+        return "%s aujourd'hui%s. À tout à l'heure 🎧🔥" % (nom, _h)
+    if cle == "relative:180m":
+        return "%s%s — ton moment Afroboost approche 🎧" % (nom, _h)
+    if cle == "relative:1440m":
+        return "%s demain%s. On se retrouve chez Afroboost 🎧" % (nom, _h)
+    if cle == "relative:2880m":
+        return "%s après-demain%s. Pense à garder ce moment pour toi 🎧" % (nom, _h)
+    return "%s%s — prépare-toi !" % (nom, _h)
+
+
+def n1b2_cible(regle: dict, instant_cours, zurich):
+    """Instant UTC ou ce rappel doit partir, ou None si la regle ne s'applique pas."""
+    if regle.get("type") == "same_day":
+        # L'heure fixe se lit sur la date LOCALE du cours : un cours du mardi
+        # 19:00 a Zurich donne bien le mardi 07:00 a Zurich, ete comme hiver.
+        _local = instant_cours.astimezone(zurich)
+        try:
+            _c = _local.replace(hour=int(regle.get("heure", 0)), minute=0,
+                                second=0, microsecond=0)
+        except (ValueError, TypeError):
+            return None
+        # Une heure fixe posterieure au debut du cours n'a aucun sens : on ne
+        # rappelle jamais un cours deja commence.
+        if _c >= _local:
+            return None
+        return _c.astimezone(timezone.utc)
+    from datetime import timedelta as _td2
+    return instant_cours - _td2(minutes=int(regle.get("minutes", 0)))
+
+
+def n1b2_valider_regles(brut):
+    """Regles sures issues d'une configuration, ou None si elle est inexploitable.
+
+    Tout ou rien, volontairement : une configuration partiellement fausse fait
+    RETOMBER sur le defaut plutot que d'envoyer un rappel de travers ou aucun.
+    """
+    if not isinstance(brut, list) or not brut or len(brut) > N1B2_MAX_REGLES:
+        return None
+    _sures, _vues = [], set()
+    for _r in brut:
+        if not isinstance(_r, dict):
+            return None
+        _t = _r.get("type")
+        if _t == "relative":
+            _m = _r.get("minutes")
+            if isinstance(_m, bool) or not isinstance(_m, int) or _m not in N1B2_DELAIS_AUTORISES:
+                return None
+            _sure = {"type": "relative", "minutes": _m}
+        elif _t == "same_day":
+            _h = _r.get("heure")
+            if isinstance(_h, bool) or not isinstance(_h, int) or not (0 <= _h <= 23):
+                return None
+            _sure = {"type": "same_day", "heure": _h}
+        else:
+            return None
+        _c = n1b2_cle(_sure)
+        if _c in _vues:            # deux regles de meme cle s'ecraseraient
+            return None
+        _vues.add(_c)
+        _sures.append(_sure)
+    return _sures
+
+
+async def n1b2_regles_du_coach(coach_id: str, cache: dict):
+    """Regles du coach, ou le defaut. Lecture seule, mise en cache par passage."""
+    if not coach_id:
+        return list(N1B2_REGLES_DEFAUT)
+    if coach_id in cache:
+        return cache[coach_id]
+    _regles = list(N1B2_REGLES_DEFAUT)
+    try:
+        _p = await db.coach_profiles.find_one({"email": coach_id},
+                                              {"_id": 0, "reminder_rules": 1})
+        if _p and _p.get("reminder_rules") is not None:
+            _v = n1b2_valider_regles(_p.get("reminder_rules"))
+            if _v:
+                _regles = _v
+            else:
+                logger.warning("[N1B-2] regles invalides pour %s — repli sur le defaut", coach_id)
+    except Exception as e:
+        logger.warning("[N1B-2] lecture des regles impossible pour %s: %s", coach_id, e)
+    cache[coach_id] = _regles
+    return _regles
+
+
 # V183: Cron rappel 1h avant un cours réservé
 @api_router.get("/cron/reservation-reminders")
 async def cron_reservation_reminders():
@@ -22241,9 +22392,15 @@ async def cron_reservation_reminders():
     #
     # La borne basse est TOUJOURS dans le futur (`now + 30 min`) : un cours deja
     # commence ne peut jamais etre rattrape.
+    #
+    # N1B-2 : la fenetre n'est plus calee sur le cours mais sur la CIBLE de
+    # chaque regle (`cible - 30 < maintenant <= cible + 30`). Pour la regle
+    # historique — 60 min avant — les deux formulations sont EQUIVALENTES au
+    # borne pres : cible = cours - 60, donc la condition redonne exactement
+    # `maintenant + 30 <= cours < maintenant + 90`. Comportement inchange.
     _zurich = _ZoneInfo("Europe/Zurich")
-    fenetre_debut = now + _td(minutes=30)
-    fenetre_fin = now + _td(minutes=90)
+    _demi = _td(minutes=N1B2_DEMI_FENETRE_MIN)
+    _horizon = now + _td(minutes=N1B2_HORIZON_MIN)
 
     def _v435_instant_du_cours(valeur):
         """Instant REEL du cours en UTC, ou None si la date est inexploitable."""
@@ -22272,22 +22429,48 @@ async def cron_reservation_reminders():
         if len(_candidates) >= 2000:
             # Pas de troncature silencieuse.
             logger.warning("[REMINDER-V435] plafond de 2000 candidats atteint — couverture partielle")
-        reservations = []
+        _cache_regles: dict = {}
+        _cache_coach: dict = {}
+
+        async def _n1b2_coach_de(_resa):
+            """Coach proprietaire, mis en cache : jamais deux fois la meme requete."""
+            _direct = (_resa.get("coach_id") or "").strip()
+            if _direct:
+                return _direct
+            _k = "cours:" + str(_resa.get("courseId") or "")
+            if _k in _cache_coach:
+                return _cache_coach[_k]
+            _c = ""
+            try:
+                from api.routes.shared import resoudre_coach_de_reservation as _n1b2_resoudre
+                _c = await _n1b2_resoudre(db, _resa)
+            except Exception as _e:
+                logger.warning("[N1B-2] coach introuvable pour la resa %s: %s", _resa.get("id"), _e)
+            _cache_coach[_k] = _c
+            return _c
+
+        taches = []
         for _r in _candidates:
-            if n1b_deja_envoye(_r, N1B_CLE_HERITEE):
-                continue
             _quand = _v435_instant_du_cours(_r.get("datetime"))
-            # Borne haute EXCLUE : sans cela, un cours tombant pile sur la limite
-            # est selectionne par deux passages consecutifs (borne haute de l'un,
-            # borne basse du suivant). Semi-ouverte, chaque cours appartient a un
-            # seul creneau — verifie par test.
-            if _quand and fenetre_debut <= _quand < fenetre_fin:
-                reservations.append(_r)
+            # Un cours DEJA COMMENCE n'est jamais rattrape ; au-dela de l'horizon,
+            # aucune regle ne peut encore se declencher.
+            if not _quand or _quand <= now or _quand > _horizon:
+                continue
+            for _regle in await n1b2_regles_du_coach(await _n1b2_coach_de(_r), _cache_regles):
+                _cle = n1b2_cle(_regle)
+                if n1b_deja_envoye(_r, _cle):
+                    continue
+                _cible = n1b2_cible(_regle, _quand, _zurich)
+                # Borne BASSE exclue, borne haute incluse : sans cela, une cible
+                # tombant pile sur la limite serait retenue par deux passages
+                # consecutifs. Semi-ouverte, elle appartient a un seul creneau.
+                if _cible and (_cible - _demi) < now <= (_cible + _demi):
+                    taches.append((_r, _cle))
     except Exception as e:
         logger.error(f"[REMINDER-V183] erreur lecture résa: {e}")
         return {"checked": 0, "sent": 0, "error": str(e)}
     sent = 0
-    for r in reservations:
+    for r, _cle_regle in taches:
         email = (r.get("userEmail") or "").lower().strip()
         if not email:
             continue
@@ -22300,8 +22483,8 @@ async def cron_reservation_reminders():
                 continue
             ok = await send_push_by_email(
                 email,
-                "📅 Ton cours commence dans 1h",
-                f"{course_name}" + (f" à {course_time}" if course_time else "") + " — prépare-toi !",
+                n1b2_titre(_cle_regle),
+                n1b2_corps(_cle_regle, course_name, course_time),
                 {"type": "course_reminder", "reservation_id": r.get("id")}
             )
             # V435 : le drapeau n'est pose QUE si l'envoi a reellement abouti.
@@ -22311,11 +22494,11 @@ async def cron_reservation_reminders():
             # suivant, tant que le cours est dans la fenetre.
             if ok:
                 sent += 1
-                await n1b_marquer_envoye(r.get("id"), N1B_CLE_HERITEE, now.isoformat())
+                await n1b_marquer_envoye(r.get("id"), _cle_regle, now.isoformat())
         except Exception as e:
             logger.warning(f"[REMINDER-V183] résa {r.get('id')}: {e}")
-    logger.info(f"[REMINDER-V183] {sent}/{len(reservations)} rappels envoyés")
-    return {"checked": len(reservations), "sent": sent}
+    logger.info(f"[REMINDER-V183] {sent}/{len(taches)} rappels envoyés")
+    return {"checked": len(taches), "sent": sent}
 
 
 async def send_backup_email(participant_id: str, message_preview: str):
