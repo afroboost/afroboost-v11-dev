@@ -22029,11 +22029,31 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
         "timestamp": datetime.now(timezone.utc).isoformat()
     })
     any_sent = False
+    # === V439-DIAG : statut HTTP REEL retourne par FCH pour CHAQUE endpoint ===
+    #
+    # `webpush()` renvoie un objet portant `.status_code`, et cette valeur etait
+    # JETEE. On savait donc qu'aucune exception n'avait ete levee, mais pas quel
+    # appareil avait recu quel code : « FCM a accepte » n'etait qu'une deduction
+    # tiree de l'absence d'erreur.
+    #
+    # Diagnostic PUR : aucun comportement ne change, aucun envoi supplementaire.
+    # Le but est de trancher entre « FCM refuse » et « FCM accepte mais Android
+    # n'affiche pas » — sans toucher au Service Worker tant que ce n'est pas
+    # prouve necessaire.
+    #
+    # AUCUNE DONNEE SENSIBLE : on journalise le RANG dans la liste V437, une
+    # empreinte courte de l'endpoint (sha256 tronque, non reversible) et le
+    # statut HTTP. Jamais l'endpoint complet, jamais les cles `p256dh`/`auth`,
+    # jamais le jeton VAPID.
+    import hashlib as _h439
+    _rang = 0
     for sub in subs:
         subscription_info = sub.get("subscription")
         if not subscription_info:
             continue
         _endpoint = subscription_info.get("endpoint", "")
+        _rang += 1
+        _emp = _h439.sha256(_endpoint.encode()).hexdigest()[:10] if _endpoint else "sans-endpoint"
         try:
             # V434: TTL EXPLICITE. pywebpush 2.2.0 met `ttl=0` par defaut et
             # envoie bel et bien l'en-tete `TTL: 0` (__init__.py:349-351,
@@ -22045,7 +22065,8 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
             # valide, FCM 201 — et aucune notification affichee. 3600 s couvre
             # ces fenetres de veille sans conserver un message devenu inutile
             # pendant des heures.
-            webpush(subscription_info=subscription_info, data=payload, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"}, ttl=3600)
+            _rep439 = webpush(subscription_info=subscription_info, data=payload, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"}, ttl=3600)
+            logger.info("[PUSH-FCM] rang=%d emp=%s statut=%s", _rang, _emp, getattr(_rep439, "status_code", "?"))
             any_sent = True
             # V437 : PLUS DE `break`. On tente les 3 appareils retenus, meme si
             # le premier a abouti — c'est le comportement voulu (telephone ET
@@ -22053,6 +22074,8 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
             # qu'un seul accepte ; un endpoint en echec n'empeche pas les autres,
             # la gestion 404/410 restant endpoint par endpoint.
         except WebPushException as e:
+            _st439 = e.response.status_code if e.response is not None else "exception"
+            logger.info("[PUSH-FCM] rang=%d emp=%s statut=%s", _rang, _emp, _st439)
             if e.response is not None and e.response.status_code in [404, 410]:
                 # V245: desactiver PAR endpoint, pas tout le participant — sinon
                 # une souscription morte tuerait aussi les fraiches du meme pid.
@@ -22064,6 +22087,7 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
             else:
                 logger.error(f"[PUSH] Echec critique: {str(e)}")
         except Exception as e:
+            logger.info("[PUSH-FCM] rang=%d emp=%s statut=exception-reseau (%s)", _rang, _emp, type(e).__name__)
             logger.error(f"[PUSH] Erreur: {str(e)}")
     return any_sent
 
