@@ -371,12 +371,11 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
     if subscription_info:
         remaining = subscription_info.get("remaining_sessions", "?")
         total = subscription_info.get("total_sessions", "?")
-        code = subscription_info.get("code", promo)
+        # Option 3 : le code d'abonnement ne part plus par e-mail (identifiant interne).
         sub_html = f"""
         <div style="background:rgba(147,51,234,0.15);border:1px solid rgba(147,51,234,0.3);border-radius:8px;padding:14px;margin:16px 0;">
             <p style="margin:0;color:#a855f7;font-size:13px;">{t['credit_label']}</p>
             <p style="margin:4px 0 0;color:#fff;font-size:18px;font-weight:bold;">{remaining}/{total} {t['credit_unit']}</p>
-            <p style="margin:4px 0 0;color:#888;font-size:12px;">Code : {code}</p>
         </div>"""
 
     # v158: Le QR code pointe vers la page chat avec le code d'accès pré-rempli
@@ -398,7 +397,6 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
                     <tr><td style="color:#888;padding:6px 0;">{t['offer']}</td><td>{offer}</td></tr>
                     {"<tr><td style='color:#888;padding:6px 0;'>" + t['course'] + "</td><td>" + course + "</td></tr>" if course else ""}
                     {"<tr><td style='color:#888;padding:6px 0;'>" + t['dates'] + "</td><td>" + dates_text + "</td></tr>" if dates_text else ""}
-                    {"<tr><td style='color:#888;padding:6px 0;'>" + t['promo'] + "</td><td style='color:#a855f7;'>" + promo + "</td></tr>" if promo else ""}
                     <tr><td style="color:#888;padding:6px 0;">{t['price']}</td><td style="font-weight:bold;">{price} CHF</td></tr>
                 </table>
             </div>
@@ -778,10 +776,31 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
         sub_info = None
         if subscription_id:
             sub_info = await db.subscriptions.find_one({"id": subscription_id}, {"_id": 0})
-        asyncio.create_task(_send_reservation_email(
-            user_email, reservation.userName, reservation_data, sub_info,
-            user_lang=reservation.userLanguage,
-            user_whatsapp=reservation.userWhatsapp
+        # === reservation_created : evenement UNIQUE, client + coach ===
+        # L'envoi ne depend plus du chemin : le meme helper sert ici et dans
+        # l'espace abonne. Il est idempotent par canal et NON BLOQUANT.
+        from api.routes.shared import notifier_reservation_creee as _rc_notifier
+
+        async def _rc_push_coach(_email, _titre, _msg, _data=None):
+            # Import PARESSEUX : `server.py` importe ce module au chargement,
+            # un import en tete de fichier creerait un cycle. On prend
+            # `send_push_by_email` — celui qui porte V433 (tri des abonnements)
+            # et V434 (TTL 3600) — et jamais `_send_push_to_email`.
+            from api.server import send_push_by_email as _envoyer
+            return await _envoyer(_email, _titre, _msg, _data)
+
+        async def _rc_email_client(_resa):
+            await _send_reservation_email(
+                user_email, reservation.userName, _resa, sub_info,
+                user_lang=reservation.userLanguage,
+                user_whatsapp=reservation.userWhatsapp
+            )
+            return True
+
+        asyncio.create_task(_rc_notifier(
+            db, reservation_data,
+            envoyer_email_client=_rc_email_client,
+            envoyer_push_coach=_rc_push_coach,
         ))
 
     # V180: Notification push à l'abonné après réservation réussie
@@ -798,18 +817,13 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
         except Exception as _e:
             logger.warning(f"[PUSH-V180] notif réservation échec: {_e}")
 
-    # V206: Notification push au COACH pour chaque nouvelle réservation
-    try:
-        COACH_EMAIL = "contact.artboost@gmail.com"
-        course_name = (reservation.courseName or reservation.offerName or "cours")
-        asyncio.create_task(_send_push_to_email(
-            COACH_EMAIL,
-            f"📅 Nouvelle réservation !",
-            f"{reservation.userName} — {course_name}",
-            {"type": "new_reservation", "customer": reservation.userName, "course": course_name}
-        ))
-    except Exception as _e:
-        logger.warning(f"[PUSH-V206] notif coach réservation échec: {_e}")
+    # V206 RETIRE : ce bloc poussait vers une CONSTANTE EN DUR
+    # (`COACH_EMAIL = "contact.artboost@gmail.com"`), ce qui aurait notifie Bassi
+    # pour la reservation d'un autre coach — 58 reservations concernees. Il
+    # utilisait en plus `_send_push_to_email`, l'implementation SANS V433 (tri)
+    # ni V434 (TTL), qui desactive TOUS les abonnements d'un participant sur un
+    # seul 404/410. Le helper `notifier_reservation_creee` s'en charge desormais,
+    # avec le coach REELLEMENT resolu et `send_push_by_email`.
 
     return reservation_data
 

@@ -871,3 +871,151 @@ async def notifier_nouveau_prospect(db, lead: dict, envoyer_push=None) -> bool:
     except Exception as e:
         logger.warning(f"[C17-C] notification ignoree, le prospect reste enregistre — {type(e).__name__}: {e}")
         return False
+
+
+# =====================================================================
+# RESERVATION-CREATED — evenement metier UNIQUE
+# =====================================================================
+# Jusqu'ici la confirmation dependait du CHEMIN utilise : `create_reservation`
+# envoyait un e-mail, l'espace abonne dependait de V436 (casse), et le scan QR
+# n'envoyait rien. Deux moteurs concurrents, des comportements differents pour
+# un meme evenement metier.
+#
+# Ce helper est le point unique. La source (`chat_widget_abonne`,
+# `subscriber_space`, …) reste une METADONNEE : elle ne decide jamais si les
+# notifications partent.
+#
+# NON BLOQUANT — ne leve JAMAIS. Une reservation reussie ne doit pas etre
+# annulee, ni meme perturbee, parce qu'un e-mail ou un push echoue.
+#
+# IDEMPOTENT PAR CANAL — chaque canal a son propre jeton sous `confirmation`.
+# Le jeton est RESERVE par une ecriture conditionnelle atomique AVANT l'envoi :
+# deux executions simultanees (rejeu du frontend, retry, double appel) ne
+# peuvent pas produire deux envois. Un `find` puis un `send` laisserait une
+# fenetre entre les deux ; pas cette forme.
+#
+# MULTI-COACH STRICT — le coach est resolu depuis la reservation, puis depuis le
+# cours. Aucun repli vers une constante globale ni vers le super-admin : mieux
+# vaut ne prevenir personne que prevenir le mauvais coach.
+
+async def _rc_reserver_jeton(db, reservation_id: str, canal: str, quand: str) -> bool:
+    """Reserve le droit d'envoyer sur CE canal. True si on l'obtient."""
+    try:
+        res = await db.reservations.update_one(
+            {"id": reservation_id, f"confirmation.{canal}": {"$exists": False}},
+            {"$set": {f"confirmation.{canal}": {"statut": "en_cours", "at": quand}}},
+        )
+        return bool(getattr(res, "matched_count", 0))
+    except Exception as e:
+        logger.warning("[RESA] jeton %s impossible: %s", canal, type(e).__name__)
+        return False
+
+
+async def _rc_cloturer_jeton(db, reservation_id: str, canal: str, ok: bool) -> None:
+    try:
+        await db.reservations.update_one(
+            {"id": reservation_id},
+            {"$set": {f"confirmation.{canal}.statut": "envoye" if ok else "echec"}},
+        )
+    except Exception:
+        pass
+
+
+async def resoudre_coach_de_reservation(db, reservation: dict) -> str:
+    """Coach REELLEMENT proprietaire, ou '' — jamais de constante globale."""
+    try:
+        c = (reservation.get("coach_id") or "").strip()
+        if c:
+            return c
+        cid = (reservation.get("courseId") or "").strip()
+        if cid:
+            cours = await db.courses.find_one({"id": cid}, {"_id": 0, "coach_id": 1})
+            return ((cours or {}).get("coach_id") or "").strip()
+    except Exception as e:
+        logger.warning("[RESA] resolution coach impossible: %s", type(e).__name__)
+    return ""
+
+
+async def notifier_reservation_creee(
+    db, reservation: dict, envoyer_email_client=None, envoyer_push_coach=None
+) -> dict:
+    """`reservation_created` : confirme le client ET previent le coach proprietaire."""
+    bilan = {"client_email": None, "coach_inapp": None, "coach_push": None}
+    try:
+        rid = (reservation.get("id") or "").strip()
+        if not rid:
+            logger.warning("[RESA] reservation sans id — aucune notification")
+            return bilan
+        maintenant = datetime.now(timezone.utc).isoformat()
+
+        # --- 1. CLIENT : confirmation par e-mail ---
+        client = normaliser_email(reservation.get("userEmail"))
+        if client and envoyer_email_client is not None:
+            if await _rc_reserver_jeton(db, rid, "client_email", maintenant):
+                ok = False
+                try:
+                    ok = bool(await envoyer_email_client(reservation))
+                except Exception as e:
+                    logger.warning("[RESA] e-mail client echoue: %s", type(e).__name__)
+                await _rc_cloturer_jeton(db, rid, "client_email", ok)
+                bilan["client_email"] = "envoye" if ok else "echec"
+            else:
+                bilan["client_email"] = "deja_traite"
+
+        # --- 2. COACH : resolution stricte ---
+        coach = await resoudre_coach_de_reservation(db, reservation)
+        if not coach:
+            # Anomalie tracee, reservation intacte. On ne devine pas.
+            logger.warning("[RESA] coach non resolu (resa %s) — aucune notification coach", rid[:8])
+            return bilan
+
+        prenom = (reservation.get("userName") or "").strip().split(" ")[0][:40] or "Un client"
+        cours = (reservation.get("courseName") or reservation.get("offerName") or "une seance")
+        quand_txt = (reservation.get("selectedDatesText")
+                     or str(reservation.get("datetime") or "")[:10])
+        titre = "Nouvelle reservation"
+        message = f"{prenom} vient de reserver {cours}" + (f" — {quand_txt}" if quand_txt else "")
+
+        # --- 3. COACH : notification in-app ---
+        # AUCUNE donnee personnelle : ni e-mail client, ni telephone, ni code.
+        # (L'affichage dans le centre C17-J fera l'objet d'un lot separe : il
+        #  filtre aujourd'hui `type: "new_lead"` uniquement.)
+        if await _rc_reserver_jeton(db, rid, "coach_inapp", maintenant):
+            ok = False
+            try:
+                await db.notifications.update_one(
+                    {"id": f"resa_{rid}"},
+                    {"$setOnInsert": {
+                        "id": f"resa_{rid}", "type": "new_reservation", "target": "coach",
+                        "title": titre, "message": message, "coach_id": coach,
+                        "reservation_id": rid, "read": False, "created_at": maintenant,
+                    }},
+                    upsert=True,
+                )
+                ok = True
+            except Exception as e:
+                logger.warning("[RESA] notification coach echouee: %s", type(e).__name__)
+            await _rc_cloturer_jeton(db, rid, "coach_inapp", ok)
+            bilan["coach_inapp"] = "envoye" if ok else "echec"
+        else:
+            bilan["coach_inapp"] = "deja_traite"
+
+        # --- 4. COACH : push ---
+        if envoyer_push_coach is not None:
+            if await _rc_reserver_jeton(db, rid, "coach_push", maintenant):
+                ok = False
+                try:
+                    ok = bool(await envoyer_push_coach(coach, titre, message,
+                                                       {"type": "new_reservation", "reservation_id": rid}))
+                except Exception as e:
+                    logger.warning("[RESA] push coach echoue: %s", type(e).__name__)
+                await _rc_cloturer_jeton(db, rid, "coach_push", ok)
+                bilan["coach_push"] = "envoye" if ok else "echec"
+            else:
+                bilan["coach_push"] = "deja_traite"
+
+        logger.info("[RESA] reservation_created %s -> %s", rid[:8], bilan)
+    except Exception as e:
+        # Garde-fou ultime : la reservation reste valide quoi qu'il arrive.
+        logger.warning("[RESA] notification ignoree — %s: %s", type(e).__name__, e)
+    return bilan

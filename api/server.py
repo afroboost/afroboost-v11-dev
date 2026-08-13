@@ -12395,118 +12395,35 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     reservation_doc.pop("_id", None)
     logger.info(f"[SUBSCRIBER_SPACE V187] Réservation {reservation_doc['reservationCode']} pour {user_email} ({course.get('name')}) × {quantity} guests={guests}")
 
-    # V209: Notification push au coach — nouvelle réservation
+    # === reservation_created : evenement UNIQUE, client + coach ===
+    #
+    # Remplace V436 (confirmation e-mail, cassee par une garde `not _frais` sur
+    # une projection vide) ET le push coach V209, qui partaient separement.
+    # Un seul helper partage sert desormais ce chemin ET celui du ChatWidget :
+    # la source de la reservation ne decide plus si les notifications partent.
+    #
+    # Le coach est RESOLU depuis la reservation (`coach_id`, puis le cours) —
+    # jamais une constante. Idempotent par canal, NON BLOQUANT : une panne de
+    # notification ne peut pas annuler la reservation.
     try:
-        coach_email_push = (coach_id if coach_id and "@" in coach_id else "").lower().strip()
-        if not coach_email_push:
-            coach_email_push = (subscription.get("coach_id") or "").lower().strip()
-        # V286 : respecter la préférence coach "new_reservation" (opt-out).
-        if coach_email_push and await _v286_should_send_notification(coach_email_push, "coach", "new_reservation"):
-            # Formater la date pour la notif
-            notif_date = occurrence_iso[:10] if occurrence_iso else ""
-            notif_time = course.get("time") or ""
-            await send_push_by_email(
-                coach_email_push,
-                f"Nouvelle réservation",
-                f"{user_name} a réservé {course.get('name', 'une séance')} ({notif_date} {notif_time})",
-                {"type": "new_reservation", "code": code_upper, "reservation_id": reservation_doc["id"]}
-            )
-    except Exception as e:
-        logger.warning(f"[V209] Erreur push réservation: {e}")
+        from api.routes.shared import notifier_reservation_creee as _rc_notifier
+        from api.routes.reservation_routes import _send_reservation_email as _rc_email
 
-    # === V436 : confirmation par e-mail au CLIENT ===
-    #
-    # Ce chemin — l'espace abonné — represente 67 des 125 reservations (54 %).
-    # Il prevenait le COACH (bloc V209 ci-dessus) et JAMAIS le client : 16
-    # personnes distinctes ont reserve sans recevoir la moindre confirmation.
-    # Seul `create_reservation` en envoyait une.
-    #
-    # POURQUOI PAS `_send_reservation_email` : cette fonction existante expedie
-    # le code d'acces permanent AFRO-XXXX en gros caracteres, un QR qui le
-    # contient, et le code d'abonnement. Or ce code EST le mot de passe de
-    # l'espace abonne. On envoie donc un message MINIMAL, sans aucun code.
-    #
-    # PAS DE CODE DE RESERVATION NON PLUS : `POST /reservations/{code}/validate`
-    # n'a AUCUNE authentification et pose `validated: True` avec le seul code.
-    # Le diffuser permettrait a quiconque de valider une presence sans venir —
-    # et fausserait la future garde anti-double-essai, qui s'appuie dessus.
-    #
-    # NON BLOQUANT : tache detachee, apres l'insertion. Une panne d'e-mail ne
-    # peut ni annuler ni annuler-partiellement une reservation reussie.
-    #
-    # IDEMPOTENT : `confirmation_sent_at` n'est pose qu'APRES un envoi reussi,
-    # et sa presence interdit tout second envoi. Un rejeu du frontend, un retry
-    # backend ou un rechargement de page ne peuvent pas produire deux e-mails.
-    async def _v436_confirmer_par_email():
-        # V436-DIAG : traces d'observation UNIQUEMENT. Aucune logique metier n'est
-        # modifiee, aucun envoi supplementaire, aucune donnee personnelle
-        # journalisee (ni e-mail, ni nom, ni contenu du message).
-        #
-        # Contexte : une reservation reelle du 12/08/2026 a 14:46:18 a bien ete
-        # traitee par le conteneur portant V436, et n'a produit AUCUNE trace —
-        # ni succes, ni exception. Les seules sorties possibles sans trace sont
-        # les deux `return` silencieux ci-dessous ; s'ils ne se declenchent pas
-        # non plus, c'est que la tache n'a jamais demarre.
-        logger.info("[V436-DIAG] tache demarree")
-        try:
-            if not user_email or not RESEND_AVAILABLE or not RESEND_API_KEY:
-                logger.info(
-                    "[V436-DIAG] sortie A — email_client=%s resend_dispo=%s cle=%s",
-                    bool(user_email), RESEND_AVAILABLE, bool(RESEND_API_KEY)
-                )
-                return
-            _frais = await db.reservations.find_one(
-                {"id": reservation_doc["id"]}, {"_id": 0, "confirmation_sent_at": 1}
+        async def _rc_email_client(_resa):
+            await _rc_email(
+                user_email, user_name, _resa, subscription,
+                user_lang=None, user_whatsapp=subscription.get('whatsapp') or '',
             )
-            if not _frais or _frais.get("confirmation_sent_at"):
-                logger.info(
-                    "[V436-DIAG] sortie B — resa_relue=%s deja_confirmee=%s",
-                    bool(_frais), bool((_frais or {}).get("confirmation_sent_at"))
-                )
-                return  # deja confirmee : on ne renvoie jamais
-            _prenom = (user_name or "").strip().split(" ")[0][:40] or "Bonjour"
-            _cours = course.get("name") or "ta séance"
-            _heure = course.get("time") or ""
-            _lieu = course.get("location") or ""
-            _jour = ""
-            try:
-                _d = datetime.fromisoformat(str(occurrence_iso).replace("Z", "+00:00"))
-                _jour = _d.strftime("%d.%m.%Y")
-            except Exception:
-                _jour = str(occurrence_iso or "")[:10]
-            _lignes = "".join(
-                f'<tr><td style="color:#888;padding:6px 0;">{_l}</td>'
-                f'<td style="color:#fff;font-weight:600;">{_v}</td></tr>'
-                for _l, _v in (
-                    ("Cours", _cours), ("Date", _jour),
-                    ("Heure", _heure), ("Lieu", _lieu),
-                ) if _v
-            )
-            _html = (
-                '<div style="background:#111;padding:28px;font-family:Arial,sans-serif;">'
-                f'<h2 style="color:#D91CD2;margin:0 0 6px;">Réservation confirmée</h2>'
-                f'<p style="color:#ddd;margin:0 0 18px;">Salut {_prenom}, ta place est réservée.</p>'
-                f'<table style="width:100%;max-width:420px;font-size:14px;">{_lignes}</table>'
-                '<p style="color:#888;font-size:12px;margin-top:22px;">'
-                'Un empêchement ? Préviens-nous, une autre personne pourra en profiter.</p>'
-                '<p style="color:#666;font-size:12px;">À très vite — Afroboost</p></div>'
-            )
-            await asyncio.to_thread(resend.Emails.send, {
-                "from": "Afroboost <notifications@afroboost.com>",
-                "to": [user_email],
-                "subject": f"Réservation confirmée — {_cours}",
-                "html": _html,
-            })
-            await db.reservations.update_one(
-                {"id": reservation_doc["id"], "confirmation_sent_at": {"$exists": False}},
-                {"$set": {"confirmation_sent_at": datetime.now(timezone.utc).isoformat()}},
-            )
-            logger.info(f"[V436] confirmation envoyée (résa {reservation_doc['id'][:8]})")
-        except Exception as _e:
-            # La reservation reste valide quoi qu'il arrive.
-            logger.warning(f"[V436] confirmation non envoyée: {type(_e).__name__}: {_e}")
+            return True
 
-    asyncio.create_task(_v436_confirmer_par_email())
+        asyncio.create_task(_rc_notifier(
+            db, reservation_doc,
+            envoyer_email_client=_rc_email_client,
+            envoyer_push_coach=send_push_by_email,
+        ))
+    except Exception as _e:
+        logger.warning(f'[RESA] notification ignoree: {type(_e).__name__}')
+
 
     return {
         "success": True,
