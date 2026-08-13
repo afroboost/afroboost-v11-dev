@@ -22225,6 +22225,10 @@ async def n1b_marquer_envoye(reservation_id: str, cle: str, quand: str) -> None:
 # Le reglage par le coach viendra avec N1B-3 ; ici, rien ne l'ecrit.
 N1B2_MAX_REGLES = 2
 N1B2_DELAIS_AUTORISES = (60, 180, 1440, 2880)   # 1 h, 3 h, 24 h, 48 h
+# N1B-3B1 : demi-heures autorisees pour `same_day`. La cadence du cron est passee
+# a 30 min le 13/08/2026 (crontab VPS, `0,30 * * * *`) — c'est elle qui rend
+# HH:30 realisable. Toute valeur plus fine resterait une illusion.
+N1B2_MINUTES_AUTORISEES = (0, 30)
 N1B2_REGLES_DEFAUT = ({"type": "relative", "minutes": 60},)
 # Demi-fenetre : le cron passe toutes les 60 min, la fenetre fait donc 60 min
 # (+/- 30). Toute precision plus fine serait une illusion tant que la frequence
@@ -22241,7 +22245,12 @@ def n1b2_cle(regle: dict) -> str:
     evite un second rappel sur toutes les reservations deja traitees.
     """
     if regle.get("type") == "same_day":
-        return "same_day:%02d:00" % int(regle.get("heure", 0))
+        # N1B-3B1 : la minute entre dans la cle. Avec `minute` absente ou nulle,
+        # la chaine produite est IDENTIQUE a celle de N1B-2 (`same_day:07:00`) :
+        # une regle a l'heure pleine garde donc exactement la meme cle, et rien
+        # de deja marque ne peut etre renvoye.
+        return "same_day:%02d:%02d" % (int(regle.get("heure", 0)),
+                                       int(regle.get("minute", 0)))
     _m = int(regle.get("minutes", 0))
     if _m == 60:
         return N1B_CLE_HERITEE
@@ -22293,7 +22302,8 @@ def n1b2_cible(regle: dict, instant_cours, zurich):
         # 19:00 a Zurich donne bien le mardi 07:00 a Zurich, ete comme hiver.
         _local = instant_cours.astimezone(zurich)
         try:
-            _c = _local.replace(hour=int(regle.get("heure", 0)), minute=0,
+            _c = _local.replace(hour=int(regle.get("heure", 0)),
+                                minute=int(regle.get("minute", 0)),
                                 second=0, microsecond=0)
         except (ValueError, TypeError):
             return None
@@ -22328,7 +22338,12 @@ def n1b2_valider_regles(brut):
             _h = _r.get("heure")
             if isinstance(_h, bool) or not isinstance(_h, int) or not (0 <= _h <= 23):
                 return None
-            _sure = {"type": "same_day", "heure": _h}
+            # N1B-3B1 : `minute` absente vaut 0 — une regle ecrite au format
+            # N1B-2 reste donc valide et produit la meme cle.
+            _m = _r.get("minute", 0)
+            if isinstance(_m, bool) or not isinstance(_m, int) or _m not in N1B2_MINUTES_AUTORISEES:
+                return None
+            _sure = {"type": "same_day", "heure": _h, "minute": _m}
         else:
             return None
         _c = n1b2_cle(_sure)
