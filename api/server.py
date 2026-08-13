@@ -21984,6 +21984,39 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
     ).sort("updated_at", -1).to_list(20)
     if not subs:
         return False
+
+    # === V437 : notifier jusqu'a 3 APPAREILS, plus un seul ===
+    #
+    # V433 avait corrige l'ORDRE (les plus recents d'abord) mais la boucle
+    # s'arretait au PREMIER succes. Or un coach a plusieurs appareils : n'en
+    # notifier qu'un, choisi par un tri a la seconde pres, revient a tirer au
+    # sort lequel sonnera.
+    #
+    # Mesure du 13/08/2026 : sur les 185 abonnements du compte coach, le
+    # navigateur de bureau s'etait reabonne 29 SECONDES apres le telephone. Il
+    # est passe en tete, FCM l'a accepte, la boucle s'est arretee — et le
+    # Samsung, au rang 2, n'a jamais ete sollicite. Le push etait pourtant
+    # « reussi » cote serveur.
+    #
+    # On vise donc les 3 plus recents, endpoints DEDUPLIQUES (un meme appareil
+    # ne doit jamais recevoir deux fois le meme push dans un seul appel), et on
+    # ne parcourt JAMAIS les 185 : la borne protege des envois inutiles vers des
+    # endpoints morts.
+    V437_MAX_APPAREILS = 3
+    _vus = set()
+    _cibles = []
+    for _s in subs:
+        _info = _s.get("subscription") or {}
+        _ep = str(_info.get("endpoint") or "").strip()
+        if not _ep or _ep in _vus:
+            continue
+        _vus.add(_ep)
+        _cibles.append(_s)
+        if len(_cibles) >= V437_MAX_APPAREILS:
+            break
+    if not _cibles:
+        return False
+    subs = _cibles
     # V274: le Service Worker lit `url` et `session_id` au niveau RACINE du
     # payload (cf. sw.js). On les y expose : au clic, la notification ouvre le
     # chat (`/?openChat=true` par defaut) au lieu de la seule page d'accueil.
@@ -22014,7 +22047,11 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
             # pendant des heures.
             webpush(subscription_info=subscription_info, data=payload, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"}, ttl=3600)
             any_sent = True
-            break  # un device notifie suffit
+            # V437 : PLUS DE `break`. On tente les 3 appareils retenus, meme si
+            # le premier a abouti — c'est le comportement voulu (telephone ET
+            # navigateur, comme WhatsApp ou Slack). `any_sent` passe a vrai des
+            # qu'un seul accepte ; un endpoint en echec n'empeche pas les autres,
+            # la gestion 404/410 restant endpoint par endpoint.
         except WebPushException as e:
             if e.response is not None and e.response.status_code in [404, 410]:
                 # V245: desactiver PAR endpoint, pas tout le participant — sinon
