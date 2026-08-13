@@ -22021,31 +22021,13 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
     # payload (cf. sw.js). On les y expose : au clic, la notification ouvre le
     # chat (`/?openChat=true` par defaut) au lieu de la seule page d'accueil.
     _push_url = (data or {}).get("url") or "/?openChat=true"
-    _corps = {
+    payload = json.dumps({
         "title": title, "body": body,
         "icon": "/logo192.png", "badge": "/logo192.png",
         "url": _push_url, "session_id": session_id,
         "data": data or {},
         "timestamp": datetime.now(timezone.utc).isoformat()
-    }
-    # === V438 : remonter `tag` A LA RACINE du message ===
-    #
-    # Le Service Worker lit `data.tag` sur l'objet RACINE (sw.js:221), pas dans
-    # la sous-cle `data`. Sans cette remontee, un tag fourni par l'appelant
-    # serait ignore et TOUTES les notifications garderaient le defaut commun
-    # `afroboost-push` — or sur Android, un tag identique REMPLACE la
-    # notification precedente au lieu de s'empiler.
-    #
-    # Constate le 13/08/2026 : deux reservations a 51 s d'intervalle, deux push
-    # acceptes par FCM, une seule notification visible — la seconde avait
-    # ecrase la premiere. Le titre etant identique (« Nouvelle reservation »),
-    # le remplacement etait invisible.
-    #
-    # Sans tag fourni, le comportement reste EXACTEMENT celui d'avant.
-    _tag = (data or {}).get("tag")
-    if _tag:
-        _corps["tag"] = str(_tag)
-    payload = json.dumps(_corps)
+    })
     any_sent = False
     for sub in subs:
         subscription_info = sub.get("subscription")

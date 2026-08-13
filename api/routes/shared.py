@@ -1005,19 +1005,8 @@ async def notifier_reservation_creee(
             if await _rc_reserver_jeton(db, rid, "coach_push", maintenant):
                 ok = False
                 try:
-                    # V438 : tag OPAQUE et STABLE, propre a cette reservation.
-                    # - deux reservations differentes -> deux tags -> les
-                    #   notifications s'EMPILENT au lieu de se remplacer ;
-                    # - la meme reservation rejouee -> meme tag -> la
-                    #   notification est remplacee, jamais dupliquee.
-                    # C'est une empreinte, pas l'identifiant : `reservation_id`
-                    # n'est ni devinable depuis le tag, ni affiche a l'ecran.
-                    import hashlib as _h
-                    _tag = "resa-" + _h.sha256(rid.encode()).hexdigest()[:12]
                     ok = bool(await envoyer_push_coach(coach, titre, message,
-                                                       {"type": "new_reservation",
-                                                        "reservation_id": rid,
-                                                        "tag": _tag}))
+                                                       {"type": "new_reservation", "reservation_id": rid}))
                 except Exception as e:
                     logger.warning("[RESA] push coach echoue: %s", type(e).__name__)
                 await _rc_cloturer_jeton(db, rid, "coach_push", ok)
