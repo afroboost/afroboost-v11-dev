@@ -430,3 +430,53 @@ describe('mise en page', () => {
     expect(par('reminder-heure-0').getAttribute('aria-label')).toBe('Heure du rappel 1');
   });
 });
+
+// --------------------------------------------------------------------------
+describe('N1B-3C.1 — fuseau affiche et zoom iOS', () => {
+  test('le fuseau est affiche en clair', async () => {
+    await monter({ rules: [R1H] });
+    expect(par('reminder-fuseau')).not.toBeNull();
+    expect(texte()).toContain('Fuseau horaire : Europe/Zurich');
+  });
+
+  test('le fuseau est la meme avec une heure fixe — c\'est la qu\'il compte le plus', async () => {
+    await monter({ rules: [SD700] });
+    expect(texte()).toContain('Europe/Zurich');
+  });
+
+  test('pas de fuseau quand il n\'y a pas d\'editeur — rien a situer dans le temps', async () => {
+    await monter({ echecGet: { response: { status: 401 } } });
+    expect(par('reminder-fuseau')).toBeNull();
+  });
+
+  // iOS zoome sur tout champ de MOINS de 16 px a la mise au point, ce qui
+  // decale la page entiere. Le seuil est un seuil : 15,9 px zoome encore.
+  test('le menu de moment fait 16 px — en dessous, iOS zoome', async () => {
+    await monter({ rules: [R1H] });
+    expect(par('reminder-moment-0').style.fontSize).toBe('16px');
+  });
+
+  test('le menu d\'heure fait 16 px lui aussi', async () => {
+    await monter({ rules: [SD700] });
+    expect(par('reminder-heure-0').style.fontSize).toBe('16px');
+  });
+
+  test('les deux rappels sont couverts, pas seulement le premier', async () => {
+    await monter({ rules: [R24H, SD700] });
+    expect(par('reminder-moment-1').style.fontSize).toBe('16px');
+    expect(par('reminder-heure-1').style.fontSize).toBe('16px');
+  });
+
+  // Le garde-fou qui compte : une classe Tailwind de taille sur ces menus
+  // reviendrait a repasser sous 16 px a une largeur donnee. `sm:text-sm`
+  // (14 px) mordait par exemple sur l'iPhone en PAYSAGE, qui depasse les
+  // 640 px du point de rupture — le zoom revenait la ou personne ne teste.
+  test('aucune classe de taille de texte ne peut repasser sous 16 px', () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, '..', 'ReminderRulesCard.js'), 'utf8'
+    );
+    const declaration = source.match(/const classeChamp = [\s\S]*?;/);
+    expect(declaration).not.toBeNull();
+    expect(declaration[0]).not.toMatch(/text-(xs|sm|base|lg)/);
+  });
+});

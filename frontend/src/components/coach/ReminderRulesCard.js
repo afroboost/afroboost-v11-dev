@@ -232,9 +232,18 @@ const ReminderRulesCard = ({ coachEmail }) => {
 
   const styleChamp = {
     colorScheme: 'dark',        // sans quoi le menu natif s'ouvre en clair sur fond sombre
-    backgroundColor: 'rgba(0,0,0,0.45)'
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    // N1B-3C.1 — 16 px, et jamais moins. iOS ZOOME automatiquement sur tout
+    // champ de moins de 16 px a la mise au point : la page se decale, et le
+    // coach se retrouve avec une mise en page cassee alors qu'elle est juste.
+    // Le seuil vaut a TOUTES les largeurs — un iPhone en paysage depasse le
+    // point de rupture `sm` (640 px) et zoomait donc aussi avec `sm:text-sm`
+    // (14 px). D'ou une taille en dur ici plutot qu'une classe responsive.
+    fontSize: '16px'
   };
-  const classeChamp = 'rounded-lg border border-white/10 text-white text-xs sm:text-sm '
+  // `text-xs sm:text-sm` a ete retire : `styleChamp` impose desormais 16 px, la
+  // classe n'aurait plus aucun effet et laisserait croire le contraire.
+  const classeChamp = 'rounded-lg border border-white/10 text-white '
     + 'px-2 py-2 focus:outline-none focus:border-white/30 min-w-0';
 
   return (
@@ -342,6 +351,15 @@ const ReminderRulesCard = ({ coachEmail }) => {
               <SvgIcon name="plusCircle" size={14} /> Ajouter un second rappel
             </button>
           )}
+
+          {/* N1B-3C.1 — le fuseau est AFFICHE, jamais demande. Tous les cours
+              sont a l'heure suisse et le serveur raisonne en Europe/Zurich
+              (`_n1b3b2_occurrences_du_coach`, api/server.py). Sans cette ligne,
+              rien ne dit au coach que le « 07:00 » qu'il choisit est bien 7 h
+              chez lui — un coach en voyage n'avait aucun moyen de le savoir. */}
+          <p className="text-white/40 text-xs mt-2" data-testid="reminder-fuseau">
+            Fuseau horaire : Europe/Zurich
+          </p>
 
           {/* Refus previsible : dit sous les champs, sans attendre le serveur. */}
           {refus && (
