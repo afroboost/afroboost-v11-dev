@@ -10,10 +10,11 @@ from zoneinfo import ZoneInfo
 
 SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api", "server.py")
 A_EXTRAIRE = {"n1b2_cle", "n1b2_titre", "n1b2_corps", "n1b2_cible",
-              "n1b2_valider_regles", "n1b_deja_envoye"}
+              "n1b2_valider_regles", "n1b_deja_envoye",
+              "n1b3b2_plan", "n1b3b2_regles_trop_proches", "n1b3b2_collisions"}
 CONSTANTES = {"N1B_CLE_HERITEE", "N1B2_MAX_REGLES", "N1B2_DELAIS_AUTORISES",
               "N1B2_REGLES_DEFAUT", "N1B2_DEMI_FENETRE_MIN", "N1B2_HORIZON_MIN",
-              "N1B2_MINUTES_AUTORISEES"}
+              "N1B2_MINUTES_AUTORISEES", "N1B3B2_ECART_MIN"}
 
 src = open(SRC, encoding="utf-8").read()
 arbre = ast.parse(src)
@@ -48,19 +49,33 @@ def instant_du_cours(valeur):
 
 
 def passage_cron(now, resa, regles):
-    """Ce que le cron retiendrait a cet instant : liste de cles a envoyer."""
+    """Ce que le cron retiendrait a cet instant : liste de cles a envoyer.
+
+    Copie fidele de la boucle de `cron_reservation_reminders`, y compris
+    l'absorption N1B-3B2 (calculee AVANT toute lecture de `reminders_sent`).
+    """
     quand = instant_du_cours(resa.get("datetime"))
     if not quand or quand <= now or quand > now + HORIZON:
         return []
+    gardees, _absorbees = NS["n1b3b2_plan"](regles, quand, ZH)
     retenues = []
-    for regle in regles:
-        cle = NS["n1b2_cle"](regle)
+    for cible, cle in gardees:
         if NS["n1b_deja_envoye"](resa, cle):
             continue
-        cible = NS["n1b2_cible"](regle, quand, ZH)
-        if cible and (cible - DEMI) < now <= (cible + DEMI):
+        if (cible - DEMI) < now <= (cible + DEMI):
             retenues.append(cle)
     return retenues
+
+
+def absorbees_cron(now, resa, regles):
+    """Ce que le cron JOURNALISE a cet instant : une ligne par rappel absorbant
+    reellement retenu pour envoi (cf. la boucle de `cron_reservation_reminders`)."""
+    retenues = passage_cron(now, resa, regles)
+    if not retenues:
+        return []
+    quand = instant_du_cours(resa.get("datetime"))
+    _gardees, absorbees = NS["n1b3b2_plan"](regles, quand, ZH)
+    return [cle for _c, cle, _cg, kg in absorbees if kg in retenues]
 
 
 def passage_v435_historique(now, resa):
@@ -90,6 +105,8 @@ def simuler(resa, regles, depart, nb_heures, echecs=(), passages_sup=(), pas_min
                 for i in range(int(nb_heures * 60 // pas_min))]
     instants = sorted(instants + list(passages_sup))
     for now in instants:
+        for cle in absorbees_cron(now, resa, regles):
+            journal_absorbees.append((cle, now.astimezone(ZH).strftime("%a %d/%m %H:%M")))
         for cle in passage_cron(now, resa, regles):
             tentative += 1
             if tentative in echecs:
@@ -97,6 +114,16 @@ def simuler(resa, regles, depart, nb_heures, echecs=(), passages_sup=(), pas_min
             marquer(resa, cle, now.isoformat())
             envois.append((cle, now.astimezone(ZH).strftime("%a %d/%m %H:%M")))
     return envois
+
+
+journal_absorbees = []
+
+
+def simuler_absorbees(*a, **kw):
+    """Meme simulation, mais renvoie ce que le cron aurait JOURNALISE comme absorbe."""
+    del journal_absorbees[:]
+    simuler(*a, **kw)
+    return list(journal_absorbees)
 
 
 DEFAUT = list(NS["N1B2_REGLES_DEFAUT"])
@@ -302,8 +329,186 @@ verifier("07:00 et 07:30 restent deux regles distinctes",
          NS["n1b2_valider_regles"]([SD7, SD730]), [SD7, SD730])
 
 # Le titre reste celui de la famille same_day, quelle que soit la minute.
-verifier("titre same_day inchange a la demi-heure",
-         NS["n1b2_titre"]("same_day:07:30"), "📅 Ton cours, c'est aujourd'hui")
+verifier("titre same_day identique a la demi-heure",
+         NS["n1b2_titre"]("same_day:07:30"), "📅 Afroboost, c'est aujourd'hui")
+
+# === N1B-3B2 : jamais deux notifications rapprochees ========================
+PLAN = NS["n1b3b2_plan"]
+TROP_PROCHES = NS["n1b3b2_regles_trop_proches"]
+COLLISIONS = NS["n1b3b2_collisions"]
+
+# Libelle C4, tranche par le coach.
+verifier("titre C4 — jour meme", NS["n1b2_titre"]("same_day:07:00"),
+         "📅 Afroboost, c'est aujourd'hui")
+verifier("corps C4 — exemple du coach", CORPS("same_day:07:00", "Danse Afro", "08:00"),
+         "Danse Afro aujourd'hui à 08:00. À tout à l'heure 🎧🔥")
+# Les quatre autres titres ne bougent pas.
+verifier("titre 1 h inchange", NS["n1b2_titre"]("defaut"), "📅 Ton cours commence dans 1h")
+verifier("titre 3 h inchange", NS["n1b2_titre"]("relative:180m"), "📅 Ton cours commence dans 3h")
+verifier("titre 24 h inchange", NS["n1b2_titre"]("relative:1440m"), "📅 Ton cours, c'est demain")
+verifier("titre 48 h inchange", NS["n1b2_titre"]("relative:2880m"), "📅 Ton cours, c'est après-demain")
+
+verifier("seuil de collision = 60 min", NS["N1B3B2_ECART_MIN"], 60)
+
+# --- Refus a la sauvegarde -------------------------------------------------
+# Le doublon EXACT est deja refuse par la validation (meme cle).
+verifier("doublon exact same_day refuse en amont",
+         NS["n1b2_valider_regles"]([SD7, {"type": "same_day", "heure": 7, "minute": 0}]), None)
+verifier("doublon exact relatif refuse en amont",
+         NS["n1b2_valider_regles"]([R24, {"type": "relative", "minutes": 1440}]), None)
+# Deux same_day a 30 min : valides separement, refuses ensemble.
+verifier("07:00 + 07:30 -> refus a la sauvegarde",
+         TROP_PROCHES([SD7, SD730]),
+         "Deux rappels le jour même à 07:00 et 07:30, c'est moins d'une heure d'écart. "
+         "Espace-les davantage.")
+verifier("ordre inverse -> meme refus", TROP_PROCHES([SD730, SD7]),
+         TROP_PROCHES([SD7, SD730]))
+verifier("07:00 + 08:00 (60 min pile) -> accepte",
+         TROP_PROCHES([SD7, {"type": "same_day", "heure": 8, "minute": 0}]), "")
+verifier("07:30 + 18:30 -> accepte", TROP_PROCHES([SD730, SD1830]), "")
+verifier("une seule regle -> jamais de refus", TROP_PROCHES([SD7]), "")
+verifier("deux relatifs -> jamais de refus ici", TROP_PROCHES([R1, R24]), "")
+verifier("relatif + same_day -> pas de refus a l'aveugle", TROP_PROCHES([R1, SD7]), "")
+
+# --- Collisions concretes annoncees au coach -------------------------------
+def occ(jour, iso):
+    """Occurrence d'un cours, telle que la route la fabrique."""
+    return {"label": jour, "instant": datetime.fromisoformat(iso).replace(tzinfo=ZH)
+            .astimezone(timezone.utc)}
+
+# L'exemple exact du coach : cours mardi 08:00, regles « 1 h avant » + « 07:00 ».
+verifier("message de collision — exemple du coach",
+         COLLISIONS([R1, SD7], [occ("mardi", "2026-08-18T08:00:00")], ZH),
+         ["Ton cours du mardi à 08:00 recevrait deux rappels à 07:00."])
+# Cibles proches mais distinctes : la phrase le dit.
+verifier("message de collision — cibles distinctes",
+         COLLISIONS([R1, SD730], [occ("mardi", "2026-08-18T08:00:00")], ZH),
+         ["Ton cours du mardi à 08:00 recevrait deux rappels rapprochés, à 07:00 et 07:30."])
+# Cours de 19:00 : 18:00 et 07:00 sont a 11 h d'ecart -> rien a signaler.
+verifier("aucune collision quand les rappels sont espaces",
+         COLLISIONS([R1, SD7], [occ("mardi", "2026-08-18T19:00:00")], ZH), [])
+# Un cours hebdomadaire revient 2 fois dans la fenetre : une seule phrase.
+verifier("occurrences repetees -> message dedoublonne",
+         COLLISIONS([R1, SD7], [occ("mardi", "2026-08-18T08:00:00"),
+                                occ("mardi", "2026-08-25T08:00:00")], ZH),
+         ["Ton cours du mardi à 08:00 recevrait deux rappels à 07:00."])
+# Deux cours differents, deux phrases.
+verifier("deux cours en collision -> deux messages",
+         COLLISIONS([R1, SD7], [occ("mardi", "2026-08-18T08:00:00"),
+                                occ("jeudi", "2026-08-20T07:30:00")], ZH),
+         ["Ton cours du mardi à 08:00 recevrait deux rappels à 07:00.",
+          "Ton cours du jeudi à 07:30 recevrait deux rappels rapprochés, à 06:30 et 07:00."])
+verifier("aucun cours connu -> aucun message", COLLISIONS([R1, SD7], [], ZH), [])
+verifier("une seule regle -> aucune collision possible",
+         COLLISIONS(DEFAUT, [occ("mardi", "2026-08-18T08:00:00")], ZH), [])
+
+# --- Le plan lui-meme ------------------------------------------------------
+_c8 = datetime.fromisoformat("2026-08-18T08:00:00").replace(tzinfo=ZH).astimezone(timezone.utc)
+_g, _a = PLAN([R1, SD7], _c8, ZH)
+verifier("collision -> une seule cible gardee", [k for _, k in _g], ["defaut"])
+verifier("collision -> l'autre est absorbee", [k for _, k, _, _ in _a], ["same_day:07:00"])
+verifier("l'absorbee designe qui l'a absorbee", [kg for _, _, _, kg in _a], ["defaut"])
+
+# Le PREMIER chronologiquement gagne, quel que soit l'ordre d'ecriture des regles.
+_g2, _a2 = PLAN([SD7, R1], _c8, ZH)
+verifier("ordre des regles indifferent — gardee", [k for _, k in _g2], [k for _, k in _g])
+verifier("ordre des regles indifferent — absorbee",
+         [k for _, k, _, _ in _a2], [k for _, k, _, _ in _a])
+
+# Cours a 07:30 : same_day 07:00 (07:00) precede le relatif 1 h (06:30) ? non —
+# 06:30 est AVANT. C'est donc le relatif qui est garde, et le same_day absorbe.
+_c730 = datetime.fromisoformat("2026-08-18T07:30:00").replace(tzinfo=ZH).astimezone(timezone.utc)
+_g3, _a3 = PLAN([SD7, R1], _c730, ZH)
+verifier("le plus tot gagne (06:30 avant 07:00)", [k for _, k in _g3], ["defaut"])
+verifier("le plus tard est absorbe", [k for _, k, _, _ in _a3], ["same_day:07:00"])
+
+# 60 min pile : ce n'est PAS une collision (« moins de 60 min »).
+_c9 = datetime.fromisoformat("2026-08-18T09:00:00").replace(tzinfo=ZH).astimezone(timezone.utc)
+_g4, _a4 = PLAN([R1, SD7], _c9, ZH)
+verifier("60 min pile -> les deux partent", sorted(k for _, k in _g4),
+         ["defaut", "same_day:07:00"])
+verifier("60 min pile -> rien d'absorbe", _a4, [])
+
+# Une regle dont la cible n'existe pas (heure fixe posterieure au cours) est
+# simplement absente du plan — ni gardee, ni absorbee.
+_c6 = datetime.fromisoformat("2026-08-18T06:00:00").replace(tzinfo=ZH).astimezone(timezone.utc)
+_g5, _a5 = PLAN([SD7], _c6, ZH)
+verifier("cible impossible -> plan vide", (_g5, _a5), ([], []))
+
+# --- Le runtime, bout en bout ---------------------------------------------
+COURS_8H = "2026-08-18T08:00:00"
+verifier("runtime : cours 08:00, 1 h + 07:00 -> UN SEUL envoi",
+         simuler({"datetime": COURS_8H}, [R1, SD7], DEBUT, 96, pas_min=30),
+         [("defaut", "Tue 18/08 07:00")])
+verifier("runtime : l'absorption est journalisee une fois, a l'heure prevue",
+         simuler_absorbees({"datetime": COURS_8H}, [R1, SD7], DEBUT, 96, pas_min=30),
+         [("same_day:07:00", "Tue 18/08 07:00")])
+
+# Aucun rattrapage : on rejoue TOUT le cron ensuite.
+_rr = {"datetime": COURS_8H}
+simuler(_rr, [R1, SD7], DEBUT, 96, pas_min=30)
+verifier("runtime : rejeu integral -> l'absorbee ne revient pas",
+         simuler(_rr, [R1, SD7], DEBUT, 96, pas_min=30), [])
+
+# Le rappel GARDE echoue a TOUTES ses tentatives : l'absorbee ne prend jamais
+# sa place — l'abonne ne recoit rien, plutot que le mauvais rappel.
+verifier("runtime : garde en echec total -> l'absorbee ne le remplace pas",
+         simuler({"datetime": COURS_8H}, [R1, SD7], DEBUT, 96,
+                 echecs=(1, 2, 3, 4), pas_min=30),
+         [])
+# Un seul echec : le garde repasse, et c'est TOUJOURS lui, jamais l'absorbee.
+verifier("runtime : apres un echec, c'est encore le garde qui repart",
+         [c for c, _ in simuler({"datetime": COURS_8H}, [R1, SD7], DEBUT, 96,
+                                echecs=(1,), pas_min=30)],
+         ["defaut"])
+# ... et le garde, lui, reste retentable si un passage retombe dans la fenetre.
+_instant_7h = datetime(2026, 8, 18, 7, 0, tzinfo=ZH).astimezone(timezone.utc)
+verifier("runtime : le garde reste retentable apres un echec",
+         simuler({"datetime": COURS_8H}, [R1, SD7], DEBUT, 96, echecs=(1,),
+                 passages_sup=(_instant_7h + timedelta(minutes=20),), pas_min=30),
+         [("defaut", "Tue 18/08 07:20")])
+
+# Cours a 19:00 : aucune collision, les DEUX rappels partent (non-regression).
+verifier("runtime : sans collision, les deux rappels partent",
+         simuler({"datetime": COURS}, [R1, SD7], DEBUT, 96, pas_min=30),
+         [("same_day:07:00", "Tue 18/08 07:00"), ("defaut", "Tue 18/08 18:00")])
+verifier("runtime : sans collision, rien n'est journalise comme absorbe",
+         simuler_absorbees({"datetime": COURS}, [R1, SD7], DEBUT, 96, pas_min=30), [])
+
+# Le defaut de production ne peut PAS declencher d'absorption : une seule regle.
+_abs_defaut = []
+for _hh in range(0, 24):
+    for _mm in ("00", "30"):
+        _cc = "2026-08-18T%02d:%s:00" % (_hh, _mm)
+        _abs_defaut += simuler_absorbees({"datetime": _cc}, DEFAUT, DEBUT, 96, pas_min=30)
+verifier("defaut de production : aucune absorption sur 48 horaires", _abs_defaut, [])
+
+# Balayage : quelles que soient la paire de regles et l'heure du cours, deux
+# cibles GARDEES ne sont jamais a moins de 60 min l'une de l'autre — et la somme
+# gardees + absorbees ne perd ni n'invente jamais de regle.
+_rapproches, _perdues = [], []
+_PAIRES = ([R1, SD7], [R1, SD730], [R3, SD7], [R3, SD1830], [R24, SD7],
+           [R48, SD1830], [R1, R3], [R24, R48], [R1, SD18], [R3, SD730],
+           [SD7, SD18], [SD730, SD1830])
+for _paire in _PAIRES:
+    for _hh in range(0, 24):
+        for _mm in ("00", "30"):
+            _inst = (datetime(2026, 8, 18, _hh, int(_mm), tzinfo=ZH)
+                     .astimezone(timezone.utc))
+            _gg, _aa = PLAN(_paire, _inst, ZH)
+            _cibles = sorted(c for c, _ in _gg)
+            for _x, _y in zip(_cibles, _cibles[1:]):
+                if (_y - _x) < timedelta(minutes=60):
+                    _rapproches.append((_paire, _hh, _mm))
+            # Comptabilite : chaque regle dont la cible existe est soit gardee,
+            # soit absorbee — jamais les deux, jamais aucune des deux.
+            _attendu = sorted(NS["n1b2_cle"](_r) for _r in _paire
+                              if NS["n1b2_cible"](_r, _inst, ZH))
+            _obtenu = sorted([k for _, k in _gg] + [k for _, k, _, _ in _aa])
+            if _attendu != _obtenu:
+                _perdues.append((_paire, _hh, _mm, _attendu, _obtenu))
+verifier("aucune cible gardee rapprochee — 12 paires x 48 horaires", _rapproches, [])
+verifier("chaque regle est gardee OU absorbee, jamais perdue", _perdues, [])
 
 print("=" * 74)
 echecs_test = 0

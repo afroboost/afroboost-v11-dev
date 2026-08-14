@@ -22264,7 +22264,10 @@ def n1b2_titre(cle: str) -> str:
     tant qu'aucune regle n'est configurable (N1B-3).
     """
     if cle.startswith("same_day:"):
-        return "📅 Ton cours, c'est aujourd'hui"
+        # N1B-3B2 : libelle C4, tranche par le coach. « Ton cours » disparait au
+        # profit de la marque — le rappel du jour meme est celui qu'on lit le
+        # plus souvent sur un ecran verrouille, il doit se reconnaitre seul.
+        return "📅 Afroboost, c'est aujourd'hui"
     return {
         N1B_CLE_HERITEE: "📅 Ton cours commence dans 1h",
         "relative:180m": "📅 Ton cours commence dans 3h",
@@ -22354,6 +22357,120 @@ def n1b2_valider_regles(brut):
     return _sures
 
 
+# === N1B-3B2 : DEUX RAPPELS NE SE MARCHENT JAMAIS DESSUS ===
+#
+# Deux regles parfaitement valides prises SEPAREMENT peuvent viser le meme
+# instant pour un cours donne : « 60 min avant » et « le jour meme a 07:00 »
+# tombent tous les deux a 07:00 pour un cours de 08:00. L'abonne recevrait deux
+# notifications a la meme minute — c'est exactement ce qu'on ne veut pas.
+#
+# La garde est posee DEUX FOIS, et ce n'est pas une redondance :
+#   - a la SAUVEGARDE, pour le dire au coach en clair, avec ses vrais cours ;
+#   - au RUNTIME, parce qu'un cours cree APRES la sauvegarde ferait apparaitre
+#     une collision que personne n'aurait pu annoncer.
+# Le runtime est donc la seule garantie REELLE ; la sauvegarde n'est qu'un
+# avertissement utile, et elle ne bloque pas.
+N1B3B2_ECART_MIN = 60          # deux cibles plus proches que cela = collision
+N1B3B2_HORIZON_JOURS = 14      # profondeur de l'apercu des cours a la sauvegarde
+
+
+def n1b3b2_plan(regles, instant_cours, zurich):
+    """Rappels reellement envoyables pour UNE occurrence, collisions retirees.
+
+    Renvoie `(gardees, absorbees)` :
+      - `gardees`   : [(cible, cle)] ;
+      - `absorbees` : [(cible, cle, cible_gardee, cle_gardee)].
+
+    Deux proprietes tiennent tout le reste :
+
+    1. On garde le PREMIER chronologiquement, et on compare chaque candidat a la
+       derniere cible RETENUE — jamais a la precedente absorbee. Sinon trois
+       rappels en chaine (07:00, 07:30, 08:00) laisseraient passer 07:00 et
+       08:00... a 60 min d'ecart exactement, c'est voulu ; mais 07:00 / 07:20 /
+       07:40 ne doit en laisser qu'UN.
+    2. La decision ne lit PAS `reminders_sent`. Elle ne depend que du cours et
+       des regles, donc elle rend le meme verdict a chaque passage du cron :
+       une regle absorbee l'est definitivement pour cette occurrence, et aucun
+       passage ulterieur ne peut la rattraper.
+    """
+    _cibles = []
+    for _rg in regles:
+        _c = n1b2_cible(_rg, instant_cours, zurich)
+        if _c:
+            _cibles.append((_c, n1b2_cle(_rg)))
+    # Tri par cible PUIS par cle. La cle departage les egalites parfaites — et
+    # elles existent : « 60 min avant » et « jour meme a 07:00 » visent tous
+    # deux 07:00 pour un cours de 08:00. Trier sur la seule cible laisserait
+    # l'ORDRE D'ECRITURE des regles decider, si bien que reordonner les deux
+    # memes regles dans l'interface changerait le message recu par l'abonne.
+    _cibles.sort(key=lambda _x: (_x[0], _x[1]))
+    _seuil = timedelta(minutes=N1B3B2_ECART_MIN)
+    _gardees, _absorbees = [], []
+    for _c, _cle in _cibles:
+        if _gardees and (_c - _gardees[-1][0]) < _seuil:
+            _absorbees.append((_c, _cle, _gardees[-1][0], _gardees[-1][1]))
+        else:
+            _gardees.append((_c, _cle))
+    return _gardees, _absorbees
+
+
+def n1b3b2_regles_trop_proches(regles):
+    """Message de REFUS si deux `same_day` sont a moins de 60 min, sinon "".
+
+    Ce controle-la ne depend d'AUCUN cours : deux heures fixes le meme jour sont
+    rapprochees pour tous les cours a la fois, il est donc juste de refuser.
+    Les delais relatifs, eux, sont espaces d'au moins 120 min par construction
+    (60 / 180 / 1440 / 2880) ; et un relatif face a un `same_day` ne se juge
+    qu'a la lumiere d'un cours reel — c'est l'affaire de `n1b3b2_collisions`.
+
+    Le doublon EXACT est deja refuse en amont par `n1b2_valider_regles` : deux
+    regles identiques produisent la meme cle. Ici on attrape l'ecart de 30 min.
+    """
+    _mins = sorted(int(_r.get("heure", 0)) * 60 + int(_r.get("minute", 0))
+                   for _r in regles if _r.get("type") == "same_day")
+    for _a, _b in zip(_mins, _mins[1:]):
+        if (_b - _a) < N1B3B2_ECART_MIN:
+            return ("Deux rappels le jour même à %02d:%02d et %02d:%02d, "
+                    "c'est moins d'une heure d'écart. Espace-les davantage."
+                    % (_a // 60, _a % 60, _b // 60, _b % 60))
+    return ""
+
+
+def n1b3b2_collisions(regles, occurrences, zurich):
+    """Collisions concretes avec les cours a venir, dites en clair au coach.
+
+    `occurrences` : [{"label": "mardi", "instant": datetime aware}] — un cours
+    hebdomadaire revient plusieurs fois dans la fenetre, mais produit toujours
+    la meme phrase : on dedoublonne pour ne pas repeter dix fois la meme chose.
+
+    Ces messages AVERTISSENT, ils ne bloquent pas : le coach peut vouloir cette
+    configuration pour ses autres cours, et le runtime absorbera proprement le
+    rappel en trop sur celui-ci.
+    """
+    _messages, _vus = [], set()
+    for _occ in occurrences:
+        _instant = _occ.get("instant")
+        if not _instant:
+            continue
+        _, _absorbees = n1b3b2_plan(regles, _instant, zurich)
+        _jour = _occ.get("label") or "cours"
+        _h_cours = _instant.astimezone(zurich).strftime("%H:%M")
+        for _cible, _cle, _cible_g, _cle_g in _absorbees:
+            _h1 = _cible_g.astimezone(zurich).strftime("%H:%M")
+            _h2 = _cible.astimezone(zurich).strftime("%H:%M")
+            _sig = (_jour, _h_cours, _h1, _h2)
+            if _sig in _vus:
+                continue
+            _vus.add(_sig)
+            if _h1 == _h2:
+                _messages.append("Ton cours du %s à %s recevrait deux rappels à %s."
+                                 % (_jour, _h_cours, _h1))
+            else:
+                _messages.append("Ton cours du %s à %s recevrait deux rappels rapprochés, "
+                                 "à %s et %s." % (_jour, _h_cours, _h1, _h2))
+    return _messages
+
+
 async def n1b2_regles_du_coach(coach_id: str, cache: dict):
     """Regles du coach, ou le defaut. Lecture seule, mise en cache par passage."""
     if not coach_id:
@@ -22374,6 +22491,119 @@ async def n1b2_regles_du_coach(coach_id: str, cache: dict):
         logger.warning("[N1B-2] lecture des regles impossible pour %s: %s", coach_id, e)
     cache[coach_id] = _regles
     return _regles
+
+
+# === N1B-3B2 : LE COACH PEUT ENFIN ENREGISTRER SES REGLES ===
+#
+# Jusqu'ici AUCUN code du depot n'ecrivait `coach_profiles.reminder_rules` : le
+# moteur multi-regles etait lu mais jamais alimente, donc inerte. Ces deux
+# routes sont le premier — et le seul — ecrivain.
+#
+# Ce que ces routes NE font PAS : elles ne touchent a aucun autre champ du
+# profil. Le `$set` ne porte que sur `reminder_rules`, donc une sauvegarde de
+# rappels n'ecrase jamais photo, anniversaire ou preferences.
+async def _n1b3b2_coach_appelant(request: Request) -> str:
+    """Coach authentifie, ou leve 401/403. Meme chemin que le reste du dashboard.
+
+    On reprend `_v263_authenticated_coach` (JWT signe, repli X-User-Email du
+    mode transitoire V265) plutot qu'une regle neuve : le dashboard du
+    proprietaire n'emet pas toujours de JWT, et exiger le jeton ici rendrait la
+    page inutilisable pour lui — c'est exactement l'incident V310c.
+    """
+    _e = await _v263_authenticated_coach(request)
+    if not _e:
+        raise HTTPException(status_code=401, detail="Authentification requise")
+    if not await _v309_is_coach_or_admin(_e):
+        raise HTTPException(status_code=403, detail="Réservé aux coachs")
+    return _e
+
+
+async def _n1b3b2_occurrences_du_coach(email: str):
+    """Prochaines occurrences des cours du coach, pour l'avertissement de collision.
+
+    Lecture seule et sans consequence : si elle echoue, la sauvegarde reste
+    valable — on perd l'avertissement, pas la configuration.
+    """
+    from zoneinfo import ZoneInfo as _ZI
+    _zh = _ZI("Europe/Zurich")
+    _filtre = {"archived": {"$ne": True}}
+    if not is_super_admin(email):
+        _filtre["coach_id"] = email
+    _occ = []
+    for _c in await db.courses.find(_filtre, {"_id": 0}).to_list(100):
+        for _o in _v184_next_occurrences(_c, days_ahead=N1B3B2_HORIZON_JOURS):
+            try:
+                # `_v184_next_occurrences` renvoie un ISO NAIF, en heure suisse
+                # (cf. V196) : on le date explicitement avant toute comparaison.
+                _dt = datetime.fromisoformat(_o["datetime"]).replace(tzinfo=_zh)
+            except (ValueError, TypeError, KeyError):
+                continue
+            _occ.append({"label": _o.get("weekday_label") or "",
+                         "instant": _dt.astimezone(timezone.utc)})
+    return _occ, _zh
+
+
+@api_router.get("/coach/reminder-rules")
+async def n1b3b2_lire_regles(request: Request):
+    """Regles de rappel du coach appelant, ou le defaut s'il n'en a pas."""
+    _email = await _n1b3b2_coach_appelant(request)
+    _p = await db.coach_profiles.find_one({"email": _email},
+                                          {"_id": 0, "reminder_rules": 1})
+    _brut = (_p or {}).get("reminder_rules")
+    _sures = n1b2_valider_regles(_brut) if _brut is not None else None
+    return {"rules": _sures or list(N1B2_REGLES_DEFAUT),
+            "par_defaut": not bool(_sures)}
+
+
+@api_router.put("/coach/reminder-rules")
+async def n1b3b2_ecrire_regles(request: Request):
+    """Enregistre les regles de rappel du coach appelant.
+
+    Trois verdicts, volontairement distincts :
+      - 400 si la configuration est invalide (type inconnu, delai hors liste,
+        doublon exact, plus de deux regles) — `n1b2_valider_regles` ;
+      - 400 si deux `same_day` sont a moins de 60 min — vrai pour TOUS les
+        cours, donc refusable sans rien connaitre du planning ;
+      - 200 avec `avertissements` si une collision concrete apparait sur un
+        cours reel. On n'interdit pas : la meme configuration peut etre la
+        bonne pour les autres cours, et le runtime absorbera le rappel en trop.
+    """
+    _email = await _n1b3b2_coach_appelant(request)
+    try:
+        _body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Corps de requête illisible")
+    _brut = _body.get("rules") if isinstance(_body, dict) else None
+    _sures = n1b2_valider_regles(_brut)
+    if not _sures:
+        raise HTTPException(
+            status_code=400,
+            detail="Configuration de rappels invalide : au plus %d règles, "
+                   "délais autorisés %s minutes, heure fixe entre 00 et 23 "
+                   "aux minutes %s, et jamais deux fois le même rappel."
+                   % (N1B2_MAX_REGLES, list(N1B2_DELAIS_AUTORISES),
+                      list(N1B2_MINUTES_AUTORISEES)))
+    _refus = n1b3b2_regles_trop_proches(_sures)
+    if _refus:
+        raise HTTPException(status_code=400, detail=_refus)
+
+    _avertissements = []
+    try:
+        _occ, _zh = await _n1b3b2_occurrences_du_coach(_email)
+        _avertissements = n1b3b2_collisions(_sures, _occ, _zh)
+    except Exception as _e:
+        # L'avertissement est un confort, pas une condition : on enregistre.
+        logger.warning("[N1B-3B2] collisions non calculables pour %s: %s", _email, _e)
+
+    await db.coach_profiles.update_one(
+        {"email": _email},
+        {"$set": {"email": _email, "reminder_rules": _sures,
+                  "reminder_rules_updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    logger.info("[N1B-3B2] regles enregistrees pour %s: %s (%d avertissement(s))",
+                _email, _sures, len(_avertissements))
+    return {"success": True, "rules": _sures, "avertissements": _avertissements}
 
 
 # V183: Cron rappel 1h avant un cours réservé
@@ -22471,16 +22701,34 @@ async def cron_reservation_reminders():
             # aucune regle ne peut encore se declencher.
             if not _quand or _quand <= now or _quand > _horizon:
                 continue
-            for _regle in await n1b2_regles_du_coach(await _n1b2_coach_de(_r), _cache_regles):
-                _cle = n1b2_cle(_regle)
+            _regles_r = await n1b2_regles_du_coach(await _n1b2_coach_de(_r), _cache_regles)
+            # N1B-3B2 : les cibles sont RECALCULEES pour cette occurrence reelle,
+            # et les rappels rapproches sont ecartes AVANT toute autre decision.
+            # Le calcul ne lit pas `reminders_sent` : il rend donc le meme verdict
+            # a chaque passage, ce qui interdit tout rattrapage de la regle
+            # absorbee — y compris si le rappel garde a echoue.
+            _gardees, _absorbees = n1b3b2_plan(_regles_r, _quand, _zurich)
+            for _cible, _cle in _gardees:
                 if n1b_deja_envoye(_r, _cle):
                     continue
-                _cible = n1b2_cible(_regle, _quand, _zurich)
                 # Borne BASSE exclue, borne haute incluse : sans cela, une cible
                 # tombant pile sur la limite serait retenue par deux passages
                 # consecutifs. Semi-ouverte, elle appartient a un seul creneau.
-                if _cible and (_cible - _demi) < now <= (_cible + _demi):
+                if (_cible - _demi) < now <= (_cible + _demi):
                     taches.append((_r, _cle))
+                    # La trace de l'absorption est accrochee a l'envoi REEL du
+                    # rappel absorbant : une ligne par notification effectivement
+                    # partie. Journaliser sur la seule fenetre de l'absorbee en
+                    # produirait une a chaque passage du cron, pour chaque
+                    # reservation future — un journal illisible.
+                    for _ca, _cla, _cg, _clg in _absorbees:
+                        if _clg != _cle:
+                            continue
+                        logger.info(
+                            "[N1B-3B2] resa %s : rappel « %s » absorbe par « %s » — %d min "
+                            "d'ecart, seuil %d min. Non envoye, et aucun rattrapage.",
+                            _r.get("id"), _cla, _clg,
+                            int((_ca - _cg).total_seconds() // 60), N1B3B2_ECART_MIN)
     except Exception as e:
         logger.error(f"[REMINDER-V183] erreur lecture résa: {e}")
         return {"checked": 0, "sent": 0, "error": str(e)}
