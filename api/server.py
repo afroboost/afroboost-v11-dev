@@ -59,7 +59,10 @@ from api.routes.contact_categories_routes import category_router, init_category_
 # V363: Import routes segments de contacts (CALCULÉS, lecture seule, aucune écriture)
 from api.routes.contact_segments_routes import segments_router, init_segments_db
 # V367: Import routes bot WhatsApp — ÉTAPE 1 : APERÇU SEUL, aucun envoi, drapeau OFF
-from api.routes.bot_whatsapp_routes import bot_router, init_bot_db
+# V440 : `_lien_offre` est importé, PAS recopié. C'est la seule fabrique d'URL
+# d'offre du dépôt (`?offre=<id>`, V371/V434) ; en faire une seconde copie ici
+# garantirait qu'un jour les deux divergent.
+from api.routes.bot_whatsapp_routes import bot_router, init_bot_db, _lien_offre as v440_lien_offre
 # V223: Calcul prix progressif (module pur, sans accès DB)
 from api.pricing import compute_active_price  # V223
 
@@ -15410,6 +15413,312 @@ async def verify_meta_whatsapp_webhook(request: Request):
         raise HTTPException(status_code=403, detail="Verification failed")
 
 
+# =====================================================================
+# === V440 (M1) : LE FLUX WHATSAPP SAIT ENFIN QUI IL EST ==============
+# =====================================================================
+#
+# CE QUI N'ALLAIT PAS. L'appel OpenAI du webhook recevait
+# `system = ai_config.systemPrompt + context`, avec un `systemPrompt` VIDE en
+# base et un `context` réduit au prénom du client. `messages` ne portait qu'UN
+# tour, sans historique. Le modèle était donc un assistant générique, amnésique,
+# ignorant Afroboost. Mesuré le 13/08/2026 dans `ai_logs` :
+#   « Puis-je payer par twint? »  -> « je ne suis pas capable de traiter les
+#                                     paiements … vérifiez auprès de la plateforme »
+#   « Je peut te twinter »        -> « contacte-moi par TWITTER »
+# Ces réponses sont CORRECTES pour un assistant sans contexte : le défaut n'est
+# pas la formulation, c'est l'absence d'informations. On corrige donc le
+# contexte, jamais une phrase.
+#
+# CE QUI EST HORS PÉRIMÈTRE, ET VOLONTAIREMENT.
+#   - `ai_config.systemPrompt` n'est PAS modifié en base. Le bloc métier est
+#     AJOUTÉ à `context`, exactement comme la ligne « Le client s'appelle … »
+#     le fait déjà. V433 avait touché la base, V434 l'a intégralement annulé.
+#   - Le chat du SITE (`/chat`, `/chat/ai-response`) n'est pas touché.
+#   - Le checkout n'est pas touché : on ne crée aucune session de paiement, on
+#     donne un lien qui ouvre la carte de l'offre. Un lien ne doit jamais
+#     déclencher un paiement tout seul.
+#
+# ⚠️ MONO-COACH ASSUMÉ (arbitrage du 14/08/2026, option b). Ce flux répond pour
+# UN SEUL coach : `AUTHORIZED_COACH_EMAIL`, dont la boîte est `admin_afroboost`
+# en dur dans `_save_whatsapp_conversation`. Les offres lues ci-dessous ne sont
+# donc filtrées par AUCUN `coach_id` — ce serait un faux-semblant de
+# multi-tenant. `v440_offres_visibles` porte cette hypothèse de façon EXPLICITE
+# et TESTABLE (cf. `V440_MONO_COACH`) : le jour où un vrai coach partenaire
+# existera, ce point échouera bruyamment au lieu de servir en silence les offres
+# d'autrui. Le vrai multi-coach est un chantier séparé.
+import unicodedata as _v440_ud
+
+# Marqueur d'hypothèse. Tant qu'il vaut True, ce flux est mono-coach ASSUMÉ.
+V440_MONO_COACH = True
+
+V440_MAX_HISTORIQUE = 8      # tours relus — la fenêtre Meta est de 24 h de toute façon
+V440_SEUIL_SCORE = 3         # en dessous : aucune offre n'est « certaine »
+V440_MARGE_SCORE = 2         # écart minimal avec la 2ᵉ, sinon c'est une égalité
+V440_SITE = "https://afroboost.com"
+
+# Mots trop courants pour désigner une offre. Sans ce filtre, « cours » élirait
+# une offre au hasard parmi les quatre qui le portent dans leurs mots-clés.
+V440_MOTS_IGNORES = frozenset((
+    "pour", "avec", "dans", "cette", "cette", "mon", "ton", "son", "les", "des",
+    "une", "aux", "par", "que", "qui", "est", "sur", "pas", "plus", "bien",
+    "bonjour", "salut", "merci", "svp", "stp", "payer", "paye", "paiement",
+    "twint", "twinter", "carte", "prix", "combien", "possible", "aimerais",
+    "voudrais", "veux", "peux", "puis", "comment", "quand", "reserver",
+    "reservation", "samedi", "dimanche", "lundi", "mardi", "mercredi", "jeudi",
+    "vendredi",
+))
+
+
+def v440_normaliser(texte) -> str:
+    """Minuscules sans accents — « Casque » et « casqué » doivent se rejoindre."""
+    if not isinstance(texte, str):
+        return ""
+    _d = _v440_ud.normalize("NFD", texte.lower())
+    return "".join(_c for _c in _d if _v440_ud.category(_c) != "Mn")
+
+
+def v440_singulier(mot: str) -> str:
+    """Forme canonique : « casques » et « casque » doivent se rejoindre.
+
+    Sans cela, le cas reel echouait — la cliente ecrit « 3 casques », l'offre
+    s'appelle « … du casque Silent ». Le pluriel n'est retire qu'a partir de 5
+    lettres, pour ne pas transformer « cours » en « cour » cote message et le
+    laisser intact cote offre : la regle s'applique aux DEUX cotes, donc la
+    comparaison reste juste quelle que soit la forme choisie.
+    """
+    if len(mot) >= 5 and mot[-1] in "sx":
+        return mot[:-1]
+    return mot
+
+
+def v440_mots(texte) -> set:
+    """Mots utiles d'un texte : au moins 4 lettres, hors mots trop courants.
+
+    La mise au singulier precede le filtre : « reservations » doit etre ecarte
+    comme « reservation ».
+    """
+    _brut = re.split(r"[^a-z0-9]+", v440_normaliser(texte))
+    _mots = {v440_singulier(_m) for _m in _brut if len(_m) >= 4}
+    return {_m for _m in _mots
+            if _m not in V440_MOTS_IGNORES and v440_singulier(_m) not in V440_MOTS_IGNORES}
+
+
+def v440_score_offre(mots: set, offre: dict) -> int:
+    """Score d'appariement entre les mots d'un fil et une offre.
+
+    Le NOM pèse 3, les mots-clés 1. C'est délibéré : sur les offres réelles, 4
+    des 5 partagent des mots-clés IDENTIQUES (« cours, danse, fitness … »), qui
+    ne distinguent donc rien. Seul le nom porte l'information — « casque »,
+    « t-shirt » — et c'est lui qui doit décider.
+    """
+    _score = 0
+    _noms = v440_mots(offre.get("name") or "")
+    _cles = v440_mots(offre.get("keywords") or "")
+    for _m in mots:
+        if _m in _noms:
+            _score += 3
+        elif _m in _cles:
+            _score += 1
+    return _score
+
+
+def v440_offre_certaine(texte: str, offres: list):
+    """L'offre dont il est question, ou None — et le motif, toujours.
+
+    ABSTENTION PAR DÉFAUT. On ne retient une offre que si elle est nettement
+    devant : score suffisant ET écart d'au moins `V440_MARGE_SCORE` avec la
+    suivante. Une égalité, un score faible, une liste vide -> None. C'est la
+    règle « plusieurs offres possibles -> aucune sélection arbitraire », et elle
+    est plus importante que de trouver une réponse : un mauvais lien coûte plus
+    cher qu'une question.
+    """
+    _mots = v440_mots(texte)
+    if not _mots or not offres:
+        return None, "aucun mot exploitable"
+    _classement = sorted(
+        ((v440_score_offre(_mots, _o), _o) for _o in offres),
+        key=lambda _p: (-_p[0], str(_p[1].get("id") or "")),
+    )
+    _meilleur, _offre = _classement[0]
+    if _meilleur < V440_SEUIL_SCORE:
+        return None, "score insuffisant (%d < %d)" % (_meilleur, V440_SEUIL_SCORE)
+    _second = _classement[1][0] if len(_classement) > 1 else 0
+    if (_meilleur - _second) < V440_MARGE_SCORE:
+        return None, "égalité entre plusieurs offres (%d vs %d)" % (_meilleur, _second)
+    return _offre, "offre identifiée (score %d)" % _meilleur
+
+
+def v440_urls_autorisees(offres: list) -> set:
+    """Les SEULES URL qu'une réponse a le droit de contenir.
+
+    Rien n'est fabriqué ici : chaque lien d'offre sort de `v440_lien_offre`,
+    l'unique fabrique du dépôt, à partir d'un `offers.id` réel.
+    """
+    _ok = {V440_SITE, V440_SITE + "/"}
+    for _o in offres or []:
+        _l = v440_lien_offre(_o)
+        if _l:
+            _ok.add(_l)
+    return _ok
+
+
+def v440_garde_urls(texte: str, autorisees: set):
+    """Garde de SORTIE : neutralise toute URL absente de l'ensemble autorisé.
+
+    Le contexte a beau interdire d'inventer, un modèle peut passer outre — et
+    c'est précisément ce qu'il a fait en envoyant la cliente vers « Twitter ».
+    On ne fait donc pas confiance à la consigne : on relit le texte SORTANT.
+
+    Une URL interdite est REMPLACÉE par la racine du site, jamais simplement
+    effacée : retirer un lien au milieu d'une phrase produirait « Voici le lien
+    pour ton offre :  » — une promesse vide. `https://afroboost.com` est
+    toujours vrai, toujours sûr, et ne mène chez aucun tiers.
+    """
+    if not isinstance(texte, str) or not texte:
+        return texte, []
+    _retirees = []
+
+    def _remplacer(_m):
+        _url = _m.group(0)
+        # La ponctuation finale appartient à la phrase, pas à l'URL.
+        _fin = ""
+        while _url and _url[-1] in ".,;:!?)»\"'":
+            _fin = _url[-1] + _fin
+            _url = _url[:-1]
+        if _url in autorisees:
+            return _url + _fin
+        _retirees.append(_url)
+        return V440_SITE + _fin
+
+    _propre = re.sub(r"https?://[^\s<>\"'`]+", _remplacer, texte)
+    # Les URL écrites sans protocole (« afroboost.com/?offre=… », « twint.ch »)
+    # échappent au motif ci-dessus et resteraient cliquables sur WhatsApp.
+    _propre = re.sub(
+        r"(?<![/\w.])(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+/[^\s<>\"'`]*",
+        _remplacer, _propre, flags=re.IGNORECASE)
+    return _propre, _retirees
+
+
+def v440_contexte_metier(offres: list, offre_ciblee: dict, motif: str = "") -> str:
+    """Le bloc métier ajouté au prompt système. Construit ENTIÈREMENT en Python.
+
+    Tout ce que le modèle a le droit de dire d'une offre — nom, prix, lien —
+    figure ici, calculé depuis la base. Le modèle rédige ; il n'invente pas les
+    faits, et surtout pas les URL.
+    """
+    _c = [
+        "Tu es l'assistant WhatsApp d'Afroboost, le studio de fitness afrobeat "
+        "de Coach Bassi à Neuchâtel (Suisse). Tu réponds en français, de façon "
+        "chaleureuse et brève, comme dans une conversation WhatsApp.",
+        "",
+        "PAIEMENT — CE QUI EST VRAI :",
+        "- Les offres PAYANTES se règlent sur le site Afroboost, par carte ou "
+        "par TWINT (en CHF). TWINT fonctionne, c'est un moyen de paiement "
+        "normal du site.",
+        "- Tu ne traites pas la transaction toi-même, mais cela ne veut PAS "
+        "dire que TWINT est indisponible : tu donnes le lien du site, et le "
+        "paiement s'y fait.",
+        "- N'envoie JAMAIS quelqu'un chercher sur l'application ou le site "
+        "TWINT : le parcours normal est Afroboost.",
+        "",
+    ]
+    _payantes = [_o for _o in (offres or []) if (_o.get("price") or 0) > 0]
+    if _payantes:
+        _c.append("OFFRES PAYANTES ET LEURS LIENS (les seuls liens autorisés) :")
+        for _o in _payantes:
+            _c.append("- %s — %s CHF — %s"
+                      % (str(_o.get("name") or "Offre").strip(),
+                         _o.get("price"), v440_lien_offre(_o)))
+        _c.append("")
+    _gratuites = [_o for _o in (offres or []) if not (_o.get("price") or 0) > 0]
+    if _gratuites:
+        _c.append("OFFRES GRATUITES (aucun paiement, donc AUCUNE mention de TWINT) :")
+        for _o in _gratuites:
+            _c.append("- %s — gratuit — %s"
+                      % (str(_o.get("name") or "Offre").strip(), v440_lien_offre(_o)))
+        _c.append("")
+
+    if offre_ciblee is not None:
+        _nom = str(offre_ciblee.get("name") or "cette offre").strip()
+        if (offre_ciblee.get("price") or 0) > 0:
+            _c += [
+                "OFFRE CONCERNÉE PAR CETTE CONVERSATION : %s (%s CHF)." % (_nom, offre_ciblee.get("price")),
+                "Si la personne parle de payer, confirme que TWINT est possible "
+                "et donne EXACTEMENT ce lien : %s" % v440_lien_offre(offre_ciblee),
+                "",
+            ]
+        else:
+            _c += [
+                "OFFRE CONCERNÉE PAR CETTE CONVERSATION : %s, et elle est GRATUITE." % _nom,
+                "Ne propose donc PAS de paiement ni TWINT. Dis simplement qu'il "
+                "n'y a rien à payer et donne ce lien pour réserver : %s"
+                % v440_lien_offre(offre_ciblee),
+                "",
+            ]
+    else:
+        _c += [
+            "AUCUNE OFFRE N'A PU ÊTRE IDENTIFIÉE AVEC CERTITUDE (%s)." % (motif or "indéterminé"),
+            "Tu ne dois donc donner AUCUN lien d'offre. Demande gentiment de "
+            "quelle offre ou de quel cours il s'agit. Tu peux confirmer que le "
+            "paiement par TWINT existe sur le site, sans donner de lien précis.",
+            "",
+        ]
+
+    _c += [
+        "RÈGLES ABSOLUES :",
+        "- N'invente JAMAIS une adresse web. N'écris que les liens listés "
+        "ci-dessus, copiés au caractère près. Si le lien dont tu aurais besoin "
+        "n'y figure pas, n'en mets aucun et pose une question.",
+        "- N'invente ni prix, ni horaire, ni offre absente de cette liste.",
+        "- Ne demande jamais de coordonnées bancaires.",
+        "- Si tu ne sais pas, dis-le et propose de faire suivre à Coach Bassi.",
+    ]
+    return "\n".join(_c)
+
+
+async def v440_offres_visibles() -> list:
+    """Offres visibles. ⚠️ AUCUN filtre `coach_id` — mono-coach assumé, cf. en-tête."""
+    try:
+        return await db.offers.find(
+            {"visible": {"$ne": False}},
+            {"_id": 0, "id": 1, "name": 1, "price": 1, "keywords": 1, "isProduct": 1},
+        ).to_list(50)
+    except Exception as _e:
+        logger.warning("[V440] offres illisibles : %s", _e)
+        return []
+
+
+async def v440_historique_fil(from_phone: str, limite: int = V440_MAX_HISTORIQUE):
+    """Derniers tours du fil WhatsApp, au format `messages` d'OpenAI.
+
+    C'est ce qui manquait pour que « Puis-je payer par Twint ? » garde le
+    contexte des « 3 casques » demandés deux minutes plus tôt. Lecture seule.
+    Le message COURANT n'y figure pas : il n'est enregistré qu'après la réponse.
+    """
+    _pid = "whatsapp_" + str(from_phone or "").replace("+", "")
+    try:
+        _conv = await db.private_conversations.find_one(
+            {"$or": [{"participant_1_id": _pid}, {"participant_2_id": _pid}]},
+            {"_id": 0, "id": 1})
+        if not _conv:
+            return []
+        _msgs = await db.private_messages.find(
+            {"conversation_id": _conv["id"], "is_deleted": {"$ne": True}},
+            {"_id": 0, "sender_id": 1, "content": 1, "created_at": 1},
+        ).sort("created_at", -1).to_list(limite)
+    except Exception as _e:
+        logger.warning("[V440] historique illisible : %s", _e)
+        return []
+    _tours = []
+    for _m in reversed(_msgs):
+        _texte = (_m.get("content") or "").strip()
+        if not _texte:
+            continue
+        _tours.append({"role": "user" if _m.get("sender_id") == _pid else "assistant",
+                       "content": _texte[:1000]})
+    return _tours
+
+
 @api_router.post("/webhook/whatsapp-meta")
 async def handle_meta_whatsapp_webhook(request: Request):
     """
@@ -15664,6 +15973,28 @@ async def handle_meta_whatsapp_webhook(request: Request):
                 if last_media:
                     context += f"\n\nNote: Tu as récemment envoyé un média à ce client: {last_media}. Tu peux lui demander s'il l'a bien reçu."
 
+                # === V440 : contexte métier + historique + offre résolue en Python ===
+                #
+                # L'offre est cherchée sur le fil ENTIER (historique + message
+                # courant), pas sur le seul message : c'est ce qui fait que
+                # « Puis-je payer par Twint ? » garde les « 3 casques » demandés
+                # juste avant. La résolution est faite ICI, jamais par le modèle.
+                _v440_offres, _v440_hist, _v440_ciblee, _v440_motif = [], [], None, "non calculé"
+                try:
+                    _v440_offres = await v440_offres_visibles()
+                    _v440_hist = await v440_historique_fil(from_phone)
+                    _v440_fil = " ".join([_t["content"] for _t in _v440_hist] + [incoming_message])
+                    _v440_ciblee, _v440_motif = v440_offre_certaine(_v440_fil, _v440_offres)
+                    context += "\n\n" + v440_contexte_metier(_v440_offres, _v440_ciblee, _v440_motif)
+                    logger.info("[V440] %d offre(s), %d tour(s) d'historique — %s",
+                                len(_v440_offres), len(_v440_hist), _v440_motif)
+                except Exception as _e_v440:
+                    # Le contexte est un PLUS : s'il échoue, on répond comme avant
+                    # plutôt que de ne pas répondre du tout.
+                    logger.error("[V440] contexte métier ignoré (%s) — flux nu",
+                                 _e_v440)
+
+                # `systemPrompt` reste lu tel quel, et n'est jamais réécrit en base.
                 full_system_prompt = ai_config.get("systemPrompt", "") + context
 
                 # 4. Appeler l'IA
@@ -15688,13 +16019,28 @@ async def handle_meta_whatsapp_webhook(request: Request):
                     response = await asyncio.to_thread(
                         client.chat.completions.create,
                         model=model_name,
-                        messages=[
-                            {"role": "system", "content": full_system_prompt},
-                            {"role": "user", "content": incoming_message}
-                        ],
+                        messages=(
+                            [{"role": "system", "content": full_system_prompt}]
+                            + _v440_hist                      # V440 : les tours précédents
+                            + [{"role": "user", "content": incoming_message}]
+                        ),
                         max_tokens=1000
                     )
                     ai_response = response.choices[0].message.content
+
+                    # === V440 : GARDE DE SORTIE ANTI-INVENTION ===
+                    # La consigne du contexte interdit d'inventer une URL ; cette
+                    # garde ne lui fait pas confiance et relit le texte sortant.
+                    # Toute adresse absente de l'ensemble autorisé est ramenée sur
+                    # la racine du site — jamais chez un tiers, jamais vers TWINT.
+                    try:
+                        ai_response, _v440_retirees = v440_garde_urls(
+                            ai_response, v440_urls_autorisees(_v440_offres))
+                        if _v440_retirees:
+                            logger.warning("[V440] %d URL non autorisée(s) neutralisée(s) : %s",
+                                           len(_v440_retirees), _v440_retirees[:3])
+                    except Exception as _e_garde:
+                        logger.error("[V440] garde de sortie ignorée : %s", _e_garde)
 
                     response_time = time.time() - start_time
 
