@@ -35,6 +35,7 @@ import {
 // c'est le serveur qui décide ; ici on évite seulement d'afficher une interface
 // coach qui ne fonctionnera pas).
 import { jetonExpire } from '../utils/jwt';
+import { c9bIdentifier, c9bCoupeCircuit } from '../utils/analyticsIdentity'; // C9-B
 import AudioMessage from './chat/AudioMessage'; // V356 : lecteur de note vocale
 import AfricanEmojiPicker from './chat/AfricanEmojiPicker';
 import SubscriberForm from './chat/SubscriberForm';
@@ -92,6 +93,20 @@ var V319_REQUIRE_COACH_JWT = false;
 // Dernière valeur connue, relue AVANT le premier rendu : évite un éclair d'interface
 // coach chez un visiteur qui aurait juste saisi l'email de l'admin.
 try { V319_REQUIRE_COACH_JWT = localStorage.getItem('afroboost_require_coach_jwt') === '1'; } catch (e) {}
+
+// C9-B : meme motif que V319 — variable de module, derniere valeur connue relue
+// AVANT le premier rendu. Sans ce cache, il existerait une fenetre de course : la
+// connexion d'un abonne peut aboutir avant que la reponse de /feature-flags soit
+// arrivee, et le drapeau vaudrait faussement `false`. Defaut prudent : eteint.
+var C9B_IDENTIFY_ENABLED = false;
+try { C9B_IDENTIFY_ENABLED = localStorage.getItem('afroboost_posthog_identify') === '1'; } catch (e) {}
+// ⚠️ Le pseudonyme n'est VOLONTAIREMENT pas stocke dans une variable de module.
+// Il voyage par la valeur de retour de `v296EnsureSubscriberToken`, donc dans la
+// portee locale de l'appel. Une variable partagee serait ecrasee par les DEUX
+// appels « au vol » de cette meme fonction (echange silencieux au montage,
+// doublon best-effort) pendant le `await handleSmartEntry` qui separe l'ecriture
+// de la lecture : sur un appareil deja connu, le pseudonyme de l'ancien titulaire
+// pourrait alors identifier le nouveau. Fusion irreversible.
 
 /**
  * V349 — en-têtes d'identité pour les appels faits en `fetch`.
@@ -1773,16 +1788,21 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   // des appareils déjà connectés (code localStorage -> jeton), sans rien redemander.
   const v296EnsureSubscriberToken = async (code, email) => {
     const c = (code || '').trim();
-    if (!c) return null;
+    if (!c) return { token: null, analyticsId: '' };
     try {
       const res = await axios.post(API + '/subscriber/token', { code: c, email: (email || '').trim() });
+      // C9-B : le serveur ne renseigne `analytics_id` QUE s'il a positivement
+      // constate que le code est individuel et apparie a cette adresse. Vide dans
+      // tous les cas ambigus — on ne decide rien ici, on transporte.
+      const pseudo = (res && res.data && res.data.analytics_id) || '';
       const tok = res && res.data && res.data.token;
       if (tok) {
         try { localStorage.setItem('afroboost_subscriber_token', tok); } catch (e) { /* silencieux */ }
-        return tok;
+        return { token: tok, analyticsId: pseudo };
       }
+      return { token: null, analyticsId: pseudo };
     } catch (e) { /* silencieux */ }
-    return null;
+    return { token: null, analyticsId: '' };
   };
 
   // === CACHE HYBRIDE v9.4.0: Chargement instantané via localStorage (persistant) + sessionStorage ===
@@ -2328,6 +2348,14 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       var required = !!(res && res.data && res.data.REQUIRE_COACH_JWT);
       V319_REQUIRE_COACH_JWT = required;
       try { localStorage.setItem('afroboost_require_coach_jwt', required ? '1' : '0'); } catch (e) {}
+      // C9-B : on lit le meme appel (deja throttle a 60 s), aucun trafic ajoute.
+      // `c9bCoupeCircuit` ne se contente pas d'empecher les prochains identify :
+      // eteint, il coupe le traitement des personnes meme sur un navigateur DEJA
+      // identifie. Il ne defait aucune fusion passee — rien ne le peut.
+      var c9bOn = !!(res && res.data && res.data.POSTHOG_IDENTIFY_ENABLED);
+      C9B_IDENTIFY_ENABLED = c9bOn;
+      try { localStorage.setItem('afroboost_posthog_identify', c9bOn ? '1' : '0'); } catch (e) {}
+      c9bCoupeCircuit(c9bOn);
       if (!required || v319HasCoachJwt()) return;   // rien à faire
       // Ce bloc ne doit toucher QUE quelqu'un qui se présentait comme coach. Un
       // visiteur ou un abonné n'a pas de jeton non plus : lui montrer un formulaire
@@ -3890,7 +3918,12 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       // On inverse l'ordre : jeton -> smart-entry -> et on ne persiste QUE si le
       // serveur a dit oui. Un refus ne laisse plus aucune trace locale.
       var _subTok = null;
-      try { _subTok = await v296EnsureSubscriberToken(profile.code, profile.email); } catch (e) { /* silencieux */ }
+      var _c9bPseudo = '';   // C9-B : portee LOCALE, jamais partagee (cf. l'entete)
+      try {
+        var _jeton = await v296EnsureSubscriberToken(profile.code, profile.email);
+        _subTok = _jeton && _jeton.token;
+        _c9bPseudo = (_jeton && _jeton.analyticsId) || '';
+      } catch (e) { /* silencieux */ }
 
       var _entree = await handleSmartEntry({
         firstName: profile.name,
@@ -3911,6 +3944,23 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
         setValidatingCode(false);
         return false;
       }
+
+      // === C9-B : UNIQUE POINT D'IDENTIFICATION ANALYTIQUE DU DEPOT ===
+      //
+      // On est ici APRES deux verdicts serveur : le jeton d'appareil a ete emis
+      // (donc `/subscriber/token` a constate que le code est individuel ET
+      // apparie a cette adresse), et smart-entry a accepte. Le garde ci-dessus
+      // renvoie `false` aussi bien sur refus que sur panne reseau — arriver ici
+      // signifie donc que le serveur a dit oui, pas que le cache le croyait.
+      //
+      // Ce point est commun aux TROIS entrees abonne — formulaire, QR, lien
+      // `?code=` — ce qui evite d'avoir a instrumenter chacune. Volontairement
+      // PAS pose dans `v296EnsureSubscriberToken` : elle sert aussi a l'echange
+      // silencieux au montage et a un doublon best-effort, qui ne prouvent rien.
+      //
+      // Best-effort absolu : `c9bIdentifier` ne leve jamais et son retour n'est
+      // pas teste. Aucune mesure ne doit empecher un abonne d'entrer.
+      c9bIdentifier(_c9bPseudo, { actif: C9B_IDENTIFY_ENABLED, email: profile.email });
 
       // V294 : fusion (jamais d'écrasement par du vide) au lieu d'un remplacement
       // brut -> whatsapp/birthday déjà présents ne sont plus perdus.

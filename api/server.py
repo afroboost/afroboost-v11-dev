@@ -1068,6 +1068,16 @@ class FeatureFlags(BaseModel):
     # se comporte exactement comme aujourd'hui. Déclaré maintenant pour que la bascule
     # se fasse sans redéploiement, le jour où le menu sera branché et testé.
     BOT_MENU_ENABLED: bool = False
+    # C9-B : interrupteur de l'IDENTIFICATION PostHog (rattachement de la visite
+    # anonyme a la personne). Defaut FALSE = comportement actuel, aucun profil de
+    # personne n'est cree. True = `/subscriber/token` renvoie un pseudonyme et le
+    # navigateur appelle `identify()`. Basculable SANS redeploiement — c'est le
+    # coupe-circuit du lot, une variable d'environnement Coolify imposerait un
+    # rebuild de plusieurs minutes.
+    # ⚠️ L'ETEINDRE ARRETE TOUTE NOUVELLE FUSION, mais ne DEFAIT PAS celles deja
+    # produites : une fusion PostHog est irreversible (« Split IDs » ne garantit
+    # rien sur le passe).
+    POSTHOG_IDENTIFY_ENABLED: bool = False
     updatedAt: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -1082,6 +1092,7 @@ class FeatureFlagsUpdate(BaseModel):
     SUPERADMIN_JWT_STRICT: Optional[bool] = None  # V344
     CHAT_READ_STRICT: Optional[bool] = None  # V349
     BOT_MENU_ENABLED: Optional[bool] = None  # V367
+    POSTHOG_IDENTIFY_ENABLED: Optional[bool] = None  # C9-B
 
 # === SYSTÈME MULTI-COACH v8.9 - MODÈLES ===
 
@@ -14698,6 +14709,7 @@ async def get_feature_flags():
             "PUBLICATIONS_NO_EXPIRY": False,   # V333 : défaut OFF (48 h pour tout le monde)
             "SUPERADMIN_JWT_STRICT": False,    # V344 : défaut OFF (repli X-User-Email encore accepté)
             "CHAT_READ_STRICT": False,         # V349 : défaut OFF (lecture du chat encore ouverte)
+            "POSTHOG_IDENTIFY_ENABLED": False, # C9-B : défaut OFF (aucune identification)
             "updatedAt": None,
             "updatedBy": None
         }
@@ -14712,7 +14724,8 @@ async def get_feature_flags():
                          ("STREAMING_SERVICE_ENABLED", False), ("SUBSCRIBER_STRICT_ENTRY", False),
                          ("REQUIRE_COACH_JWT", False), ("PAWAPAY_ENABLED", False),
                          ("PUBLICATIONS_NO_EXPIRY", False), ("SUPERADMIN_JWT_STRICT", False),
-                         ("CHAT_READ_STRICT", False), ("BOT_MENU_ENABLED", False)):
+                         ("CHAT_READ_STRICT", False), ("BOT_MENU_ENABLED", False),
+                         ("POSTHOG_IDENTIFY_ENABLED", False)):
         if _k not in flags:
             flags[_k] = _default
     return flags
@@ -25392,10 +25405,19 @@ async def v296_subscriber_token(request: Request):
     # V390 : le code doit APPARTENIR à l'e-mail demandé. Un code non assigné
     # (`assignedEmail` vide) reste utilisable tel quel — c'est le cas des codes
     # collectifs, et il n'ouvre alors le compte de personne en particulier.
+    # C9-B : `_c9b_appariement` ne devient vrai que si le contrôle ci-dessous a
+    # REELLEMENT tourné ET conclu positivement. C'est la seule condition qui
+    # autorisera un pseudonyme analytique. Volontairement initialisé a False :
+    # les trois cas ambigus (code absent de `discount_codes`, e-mail vide, code
+    # collectif sans `assignedEmail`) le laissent faux et n'identifient personne.
+    _c9b_appariement = False
     if email:
         _dc = await db.discount_codes.find_one(
             {"code": {"$regex": f"^{re.escape(code)}$", "$options": "i"}},
-            {"_id": 0, "assignedEmail": 1},
+            # C9-B : `active` est ajoute a la PROJECTION seulement. Le refus V390
+            # ci-dessous garde exactement le meme comportement ; c'est uniquement
+            # la PERMISSION d'identifier qui exigera un document actif.
+            {"_id": 0, "assignedEmail": 1, "active": 1},
         )
         _assigne = ((_dc or {}).get("assignedEmail") or "").strip().lower()
         if _assigne and _assigne != email:
@@ -25403,10 +25425,53 @@ async def v296_subscriber_token(request: Request):
                 f"[V390] Jeton REFUSE : code {code} assigne a {_assigne}, demande pour {email}"
             )
             raise HTTPException(status_code=403, detail="Code réservé à un autre compte")
+        # Le document doit etre ACTIF. Un meme code peut porter plusieurs
+        # documents en base (constate en production), et `find_one` en rend un
+        # sans tri : sans ce filtre, l'appariement pourrait s'appuyer sur une
+        # vieille ligne desactivee. Pour un verdict irreversible, on exige que la
+        # ligne lue soit celle qui vaut encore.
+        _c9b_appariement = (bool(_assigne) and _assigne == email
+                            and (_dc or {}).get("active") is True)
     from api.routes.shared import make_subscriber_token, jwt_secret_is_set
     token = make_subscriber_token(code, email)
+
+    # === C9-B : PSEUDONYME ANALYTIQUE, ET RIEN D'AUTRE ===
+    #
+    # POURQUOI ICI, ET PAS EN FIN DE TUNNEL. L'e-mail saisi au tunnel n'est
+    # jamais verifie — pas meme un `@`. Identifier dessus ferait qu'une faute de
+    # frappe cree une personne fantome captant tout l'historique anonyme, et une
+    # fusion PostHog est IRREVERSIBLE. Ici, l'appelant a du presenter un code
+    # individuel dont la base atteste qu'il appartient a cette adresse.
+    #
+    # CE QUE CELA PROUVE, EXACTEMENT : la possession d'un code individuel apparie
+    # a cet e-mail. PAS le controle de la boite (le code circule, ne tourne pas,
+    # n'expire pas, et `/subscriber-info/{code}` livre l'adresse a qui le detient).
+    # Compromis assume — cf. le bilan C9-B.
+    #
+    # `analytics_id` est un sha256 sale tronque : non reversible, et le sel ne
+    # quitte JAMAIS le serveur. Le navigateur ne recalcule rien, il recoit.
+    # C'est strictement moins revelateur que ce que cette reponse contient deja
+    # (`name`) et que le JWT ci-dessus, qui porte l'e-mail en clair.
+    #
+    # LE PROPRIETAIRE N'ENTRE JAMAIS DANS SON PROPRE ENTONNOIR. Le navigateur
+    # ecarte deja les sessions coach, mais cette liste-la vit cote CLIENT et peut
+    # etre contournee (localStorage vide, navigateur neuf). Le refus est donc pose
+    # ICI aussi : c'est le serveur qui tranche, comme partout ailleurs dans ce
+    # dépôt. Sans lui, l'historique du dashboard fusionnerait dans une fiche
+    # client au premier test du parcours abonne par Bassi.
+    _c9b_id = ""
+    try:
+        if _c9b_appariement and not is_super_admin(email) \
+                and (await get_feature_flags()).get("POSTHOG_IDENTIFY_ENABLED"):
+            from api.routes.shared import posthog_id as _c9b_pseudo
+            _c9b_id = _c9b_pseudo(email)
+    except Exception as _c9be:
+        # Jamais bloquant : la mesure ne doit pas empecher un abonne d'entrer.
+        logger.warning(f"[C9-B] pseudonyme ignore: {type(_c9be).__name__}")
+        _c9b_id = ""
     # secret absent -> token '' : le frontend garde le chemin actuel, rien ne casse.
-    return {"success": True, "token": token, "name": name, "secret_set": jwt_secret_is_set()}
+    return {"success": True, "token": token, "name": name,
+            "secret_set": jwt_secret_is_set(), "analytics_id": _c9b_id}
 
 
 # === STAFF ACCESS: Code d'accès pour scanner uniquement ===
