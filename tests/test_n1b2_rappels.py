@@ -4,17 +4,26 @@
 Les fonctions testees sont EXTRAITES du vrai `api/server.py` (via AST), pas
 recopiees : si le code change, le test suit.
 """
-import ast, os, sys
+import ast, asyncio, os, sys
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api", "server.py")
 A_EXTRAIRE = {"n1b2_cle", "n1b2_titre", "n1b2_corps", "n1b2_cible",
               "n1b2_valider_regles", "n1b_deja_envoye",
-              "n1b3b2_plan", "n1b3b2_regles_trop_proches", "n1b3b2_collisions"}
+              "n1b3b2_plan", "n1b3b2_regles_trop_proches", "n1b3b2_collisions",
+              # N1B-3B2 : les DEUX routes sont extraites comme le reste. Le
+              # cloisonnement entre coachs ne se demontre pas sur une copie du
+              # code — il se demontre sur le code REELLEMENT servi. Et c'est
+              # possible ici : `get_source_segment` part du `def`, donc le
+              # decorateur `@api_router` ne suit pas et la route redevient une
+              # coroutine ordinaire, appelable sans FastAPI.
+              "_n1b3b2_coach_appelant", "_n1b3b2_occurrences_du_coach",
+              "n1b3b2_lire_regles", "n1b3b2_ecrire_regles"}
 CONSTANTES = {"N1B_CLE_HERITEE", "N1B2_MAX_REGLES", "N1B2_DELAIS_AUTORISES",
               "N1B2_REGLES_DEFAUT", "N1B2_DEMI_FENETRE_MIN", "N1B2_HORIZON_MIN",
-              "N1B2_MINUTES_AUTORISEES", "N1B3B2_ECART_MIN"}
+              "N1B2_MINUTES_AUTORISEES", "N1B3B2_ECART_MIN",
+              "N1B3B2_HORIZON_JOURS"}
 
 src = open(SRC, encoding="utf-8").read()
 arbre = ast.parse(src)
@@ -26,7 +35,113 @@ for n in arbre.body:
         for c in n.targets:
             if isinstance(c, ast.Name) and c.id in CONSTANTES:
                 morceaux.append(ast.get_source_segment(src, n))
-NS = {"datetime": datetime, "timezone": timezone, "timedelta": timedelta}
+
+# === N1B-3B2 : de quoi appeler les routes hors FastAPI, sans base ni reseau ==
+#
+# Les routes s'appuient sur quatre choses seulement : l'identite de l'appelant,
+# la base, `HTTPException`, et le journal. On les remplace par des doubles qui
+# ENREGISTRENT chaque appel. C'est ce journal qui fait la preuve : il ne suffit
+# pas que le coach A recoive les bonnes regles — il faut que la requete partie
+# vers Mongo n'ait JAMAIS pu en designer une autre. Un test qui se contenterait
+# de comparer la reponse passerait alors meme que le filtre serait ouvert.
+
+class FauxHTTPException(Exception):
+    """Meme surface que celle de FastAPI : un code et un detail."""
+    def __init__(self, status_code=500, detail=""):
+        self.status_code, self.detail = status_code, detail
+        Exception.__init__(self, "%s %s" % (status_code, detail))
+
+
+class FausseRequete:
+    """Porte un corps JSON. `Request` ne sert que d'annotation de signature."""
+    def __init__(self, corps=None, illisible=False):
+        self._corps, self._illisible = corps, illisible
+
+    async def json(self):
+        if self._illisible:
+            raise ValueError("corps illisible")
+        return self._corps
+
+
+class FausseCollection:
+    """Documents en memoire, et journal des filtres REELLEMENT envoyes."""
+    def __init__(self):
+        self.docs, self.filtres = [], []
+
+    @staticmethod
+    def _colle(doc, filtre):
+        # Les conditions a operateur (`{"$ne": True}`) ne servent pas au
+        # cloisonnement : on ne les rejoue pas, mais le filtre reste journalise.
+        return all(doc.get(c) == v for c, v in filtre.items()
+                   if not isinstance(v, dict))
+
+    async def find_one(self, filtre, projection=None):
+        self.filtres.append(("find_one", dict(filtre)))
+        for _d in self.docs:
+            if self._colle(_d, filtre):
+                return dict(_d)
+        return None
+
+    async def update_one(self, filtre, maj, upsert=False):
+        self.filtres.append(("update_one", dict(filtre)))
+        for _d in self.docs:
+            if self._colle(_d, filtre):
+                _d.update(maj.get("$set", {}))
+                return
+        if upsert:
+            self.docs.append(dict(maj.get("$set", {})))
+
+    def find(self, filtre, projection=None):
+        self.filtres.append(("find", dict(filtre)))
+        _trouves = [dict(_d) for _d in self.docs if self._colle(_d, filtre)]
+
+        class _Curseur:
+            async def to_list(_s, n):
+                return _trouves[:n]
+        return _Curseur()
+
+
+class FausseBase:
+    def __init__(self):
+        self.coach_profiles, self.courses = FausseCollection(), FausseCollection()
+
+
+class FauxJournal:
+    def info(self, *a, **k): pass
+    def warning(self, *a, **k): pass
+    def debug(self, *a, **k): pass
+    def error(self, *a, **k): pass
+
+
+BASE = FausseBase()
+# Identite que le serveur croit reconnaitre. C'est la SEULE source d'identite :
+# aucun test ne doit pouvoir la contourner par le corps de la requete.
+IDENT = {"email": None, "est_coach": True, "est_super": False}
+
+
+async def _faux_v263_authenticated_coach(request):
+    return IDENT["email"]
+
+
+async def _faux_v309_is_coach_or_admin(email):
+    return IDENT["est_coach"]
+
+
+def _faux_is_super_admin(email):
+    return IDENT["est_super"]
+
+
+def _faux_v184_next_occurrences(cours, days_ahead=14):
+    return list(cours.get("occurrences") or [])
+
+
+NS = {"datetime": datetime, "timezone": timezone, "timedelta": timedelta,
+      "Request": FausseRequete, "HTTPException": FauxHTTPException,
+      "db": BASE, "logger": FauxJournal(),
+      "_v263_authenticated_coach": _faux_v263_authenticated_coach,
+      "_v309_is_coach_or_admin": _faux_v309_is_coach_or_admin,
+      "is_super_admin": _faux_is_super_admin,
+      "_v184_next_occurrences": _faux_v184_next_occurrences}
 exec("\n\n".join(morceaux), NS)
 assert len(A_EXTRAIRE) == sum(1 for f in A_EXTRAIRE if f in NS), "extraction incomplete"
 
@@ -509,6 +624,188 @@ for _paire in _PAIRES:
                 _perdues.append((_paire, _hh, _mm, _attendu, _obtenu))
 verifier("aucune cible gardee rapprochee — 12 paires x 48 horaires", _rapproches, [])
 verifier("chaque regle est gardee OU absorbee, jamais perdue", _perdues, [])
+
+
+# === N1B-3B2 : fuseau, les DEUX bascules ===================================
+#
+# L'heure d'hiver est deja couverte plus haut (cours du 26/10). Il manquait la
+# bascule d'ETE : le dernier dimanche de mars, 2026-03-29, ou la Suisse passe
+# de +01:00 a +02:00 a 02:00 locale.
+
+# Cours le jour MEME de la bascule : l'heure fixe se lit sur la date locale du
+# cours, elle doit donc rester 07:00 a l'horloge — pas 06:00, pas 08:00.
+verifier("07:00 local malgre le passage a l'heure d'ETE (cours du 29/03)",
+         simuler({"datetime": "2026-03-29T19:00:00"}, [SD7],
+                 datetime(2026, 3, 26, 0, 0, tzinfo=ZH).astimezone(timezone.utc), 96),
+         [("same_day:07:00", "Sun 29/03 07:00")])
+
+# Un delai RELATIF est une duree absolue : 48 h avant un cours du lundi 19:00
+# tombe le samedi 18:00 a l'horloge, parce que la nuit du samedi au dimanche ne
+# dure que 23 h. Ce n'est pas un defaut — c'est la definition de « 48 h avant ».
+# Le test le FIGE pour qu'un futur « correctif » ne le transforme pas en piege.
+verifier("48 h avant : duree absolue, l'heure murale glisse d'1 h a la bascule",
+         simuler({"datetime": "2026-03-30T19:00:00"}, [R48],
+                 datetime(2026, 3, 27, 0, 0, tzinfo=ZH).astimezone(timezone.utc), 96),
+         [("relative:2880m", "Sat 28/03 18:00")])
+
+
+# === N1B-3B2 : authentification et cloisonnement entre coachs ==============
+#
+# Les deux routes sont les PREMIERES a ecrire `reminder_rules`. Elles sont donc
+# aussi les premieres a pouvoir ecrire chez le mauvais coach. On verifie les
+# deux verrous : l'identite est exigee, et elle vient UNIQUEMENT du serveur.
+
+A = "coach.a@afroboost.ch"
+B = "coach.b@afroboost.ch"
+PROFILS = [{"email": A, "reminder_rules": [SD7]},
+           {"email": B, "reminder_rules": [R24, R3]}]
+
+
+def appeler(coro):
+    """(statut, charge) — 200 et la reponse, ou le code de l'HTTPException."""
+    try:
+        return (200, asyncio.run(coro))
+    except FauxHTTPException as _e:
+        return (_e.status_code, _e.detail)
+
+
+def contexte(email, est_coach=True, est_super=False, profils=(), cours=()):
+    """Repose l'identite ET remet les journaux a zero avant chaque appel."""
+    IDENT["email"], IDENT["est_coach"], IDENT["est_super"] = email, est_coach, est_super
+    BASE.coach_profiles.docs = [dict(_d) for _d in profils]
+    BASE.coach_profiles.filtres = []
+    BASE.courses.docs = [dict(_d) for _d in cours]
+    BASE.courses.filtres = []
+
+
+def profil_de(email):
+    """Le profil de ce coach, ou un marqueur explicite s'il a DISPARU.
+
+    Une ecriture mal cloisonnee n'abime pas seulement le contenu : elle peut
+    faire disparaitre le document du voisin. Le test doit alors le DIRE et
+    laisser le tableau s'imprimer, pas s'interrompre sur une IndexError.
+    """
+    for _d in BASE.coach_profiles.docs:
+        if _d.get("email") == email:
+            return _d
+    return {"reminder_rules": "PROFIL DISPARU"}
+
+
+def emails_vises():
+    """Tous les coachs designes par les requetes parties vers `coach_profiles`."""
+    return sorted({_f[1].get("email") for _f in BASE.coach_profiles.filtres})
+
+
+# --- 401 : sans identite, rien ---------------------------------------------
+contexte(None, profils=PROFILS)
+verifier("GET sans authentification -> 401",
+         appeler(NS["n1b3b2_lire_regles"](FausseRequete()))[0], 401)
+verifier("GET sans authentification ne lit RIEN en base",
+         BASE.coach_profiles.filtres, [])
+
+contexte(None, profils=PROFILS)
+verifier("PUT sans authentification -> 401",
+         appeler(NS["n1b3b2_ecrire_regles"](FausseRequete({"rules": [SD7]})))[0], 401)
+verifier("PUT sans authentification n'ecrit RIEN en base",
+         BASE.coach_profiles.filtres, [])
+
+# Un inconnu ne s'entend jamais repondre « reserve aux coachs » : on ne renseigne
+# pas sur le role de quelqu'un dont on ignore encore l'identite.
+contexte(None, est_coach=False, profils=PROFILS)
+verifier("non authentifie -> 401, jamais 403",
+         appeler(NS["n1b3b2_lire_regles"](FausseRequete()))[0], 401)
+
+# --- 403 : identifie mais pas coach ----------------------------------------
+contexte("visiteur@exemple.ch", est_coach=False, profils=PROFILS)
+verifier("GET authentifie mais non coach -> 403",
+         appeler(NS["n1b3b2_lire_regles"](FausseRequete()))[0], 403)
+
+contexte("visiteur@exemple.ch", est_coach=False, profils=PROFILS)
+verifier("PUT authentifie mais non coach -> 403",
+         appeler(NS["n1b3b2_ecrire_regles"](FausseRequete({"rules": [SD7]})))[0], 403)
+verifier("un non-coach n'ecrit RIEN en base",
+         [_f for _f in BASE.coach_profiles.filtres if _f[0] == "update_one"], [])
+
+# --- Le coach A ne lit que A -----------------------------------------------
+contexte(A, profils=PROFILS)
+_st, _rep = appeler(NS["n1b3b2_lire_regles"](FausseRequete()))
+verifier("GET coach A : ses regles, jamais celles de B",
+         (_st, _rep["rules"], _rep["par_defaut"]), (200, [SD7], False))
+verifier("GET coach A : la requete Mongo ne designe que A",
+         BASE.coach_profiles.filtres, [("find_one", {"email": A})])
+
+contexte("coach.neuf@afroboost.ch", profils=PROFILS)
+_st, _rep = appeler(NS["n1b3b2_lire_regles"](FausseRequete()))
+verifier("GET coach sans configuration : le defaut historique, pas celui d'un voisin",
+         (_rep["rules"], _rep["par_defaut"]), (DEFAUT, True))
+
+# --- Le coach A n'ecrit que chez A -----------------------------------------
+contexte(A, profils=PROFILS)
+_st, _rep = appeler(NS["n1b3b2_ecrire_regles"](FausseRequete({"rules": [R24]})))
+verifier("PUT coach A : accepte", (_st, _rep.get("rules")), (200, [R24]))
+verifier("PUT coach A : toutes les requetes portent sur A", emails_vises(), [A])
+verifier("PUT coach A : ses regles sont bien remplacees",
+         profil_de(A)["reminder_rules"], [R24])
+verifier("PUT coach A : les regles de B sont INTACTES",
+         profil_de(B)["reminder_rules"], [R24, R3])
+
+# LE test qui compte : le corps tente de se faire passer pour B, de trois
+# facons a la fois. L'identite ne se negocie pas depuis la requete.
+contexte(A, profils=PROFILS)
+appeler(NS["n1b3b2_ecrire_regles"](FausseRequete(
+    {"rules": [R3], "email": B, "coach_id": B, "coach": B})))
+verifier("un email/coach_id injecte dans le corps est IGNORE", emails_vises(), [A])
+verifier("l'injection laisse les regles de B intactes",
+         profil_de(B)["reminder_rules"], [R24, R3])
+verifier("l'injection ecrit bien chez A", profil_de(A)["reminder_rules"], [R3])
+
+# --- Le planning d'un autre coach ne fuit pas par l'avertissement -----------
+COURS_A = {"id": "c-a", "coach_id": A, "occurrences": []}
+COURS_B = {"id": "c-b", "coach_id": B, "occurrences": []}
+
+contexte(A, profils=PROFILS, cours=[COURS_A, COURS_B])
+appeler(NS["n1b3b2_ecrire_regles"](FausseRequete({"rules": [SD7]})))
+verifier("les cours consultes sont filtres sur le coach appelant",
+         [_f[1].get("coach_id") for _f in BASE.courses.filtres if _f[0] == "find"], [A])
+
+# Le super-admin voit tout le planning : c'est VOULU (il administre le site).
+# Mais meme lui n'ecrit que sur son propre profil.
+contexte(A, est_super=True, profils=PROFILS, cours=[COURS_A, COURS_B])
+appeler(NS["n1b3b2_ecrire_regles"](FausseRequete({"rules": [SD7]})))
+verifier("super-admin : aucun filtre coach_id sur les cours (voulu)",
+         [("coach_id" in _f[1]) for _f in BASE.courses.filtres if _f[0] == "find"], [False])
+verifier("super-admin : l'ecriture reste sur SON profil", emails_vises(), [A])
+
+# --- Rien d'invalide ne passe par la route ---------------------------------
+contexte(A, profils=PROFILS)
+verifier("PUT 3 regles -> 400",
+         appeler(NS["n1b3b2_ecrire_regles"](FausseRequete({"rules": [R1, R3, R24]})))[0], 400)
+verifier("3 regles refusees : rien n'est ecrit",
+         [_f for _f in BASE.coach_profiles.filtres if _f[0] == "update_one"], [])
+
+contexte(A, profils=PROFILS)
+verifier("PUT deux same_day a 30 min d'ecart -> 400",
+         appeler(NS["n1b3b2_ecrire_regles"](FausseRequete(
+             {"rules": [SD7, {"type": "same_day", "heure": 7, "minute": 30}]})))[0], 400)
+
+contexte(A, profils=PROFILS)
+verifier("PUT corps illisible -> 400",
+         appeler(NS["n1b3b2_ecrire_regles"](FausseRequete(illisible=True)))[0], 400)
+verifier("corps illisible : rien n'est ecrit",
+         [_f for _f in BASE.coach_profiles.filtres if _f[0] == "update_one"], [])
+
+# --- Collision concrete : enregistree, mais annoncee ------------------------
+contexte(A, profils=PROFILS,
+         cours=[{"id": "c-coll", "coach_id": A,
+                 "occurrences": [{"datetime": "2026-08-18T08:00:00",
+                                  "weekday_label": "mardi"}]}])
+_st, _rep = appeler(NS["n1b3b2_ecrire_regles"](FausseRequete({"rules": [R1, SD7]})))
+verifier("PUT collision reelle : enregistre (200) ET averti en clair",
+         (_st, _rep["rules"], _rep["avertissements"]),
+         (200, [R1, SD7],
+          ["Ton cours du mardi à 08:00 recevrait deux rappels à 07:00."]))
+verifier("la configuration avertie est bien enregistree",
+         profil_de(A)["reminder_rules"], [R1, SD7])
 
 print("=" * 74)
 echecs_test = 0
