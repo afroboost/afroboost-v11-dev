@@ -473,9 +473,70 @@ async def v307_set_jwt_secret(request: Request):
     """V307 : pose le JWT_SECRET dans MongoDB (app_secrets) et l'active IMMÉDIATEMENT
     (os.environ), quand Coolify ne l'injecte pas (diagnostic prouvé). SUPER ADMIN
     uniquement. Le secret n'est JAMAIS renvoyé ni loggé. Body optionnel {secret} ;
-    sinon un secret fort est généré. Active le masquage des codes (sécurité V296)."""
-    _caller = await _v263_authenticated_coach(request)
+    sinon un secret fort est généré. Active le masquage des codes (sécurité V296).
+
+    ═══ V2-0c : LA CLÉ N'EST PLUS SOUS LE PAILLASSON ═══
+
+    CE QUI N'ALLAIT PAS. Cette route posait `JWT_SECRET` — la clé qui signe TOUS
+    les jetons de la plateforme — derrière `_v263_authenticated_coach`. Or cette
+    fonction retombe INCONDITIONNELLEMENT sur l'en-tête `X-User-Email`
+    (`server.py:7908`, `return _hdr`) : le `if _hdr and secret` juste au-dessus
+    ne gouverne que le journal, pas la valeur rendue. Et `SUPER_ADMIN_EMAILS` est
+    en clair dans le bundle public (`frontend/src/App.js`).
+
+    Autrement dit : `curl -H "X-User-Email: <adresse admin publique>"` suffisait à
+    réécrire la clé de signature. Vérifié en production par sonde NON destructive
+    (secret volontairement trop court, rejeté ligne 489 AVANT toute écriture) :
+    la réponse était `400 « Secret trop court »`, donc l'authentification était
+    franchie. Sans en-tête : 403.
+
+    Avec 32 caractères, l'attaquant devenait propriétaire de la clé : il signait
+    des jetons super-admin valides et ouvrait TOUTES les routes durcies — celles
+    de V2-0, de V2-0b, `/contacts/all`, tout — en plus de déconnecter chacun.
+    Ce défaut annulait la valeur de tous les durcissements JWT du dépôt.
+
+    LA GARDE. `_v311_coach_email_from_jwt` (signature HS256 vérifiée, jetons
+    `type: "subscriber"` rejetés, AUCUN repli d'en-tête) + `is_super_admin`.
+    Même couple que le cockpit V334 (`server.py` ~9155). `_v311` seule ne
+    suffirait pas : elle prouve la signature, pas le privilège — un JWT de coach
+    ordinaire la traverse.
+
+    Le contrôle de rôle s'appuie volontairement sur la liste EN DUR
+    `SUPER_ADMIN_EMAILS`, pas sur `db.coaches` : elle reste vraie même si Mongo
+    est en panne, c'est-à-dire précisément quand on a besoin de reposer le
+    secret. C'est aussi pourquoi `v20_exiger_coach_signe`, qui interroge la base,
+    serait ici un mauvais choix.
+
+    AUCUN APPELANT LOGICIEL. `git log --all -S "v307-set-jwt-secret"` ne rend
+    qu'un commit : celui qui a créé la route. Côté frontend, l'historique est
+    VIDE — aucun écran ne l'a jamais appelée. Bundle déployé, crontab VPS, tests,
+    CI : zéro occurrence.
+
+    ⚠️ CE QUI CHANGE POUR L'EXPLOITANT. L'usage prévu était un `curl` manuel avec
+    `X-User-Email`. Il faut désormais un jeton signé. Le chemin existe et il est
+    déjà pratiqué : `POST /api/auth/login` rend un `token` (7 jours,
+    `role: super_admin`), vérifiable par `GET /api/auth/whoami` ; et
+    `tests/bascule_superadmin_jwt.py` forge un jeton hors ligne depuis
+    `app_secrets` — c'est ainsi que `SUPERADMIN_JWT_STRICT: true` a été posé.
+
+    ⚠️ VERROU D'AMORÇAGE — À CONNAÎTRE AVANT D'EN AVOIR BESOIN. Si `JWT_SECRET`
+    disparaît (document `app_secrets` perdu, base réinitialisée), `_v311` renvoie
+    `""` dès sa première ligne et `generate_jwt_token` rend une chaîne vide :
+    plus aucun jeton n'est produisible, donc cette route devient inatteignable.
+    C'est assumé — une trappe de secours par en-tête rouvrirait exactement le
+    trou qu'on ferme. La récupération se fait alors HORS HTTP, par l'un de ces
+    trois chemins, tous suivis d'un REDÉMARRAGE (le secret n'est relu qu'au
+    `startup`, cf. `_v307_resolve_jwt_secret`) :
+      1. variable d'environnement `JWT_SECRET` (`docker-compose.yml`) ;
+      2. fichier monté `/app/secrets/jwt_secret` ou `/run/secrets/jwt_secret` ;
+      3. écriture directe dans Mongo : `db.app_secrets.update_one({"id":"jwt"},
+         {"$set":{"secret":"<64 caractères>"}}, upsert=True)`.
+    """
+    _caller = _v311_coach_email_from_jwt(request)
     if not _caller or not is_super_admin(_caller):
+        _revendique = (request.headers.get("X-User-Email", "") or "").lower().strip()
+        logger.warning("[V2-0c] REFUS pose du JWT_SECRET — « %s » sans jeton super-admin signé",
+                       _revendique or "anonyme")
         raise HTTPException(status_code=403, detail="Réservé au super admin")
     try:
         body = await request.json()
