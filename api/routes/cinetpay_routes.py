@@ -440,6 +440,31 @@ async def register_free_pack(request: RegisterFreePackRequest, response: Respons
             )
 
         # === VÉRIFIER QUE L'EMAIL N'EXISTE PAS ===
+        # === V2-0d : LE CHEMIN COURT DE L'ESCALADE SUPER-ADMIN ===
+        #
+        # Cette route est le TROISIÈME créateur de comptes, et le plus dangereux
+        # des trois : elle est anonyme, elle n'interdisait pas les adresses de
+        # `SUPER_ADMIN_EMAILS`, et son `users_auth.insert_one` n'écrit AUCUN
+        # champ `pending_validation`. Or `login` ne refuse que si ce champ vaut
+        # explicitement `True` — un champ ABSENT laisse donc passer.
+        #
+        # Conséquence : là où la chaîne classique demandait trois appels
+        # (register -> activate-coach -> login), celle-ci en demandait UN SEUL.
+        # Le compte naissait ACTIF, et `login` accordait `role: "super_admin"`
+        # sur le seul e-mail. Fermer `register` et `activate-coach` sans fermer
+        # cette route aurait été décoratif.
+        #
+        # Conditions réunies en production au moment de l'audit : « Pack
+        # Lancement » à 0 CHF et visible, et `afroboost.bassi@gmail.com` absent
+        # de `coaches` comme de `users_auth` — les deux contrôles d'unicité
+        # ci-dessous passaient donc sans rien bloquer.
+        #
+        # Même réponse que « déjà enregistré », pour ne pas créer d'oracle.
+        from api.routes.shared import is_super_admin as _v20d_est_admin
+        if _v20d_est_admin(email):
+            logger.warning("[V2-0d] REFUS inscription gratuite sous une adresse réservée")
+            raise HTTPException(status_code=409, detail="Cet email est déjà enregistré comme partenaire")
+
         existing_coach = await db.coaches.find_one({"email": email})
         if existing_coach:
             raise HTTPException(status_code=409, detail="Cet email est déjà enregistré comme partenaire")

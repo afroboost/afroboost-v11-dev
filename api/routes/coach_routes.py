@@ -179,9 +179,44 @@ async def list_pending_coaches(request: Request):
 @coach_router.post("/admin/activate-coach")
 async def activate_coach(request: Request):
     """V311d : valide une auto-inscription (Super Admin). Corps: {"email": "..."}.
-    Lève le drapeau pending_validation et réactive le profil coach. Égalité stricte."""
-    caller_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not is_super_admin(caller_email):
+    Lève le drapeau pending_validation et réactive le profil coach. Égalité stricte.
+
+    ═══ V2-0d : MAILLON 2 DE L'ESCALADE SUPER-ADMIN ═══
+
+    Cette route passait `users_auth.pending_validation` à False et réactivait le
+    profil coach, sur la seule foi de `request.headers.get("X-User-Email")`. Or
+    `SUPER_ADMIN_EMAILS` figure en clair dans le bundle public : l'en-tête se
+    falsifie au `curl`.
+
+    Elle formait le deuxième maillon d'une chaîne d'escalade complète :
+      1. `POST /auth/register` avec une adresse super-admin -> compte cree avec
+         le mot de passe de l'attaquant, en `pending_validation: True` ;
+      2. CETTE ROUTE, en-tete forge -> le compte devient actif ;
+      3. `POST /auth/login` -> `role = "super_admin"` derive du seul e-mail,
+         donc un JWT REELLEMENT SIGNE par le serveur.
+    Ce jeton franchissait ensuite toutes les gardes JWT strictes ajoutees par
+    V2-0, V2-0b et V2-0c : la chaine annulait leur valeur.
+
+    Jeton SIGNÉ de super-admin exigé, sans repli. `super_admin_signe`
+    (`api/routes/shared.py`) decode un JWT HS256 et verifie l'appartenance a
+    `SUPER_ADMIN_EMAILS` ; elle ne lit JAMAIS `X-User-Email`. Elle RENVOIE une
+    chaine vide au lieu de lever — le 403 reste donc a la charge de la route,
+    comme le fait deja `server.py` pour les pouvoirs V344.
+
+    Cout nul : `activate-coach` n'a AUCUN appelant. Zero occurrence dans
+    `frontend/src`, zero dans le bundle deploye. Le parcours d'activation, s'il
+    reprend un jour, se fera depuis un dashboard qui porte deja un jeton.
+
+    ⚠️ Ce durcissement seul ne suffit pas : deux autres chemins creent un compte
+    (`/auth/register` et `/cinetpay/register-free`). Ils sont fermes dans le
+    meme lot — sans quoi celui-ci serait decoratif.
+    """
+    from api.routes.shared import super_admin_signe
+    caller_email = super_admin_signe(request)
+    if not caller_email:
+        _revendique = (request.headers.get("X-User-Email", "") or "").lower().strip()
+        logger.warning("[V2-0d] REFUS activation de coach — « %s » sans jeton super-admin signé",
+                       _revendique or "anonyme")
         raise HTTPException(status_code=403, detail="Super Admin requis")
     try:
         body = await request.json()

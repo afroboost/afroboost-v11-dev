@@ -292,6 +292,28 @@ async def register(request: Request, response: Response, user_data: RegisterRequ
         if not user_data.password or len(user_data.password) < 6:
             raise HTTPException(status_code=400, detail="Le mot de passe doit contenir au moins 6 caractères")
 
+        # === V2-0d : MAILLON 1 DE L'ESCALADE SUPER-ADMIN ===
+        #
+        # Rien n'interdisait de s'inscrire SOUS une adresse de SUPER_ADMIN_EMAILS
+        # avec son propre mot de passe. Le compte naissait `pending_validation`,
+        # mais `/admin/activate-coach` (en-tête falsifiable) le débloquait, puis
+        # `login` accordait `role: "super_admin"` sur le seul e-mail — donc un JWT
+        # RÉELLEMENT SIGNÉ, qui franchissait toutes les gardes de V2-0/b/c.
+        # Mesuré : `afroboost.bassi@gmail.com` est super-admin dans les trois
+        # listes du code et n'a AUCUNE fiche `users_auth`. La place était libre.
+        #
+        # ⚠️ MÊME RÉPONSE QUE « déjà enregistré », ET C'EST VOULU. Un 403 dédié
+        # (« cette adresse est celle du super-admin ») serait un oracle : il
+        # confirmerait à un inconnu quelles adresses sont privilégiées. On rend
+        # donc le 409 existant, mot pour mot — indiscernable d'un e-mail occupé.
+        #
+        # La comparaison est celle d'`is_super_admin_email` : `.lower().strip()`
+        # contre la liste minusculisée. Casse et espaces sont donc couverts sans
+        # écrire de règle nouvelle.
+        if is_super_admin_email(email):
+            logger.warning("[V2-0d] REFUS inscription sous une adresse réservée")
+            raise HTTPException(status_code=409, detail="Cet email est déjà enregistré")
+
         # Vérifier si l'email existe déjà
         existing_user = await _db.users_auth.find_one({"email": email})
         if existing_user:
