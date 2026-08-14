@@ -12657,8 +12657,48 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
 
 
 @api_router.get("/subscriber/by-email/{email}/space-link")
-async def get_space_link_by_email(email: str):
-    """V184: Retourne le lien d'accès rapide d'un abonné identifié par son email."""
+async def get_space_link_by_email(email: str, request: Request):
+    """V184: Retourne le lien d'accès rapide d'un abonné identifié par son email.
+
+    V2-0b : route FERMÉE aux anonymes. C'est la JUMELLE de `/my-access-code`, et
+    de loin la plus grave des deux : elle rend le VRAI code d'abonnement
+    (`AFR-XXXXXX`) plus l'URL `/espace/{code}`, contre un simple e-mail placé
+    dans le chemin, sans aucune authentification. Mesuré : **27 personnes**
+    exposées, contre 2 pour sa jumelle. Et ce code-là ouvre l'espace abonné,
+    puis `/subscriber/token`, puis le tunnel — c'est exactement la chaîne de
+    prise de compte documentée en V389.
+    Fermer `/my-access-code` sans elle n'aurait rien fermé.
+
+    JETON SIGNÉ EXIGÉ, SANS REPLI — et contrairement à ce qu'on pouvait croire,
+    cela ne casse rien.
+
+    Une première version de ce lot avait posé ici une garde TRANSITOIRE
+    (`_v263_authenticated_coach`, qui accepte le repli `X-User-Email`), au motif
+    que la route est utilisée par le bouton « Lien » de l'onglet Contacts
+    (`ContactsManager.js:112`) et qu'un jeton strict rejouerait l'incident V310c.
+    Ce raisonnement était FAUX, pour deux raisons vérifiées :
+
+      1. Le repli ne fermait rien. `SUPER_ADMIN_EMAILS` figure en clair dans le
+         bundle public (`App.js`) : un simple en-tête
+         `X-User-Email: <adresse admin>` rendait les 27 codes. La « fermeture »
+         était cosmétique.
+      2. Le risque V310c n'existe pas ICI. `GET /api/contacts/all` — la route qui
+         alimente la liste — est JWT-STRICT depuis V311h
+         (`_v311_coach_email_from_jwt`, aucun repli en-tête ; mesuré en
+         production : 403 avec `X-User-Email` seul). Or le bouton n'est rendu
+         que sur une ligne issue de cette liste. Un coach qui VOIT le bouton
+         porte donc nécessairement un jeton signé valide. Le 403 serait déjà
+         survenu en amont, avant que le bouton n'existe à l'écran.
+
+    Autrement dit : la garde stricte est exactement aussi permissive que l'écran
+    qui l'appelle, et strictement plus fermée que le repli.
+
+    Le 404 « Aucun code abonné » est CONSERVÉ tel quel : `ContactsManager.js:120`
+    le traduit par l'état « Pas abonné ». Le transformer en 403 changerait
+    l'affichage du coach — ce serait une régression silencieuse.
+    """
+    from api.routes.shared import v20_exiger_coach_signe
+    await v20_exiger_coach_signe(request, db, "lien d'espace abonné")
     email_clean = (email or "").lower().strip()
     if not email_clean:
         raise HTTPException(status_code=400, detail="Email requis")

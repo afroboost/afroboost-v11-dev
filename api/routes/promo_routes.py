@@ -944,8 +944,38 @@ async def deduct_session(data: dict):
 
 # === v95: SYNC — Créer des subscriptions pour les codes promo qui n'en ont pas encore ===
 @promo_router.post("/subscriptions/sync")
-async def sync_subscriptions_for_email(data: dict):
-    """Crée des subscriptions pour tous les codes assignés à un email qui n'en ont pas encore"""
+async def sync_subscriptions_for_email(data: dict, request: Request):
+    """Crée des subscriptions pour tous les codes assignés à un email qui n'en ont pas encore
+
+    V2-0b : route FERMÉE. C'est la TROISIÈME jumelle, et la seule qui ÉCRIT.
+    Elle n'avait ni paramètre `Request`, ni garde, ni limite de débit, et elle
+    prenait l'e-mail dans le CORPS d'un POST — la forme la plus facile à rater
+    dans un audit. Testée en production : HTTP 200 en anonyme.
+
+    Ce qu'elle laissait faire à un inconnu :
+      - LIRE les codes en clair : ils ressortent dans `created[]` et `skipped[]`.
+        Un balayage des 17 adresses porteuses d'un code assigné révélait les
+        27 codes actifs en une passe.
+      - ÉCRIRE : `insert_one` dans `subscriptions`, avec `email` ET `name` pris
+        tels quels dans la requête. Plus grave, elle ne teste l'existence que
+        d'un abonnement `status: "active"` — un abonnement ANNULÉ est donc
+        invisible pour elle, et elle en réinsère un neuf avec
+        `used_sessions: 0`. Autrement dit : un anonyme pouvait rendre à un
+        abonné désactivé la totalité de son forfait. 5 documents étaient dans
+        ce cas au moment de l'audit.
+
+    Jeton signé exigé, sans repli. Coût nul : `grep` sur `frontend/src`,
+    `frontend/build`, `api/**`, `tests/` et le crontab VPS -> ZÉRO appelant, et
+    `git log --all -S` côté frontend est vide. Elle n'a jamais servi.
+
+    On importe `v20_exiger_coach_signe` de `shared.py` plutôt que d'imiter la
+    garde locale de ce fichier (`GET /discount-codes`, l.303) : celle-ci est déjà
+    dupliquée deux fois avec une divergence réelle entre les copies (un seul
+    super-admin reconnu ici, deux ailleurs). Une troisième copie ajouterait une
+    troisième divergence.
+    """
+    from api.routes.shared import v20_exiger_coach_signe
+    await v20_exiger_coach_signe(request, _db, "synchronisation des abonnements")
     email = data.get("email", "").lower().strip()
     if not email:
         return {"success": False, "message": "Email requis"}

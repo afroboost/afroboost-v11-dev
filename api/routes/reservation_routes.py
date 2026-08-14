@@ -1614,8 +1614,37 @@ async def export_attendance(request: Request, date: str = "", course: str = ""):
 
 
 @reservation_router.get("/my-access-code")
-async def get_my_access_code(email: str = ""):
-    """v158: Retourne le code AFRO-XXXX permanent d'un utilisateur par email."""
+async def get_my_access_code(request: Request, email: str = ""):
+    """v158: Retourne le code AFRO-XXXX permanent d'un utilisateur par email.
+
+    V2-0b : route FERMÉE. Elle rendait `accessCode` + `name` contre un simple
+    e-mail, sans aucune authentification ni limitation de débit. Elle n'avait pas
+    de paramètre `Request` : l'authentification y était structurellement
+    impossible, pas seulement oubliée. Même famille que la faille V389, restée
+    ouverte parce qu'elle vise une AUTRE collection (`users`, pas
+    `discount_codes`) et qu'elle a échappé au nettoyage.
+
+    CE QUE CE CODE EST VRAIMENT. `users.accessCode` est un `AFRO-XXXX` de 4
+    caractères — le code de CONVERSATION, pas le code d'abonnement `AFR-XXXXXX`.
+    Il vaut quand même justificatif : le CAS D du scan QR (`_validate_user_access_code`)
+    valide une présence avec lui. Le voler, c'est entrer au cours à la place de
+    quelqu'un.
+
+    JETON SIGNÉ EXIGÉ, SANS REPLI, et le risque est nul : la route n'a AUCUN
+    appelant. Zéro occurrence dans `frontend/src`, zéro dans le bundle déployé
+    source-maps comprises, zéro dans les tests, la CI et le crontab VPS, et
+    `git log --all -S` côté frontend est vide depuis sa création (v158, avril
+    2026). C'est du code mort qui expose un secret vivant — 2 comptes concernés
+    sur 110.
+
+    AUCUNE FONCTIONNALITÉ N'EST PERDUE. Le recours d'un client ayant perdu son
+    code existe déjà, ailleurs, et il est meilleur : bouton « Code perdu ? »
+    (`ChatWidget.js:8804`) -> `POST /subscriber/recover`, qui envoie le code
+    PAR E-MAIL à l'adresse enregistrée, avec limitation à 3 tentatives/10 min,
+    et ne rend jamais le secret dans la réponse HTTP. C'est le mécanisme V389.
+    """
+    from api.routes.shared import v20_exiger_coach_signe
+    await v20_exiger_coach_signe(request, db, "lecture d'un code d'accès")
     if not email:
         raise HTTPException(status_code=400, detail="Email requis")
     user = await db.users.find_one({"email": email.lower().strip()}, {"_id": 0, "accessCode": 1, "name": 1, "email": 1})
