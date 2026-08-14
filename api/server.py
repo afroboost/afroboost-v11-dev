@@ -5803,6 +5803,214 @@ async def get_checkout_status(session_id: str):
         logger.error(f"Error checking checkout status: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error checking status: {str(e)}")
 
+
+
+# ===========================================================================
+# P0-STRIPE-EMAIL — e-mail d'acces du client : construction et envoi.
+#
+# Ce bloc vivait en ligne dans `stripe_webhook`. Il en sort pour deux
+# raisons, et une seule ne suffirait pas :
+#   1. la construction du HTML n'etait couverte par AUCUN try (le try ne
+#      commencait qu'autour de `resend.Emails.send`), si bien qu'une
+#      variable non liee y tuait tout le webhook ;
+#   2. le rattrapage d'un e-mail perdu doit reutiliser EXACTEMENT le meme
+#      message. Deux copies du gabarit divergeraient au premier retouche.
+#
+# `_p0_html_email_acces` est PURE : aucune I/O, aucune lecture de base. Elle
+# est donc testable hors ligne et comparable octet pour octet a l'ancien
+# bloc en ligne (cf. tests/test_p0_stripe_email.py).
+#
+# ATTENTION AU FORMATAGE : le corps de la f-string ci-dessous garde
+# l'indentation qu'il avait dans le webhook. Le ré-indenter changerait le
+# HTML reellement envoye au client — c'est du contenu, pas de la mise en page.
+# ===========================================================================
+
+# Cle du marqueur d'envoi dans `discount_codes.emails_envoyes`. Une cle par
+# type d'e-mail et par destinataire : un booleen unique interdirait d'ajouter
+# un second e-mail sans casser l'idempotence du premier.
+P0_CLE_EMAIL_CLIENT = "client_acces"
+
+
+def _p0_html_email_acces(new_code: str, sessions_count, primary_color: str) -> str:
+    """HTML de l'e-mail d'acces client. Fonction pure, sans effet de bord."""
+    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=https://afroboost.com/?qr={new_code}&format=png"
+    chat_url = f"https://afroboost.com/?qr={new_code}"
+    # V225: sans ce lien, le client vient de payer et n'a aucun
+    # chemin evident vers la reservation de sa seance — l'email
+    # ne pointait que vers le chat (?qr=).
+    # f-string sur new_code, deja une chaine construite plus haut :
+    # aucune valeur externe, donc aucun chemin qui puisse lever
+    # dans le webhook (ou une exception priverait l'acheteur de
+    # son code AFR et de ses credits).
+    espace_url = f"https://afroboost.com/espace/{new_code}"  # V225
+    # V243: message WhatsApp pre-encode pour le bouton de partage
+    # de l'email (le lien wa.me exige un texte URL-encode).
+    from urllib.parse import quote as _url_quote
+    _wa_share_text = _url_quote(f"Mon lien de réservation Afroboost : {espace_url}")
+    html = f"""<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;background:#0a0a0a;color:#fff;">
+                        <div style="background:linear-gradient(135deg,{primary_color},#8b5cf6);padding:28px 24px;text-align:center;">
+                            <h1 style="color:white;margin:0;font-size:24px;">Bienvenue chez Afroboost !</h1>
+                            <p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">Ta souscription est confirmee</p>
+                        </div>
+                        <div style="padding:28px 24px;">
+                            <p style="color:#e2e8f0;font-size:15px;line-height:1.6;margin:0 0 16px;">Merci pour ton achat et bienvenue dans la communaute Afroboost ! <span style="font-size:18px;">&#9889;</span></p>
+                            <p style="color:#a855f7;font-size:14px;line-height:1.6;margin:0 0 24px;">Ton energie va faire la difference. Voici tout ce qu'il te faut pour commencer.</p>
+
+                            <!-- CODE + QR -->
+                            <div style="background:rgba(147,51,234,0.15);border:1px solid rgba(147,51,234,0.3);border-radius:14px;padding:22px;margin:0 0 24px;text-align:center;">
+                                <p style="margin:0 0 6px;color:#888;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Ton code d'acces personnel</p>
+                                <p style="margin:0;color:{primary_color};font-size:30px;font-weight:bold;letter-spacing:3px;">{new_code}</p>
+                                <p style="margin:10px 0 20px;color:#888;font-size:13px;">{sessions_count} seance(s) incluse(s)</p>
+                                <img src="{qr_url}" alt="QR Code Afroboost" width="180" height="180" style="background:white;padding:12px;border-radius:10px;display:block;margin:0 auto;"/>
+                                <p style="color:#a855f7;font-size:12px;margin:14px 0 0;line-height:1.5;">
+                                    <strong style="color:#fff;">Ton QR code a 2 usages :</strong><br>
+                                    &#10003; A scanner a l'entree de ton cours<br>
+                                    &#10003; A scanner pour acceder a ton espace chat / client
+                                </p>
+                            </div>
+
+                            <!-- V225: BOUTON PRINCIPAL — RESERVER SA SEANCE -->
+                            <div style="text-align:center;margin:0 0 24px;">
+                                <a href="{espace_url}" style="display:inline-block;background:{primary_color};color:white;padding:16px 36px;text-decoration:none;border-radius:12px;font-weight:bold;font-size:16px;">&#128197; Reserver ma seance</a>
+                                <p style="color:#a855f7;font-size:12px;margin:10px 0 0;line-height:1.5;">Ton espace personnel : choisis ta date et confirme en un clic.</p>
+                                <!-- V243: partage WhatsApp du lien d'espace. wa.me/?text=
+                                     ouvre WhatsApp avec le message pre-rempli ; le
+                                     destinataire est choisi dans l'app. L'URL est encodee
+                                     cote serveur (quote) pour survivre aux caracteres
+                                     speciaux du code. -->
+                                <div style="margin:12px 0 0;">
+                                    <a href="https://wa.me/?text={_wa_share_text}" style="display:inline-block;background:#25D366;color:white;padding:10px 24px;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">&#128241; Partager via WhatsApp</a>
+                                </div>
+                            </div>
+
+                            <!-- BOUTON ACCES DIRECT CHAT -->
+                            <div style="text-align:center;margin:0 0 28px;">
+                                <a href="{chat_url}" style="display:inline-block;background:transparent;color:{primary_color};border:1px solid {primary_color};padding:14px 32px;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">Acceder a mon espace chat</a>
+                                <p style="color:#666;font-size:11px;margin:10px 0 0;">Ce lien te connecte automatiquement avec ton code</p>
+                            </div>
+
+                            <!-- GUIDE RESERVATION FUTURES SEANCES -->
+                            <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.2);border-radius:14px;padding:22px;margin:0 0 20px;">
+                                <h2 style="color:#fff;margin:0 0 16px;font-size:16px;">Comment reserver tes prochaines seances ?</h2>
+                                <table style="width:100%;border-spacing:0;">
+                                    <tr>
+                                        <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
+                                            <div style="background:{primary_color};color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">1</div>
+                                        </td>
+                                        <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
+                                            <strong>Ouvre ton espace chat</strong> en cliquant sur le bouton ci-dessus, ou scanne le QR code avec ton telephone.
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
+                                            <div style="background:{primary_color};color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">2</div>
+                                        </td>
+                                        <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
+                                            <strong>Entre ton code</strong> {new_code} si demande (il est deja memorise si tu viens du lien).
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
+                                            <div style="background:{primary_color};color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">3</div>
+                                        </td>
+                                        <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
+                                            <strong>Dis a l'IA "je veux reserver"</strong> ou choisis une date dans la liste des sessions disponibles.
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
+                                            <div style="background:{primary_color};color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">4</div>
+                                        </td>
+                                        <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
+                                            <strong>Confirme ta reservation</strong> - tes seances restantes se mettent a jour automatiquement.
+                                        </td>
+                                    </tr>
+                                </table>
+                                <p style="color:#a855f7;font-size:12px;margin:16px 0 0;text-align:center;line-height:1.5;">
+                                    Astuce : installe Afroboost en PWA depuis le menu du navigateur pour un acces rapide.
+                                </p>
+                            </div>
+
+                            <!-- FOOTER -->
+                            <p style="color:#666;font-size:11px;text-align:center;margin:24px 0 0;line-height:1.5;">Conserve ce mail precieusement - ton code et ton QR code y sont accessibles a tout moment.<br>A tres vite chez Afroboost !</p>
+                        </div>
+                    </div>"""
+    return html
+
+
+async def _p0_envoyer_email_acces(destinataire: str, new_code: str, sessions_count, primary_color: str) -> None:
+    """Envoie l'e-mail d'acces. Leve si Resend echoue — l'appelant decide."""
+    await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost <notifications@afroboost.com>", "to": [destinataire], "subject": f"Bienvenue chez Afroboost - Ton code {new_code}", "html": _p0_html_email_acces(new_code, sessions_count, primary_color)})
+
+
+async def _p0_marquer_email_envoye(session_id: str, cle: str) -> None:
+    """Marqueur d'envoi, ecrit UNIQUEMENT apres un succes reel.
+
+    Jamais avant l'appel a Resend : un marqueur pose en avance ferait croire
+    a un envoi qui n'a pas eu lieu et rendrait la perte definitive — c'est la
+    panne P0 reproduite a l'envers. Le champ est additif : un document qui ne
+    le porte pas est un document anterieur au correctif (cf. `_p0_rattrapage`).
+    """
+    await db.discount_codes.update_one(
+        {"session_id": session_id},
+        {"$set": {f"emails_envoyes.{cle}": datetime.now(timezone.utc).isoformat()}},
+    )
+
+
+async def _p0_rattrapage_email_acces(deja: dict, session_id: str, primary_color: str) -> str:
+    """Voie de rattrapage : renvoyer l'e-mail d'acces, et RIEN d'autre.
+
+    Appelee depuis la garde d'idempotence V384, donc sur un paiement DEJA
+    traite. Elle ne cree jamais de code, de souscription, de reservation, de
+    credit ni de paiement : elle ne fait que relire et, le cas echeant,
+    renvoyer le message. Fail-closed — au moindre doute sur l'integrite, elle
+    n'envoie rien et le dit dans le journal, sans donnee personnelle.
+
+    Retourne un libelle d'issue, destine au journal :
+      "historique"          document anterieur au correctif -> on ne rejoue pas
+      "deja_envoye"         marqueur present -> rien a faire
+      "integrite_absente"   l'objet metier ne repond pas -> on n'envoie pas
+      "renvoye"             e-mail reparti et marque
+    """
+    # RETROCOMPATIBILITE HISTORIQUE — regle bloquante.
+    # `emails_envoyes` n'existe que sur les documents nes du code corrige.
+    # Son ABSENCE ne veut donc PAS dire « e-mail jamais envoye » : elle veut
+    # dire « document anterieur, etat inconnu ». Rejouer sur simple absence
+    # renverrait l'e-mail de tout l'historique au premier rejeu Stripe.
+    _envoyes = deja.get("emails_envoyes")
+    if not isinstance(_envoyes, dict):
+        return "historique"
+    if _envoyes.get(P0_CLE_EMAIL_CLIENT):
+        return "deja_envoye"
+
+    # CONTROLE D'INTEGRITE — on ne renvoie un acces que si l'acces existe
+    # vraiment et correspond au paiement traite. Sans cela, un echec survenu
+    # AVANT la creation de la souscription (ex. panne Mongo ligne 6268)
+    # ferait partir un code inutilisable : le client croirait son acces actif.
+    _code = (deja.get("code") or "").strip()
+    _destinataire = (deja.get("assignedEmail") or "").strip()
+    if not _code or not _destinataire:
+        return "integrite_absente"
+    _sub = await db.subscriptions.find_one(
+        {"code": _code},
+        {"_id": 0, "email": 1, "status": 1, "total_sessions": 1},
+    )
+    if not _sub:
+        return "integrite_absente"
+    # Le destinataire est relu depuis la BASE (`assignedEmail`), jamais depuis
+    # le payload Stripe : un evenement forge ne doit pas pouvoir detourner le
+    # code d'un client vers une autre adresse.
+    if (_sub.get("email") or "").strip().lower() != _destinataire.lower():
+        return "integrite_absente"
+
+    _seances = _sub.get("total_sessions")
+    if not isinstance(_seances, int):
+        _seances = deja.get("maxUses") or 0
+    await _p0_envoyer_email_acces(_destinataire, _code, _seances, primary_color)
+    await _p0_marquer_email_envoye(session_id, P0_CLE_EMAIL_CLIENT)
+    return "renvoye"
+
+
 @api_router.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
     """Webhook Stripe - Gère les paiements coach, crédits et clients."""
@@ -5867,6 +6075,20 @@ async def stripe_webhook(request: Request):
             if payment_type == "vitrine_purchase":
                 logger.info("[WEBHOOK] Achat vitrine — laissé à /api/checkout/webhook/stripe")
                 return {"status": "ignored", "reason": "vitrine_purchase"}
+
+            # P0-STRIPE-EMAIL — CAUSE RACINE. `primary_color` / `primary_rgb`
+            # n'etaient affectees que dans la branche `credit_purchase` (plus bas),
+            # alors que V259 a introduit {primary_color} dans les DEUX autres
+            # branches. Python en fait des locales de toute la fonction : les lire
+            # ailleurs levait UnboundLocalError — ce qui, cote achat client, tuait
+            # le webhook juste avant l'envoi de l'e-mail d'acces.
+            # On les lie donc ICI, avant l'aiguillage, une fois pour toutes.
+            # `_v259_primary_color` ne leve jamais (try/except interne) et retombe
+            # sur #D91CD2, soit exactement la couleur codee en dur avant V259.
+            # La branche `credit_purchase` les reaffecte avec la couleur du coach :
+            # son comportement est strictement inchange.
+            primary_color = await _v259_primary_color()
+            primary_rgb = _v259_primary_rgb(primary_color)
 
             # v13.0: Achat de crédits par partenaire existant
             if payment_type == "credit_purchase":
@@ -6151,9 +6373,15 @@ async def stripe_webhook(request: Request):
                 # dont la réponse tarde ou échoue — le doublon deviendrait la
                 # norme. Même garde que /api/admin/reconcile-stripe-payments :
                 # un code portant déjà ce `session_id` signe un paiement traité.
-                _deja = await db.discount_codes.find_one({"session_id": session.id}, {"_id": 0, "code": 1})
+                _deja = await db.discount_codes.find_one({"session_id": session.id}, {"_id": 0, "code": 1, "assignedEmail": 1, "maxUses": 1, "emails_envoyes": 1})
                 if _deja:
-                    logger.info(f"[PAYMENT] Session {session.id} deja traitee (code {_deja.get('code')}) — rien refait")
+                    # P0-STRIPE-EMAIL — « paiement traite » et « e-mail envoye » sont
+                    # deux etats distincts. La garde V384 reste souveraine sur le
+                    # premier : on ne poursuit JAMAIS le traitement metier ici, donc
+                    # ni code, ni souscription, ni reservation, ni credit, ni
+                    # paiement ne peuvent etre recrees. Seul l'e-mail peut repartir.
+                    _issue = await _p0_rattrapage_email_acces(_deja, session.id, primary_color)
+                    logger.info(f"[PAYMENT] Session {session.id} deja traitee (code {_deja.get('code')}) — rien refait (e-mail: {_issue})")
                     return {"status": "already_processed", "code": _deja.get("code")}
 
                 new_code = f"AFR-{str(uuid.uuid4())[:6].upper()}"
@@ -6183,7 +6411,11 @@ async def stripe_webhook(request: Request):
                                  # les écrire ne change donc aucun comportement, cela rend
                                  # seulement le document complet et lisible tel quel.
                                  "multi_member": False, "shared_sessions": True,
-                                 "targetCategories": [], "coach_id": None}
+                                 "targetCategories": [], "coach_id": None,
+                                 # P0-STRIPE-EMAIL : marqueurs d'envoi, cle -> horodatage.
+                                 # Cree VIDE : sa presence signe un document ne du code
+                                 # corrige, son absence signe un document historique.
+                                 "emails_envoyes": {}}
                 await db.discount_codes.insert_one(discount_doc)
                 logger.info(f"[PAYMENT] Code {new_code} cree pour {customer_email} ({sessions_count} seances)")
                 # v95.2: Auto-créer la subscription après paiement Stripe
@@ -6484,112 +6716,16 @@ async def stripe_webhook(request: Request):
                     # Jamais bloquant: le code AFR et les credits sont deja crees.
                     logger.warning(f"[V226] Report de la commande dans reservations echoue: {_v226_err}")
 
+                # P0-STRIPE-EMAIL : memorise l'echec d'envoi pour repondre en
+                # erreur a la toute fin de la branche (voir plus bas). Liee ici,
+                # avant le `if`, pour qu'aucun chemin ne puisse la lire non liee.
+                _p0_email_echec = False
                 # v163: EMAIL CONFIRMATION — QR code (double usage) + Guide de connexion au chat
                 if RESEND_AVAILABLE and RESEND_API_KEY and customer_email:
-                    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=https://afroboost.com/?qr={new_code}&format=png"
-                    chat_url = f"https://afroboost.com/?qr={new_code}"
-                    # V225: sans ce lien, le client vient de payer et n'a aucun
-                    # chemin evident vers la reservation de sa seance — l'email
-                    # ne pointait que vers le chat (?qr=).
-                    # f-string sur new_code, deja une chaine construite plus haut :
-                    # aucune valeur externe, donc aucun chemin qui puisse lever
-                    # dans le webhook (ou une exception priverait l'acheteur de
-                    # son code AFR et de ses credits).
-                    espace_url = f"https://afroboost.com/espace/{new_code}"  # V225
-                    # V243: message WhatsApp pre-encode pour le bouton de partage
-                    # de l'email (le lien wa.me exige un texte URL-encode).
-                    from urllib.parse import quote as _url_quote
-                    _wa_share_text = _url_quote(f"Mon lien de réservation Afroboost : {espace_url}")
-                    html = f"""<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;background:#0a0a0a;color:#fff;">
-                        <div style="background:linear-gradient(135deg,{primary_color},#8b5cf6);padding:28px 24px;text-align:center;">
-                            <h1 style="color:white;margin:0;font-size:24px;">Bienvenue chez Afroboost !</h1>
-                            <p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">Ta souscription est confirmee</p>
-                        </div>
-                        <div style="padding:28px 24px;">
-                            <p style="color:#e2e8f0;font-size:15px;line-height:1.6;margin:0 0 16px;">Merci pour ton achat et bienvenue dans la communaute Afroboost ! <span style="font-size:18px;">&#9889;</span></p>
-                            <p style="color:#a855f7;font-size:14px;line-height:1.6;margin:0 0 24px;">Ton energie va faire la difference. Voici tout ce qu'il te faut pour commencer.</p>
-
-                            <!-- CODE + QR -->
-                            <div style="background:rgba(147,51,234,0.15);border:1px solid rgba(147,51,234,0.3);border-radius:14px;padding:22px;margin:0 0 24px;text-align:center;">
-                                <p style="margin:0 0 6px;color:#888;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Ton code d'acces personnel</p>
-                                <p style="margin:0;color:{primary_color};font-size:30px;font-weight:bold;letter-spacing:3px;">{new_code}</p>
-                                <p style="margin:10px 0 20px;color:#888;font-size:13px;">{sessions_count} seance(s) incluse(s)</p>
-                                <img src="{qr_url}" alt="QR Code Afroboost" width="180" height="180" style="background:white;padding:12px;border-radius:10px;display:block;margin:0 auto;"/>
-                                <p style="color:#a855f7;font-size:12px;margin:14px 0 0;line-height:1.5;">
-                                    <strong style="color:#fff;">Ton QR code a 2 usages :</strong><br>
-                                    &#10003; A scanner a l'entree de ton cours<br>
-                                    &#10003; A scanner pour acceder a ton espace chat / client
-                                </p>
-                            </div>
-
-                            <!-- V225: BOUTON PRINCIPAL — RESERVER SA SEANCE -->
-                            <div style="text-align:center;margin:0 0 24px;">
-                                <a href="{espace_url}" style="display:inline-block;background:{primary_color};color:white;padding:16px 36px;text-decoration:none;border-radius:12px;font-weight:bold;font-size:16px;">&#128197; Reserver ma seance</a>
-                                <p style="color:#a855f7;font-size:12px;margin:10px 0 0;line-height:1.5;">Ton espace personnel : choisis ta date et confirme en un clic.</p>
-                                <!-- V243: partage WhatsApp du lien d'espace. wa.me/?text=
-                                     ouvre WhatsApp avec le message pre-rempli ; le
-                                     destinataire est choisi dans l'app. L'URL est encodee
-                                     cote serveur (quote) pour survivre aux caracteres
-                                     speciaux du code. -->
-                                <div style="margin:12px 0 0;">
-                                    <a href="https://wa.me/?text={_wa_share_text}" style="display:inline-block;background:#25D366;color:white;padding:10px 24px;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">&#128241; Partager via WhatsApp</a>
-                                </div>
-                            </div>
-
-                            <!-- BOUTON ACCES DIRECT CHAT -->
-                            <div style="text-align:center;margin:0 0 28px;">
-                                <a href="{chat_url}" style="display:inline-block;background:transparent;color:{primary_color};border:1px solid {primary_color};padding:14px 32px;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">Acceder a mon espace chat</a>
-                                <p style="color:#666;font-size:11px;margin:10px 0 0;">Ce lien te connecte automatiquement avec ton code</p>
-                            </div>
-
-                            <!-- GUIDE RESERVATION FUTURES SEANCES -->
-                            <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.2);border-radius:14px;padding:22px;margin:0 0 20px;">
-                                <h2 style="color:#fff;margin:0 0 16px;font-size:16px;">Comment reserver tes prochaines seances ?</h2>
-                                <table style="width:100%;border-spacing:0;">
-                                    <tr>
-                                        <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
-                                            <div style="background:{primary_color};color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">1</div>
-                                        </td>
-                                        <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
-                                            <strong>Ouvre ton espace chat</strong> en cliquant sur le bouton ci-dessus, ou scanne le QR code avec ton telephone.
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
-                                            <div style="background:{primary_color};color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">2</div>
-                                        </td>
-                                        <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
-                                            <strong>Entre ton code</strong> {new_code} si demande (il est deja memorise si tu viens du lien).
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
-                                            <div style="background:{primary_color};color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">3</div>
-                                        </td>
-                                        <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
-                                            <strong>Dis a l'IA "je veux reserver"</strong> ou choisis une date dans la liste des sessions disponibles.
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td style="width:36px;vertical-align:top;padding:8px 12px 8px 0;">
-                                            <div style="background:{primary_color};color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;font-weight:bold;font-size:14px;">4</div>
-                                        </td>
-                                        <td style="color:#e2e8f0;font-size:14px;line-height:1.5;padding:8px 0;">
-                                            <strong>Confirme ta reservation</strong> - tes seances restantes se mettent a jour automatiquement.
-                                        </td>
-                                    </tr>
-                                </table>
-                                <p style="color:#a855f7;font-size:12px;margin:16px 0 0;text-align:center;line-height:1.5;">
-                                    Astuce : installe Afroboost en PWA depuis le menu du navigateur pour un acces rapide.
-                                </p>
-                            </div>
-
-                            <!-- FOOTER -->
-                            <p style="color:#666;font-size:11px;text-align:center;margin:24px 0 0;line-height:1.5;">Conserve ce mail precieusement - ton code et ton QR code y sont accessibles a tout moment.<br>A tres vite chez Afroboost !</p>
-                        </div>
-                    </div>"""
                     try:
-                        await asyncio.to_thread(resend.Emails.send, {"from": "Afroboost <notifications@afroboost.com>", "to": [customer_email], "subject": f"Bienvenue chez Afroboost - Ton code {new_code}", "html": html})
+                        await _p0_envoyer_email_acces(customer_email, new_code, sessions_count, primary_color)
+                        # Marqueur ecrit APRES le succes reel de l'envoi, jamais avant.
+                        await _p0_marquer_email_envoye(session.id, P0_CLE_EMAIL_CLIENT)
                         logger.info(f"[PAYMENT] Email v163 envoye a {customer_email}")
                         # V183: Notif push à l'abonné après paiement réussi
                         try:
@@ -6603,6 +6739,7 @@ async def stripe_webhook(request: Request):
                             logger.warning(f"[PUSH-V183] notif paiement abonné échec: {_pe}")
                     except Exception as mail_err:
                         logger.warning(f"[PAYMENT] Email error: {mail_err}")
+                        _p0_email_echec = True
                 # v8.7: Sync CRM - Creer/MAJ contact (email unique)
                 # V243: on capture aussi le telephone WhatsApp (collecte par
                 # Stripe au checkout) et on rattache le contact au coach — sans
@@ -6685,6 +6822,17 @@ async def stripe_webhook(request: Request):
                             logger.warning(f"[PUSH-V180] notif vente coach échec: {_pe}")
                     except Exception as notify_err:
                         logger.warning(f"[PAYMENT] Coach notification error: {notify_err}")
+
+                # P0-STRIPE-EMAIL — l'e-mail d'acces n'est PAS parti. On ne defait
+                # RIEN (le paiement reste traite, le code et la souscription
+                # restent crees, le coach a bien ete notifie) : on repond
+                # seulement en erreur pour que Stripe rejoue. Le rejeu sortira
+                # a la garde V384 et passera par la voie de rattrapage, qui ne
+                # recree aucun objet metier et se contente de renvoyer l'e-mail.
+                # Sans cette reponse en erreur, Stripe recevrait 200 et le client
+                # ne recevrait JAMAIS son code : c'est exactement la panne P0.
+                if _p0_email_echec:
+                    raise HTTPException(status_code=503, detail="email_acces_non_envoye")
         elif event.type == 'invoice.upcoming':
             # V400 — ÉCHÉANCE À VENIR : c'est le déclencheur du rappel J-3.
             #
