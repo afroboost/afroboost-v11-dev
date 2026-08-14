@@ -22,6 +22,7 @@ import { playNotificationSound, linkifyText } from "../services/notificationServ
 import { QRScannerModal } from "./QRScanner";
 // ArticleManager supprimé - v8.9 Nettoyage SAAS
 import ReservationTab from "./coach/ReservationTab"; // Import Reservation Tab
+import ReminderRulesCard from "./coach/ReminderRulesCard"; // N1B-3C : rappels avant cours
 import SuiviAbonnes from "./coach/SuiviAbonnes"; // V334 etape 3
 import MessagesWhatsApp from "./coach/MessagesWhatsApp"; // V411
 import CampaignManager from "./coach/CampaignManager"; // Import Campaign Manager
@@ -6848,6 +6849,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
         {/* Reservations Tab - Utilise le composant extrait ReservationTab */}
         {tab === "reservations" && (
+          <div className="space-y-4">
+          {/* N1B-3C : le reglage des rappels vit ICI et nulle part ailleurs —
+              en tete de l'onglet, au-dessus de la liste. Aucune entree n'est
+              ajoutee dans l'onglet Gestion. */}
+          <ReminderRulesCard coachEmail={safeCoachUser?.email} />
           <ReservationTab
             reservations={filteredReservations}
             pagination={reservationPagination}
@@ -6875,6 +6881,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             }}
             t={t}
           />
+          </div>
         )}
 
         {/* v36: HUB GESTION — Centre de commande unifié avec sous-onglets 2x2 */}
