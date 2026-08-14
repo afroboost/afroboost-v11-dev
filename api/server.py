@@ -15533,10 +15533,14 @@ def v440_offre_certaine(texte: str, offres: list):
     cher qu'une question.
     """
     _mots = v440_mots(texte)
-    if not _mots or not offres:
+    # V440b : une offre INVISIBLE ne peut jamais être élue. Il en existe (un
+    # doublon « Silent … Lac de Vidy » à 25 CHF, masqué) : le proposer enverrait
+    # un client sur une offre que le coach a délibérément retirée.
+    _utilisables = [_o for _o in (offres or []) if v440_visible(_o)]
+    if not _mots or not _utilisables:
         return None, "aucun mot exploitable"
     _classement = sorted(
-        ((v440_score_offre(_mots, _o), _o) for _o in offres),
+        ((v440_score_offre(_mots, _o), _o) for _o in _utilisables),
         key=lambda _p: (-_p[0], str(_p[1].get("id") or "")),
     )
     _meilleur, _offre = _classement[0]
@@ -15548,6 +15552,44 @@ def v440_offre_certaine(texte: str, offres: list):
     return _offre, "offre identifiée (score %d)" % _meilleur
 
 
+def v440_visible(offre: dict) -> bool:
+    """Une offre invisible n'existe pas pour le bot.
+
+    Même convention que la vitrine et le chat du site (`visible: {$ne: False}`) :
+    un champ ABSENT vaut visible. La garde est répétée ici, en pur, parce que la
+    requête base ne protège que l'appel nominal — un appelant futur qui passerait
+    une liste non filtrée ne doit pas pouvoir proposer un brouillon.
+    """
+    return (offre or {}).get("visible") is not False
+
+
+def v440_prix_actif(offre: dict, maintenant=None):
+    """Prix RÉELLEMENT payé aujourd'hui, en CHF — ou None si indéterminable.
+
+    ⚠️ NE JAMAIS LIRE `offre["price"]` POUR DÉCIDER SI UNE OFFRE EST PAYANTE.
+    Sur une offre à prix progressif, le champ plat est une SENTINELLE à 0.0 et le
+    vrai prix vit dans `price_early_bird` / `price_standard` / `price_last_minute`.
+    Mesuré le 14/08/2026 sur « Afroboost Silent … casque Silent » (LAAF Festival) :
+    `price` valait 0.0 alors que le billet était à 10 CHF. Annoncer « gratuit »
+    aurait été une fausse promesse commerciale.
+
+    La source de vérité est `compute_active_price` (api/pricing.py, V223) — le
+    MÊME calcul que celui du site et du checkout. On ne recopie aucun palier ici.
+
+    `maintenant` est injectable pour les tests ; en production il vaut None, donc
+    le palier est recalculé à CHAQUE message. Aucun cache, aucun prix périmé.
+
+    None (et non 0.0) en cas d'échec : confondre « je ne sais pas » avec
+    « gratuit » est exactement l'erreur qu'on corrige.
+    """
+    try:
+        _p = compute_active_price(offre or {}, maintenant)
+        return float(_p.get("price") or 0)
+    except Exception as _e:
+        logger.warning("[V440] prix actif indéterminable : %s", _e)
+        return None
+
+
 def v440_urls_autorisees(offres: list) -> set:
     """Les SEULES URL qu'une réponse a le droit de contenir.
 
@@ -15556,6 +15598,8 @@ def v440_urls_autorisees(offres: list) -> set:
     """
     _ok = {V440_SITE, V440_SITE + "/"}
     for _o in offres or []:
+        if not v440_visible(_o):      # V440b : une offre masquée n'a pas de lien
+            continue
         _l = v440_lien_offre(_o)
         if _l:
             _ok.add(_l)
@@ -15599,12 +15643,26 @@ def v440_garde_urls(texte: str, autorisees: set):
     return _propre, _retirees
 
 
-def v440_contexte_metier(offres: list, offre_ciblee: dict, motif: str = "") -> str:
+def v440_prix_lisible(valeur) -> str:
+    """« 10 CHF », « 59.99 CHF » — sans décimale inutile."""
+    _v = float(valeur)
+    return ("%d CHF" % _v) if _v == int(_v) else ("%.2f CHF" % _v)
+
+
+def v440_contexte_metier(offres: list, offre_ciblee: dict, motif: str = "",
+                         maintenant=None, twint_disponible: bool = True) -> str:
     """Le bloc métier ajouté au prompt système. Construit ENTIÈREMENT en Python.
 
     Tout ce que le modèle a le droit de dire d'une offre — nom, prix, lien —
     figure ici, calculé depuis la base. Le modèle rédige ; il n'invente pas les
-    faits, et surtout pas les URL.
+    faits, et surtout pas les URL ni les prix.
+
+    V440b : les prix viennent de `v440_prix_actif`, donc de `compute_active_price`
+    — le même calcul que le site. `maintenant` n'est injecté que par les tests ;
+    en production il vaut None et le palier est réévalué à chaque message.
+
+    `twint_disponible` reflète la configuration RÉELLE du site : si le coach
+    retire son moyen de paiement, le bot cesse de promettre TWINT.
     """
     _c = [
         "Tu es l'assistant WhatsApp d'Afroboost, le studio de fitness afrobeat "
@@ -15612,25 +15670,38 @@ def v440_contexte_metier(offres: list, offre_ciblee: dict, motif: str = "") -> s
         "chaleureuse et brève, comme dans une conversation WhatsApp.",
         "",
         "PAIEMENT — CE QUI EST VRAI :",
-        "- Les offres PAYANTES se règlent sur le site Afroboost, par carte ou "
-        "par TWINT (en CHF). TWINT fonctionne, c'est un moyen de paiement "
-        "normal du site.",
-        "- Tu ne traites pas la transaction toi-même, mais cela ne veut PAS "
-        "dire que TWINT est indisponible : tu donnes le lien du site, et le "
-        "paiement s'y fait.",
-        "- N'envoie JAMAIS quelqu'un chercher sur l'application ou le site "
-        "TWINT : le parcours normal est Afroboost.",
-        "",
     ]
-    _payantes = [_o for _o in (offres or []) if (_o.get("price") or 0) > 0]
+    if twint_disponible:
+        _c += [
+            "- Les offres PAYANTES se règlent sur le site Afroboost, et TWINT y "
+            "est accepté (en CHF). TWINT fonctionne, c'est un moyen de paiement "
+            "normal du site.",
+            "- Tu ne traites pas la transaction toi-même, mais cela ne veut PAS "
+            "dire que TWINT est indisponible : tu donnes le lien de l'offre sur "
+            "le site, et le paiement se fait là, dans le parcours de réservation.",
+            "- N'envoie JAMAIS quelqu'un chercher sur l'application ou le site "
+            "TWINT, et ne donne jamais d'adresse twint.ch : le point d'entrée "
+            "est TOUJOURS la page Afroboost de l'offre.",
+        ]
+    else:
+        _c += [
+            "- ATTENTION : aucun moyen de paiement en ligne n'est configuré en "
+            "ce moment. Ne promets NI TWINT NI carte. Si la personne veut payer, "
+            "dis que tu fais suivre à Coach Bassi pour organiser le paiement.",
+        ]
+    _c.append("")
+
+    _visibles = [_o for _o in (offres or []) if v440_visible(_o)]
+    _prix = {id(_o): v440_prix_actif(_o, maintenant) for _o in _visibles}
+    _payantes = [_o for _o in _visibles if (_prix[id(_o)] or 0) > 0]
+    _gratuites = [_o for _o in _visibles if _prix[id(_o)] == 0]
     if _payantes:
         _c.append("OFFRES PAYANTES ET LEURS LIENS (les seuls liens autorisés) :")
         for _o in _payantes:
-            _c.append("- %s — %s CHF — %s"
+            _c.append("- %s — %s — %s"
                       % (str(_o.get("name") or "Offre").strip(),
-                         _o.get("price"), v440_lien_offre(_o)))
+                         v440_prix_lisible(_prix[id(_o)]), v440_lien_offre(_o)))
         _c.append("")
-    _gratuites = [_o for _o in (offres or []) if not (_o.get("price") or 0) > 0]
     if _gratuites:
         _c.append("OFFRES GRATUITES (aucun paiement, donc AUCUNE mention de TWINT) :")
         for _o in _gratuites:
@@ -15638,13 +15709,28 @@ def v440_contexte_metier(offres: list, offre_ciblee: dict, motif: str = "") -> s
                       % (str(_o.get("name") or "Offre").strip(), v440_lien_offre(_o)))
         _c.append("")
 
-    if offre_ciblee is not None:
+    if offre_ciblee is not None and v440_visible(offre_ciblee):
         _nom = str(offre_ciblee.get("name") or "cette offre").strip()
-        if (offre_ciblee.get("price") or 0) > 0:
+        _p = v440_prix_actif(offre_ciblee, maintenant)
+        if _p is None:
+            # « Je ne sais pas » n'est PAS « gratuit » : on ne promet rien.
             _c += [
-                "OFFRE CONCERNÉE PAR CETTE CONVERSATION : %s (%s CHF)." % (_nom, offre_ciblee.get("price")),
-                "Si la personne parle de payer, confirme que TWINT est possible "
-                "et donne EXACTEMENT ce lien : %s" % v440_lien_offre(offre_ciblee),
+                "OFFRE CONCERNÉE PAR CETTE CONVERSATION : %s, mais son PRIX EST "
+                "INDÉTERMINÉ." % _nom,
+                "N'annonce donc AUCUN prix et ne promets aucun paiement. Donne "
+                "ce lien pour qu'elle voie le tarif à jour : %s"
+                % v440_lien_offre(offre_ciblee),
+                "",
+            ]
+        elif _p > 0:
+            _c += [
+                "OFFRE CONCERNÉE PAR CETTE CONVERSATION : %s, au tarif actuel de %s."
+                % (_nom, v440_prix_lisible(_p)),
+                ("Si la personne parle de payer, confirme que TWINT est possible "
+                 "et donne EXACTEMENT ce lien : %s" % v440_lien_offre(offre_ciblee))
+                if twint_disponible else
+                ("Ne promets aucun moyen de paiement en ligne. Donne ce lien et "
+                 "propose de faire suivre à Coach Bassi : %s" % v440_lien_offre(offre_ciblee)),
                 "",
             ]
         else:
@@ -15659,8 +15745,9 @@ def v440_contexte_metier(offres: list, offre_ciblee: dict, motif: str = "") -> s
         _c += [
             "AUCUNE OFFRE N'A PU ÊTRE IDENTIFIÉE AVEC CERTITUDE (%s)." % (motif or "indéterminé"),
             "Tu ne dois donc donner AUCUN lien d'offre. Demande gentiment de "
-            "quelle offre ou de quel cours il s'agit. Tu peux confirmer que le "
-            "paiement par TWINT existe sur le site, sans donner de lien précis.",
+            "quelle offre ou de quel cours il s'agit."
+            + (" Tu peux confirmer que le paiement par TWINT existe sur le site, "
+               "sans donner de lien précis." if twint_disponible else ""),
             "",
         ]
 
@@ -15676,12 +15763,54 @@ def v440_contexte_metier(offres: list, offre_ciblee: dict, motif: str = "") -> s
     return "\n".join(_c)
 
 
+async def v440_twint_configure() -> bool:
+    """Le site peut-il RÉELLEMENT encaisser en ligne aujourd'hui ?
+
+    Mesuré le 14/08/2026 : `concept.paymentTwint` et `paymentCreditCard` sont
+    tous deux à False, et le vrai encaissement passe par le lien TWINT direct
+    résolu par la route `/payment-links` (V222 : repli sur
+    `partner_payment_config.twint_direct_url`). Promettre TWINT sans vérifier
+    reviendrait à promettre au hasard.
+
+    On ne peut PAS appeler `get_payment_links` : c'est une route FastAPI, et
+    elle ÉCRIT (`insert_one` quand le document manque). On refait donc ici ses
+    deux LECTURES, et rien d'autre.
+    """
+    try:
+        _l = await db.payment_links.find_one({"id": "payment_links"},
+                                             {"_id": 0, "twint": 1}) or {}
+        if (_l.get("twint") or "").strip():
+            return True
+        for _admin in SUPER_ADMIN_EMAILS:
+            _cfg = await db["partner_payment_config"].find_one(
+                {"coach_email": _admin}, {"_id": 0, "twint_direct_url": 1})
+            if _cfg and (_cfg.get("twint_direct_url") or "").strip():
+                return True
+        _cpt = await db.concept.find_one(
+            {"id": "concept"}, {"_id": 0, "paymentTwint": 1, "paymentCreditCard": 1}) or {}
+        # Le Checkout Stripe du site propose `['card', 'twint']` en CHF : si le
+        # parcours carte est ouvert, TWINT l'est aussi.
+        return bool(_cpt.get("paymentTwint") or _cpt.get("paymentCreditCard"))
+    except Exception as _e:
+        logger.warning("[V440] configuration de paiement illisible : %s", _e)
+        return False        # dans le doute, on ne promet rien
+
+
 async def v440_offres_visibles() -> list:
-    """Offres visibles. ⚠️ AUCUN filtre `coach_id` — mono-coach assumé, cf. en-tête."""
+    """Offres visibles. ⚠️ AUCUN filtre `coach_id` — mono-coach assumé, cf. en-tête.
+
+    V440b : on remonte AUSSI les champs de tarification progressive — sans eux,
+    `compute_active_price` retomberait sur le prix plat, c'est-à-dire sur le bug
+    même que ce lot corrige.
+    """
     try:
         return await db.offers.find(
             {"visible": {"$ne": False}},
-            {"_id": 0, "id": 1, "name": 1, "price": 1, "keywords": 1, "isProduct": 1},
+            {"_id": 0, "id": 1, "name": 1, "price": 1, "keywords": 1, "isProduct": 1,
+             "visible": 1, "progressive_pricing": 1, "countdown_date": 1,
+             "countdown_time": 1, "early_bird_days_before": 1,
+             "standard_hours_before": 1, "price_early_bird": 1,
+             "price_standard": 1, "price_last_minute": 1},
         ).to_list(50)
     except Exception as _e:
         logger.warning("[V440] offres illisibles : %s", _e)
@@ -15983,11 +16112,17 @@ async def handle_meta_whatsapp_webhook(request: Request):
                 try:
                     _v440_offres = await v440_offres_visibles()
                     _v440_hist = await v440_historique_fil(from_phone)
+                    _v440_twint = await v440_twint_configure()
                     _v440_fil = " ".join([_t["content"] for _t in _v440_hist] + [incoming_message])
                     _v440_ciblee, _v440_motif = v440_offre_certaine(_v440_fil, _v440_offres)
-                    context += "\n\n" + v440_contexte_metier(_v440_offres, _v440_ciblee, _v440_motif)
-                    logger.info("[V440] %d offre(s), %d tour(s) d'historique — %s",
-                                len(_v440_offres), len(_v440_hist), _v440_motif)
+                    # `maintenant` reste None : le palier tarifaire est donc
+                    # recalculé à CET instant, à chaque message. Aucun cache.
+                    context += "\n\n" + v440_contexte_metier(
+                        _v440_offres, _v440_ciblee, _v440_motif,
+                        maintenant=None, twint_disponible=_v440_twint)
+                    logger.info("[V440] %d offre(s), %d tour(s), twint=%s — %s | prix actif: %s",
+                                len(_v440_offres), len(_v440_hist), _v440_twint, _v440_motif,
+                                v440_prix_actif(_v440_ciblee) if _v440_ciblee else "—")
                 except Exception as _e_v440:
                     # Le contexte est un PLUS : s'il échoue, on répond comme avant
                     # plutôt que de ne pas répondre du tout.

@@ -7,14 +7,23 @@ recopiees : si le code change, le test suit. `_lien_offre` est extraite de
 du depot — la tester ailleurs prouverait le contraire de ce qu'on veut prouver.
 """
 import ast, os, re, sys, unicodedata
+from datetime import datetime, timezone
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(RACINE, "api", "server.py")
 SRC_BOT = os.path.join(RACINE, "api", "routes", "bot_whatsapp_routes.py")
 
+# V440b : `compute_active_price` est IMPORTEE du vrai module de tarification —
+# le meme que celui du site et du checkout. Le recopier ici prouverait que le
+# test suit une copie, pas la verite. `api/pricing.py` est un module PUR : il
+# n'ouvre aucune connexion base, donc il s'importe sans effet de bord.
+sys.path.insert(0, RACINE)
+from api.pricing import compute_active_price
+
 A_EXTRAIRE = {"v440_normaliser", "v440_singulier", "v440_mots", "v440_score_offre",
               "v440_offre_certaine", "v440_urls_autorisees", "v440_garde_urls",
-              "v440_contexte_metier"}
+              "v440_contexte_metier", "v440_visible", "v440_prix_actif",
+              "v440_prix_lisible"}
 CONSTANTES = {"V440_MONO_COACH", "V440_MAX_HISTORIQUE", "V440_SEUIL_SCORE",
               "V440_MARGE_SCORE", "V440_SITE", "V440_MOTS_IGNORES"}
 # Cote bot : la fabrique d'URL et ses deux constantes.
@@ -35,7 +44,14 @@ def morceaux(chemin, fonctions, constantes):
     return out
 
 
-NS = {"re": re, "_v440_ud": unicodedata}
+class _JournalMuet:
+    def warning(self, *a, **k): pass
+    def info(self, *a, **k): pass
+    def error(self, *a, **k): pass
+
+
+NS = {"re": re, "_v440_ud": unicodedata,
+      "compute_active_price": compute_active_price, "logger": _JournalMuet()}
 exec("\n\n".join(morceaux(SRC_BOT, A_EXTRAIRE_BOT, CONSTANTES_BOT)), NS)
 # `_lien_offre` est importee dans server.py sous le nom `v440_lien_offre` :
 # on reproduit exactement cet alias, sinon le contexte ne saurait pas la nommer.
@@ -65,12 +81,39 @@ UNITE = {"id": "fea0ab6a-8adc-460d-9d7d-bbff57059ca5", "name": "Cours à l'unit�
          "isProduct": False}
 TSHIRT = {"id": "84b7d8c6-b859-410a-8a09-0d1ee0069404", "name": "T-shirt + 1 cours offert!",
           "price": 59.99, "keywords": "Shirt, t-shirt, vêtement", "isProduct": True}
+# V440b : l'offre du LAAF Festival, avec sa tarification progressive REELLE.
+# `price` vaut 0.0 — c'est une SENTINELLE, pas une gratuite. Le vrai tarif est
+# dans les trois paliers, et c'est tout l'objet de ce lot.
 CASQUE = {"id": "76a78f31-614a-415a-876b-9d2d1a4b441c",
           "name": " Afroboost Silent avec Bassi Le prix du billet correspond à la réservation du casque Silent (cours offert).",
-          "price": 0.0, "keywords": _CLES_COMMUNES, "isProduct": False}
+          "price": 0.0, "keywords": _CLES_COMMUNES, "isProduct": False,
+          "visible": True, "progressive_pricing": True,
+          "countdown_date": "2026-08-21", "countdown_time": "18:30",
+          "early_bird_days_before": 7, "standard_hours_before": 24,
+          "price_early_bird": 10.0, "price_standard": 15.0, "price_last_minute": 25.0}
 MEMBRES = {"id": "484c4519-15dc-4b86-8aa3-48e3c01c9645", "name": "Membres",
            "price": 150.0, "keywords": _CLES_COMMUNES, "isProduct": False}
 OFFRES = [PULSE, UNITE, TSHIRT, CASQUE, MEMBRES]
+
+# Doublon REEL, masque par le coach : il ne doit JAMAIS etre propose.
+VIDY = {"id": "184e76e0-d3a0-4ba4-b63e-a6eb773bf8d7",
+        "name": "Silent Dance & Fitness au bord du Lac de Vidy – Lausanne",
+        "price": 25.0, "keywords": "silent, casque, lausanne, vidy",
+        "isProduct": False, "visible": False}
+# Une offre VRAIMENT gratuite (prix plat 0, aucune tarification progressive).
+GRATUITE = {"id": "11111111-1111-1111-1111-111111111111", "name": "Portes ouvertes découverte",
+            "price": 0.0, "keywords": "portesouvertes", "isProduct": False, "visible": True}
+
+# Bornes de palier de l'offre du festival : reference = 21/08 18:30 UTC,
+# early_bird_days_before = 7 -> bascule le 14/08 a 18:30 ; standard_hours_before
+# = 24 -> bascule le 20/08 a 18:30.
+T_EARLY = datetime(2026, 8, 14, 10, 0, tzinfo=timezone.utc)          # avant
+T_LIMITE_MOINS = datetime(2026, 8, 14, 18, 29, 59, tzinfo=timezone.utc)
+T_LIMITE_PILE = datetime(2026, 8, 14, 18, 30, 0, tzinfo=timezone.utc)  # la limite
+T_STANDARD = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)       # apres
+T_LM_MOINS = datetime(2026, 8, 20, 18, 29, 59, tzinfo=timezone.utc)
+T_LM_PILE = datetime(2026, 8, 20, 18, 30, 0, tzinfo=timezone.utc)
+T_APRES = datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc)          # evenement passe
 
 resultats = []
 
@@ -152,13 +195,22 @@ verifier("fil complet -> l'offre casque est retrouvee",
          (CERTAINE(_fil, OFFRES)[0] or {}).get("id"), CASQUE["id"])
 
 # ... et comme cette offre est GRATUITE, aucune promesse de TWINT.
-_ctx_casque = CONTEXTE(OFFRES, CASQUE, "offre identifiée")
-verifier_vrai("offre gratuite -> le contexte l'annonce gratuite",
-              "GRATUITE" in _ctx_casque)
-verifier_vrai("offre gratuite -> interdiction explicite de proposer TWINT",
-              "Ne propose donc PAS de paiement ni TWINT" in _ctx_casque)
-verifier_vrai("offre gratuite -> le lien reel est quand meme donne",
-              LIEN(CASQUE) in _ctx_casque)
+# V440b : cette offre N'EST PAS gratuite malgre `price: 0.0` — son tarif du jour
+# vient des paliers. Le 14/08 a 10:00, c'est 10 CHF.
+_ctx_casque = CONTEXTE(OFFRES, CASQUE, "offre identifiée", maintenant=T_EARLY)
+verifier_vrai("l'offre du festival est annoncee PAYANTE, pas gratuite",
+              "au tarif actuel de 10 CHF" in _ctx_casque, _ctx_casque[:200])
+verifier_vrai("offre payante -> TWINT est propose", "TWINT est possible" in _ctx_casque)
+verifier_vrai("offre payante -> le lien reel est donne", LIEN(CASQUE) in _ctx_casque)
+
+# Une offre REELLEMENT gratuite, elle, n'ouvre aucune promesse de paiement.
+_ctx_vraiment_gratuit = CONTEXTE([GRATUITE], GRATUITE, "offre identifiée", maintenant=T_EARLY)
+verifier_vrai("offre reellement gratuite -> annoncee gratuite",
+              "GRATUITE" in _ctx_vraiment_gratuit)
+verifier_vrai("offre reellement gratuite -> aucune promesse TWINT",
+              "Ne propose donc PAS de paiement ni TWINT" in _ctx_vraiment_gratuit)
+verifier_vrai("offre reellement gratuite -> le lien est quand meme donne",
+              LIEN(GRATUITE) in _ctx_vraiment_gratuit)
 
 # === 6. Offre payante identifiee -> bon lien reel ===========================
 _ctx_tshirt = CONTEXTE(OFFRES, TSHIRT, "offre identifiée")
@@ -187,9 +239,12 @@ for _nom_ctx, _ctx in (("cible", _ctx_tshirt), ("sans cible", _ctx_rien),
              [u for u in _trouvees if u not in _permises], [])
 
 # On n'envoie jamais vers un tiers.
+# Le contexte NOMME twint.ch pour l'interdire — c'est voulu. Ce qu'il ne doit
+# jamais contenir, c'est une ADRESSE cliquable vers ce domaine.
 for _nom_ctx, _ctx in (("cible", _ctx_tshirt), ("sans cible", _ctx_rien)):
-    verifier_vrai("contexte (%s) : aucun lien twint.ch" % _nom_ctx,
-                  "twint.ch" not in _ctx.lower())
+    verifier("contexte (%s) : aucune ADRESSE twint.ch" % _nom_ctx,
+             re.findall(r"(?:https?://|\bwww\.)[^\s]*twint\.ch[^\s]*", _ctx.lower())
+             + re.findall(r"twint\.ch/", _ctx.lower()), [])
 verifier_vrai("le contexte interdit d'envoyer vers l'app TWINT",
               "N'envoie JAMAIS quelqu'un chercher sur l'application" in _ctx_rien)
 
@@ -262,6 +317,100 @@ for _offres in ([], [{}], [{"id": None}], [{"name": None, "price": None}]):
     except Exception as _e:
         _anomalies2.append((_offres, type(_e).__name__))
 verifier("offres malformees -> aucune exception", _anomalies2, [])
+
+# === 11. V440b — LE PRIX RÉEL, PAS LE CHAMP PLAT ============================
+PRIX = NS["v440_prix_actif"]
+VISIBLE = NS["v440_visible"]
+LISIBLE = NS["v440_prix_lisible"]
+
+# Le coeur du lot : `price` vaut 0.0, l'offre n'est PAS gratuite.
+verifier("le champ plat vaut bien 0.0 (sentinelle)", CASQUE["price"], 0.0)
+verifier("prix actif AVANT la bascule -> 10 CHF", PRIX(CASQUE, T_EARLY), 10.0)
+verifier("prix actif A LA LIMITE PILE -> 15 CHF (borne exclue)", PRIX(CASQUE, T_LIMITE_PILE), 15.0)
+verifier("prix actif 1 s AVANT la limite -> encore 10 CHF", PRIX(CASQUE, T_LIMITE_MOINS), 10.0)
+verifier("prix actif APRES la bascule -> 15 CHF", PRIX(CASQUE, T_STANDARD), 15.0)
+verifier("2e bascule, 1 s avant -> encore 15 CHF", PRIX(CASQUE, T_LM_MOINS), 15.0)
+verifier("2e bascule pile -> 25 CHF", PRIX(CASQUE, T_LM_PILE), 25.0)
+verifier("evenement passe -> 25 CHF (last minute)", PRIX(CASQUE, T_APRES), 25.0)
+
+# Les offres a prix plat ne changent pas de comportement.
+verifier("prix plat inchange (PULSE)", PRIX(PULSE, T_EARLY), 250.0)
+verifier("prix plat inchange (T-shirt)", PRIX(TSHIRT, T_APRES), 59.99)
+verifier("offre vraiment gratuite -> 0.0", PRIX(GRATUITE, T_EARLY), 0.0)
+verifier("offre absente -> 0.0 et pas d'exception", PRIX({}, T_EARLY), 0.0)
+
+# Mise en forme des prix.
+verifier("prix entier sans decimale", LISIBLE(10.0), "10 CHF")
+verifier("prix a virgule conserve", LISIBLE(59.99), "59.99 CHF")
+
+# Le contexte SUIT le palier — c'est l'exigence « pas de cache obsolete ».
+_ctx_e = CONTEXTE(OFFRES, CASQUE, "ok", maintenant=T_EARLY)
+_ctx_s = CONTEXTE(OFFRES, CASQUE, "ok", maintenant=T_STANDARD)
+_ctx_l = CONTEXTE(OFFRES, CASQUE, "ok", maintenant=T_LM_PILE)
+verifier_vrai("contexte a T_EARLY annonce 10 CHF", "au tarif actuel de 10 CHF" in _ctx_e)
+verifier_vrai("contexte a T_STANDARD annonce 15 CHF", "au tarif actuel de 15 CHF" in _ctx_s)
+verifier_vrai("contexte a T_LAST_MINUTE annonce 25 CHF", "au tarif actuel de 25 CHF" in _ctx_l)
+verifier_vrai("le contexte change bien entre deux paliers", _ctx_e != _ctx_s)
+verifier_vrai("aucun contexte n'annonce cette offre gratuite",
+              all("GRATUITE" not in c for c in (_ctx_e, _ctx_s, _ctx_l)))
+# ... et la liste generale suit aussi, pas seulement la ligne « offre concernee ».
+verifier_vrai("la liste des offres payantes suit le palier",
+              "— 10 CHF —" in _ctx_e and "— 15 CHF —" in _ctx_s)
+
+# === 12. Offre invisible : jamais resolue, jamais liee ======================
+_OFFRES_AVEC_MASQUEE = OFFRES + [VIDY]
+verifier("offre invisible -> visible() False", VISIBLE(VIDY), False)
+verifier("offre sans champ visible -> consideree visible", VISIBLE({"id": "x"}), True)
+# L'exigence est « une offre invisible n'est JAMAIS proposee » — pas « ce message
+# ne resout rien ». Ici « silent » figure aussi dans le nom de l'offre VISIBLE du
+# festival, qui est donc elue : c'est acceptable, la carte porte son vrai nom et
+# ses vraies dates. Ce qui compte est que VIDY ne sorte jamais.
+_res_vidy = CERTAINE("je veux le silent a vidy lausanne", _OFFRES_AVEC_MASQUEE)[0]
+verifier("l'offre masquee n'est JAMAIS celle qui est elue",
+         (_res_vidy or {}).get("id") == VIDY["id"], False)
+verifier("aucun mot ne peut elire l'offre masquee",
+         [m for m in ("vidy", "lausanne", "silent", "casque")
+          if (CERTAINE(m, _OFFRES_AVEC_MASQUEE)[0] or {}).get("id") == VIDY["id"]], [])
+verifier_vrai("le lien de l'offre masquee n'est PAS autorise",
+              LIEN(VIDY) not in AUTORISEES(_OFFRES_AVEC_MASQUEE))
+verifier_vrai("le lien de l'offre masquee est neutralise par la garde",
+              GARDE("Paye ici " + LIEN(VIDY), AUTORISEES(_OFFRES_AVEC_MASQUEE))[0]
+              == "Paye ici " + SITE)
+_ctx_masque = CONTEXTE(_OFFRES_AVEC_MASQUEE, None, "x", maintenant=T_EARLY)
+verifier_vrai("l'offre masquee n'apparait pas dans le contexte",
+              VIDY["id"] not in _ctx_masque and "Vidy" not in _ctx_masque)
+# Meme designee explicitement, une offre masquee ne produit pas de lien cible.
+_ctx_force = CONTEXTE(_OFFRES_AVEC_MASQUEE, VIDY, "force", maintenant=T_EARLY)
+verifier_vrai("offre masquee imposee -> traitee comme non identifiee",
+              "AUCUNE OFFRE" in _ctx_force and VIDY["id"] not in _ctx_force)
+
+# === 13. Disponibilite REELLE du paiement ===================================
+_ctx_sans_twint = CONTEXTE(OFFRES, CASQUE, "ok", maintenant=T_EARLY, twint_disponible=False)
+verifier_vrai("paiement non configure -> aucune promesse TWINT",
+              "TWINT est possible" not in _ctx_sans_twint)
+verifier_vrai("paiement non configure -> on annonce l'indisponibilite",
+              "aucun moyen de paiement en ligne n'est configuré" in _ctx_sans_twint)
+verifier_vrai("paiement non configure -> on propose de faire suivre au coach",
+              "Coach Bassi" in _ctx_sans_twint)
+verifier_vrai("paiement non configure -> le lien de l'offre reste donne",
+              LIEN(CASQUE) in _ctx_sans_twint)
+_ctx_sans_twint_sans_offre = CONTEXTE(OFFRES, None, "rien", maintenant=T_EARLY,
+                                      twint_disponible=False)
+verifier_vrai("sans offre ET sans paiement -> aucune mention de TWINT possible",
+              "TWINT existe sur le site" not in _ctx_sans_twint_sans_offre)
+
+# === 14. Non-regression M1 : la garde anti-invention est intacte ============
+_permises_b = AUTORISEES(_OFFRES_AVEC_MASQUEE)
+for _t_inj in (T_EARLY, T_STANDARD, T_LM_PILE, T_APRES):
+    _ctx_i = CONTEXTE(_OFFRES_AVEC_MASQUEE, CASQUE, "ok", maintenant=_t_inj)
+    _hors = [u for u in re.findall(r"https?://[^\s]+", _ctx_i) if u not in _permises_b]
+    verifier("contexte a %s : aucune URL hors liste" % _t_inj.strftime("%d/%m"), _hors, [])
+verifier("la resolution d'offre n'a pas change (cas conversationnel)",
+         (CERTAINE(M1 + " " + M2, OFFRES)[0] or {}).get("id"), CASQUE["id"])
+verifier("l'abstention n'a pas change (message 2 seul)",
+         CERTAINE(M2, OFFRES)[0], None)
+verifier("l'ambiguite n'a pas change (« cours »)",
+         CERTAINE("je veux reserver un cours", OFFRES)[0], None)
 
 print("=" * 74)
 echecs = 0
