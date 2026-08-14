@@ -1549,8 +1549,38 @@ async def _qr_scan_validate_inner(request: Request):
 async def export_attendance(request: Request, date: str = "", course: str = ""):
     """Exporte la liste des présences (réservations validées) au format CSV.
     Paramètres optionnels: date (YYYY-MM-DD), course (nom du cours).
-    Le frontend peut convertir en Excel ou PDF."""
+    Le frontend peut convertir en Excel ou PDF.
+
+    V2-0 : route FERMÉE. Elle répondait 200 à un anonyme et rendait un CSV
+    `Nom, Email, WhatsApp, Cours, Date, Code, Validé le` — le fichier le plus
+    nominatif du dépôt. Cas particulier : `request` ÉTAIT déjà dans la signature,
+    il n'était simplement jamais lu. La garde était à un appel de distance.
+
+    Jeton signé exigé, sans repli : `export/attendance` a 0 occurrence dans
+    `frontend/src`, et aucun composant ne télécharge ce CSV.
+
+    ⚠️ CONSÉQUENCE À ASSUMER, PAS À ADOUCIR. `coach_jwt_email` ne lit QUE
+    l'en-tête `Authorization: Bearer`. Or le jeton vit dans `localStorage`, pas
+    dans un cookie : une URL collée dans la barre d'adresse n'envoie JAMAIS cet
+    en-tête, même après reconnexion. Si quelqu'un téléchargeait ce fichier à la
+    main, cet usage est donc SUPPRIMÉ, pas sécurisé. C'est un choix : un export
+    nominatif (nom, e-mail, WhatsApp) ne peut pas rester ouvert au premier venu.
+    Le rétablir demandera un bouton dans le dashboard, qui passera l'en-tête —
+    ce sera un autre lot.
+
+    Le périmètre coach entre AUSSI dans la requête : `query` ne portait aucun
+    `coach_id`, donc même authentifiée la route aurait laissé un coach exporter
+    les présences d'un autre. `{}` pour le super-admin -> export inchangé.
+    """
+    from api.routes.shared import (v20_exiger_coach_signe, v20_perimetre_contacts,
+                                   V20AccesRefuse)
+    _appelant = await v20_exiger_coach_signe(request, db, "export des présences")
+    try:
+        _perimetre = v20_perimetre_contacts(_appelant)
+    except V20AccesRefuse:
+        raise HTTPException(status_code=403, detail="Authentification coach requise")
     query = {"validated": True}
+    query.update(_perimetre)
     if date:
         query["selectedDatesText"] = {"$regex": date, "$options": "i"}
     if course:

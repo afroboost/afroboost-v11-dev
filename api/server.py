@@ -18023,21 +18023,58 @@ async def restore_trash(trash_id: str, request: Request):
 
 # --- Active Conversations for Internal Messaging ---
 @api_router.get("/conversations/active")
-async def get_active_conversations_for_messaging():
+async def get_active_conversations_for_messaging(request: Request):
     """
     Récupère TOUTES les conversations pour la programmation de messages internes.
     Inclut : 
     - Sessions avec titre (groupes nommés comme "Les Lionnes")
     - Groupes standards (community, vip, promo)
     - TOUS les utilisateurs de la collection users
+
+    V2-0 : route FERMÉE aux anonymes. Elle répondait 200 sans le moindre
+    en-tête et rendait un annuaire nominatif — nom + e-mail de TOUS les `users`
+    (`db.users.find({})`), plus les titres des groupes privés et leurs
+    `participant_ids`. Elle n'avait pas de paramètre `Request`.
+
+    ⚠️ GARDE TRANSITOIRE, PAS JWT-STRICT, ET C'EST DÉLIBÉRÉ. Contrairement aux
+    trois autres routes fermées par V2-0, celle-ci EST utilisée :
+    `CoachDashboard.js:3415`, présente dans le bundle déployé, et elle sert de
+    repli au ciblage des campagnes (`CampaignModal.js:139-149`). Or le dashboard
+    n'émet un JWT que sur le chemin « e-mail + mot de passe » : ses trois entrées
+    automatiques (cookie `/auth/me`, `afroboost_admin_persist`, Google) n'en
+    produisent aucune. Exiger un jeton signé ici rejouerait l'incident V310c
+    (403 -> tableau de bord vide, revert `0e12578`).
+    On utilise donc le même couple que le reste du dashboard —
+    `_v263_authenticated_coach` (JWT, repli `X-User-Email` du mode transitoire
+    V265) + `_v309_is_coach_or_admin` (rôle relu en base, jamais dans le
+    navigateur). L'accès ANONYME, qui était la fuite réelle, est fermé. La
+    falsifiabilité de `X-User-Email` reste, connue et documentée : elle se
+    referme avec le repli V265, pas dans ce lot.
     """
+    _v20_appelant = await _v263_authenticated_coach(request)
+    if not _v20_appelant or not await _v309_is_coach_or_admin(_v20_appelant):
+        logger.warning("[V2-0] REFUS /conversations/active — « %s »",
+                       _v20_appelant or "anonyme")
+        raise HTTPException(status_code=403,
+                            detail="Authentification coach requise — reconnectez-vous")
+    # Périmètre : `{}` pour le super-admin, donc réponse RIGOUREUSEMENT
+    # identique pour le propriétaire. Un coach ordinaire est cadré — et les
+    # documents sans `coach_id` (102 des 110 `users`, 620 des 652 sessions) lui
+    # restent invisibles : fail-closed assumé, aucune attribution inventée.
+    from api.routes.shared import v20_perimetre_contacts as _v20_perim, V20AccesRefuse as _V20Refus
+    try:
+        _v20_portee = _v20_perim(_v20_appelant)
+    except _V20Refus:
+        raise HTTPException(status_code=403, detail="Authentification coach requise")
     try:
         conversations = []
         seen_user_ids = set()  # Pour éviter les doublons d'utilisateurs
         
         # 1. Récupérer TOUTES les sessions de chat avec titre (GROUPES NOMMÉS)
+        _v20_q_sessions = {"is_deleted": {"$ne": True}}
+        _v20_q_sessions.update(_v20_portee)          # V2-0 : {} pour le super-admin
         sessions = await db.chat_sessions.find(
-            {"is_deleted": {"$ne": True}},
+            _v20_q_sessions,
             {"_id": 0, "id": 1, "mode": 1, "title": 1, "participant_ids": 1, "created_at": 1, "last_message_at": 1, "updated_at": 1}
         ).sort("updated_at", -1).to_list(500)
         
@@ -18097,8 +18134,11 @@ async def get_active_conversations_for_messaging():
                 conversations.append(group)
         
         # 3. Récupérer TOUS les utilisateurs de la collection users
+        # V2-0 : `find({})` livrait les 110 users à n'importe quel appelant, y
+        # compris les 5 rattachés à un autre coach. Le périmètre entre ici ; il
+        # vaut `{}` pour le super-admin, donc sa liste est inchangée.
         all_users = await db.users.find(
-            {},
+            dict(_v20_portee),
             {"_id": 0, "id": 1, "name": 1, "email": 1, "created_at": 1}
         ).sort("name", 1).to_list(500)
         
@@ -23921,8 +23961,33 @@ async def get_campaigns_list(request: Request):
         return {"error": str(ex)}
 
 @api_router.get("/campaign-errors")
-async def get_campaign_errors(limit: int = 20):
-    """V164: Endpoint diagnostic — affiche les dernières erreurs de campagne WhatsApp"""
+async def get_campaign_errors(request: Request, limit: int = 20):
+    """V164: Endpoint diagnostic — affiche les dernières erreurs de campagne WhatsApp
+
+    V2-0 : route FERMÉE. Elle répondait 200 à un anonyme et livrait les documents
+    de `campaign_errors` SANS projection — donc `to_phone` et `from_phone` en
+    clair (94 documents, vérifié en production le 14/08/2026). Elle n'avait pas
+    de paramètre `Request` : l'authentification y était structurellement
+    impossible, pas seulement oubliée.
+
+    Jeton signé exigé, sans repli : `campaign-errors` n'apparaît nulle part dans
+    `frontend/src` ni dans aucun des 3 bundles déployés — sa seule occurrence
+    dans tout le dépôt est sa propre définition. Aucun écran ne peut casser.
+
+    `limit` est borné : il servait de `to_list(limit)` non plafonné, donc
+    `?limit=100000` était accepté.
+    """
+    from api.routes.shared import v20_exiger_coach_signe, v20_perimetre_contacts
+    _v20_appelant = await v20_exiger_coach_signe(request, db, "diagnostic des erreurs de campagne")
+    # Aucun des 94 documents de `campaign_errors` ne porte de `coach_id` : il est
+    # impossible de les cadrer honnêtement. Ils restent donc réservés au
+    # super-admin, à qui le périmètre rend `{}`. Un coach ordinaire reçoit une
+    # liste vide plutôt qu'un lot mal attribué — même décision, et même code, que
+    # `/campaigns/logs`. Sans cela, l'arrivée d'un partenaire lui livrerait les
+    # `to_phone` de tous les destinataires.
+    if v20_perimetre_contacts(_v20_appelant):
+        return []
+    limit = max(1, min(int(limit or 20), 200))
     try:
         errors = await db.campaign_errors.find().sort("created_at", -1).limit(limit).to_list(limit)
         for e in errors:

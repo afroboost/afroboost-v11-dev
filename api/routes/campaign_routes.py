@@ -61,11 +61,41 @@ async def get_campaigns(request: Request):
     return campaigns
 
 @campaign_router.get("/campaigns/logs")
-async def get_campaigns_error_logs():
-    """Renvoie les 50 dernières erreurs d'envoi de campagnes."""
+async def get_campaigns_error_logs(request: Request):
+    """Renvoie les 50 dernières erreurs d'envoi de campagnes.
+
+    V2-0 : route FERMÉE. Elle répondait 200 à un anonyme et livrait
+    `campaign_name`, `contact_id` et surtout `contact_name` — nominatif, toutes
+    campagnes de tous les coachs confondues. Elle n'avait pas de paramètre
+    `Request`. Anomalie d'autant plus nette qu'elle est encadrée, dans ce même
+    fichier, par des routes qui lisent une identité (l.52 et suivantes).
+
+    Jeton signé exigé, sans repli : `campaigns/logs` n'apparaît ni dans
+    `frontend/src` ni dans les bundles déployés. L'état `campaignLogs` du
+    dashboard existe mais il est alimenté UNIQUEMENT côté navigateur
+    (`CoachDashboard.js:3381`) — le vrai endpoint de journaux du dashboard est
+    `/ai-logs`, qui n'est pas celui-ci.
+
+    ⚠️ Le filtre coach est posé sur `campaigns` (`v20_perimetre_contacts`), mais
+    PAS sur `campaign_errors` : aucun de ses 94 documents ne porte de `coach_id`,
+    donc aucun cadrage n'y est démontrable. Ils restent réservés au super-admin,
+    à qui `v20_perimetre_contacts` rend `{}`. Un coach ordinaire n'en verra
+    aucun : fail-closed assumé plutôt qu'attribution inventée.
+    """
+    from api.routes.shared import (v20_exiger_coach_signe, v20_perimetre_contacts,
+                                   V20AccesRefuse)
+    _appelant = await v20_exiger_coach_signe(request, db, "journaux de campagnes")
+    try:
+        _perimetre = v20_perimetre_contacts(_appelant)
+    except V20AccesRefuse:
+        raise HTTPException(status_code=403, detail="Authentification coach requise")
     try:
         error_logs = []
-        campaigns_with_results = await db.campaigns.find({"results": {"$exists": True, "$ne": []}}, {"_id": 0, "id": 1, "name": 1, "results": 1, "updatedAt": 1}).sort("updatedAt", -1).to_list(100)
+        # V2-0 : le périmètre du coach entre dans la requête. Vide `{}` pour le
+        # super-admin, donc comportement RIGOUREUSEMENT identique pour lui.
+        _q_campagnes = {"results": {"$exists": True, "$ne": []}}
+        _q_campagnes.update(_perimetre)
+        campaigns_with_results = await db.campaigns.find(_q_campagnes, {"_id": 0, "id": 1, "name": 1, "results": 1, "updatedAt": 1}).sort("updatedAt", -1).to_list(100)
         for campaign in campaigns_with_results:
             campaign_id = campaign.get("id", "")
             campaign_name = campaign.get("name", "Sans nom")
@@ -78,7 +108,11 @@ async def get_campaigns_error_logs():
                         "sent_at": result.get("sentAt", campaign.get("updatedAt", "")), "status": "failed"
                     })
         try:
-            twilio_errors = await db.campaign_errors.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
+            # V2-0 : `campaign_errors` ne porte AUCUN coach_id (94/94 documents).
+            # Impossible de le cadrer honnêtement -> réservé au super-admin. Un
+            # coach ordinaire n'en reçoit aucun plutôt qu'un lot mal attribué.
+            twilio_errors = ([] if _perimetre else
+                             await db.campaign_errors.find({}, {"_id": 0}).sort("created_at", -1).to_list(50))
             for terr in twilio_errors:
                 error_logs.append({
                     "source": "twilio_diagnostic", "campaign_id": terr.get("campaign_id", ""),

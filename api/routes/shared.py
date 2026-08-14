@@ -210,6 +210,90 @@ def get_coach_filter(email: str) -> dict:
     return {"coach_id": email.lower().strip()}
 
 
+# =====================================================================
+# === V2-0 (CONTACTS) : REFUSER N'EST PAS FILTRER =====================
+# =====================================================================
+#
+# CE QUE CE BLOC CORRIGE. `get_coach_filter("")` ci-dessus renvoie
+# `{"coach_id": ""}`. Ce n'est PAS un refus : c'est un filtre qui SÉLECTIONNE
+# les documents dont `coach_id` vaut la chaîne vide — il y en a 5 dans
+# `chat_participants`, mesurés le 14/08/2026. Et sa variante `None` matcherait
+# en plus les champs ABSENTS, soit 891 documents (1 contact, 102 `users`,
+# 620 `chat_sessions`, 74 `leads`, 94 `campaign_errors`). Une garde qui rend un
+# dictionnaire ne sait pas dire « non ». Celle-ci lève.
+#
+# Le code s'en protège aujourd'hui par des `if caller_email else []` dispersés —
+# une protection accidentelle, qu'une réécriture supprime sans bruit.
+#
+# ⚠️ MONO-COACH ASSUMÉ, ET DIT. Mesure du 14/08/2026 : `coaches` contient UN
+# document, `coach_auth` n'existe pas, et `chat_participants.coach_id` n'a
+# qu'UNE valeur distincte sur 1331 documents. Ce périmètre ne SÉPARE donc
+# personne aujourd'hui — il pose la structure pour que l'arrivée d'un partenaire
+# ne l'expose pas. Ne pas le présenter comme un cloisonnement actif.
+#
+# FAIL-CLOSED SUR L'HISTORIQUE, VOLONTAIREMENT. Un document sans `coach_id` ne
+# correspond à aucun `{"coach_id": <email>}` : il reste invisible pour un coach
+# ordinaire et visible du seul super-admin (`{}`). On n'invente à personne un
+# propriétaire qu'il n'a pas — l'attribution de l'historique est une décision
+# séparée et réversible, pas un effet de bord d'une garde de sécurité.
+
+class V20AccesRefuse(Exception):
+    """Levée quand aucune identité exploitable n'accompagne la requête."""
+
+
+def v20_perimetre_contacts(email: str) -> dict:
+    """Filtre Mongo d'une identité DÉJÀ authentifiée — ou refus explicite.
+
+    - identité vide / absente -> LÈVE `V20AccesRefuse` (jamais un dictionnaire) ;
+    - super-admin             -> `{}` (vue globale intacte, cf. incident V310c) ;
+    - coach                   -> `{"coach_id": <email normalisé>}`.
+
+    L'appelant convertit `V20AccesRefuse` en 403. La séparation est voulue : ce
+    module ne dépend pas de FastAPI, ce qui le rend testable hors ligne.
+    """
+    _e = (email or "").strip().lower() if isinstance(email, str) else ""
+    if not _e:
+        raise V20AccesRefuse("identité requise")
+    if is_super_admin(_e):
+        return {}
+    return {"coach_id": _e}
+
+
+async def v20_exiger_coach_signe(request, database, quoi: str = ""):
+    """Identité coach/admin portée par un JWT SIGNÉ, sinon 403. Aucun repli.
+
+    Réservée aux routes dont il est PROUVÉ qu'aucun frontend ne les appelle —
+    exiger un jeton signé sur une route du dashboard reproduirait l'incident
+    V310c (403 -> écran vide), car le dashboard n'émet un JWT que sur le chemin
+    « e-mail + mot de passe » et pas sur ses trois entrées automatiques.
+
+    Le rôle n'est jamais décidé par le navigateur : il est relu dans `coaches`.
+    """
+    from fastapi import HTTPException
+    email = coach_jwt_email(request)
+    if not email:
+        _revendique = ""
+        try:
+            _revendique = (request.headers.get("X-User-Email", "") or "").strip().lower()
+        except Exception:
+            pass
+        logger.warning("[V2-0] REFUS %s — « %s » sans jeton signé",
+                       quoi or "accès", _revendique or "anonyme")
+        raise HTTPException(status_code=403,
+                            detail="Authentification coach requise — reconnectez-vous")
+    if is_super_admin(email):
+        return email
+    try:
+        if database is not None and await database.coaches.find_one({"email": email}, {"_id": 1}):
+            return email
+    except Exception as _e:
+        logger.warning("[V2-0] vérification du rôle impossible pour %s : %s", email, _e)
+    logger.warning("[V2-0] REFUS %s — « %s » n'est pas un coach enregistré",
+                   quoi or "accès", email)
+    raise HTTPException(status_code=403,
+                        detail="Authentification coach requise — reconnectez-vous")
+
+
 # === V385 : DURÉE DE VALIDITÉ DES CODES CRÉÉS AUTOMATIQUEMENT ===
 #
 # Un code créé après paiement doit porter la MÊME durée que ceux créés à la main
