@@ -210,55 +210,133 @@ class TestIndexExports:
 # === BACKEND API TESTS ===
 
 class TestBackendSendWhatsAppEndpoint:
-    """Tester l'endpoint backend POST /api/send-whatsapp"""
-    
+    """Tester l'endpoint backend POST /api/send-whatsapp — 100 % HORS LIGNE.
+
+    V442-TESTS — CETTE CLASSE ENVOYAIT 4 VRAIS WHATSAPP.
+    Elle faisait quatre `requests.post()` sur `{BASE_URL}/api/send-whatsapp` avec
+    un corps VALIDE (`{"to": "+41791234567", "message": "..."}`). Lancée contre la
+    production, elle expédiait donc quatre messages réels depuis le numéro
+    business d'Afroboost — facturés au compte, comptés dans la note de qualité
+    Meta, et potentiellement vus par le titulaire du numéro composé.
+
+    Elle est désormais entièrement hors ligne : plus aucun `requests`, plus aucune
+    URL. On teste le VRAI code du handler, extrait de `api/server.py` par analyse
+    AST et exécuté tel quel, avec le moteur d'envoi remplacé par un mouchard qui
+    enregistre l'appel au lieu de l'émettre. Le harnais est celui de
+    `test_v442_send_whatsapp_auth.py` — on ne le duplique pas.
+
+    L'assertion `status_code == 200` de `test_endpoint_returns_simulated_without_config`
+    est devenue FAUSSE avec V442 (la route exige un JWT super-admin signé). Elle
+    n'est pas « rafraîchie » avec un appel authentifié réel — ce serait remplacer
+    un envoi par un autre envoi. Elle est remplacée par la vérification du
+    comportement voulu : anonyme -> refus.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        import sys, os as _os
+        _tests = _os.path.dirname(_os.path.abspath(__file__))
+        if _tests not in sys.path:
+            sys.path.insert(0, _tests)
+        import test_v442_send_whatsapp_auth as h
+        self.h = h
+        self.bac = h.construire()
+        h.ENVOIS.clear()
+
+    def _appeler(self, headers, to="+41791234567", message="Test message", media=None):
+        """Renvoie ('ok', resultat) ou ('refus', code). Aucun reseau."""
+        import asyncio
+        async def run():
+            return await self.bac["send_whatsapp_message"](
+                self.h.Payload(to, message, media), self.h.FausseRequete(headers))
+        try:
+            return ("ok", asyncio.get_event_loop().run_until_complete(run()))
+        except self.h.HTTPException as e:
+            return ("refus", e.status_code)
+
+    def _bearer(self, email=None, **kw):
+        return {"Authorization": "Bearer " + self.h.jeton(email or self.h.ADMIN, **kw)}
+
+    # --- la route existe toujours (verification structurelle, sans reseau) ---
     def test_endpoint_exists(self):
         """POST /api/send-whatsapp endpoint must exist"""
-        response = requests.post(
-            f"{BASE_URL}/api/send-whatsapp",
-            json={"to": "+41791234567", "message": "Test message"}
-        )
-        # Should not return 404 (endpoint exists)
-        assert response.status_code != 404, \
-            f"/api/send-whatsapp endpoint not found (got {response.status_code})"
-    
-    def test_endpoint_returns_simulated_without_config(self):
-        """Without Twilio config, endpoint should return simulated status"""
-        response = requests.post(
-            f"{BASE_URL}/api/send-whatsapp",
-            json={"to": "+41791234567", "message": "Test IA liaison"}
-        )
-        assert response.status_code == 200, \
-            f"Expected 200, got {response.status_code}"
-        
-        data = response.json()
-        # Should return simulated status when no Twilio config
-        assert data.get("status") in ["simulated", "success", "error"], \
-            f"Unexpected status: {data.get('status')}"
-    
+        assert '@api_router.post("/send-whatsapp")' in self.h.SOURCE, \
+            "/api/send-whatsapp endpoint not defined in api/server.py"
+        assert callable(self.bac.get("send_whatsapp_message")), \
+            "le handler send_whatsapp_message est introuvable"
+
+    # --- ANONYME -> REFUS (remplace l'assertion 200 devenue obsolete) ---
+    def test_anonymous_is_refused(self):
+        """V442 : sans authentification, la route doit REFUSER — et ne rien envoyer."""
+        etat, code = self._appeler({})
+        assert etat == "refus" and code == 403, \
+            f"Un appel anonyme aurait du etre refuse en 403, obtenu {etat} {code}"
+        assert self.h.ENVOIS == [], "Un envoi a ete declenche par un appel anonyme"
+
+    # --- AUTH INVALIDE -> REFUS ---
+    @pytest.mark.parametrize("nom,headers", [
+        ("X-User-Email forge",      {"X-User-Email": "contact.artboost@gmail.com"}),
+        ("JWT d'un autre secret",   None),
+        ("jeton illisible",         {"Authorization": "Bearer pas-un-jwt"}),
+        ("Bearer vide",             {"Authorization": "Bearer "}),
+        ("coach non super-admin",   "coach"),
+        ("jeton abonne",            "subscriber"),
+        ("JWT expire",              "expire"),
+    ])
+    def test_invalid_auth_is_refused(self, nom, headers):
+        """V442 : toute identite non prouvee doit REFUSER — et ne rien envoyer."""
+        if headers is None:
+            headers = {"Authorization": "Bearer " + self.h.jeton(self.h.ADMIN, secret="mauvais")}
+        elif headers == "coach":
+            headers = self._bearer(self.h.COACH)
+        elif headers == "subscriber":
+            headers = self._bearer(self.h.ADMIN, type_="subscriber")
+        elif headers == "expire":
+            headers = self._bearer(self.h.ADMIN, exp=1)
+        etat, code = self._appeler(headers)
+        assert etat == "refus" and code == 403, f"{nom} : attendu 403, obtenu {etat} {code}"
+        assert self.h.ENVOIS == [], f"{nom} : un envoi a ete declenche"
+
+    # --- AUTH LEGITIME -> CHEMIN AUTORISE, SANS ENVOI REEL ---
+    def test_legitimate_auth_reaches_engine_without_sending(self):
+        """V442 : le super-admin signe passe. Le moteur est ATTEINT, jamais Meta.
+
+        C'est la contrepartie exigee par la regle V310c du projet : ne jamais
+        durcir une auth sans prouver que le chemin legitime marche encore.
+        """
+        etat, res = self._appeler(self._bearer())
+        assert etat == "ok", f"Le super-admin legitime a ete refuse : {etat} {res}"
+        assert len(self.h.ENVOIS) == 1, "Le moteur d'envoi n'a pas ete atteint"
+        assert self.h.ENVOIS[0]["to_phone"] == "+41791234567"
+        # Le mouchard prouve qu'aucun appel reseau n'a eu lieu : c'est LUI qui a
+        # repondu, pas Meta.
+        assert res.get("status") == "simulated-par-le-test", \
+            "La reponse ne vient pas du mouchard — un vrai envoi a pu partir"
+
     def test_endpoint_accepts_required_fields(self):
-        """Endpoint must accept 'to' and 'message' fields"""
-        response = requests.post(
-            f"{BASE_URL}/api/send-whatsapp",
-            json={"to": "+41791234567", "message": "Test message from IA"}
-        )
-        # Should not fail with validation error
-        assert response.status_code != 422, \
-            "Endpoint rejected valid payload with 'to' and 'message'"
-    
+        """Endpoint must accept 'to' and 'message' fields (sans reseau)."""
+        etat, _ = self._appeler(self._bearer(), to="+41791234567", message="Test message from IA")
+        assert etat == "ok", "Le handler a rejete un couple (to, message) valide"
+        assert self.h.ENVOIS[0]["message"] == "Test message from IA", \
+            "Le message n'est pas transmis tel quel au moteur"
+
     def test_endpoint_accepts_mediaUrl(self):
-        """Endpoint must accept optional 'mediaUrl' field"""
-        response = requests.post(
-            f"{BASE_URL}/api/send-whatsapp",
-            json={
-                "to": "+41791234567",
-                "message": "Test with media",
-                "mediaUrl": "https://example.com/image.jpg"
-            }
-        )
-        # Should not fail with validation error
-        assert response.status_code != 422, \
-            "Endpoint rejected payload with mediaUrl"
+        """Endpoint must accept optional 'mediaUrl' field (sans reseau)."""
+        etat, _ = self._appeler(self._bearer(), media="https://example.com/image.jpg")
+        assert etat == "ok", "Le handler a rejete un mediaUrl valide"
+        assert self.h.ENVOIS[0]["media_url"] == "https://example.com/image.jpg", \
+            "Le mediaUrl n'est pas transmis tel quel au moteur"
+
+    def test_no_test_of_this_class_uses_the_network(self):
+        """Garde-fou : cette classe ne doit plus JAMAIS refaire d'appel reseau."""
+        import ast, inspect
+        src = inspect.getsource(TestBackendSendWhatsAppEndpoint)
+        arbre = ast.parse("class _X:\n" + "\n".join(
+            "    " + l for l in src.splitlines()[1:]))
+        appels = [ast.unparse(n) for n in ast.walk(arbre)
+                  if isinstance(n, ast.Call) and ast.unparse(n).startswith(
+                      ("requests.", "httpx.", "urllib.", "fetch("))]
+        assert appels == [], f"Appel reseau reintroduit dans les tests : {appels}"
 
 
 class TestBackendHealthCheck:
