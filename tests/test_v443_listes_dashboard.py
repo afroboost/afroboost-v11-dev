@@ -210,18 +210,32 @@ def tests_frontend():
 
     # --- F. aucune garde backend de securite rouverte, aucun autre domaine touche
     import subprocess
-    diff = subprocess.check_output(["git", "diff", "--name-only", "79cdddf"], cwd=RACINE).decode()
+    # On juge le PERIMETRE DES COMMITS DU LOT, pas l'arbre de travail.
+    #
+    # Cette sonde comparait `git diff 79cdddf` — donc l'arbre courant — a deux
+    # fichiers applicatifs. C'etait vrai le jour ou elle a ete ecrite, et faux des
+    # le lot suivant : V441 touche legitimement `api/server.py` et
+    # `MessagesWhatsApp.js`, et la sonde tombait alors qu'elle n'avait rien a
+    # dire sur eux. Un garde-fou qui interdit tout changement futur du depot
+    # n'est pas un garde-fou, c'est un frein — la lecon avait deja ete tiree sur
+    # le S9b de test_v442_send_whatsapp_auth.py.
+    #
+    # On borne donc au lot lui-meme : `2cd1e75` (V443) et `9abc299` (timeout).
+    # L'invariant devient permanent.
+    LOT = ("2cd1e75~1", "9abc299")
+    diff = subprocess.check_output(["git", "diff", "--name-only", *LOT], cwd=RACINE).decode()
     touches = sorted(f for f in diff.split() if f)
-    # On juge le code APPLICATIF : ajouter des fichiers sous `tests/` est le but
-    # meme du lot, pas un debordement de perimetre.
+    # Ajouter des fichiers sous `tests/` est le but meme du lot, pas un
+    # debordement de perimetre : on juge le code APPLICATIF.
     applicatifs = [f for f in touches if not f.startswith("tests/")]
     attendus = ["api/routes/reservation_routes.py", "frontend/src/components/CoachDashboard.js"]
-    verifier("F1. seuls 2 fichiers applicatifs modifies", applicatifs == attendus, str(applicatifs))
-    verifier("F1b. tout le reste du diff est du test", 
+    verifier("F1. le lot dashboard ne touche que 2 fichiers applicatifs",
+             applicatifs == attendus, str(applicatifs))
+    verifier("F1b. tout le reste du lot est du test",
              all(f.startswith("tests/") for f in touches if f not in attendus), str(touches))
     for domaine in ("promo_routes", "stripe", "checkout", "campaign", "whatsapp",
                     "contact", "auth_routes", "cinetpay", "pawapay"):
-        verifier("F2. aucun fichier %s touche" % domaine,
+        verifier("F2. le lot ne touche aucun fichier %s" % domaine,
                  not any(domaine in f for f in applicatifs), str(applicatifs))
 
 
