@@ -536,9 +536,38 @@ class Reservation(ReservationBase):
 async def get_reservations(request: Request, page: int = 1, limit: int = 20, all_data: bool = False):
     """Get reservations with pagination - Filtré par coach_id"""
     caller_email = request.headers.get("X-User-Email", "").lower().strip()
+
+    # V443 — UNE ABSENCE D'IDENTITÉ N'EST PAS UNE LISTE VIDE.
+    #
+    # Cette route répondait `200 {"data": [], "pagination": {"total": 0}}` quand
+    # aucune identité n'était présentée : le sentinelle `{"coach_id":
+    # "__no_access__"}` fabriquait une requête qui ne peut rien remonter. Vu du
+    # dashboard, un refus d'accès et un carnet de réservations vide étaient donc
+    # EXACTEMENT le même écran — sans message, sans erreur, sans rien dans la
+    # console. Le coach a vu « aucune réservation » alors que la base en contenait
+    # 128, toutes à son nom.
+    #
+    # Une liste vide est une AFFIRMATION (« il n'y a rien »). On ne la fait plus
+    # quand on n'est pas en mesure de la vérifier : on refuse, explicitement.
+    # C'est le principe déjà retenu par V2-0 sur quatre autres routes — « refuser
+    # au lieu de filtrer ».
+    #
+    # ⚠️ PÉRIMÈTRE VOLONTAIREMENT ÉTROIT : la STRATÉGIE d'authentification n'est
+    # PAS touchée. L'identité reste exactement ce qu'elle était avant — l'en-tête
+    # `X-User-Email`, avec les mêmes droits, le même super-admin, le même
+    # filtrage par `coach_id`. Aucun JWT n'est exigé ici, aucune garde n'est
+    # ajoutée ni retirée : un appelant qui passait AVANT passe encore, à
+    # l'identique. Seule change la réponse faite à celui qui ne présentait RIEN,
+    # et qui recevait un mensonge poli. Rendre cette route JWT-strict est un lot
+    # distinct (P0-AUTH-COHERENCE), qui devra d'abord PROUVER — appel réel à
+    # l'appui — que le chemin légitime du propriétaire émet bien un jeton signé
+    # (règle V310c : un durcissement non prouvé a déjà vidé ce dashboard une fois).
+    if not caller_email:
+        raise HTTPException(status_code=403, detail="Authentification coach requise")
+
     # V206: Super admin voit tout (y compris bassi_default)
     # V244: isolation stricte — le sentinelle bassi_default a ete migre, plus aucun doc ne le porte.
-    base_query = {} if is_super_admin(caller_email) else {"coach_id": caller_email} if caller_email else {"coach_id": "__no_access__"}
+    base_query = {} if is_super_admin(caller_email) else {"coach_id": caller_email}
     projection = {
         "_id": 0, "id": 1, "reservationCode": 1, "userName": 1, "userEmail": 1,
         "userWhatsapp": 1, "courseName": 1, "courseTime": 1, "datetime": 1,

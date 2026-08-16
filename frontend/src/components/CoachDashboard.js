@@ -1626,6 +1626,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [reservationsSearch, setReservationsSearch] = useState(''); // Recherche locale réservations
   const [reservationPagination, setReservationPagination] = useState({ page: 1, limit: 20, total: 0, pages: 0 });
   const [loadingReservations, setLoadingReservations] = useState(false);
+
+  // V443 — sections qui n'ont pas pu se charger. Sert UNIQUEMENT a afficher un
+  // bandeau : aucune autre logique n'en depend, et il n'entre dans aucun tableau
+  // de dependances d'effet (regle « jamais de boucle d'appels API »).
+  const [v443Echecs, setV443Echecs] = useState([]);
   const [courses, setCourses] = useState([]);
   const [offers, setOffers] = useState([]);
   const [offersSearch, setOffersSearch] = useState(''); // Recherche locale offres
@@ -2089,8 +2094,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       const res = await axios.get(`${API}/reservations?page=${page}&limit=${limit}`, getCoachHeaders());
       setReservations(res.data.data);
       setReservationPagination(res.data.pagination);
+      // V443 : ce rechargement a REUSSI — le bandeau ne doit plus accuser cette
+      // section. Un bandeau qui survit a la reparation ment autant qu'une liste
+      // vide qui cache un refus. On rend `prev` a l'identique quand il n'y a rien
+      // a retirer (regle « jamais de boucle d'appels API »).
+      setV443Echecs(prev => (prev.includes('Réservations')
+        ? prev.filter(x => x !== 'Réservations') : prev));
     } catch (err) {
       console.error("Error loading reservations:", err);
+      setV443Echecs(prev => (prev.includes('Réservations') ? prev : prev.concat('Réservations')));
     } finally {
       setLoadingReservations(false);
     }
@@ -2103,7 +2115,24 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // Toutes les requêtes passent le header X-User-Email pour filtrage par coach_id
         const headers = getCoachHeaders();
         const resPromise = axios.get(`${API}/reservations?page=1&limit=20`, headers);
-        const [res, crs, off, usr, lnk, cpt, cds] = await Promise.all([
+
+        // V443 — SEPT SOURCES, SEPT SORTS DISTINCTS.
+        //
+        // C'etait un `Promise.all` : tout-ou-rien. Une seule des sept requetes qui
+        // echouait, et AUCUN des sept `setState` ne s'executait — le dashboard
+        // entier restait vide. Le `catch` final ne faisait qu'un `console.error` :
+        // aucun message a l'ecran. Le coach voyait un tableau de bord vide et
+        // silencieux, sans le moindre indice de ce qui s'etait passe.
+        //
+        // C'etait d'autant plus fragile que `/discount-codes` est la SEULE des
+        // sept a exiger un JWT signe : les six autres se contentent de
+        // `X-User-Email`. Le jeton coach expirant a 7 jours sans renouvellement,
+        // c'est elle qui lache la premiere — et elle emportait les six autres.
+        //
+        // Desormais chaque source alimente son etat independamment. Les
+        // reservations s'affichent meme si les utilisateurs echouent ; les codes
+        // promo s'affichent meme si les reservations echouent.
+        const reponses = await Promise.allSettled([
           // V237: `?scope=mine` demande explicitement les donnees DU coach
           // connecte (l'admin continue de tout recevoir). Sans ce parametre les
           // endpoints gardent leur comportement public, ce qui protege la
@@ -2113,16 +2142,60 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           axios.get(`${API}/users`, headers), axios.get(`${API}/payment-links`, headers),
           axios.get(`${API}/concept`, headers), axios.get(`${API}/discount-codes`, headers)
         ]);
-        // Réservations avec pagination
-        setReservations(res.data.data);
-        setReservationPagination(res.data.pagination);
-        
-        setCourses(crs.data); setOffers(isSuperAdmin ? off.data : off.data.filter(o => (o.coach_id || '').toLowerCase() === safeCoachUser?.email.toLowerCase()));
+        const [res, crs, off, usr, lnk, cpt, cds] = reponses;
+
+        // Le `poser` est enveloppe lui aussi : une reponse peut arriver en 200 et
+        // le code qui l'exploite lever malgre tout (par ex. une lecture de champ
+        // sur une identite absente). Sans cette garde, un seul `setState` fautif
+        // reprendrait tout le monde avec lui — exactement le defaut qu'on corrige.
+        const echecs = [];
+        const appliquer = (nom, reponse, poser) => {
+          if (reponse.status !== 'fulfilled') {
+            echecs.push(nom);
+            console.error(`[V443] ${nom} : chargement echoue`, reponse.reason);
+            return;
+          }
+          try {
+            poser(reponse.value);
+          } catch (e) {
+            echecs.push(nom);
+            console.error(`[V443] ${nom} : reponse recue mais exploitation impossible`, e);
+          }
+        };
+
+        appliquer('Réservations', res, (r) => {
+          setReservations(r.data.data);
+          setReservationPagination(r.data.pagination);
+        });
+        appliquer('Cours', crs, (r) => setCourses(r.data));
+        appliquer('Offres', off, (r) => setOffers(
+          isSuperAdmin ? r.data : r.data.filter(o => (o.coach_id || '').toLowerCase() === (safeCoachUser?.email || '').toLowerCase())));
         // v92: Partners don't see full user database
-        setUsers(isSuperAdmin ? usr.data : []);
-        setPaymentLinks(lnk.data); setConcept(cpt.data);
-        // v92: Partners see only their own promo codes
-        setDiscountCodes(isSuperAdmin ? cds.data : cds.data.filter(c => c.createdBy === safeCoachUser?.email || c.coach_id === safeCoachUser?.email));
+        appliquer('Utilisateurs', usr, (r) => setUsers(isSuperAdmin ? r.data : []));
+        appliquer('Liens de paiement', lnk, (r) => setPaymentLinks(r.data));
+        appliquer('Vitrine', cpt, (r) => setConcept(r.data));
+
+        // V443 — LE FILTRE CLIENT QUI EFFACAIT TOUS LES CODES PROMO.
+        //
+        // Il y avait ici :
+        //   isSuperAdmin ? cds.data
+        //     : cds.data.filter(c => c.createdBy === safeCoachUser?.email
+        //                         || c.coach_id  === safeCoachUser?.email)
+        //
+        // Mesure du 16/08/2026 sur la base de production : les 40 codes portent
+        // `coach_id: null` et AUCUN ne possede de champ `createdBy`. Des que
+        // `isSuperAdmin` etait faux, ce filtre evaluait `undefined === email`
+        // puis `null === email` : il eliminait les 40 codes, alors que le backend
+        // venait de les renvoyer en 200 (48 appels mesures, zero refus).
+        //
+        // Ce filtre defaisait le travail du serveur. `get_discount_codes`
+        // (api/routes/promo_routes.py) filtre DEJA par coach et inclut
+        // DELIBEREMENT les codes legacy (`{"coach_id": None}`) — c'est une
+        // decision serveur, prise derriere une garde d'authentification. Le
+        // navigateur n'a pas a la rejuger, et il la rejugeait mal.
+        appliquer('Codes promo', cds, (r) => setDiscountCodes(r.data));
+
+        setV443Echecs(echecs);
 
         // v69: Charger prochaine expiration d'offre
         try {
@@ -2205,7 +2278,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const exportCSV = async () => {
     try {
       // Récupérer TOUTES les réservations pour l'export (sans pagination)
-      const response = await axios.get(`${API}/reservations?all_data=true`);
+      // V443 : on passe l'identité EXPLICITEMENT. Cet appel ne devait sa survie
+      // qu'à l'intercepteur axios global, qui ne pose `X-User-Email` que si
+      // `afroboost_coach_user` existe encore. Depuis que la route refuse au lieu
+      // de renvoyer une liste vide, un export sans identité produirait une erreur
+      // franche — mieux qu'un CSV vide, mais autant présenter l'identité qu'on a.
+      const response = await axios.get(`${API}/reservations?all_data=true`, getCoachHeaders());
       const allReservations = response.data.data;
       
       const rows = [
@@ -5900,6 +5978,31 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   
   return (
     <div className="w-full min-h-screen section-gradient" style={{ padding: '4px', boxSizing: 'border-box', overflowX: 'hidden', maxWidth: '100vw' }}>
+      {/* V443 — une section qui n'a pas pu se charger le DIT. Avant, l'echec
+          n'existait que dans la console : a l'ecran, « rien n'a pu etre charge »
+          et « il n'y a rien » se ressemblaient trait pour trait. Le rouge est un
+          statut, pas une couleur de marque : on reprend donc EXACTEMENT la palette
+          de la banniere `trashError` de ce meme fichier (#ef4444), et non une
+          teinte importee d'ailleurs. */}
+      {v443Echecs.length > 0 && (
+        <div
+          data-testid="v443-bandeau-echec"
+          role="alert"
+          style={{
+            margin: '4px 4px 10px', padding: '10px 12px', borderRadius: '10px',
+            background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.4)',
+            color: '#ef4444', fontSize: '13px', lineHeight: 1.45,
+          }}
+        >
+          <strong>Chargement incomplet.</strong>{' '}
+          {v443Echecs.length === 1
+            ? `La section « ${v443Echecs[0]} » n'a pas pu être chargée.`
+            : `Ces sections n'ont pas pu être chargées : ${v443Echecs.join(', ')}.`}{' '}
+          Le reste du tableau de bord est à jour. Rechargez la page ; si le problème
+          persiste, déconnectez-vous et reconnectez-vous.
+        </div>
+      )}
+
       {/* QR Scanner Modal with Camera Support */}
       {showScanner && (
         <QRScannerModal 
