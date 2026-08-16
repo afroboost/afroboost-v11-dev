@@ -4424,6 +4424,9 @@ async def launch_campaign(campaign_id: str):
     
     success_count = 0
     fail_count = 0
+    # V441: `results` est une LISTE (l. 4415). Y indexer une cle levait
+    # AttributeError et tuait la campagne en plein milieu (bug V165 du 24/04/2026).
+    skipped_count = 0
     
     logger.info(f"[CAMPAIGN-LAUNCH] 🚀 Lancement campagne '{campaign_name}' - targetIds: {len(target_ids)}, channels: {channels}")
     
@@ -4716,7 +4719,7 @@ async def launch_campaign(campaign_id: str):
                 normalized_contact = "41" + normalized_contact[1:]
             if normalized_contact == business_phone_number:
                 logger.warning(f"[CAMPAIGN-LAUNCH] 🚫 Contact '{contact_name}' EXCLU — c'est le numéro business WhatsApp ({contact_phone})")
-                results["skipped"] = results.get("skipped", 0) + 1
+                skipped_count += 1  # V441: etait results["skipped"] -> AttributeError sur une liste
                 continue
 
         logger.info(f"[CAMPAIGN-LAUNCH] 👤 Contact: {contact_name} | whatsapp={contact.get('whatsapp')} | phone={contact.get('phone')} | résolu={contact_phone}")
@@ -5059,7 +5062,7 @@ async def launch_campaign(campaign_id: str):
         }}
     )
     
-    logger.info(f"[CAMPAIGN-LAUNCH] 🏁 Campagne '{campaign_name}' terminée - ✅{success_count} / ❌{fail_count}")
+    logger.info(f"[CAMPAIGN-LAUNCH] 🏁 Campagne '{campaign_name}' terminée - ✅{success_count} / ❌{fail_count} / 🚫{skipped_count}")
     
     return await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
 
@@ -19989,6 +19992,19 @@ def _v411_exiger_super_admin(request: Request, quoi: str) -> str:
     return appelant
 
 
+def _v441_exiger_lecteur(request: Request, quoi: str) -> str:
+    """V441 : qui lit ? On réutilise TELLE QUELLE la porte de V411 (JWT signé de
+    super-admin) et on retourne son e-mail comme identifiant de lecteur.
+
+    Pourquoi l'e-mail plutôt que `admin_afroboost` : l'état « lu » appartient à une
+    PERSONNE, pas à une boîte. Deux super-admins ne se marquent pas les fils lus
+    l'un pour l'autre, et tous les appareils d'une même personne partagent le même
+    état puisque la clé est son e-mail — jamais un identifiant d'appareil, jamais
+    le localStorage. C'est aussi la forme qui survivra au vrai multi-coach.
+    """
+    return _v411_exiger_super_admin(request, quoi).lower().strip()
+
+
 async def _v411_fil_reserve(conversation_id: str) -> bool:
     """V411 : ce fil relève-t-il de la boîte du coach (WhatsApp ou admin) ?
     Un fil INCONNU renvoie False : inutile de réclamer un jeton pour un identifiant
@@ -20466,6 +20482,138 @@ async def get_unread_private_count(participant_id: str, request: Request):
         "is_deleted": {"$ne": True}
     })
     return {"unread_count": count}
+
+
+# === V441 — MESSAGES WHATSAPP NON LUS (marque de lecture) ===
+#
+# POURQUOI PAS `is_read` ? Le champ existe dans le modèle `PrivateMessage` mais
+# n'a JAMAIS été écrit sur un message WhatsApp : mesuré le 16/08/2026, 0 document
+# sur 120 le porte. Les deux routes qui s'en servent (`PUT /private/messages/read`
+# et `GET /private/unread`) filtrent sur `is_read: False`, qui ne matche rien —
+# elles renvoient 0 depuis toujours. Les réparer imposerait d'écrire un champ dans
+# `_save_whatsapp_conversation`, c'est-à-dire de toucher le chemin d'ingestion
+# WhatsApp, le plus critique du produit, ET de migrer l'historique.
+#
+# À la place : une MARQUE DE LECTURE par (lecteur, fil). Le non-lu est DÉRIVÉ au
+# calcul — « les entrants postérieurs à ma dernière lecture » — jamais incrémenté.
+# Conséquences directes :
+#   - le webhook Meta n'est pas modifié d'une ligne ;
+#   - le moteur d'envoi n'est pas modifié d'une ligne ;
+#   - aucun document existant n'est lu de travers, écrit ni migré ;
+#   - rollback = `git revert` + `db.private_lectures.drop()`, l'état d'avant est
+#     rendu bit pour bit.
+#
+# LU ≠ REÇU. Le compteur ne bouge QUE sur `POST /private/lecture`, appelé au clic
+# sur un fil. Ni le polling, ni l'affichage de la liste, ni l'ouverture du
+# dashboard n'écrivent quoi que ce soit. C'est la raison pour laquelle le marquage
+# est un POST séparé et non un effet de bord de `GET /private/messages/{id}` :
+# l'onglet WhatsApp précharge les messages de TOUS les fils au montage, et un
+# marquage accroché à cette lecture rendrait « lus » les 9 fils d'un seul coup.
+#
+# HISTORIQUE : en l'absence de marque, le seuil vaut `V441_NONLU_ORIGINE`. Les 58
+# entrants historiques (le plus récent : 2026-08-14T02:03) lui étant antérieurs,
+# le compteur vaut 0 partout à la mise en ligne — personne ne se réveille avec un
+# badge « 58 » qu'il apprendrait aussitôt à ignorer.
+V441_NONLU_ORIGINE = os.environ.get("NONLU_ORIGINE", "2026-08-16T00:00:00+00:00")
+
+
+def _v441_filtre_boite_coach() -> dict:
+    """Les fils qui relèvent de la boîte du coach. MONO-COACH ASSUMÉ : il n'existe
+    qu'un numéro business et qu'une URL de webhook chez Meta, donc `coach_id`
+    n'existe sur aucun de ces documents (0/9 fils, 0/120 messages, mesuré). Le
+    rattachement reste implicite via `admin_afroboost`, exactement comme partout
+    ailleurs dans ce fichier. Le jour d'un vrai multi-coach, c'est CE filtre qui
+    devra prendre un `coach_id` — et lui seul."""
+    return {"$or": [{"channel": "whatsapp"},
+                    {"participant_1_id": "admin_afroboost"},
+                    {"participant_2_id": "admin_afroboost"}]}
+
+
+@api_router.get("/private/nonlus")
+async def v441_compter_non_lus(request: Request):
+    """V441 : combien de messages ENTRANTS non lus, par fil et au total.
+
+    Cette route NE FAIT QUE COMPTER. Aucune écriture, aucun `$set`, aucun upsert :
+    le polling peut l'appeler toutes les 5 secondes sans jamais consommer un
+    non-lu. C'est ce qui garantit qu'un message reste non lu tant que le coach
+    n'a pas ouvert la conversation, et qu'un rafraîchissement du navigateur ou un
+    second appareil retrouve exactement le même état.
+
+    PROTECTION : la même que la lecture des fils (V411) — un JWT SIGNÉ de
+    super-admin. `X-User-Email` ne vaut rien ici.
+    """
+    lecteur = _v441_exiger_lecteur(request, "compteur des non lus")
+
+    fils = await db.private_conversations.find(
+        _v441_filtre_boite_coach(), {"_id": 0, "id": 1}).to_list(500)
+    ids_fils = [f["id"] for f in fils if f.get("id")]
+    if not ids_fils:
+        return {"nonlus": {}, "total": 0, "conversations_non_lues": 0}
+
+    lectures = {}
+    async for lu in db.private_lectures.find(
+            {"lecteur_id": lecteur}, {"_id": 0, "conversation_id": 1, "lu_jusqu_a": 1}):
+        lectures[lu.get("conversation_id")] = lu.get("lu_jusqu_a") or V441_NONLU_ORIGINE
+
+    # Un seuil PAR fil : celui qui n'a jamais été ouvert part de l'origine.
+    conditions = [{"conversation_id": cid,
+                   "created_at": {"$gt": lectures.get(cid, V441_NONLU_ORIGINE)}}
+                  for cid in ids_fils]
+
+    par_fil = {}
+    async for ligne in db.private_messages.aggregate([
+        {"$match": {
+            # ENTRANTS uniquement. `sender_id` est le SEUL porteur de la direction :
+            # entrant = `whatsapp_<numéro>`, sortant = `admin_afroboost`. Un message
+            # envoyé par le coach ne peut donc pas créer de non-lu.
+            "sender_id": {"$regex": "^whatsapp_"},
+            "is_deleted": {"$ne": True},
+            "$or": conditions,
+        }},
+        {"$group": {"_id": "$conversation_id", "n": {"$sum": 1}}},
+    ]):
+        if ligne.get("n"):
+            par_fil[ligne["_id"]] = ligne["n"]
+
+    return {
+        "nonlus": par_fil,
+        "total": sum(par_fil.values()),
+        "conversations_non_lues": len(par_fil),
+    }
+
+
+class V441MarquerLu(BaseModel):
+    conversation_id: str
+
+
+@api_router.post("/private/lecture")
+async def v441_marquer_lu(corps: V441MarquerLu, request: Request):
+    """V441 : le coach a OUVERT ce fil — il est lu jusqu'à maintenant.
+
+    SEUL ÉCRIVAIN de `private_lectures`, et seule route de tout ce lot qui écrit
+    quoi que ce soit. À n'appeler que sur une ouverture RÉELLE de conversation,
+    jamais depuis un chargement de liste ni depuis un polling.
+
+    On enregistre l'INSTANT de lecture, pas la liste des messages lus : un message
+    arrivé après le clic sera donc bien compté comme non lu au prochain calcul.
+    """
+    lecteur = _v441_exiger_lecteur(request, f"marquage lu du fil {corps.conversation_id}")
+
+    fil = await db.private_conversations.find_one(
+        {"id": corps.conversation_id}, {"_id": 0, "id": 1})
+    if not fil:
+        raise HTTPException(status_code=404, detail="Conversation introuvable.")
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    await db.private_lectures.update_one(
+        {"lecteur_id": lecteur, "conversation_id": corps.conversation_id},
+        {"$set": {"lu_jusqu_a": maintenant},
+         "$setOnInsert": {"lecteur_id": lecteur,
+                          "conversation_id": corps.conversation_id,
+                          "cree_le": maintenant}},
+        upsert=True,
+    )
+    return {"success": True, "conversation_id": corps.conversation_id, "lu_jusqu_a": maintenant}
 
 # === UPLOAD PHOTO DE PROFIL (LEGACY REDIRECT) ===
 # L'ancien endpoint redirige vers le nouveau moteur /users/upload-photo

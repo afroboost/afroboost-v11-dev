@@ -99,6 +99,10 @@ export default function MessagesWhatsApp() {
   const [ouvert, setOuvert] = useState(null);
   const [suppression, setSuppression] = useState(null); // id du fil en cours de suppression
 
+  // V441 — non lus. { conversation_id: nombre }. Vient du SERVEUR, jamais du
+  // navigateur : un rafraîchissement ou un autre appareil retrouve le même état.
+  const [nonLus, setNonLus] = useState({});
+
   // V434 — réponse manuelle. `brouillons` est indexé par fil : passer d'une
   // conversation à l'autre ne fait pas perdre ce qu'on était en train d'écrire.
   const [brouillons, setBrouillons] = useState({});   // { conversation_id: texte }
@@ -117,6 +121,24 @@ export default function MessagesWhatsApp() {
    *  page. En dessous, on ne met AUCUNE contrainte de hauteur : encadrer trois
    *  conversations dans une zone qui défile ferait un cadre vide et inutile. */
   const SEUIL_DEFILEMENT = 6;
+
+  /** V441 : relit les compteurs de non lus. NE MARQUE RIEN — c'est une simple
+   *  lecture, appelable en boucle sans jamais consommer un non lu. */
+  const chargerNonLus = useCallback(async () => {
+    try {
+      const r = await axios.get(`${API}/private/nonlus`);
+      setNonLus((prev) => {
+        const suivant = (r.data && r.data.nonlus) || {};
+        // Règle « jamais de boucle d'appels API » : si rien n'a changé, on rend
+        // l'objet PRÉCÉDENT, sinon chaque sondage relancerait tous les effets.
+        const memeTaille = Object.keys(prev).length === Object.keys(suivant).length;
+        if (memeTaille && Object.keys(suivant).every((k) => prev[k] === suivant[k])) return prev;
+        return suivant;
+      });
+    } catch (e) {
+      // Un compteur indisponible ne doit JAMAIS casser la liste (leçon V345).
+    }
+  }, []);
 
   const charger = useCallback(async () => {
     setErreur(""); setRefus(false); setFils(null);
@@ -154,10 +176,32 @@ export default function MessagesWhatsApp() {
 
   useEffect(() => { charger(); }, [charger]);
 
+  /** V441 : sondage doux (5 s) des seuls compteurs — pas des messages. Le fil
+   *  ouvert n'est pas rechargé : ouvrir une conversation ne doit pas dépendre du
+   *  rythme du sondage, et relire les messages en boucle saturerait le serveur. */
+  useEffect(() => {
+    chargerNonLus();
+    const t = setInterval(chargerNonLus, 5000);
+    return () => clearInterval(t);
+  }, [chargerNonLus]);
+
   /** Ouvre un fil ; charge ses messages s'ils ne sont pas déjà là. */
   const basculer = async (fil) => {
     if (ouvert === fil.id) { setOuvert(null); return; }
     setOuvert(fil.id);
+
+    // V441 — LU ≠ REÇU. C'est le SEUL endroit du produit qui marque un fil lu, et
+    // il n'est atteint que par un clic sur cette conversation. Ni le chargement de
+    // la liste, ni le sondage, ni l'ouverture de l'onglet n'écrivent quoi que ce
+    // soit. On vide le compteur localement tout de suite (l'écran répond au clic)
+    // et le serveur, lui, fait foi au sondage suivant.
+    if (nonLus[fil.id]) {
+      setNonLus((prev) => { const c = { ...prev }; delete c[fil.id]; return c; });
+    }
+    axios.post(`${API}/private/lecture`, { conversation_id: fil.id })
+      .then(() => chargerNonLus())
+      .catch(() => { /* le compteur reviendra au sondage suivant : rien de perdu */ });
+
     if (messages[fil.id]) return;
     try {
       const rm = await axios.get(`${API}/private/messages/${fil.id}`);
@@ -410,16 +454,30 @@ export default function MessagesWhatsApp() {
       <div style={fils.length > SEUIL_DEFILEMENT
         ? { maxHeight: "60vh", overflowY: "auto", overflowX: "hidden", paddingRight: 4 }
         : undefined}>
-      {fils.map((fil) => {
+      {/* V441 : les fils NON LUS remontent en tête (le plus récent d'abord), puis
+          les autres par date. Le tri se fait à l'affichage, sur une COPIE : l'ordre
+          reçu du serveur n'est pas altéré, et un fil qu'on vient de lire ne saute
+          pas sous le curseur — il reprend simplement sa place au rendu suivant. */}
+      {fils.slice().sort((a, b) => {
+        const na = nonLus[a.id] ? 1 : 0;
+        const nb = nonLus[b.id] ? 1 : 0;
+        if (na !== nb) return nb - na;
+        return String(b.last_message_at || "").localeCompare(String(a.last_message_at || ""));
+      }).map((fil) => {
         const msgs = messages[fil.id];
         const nom = nomPropre(fil.participant_1_name, fil.phone);
         const estOuvert = ouvert === fil.id;
         const enCours = suppression === fil.id;
+        const nbNonLus = nonLus[fil.id] || 0;
         return (
           <div key={fil.id} style={{
-            border: estOuvert ? `1px solid ${PRIMAIRE}` : BORDURE,
+            border: estOuvert ? `1px solid ${PRIMAIRE}`
+                  : (nbNonLus ? `1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.55)` : BORDURE),
             borderRadius: 10, marginBottom: 8, overflow: "hidden",
-            background: "rgba(255,255,255,0.03)",
+            // V441 : un fond légèrement teinté de la couleur du coach — l'accent ne
+            // repose pas QUE sur la pastille, pour rester lisible en un coup d'œil.
+            background: nbNonLus ? "rgba(var(--primary-rgb, 217, 28, 210), 0.10)"
+                                 : "rgba(255,255,255,0.03)",
           }}>
             {/* V433 : le bouton « supprimer » est un FRÈRE du bouton d'ouverture,
                 jamais un enfant — un <button> dans un <button> est du HTML
@@ -438,14 +496,32 @@ export default function MessagesWhatsApp() {
               </span>
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{
-                  display: "block", color: "#fff", fontSize: 13, fontWeight: 600,
+                  display: "block", color: "#fff", fontSize: 13,
+                  fontWeight: nbNonLus ? 800 : 600,
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                 }}>{nom}</span>
-                <span style={{ display: "block", color: "rgba(255,255,255,0.5)", fontSize: 11 }}>
+                <span style={{
+                  display: "block", fontSize: 11,
+                  color: nbNonLus ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.5)",
+                  fontWeight: nbNonLus ? 700 : 400,
+                }}>
                   {fil.phone || "—"}
                   {msgs ? ` · ${msgs.length} message${msgs.length > 1 ? "s" : ""}` : ""}
                 </span>
               </span>
+              {/* V441 : compteur PAR conversation — « 3 » se lit d'un coup d'œil
+                  là où une simple pastille ne dirait pas combien. */}
+              {nbNonLus > 0 && (
+                <span
+                  data-testid={`nonlus-${fil.id}`}
+                  aria-label={`${nbNonLus} message${nbNonLus > 1 ? "s" : ""} non lu${nbNonLus > 1 ? "s" : ""}`}
+                  style={{
+                    flexShrink: 0, minWidth: 20, height: 20, padding: "0 6px",
+                    borderRadius: 10, background: PRIMAIRE, color: "#fff",
+                    fontSize: 11, fontWeight: 800, lineHeight: "20px", textAlign: "center",
+                  }}
+                >{nbNonLus > 99 ? "99+" : nbNonLus}</span>
+              )}
               <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, flexShrink: 0 }}>
                 {dateCourte(fil.last_message_at)}
               </span>

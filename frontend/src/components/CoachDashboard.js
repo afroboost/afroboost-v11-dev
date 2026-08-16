@@ -4279,6 +4279,31 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   useEffect(() => { c17jCharger(); }, [c17jCharger]);
 
+  // === V441 — compteur global des WhatsApp non lus ===
+  // Il vit ICI, et pas dans l'onglet WhatsApp, parce que la pastille doit se voir
+  // SANS avoir ouvert l'onglet — c'est tout l'intérêt. Lecture pure : la route
+  // /private/nonlus ne marque jamais rien, un sondage ne consomme aucun non lu.
+  const [v441NonLusWhatsApp, setV441NonLusWhatsApp] = useState(0);
+
+  const v441ChargerNonLus = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/private/nonlus`);
+      const n = Number(res?.data?.total) || 0;
+      // Valeur primitive : pas d'objet neuf, donc aucun effet relance en cascade.
+      setV441NonLusWhatsApp(prev => (prev === n ? prev : n));
+    } catch (e) {
+      // 403 (coach non super-admin, jeton expire) ou panne reseau : on n'affiche
+      // pas de pastille, et surtout on ne casse pas le dashboard.
+      setV441NonLusWhatsApp(0);
+    }
+  }, []);
+
+  useEffect(() => {
+    v441ChargerNonLus();
+    const t = setInterval(v441ChargerNonLus, 5000);
+    return () => clearInterval(t);
+  }, [v441ChargerNonLus]);
+
   const c17jMarquerLue = useCallback(async (id) => {
     if (!id) return;
     // Mise a jour optimiste : l'interface repond tout de suite, sans rechargement.
@@ -7057,9 +7082,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   // V334 etape 3 : suivi de progression des abonnes du coach.
                   { id: 'suivi', icon: 'barChart', label: 'Suivi abonnés', badge: 0 },
                   // V411 : les echanges WhatsApp recus sur le numero Afroboost.
-                  // Ils etaient enregistres depuis longtemps mais AUCUN ecran ne
-                  // les montrait. Lecture seule.
-                  { id: 'whatsapp', icon: 'phone', label: 'WhatsApp', badge: 0 }
+                  // V441 : le badge compte les messages ENTRANTS non lus. Il etait
+                  // code en dur a 0, donc la pastille n'apparaissait jamais.
+                  { id: 'whatsapp', icon: 'phone', label: 'WhatsApp', badge: v441NonLusWhatsApp }
                 ];
               })().map(sub => (
                 <button
