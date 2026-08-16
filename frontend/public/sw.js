@@ -17,7 +17,7 @@
 // rechargement (V358), alors que le correctif etait en ligne depuis longtemps.
 // Bumper CACHE_NAME purge l'ancien cache a l'activation et force tous les appareils
 // a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
-var CACHE_NAME = 'afroboost-v417'; // V417: medias auto-heberges — purge des anciens caches
+var CACHE_NAME = 'afroboost-v445'; // V445: petite icone de notification Android — purge des anciens caches
 var SW_VERSION = 268;
 
 var PRECACHE_URLS = [
@@ -26,7 +26,8 @@ var PRECACHE_URLS = [
   '/logo192.png',
   '/logo512.png',
   '/logo192-maskable.png',
-  '/logo512-maskable.png'
+  '/logo512-maskable.png',
+  '/notification-badge-96.png'
 ];
 
 // -----------------------------------------------------------------
@@ -216,7 +217,28 @@ self.addEventListener('push', function(event) {
     var options = {
       body: data.body || 'Vous avez une nouvelle notification',
       icon: '/logo192.png',
-      badge: '/logo192.png',
+      // V445 — LE CARRE BLANC DANS LA BARRE DE STATUT ANDROID.
+      //
+      // `badge` est la PETITE icone (barre de statut, coin de la notification).
+      // Android ne l'affiche JAMAIS en couleur : il n'en garde que le canal
+      // ALPHA et repeint chaque pixel non transparent avec la teinte du systeme
+      // — blanc sur le volet sombre de Samsung.
+      //
+      // Or `/logo192.png` est le logo couleur sur fond noir OPAQUE : mesure du
+      // 16/08/2026, 36 864 pixels sur 36 864 ont alpha = 255, aucun transparent.
+      // Sa silhouette est donc un carre plein, et Android affichait exactement
+      // ca : un carre blanc. Le fichier n'etait pas casse — il etait juste du
+      // mauvais TYPE pour cet emplacement.
+      //
+      // `/notification-badge-96.png` est la silhouette du meme « A », EXTRAITE
+      // de logo512.png (l'asset officiel, aucun redessin) : blanc sur fond
+      // transparent, masque plein pour rester lisible a 24 dp. Le test
+      // tests/test_v445_icone_notification.py la regenere depuis le logo et
+      // verifie qu'elle correspond au fichier livre, octet pour octet.
+      //
+      // `icon` reste le logo COULEUR : c'est la grande icone, elle, rendue
+      // telle quelle. Les deux emplacements n'ont pas les memes contraintes.
+      badge: '/notification-badge-96.png',
       vibrate: [200, 100, 200],
       tag: data.tag || 'afroboost-push',
       renotify: true,

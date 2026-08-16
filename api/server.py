@@ -22994,7 +22994,10 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
     _push_url = (data or {}).get("url") or "/?openChat=true"
     payload = json.dumps({
         "title": title, "body": body,
-        "icon": "/logo192.png", "badge": "/logo192.png",
+        "icon": "/logo192.png", "badge": "/notification-badge-96.png",  # V445 : le badge
+        # Android n'est qu'un masque alpha — le logo couleur y donnait un carre blanc.
+        # (Le Service Worker code ses propres valeurs en dur et ignore celles-ci ;
+        #  on les corrige tout de meme pour qu'aucune des deux ne mente.)
         "url": _push_url, "session_id": session_id,
         "data": data or {},
         "timestamp": datetime.now(timezone.utc).isoformat()

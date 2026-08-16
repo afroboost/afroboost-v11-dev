@@ -83,7 +83,10 @@ async def _send_push_to_email(email: str, title: str, body: str, data: dict = No
             continue
         payload = _json.dumps({
             "title": title, "body": body,
-            "icon": "/logo192.png", "badge": "/logo192.png",
+            "icon": "/logo192.png", "badge": "/notification-badge-96.png",  # V445 : le badge
+        # Android n'est qu'un masque alpha — le logo couleur y donnait un carre blanc.
+        # (Le Service Worker code ses propres valeurs en dur et ignore celles-ci ;
+        #  on les corrige tout de meme pour qu'aucune des deux ne mente.)
             "data": data or {},
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
