@@ -2132,15 +2132,57 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         // Desormais chaque source alimente son etat independamment. Les
         // reservations s'affichent meme si les utilisateurs echouent ; les codes
         // promo s'affichent meme si les reservations echouent.
+        // V444 — UNE REQUETE QUI PEND N'EST PAS UNE REQUETE QUI REUSSIT.
+        //
+        // V443 a decouple les sept sources : une requete qui ECHOUE ne vide plus
+        // l'ecran. Restait un cas qu'aucun `catch` n'attrape — celui ou la requete
+        // ne repond ni oui ni non. `Promise.allSettled` attend indefiniment une
+        // promesse qui ne se regle jamais : la section restait muette, sans
+        // donnees et sans message, exactement l'ecran silencieux qu'on vient de
+        // supprimer. Un proxy qui garde la connexion ouverte, un conteneur
+        // remplace en plein vol, un reseau mobile qui decroche : la promesse
+        // n'est ni tenue ni rompue, elle est suspendue.
+        //
+        // On lui pose donc une echeance. Passe ce delai, la section est declaree
+        // en echec, elle apparait dans le bandeau, et les six autres continuent.
+        //
+        // Le chemin de SUCCES est inchange : la course est gagnee par la reponse
+        // des qu'elle arrive, et le minuteur est annule. Aucune requete nouvelle,
+        // aucune ecriture nouvelle, aucun `setState` supplementaire — c'est un
+        // enrobage, pas un comportement de plus.
+        //
+        // 15 s : au-dela du plus lent des sept appels observe en production
+        // (le chargement complet du dashboard tient en 2 a 3 s), et en deca de la
+        // patience d'un humain devant un ecran vide.
+        const DELAI_CHARGE_MS = 15000;
+        const avecDelai = (promesse, nom, delai = DELAI_CHARGE_MS) => {
+          let minuteur;
+          return Promise.race([
+            // `finally` desamorce le minuteur des que la requete se regle, dans
+            // un sens comme dans l'autre : sans lui, un compte a rebours resterait
+            // arme apres coup (et, en test, maintiendrait le processus en vie).
+            promesse.finally(() => clearTimeout(minuteur)),
+            new Promise((_, rejeter) => {
+              minuteur = setTimeout(
+                () => rejeter(new Error(`${nom} : aucune reponse en ${delai} ms`)),
+                delai);
+            }),
+          ]);
+        };
+
         const reponses = await Promise.allSettled([
           // V237: `?scope=mine` demande explicitement les donnees DU coach
           // connecte (l'admin continue de tout recevoir). Sans ce parametre les
           // endpoints gardent leur comportement public, ce qui protege la
           // vitrine : elle appelle les MEMES routes, et l'intercepteur axios
           // global y ajoute deja X-User-Email des qu'un coach est connecte.
-          resPromise, axios.get(`${API}/courses?scope=mine`, headers), axios.get(`${API}/offers?scope=mine`, headers),
-          axios.get(`${API}/users`, headers), axios.get(`${API}/payment-links`, headers),
-          axios.get(`${API}/concept`, headers), axios.get(`${API}/discount-codes`, headers)
+          avecDelai(resPromise, 'Réservations'),
+          avecDelai(axios.get(`${API}/courses?scope=mine`, headers), 'Cours'),
+          avecDelai(axios.get(`${API}/offers?scope=mine`, headers), 'Offres'),
+          avecDelai(axios.get(`${API}/users`, headers), 'Utilisateurs'),
+          avecDelai(axios.get(`${API}/payment-links`, headers), 'Liens de paiement'),
+          avecDelai(axios.get(`${API}/concept`, headers), 'Vitrine'),
+          avecDelai(axios.get(`${API}/discount-codes`, headers), 'Codes promo')
         ]);
         const [res, crs, off, usr, lnk, cpt, cds] = reponses;
 

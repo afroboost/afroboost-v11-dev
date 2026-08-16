@@ -212,12 +212,17 @@ def tests_frontend():
     import subprocess
     diff = subprocess.check_output(["git", "diff", "--name-only", "79cdddf"], cwd=RACINE).decode()
     touches = sorted(f for f in diff.split() if f)
+    # On juge le code APPLICATIF : ajouter des fichiers sous `tests/` est le but
+    # meme du lot, pas un debordement de perimetre.
+    applicatifs = [f for f in touches if not f.startswith("tests/")]
     attendus = ["api/routes/reservation_routes.py", "frontend/src/components/CoachDashboard.js"]
-    verifier("F1. seuls 2 fichiers applicatifs modifies", touches == attendus, str(touches))
+    verifier("F1. seuls 2 fichiers applicatifs modifies", applicatifs == attendus, str(applicatifs))
+    verifier("F1b. tout le reste du diff est du test", 
+             all(f.startswith("tests/") for f in touches if f not in attendus), str(touches))
     for domaine in ("promo_routes", "stripe", "checkout", "campaign", "whatsapp",
                     "contact", "auth_routes", "cinetpay", "pawapay"):
         verifier("F2. aucun fichier %s touche" % domaine,
-                 not any(domaine in f for f in touches), str(touches))
+                 not any(domaine in f for f in applicatifs), str(applicatifs))
 
 
 def main():
