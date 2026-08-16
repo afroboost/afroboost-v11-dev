@@ -17110,15 +17110,55 @@ async def send_whatsapp_direct(to_phone: str, message: str, media_url: str = Non
     else:
         return await _send_whatsapp_twilio(to_phone, message, media_url, config, campaign_id, campaign_name)
 @api_router.post("/send-whatsapp")
-async def send_whatsapp_message(request: SendWhatsAppRequest):
+async def send_whatsapp_message(payload: SendWhatsAppRequest, request: Request):
     """
     Endpoint pour envoyer un message WhatsApp.
     Utilise la config Twilio avec PRIORITÉ aux variables .env.
+
+    V442 — CETTE ROUTE ÉTAIT OUVERTE À TOUT LE MONDE. Vérifié en production le
+    16/08/2026 : un `curl` anonyme atteignait la validation Pydantic
+    (`422 Field required: to, message`), donc un appel avec un corps COMPLET
+    aurait ENVOYÉ un vrai WhatsApp depuis le numéro business d'Afroboost.
+    Conséquences possibles : spam facturé au compte, chute de la note de
+    qualité, et surtout suspension du WABA par Meta.
+
+    Ses deux routes sœurs `/send-whatsapp-template` et `/create-whatsapp-template`
+    ont été fermées par V435 le 12/08 ; celle-ci a été oubliée. Preuve de
+    l'asymétrie, mesurée le même jour sur la production :
+        POST /api/send-whatsapp           -> 422 (aucune garde)
+        POST /api/send-whatsapp-template  -> 403 (garde V435)
+    On pose donc ICI la garde IDENTIQUE à celle de la jumelle. Le chemin d'envoi
+    moderne (`POST /private/whatsapp/envoyer`, V434) l'utilise déjà lui aussi :
+    les trois portes qui mènent au même numéro business sont enfin les mêmes.
+
+    Pourquoi `_v411_exiger_super_admin` et pas une garde plus large : c'est la
+    seule qui n'accepte JAMAIS `X-User-Email`. `require_auth` et
+    `_v263_authenticated_coach` gardent un repli inconditionnel sur cet en-tête
+    falsifiable, et `_v319_coach_identity` ne s'en protège que si le drapeau
+    `REQUIRE_COACH_JWT` est ON — un état de base de données modifiable à chaud,
+    dont l'`except` retombe volontairement sur le mode permissif. Une porte qui
+    ouvre le numéro business ne peut pas dépendre d'un réglage.
+
+    ⚠️ Le paramètre du corps s'appelait `request`, ce qui interdisait d'injecter
+    l'objet `Request` de Starlette — c'est-à-dire, littéralement, ce qui rendait
+    toute authentification IMPOSSIBLE sur cette route. Il est renommé `payload`.
+    Le contrat de l'API est INCHANGÉ : FastAPI lie le corps par le TYPE (modèle
+    Pydantic), jamais par le nom du paramètre, et un modèle unique reste au
+    premier niveau du JSON. Vérifié sur l'`openapi.json` de la production, où
+    `create_course(course: CourseCreate, request: Request)` expose bien
+    `CourseCreate` au premier niveau et `parameters: null`. Les appelants
+    continuent d'envoyer `{"to": …, "message": …, "mediaUrl": …}`.
+
+    Le moteur d'envoi lui-même (`send_whatsapp_direct`) n'est PAS touché, et les
+    envois internes ne le sont pas non plus : campagnes, webhook entrant, réponse
+    manuelle du coach et renouvellements V195 appellent la FONCTION en Python,
+    jamais cette route HTTP.
     """
+    _v411_exiger_super_admin(request, "envoi WhatsApp direct (route héritée V161)")
     return await send_whatsapp_direct(
-        to_phone=request.to,
-        message=request.message,
-        media_url=request.mediaUrl
+        to_phone=payload.to,
+        message=payload.message,
+        media_url=payload.mediaUrl
     )
 
 @api_router.post("/send-whatsapp-template")
