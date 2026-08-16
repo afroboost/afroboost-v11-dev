@@ -214,21 +214,35 @@ def tests_structurels():
     src_moteur = extraire("send_whatsapp_direct")
     for interdit in ("_v411_exiger_super_admin", "Request", "Authorization", "HTTPException"):
         verifier("S9. send_whatsapp_direct intact (%s absent)" % interdit, interdit not in src_moteur, interdit)
+    # Ce que V442 doit prouver, c'est que SON COMMIT n'a pas touche au moteur
+    # d'envoi. On compare donc le commit V442 a SON PROPRE PARENT, et non l'arbre
+    # de travail a un hachage fige : sinon le garde-fou tombe en panne des qu'un
+    # correctif ULTERIEUR et parfaitement legitime touche l'une de ces fonctions.
+    # C'est arrive des le lot suivant : V441 modifie `launch_campaign` a dessein
+    # (il y retire l'indexation `results["skipped"]` qui tuait les campagnes).
+    # L'invariant ci-dessous, lui, reste vrai pour toujours.
     import subprocess
-    avant = subprocess.check_output(["git", "show", "706fd17:api/server.py"], cwd=RACINE).decode("utf-8")
-    a = ast.parse(avant)
-    def src_de(arbre, texte, nom):
+    V442 = "5b4338b"
+
+    def _src_au(rev, nom):
+        texte = subprocess.check_output(
+            ["git", "show", "%s:api/server.py" % rev], cwd=RACINE).decode("utf-8")
         lg = texte.splitlines(True)
-        for x in ast.walk(arbre):
+        for x in ast.walk(ast.parse(texte)):
             if isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef)) and x.name == nom:
                 return "".join(lg[x.lineno - 1:x.end_lineno])
         return None
-    verifier("S9b. send_whatsapp_direct OCTET POUR OCTET identique a la prod 706fd17",
-             src_de(a, avant, "send_whatsapp_direct") == src_moteur, "")
-    for f in ("_send_whatsapp_meta", "_send_whatsapp_twilio", "launch_campaign",
-              "_send_whatsapp_campaign_template", "handle_meta_whatsapp_webhook", "v434_envoyer"):
-        verifier("S9c. %s inchange vs prod 706fd17" % f,
-                 src_de(a, avant, f) == extraire(f), "")
+
+    for f in ("send_whatsapp_direct", "_send_whatsapp_meta", "_send_whatsapp_twilio",
+              "launch_campaign", "_send_whatsapp_campaign_template",
+              "handle_meta_whatsapp_webhook", "v434_envoyer"):
+        verifier("S9b. le commit V442 n'a pas touche a %s" % f,
+                 _src_au(V442 + "^", f) == _src_au(V442, f), "")
+
+    # Et dans l'arbre courant, le moteur d'envoi lui-meme reste intact : c'est la
+    # fonction que V442 ne doit JAMAIS modifier, quel que soit le lot en cours.
+    verifier("S9c. send_whatsapp_direct intact dans l'arbre courant",
+             _src_au(V442, "send_whatsapp_direct") == src_moteur, "")
 
     # La garde doit etre la MEME que celle de la route soeur fermee par V435.
     for soeur in ("send_whatsapp_template", "create_whatsapp_template"):
