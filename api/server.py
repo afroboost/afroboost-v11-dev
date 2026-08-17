@@ -24292,6 +24292,11 @@ ESSAI3_ECHANTILLON_MINIMUM = 10
 
 ESSAI3_PERIODES = {"7d": 7, "30d": 30, "90d": 90, "all": None}
 
+# Borne de securite de la lecture. Elle n'est pas censee etre atteinte : elle
+# vaut cent fois le nombre d'essais jamais accordes. Si elle l'etait, le journal
+# le dirait plutot que de laisser croire a un funnel complet.
+ESSAI3_PLAFOND = 5000
+
 # Un essai anterieur a ESSAI-0 n'a pas d'`offer_id`. Il compte dans « Toutes
 # les offres » — son statut d'essai, lui, est certain — et reste joignable par
 # cette cle plutot que d'etre attribue d'office a une offre qu'on ignore.
@@ -24431,7 +24436,13 @@ async def _essai3_cohorte(coach_email: str, depuis_iso: str):
             }},
         }},
     ]
-    return await db.subscriptions.aggregate(_pipeline).to_list(5000)
+    _lignes = await db.subscriptions.aggregate(_pipeline).to_list(ESSAI3_PLAFOND)
+    if len(_lignes) >= ESSAI3_PLAFOND:
+        # Un plafond SILENCIEUX ferait passer un funnel tronque pour un funnel
+        # complet. On le dit, meme si ce volume est hors d'atteinte aujourd'hui.
+        logger.warning("[ESSAI-3] cohorte plafonnee a %d essais — les chiffres "
+                       "affiches sont tronques", ESSAI3_PLAFOND)
+    return _lignes
 
 
 @api_router.get("/coach/funnel/free-trial")

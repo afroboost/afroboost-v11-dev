@@ -26,7 +26,7 @@ def verifier(nom, ok, detail=""):
 # ── extraction ──────────────────────────────────────────────────────────────
 _ARBRE = ast.parse(io.open(SERVEUR, encoding="utf-8").read())
 _VOULUS = ("ESSAI3_CONVERSION_DEPUIS", "ESSAI3_ECHANTILLON_MINIMUM",
-           "ESSAI3_PERIODES", "ESSAI3_OFFRE_INCONNUE",
+           "ESSAI3_PERIODES", "ESSAI3_OFFRE_INCONNUE", "ESSAI3_PLAFOND",
            "_essai3_taux", "_essai3_jours", "_essai3_mediane",
            "_essai3_diagnostic", "_essai3_cohorte",
            "essai3_funnel_essai_gratuit")
@@ -563,6 +563,9 @@ def structure():
              not any(s in SOURCE for s in ("PULSE", "Membres", "Silent")), "")
     verifier("S8. aucune date de periode codee en dur hors du bareme declare",
              SOURCE.count("2026-08-17") == 1)
+    verifier("S8b. le plafond de lecture est NOMME et son atteinte est tracee",
+             "ESSAI3_PLAFOND" in code_nu("_essai3_cohorte")
+             and "plafonnee" in code_nu("_essai3_cohorte"))
     verifier("S9. le seuil d'echantillon est nomme, pas dissemine",
              code_nu("_essai3_diagnostic").count("ESSAI3_ECHANTILLON_MINIMUM") == 1)
     verifier("S10. division protegee : le taux passe TOUJOURS par _essai3_taux",
