@@ -1671,17 +1671,23 @@ async def sessions_agenda(days: int = 60):
     jour d'un cours change donc les cartes, « prochaine seance » et le
     calendrier au meme instant, par construction, sans aucune resaisie.
 
-    DEUX FAMILLES de cours y entrent, et la seconde n'est pas une tolerance :
+    UNE SEANCE N'APPARAIT QUE SI LE VISITEUR PEUT Y ACCEDER. La condition
+    NECESSAIRE est donc qu'au moins une offre PUBLIQUE y mene. Sessions decrit
+    les activites reellement accessibles, pas un panneau d'affichage : montrer
+    une seance que personne ne peut reserver serait une impasse, et les offres
+    masquees ne doivent jamais fuir par ce biais.
 
-      1. les cours PUBLIES — `visible` vrai et non archives ;
+    Cette condition ne suffit pas seule. Le cours doit en plus etre, SOIT
 
-      2. les cours lies a une offre publique ET marques `agenda_abonne`. C'est
-         la regle V426, deja ecrite pour l'espace abonne (`_v426_recurrents_de_loffre`) :
-         une activite recurrente rattachee a un forfait reste a l'agenda meme
-         si elle est archivee. C'est exactement le cas des seances du mercredi
-         et du dimanche, et c'est pourquoi les cartes d'offres annoncent deja
-         leurs horaires alors que `GET /courses`, qui filtre `archived`, les
-         ignore. Sans cette famille, le calendrier contredirait les cartes.
+      1. publie — `visible` vrai et non archive ; SOIT
+
+      2. marque `agenda_abonne`. C'est la regle V426, deja ecrite pour l'espace
+         abonne (`_v426_recurrents_de_loffre`) : une activite recurrente
+         rattachee a un forfait reste a l'agenda meme si elle est archivee.
+         C'est exactement le cas des seances du mercredi et du dimanche, et
+         c'est pourquoi les cartes d'offres annoncent deja leurs horaires alors
+         que `GET /courses`, qui filtre `archived`, les ignore. Sans ce second
+         terme, le calendrier contredirait les cartes.
 
     Une occurrence n'apparait QU'UNE FOIS, meme si plusieurs offres y donnent
     acces : la cle est (cours, instant), jamais l'offre. Les offres qui
@@ -1710,9 +1716,11 @@ async def sessions_agenda(days: int = 60):
             _offres_par_cours.setdefault(_cid, []).append(
                 {"id": _o.get("id"), "name": _o.get("name")})
 
-    _filtre = {"$or": [
+    if not _lies:
+        return {"occurrences": [], "jours": _jours}
+    _filtre = {"id": {"$in": _lies}, "$or": [
         {"visible": {"$ne": False}, "archived": {"$ne": True}},
-        {"id": {"$in": _lies}, "agenda_abonne": True},
+        {"agenda_abonne": True},
     ]}
     try:
         _cours = await db.courses.find(_filtre, {"_id": 0}).to_list(300)

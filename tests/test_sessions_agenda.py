@@ -191,7 +191,7 @@ def jours_de(sortie):
 
 async def scenarios():
     # --- A. le cas reel : PULSE et Membres, mercredi + dimanche --------------
-    s = await agenda([PULSE, MEMBRES], [MERCREDI, DIMANCHE, EVENEMENT], jours=30)
+    s = await agenda([PULSE, MEMBRES, OFFRE_EVT], [MERCREDI, DIMANCHE, EVENEMENT], jours=30)
     occ = s["occurrences"]
     verifier("A1. les seances recurrentes du mercredi et du dimanche SORTENT",
              len(occ) > 0, "%d occurrence(s)" % len(occ))
@@ -227,8 +227,11 @@ async def scenarios():
     verifier("C2. un cours `visible: false` non lie reste dehors",
              len(s3["occurrences"]) == 0, str(s3["occurrences"][:1]))
     s4 = await agenda([], [EVENEMENT], jours=60)
-    verifier("C3. un cours publie sort meme sans offre liee",
-             len(s4["occurrences"]) == 1)
+    verifier("C3. un cours publie SANS offre publique ne sort pas — pas de chemin d'acces",
+             len(s4["occurrences"]) == 0, str(s4["occurrences"][:1]))
+    s5 = await agenda([OFFRE_EVT], [EVENEMENT], jours=60)
+    verifier("C3b. le meme cours sort des qu'une offre publique y mene",
+             len(s5["occurrences"]) == 1)
 
     # --- D. FLEXIBILITE : aucun jour n'est fige -----------------------------
     JEUDI = dict(MERCREDI, id="jeu", name="Atelier", weekday=4, time="19:00")
@@ -344,14 +347,27 @@ async def scenarios_visiteur():
     verifier("V-F. offre rendue masquee -> le cours quitte le parcours visiteur",
              len(s["occurrences"]) == 0, "%d" % len(s["occurrences"]))
 
-    # --- un cours PUBLIE sort par lui-meme, offre ou pas --------------------
-    _publie = {"id": "pub", "name": "Cours publie", "weekday": 4, "time": "10:00",
-               "visible": True, "archived": False}
-    s = await agenda([MASQUEE], [_publie], jours=14)
-    verifier("V-G. un cours publie sort par lui-meme, pas « a cause » d'une offre",
+    # --- le coeur de la regle : PAS de chemin public, PAS de seance ---------
+    # Un cours parfaitement publie mais rattache a la seule offre masquee est
+    # une impasse : le visiteur le verrait sans pouvoir le reserver. Sessions
+    # decrit ce qui est ACCESSIBLE, pas ce qui existe.
+    _publie_impasse = {"id": "impasse", "name": "Silent Dance & Fitness",
+                       "weekday": 0, "time": "18:30", "visible": True, "archived": False}
+    _off_m2 = {"id": "off-m2", "name": "Silent Dance", "visible": False,
+               "linked_course_ids": ["impasse"]}
+    s = await agenda([_off_m2], [_publie_impasse], jours=14)
+    verifier("V-G. cours PUBLIE mais sans offre publique -> absent de Sessions",
+             len(s["occurrences"]) == 0, str(s["occurrences"][:1]))
+
+    _off_p2 = dict(_off_m2, id="off-p2", visible=True)
+    s = await agenda([_off_p2], [_publie_impasse], jours=14)
+    verifier("V-G2. la meme seance revient des que son offre est publiee",
              len(s["occurrences"]) > 0)
-    verifier("V-G2. et aucune offre masquee ne lui est accrochee",
-             all(len(o["offers"]) == 0 for o in s["occurrences"]))
+
+    # --- aucun cours du tout n'est rattache a une offre publique -----------
+    s = await agenda([MASQUEE], [CACHE, MIXTE, _publie_impasse], jours=14)
+    verifier("V-H. aucune offre publique -> agenda vide, jamais une impasse",
+             s["occurrences"] == [], str(s["occurrences"][:1]))
 
 
 def json_texte(x):
