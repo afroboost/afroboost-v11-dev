@@ -139,9 +139,11 @@ def calculate_total(items: List[CheckoutItem], discount_amount: float = None) ->
 async def create_checkout_session(req: CreateCheckoutRequest):
     """Crée une session de paiement routée vers le bon vendeur"""
 
-    total = calculate_total(req.items, req.discount_amount)
+    # ESSAI-1B : le total qui DECIDE vient du catalogue. `discount_amount`,
+    # fourni par le navigateur, n'est plus une autorite metier.
+    total, _prix_resolus = await _essai1b_total_autorite(req.items)
 
-    if total <= 0:
+    if total <= 0 and _prix_resolus:
         # Gratuit : pas de paiement, créer directement la réservation
         #
         # ESSAI-1 : cette branche mene EXACTEMENT aux memes ecritures que
@@ -218,9 +220,17 @@ async def create_checkout_session(req: CreateCheckoutRequest):
 
             line_items = []
             for item in req.items:
-                amount = int(item.price * 100)  # Stripe utilise les centimes
-                if req.discount_amount and len(req.items) == 1:
-                    amount = int(max(0, (item.price - (req.discount_amount or 0))) * 100)
+                # ESSAI-1B : le montant DEBITE vient du catalogue, pas du
+                # navigateur. Il etait calcule `item.price - discount_amount`,
+                # deux valeurs fournies par le client : n'importe qui pouvait
+                # ramener une offre a 250 CHF a zero. `discount_amount` n'est
+                # plus consulte ; une remise reelle doit venir d'un code valide
+                # par le serveur, mecanisme qui existe deja ailleurs.
+                _prix_reel, _atteste = await _essai1b_prix_unitaire(item)
+                if not _atteste:
+                    logger.warning(
+                        "[ESSAI-1B] article hors catalogue au paiement : prix non atteste")
+                amount = int(round(max(0.0, _prix_reel) * 100))  # centimes
                 line_items.append({
                     "price_data": {
                         "currency": item.currency.lower(),
@@ -608,6 +618,71 @@ class FreeCheckoutRequest(BaseModel):
     discount_code: Optional[str] = None
 
 
+# === ESSAI-1B : LE PRIX VIENT DU CATALOGUE, JAMAIS DU NAVIGATEUR ===
+#
+# `calculate_total` additionne les `price` envoyes par le client, puis soustrait
+# un `discount_amount` lui aussi envoye par le client. Deux autorites metier
+# confiees au navigateur : `price: 250` accompagne de `discount_amount: 250`
+# donne un total nul, donc un checkout GRATUIT sur une offre payante. Et sur
+# `/free`, un simple `price: 0` suffit a franchir la garde « ce chemin ne traite
+# que le 0 CHF ».
+#
+# On relit donc le prix en base. Et si un article ne se rattache a AUCUNE offre
+# du catalogue, on ne peut pas AFFIRMER qu'il est gratuit : le doute ne profite
+# pas au client, la commande part du cote payant.
+#
+# `discount_amount` n'est plus consulte. Une remise reelle doit venir d'un code
+# valide par le serveur — le mecanisme existe deja ailleurs et n'est pas
+# reecrit ici.
+
+
+async def _essai1b_prix_unitaire(item):
+    """Rend (prix unitaire faisant autorite, a-t-il ete resolu en base ?).
+
+    Non resolu = le catalogue ne connait pas cet article. On retombe alors sur
+    le prix annonce, faute de mieux — mais l'appelant SAIT que la valeur n'est
+    pas attestee, et refuse notamment de la declarer gratuite.
+    """
+    _d = item.dict() if hasattr(item, "dict") else dict(item)
+    _oid = str(_d.get("id") or "").strip()
+    if _oid:
+        try:
+            _o = await db["offers"].find_one(
+                {"id": _oid}, {"_id": 0, "price": 1, "active_price": 1})
+            if _o:
+                _p = _o.get("active_price")
+                if _p is None:
+                    _p = _o.get("price")
+                return float(_p or 0), True
+        except Exception as _err:
+            logger.warning(f"[ESSAI-1B] prix de l'offre {_oid} illisible: {_err}")
+    return float(_d.get("price") or 0), False
+
+
+async def _essai1b_total_autorite(items):
+    """Rend (total calcule en base, tous les articles ont-ils ete resolus)."""
+    _total = 0.0
+    _tout_resolu = True
+    for _it in (items or []):
+        _d = _it.dict() if hasattr(_it, "dict") else dict(_it)
+        _qte = max(1, int(_d.get("quantity") or 1))
+        _prix, _resolu = await _essai1b_prix_unitaire(_it)
+        if not _resolu:
+            _tout_resolu = False
+        _total += _prix * _qte
+    return round(_total, 2), _tout_resolu
+
+
+async def _essai1b_exiger_gratuit(items) -> None:
+    """Refuse un chemin gratuit que le catalogue ne confirme pas."""
+    _total, _resolu = await _essai1b_total_autorite(items)
+    if not _resolu or _total > 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Cet endpoint ne traite que les offres gratuites (0 CHF).",
+        )
+
+
 # === ESSAI-1 : UN SEUL ESSAI GRATUIT PAR PERSONNE ===
 #
 # Le probleme n'est pas theorique. Rien, aujourd'hui, n'empeche de repasser dix
@@ -764,10 +839,10 @@ async def free_checkout(req: FreeCheckoutRequest):
     payment_transaction, la notif push au coach et le contact — exactement ce
     que produit le webhook Stripe pour un achat payant.
     """
-    # garde-fou : on refuse un item non gratuit ici, ce chemin est reserve au 0 CHF.
-    total = sum((it.price or 0) * (it.quantity or 1) for it in req.items)
-    if total > 0:
-        raise HTTPException(status_code=400, detail="Cet endpoint ne traite que les offres gratuites (0 CHF).")
+    # garde-fou : on refuse un item non gratuit ici, ce chemin est reserve au
+    # 0 CHF. ESSAI-1B : le prix est relu EN BASE — additionner les `price` du
+    # client laissait passer une offre a 250 CHF annoncee a 0.
+    await _essai1b_exiger_gratuit(req.items)
     if not req.customer_email or "@" not in req.customer_email:
         raise HTTPException(status_code=400, detail="Email client requis.")
 
@@ -795,7 +870,8 @@ async def free_checkout(req: FreeCheckoutRequest):
         # Idem : une panne au milieu du tunnel ne doit pas confisquer l'essai.
         await _essai1_liberer(req.customer_email)
         raise
-    access_code = (result or {}).get("access_code", "")
+    # ESSAI-1A : `access_code` n'est volontairement PAS relu ici — il ne doit
+    # plus quitter le serveur par HTTP, seulement par l'e-mail du titulaire.
     product_name = (result or {}).get("product_name", "Offre gratuite")
 
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -848,10 +924,19 @@ async def free_checkout(req: FreeCheckoutRequest):
     except Exception as _c_err:
         logger.warning(f"[V249] contact gratuit non-bloquant: {_c_err}")
 
+    # ESSAI-1A : le code AFR- ne repart PLUS dans la reponse HTTP.
+    #
+    # Cette route n'a aucune authentification : l'adresse est celle que le
+    # visiteur ecrit lui-meme. Renvoyer le code revenait donc a le remettre a
+    # QUICONQUE saisit l'adresse d'un tiers. Il part desormais par le seul
+    # canal qui atteste de la possession de l'adresse : l'e-mail.
+    #
+    # Le parcours legitime ne change pas d'un pixel — la vitrine ne lisait pas
+    # ce champ, et son message dit deja « Consultez votre email pour recevoir
+    # votre QR code et code d'acces AFR ».
     return {
         "success": True,
         "free": True,
-        "access_code": access_code,
         "transaction_id": transaction_id,
         "message": "Réservation confirmée gratuitement !",
     }

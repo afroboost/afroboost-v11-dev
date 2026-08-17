@@ -131,8 +131,13 @@ class _Coll(object):
 
 
 class _Base(object):
-    def __init__(self, codes=None):
+    def __init__(self, codes=None, offres=None):
         self._c = {
+            "offers": _Coll(offres if offres is not None else [
+                {"id": "off-essai", "price": 0.0},
+                {"id": "off-42", "price": 0.0},
+                {"id": "pack", "price": 250.0},
+            ]),
             "discount_codes": _Coll(codes),
             "free_trial_claims": _Coll([], cle_primaire=True),
             "subscriptions": _Coll(),
@@ -187,7 +192,8 @@ class _Req(object):
         self.discount_amount = discount_amount
 
 
-A_EXTRAIRE = ["_essai1_essai_deja_accorde", "_essai1_reclamer", "_essai1_liberer",
+A_EXTRAIRE = ["_essai1b_prix_unitaire", "_essai1b_total_autorite", "_essai1b_exiger_gratuit",
+              "_essai1_essai_deja_accorde", "_essai1_reclamer", "_essai1_liberer",
               "_essai1_tracer_refus", "_essai1_garde", "calculate_total",
               "free_checkout", "create_checkout_session"]
 
@@ -197,10 +203,10 @@ ESSAI1_MESSAGE = "Votre essai gratuit a deja ete utilise."
 '''
 
 
-def bac(codes=None, echec_paiement=False):
+def bac(codes=None, echec_paiement=False, offres=None):
     PAIEMENTS[:] = []
     POSTHOG[:] = []
-    base = _Base(codes)
+    base = _Base(codes, offres)
 
     async def faux_paiement(**kw):
         await asyncio.sleep(0)
@@ -374,7 +380,8 @@ async def scenarios():
     b, base = bac(codes=[code_essai(ANA)])
     _e = None
     try:
-        await b["create_checkout_session"](_Req(ANA, items=[_Item(price=0.0)]))
+        await b["create_checkout_session"](
+            _Req(ANA, items=[_Item(id="off-essai", price=0.0)]))
     except _HTTP as ex:
         _e = ex
     verifier("T8d. /create-session a total nul est garde comme /free",
@@ -433,6 +440,93 @@ async def scenarios():
     verifier("T10d. le motif et l'offre voyagent, eux",
              POSTHOG and POSTHOG[0]["props"].get("reason") == "already_used",
              str(POSTHOG[0]["props"]))
+
+
+# ============================================================================
+#     ESSAI-1A / 1B — le code ne fuit plus, le prix ne vient plus du client
+# ============================================================================
+async def scenarios_ab():
+    ANA = "ana@exemple.ch"
+
+    # --- A. le code AFR- ne repart plus dans la reponse ---------------------
+    b, base = bac()
+    r = await b["free_checkout"](_Req(ANA))
+    verifier("A1. la reponse ne contient PLUS le code AFR-",
+             "access_code" not in r, str(sorted(r.keys())))
+    verifier("A1b. et rien qui y ressemble",
+             "AFR-" not in str(r), str(r)[:120])
+    verifier("A1c. le parcours legitime reste confirme",
+             r.get("success") is True and r.get("free") is True)
+    verifier("A1d. le code a bien ete cree, il part par e-mail",
+             base["discount_codes"].docs
+             and base["discount_codes"].docs[0]["code"].startswith("AFR-"))
+
+    # --- B. un prix annonce a 0 sur une offre PAYANTE ne passe plus ---------
+    b, base = bac()
+    _e = None
+    try:
+        await b["free_checkout"](_Req(ANA, items=[_Item(id="pack", price=0.0)]))
+    except _HTTP as ex:
+        _e = ex
+    verifier("B1. `price: 0` sur une offre a 250 CHF -> refus 400",
+             _e is not None and _e.status_code == 400, repr(_e and _e.status_code))
+    verifier("B1b. et rien n'a ete cree",
+             len(PAIEMENTS) == 0 and len(base["free_trial_claims"].docs) == 0)
+
+    # --- B. discount_amount forge ------------------------------------------
+    b, base = bac()
+    _e = None
+    try:
+        await b["create_checkout_session"](
+            _Req(ANA, items=[_Item(id="pack", price=250.0)], discount_amount=250.0))
+    except Exception as ex:
+        _e = ex
+    verifier("B2. `discount_amount: 250` ne fabrique PAS un checkout gratuit",
+             len(PAIEMENTS) == 0
+             and not (isinstance(_e, _HTTP) and _e.status_code == 409),
+             "%s / %d essai(s)" % (type(_e).__name__, len(PAIEMENTS)))
+    verifier("B2b. aucune reservation d'essai n'est posee non plus",
+             len(base["free_trial_claims"].docs) == 0)
+
+    # --- B. un article non rattachable ne peut pas se declarer gratuit -------
+    b, base = bac()
+    _e = None
+    try:
+        await b["free_checkout"](_Req(ANA, items=[_Item(id="inconnu", price=0.0)]))
+    except _HTTP as ex:
+        _e = ex
+    verifier("B3. article hors catalogue -> le doute ne profite pas au client",
+             _e is not None and _e.status_code == 400 and len(PAIEMENTS) == 0)
+
+    b, base = bac()
+    _e = None
+    try:
+        await b["free_checkout"](_Req(ANA, items=[_Item(id=None, price=0.0)]))
+    except _HTTP as ex:
+        _e = ex
+    verifier("B3b. article SANS identifiant non plus",
+             _e is not None and _e.status_code == 400)
+
+    # --- B. une vraie offre gratuite continue de fonctionner ----------------
+    b, base = bac()
+    r = await b["free_checkout"](_Req(ANA, items=[_Item(id="off-essai", price=0.0)]))
+    verifier("B4. une offre REELLEMENT gratuite passe toujours",
+             r.get("success") is True and len(PAIEMENTS) == 1)
+
+    # --- B. le prix serveur prime, meme annonce plus cher -------------------
+    b, base = bac()
+    r = await b["free_checkout"](_Req(ANA, items=[_Item(id="off-essai", price=999.0)]))
+    verifier("B5. le prix du catalogue prime sur celui annonce, dans les deux sens",
+             r.get("success") is True, str(r)[:80])
+
+    # --- B. le total du checkout payant vient bien du catalogue -------------
+    b, base = bac()
+    _t, _resolu = await b["_essai1b_total_autorite"]([_Item(id="pack", price=1.0, quantity=2)])
+    verifier("B6. total recalcule = prix catalogue x quantite, pas le prix client",
+             _t == 500.0 and _resolu is True, "%r / %r" % (_t, _resolu))
+    _t2, _r2 = await b["_essai1b_total_autorite"]([_Item(id="inconnu", price=0.0)])
+    verifier("B6b. un article hors catalogue est signale comme non resolu",
+             _r2 is False, repr(_r2))
 
 
 # ============================================================================
@@ -502,6 +596,29 @@ def structure():
     verifier("S11. et il est non bloquant",
              "except" in nu_ph)
 
+    nu_free = code_nu("free_checkout")
+    verifier("S13. la reponse de /free ne contient plus `access_code`",
+             '"access_code"' not in nu_free.replace("'", '"'), "")
+    verifier("S14. et /free ne calcule plus le total depuis les prix du client",
+             "it.price" not in nu_free and "_essai1b_exiger_gratuit" in nu_free)
+
+    nu_cs = code_nu("create_checkout_session")
+    verifier("S15. /create-session n'utilise plus `discount_amount`",
+             "discount_amount" not in nu_cs, "")
+    verifier("S16. il decide sur le total recalcule en base",
+             "_essai1b_total_autorite" in nu_cs)
+
+    nu_prix = code_nu("_essai1b_prix_unitaire")
+    verifier("S17. le prix est relu dans la collection des offres",
+             "offers" in nu_prix and "find_one" in nu_prix)
+    verifier("S18. et rien n'est ecrit au passage",
+             not any(m in nu_prix for m in ("insert_one", "update_one", "delete_one")))
+    verifier("S19. le total delegue a cette resolution, il ne la refait pas",
+             "_essai1b_prix_unitaire" in code_nu("_essai1b_total_autorite"))
+    verifier("S20. le montant DEBITE par Stripe vient lui aussi du catalogue",
+             "_essai1b_prix_unitaire" in nu_cs and "item.price" not in nu_cs,
+             "")
+
     moi = io.open(os.path.abspath(__file__), encoding="utf-8").read()
     mods = set()
     for n in ast.walk(ast.parse(moi)):
@@ -520,6 +637,7 @@ def main():
     try:
         b.run_until_complete(discriminant())
         b.run_until_complete(scenarios())
+        b.run_until_complete(scenarios_ab())
     finally:
         b.close()
     ok = sum(1 for _, r, _ in RESULTATS if r)
