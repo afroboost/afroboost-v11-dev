@@ -3,7 +3,8 @@
 // ce qui preserve le comportement actuel d'une seule requete POST/PUT.
 import React, { useState, useEffect } from 'react';
 import axios from 'axios'; // V225: creation/modification des horaires depuis le wizard
-import SvgIcon from '../SvgIcon'; // V228: pictogrammes vectoriels a la place des emoji
+import SvgIcon from '../SvgIcon';
+import { appartientAuCoach } from '../../utils/courseOwnership'; // V228: pictogrammes vectoriels a la place des emoji
 import CloudinaryUploadButton from '../CloudinaryUploadButton'; // V229
 
 const STEPS = [
@@ -301,8 +302,18 @@ export default function OfferWizard({
   // cours tout juste cree : il tombait dans la branche lecture seule, etait
   // exclu de `toPersist`, donc n'etait jamais publie (`visible` restait false)
   // tout en etant deja reference dans `linked_course_ids` de l'offre.
+  // CORRECTIF : « editable » veut dire APPARTIENT AU COACH, et rien d'autre.
+  // S'appuyer sur `visibleCourses` y ajoutait sans le vouloir le filtre
+  // d'archivage. Or les vraies seances recurrentes du coach — celles que ses
+  // offres vendent — sont archivees : elles tombaient donc en lecture seule,
+  // exclues de `toPersist`, et il n'existait plus AUCUN ecran pour corriger
+  // leur jour, leur heure ou leur lieu, la section « Cours » du dashboard etant
+  // neutralisee (V226). Le perimetre reste strictement le meme : on ne rend
+  // editable que ce qui appartient au coach, archive ou non.
   const isCourseEditable = (id) =>
-    sessionOwnedCourseIds.includes(id) || visibleCourses.some(c => c.id === id);
+    sessionOwnedCourseIds.includes(id)
+    || (courses || []).some(
+      c => c && c.id === id && appartientAuCoach(c, { coachEmail, isSuperAdmin }));
 
   const markDirty = (id) => setDirtyCourseIds(prev => (prev.includes(id) ? prev : [...prev, id]));
 
