@@ -26101,6 +26101,41 @@ async def generate_social_proof(request: Request):
     logger.info(f"[V71] {count} commentaires IA générés par {user_email}")
     return {"success": True, "count": count, "comments": [{k: v for k, v in c.items() if k != "_id"} for c in generated]}
 
+# ═══════════════════════════════════════════════════════════════════════════
+# P0 — CE QU'UN COMMENTAIRE MONTRE AU PUBLIC
+#
+# `GET /api/comments` est ANONYME et projetait `{"_id": 0}`, c'est-a-dire TOUT
+# le reste. Un avis d'abonne (V88) porte `participant_code` : or ce code EST le
+# mot de passe de l'espace abonne. N'importe qui pouvait donc lire le code de
+# l'abonne qui avait laisse un avis, puis se connecter a sa place.
+#
+# On ne retire plus les champs genants un par un — cette approche laisse
+# passer le prochain champ ajoute au document. C'est une liste BLANCHE : ce qui
+# n'est pas nomme ici ne sort pas, aujourd'hui ni apres la prochaine evolution
+# du modele.
+#
+# `created_at` y figure sans etre affiche aujourd'hui : il ne porte rien de
+# personnel, et son absence transformerait le premier affichage de date en
+# regression silencieuse.
+#
+# Restent volontairement DEHORS : `participant_code` (le mot de passe),
+# `coach_id` (une adresse e-mail), `session_id` (un identifiant interne),
+# `is_visible` et `is_ai` (des donnees de moderation, qui ne regardent que le
+# coach).
+COMMENTS_CHAMPS_PUBLICS = ("id", "user_name", "text", "profile_photo",
+                           "rating", "likes", "is_verified", "created_at")
+
+# Filtrage fait par MongoDB : les champs sensibles ne quittent meme pas la base.
+COMMENTS_PROJECTION_PUBLIQUE = dict({"_id": 0},
+                                    **{_c: 1 for _c in COMMENTS_CHAMPS_PUBLICS})
+
+
+def _comment_public(doc: dict) -> dict:
+    """Le meme filtre, pour un document deja en memoire."""
+    _d = doc or {}
+    return {_c: _d[_c] for _c in COMMENTS_CHAMPS_PUBLICS if _c in _d}
+
+
 @api_router.get("/comments")
 async def get_comments(request: Request):
     """V71: Récupère les commentaires visibles (public)."""
@@ -26111,7 +26146,8 @@ async def get_comments(request: Request):
 
     # v106.7: Retourner le vrai total + les 100 derniers commentaires
     total_count = await db.comments.count_documents(query)
-    comments = await db.comments.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
+    comments = await db.comments.find(
+        query, COMMENTS_PROJECTION_PUBLIQUE).sort("created_at", -1).to_list(100)
     return {"comments": comments, "total": len(comments), "total_count": total_count}
 
 @api_router.post("/comments/{comment_id}/like")
@@ -26251,9 +26287,16 @@ async def submit_review(request: Request):
         raise HTTPException(status_code=409, detail="Vous avez déjà laissé un avis")
 
     now = datetime.now(timezone.utc)
-    # Fallback avatar DiceBear si pas de photo
+    # Fallback avatar DiceBear si pas de photo.
+    #
+    # P0 — LA GRAINE NE CONTIENT PLUS LE CODE. Elle etait composee du nom PLUS
+    # `participant_code`, et l'URL obtenue est publique et affichee : le mot de
+    # passe de l'abonne voyageait donc DANS l'avatar, ou aucune liste blanche de
+    # champs ne pouvait l'attraper — il etait a l'interieur d'un champ autorise.
+    # L'horodatage et le tirage aleatoire suffisent a distinguer deux avatars,
+    # ce que le code faisait accessoirement ici.
     if not profile_photo:
-        avatar_seed = f"{participant_name.replace(' ', '')}{participant_code}{now.strftime('%H%M%S')}"
+        avatar_seed = f"{participant_name.replace(' ', '')}{now.strftime('%H%M%S')}{_random.randint(1000, 9999)}"
         profile_photo = f"https://api.dicebear.com/7.x/avataaars/svg?seed={avatar_seed}&backgroundColor=D91CD2"
 
     comment = {
@@ -26275,7 +26318,10 @@ async def submit_review(request: Request):
     await db.comments.insert_one(comment)
     comment.pop("_id", None)
     logger.info(f"[V88] Avis soumis par {participant_name} (code: {participant_code}, coach: {coach_id})")
-    return {"success": True, "comment": comment}
+    # Meme liste blanche que la lecture publique : l'appelant a fourni son code,
+    # inutile de le lui renvoyer, et le jour ou cette reponse sera relayee
+    # ailleurs elle ne portera rien de sensible.
+    return {"success": True, "comment": _comment_public(comment)}
 
 # === v88: GET /api/reviews/check — Vérifier si un abonné a déjà laissé un avis ===
 @api_router.get("/reviews/check")
