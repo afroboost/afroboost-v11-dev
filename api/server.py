@@ -25375,7 +25375,7 @@ async def t3_suggestions_participant(request: Request):
 
 
 @api_router.get("/coach/contacts/dry-run-participant")
-async def t3_dry_run_participant(request: Request):
+async def t3_dry_run_participant(request: Request, groupe: str = "", ids: int = 0):
     """SIMULATION — qui deviendrait « participant » si l'on basculait le stock.
 
     STRICTEMENT EN LECTURE. Aucun `contact_type` n'est ecrit, aucun document
@@ -25409,6 +25409,10 @@ async def t3_dry_run_participant(request: Request):
         logger.warning("[DRY] presences illisibles : %s", _err)
 
     _bascule = "2026-08-17T19:22:33+00:00"   # deploiement d'ESSAI-5a-2
+    # Le groupe VERT : les seules sources qui prouvent un abonnement obtenu,
+    # donc un engagement reel. Les 5 presences confirmees y sont toutes.
+    _SOURCES_VERT = ("espace_onboarding", "chat_login")
+    _liste_vert = []
     _par_source = {}
     _total = 0
     _abonnes = 0
@@ -25463,6 +25467,17 @@ async def t3_dry_run_participant(request: Request):
             # commercial, et les deux peuvent coexister.
             if not _deja and not _apres:
                 _s["candidats"] += 1
+
+            # `?groupe=vert&ids=1` rend les identifiants a classer. LECTURE
+            # SEULE : c'est la seule facon de les obtenir, la route publique
+            # des contacts etant plafonnee a 1000 documents.
+            if (groupe == "vert" and ids and not _deja and not _apres
+                    and _src in _SOURCES_VERT):
+                _liste_vert.append({
+                    "id": _c.get("id"), "source": _src,
+                    "abonne": _est_abonne, "presence": _a_presence,
+                    "contact_type_avant": _c.get("contact_type"),
+                })
     except Exception as _err:
         logger.error("[DRY] contacts illisibles : %s", _err)
         raise HTTPException(status_code=503, detail="Simulation momentanément indisponible")
@@ -25481,6 +25496,8 @@ async def t3_dry_run_participant(request: Request):
                                   key=lambda kv: -kv[1]["total"])),
         "presences_distinctes_total": len(_presents),
         "note": "Lecture seule — aucun contact_type n'a été écrit.",
+        "groupe_vert": _liste_vert if (groupe == "vert" and ids) else None,
+        "sources_vert": list(_SOURCES_VERT),
     }
 
 
