@@ -25423,7 +25423,10 @@ async def t3_dry_run_participant(request: Request, groupe: str = "", ids: int = 
     try:
         # Pas de `to_list` : on parcourt le curseur, donc AUCUN plafond.
         async for _c in db.chat_participants.find(_filtre, {
-                "_id": 0, "source": 1, "email": 1, "created_at": 1,
+                # `id` etait absent de cette projection : les identifiants
+                # rendus valaient tous None, et les 22 classements ont ete
+                # refuses en 404 — sans rien ecrire, la garde ayant tenu.
+                "_id": 0, "id": 1, "source": 1, "email": 1, "created_at": 1,
                 "isSubscriber": 1, "subscriptionCode": 1, "code": 1,
                 "contact_type": 1, "categories": 1}):
             _total += 1
