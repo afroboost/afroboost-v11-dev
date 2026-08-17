@@ -773,6 +773,13 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
     # `posthog_capture` n'échoue jamais ; ce try n'est qu'une ceinture de plus.
     try:
         from api.routes.shared import posthog_capture as _c9
+        from api.routes.shared import essai2_est_essai as _e2_est_essai
+        # ESSAI-2 : `trial_booked` s'appelle « trial » mais couvre TOUTE
+        # reservation. Sans ce drapeau, l'etape « essai reserve » du funnel est
+        # indistinguable d'une reservation d'abonne payant. La reponse se lit
+        # dans la base — le code d'acces mene-t-il a un octroi gratuit — jamais
+        # dans le nom de l'offre.
+        _e2_essai = await _e2_est_essai(db, reservation_data)
         await _c9("trial_booked", email=user_email, props={
             "course_id": getattr(reservation, "courseId", None) or reservation_data.get("courseId"),
             "offer_name_present": bool(reservation_data.get("offerName")),
@@ -781,6 +788,7 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
             "is_product": bool(reservation_data.get("isProduct")),
             "has_promo": bool(promo_code),
             "source": reservation_data.get("source") or "website",
+            "is_free_trial": _e2_essai,
         })
     except Exception as _c9e:
         logger.warning(f"[C9] trial_booked ignoré: {_c9e}")
@@ -899,10 +907,16 @@ async def _c9_presence(reservation: dict, etait_deja_validee: bool):
         if not email:
             return
         rang = await db.reservations.count_documents({"userEmail": email, "validated": True})
+        # ESSAI-2 : c'est CETTE etape qui fait la valeur du funnel — une
+        # presence reelle, confirmee par le coach. Encore faut-il savoir si
+        # elle honore un essai gratuit ou une seance deja payee.
+        from api.routes.shared import essai2_est_essai as _e2_est_essai
+        _e2_essai = await _e2_est_essai(db, reservation)
         await _c9("attendance_checked_in", email=email, props={
             "course_id": reservation.get("courseId"),
             "attendance_rank": rang,
             "is_product": bool(reservation.get("isProduct")),
+            "is_free_trial": _e2_essai,
         })
         if rang == 2:
             await _c9("second_class_attended", email=email, props={

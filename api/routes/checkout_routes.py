@@ -171,6 +171,14 @@ async def create_checkout_session(req: CreateCheckoutRequest):
             # perdrait son essai sans jamais l'avoir recu.
             await _essai1_liberer(req.customer_email)
             raise
+        # ESSAI-2 : meme mesure sur la seconde porte gratuite.
+        try:
+            from api.routes.shared import essai2_tracer_octroi as _e2_octroi
+            await _e2_octroi(db, req.customer_email,
+                             str((req.items[0].id if req.items else "") or ""), 0)
+        except Exception as _e2err:
+            logger.warning(f"[ESSAI-2] octroi non mesure: {_e2err}")
+
         # V248: notification push au coach — le flux gratuit ne passe pas par le
         # webhook Stripe, il n'avait donc AUCUNE notif (l'email, lui, part deja
         # depuis _process_successful_payment). Import LAZY pour eviter le cycle :
@@ -923,6 +931,17 @@ async def free_checkout(req: FreeCheckoutRequest):
         )
     except Exception as _c_err:
         logger.warning(f"[V249] contact gratuit non-bloquant: {_c_err}")
+
+    # ESSAI-2 : l'entree du funnel. Elle n'etait pas mesuree : on savait
+    # combien de gens cliquaient et combien reservaient, jamais combien
+    # obtenaient reellement un acces.
+    try:
+        from api.routes.shared import essai2_tracer_octroi as _e2_octroi
+        await _e2_octroi(db, req.customer_email,
+                         str((req.items[0].id if req.items else "") or ""),
+                         int((result or {}).get("sessions_count") or 0))
+    except Exception as _e2err:
+        logger.warning(f"[ESSAI-2] octroi non mesure: {_e2err}")
 
     # ESSAI-1A : le code AFR- ne repart PLUS dans la reponse HTTP.
     #

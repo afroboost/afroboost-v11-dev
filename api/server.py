@@ -6682,6 +6682,19 @@ async def stripe_webhook(request: Request):
                 except Exception as _c9e:
                     logger.warning(f"[C9] pulse_purchased ignore: {_c9e}")
 
+                # ESSAI-2 : cet achat convertit-il un essai deja HONORE ?
+                # Place ici, donc apres la garde d'idempotence V384 comme
+                # `pulse_purchased` : un webhook rejoue par Stripe ressort avant
+                # d'arriver ici. L'idempotence propre a la conversion est en
+                # plus portee par `converted_at`, ecrit atomiquement.
+                try:
+                    from api.routes.shared import essai2_marquer_conversion as _e2_conv
+                    await _e2_conv(db, customer_email,
+                                   str((metadata or {}).get("offer_id") or ""),
+                                   str(subscription_data.get("id") or ""))
+                except Exception as _e2err:
+                    logger.warning(f"[ESSAI-2] conversion non evaluee: {_e2err}")
+
                 # V397 : le renouvellement FERME l'ancien forfait du meme client.
                 # Portee etroite : uniquement les forfaits deja EXPIRES ou EPUISES.
                 # Un forfait encore valide avec des seances au compteur n'est jamais

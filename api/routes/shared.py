@@ -1103,3 +1103,221 @@ async def notifier_reservation_creee(
         # Garde-fou ultime : la reservation reste valide quoi qu'il arrive.
         logger.warning("[RESA] notification ignoree — %s: %s", type(e).__name__, e)
     return bilan
+
+
+# ============================================================================
+# ESSAI-2 — LES ETAPES DU FUNNEL D'ESSAI, ADOSSEES A LA BASE
+# ============================================================================
+#
+# PostHog analyse, il ne decide de rien. Chaque etape est une verite lisible
+# dans les collections, et l'idempotence de la conversion est portee par Mongo.
+#
+# Ce qui identifie un essai est le signal d'ESSAI-1, et rien d'autre :
+# `discount_codes.payment_method == "free"` avec `total_paid == 0`, ecrit par
+# `_process_successful_payment` sur tous les essais de la vitrine y compris les
+# anciens, ou `source == "social_proof"`. On ne se fie ni a `offer_name`, chaine
+# libre qui a deja derive, ni a `subscriptions.source`, qui vaut
+# « checkout_vitrine » pour un essai comme pour un pack a 250 CHF.
+
+ESSAI2_FILTRE_GRATUIT = {
+    "$or": [
+        {"payment_method": "free", "total_paid": 0},
+        {"source": "social_proof"},
+    ]
+}
+
+
+async def essai2_codes_essai(db, email: str) -> list:
+    """Les codes d'acces obtenus GRATUITEMENT par cette adresse."""
+    _e = (email or "").strip().lower()
+    if not _e:
+        return []
+    try:
+        _q = {"assignedEmail": _e}
+        _q.update(ESSAI2_FILTRE_GRATUIT)
+        _rows = await db["discount_codes"].find(
+            _q, {"_id": 0, "code": 1}).to_list(20)
+        return [r.get("code") for r in _rows if r.get("code")]
+    except Exception as _e2:
+        logger.warning(f"[ESSAI-2] codes d'essai illisibles: {_e2}")
+        return []
+
+
+async def essai2_forfait_essai(db, email: str):
+    """Le forfait d'essai de cette adresse, ou None.
+
+    Le PREMIER dans l'ordre de creation : c'est celui qui a ouvert le funnel.
+    """
+    _codes = await essai2_codes_essai(db, email)
+    if not _codes:
+        return None
+    try:
+        _rows = await db["subscriptions"].find(
+            {"code": {"$in": _codes}}, {"_id": 0}).to_list(20)
+        if not _rows:
+            return None
+        _rows.sort(key=lambda x: str(x.get("created_at") or ""))
+        return _rows[0]
+    except Exception as _e2:
+        logger.warning(f"[ESSAI-2] forfait d'essai illisible: {_e2}")
+        return None
+
+
+async def essai2_est_essai(db, reservation: dict) -> bool:
+    """Cette reservation consomme-t-elle un essai gratuit ?
+
+    On remonte par le lien le PLUS SUR d'abord — `subscriptionId`, pose par le
+    moteur — puis par le code, qui voyage sur `promoCode`/`discountCode`.
+    """
+    if not isinstance(reservation, dict):
+        return False
+    try:
+        _sid = (reservation.get("subscriptionId") or "").strip()
+        _code = (reservation.get("promoCode") or reservation.get("discountCode") or "").strip().upper()
+        if not _sid and not _code:
+            return False
+        if not _code and _sid:
+            _sub = await db["subscriptions"].find_one({"id": _sid}, {"_id": 0, "code": 1})
+            _code = ((_sub or {}).get("code") or "").strip().upper()
+        if not _code:
+            return False
+        _q = {"code": _code}
+        _q.update(ESSAI2_FILTRE_GRATUIT)
+        return await db["discount_codes"].find_one(_q, {"_id": 1}) is not None
+    except Exception as _e2:
+        logger.warning(f"[ESSAI-2] nature de la reservation indeterminee: {_e2}")
+        return False
+
+
+async def essai2_presence_essai(db, forfait: dict):
+    """La reservation d'essai REELLEMENT honoree, ou None.
+
+    « Presente » veut dire `validated: true`, pose par le coach au scan. Une
+    date passee ne prouve rien : on ne la regarde pas.
+    """
+    if not forfait:
+        return None
+    _sid = (forfait.get("id") or "").strip()
+    _code = (forfait.get("code") or "").strip().upper()
+    _ou = []
+    if _sid:
+        _ou.append({"subscriptionId": _sid})
+    if _code:
+        _ou.append({"promoCode": _code})
+        _ou.append({"discountCode": _code})
+    if not _ou:
+        return None
+    try:
+        _rows = await db["reservations"].find(
+            {"validated": True, "$or": _ou}, {"_id": 0}).to_list(20)
+        if not _rows:
+            return None
+        _rows.sort(key=lambda x: str(x.get("validatedAt") or ""))
+        return _rows[0]
+    except Exception as _e2:
+        logger.warning(f"[ESSAI-2] presence d'essai illisible: {_e2}")
+        return None
+
+
+async def essai2_marquer_conversion(db, email: str, purchased_offer_id: str = "",
+                                    purchased_sub_id: str = "") -> bool:
+    """Le premier achat payant qui SUIT une presence d'essai. Rend True si
+    cet appel est celui qui a converti.
+
+    TROIS CONDITIONS, dans cet ordre :
+      1. un forfait d'essai existe pour cette adresse ;
+      2. une reservation rattachee a ce forfait est `validated` — la presence
+         est confirmee par le coach, jamais deduite d'une date passee ;
+      3. l'ecriture atomique de `converted_at` reussit pour la PREMIERE fois.
+
+    L'ACHAT ANTERIEUR A LA PRESENCE se regle tout seul : on evalue au moment de
+    l'achat, donc si la presence n'a pas encore eu lieu, la condition 2 echoue
+    et rien n'est emis. Aucune date a comparer, aucune fenetre a choisir.
+
+    LE DEUXIEME ACHAT ne convertit pas : le filtre exige l'ABSENCE de
+    `converted_at`, et MongoDB ne l'accorde qu'a un seul ecrivain. C'est le
+    motif deja employe cinq fois dans ce depot.
+
+    LA FENETRE MONGO -> POSTHOG, ecrite noir sur blanc. Le marqueur est pose
+    AVANT l'envoi analytique, et c'est voulu : deplacer l'ecriture apres
+    l'envoi ferait qu'un echec reseau autoriserait une seconde conversion — on
+    troquerait une metrique perdue contre une verite metier fausse.
+    La consequence assumee est qu'un echec de PostHog perd l'evenement, sans
+    aucun rattrapage automatique.
+    Pour que ce ne soit pas definitif, la charge analytique est PERSISTEE a
+    cote du marqueur et `converted_event_sent` reste faux tant que l'envoi n'a
+    pas abouti. Un rejeu ulterieur n'a donc qu'a relire
+    `{converted_at: {$exists: true}, converted_event_sent: false}` : il
+    reconstitue l'evenement sans jamais rejuger la conversion.
+    """
+    _e = (email or "").strip().lower()
+    if not _e:
+        return False
+    try:
+        _forfait = await essai2_forfait_essai(db, _e)
+        if not _forfait:
+            return False
+        if _forfait.get("converted_at"):
+            return False
+        _presence = await essai2_presence_essai(db, _forfait)
+        if not _presence:
+            return False
+
+        _quand = datetime.now(timezone.utc)
+        _delai = None
+        try:
+            _v = str(_presence.get("validatedAt") or "").replace("Z", "+00:00")
+            _dt = datetime.fromisoformat(_v)
+            if _dt.tzinfo is None:
+                _dt = _dt.replace(tzinfo=timezone.utc)
+            _delai = max(0, int((_quand - _dt).total_seconds() // 86400))
+        except Exception:
+            _delai = None
+
+        _props = {
+            "trial_offer_id": str(_forfait.get("offer_id") or "")[:64],
+            "purchased_offer_id": str(purchased_offer_id or "")[:64],
+            "course_id": str(_presence.get("courseId") or "")[:64],
+        }
+        if _delai is not None:
+            _props["days_since_attendance"] = _delai
+
+        _res = await db["subscriptions"].update_one(
+            {"id": _forfait.get("id"), "converted_at": {"$exists": False}},
+            {"$set": {
+                "converted_at": _quand.isoformat(),
+                "converted_by_subscription_id": str(purchased_sub_id or ""),
+                "converted_props": _props,
+                "converted_event_sent": False,
+            }},
+        )
+        if not getattr(_res, "matched_count", 0):
+            return False            # un autre appel a converti avant nous
+    except Exception as _err:
+        logger.warning(f"[ESSAI-2] conversion non evaluee: {_err}")
+        return False
+
+    # A partir d'ici la conversion EST actee en base. L'analytique ne peut plus
+    # la remettre en cause, seulement la manquer.
+    try:
+        await posthog_capture("free_trial_converted", email=_e, props=_props)
+        await db["subscriptions"].update_one(
+            {"id": _forfait.get("id")}, {"$set": {"converted_event_sent": True}})
+    except Exception as _err:
+        logger.warning(f"[ESSAI-2] free_trial_converted non emis (rejouable): {_err}")
+    return True
+
+
+async def essai2_tracer_octroi(db, email: str, offer_id: str = "",
+                               sessions: int = 0) -> None:
+    """`free_trial_granted` — l'entree du funnel, qui n'etait pas mesuree.
+
+    Non bloquant : un octroi reussi ne doit jamais echouer sur sa mesure.
+    """
+    try:
+        await posthog_capture("free_trial_granted", email=email, props={
+            "offer_id": str(offer_id or "")[:64],
+            "sessions": int(sessions or 0),
+        })
+    except Exception as _err:
+        logger.warning(f"[ESSAI-2] free_trial_granted ignore: {_err}")
