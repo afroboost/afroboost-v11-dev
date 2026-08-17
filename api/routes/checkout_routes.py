@@ -143,19 +143,32 @@ async def create_checkout_session(req: CreateCheckoutRequest):
 
     if total <= 0:
         # Gratuit : pas de paiement, créer directement la réservation
+        #
+        # ESSAI-1 : cette branche mene EXACTEMENT aux memes ecritures que
+        # `/free` — meme helper, meme forfait, meme code AFR-. Garder la garde
+        # sur la seule route `/free` la rendrait contournable en changeant
+        # d'URL. Elle est donc posee ici aussi, avant la premiere ecriture.
+        await _essai1_garde(req.customer_email,
+                            str((req.items[0].id if req.items else "") or ""))
         transaction_id = f"free_{uuid.uuid4().hex[:12]}"
-        await _process_successful_payment(
-            transaction_id=transaction_id,
-            coach_email=req.coach_email,
-            customer_name=req.customer_name,
-            customer_email=req.customer_email,
-            customer_phone=req.customer_phone,
-            items=req.items,
-            total=0,
-            currency="CHF",
-            payment_method="free",
-            discount_code=req.discount_code
-        )
+        try:
+            await _process_successful_payment(
+                transaction_id=transaction_id,
+                coach_email=req.coach_email,
+                customer_name=req.customer_name,
+                customer_email=req.customer_email,
+                customer_phone=req.customer_phone,
+                items=req.items,
+                total=0,
+                currency="CHF",
+                payment_method="free",
+                discount_code=req.discount_code
+            )
+        except Exception:
+            # La creation a echoue : on rend la reservation, sinon la personne
+            # perdrait son essai sans jamais l'avoir recu.
+            await _essai1_liberer(req.customer_email)
+            raise
         # V248: notification push au coach — le flux gratuit ne passe pas par le
         # webhook Stripe, il n'avait donc AUCUNE notif (l'email, lui, part deja
         # depuis _process_successful_payment). Import LAZY pour eviter le cycle :
@@ -595,6 +608,148 @@ class FreeCheckoutRequest(BaseModel):
     discount_code: Optional[str] = None
 
 
+# === ESSAI-1 : UN SEUL ESSAI GRATUIT PAR PERSONNE ===
+#
+# Le probleme n'est pas theorique. Rien, aujourd'hui, n'empeche de repasser dix
+# fois dans le tunnel gratuit : ni index unique (la collection `subscriptions`
+# n'en a aucun), ni garde applicative, ni idempotence. Chaque passage cree un
+# forfait actif et un code AFR- de plus.
+#
+# CE QUI COMPTE COMME « ESSAI DEJA ACCORDE ». On ne se fie ni a `offer_name`
+# (chaine libre, qui a deja derive en production), ni a `subscriptions.source`
+# (« checkout_vitrine » aussi bien pour un essai que pour un pack a 250 CHF),
+# ni au seul `offer_id` (ESSAI-0 ne l'ecrit que depuis peu, et les
+# souscriptions anterieures n'en ont pas — il n'y a pas eu de backfill).
+#
+# On retient les DEUX marqueurs ecrits par du code, jamais par un humain :
+#
+#   1. `discount_codes.payment_method == "free"` ET `total_paid == 0`
+#      — pose par `_process_successful_payment`, donc present sur TOUS les
+#        essais de la vitrine, y compris les anciens, et sur les DEUX chemins
+#        gratuits (`/free` et `/create-session` a total nul) ;
+#   2. `discount_codes.source == "social_proof"`
+#      — l'essai obtenu contre une preuve sociale en est un aussi.
+#
+# Un code offert par le coach (`source: "admin_manual"`) n'entre PAS dans le
+# compte : c'est un geste commercial delibere, il ne doit pas bruler l'essai.
+# Ces deux chemins n'ecrivent d'ailleurs ni `payment_method` ni `total_paid`,
+# le filtre les ecarte donc naturellement.
+#
+# CE QU'ON NE PROMET PAS. L'identite est un e-mail que le visiteur saisit
+# lui-meme : la route n'a aucune authentification. Cette garde arrete les
+# doublons de bonne foi, les rejeux et les doubles clics. Elle n'arrete pas
+# quelqu'un qui change d'adresse — et pretendre le contraire serait mentir.
+
+ESSAI1_RAISON = "free_trial_already_used"
+ESSAI1_MESSAGE = "Votre essai gratuit a déjà été utilisé."
+
+
+async def _essai1_essai_deja_accorde(email: str) -> bool:
+    """Cette adresse a-t-elle DEJA recu un essai gratuit ?
+
+    En cas d'erreur de lecture on renvoie False : mieux vaut un second essai
+    accorde par accident qu'un tunnel casse pour tout le monde parce que la
+    base a hoquete. Le verrou d'unicite (voir plus bas) reste, lui, en place.
+    """
+    _e = (email or "").strip().lower()
+    if not _e:
+        return False
+    try:
+        _doc = await db["discount_codes"].find_one(
+            {"assignedEmail": _e,
+             "$or": [
+                 {"payment_method": "free", "total_paid": 0},
+                 {"source": "social_proof"},
+             ]},
+            {"_id": 1})
+        return _doc is not None
+    except Exception as _err:
+        logger.warning(f"[ESSAI-1] lecture anti-double-essai impossible: {_err}")
+        return False
+
+
+async def _essai1_reclamer(email: str) -> bool:
+    """Reserve l'essai de cette adresse, de facon ATOMIQUE.
+
+    Deux requetes lancees a la meme milliseconde passeraient toutes deux une
+    simple lecture — c'est arrive dans ce depot, documente a `shared.py:425`
+    (« 7 MICROSECONDES d'ecart, double-clic a la creation »). On s'appuie donc
+    sur la seule unicite garantie par MongoDB sans declarer d'index : la cle
+    primaire. `_id` porte l'adresse normalisee ; le second inserteur se prend
+    un doublon et repart les mains vides.
+
+    Meme motif que le jeton BoostTribe (`server.py:10631`), qui utilise le
+    `jti` du JWT comme `_id`.
+    """
+    _e = (email or "").strip().lower()
+    if not _e:
+        return True
+    try:
+        await db["free_trial_claims"].insert_one({
+            "_id": "trial:" + _e,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        return True
+    except Exception as _err:
+        if "duplicate" in str(_err).lower() or "E11000" in str(_err):
+            return False
+        # Toute autre panne : on ne bloque pas le tunnel sur une base capricieuse.
+        logger.warning(f"[ESSAI-1] reservation d'essai impossible: {_err}")
+        return True
+
+
+async def _essai1_liberer(email: str) -> None:
+    """Rend la reservation si la creation a echoue : sans cela, une panne au
+    milieu du tunnel priverait la personne de son essai pour toujours."""
+    _e = (email or "").strip().lower()
+    if not _e:
+        return
+    try:
+        await db["free_trial_claims"].delete_one({"_id": "trial:" + _e})
+    except Exception as _err:
+        logger.error(f"[ESSAI-1] reservation non liberee pour un essai echoue: {_err}")
+
+
+async def _essai1_garde(email: str, offer_id: str = "") -> None:
+    """Refuse un second essai. A appeler AVANT la moindre ecriture.
+
+    Leve 409 avec un message lisible par un humain dans `detail` — le frontend
+    l'affiche deja tel quel — et le motif machine dans un en-tete, pour qu'il
+    puisse orienter vers les offres payantes sans analyser du francais.
+    """
+    if await _essai1_essai_deja_accorde(email):
+        await _essai1_tracer_refus(offer_id)
+        raise HTTPException(
+            status_code=409,
+            detail=ESSAI1_MESSAGE,
+            headers={"X-Refus-Raison": ESSAI1_RAISON},
+        )
+    if not await _essai1_reclamer(email):
+        await _essai1_tracer_refus(offer_id)
+        raise HTTPException(
+            status_code=409,
+            detail=ESSAI1_MESSAGE,
+            headers={"X-Refus-Raison": ESSAI1_RAISON},
+        )
+
+
+async def _essai1_tracer_refus(offer_id: str = "") -> None:
+    """Un refus est un evenement de funnel, pas un incident.
+
+    Aucune donnee personnelle : ni e-mail, ni nom, ni code. `offer_id` est un
+    identifiant de catalogue, deja envoye par `pulse_purchased`. Non bloquant :
+    la mesure ne doit jamais empecher une reponse.
+    """
+    try:
+        from api.routes.shared import posthog_capture as _ph
+        await _ph("trial_refused", email="", props={
+            "reason": "already_used",
+            "offer_id": (offer_id or "")[:64],
+        })
+    except Exception:
+        pass
+
+
 @router.post("/free")
 async def free_checkout(req: FreeCheckoutRequest):
     """V249 — checkout d'une offre GRATUITE (0 CHF), de bout en bout.
@@ -616,19 +771,30 @@ async def free_checkout(req: FreeCheckoutRequest):
     if not req.customer_email or "@" not in req.customer_email:
         raise HTTPException(status_code=400, detail="Email client requis.")
 
+    # ESSAI-1 : ici, et pas ailleurs. `_process_successful_payment` cree le code
+    # AFR- et le forfait des ses premieres lignes ; toute verification posee
+    # apres arriverait devant un essai deja accorde.
+    await _essai1_garde(req.customer_email,
+                        str((req.items[0].id if req.items else "") or ""))
+
     transaction_id = f"free_{uuid.uuid4().hex[:12]}"
-    result = await _process_successful_payment(
-        transaction_id=transaction_id,
-        coach_email=req.coach_email,
-        customer_name=req.customer_name,
-        customer_email=req.customer_email,
-        customer_phone=req.customer_phone,
-        items=req.items,
-        total=0,
-        currency="CHF",
-        payment_method="free",
-        discount_code=req.discount_code,
-    )
+    try:
+        result = await _process_successful_payment(
+            transaction_id=transaction_id,
+            coach_email=req.coach_email,
+            customer_name=req.customer_name,
+            customer_email=req.customer_email,
+            customer_phone=req.customer_phone,
+            items=req.items,
+            total=0,
+            currency="CHF",
+            payment_method="free",
+            discount_code=req.discount_code,
+        )
+    except Exception:
+        # Idem : une panne au milieu du tunnel ne doit pas confisquer l'essai.
+        await _essai1_liberer(req.customer_email)
+        raise
     access_code = (result or {}).get("access_code", "")
     product_name = (result or {}).get("product_name", "Offre gratuite")
 
