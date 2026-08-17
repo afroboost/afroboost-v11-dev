@@ -219,6 +219,8 @@ import AudioPlayer from "./components/AudioPlayer";
 import SvgIcon from "./components/SvgIcon";
 // V184: Espace abonné accès rapide (lien public /espace/AFR-XXXXXX)
 import SubscriberSpace from "./components/SubscriberSpace";
+// Calendrier des sessions, en fenetre par-dessus la vitrine (jamais une page)
+import SessionsModal from "./components/SessionsModal";
 import { useDataCache, invalidateCache } from "./hooks/useDataCache";
 import { applyPrimaryColor, persistThemeColors } from "./utils/themeColor"; // V259 + V295 (anti-FOUC)
 import { PublicationsCarousel } from "./components/Publications"; // V261
@@ -4731,6 +4733,8 @@ function App() {
 
   // Navigation et filtrage
   const [activeFilter, setActiveFilter] = useState('all');
+  // « Sessions » ouvre une fenetre : la page de fond ne change pas d'un pixel.
+  const [showSessionsModal, setShowSessionsModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
   // Indicateur de scroll pour les nouveaux utilisateurs
@@ -7453,6 +7457,26 @@ function App() {
           </div>
         </div>
       )}
+      {/* Calendrier des sessions. Le composant se rend lui-meme par PORTAIL :
+          place ici a l'interieur d'une `.fade-in-section`, son `position: fixed`
+          serait capture par le `transform` permanent que laisse l'animation. */}
+      <SessionsModal
+        open={showSessionsModal}
+        onClose={() => setShowSessionsModal(false)}
+        courses={courses}
+        onReserve={(course) => {
+          // On relie la seance a l'offre qui la porte. Aucune offre en base ne
+          // declare aujourd'hui `linked_course_ids` : le repli vers la liste
+          // des offres est donc le chemin REEL, pas un cas de bord.
+          const liee = (Array.isArray(offers) ? offers : []).find(
+            (o) => Array.isArray(o?.linked_course_ids)
+              && course?.id && o.linked_course_ids.includes(course.id)
+          );
+          if (liee) { handleSelectOffer(liee); return; }
+          const el = document.getElementById('offers-section');
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }}
+      />
       {showConfirmPayment && <ConfirmPaymentOverlay t={t} onConfirm={confirmPayment} onCancel={() => { setShowConfirmPayment(false); setPendingReservation(null); }} />}
       {/* v158.7: SuccessOverlay et PaymentSuccessPage désactivés.
           L'utilisateur reçoit sa confirmation par email (avec QR code, code AFRO-XXXX, guide).
@@ -7774,8 +7798,18 @@ function App() {
             <button
               key={tab.key}
               onClick={() => {
+                // « Sessions » n'est plus un filtre : c'est une fenetre. On ne
+                // touche donc NI au filtre actif, NI au defilement — la page
+                // reste exactement ou le visiteur l'avait laissee, et il la
+                // retrouve intacte en fermant.
+                //
+                // L'ancienne cible `sessions-section` sort de la table : cette
+                // ancre n'existe plus depuis que le bloc qui la portait est
+                // neutralise (`showSessions = false`, V225), et le defilement
+                // echouait donc en silence.
+                if (tab.key === 'sessions') { setShowSessionsModal(true); return; }
                 setActiveFilter(tab.key);
-                const sectionMap = { sessions: 'sessions-section', offers: 'offers-section', shop: 'products-section' };
+                const sectionMap = { offers: 'offers-section', shop: 'products-section' };
                 if (sectionMap[tab.key]) {
                   const el = document.getElementById(sectionMap[tab.key]);
                   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
