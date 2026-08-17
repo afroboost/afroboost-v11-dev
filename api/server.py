@@ -14904,18 +14904,52 @@ async def get_all_contacts_unified(request: Request):
         except Exception as _e:
             logger.warning(f"[V300] enrichissement subscriber_infos ignoré: {_e}")
 
+        # CONTACTS V2 — les quatre dimensions derivees, en DEUX lectures
+        # groupees, quel que soit le nombre de contacts. Aucune ecriture.
+        try:
+            _abos = await c2_index_abonnements()
+            _cons = await c2_index_consentements()
+            for c in contacts:
+                if c.get("type") != "group":
+                    c2_enrichir(c, _abos, _cons)
+        except Exception as _c2err:
+            # L'enrichissement est un confort : s'il echoue, la liste doit
+            # rester utilisable telle qu'avant.
+            logger.warning("[C2] enrichissement ignore : %s", _c2err)
+
         # Sort: groupes d'abord, puis contacts par nom
         contacts.sort(key=lambda x: (0 if x["type"] == "group" else 1, (x.get("name") or "").lower()))
 
         groups_count = len([c for c in contacts if c["type"] == "group"])
         users_count = len([c for c in contacts if c["type"] == "user"])
 
+        # CONTACTS V2 — des compteurs REELS, calcules sur l'ensemble et non
+        # sur ce que l'ecran affiche. Ils remplacent le plafond muet de 200.
+        _u = [c for c in contacts if c.get("type") != "group"]
+        _compteurs = {
+            "tous": len(_u),
+            "participants": sum(1 for c in _u if c.get("contact_type") == "participant"),
+            "prospects": sum(1 for c in _u if c.get("contact_type") == "prospect"),
+            "partenaires": sum(1 for c in _u if c.get("contact_type") == "partner"),
+            "autres": sum(1 for c in _u if c.get("contact_type") == "other"),
+            "non_classes": sum(1 for c in _u if not c.get("contact_type")),
+            "abonnes_actifs": sum(1 for c in _u if c.get("statut_abonnement") == "actif"),
+            "anciens_abonnes": sum(1 for c in _u if c.get("statut_abonnement") == "ancien"),
+            "non_abonnes": sum(1 for c in _u if c.get("statut_abonnement") == "non_abonne"),
+            "par_zone": {_z: sum(1 for c in _u if c.get("zone") == _z) for _z in C2_ZONES},
+            "avec_email": sum(1 for c in _u if (c.get("canaux") or {}).get("email")),
+            "avec_whatsapp": sum(1 for c in _u if (c.get("canaux") or {}).get("whatsapp")),
+            "avec_telephone": sum(1 for c in _u if (c.get("canaux") or {}).get("telephone")),
+            "consentement_email": {_e: sum(1 for c in _u if (c.get("consentement") or {}).get("email") == _e) for _e in C2_CONSENTEMENTS},
+            "consentement_whatsapp": {_e: sum(1 for c in _u if (c.get("consentement") or {}).get("whatsapp") == _e) for _e in C2_CONSENTEMENTS},
+        }
         return {
             "success": True,
             "contacts": contacts,
             "total": len(contacts),
             "groups_count": groups_count,
-            "users_count": users_count
+            "users_count": users_count,
+            "compteurs": _compteurs,
         }
     except Exception as e:
         logger.error(f"[CONTACTS-ALL] Erreur: {e}")
@@ -25502,6 +25536,167 @@ async def t3_dry_run_participant(request: Request, groupe: str = "", ids: int = 
         "groupe_vert": _liste_vert if (groupe == "vert" and ids) else None,
         "sources_vert": list(_SOURCES_VERT),
     }
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CONTACTS V2 — QUATRE DIMENSIONS, TROIS DERIVEES
+#
+# Ce qui se confondait dans un seul ecran se separe ici :
+#
+#   RELATION           `contact_type`, pose a la main par le coach   (STOCKE)
+#   STATUT COMMERCIAL  actif / ancien / non abonne                   (DERIVE)
+#   CANAL              e-mail, WhatsApp, telephone disponibles       (DERIVE)
+#   ZONE               pays deduit de l'indicatif E.164              (DERIVE)
+#
+# Et une cinquieme, qu'on ne confondra pas avec le canal :
+#
+#   CONSENTEMENT       autorise / refuse / INCONNU, PAR CANAL        (DERIVE)
+#
+# AVOIR UN NUMERO N'EST PAS AVOIR LE DROIT D'ECRIRE. Le consentement vient de
+# la collection `subscribers` (opt-in V332), seule a porter une preuve datee
+# avec le texte accepte. Sans trace, l'etat est INCONNU — jamais « autorise ».
+# Aucun consentement n'est fabrique, aucun backfill n'est fait.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Indicatifs telephoniques -> (code pays, zone). Le pays est conserve pour
+# pouvoir filtrer finement (Cameroun, Senegal…) tandis que l'ecran regroupe
+# par zone. Liste volontairement courte : ce qui n'y figure pas ressort
+# « autre », jamais devine.
+C2_INDICATIFS = {
+    "41": ("CH", "suisse"),
+    "33": ("FR", "europe"), "32": ("BE", "europe"), "49": ("DE", "europe"),
+    "39": ("IT", "europe"), "34": ("ES", "europe"), "44": ("GB", "europe"),
+    "351": ("PT", "europe"), "31": ("NL", "europe"), "43": ("AT", "europe"),
+    "352": ("LU", "europe"), "377": ("MC", "europe"),
+    "237": ("CM", "afrique"), "221": ("SN", "afrique"), "225": ("CI", "afrique"),
+    "223": ("ML", "afrique"), "226": ("BF", "afrique"), "227": ("NE", "afrique"),
+    "228": ("TG", "afrique"), "229": ("BJ", "afrique"), "233": ("GH", "afrique"),
+    "234": ("NG", "afrique"), "236": ("CF", "afrique"), "241": ("GA", "afrique"),
+    "242": ("CG", "afrique"), "243": ("CD", "afrique"), "212": ("MA", "afrique"),
+    "213": ("DZ", "afrique"), "216": ("TN", "afrique"), "220": ("GM", "afrique"),
+    "224": ("GN", "afrique"), "235": ("TD", "afrique"), "254": ("KE", "afrique"),
+    "27": ("ZA", "afrique"),
+}
+
+C2_ZONES = ("suisse", "europe", "afrique", "autre", "inconnue")
+C2_STATUTS = ("actif", "ancien", "non_abonne")
+C2_CONSENTEMENTS = ("autorise", "refuse", "inconnu")
+
+
+def c2_pays_zone(numero: str):
+    """(pays, zone) depuis un numero, ou (None, "inconnue").
+
+    UN INDICATIF MALFORME N'EST JAMAIS UN PAYS CERTAIN. Un numero national
+    (« 079… ») ne dit rien du pays : deux pays ecrivent leurs numeros
+    localement de la meme facon. Dans le doute, « inconnue » — c'est une
+    information, pas un echec.
+    """
+    _n = str(numero or "").strip().replace(" ", "").replace(".", "").replace("-", "")
+    if _n.startswith("00"):
+        _n = "+" + _n[2:]
+    if not _n.startswith("+"):
+        return None, "inconnue"
+    _chiffres = "".join(c for c in _n[1:] if c.isdigit())
+    if len(_chiffres) < 8:
+        return None, "inconnue"
+    for _l in (3, 2, 1):
+        _p = _chiffres[:_l]
+        if _p in C2_INDICATIFS:
+            _pays, _zone = C2_INDICATIFS[_p]
+            return _pays, _zone
+    return None, "autre"
+
+
+def c2_canaux(contact: dict) -> dict:
+    """Les canaux DISPONIBLES — ce qui ne dit rien du droit de s'en servir."""
+    _c = contact or {}
+    _num = str(_c.get("whatsapp") or "").strip() or str(_c.get("phone") or "").strip()
+    return {
+        "email": bool(str(_c.get("email") or "").strip()),
+        "whatsapp": bool(str(_c.get("whatsapp") or "").strip()),
+        "telephone": bool(_num),
+    }
+
+
+def c2_consentement(statut_optin) -> str:
+    """`confirmed` -> autorise, `opted_out` -> refuse, tout le reste inconnu.
+
+    `pending` reste INCONNU : une inscription non confirmee n'est pas une
+    autorisation. Et l'absence de document ne vaut jamais accord.
+    """
+    _s = str(statut_optin or "").strip().lower()
+    if _s == "confirmed":
+        return "autorise"
+    if _s == "opted_out":
+        return "refuse"
+    return "inconnu"
+
+
+async def c2_index_abonnements() -> dict:
+    """email -> "actif" | "ancien". Absent = non abonne.
+
+    La verite vient de `subscriptions` et de `forfait_utilisable`, jamais du
+    drapeau `isSubscriber` : celui-ci est ecrit une seule fois a l'activation
+    et n'est JAMAIS remis a faux — un abonne de mars dont le forfait a expire
+    le porte encore. S'y fier afficherait « actif » a d'anciens abonnes.
+    """
+    from api.routes.shared import forfait_utilisable as _utilisable
+    _index = {}
+    try:
+        async for _s in db.subscriptions.find({}, {
+                "_id": 0, "email": 1, "status": 1, "expires_at": 1,
+                "remaining_sessions": 1, "total_sessions": 1}):
+            _m = str(_s.get("email") or "").strip().lower()
+            if not _m:
+                continue
+            _ok = False
+            try:
+                _ok = bool(_utilisable(_s)[0])
+            except Exception:
+                _ok = False
+            if _ok:
+                _index[_m] = "actif"
+            elif _index.get(_m) != "actif":
+                _index[_m] = "ancien"
+    except Exception as _err:
+        logger.warning("[C2] abonnements illisibles : %s", _err)
+    return _index
+
+
+async def c2_index_consentements() -> dict:
+    """(canal, valeur normalisee) -> statut opt-in. Une seule lecture."""
+    _index = {}
+    try:
+        async for _s in db.subscribers.find({}, {
+                "_id": 0, "channel": 1, "value": 1, "status": 1}):
+            _canal = str(_s.get("channel") or "").strip().lower()
+            _val = str(_s.get("value") or "").strip().lower()
+            if _canal == "whatsapp":
+                _val = "".join(c for c in _val if c.isdigit())
+            if _canal and _val:
+                _index[(_canal, _val)] = _s.get("status")
+    except Exception as _err:
+        logger.warning("[C2] consentements illisibles : %s", _err)
+    return _index
+
+
+def c2_enrichir(contact: dict, abonnements: dict, consentements: dict) -> dict:
+    """Ajoute les quatre dimensions derivees a une fiche contact."""
+    _c = contact or {}
+    _mail = str(_c.get("email") or "").strip().lower()
+    _num = str(_c.get("whatsapp") or "").strip() or str(_c.get("phone") or "").strip()
+    _pays, _zone = c2_pays_zone(_num)
+    _chiffres = "".join(ch for ch in _num if ch.isdigit())
+    _c["statut_abonnement"] = abonnements.get(_mail, "non_abonne") if _mail else "non_abonne"
+    _c["pays"] = _pays
+    _c["zone"] = _zone
+    _c["canaux"] = c2_canaux(_c)
+    _c["consentement"] = {
+        "email": c2_consentement(consentements.get(("email", _mail))) if _mail else "inconnu",
+        "whatsapp": c2_consentement(consentements.get(("whatsapp", _chiffres))) if _chiffres else "inconnu",
+    }
+    return _c
 
 
 

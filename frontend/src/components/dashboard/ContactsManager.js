@@ -15,6 +15,10 @@ import { copyToClipboard } from '../../utils/clipboard';
 import SvgIcon from '../SvgIcon';
 // ESSAI-5a-2 : la classification explicite du contact.
 import { TYPES_CONTACT } from '../../utils/contactType';
+// CONTACTS V2 : les quatre dimensions vivent dans un module a part, et tous
+// les criteres derriere UN bouton — pour ne pas ajouter une rangee de chips.
+import PanneauFiltresContacts from './PanneauFiltresContacts';
+import { filtrerContacts, FILTRES_VIDES, nombreFiltresActifs, VUES_RAPIDES } from '../../utils/contactsFiltres';
 
 export default function ContactsManager({ API, coachEmail }) {
   const [contacts, setContacts] = useState([]);
@@ -37,6 +41,12 @@ export default function ContactsManager({ API, coachEmail }) {
   // V154: Catégories de contacts
   const [categories, setCategories] = useState([]);
   const [filterCategory, setFilterCategory] = useState('all');
+  // CONTACTS V2 — filtres cumulables, compteurs reels rendus par le serveur.
+  const [filtresV2, setFiltresV2] = useState(FILTRES_VIDES);
+  const [panneauOuvert, setPanneauOuvert] = useState(false);
+  const [vueRapide, setVueRapide] = useState('tous');
+  const [compteurs, setCompteurs] = useState(null);
+  const [affiches, setAffiches] = useState(100);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [newCatName, setNewCatName] = useState('');
   const [newCatColor, setNewCatColor] = useState('#8B5CF6');
@@ -188,6 +198,7 @@ export default function ContactsManager({ API, coachEmail }) {
       const res = await axios.get(`${API}/contacts/all`, { headers });
       if (res.data.success) {
         setContacts(res.data.contacts || []);
+        setCompteurs(res.data.compteurs || null);
       }
     } catch (err) {
       console.error('Load contacts error:', err);
@@ -505,6 +516,10 @@ export default function ContactsManager({ API, coachEmail }) {
     return matchSearch && matchType && matchCategory;
   });
 
+  // CONTACTS V2 — les quatre dimensions s'appliquent PAR-DESSUS les filtres
+  // historiques (groupes, Google, categories), qui restent intacts.
+  const filtresAppliques = filtrerContacts(filtered, filtresV2, '');
+
   const groupsCount = contacts.filter(c => c.type === 'group').length;
   const usersCount = contacts.filter(c => c.type === 'user').length;
   const googleCount = contacts.filter(c => c.source === 'google').length;
@@ -797,6 +812,51 @@ export default function ContactsManager({ API, coachEmail }) {
             color: '#fff', fontSize: '13px', outline: 'none', boxSizing: 'border-box', marginBottom: '8px'
           }}
         />
+        {/* CONTACTS V2 — cinq vues rapides avec des compteurs REELS, et un
+            SEUL bouton pour tout le reste. Les critères nouveaux ne montent
+            jamais dans l'en-tête : c'est ce qui garde le mobile lisible. */}
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+          <button
+            type="button"
+            data-testid="ouvrir-filtres"
+            onClick={() => setPanneauOuvert(true)}
+            style={{
+              padding: '7px 13px', borderRadius: 999, fontSize: 12, cursor: 'pointer',
+              border: nombreFiltresActifs(filtresV2)
+                ? '1px solid var(--primary-color, #D91CD2)' : '1px solid rgba(255,255,255,0.12)',
+              background: nombreFiltresActifs(filtresV2) ? 'var(--primary-color, #D91CD2)' : 'transparent',
+              color: nombreFiltresActifs(filtresV2) ? '#fff' : 'rgba(255,255,255,0.7)',
+              fontWeight: 700, whiteSpace: 'nowrap',
+            }}
+          >
+            Filtres{nombreFiltresActifs(filtresV2) ? ` (${nombreFiltresActifs(filtresV2)})` : ''}
+          </button>
+          {VUES_RAPIDES.map((v) => {
+            const n = compteurs ? ({
+              tous: compteurs.tous, participants: compteurs.participants,
+              abonnes: compteurs.abonnes_actifs, prospects: compteurs.prospects,
+              non_classes: compteurs.non_classes,
+            })[v.id] : null;
+            const actif = vueRapide === v.id;
+            return (
+              <button
+                key={v.id}
+                type="button"
+                data-testid={`vue-${v.id}`}
+                onClick={() => { setVueRapide(v.id); setFiltresV2({ ...v.filtres }); setAffiches(100); }}
+                style={{
+                  padding: '7px 12px', borderRadius: 999, fontSize: 12, cursor: 'pointer',
+                  border: actif ? '1px solid var(--primary-color, #D91CD2)' : '1px solid rgba(255,255,255,0.10)',
+                  background: actif ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)' : 'transparent',
+                  color: actif ? '#fff' : 'rgba(255,255,255,0.55)', whiteSpace: 'nowrap',
+                }}
+              >
+                {v.libelle}{typeof n === 'number' ? ` ${n}` : ''}
+              </button>
+            );
+          })}
+        </div>
+
         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
           {[
             { key: 'all', label: 'Tous' },
@@ -975,7 +1035,7 @@ export default function ContactsManager({ API, coachEmail }) {
             {searchQuery ? 'Aucun résultat' : 'Aucun contact'}
           </div>
         ) : (
-          filtered.slice(0, 200).map((c, i) => {
+          filtresAppliques.slice(0, affiches).map((c, i) => {
             const isGroup = c.type === 'group';
             const isSelected = selectedIds.has(c.id);
             return (
@@ -1142,11 +1202,37 @@ export default function ContactsManager({ API, coachEmail }) {
             );
           })
         )}
-        {filtered.length > 200 && (
-          <div style={{ padding: '10px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>
-            ... et {filtered.length - 200} autres contacts
-          </div>
+        {/* CONTACTS V2 — l'ancien message disait « … et N autres contacts »
+            sans donner aucun moyen de les atteindre. Il est remplacé par un
+            chargement progressif qui les rend RÉELLEMENT accessibles. */}
+        {filtresAppliques.length > affiches && (
+          <button
+            type="button"
+            data-testid="charger-plus"
+            onClick={() => setAffiches(affiches + 100)}
+            style={{
+              width: '100%', marginTop: 10, padding: '11px 14px', borderRadius: 10,
+              cursor: 'pointer', background: 'rgba(255,255,255,0.05)',
+              border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.75)',
+              fontSize: 13,
+            }}
+          >
+            Afficher plus — {affiches} sur {filtresAppliques.length}
+          </button>
         )}
+        {filtresAppliques.length > 0 && filtresAppliques.length <= affiches && (
+          <p data-testid="total-affiche" style={{ marginTop: 10, textAlign: 'center',
+               color: 'rgba(255,255,255,0.35)', fontSize: 11 }}>
+            {filtresAppliques.length} contact{filtresAppliques.length > 1 ? 's' : ''} affiché{filtresAppliques.length > 1 ? 's' : ''}
+          </p>
+        )}
+
+        <PanneauFiltresContacts
+          ouvert={panneauOuvert}
+          filtres={filtresV2}
+          onChange={(f) => { setFiltresV2(f); setVueRapide(''); setAffiches(100); }}
+          onFermer={() => setPanneauOuvert(false)}
+        />
       </div>
 
       {/* V185 F1: Modal "Ajouter un contact" manuel */}
