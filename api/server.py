@@ -25374,6 +25374,117 @@ async def t3_suggestions_participant(request: Request):
 
 
 
+@api_router.get("/coach/contacts/dry-run-participant")
+async def t3_dry_run_participant(request: Request):
+    """SIMULATION — qui deviendrait « participant » si l'on basculait le stock.
+
+    STRICTEMENT EN LECTURE. Aucun `contact_type` n'est ecrit, aucun document
+    n'est modifie. Cette route existe parce que `GET /chat/participants` est
+    plafonnee a 1000 documents : on ne peut pas compter la base depuis le
+    client, et decider d'une bascule sur un echantillon tronque serait decider
+    a l'aveugle.
+
+    Elle croise trois choses que la base sait deja :
+      - l'origine du contact (`source`), qui dit COMMENT il est entre ;
+      - son etat commercial (`isSubscriber`, `subscriptionCode`), qui n'est PAS
+        une preuve de participation — on peut etre abonne sans etre jamais venu,
+        et etre venu sans etre abonne ;
+      - une presence REELLEMENT confirmee (`reservations.validated`), seule
+        preuve forte que la personne a vecu Afroboost.
+    """
+    _email = await _n1b3b2_coach_appelant(request)
+    _filtre = {} if is_super_admin(_email) else {"coach_id": _email.strip().lower()}
+
+    # ── Les presences confirmees, par adresse. Une seule lecture.
+    _presents = set()
+    try:
+        _q = {"validated": True}
+        if not is_super_admin(_email):
+            _q["coach_id"] = _email.strip().lower()
+        async for _r in db.reservations.find(_q, {"_id": 0, "userEmail": 1}):
+            _m = str(_r.get("userEmail") or "").strip().lower()
+            if _m:
+                _presents.add(_m)
+    except Exception as _err:
+        logger.warning("[DRY] presences illisibles : %s", _err)
+
+    _bascule = "2026-08-17T19:22:33+00:00"   # deploiement d'ESSAI-5a-2
+    _par_source = {}
+    _total = 0
+    _abonnes = 0
+    _classes = 0
+    _avec_presence = 0
+    _posterieurs = 0
+
+    try:
+        # Pas de `to_list` : on parcourt le curseur, donc AUCUN plafond.
+        async for _c in db.chat_participants.find(_filtre, {
+                "_id": 0, "source": 1, "email": 1, "created_at": 1,
+                "isSubscriber": 1, "subscriptionCode": 1, "code": 1,
+                "contact_type": 1, "categories": 1}):
+            _total += 1
+            _src = str(_c.get("source") or "(aucune)")
+            _s = _par_source.setdefault(_src, {
+                "total": 0, "abonnes": 0, "presences": 0,
+                "deja_classes": 0, "posterieurs": 0, "candidats": 0,
+                "avec_email": 0, "avec_categorie": 0})
+            _s["total"] += 1
+
+            _mail = str(_c.get("email") or "").strip().lower()
+            if _mail:
+                _s["avec_email"] += 1
+            if _c.get("categories"):
+                _s["avec_categorie"] += 1
+
+            _est_abonne = bool(_c.get("isSubscriber") is True
+                               or str(_c.get("subscriptionCode") or "").strip()
+                               or str(_c.get("code") or "").strip())
+            if _est_abonne:
+                _abonnes += 1
+                _s["abonnes"] += 1
+
+            _a_presence = bool(_mail and _mail in _presents)
+            if _a_presence:
+                _avec_presence += 1
+                _s["presences"] += 1
+
+            _deja = bool(str(_c.get("contact_type") or "").strip())
+            if _deja:
+                _classes += 1
+                _s["deja_classes"] += 1
+
+            _apres = str(_c.get("created_at") or "") >= _bascule
+            if _apres:
+                _posterieurs += 1
+                _s["posterieurs"] += 1
+
+            # Candidat = stock historique, non classe. L'abonnement n'exclut
+            # PAS : « participant » decrit une relation, « abonne » un etat
+            # commercial, et les deux peuvent coexister.
+            if not _deja and not _apres:
+                _s["candidats"] += 1
+    except Exception as _err:
+        logger.error("[DRY] contacts illisibles : %s", _err)
+        raise HTTPException(status_code=503, detail="Simulation momentanément indisponible")
+
+    return {
+        "dry_run": True,
+        "aucune_ecriture": True,
+        "bascule_reference": _bascule,
+        "total_contacts": _total,
+        "abonnes_actuels": _abonnes,
+        "avec_presence_confirmee": _avec_presence,
+        "deja_classes": _classes,
+        "crees_apres_bascule": _posterieurs,
+        "candidats_stock_historique": sum(s["candidats"] for s in _par_source.values()),
+        "par_source": dict(sorted(_par_source.items(),
+                                  key=lambda kv: -kv[1]["total"])),
+        "presences_distinctes_total": len(_presents),
+        "note": "Lecture seule — aucun contact_type n'a été écrit.",
+    }
+
+
+
 # V183: Cron rappel 1h avant un cours réservé
 @api_router.get("/cron/reservation-reminders")
 async def cron_reservation_reminders():
