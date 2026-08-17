@@ -90,6 +90,7 @@ RESEND_API_KEY = "re_faux_jamais_utilisee"
 A_EXTRAIRE = ["_v259_primary_rgb", "_email_wrapper",
               "n1b2_cle", "n1b2_cible", "n1b2_titre", "n1b2_corps",
               "n1b2_valider_regles", "n1b3b2_plan", "n1b2_regles_du_coach",
+              "n1b3b2_regles_trop_proches", "rv3_ecrire_rappels_du_cours",
               "rv2_deja_envoye", "rv2_normaliser_marqueur", "rv2_reserver_canal",
               "rv2_liberer_canal", "rv2_canal_autorise", "rv2_email_valide",
               "rv2_date_lisible", "rv2_contenu_rappel", "rv2_envoyer_email_rappel",
@@ -210,12 +211,14 @@ class _Coll(object):
 
     def __init__(self, docs=None):
         self.docs = docs or []
+        self.lectures = 0
 
     def find(self, q=None, p=None):
         return _Curseur([d for d in self.docs if _match(d, q or {})])
 
     async def find_one(self, q, p=None):
         await asyncio.sleep(0)
+        self.lectures += 1
         import copy
         for d in self.docs:
             if _match(d, q):
@@ -232,11 +235,62 @@ class _Coll(object):
         return _Res(0)
 
 
+COURS_ACTIF = {"id": "c1", "name": "Danse Afro", "archived": False,
+               "reminders_enabled": True,
+               "reminder_rules": [{"type": "relative", "minutes": 60}]}
+
+
+def cours(cid="c1", actif=True, regles=None, archive=False, **extra):
+    """Un cours de test. `actif=None` laisse le champ ABSENT — le cas du parc
+    historique, qui doit rester muet."""
+    d = {"id": cid, "name": "Danse Afro", "archived": archive}
+    if actif is not None:
+        d["reminders_enabled"] = bool(actif)
+    if regles is not None:
+        d["reminder_rules"] = regles
+    elif actif:
+        d["reminder_rules"] = [{"type": "relative", "minutes": 60}]
+    d.update(extra)
+    return d
+
+
 class _Base(object):
-    def __init__(self, resas, prefs=None, profils=None):
+    def __init__(self, resas, prefs=None, profils=None, cours_docs=None):
         self.reservations = _Coll(resas)
         self.notification_preferences = _Coll(prefs or [])
         self.coach_profiles = _Coll(profils or [])
+        self.courses = _Coll([dict(COURS_ACTIF)] if cours_docs is None else cours_docs)
+
+
+class _HTTP(Exception):
+    def __init__(self, status_code=500, detail=""):
+        self.status_code = status_code
+        self.detail = detail
+        Exception.__init__(self, "%s %s" % (status_code, detail))
+
+
+APPELANT = ["coach@exemple.com"]
+
+
+async def _appelant(request):
+    await asyncio.sleep(0)
+    return APPELANT[0]
+
+
+class _Requete(object):
+    """Requete minimale : la route ne lit que son corps JSON."""
+
+    def __init__(self, corps=None):
+        self._corps = corps if corps is not None else {}
+
+    async def json(self):
+        await asyncio.sleep(0)
+        if self._corps is _ILLISIBLE:
+            raise ValueError("corps illisible")
+        return self._corps
+
+
+_ILLISIBLE = object()
 
 
 # ------------------------------------------------------------- les mouchards
@@ -259,11 +313,11 @@ class _FauxResend(object):
     Emails = _FauxEmails
 
 
-def bac(resas, prefs=None, profils=None, push_ok=True, email_ok=True):
+def bac(resas, prefs=None, profils=None, push_ok=True, email_ok=True, cours_docs=None):
     PUSHS[:] = []
     EMAILS[:] = []
     _FauxEmails.echec = not email_ok
-    base = _Base(resas, prefs, profils)
+    base = _Base(resas, prefs, profils, cours_docs)
 
     async def faux_push(email, titre, corps, data=None):
         await asyncio.sleep(0)
@@ -285,7 +339,13 @@ def bac(resas, prefs=None, profils=None, push_ok=True, email_ok=True):
         "_v259_primary_color": faux_couleur,
         "logger": type("l", (), {k: staticmethod(lambda *a, **kw: None)
                                  for k in ("info", "warning", "error", "debug")}),
-        "api_router": type("r", (), {"get": staticmethod(lambda *a, **k: (lambda f: f))}),
+        "api_router": type("r", (), {
+            "get": staticmethod(lambda *a, **k: (lambda f: f)),
+            "put": staticmethod(lambda *a, **k: (lambda f: f))}),
+        "HTTPException": _HTTP,
+        "Request": object,
+        "is_super_admin": lambda e: (e or "").lower() == "admin@exemple.com",
+        "_n1b3b2_coach_appelant": _appelant,
     }
     morceaux = [CONSTANTES] + [extraire(f) for f in A_EXTRAIRE]
     exec(compile("\n\n".join(morceaux), "<rv2>", "exec"), b)
@@ -318,6 +378,7 @@ def resa(rid="r1", email="abo@exemple.com", course_time="18:30",
         "courseName": "Danse Afro",
         "courseTime": course_time,
         "coach_id": "coach@exemple.com",
+        "courseId": "c1",
         "datetime": quand.astimezone(ZURICH).isoformat() if ZURICH else quand.isoformat(),
     }
     d.update(extra)
@@ -543,6 +604,268 @@ async def scenarios():
 
 
 # ============================================================================
+#            NIVEAU 1 — LE COACH DECIDE QUELS COURS ENVOIENT DES RAPPELS
+# ============================================================================
+async def scenarios_niveau1():
+    R60 = [{"type": "relative", "minutes": 60}]
+    R1440 = [{"type": "relative", "minutes": 1440}]
+
+    # --- N1. champ absent : le parc historique reste muet ------------------
+    b, base = bac([resa()], cours_docs=[cours(actif=None)])
+    await passage(b)
+    verifier("N1. reminders_enabled ABSENT -> aucun rappel",
+             len(PUSHS) == 0 and len(EMAILS) == 0,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+    verifier("N1b. et aucun marqueur n'est laisse sur la reservation",
+             marqueur(base.reservations.docs[0]) in (None, {}))
+
+    # --- N2. explicitement desactive ---------------------------------------
+    b, base = bac([resa()], cours_docs=[cours(actif=False)])
+    await passage(b)
+    verifier("N2. reminders_enabled = false -> aucun rappel",
+             len(PUSHS) == 0 and len(EMAILS) == 0,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- N3. active avec des regles valides --------------------------------
+    b, base = bac([resa()], cours_docs=[cours(actif=True, regles=R60)])
+    await passage(b)
+    verifier("N3. actif + regles valides -> les deux canaux",
+             len(PUSHS) == 1 and len(EMAILS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- N4. deux cours, un seul actif -------------------------------------
+    b, base = bac([resa(rid="rA", courseId="cA"), resa(rid="rB", courseId="cB")],
+                  cours_docs=[cours(cid="cA", actif=True, regles=R60),
+                              cours(cid="cB", actif=False)])
+    await passage(b)
+    _dests = sorted(set([p["email"] for p in PUSHS]))
+    verifier("N4. cours A ON / cours B OFF -> seul A emet",
+             len(PUSHS) == 1 and len(EMAILS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+    verifier("N4b. c'est bien la reservation du cours A qui a ete marquee",
+             bool(marqueur(base.reservations.docs[0]))
+             and not marqueur(base.reservations.docs[1]),
+             "%r / %r" % (marqueur(base.reservations.docs[0]),
+                          marqueur(base.reservations.docs[1])))
+
+    # --- N5. chaque cours utilise SES regles --------------------------------
+    # A vise 60 min avant (donc dans la fenetre), B vise 24 h avant (hors
+    # fenetre pour un cours dans 60 min). Seul A doit sortir.
+    b, base = bac([resa(rid="rA", courseId="cA"), resa(rid="rB", courseId="cB")],
+                  cours_docs=[cours(cid="cA", actif=True, regles=R60),
+                              cours(cid="cB", actif=True, regles=R1440)])
+    await passage(b)
+    verifier("N5. regles differentes par cours -> seule celle de A se declenche",
+             len(PUSHS) == 1 and len(EMAILS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+    verifier("N5b. B, regle a 24 h, n'est pas marque pour ce passage",
+             not marqueur(base.reservations.docs[1]),
+             repr(marqueur(base.reservations.docs[1])))
+
+    # --- N6. actif mais sans regle : fail-closed ---------------------------
+    b, base = bac([resa()], cours_docs=[cours(actif=True, regles=[])])
+    await passage(b)
+    verifier("N6. actif SANS regle exploitable -> aucun rappel (fail-closed)",
+             len(PUSHS) == 0 and len(EMAILS) == 0,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    b, base = bac([resa()], cours_docs=[cours(actif=True, regles=[{"type": "n_importe_quoi"}])])
+    await passage(b)
+    verifier("N6b. regles invalides -> aucun rappel, aucun repli invente",
+             len(PUSHS) == 0 and len(EMAILS) == 0,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- N7. AUCUN repli sur les regles globales du coach ------------------
+    b, base = bac([resa()],
+                  profils=[{"email": "coach@exemple.com", "reminder_rules": R60}],
+                  cours_docs=[cours(actif=None)])
+    await passage(b)
+    verifier("N7. cours non configure + regles globales coach -> toujours RIEN",
+             len(PUSHS) == 0 and len(EMAILS) == 0,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+    verifier("N7b. le cron ne lit meme plus coach_profiles",
+             base.coach_profiles.lectures == 0,
+             "%d lecture(s)" % base.coach_profiles.lectures)
+
+    # --- N8. cours archive --------------------------------------------------
+    b, base = bac([resa()], cours_docs=[cours(actif=True, regles=R60, archive=True)])
+    await passage(b)
+    verifier("N8. cours archive -> aucun rappel meme s'il est actif",
+             len(PUSHS) == 0 and len(EMAILS) == 0,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- N9. reservation sans courseId --------------------------------------
+    d = resa(); d.pop("courseId")
+    b, base = bac([d])
+    await passage(b)
+    verifier("N9. reservation sans cours rattache -> aucun rappel",
+             len(PUSHS) == 0 and len(EMAILS) == 0,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- N10. le cours est lu UNE fois, pas une fois par reservation --------
+    _lot = [resa(rid="r%d" % i, email="abo%d@exemple.com" % i) for i in range(12)]
+    b, base = bac(_lot, cours_docs=[cours(actif=True, regles=R60)])
+    await passage(b)
+    verifier("N10. 12 reservations du meme cours -> 1 SEULE lecture de cours",
+             base.courses.lectures == 1, "%d lecture(s)" % base.courses.lectures)
+    verifier("N10b. et les 12 rappels partent bien",
+             len(PUSHS) == 12 and len(EMAILS) == 12,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- N11. le niveau 1 prime sur les preferences participant -------------
+    b, base = bac([resa()],
+                  prefs=[pref(before_class_push=True, before_class_email=True)],
+                  cours_docs=[cours(actif=False)])
+    await passage(b)
+    verifier("N11. cours OFF + participant tout ON -> AUCUN envoi",
+             len(PUSHS) == 0 and len(EMAILS) == 0,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- N12. cours ON : les preferences participant reprennent la main -----
+    for _titre, _p, _ap, _ae in (
+            ("N12. cours ON + Push ON + Email ON -> deux canaux", {}, 1, 1),
+            ("N13. cours ON + Push OFF -> e-mail seul", {"before_class_push": False}, 0, 1),
+            ("N14. cours ON + Email OFF -> push seul", {"before_class_email": False}, 1, 0)):
+        b, base = bac([resa()], prefs=([pref(**_p)] if _p else []),
+                      cours_docs=[cours(actif=True, regles=R60)])
+        await passage(b)
+        verifier(_titre, len(PUSHS) == _ap and len(EMAILS) == _ae,
+                 "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- N15. cours recurrents mercredi et dimanche -------------------------
+    # La configuration est portee par le COURS ; chaque occurrence en herite
+    # sans reglage par date. On le prouve sur deux occurrences distinctes du
+    # meme cours, traitees dans le meme passage.
+    _j1 = datetime.now(timezone.utc) + timedelta(minutes=60)
+    _j2 = datetime.now(timezone.utc) + timedelta(minutes=60)
+    b, base = bac([resa(rid="occ1", email="a@exemple.com", instant=_j1, courseId="merc"),
+                   resa(rid="occ2", email="b@exemple.com", instant=_j2, courseId="merc")],
+                  cours_docs=[cours(cid="merc", actif=True, regles=R60)])
+    await passage(b)
+    verifier("N15. deux occurrences du meme cours recurrent -> memes regles, 1 lecture",
+             len(PUSHS) == 2 and len(EMAILS) == 2 and base.courses.lectures == 1,
+             "%d push / %d e-mail / %d lecture(s)"
+             % (len(PUSHS), len(EMAILS), base.courses.lectures))
+
+    # --- N16. les instants reels du mercredi et du dimanche 18:30 -----------
+    # Calcul pur, sans envoi : on verifie que « la veille » et « le jour meme »
+    # tombent ou le coach les attend, sur les vrais cours recurrents.
+    if ZURICH is not None:
+        _regles = [{"type": "relative", "minutes": 1440},
+                   {"type": "same_day", "heure": 7, "minute": 0}]
+        _base_j = datetime.now(ZURICH).date()
+        for _nom_jour, _cible_py in (("mercredi", 2), ("dimanche", 6)):
+            _d = _base_j
+            for _ in range(8):
+                _d = _d + timedelta(days=1)
+                if _d.weekday() == _cible_py:
+                    break
+            _cours_local = datetime(_d.year, _d.month, _d.day, 18, 30, tzinfo=ZURICH)
+            _gardees, _ = b["n1b3b2_plan"](_regles, _cours_local.astimezone(timezone.utc), ZURICH)
+            _heures = sorted(c.astimezone(ZURICH).strftime("%a %d/%m %H:%M") for c, _cl in _gardees)
+            _veille = (_cours_local - timedelta(minutes=1440)).strftime("%a %d/%m %H:%M")
+            _jour_meme = _cours_local.replace(hour=7, minute=0).strftime("%a %d/%m %H:%M")
+            verifier("N16-%s. veille + jour meme tombent aux bons instants" % _nom_jour,
+                     _heures == sorted([_veille, _jour_meme]),
+                     "obtenu %s / attendu %s" % (_heures, sorted([_veille, _jour_meme])))
+            print("      %s %s 18:30 -> rappels : %s" % (_nom_jour, _d.strftime("%d/%m"), _heures))
+
+
+# ============================================================================
+#          LA ROUTE QUI ECRIT LA CONFIGURATION D'UN COURS
+# ============================================================================
+async def scenarios_route():
+    R24 = [{"type": "relative", "minutes": 1440}]
+    RSD = [{"type": "same_day", "heure": 7, "minute": 0}]
+    APPELANT[0] = "coach@exemple.com"
+
+    def _bac_route(cours_docs):
+        b, base = bac([], cours_docs=cours_docs)
+        return b["rv3_ecrire_rappels_du_cours"], base
+
+    async def _appel(route, cid, corps):
+        try:
+            return await route(cid, _Requete(corps)), None
+        except _HTTP as e:
+            return None, e
+
+    # R1. cours inconnu
+    route, base = _bac_route([cours(cid="c1", actif=None)])
+    _r, _e = await _appel(route, "inconnu", {"enabled": True, "rules": R24})
+    verifier("R1. cours inconnu -> 404", _e is not None and _e.status_code == 404,
+             repr(_e and _e.status_code))
+
+    # R2. cours d'un autre coach
+    route, base = _bac_route([cours(cid="c1", actif=None, coach_id="autre@exemple.com")])
+    _r, _e = await _appel(route, "c1", {"enabled": True, "rules": R24})
+    verifier("R2. cours d'un autre coach -> 403",
+             _e is not None and _e.status_code == 403, repr(_e and _e.status_code))
+
+    # R2b. le super-admin passe outre
+    APPELANT[0] = "admin@exemple.com"
+    route, base = _bac_route([cours(cid="c1", actif=None, coach_id="autre@exemple.com")])
+    _r, _e = await _appel(route, "c1", {"enabled": True, "rules": R24})
+    verifier("R2b. le super-admin peut configurer le cours d'un autre",
+             _e is None and _r and _r.get("reminders_enabled") is True, repr(_e))
+    APPELANT[0] = "coach@exemple.com"
+
+    # R3. activer sans regle
+    route, base = _bac_route([cours(cid="c1", actif=None, coach_id="coach@exemple.com")])
+    _r, _e = await _appel(route, "c1", {"enabled": True})
+    verifier("R3. activer SANS regle -> 400, rien n'est ecrit",
+             _e is not None and _e.status_code == 400
+             and base.courses.docs[0].get("reminders_enabled") is None,
+             repr(_e and _e.status_code))
+
+    # R4. regles invalides
+    route, base = _bac_route([cours(cid="c1", actif=None, coach_id="coach@exemple.com")])
+    _r, _e = await _appel(route, "c1", {"enabled": True,
+                                        "rules": [{"type": "relative", "minutes": 42}]})
+    verifier("R4. delai hors liste -> 400", _e is not None and _e.status_code == 400,
+             repr(_e and _e.status_code))
+
+    # R5. deux heures fixes trop proches
+    route, base = _bac_route([cours(cid="c1", actif=None, coach_id="coach@exemple.com")])
+    _r, _e = await _appel(route, "c1", {"enabled": True, "rules": [
+        {"type": "same_day", "heure": 7, "minute": 0},
+        {"type": "same_day", "heure": 7, "minute": 30}]})
+    verifier("R5. deux rappels le jour meme a 30 min d'ecart -> 400",
+             _e is not None and _e.status_code == 400, repr(_e and _e.status_code))
+
+    # R6. activation nominale
+    route, base = _bac_route([cours(cid="c1", actif=None, coach_id="coach@exemple.com")])
+    _r, _e = await _appel(route, "c1", {"enabled": True, "rules": R24 + RSD})
+    _doc = base.courses.docs[0]
+    verifier("R6. activation valide -> le cours porte l'etat ET ses regles",
+             _e is None and _doc.get("reminders_enabled") is True
+             and _doc.get("reminder_rules") == R24 + RSD,
+             "%r / %r" % (_doc.get("reminders_enabled"), _doc.get("reminder_rules")))
+
+    # R7. couper ne detruit pas les regles
+    route, base = _bac_route([cours(cid="c1", actif=True, regles=R24,
+                                    coach_id="coach@exemple.com")])
+    _r, _e = await _appel(route, "c1", {"enabled": False})
+    _doc = base.courses.docs[0]
+    verifier("R7. couper les rappels -> etat a faux, regles CONSERVEES",
+             _e is None and _doc.get("reminders_enabled") is False
+             and _doc.get("reminder_rules") == R24,
+             "%r / %r" % (_doc.get("reminders_enabled"), _doc.get("reminder_rules")))
+
+    # R8. corps illisible
+    route, base = _bac_route([cours(cid="c1", actif=None, coach_id="coach@exemple.com")])
+    _r, _e = await _appel(route, "c1", _ILLISIBLE)
+    verifier("R8. corps illisible -> 400", _e is not None and _e.status_code == 400,
+             repr(_e and _e.status_code))
+
+    # R9. `enabled` absent vaut NON — jamais une activation par inadvertance
+    route, base = _bac_route([cours(cid="c1", actif=None, coach_id="coach@exemple.com")])
+    _r, _e = await _appel(route, "c1", {"rules": R24})
+    verifier("R9. `enabled` absent -> desactivation, jamais activation",
+             _e is None and base.courses.docs[0].get("reminders_enabled") is False,
+             repr(base.courses.docs[0].get("reminders_enabled")))
+
+
+# ============================================================================
 #                    TESTS DISCRIMINANTS — le harnais ment-il ?
 # ============================================================================
 async def discriminants():
@@ -667,6 +990,10 @@ def structure():
         "frontend/src/components/coach/ReminderRulesCard.js",
         "frontend/src/components/coach/__tests__/ReminderRulesCard.test.js",
         "tests/test_rv2_rappels_push_email.py",
+        "frontend/src/components/CoachDashboard.js",
+        "frontend/src/components/coach/reminderMoments.js",
+        "frontend/src/components/coach/CourseRemindersCard.js",
+        "frontend/src/components/coach/__tests__/CourseRemindersCard.test.js",
     }
     verifier("S9. aucun fichier hors perimetre n'est touche",
              set(_modifs) <= _attendus, "inattendus : %s" % sorted(set(_modifs) - _attendus))
@@ -703,6 +1030,8 @@ def main():
     try:
         boucle.run_until_complete(discriminants())
         boucle.run_until_complete(scenarios())
+        boucle.run_until_complete(scenarios_niveau1())
+        boucle.run_until_complete(scenarios_route())
     finally:
         boucle.close()
     ok = sum(1 for _, r, _ in RESULTATS if r)

@@ -657,6 +657,12 @@ class Course(BaseModel):
     playlist: Optional[List[str]] = None  # Legacy: URLs simples
     audio_tracks: Optional[List[dict]] = None  # v17.5: Pistes audio enrichies (AudioTrack)
     coach_id: Optional[str] = None  # v19: Ownership — email du coach propriétaire
+    # RAPPELS V2 NIVEAU 1 : les rappels sont choisis COURS PAR COURS. Absent
+    # vaut NON — aucun cours historique ne se met a envoyer tout seul. Ces deux
+    # champs doivent etre declares ici : `/courses` a un `response_model` et
+    # `extra="ignore"` les retirerait silencieusement de la reponse.
+    reminders_enabled: Optional[bool] = None
+    reminder_rules: Optional[List[dict]] = None
 
 class CourseCreate(BaseModel):
     name: str
@@ -670,6 +676,12 @@ class CourseCreate(BaseModel):
     playlist: Optional[List[str]] = None  # Legacy
     audio_tracks: Optional[List[dict]] = None  # v17.5: Pistes audio enrichies
     coach_id: Optional[str] = None  # v19: Ownership
+    # RAPPELS V2 NIVEAU 1 : les rappels sont choisis COURS PAR COURS. Absent
+    # vaut NON — aucun cours historique ne se met a envoyer tout seul. Ces deux
+    # champs doivent etre declares ici : `/courses` a un `response_model` et
+    # `extra="ignore"` les retirerait silencieusement de la reponse.
+    reminders_enabled: Optional[bool] = None
+    reminder_rules: Optional[List[dict]] = None
 
 class Offer(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -24021,6 +24033,62 @@ async def n1b3b2_ecrire_regles(request: Request):
     return {"success": True, "rules": _sures, "avertissements": _avertissements}
 
 
+@api_router.put("/coach/courses/{course_id}/reminders")
+async def rv3_ecrire_rappels_du_cours(course_id: str, request: Request):
+    """Active ou coupe les rappels d'UN cours, et fixe ses regles.
+
+    Route distincte du `PUT /courses/{id}` generique, et ce n'est pas un
+    doublon : ce dernier accepte un dictionnaire brut sans rien valider, et il
+    ne verifie pas que l'appelant possede le cours. Une configuration qui
+    declenche de vrais envois merite mieux que cela.
+
+    Couper les rappels ne DETRUIT pas les regles : le coach qui reactive
+    retrouve son reglage. C'est `reminders_enabled` seul qui decide.
+    """
+    _email = await _n1b3b2_coach_appelant(request)
+    _cours = await db.courses.find_one(
+        {"id": course_id}, {"_id": 0, "id": 1, "name": 1, "coach_id": 1, "archived": 1})
+    if not _cours:
+        raise HTTPException(status_code=404, detail="Cours non trouvé")
+    _proprio = (_cours.get("coach_id") or "").strip().lower()
+    if _proprio and _proprio != _email.strip().lower() and not is_super_admin(_email):
+        raise HTTPException(status_code=403, detail="Ce cours ne vous appartient pas.")
+    try:
+        _body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Corps de requête illisible")
+    if not isinstance(_body, dict):
+        raise HTTPException(status_code=400, detail="Corps de requête illisible")
+
+    _actif = _body.get("enabled") is True
+    _maj = {"reminders_enabled": _actif,
+            "reminders_updated_at": datetime.now(timezone.utc).isoformat()}
+    _sures = None
+    if _actif:
+        # Activer sans regle exploitable n'aurait aucun effet a l'execution :
+        # autant le refuser ici, ou le coach peut encore corriger.
+        _sures = n1b2_valider_regles(_body.get("rules"))
+        if not _sures:
+            raise HTTPException(
+                status_code=400,
+                detail="Configuration de rappels invalide : au plus %d règles, "
+                       "délais autorisés %s minutes, heure fixe entre 00 et 23 "
+                       "aux minutes %s, et jamais deux fois le même rappel."
+                       % (N1B2_MAX_REGLES, list(N1B2_DELAIS_AUTORISES),
+                          list(N1B2_MINUTES_AUTORISEES)))
+        _refus = n1b3b2_regles_trop_proches(_sures)
+        if _refus:
+            raise HTTPException(status_code=400, detail=_refus)
+        _maj["reminder_rules"] = _sures
+
+    await db.courses.update_one({"id": course_id}, {"$set": _maj})
+    logger.info("[RV3] rappels %s sur le cours %s (%s) par %s",
+                "ACTIVES" if _actif else "coupes", course_id,
+                _cours.get("name"), _email)
+    return {"success": True, "id": course_id,
+            "reminders_enabled": _actif, "rules": _sures or []}
+
+
 # V183: Cron rappel 1h avant un cours réservé
 @api_router.get("/cron/reservation-reminders")
 async def cron_reservation_reminders():
@@ -24089,25 +24157,57 @@ async def cron_reservation_reminders():
         if len(_candidates) >= 2000:
             # Pas de troncature silencieuse.
             logger.warning("[REMINDER-V435] plafond de 2000 candidats atteint — couverture partielle")
-        _cache_regles: dict = {}
-        _cache_coach: dict = {}
+        # RAPPELS V2 NIVEAU 1 : la configuration vit sur LE COURS, plus sur le
+        # coach. Un cours est donc lu au plus UNE fois par passage, quel que
+        # soit le nombre de reservations qui s'y rattachent.
+        _cache_cours: dict = {}
+        _lectures_cours = [0]
 
-        async def _n1b2_coach_de(_resa):
-            """Coach proprietaire, mis en cache : jamais deux fois la meme requete."""
-            _direct = (_resa.get("coach_id") or "").strip()
-            if _direct:
-                return _direct
-            _k = "cours:" + str(_resa.get("courseId") or "")
-            if _k in _cache_coach:
-                return _cache_coach[_k]
-            _c = ""
+        async def _rv3_cours_de(_resa):
+            """Le cours d'une reservation, mis en cache par passage."""
+            _cid = str(_resa.get("courseId") or "").strip()
+            if not _cid:
+                return None
+            if _cid in _cache_cours:
+                return _cache_cours[_cid]
+            _c = None
             try:
-                from api.routes.shared import resoudre_coach_de_reservation as _n1b2_resoudre
-                _c = await _n1b2_resoudre(db, _resa)
+                _lectures_cours[0] += 1
+                _c = await db.courses.find_one(
+                    {"id": _cid},
+                    {"_id": 0, "id": 1, "name": 1, "archived": 1,
+                     "reminders_enabled": 1, "reminder_rules": 1})
             except Exception as _e:
-                logger.warning("[N1B-2] coach introuvable pour la resa %s: %s", _resa.get("id"), _e)
-            _cache_coach[_k] = _c
+                logger.warning("[RV3] cours %s illisible : %s", _cid, _e)
+            _cache_cours[_cid] = _c
             return _c
+
+        async def _rv3_regles_de(_resa):
+            """Les regles de CE cours, ou [] s'il n'envoie pas de rappels.
+
+            AUCUN repli sur une configuration globale du coach. Un cours qui n'a
+            pas ete active explicitement n'envoie rien : le champ absent vaut
+            NON, ce qui laisse tout le parc historique muet au deploiement, et
+            rend la selection du coach reellement decisive.
+
+            Active mais sans regle exploitable est traite pareil. On n'invente
+            pas une regle, et on ne va pas en chercher une que le coach n'a pas
+            vue a l'ecran : il verrait des rappels partir sans savoir d'ou.
+            """
+            _c = await _rv3_cours_de(_resa)
+            if not _c:
+                return []
+            if _c.get("archived") is True:
+                return []
+            if _c.get("reminders_enabled") is not True:
+                return []
+            _regles = n1b2_valider_regles(_c.get("reminder_rules"))
+            if not _regles:
+                logger.warning(
+                    "[RV3] cours %s actif mais sans regle exploitable — aucun rappel",
+                    _c.get("id"))
+                return []
+            return _regles
 
         taches = []
         for _r in _candidates:
@@ -24116,7 +24216,9 @@ async def cron_reservation_reminders():
             # aucune regle ne peut encore se declencher.
             if not _quand or _quand <= now or _quand > _horizon:
                 continue
-            _regles_r = await n1b2_regles_du_coach(await _n1b2_coach_de(_r), _cache_regles)
+            _regles_r = await _rv3_regles_de(_r)
+            if not _regles_r:
+                continue
             # N1B-3B2 : les cibles sont RECALCULEES pour cette occurrence reelle,
             # et les rappels rapproches sont ecartes AVANT toute autre decision.
             # Le calcul ne lit pas `reminders_sent` : il rend donc le meme verdict
@@ -24234,7 +24336,8 @@ async def cron_reservation_reminders():
                 # du cours est ouverte — et l'AUTRE canal n'en sait rien.
                 await rv2_liberer_canal(_rid, _cle_regle, _canal)
     logger.info(f"[REMINDER-V183] {sent}/{len(taches)} rappels envoyés "
-                f"(push {_par_canal[RV2_CANAL_PUSH]}, email {_par_canal[RV2_CANAL_EMAIL]})")
+                f"(push {_par_canal[RV2_CANAL_PUSH]}, email {_par_canal[RV2_CANAL_EMAIL]}) "
+                f"— {_lectures_cours[0]} lecture(s) de cours pour {len(_candidates)} candidat(s)")
     return {"checked": len(taches), "sent": sent,
             "push": _par_canal[RV2_CANAL_PUSH], "email": _par_canal[RV2_CANAL_EMAIL]}
 

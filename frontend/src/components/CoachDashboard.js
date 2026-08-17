@@ -22,7 +22,7 @@ import { playNotificationSound, linkifyText } from "../services/notificationServ
 import { QRScannerModal } from "./QRScanner";
 // ArticleManager supprimé - v8.9 Nettoyage SAAS
 import ReservationTab from "./coach/ReservationTab"; // Import Reservation Tab
-import ReminderRulesCard from "./coach/ReminderRulesCard"; // N1B-3C : rappels avant cours
+import CourseRemindersCard from "./coach/CourseRemindersCard"; // RAPPELS V2 : rappels choisis cours par cours
 import SuiviAbonnes from "./coach/SuiviAbonnes"; // V334 etape 3
 import MessagesWhatsApp from "./coach/MessagesWhatsApp"; // V411
 import CampaignManager from "./coach/CampaignManager"; // Import Campaign Manager
@@ -7020,10 +7020,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         {/* Reservations Tab - Utilise le composant extrait ReservationTab */}
         {tab === "reservations" && (
           <div className="space-y-4">
-          {/* N1B-3C : le reglage des rappels vit ICI et nulle part ailleurs —
+          {/* RAPPELS V2 : le reglage des rappels vit ICI et nulle part ailleurs —
               en tete de l'onglet, au-dessus de la liste. Aucune entree n'est
-              ajoutee dans l'onglet Gestion. */}
-          <ReminderRulesCard coachEmail={safeCoachUser?.email} />
+              ajoutee dans l'onglet Gestion. La carte est desormais PAR COURS :
+              le coach choisit lesquels envoient des rappels, le participant
+              choisit par quels canaux il veut les recevoir. */}
+          <CourseRemindersCard coachEmail={safeCoachUser?.email} />
           <ReservationTab
             reservations={filteredReservations}
             pagination={reservationPagination}
