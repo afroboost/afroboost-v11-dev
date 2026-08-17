@@ -290,6 +290,98 @@ async def scenarios():
 
 
 # ============================================================================
+#        LE LIEU — canonique sur le COURS, jamais emprunte a une offre
+# ============================================================================
+async def scenarios_lieu():
+    """Une seance a UN lieu, et il vit sur le cours.
+
+    Une offre est un moyen d'acces commercial : trois offres peuvent mener a la
+    meme seance, il serait absurde que le lieu depende de celle par laquelle on
+    arrive. `_v184_next_occurrences` lit donc `locationName` sur le cours, et
+    l'agenda le transmet sans le toucher.
+    """
+    AUVERNIER = "Bord du Lac, Auvernier, Neuchatel"
+    LAUSANNE = "ESPLANADE & CASINO DE MONTBENON, LAUSANNE"
+
+    _merc = dict(MERCREDI, locationName=AUVERNIER)
+    _dim = dict(DIMANCHE, locationName=AUVERNIER)
+    _o1 = {"id": "pulse", "name": "PULSE x10 cours", "visible": True,
+           "linked_course_ids": ["64b4c975", "23534f7c"]}
+    _o2 = {"id": "membres", "name": "Membres", "visible": True,
+           "linked_course_ids": ["64b4c975", "23534f7c"]}
+    _o3 = {"id": "unite", "name": "Cours a l'unite", "visible": True,
+           "linked_course_ids": ["64b4c975", "23534f7c"]}
+
+    # --- A. trois offres, un seul cours -> une occurrence, un seul lieu ------
+    s = await agenda([_o1, _o2, _o3], [_merc, _dim], jours=10)
+    _m = [o for o in s["occurrences"] if o["course_id"] == "64b4c975"]
+    _d = [o for o in s["occurrences"] if o["course_id"] == "23534f7c"]
+    _cles = [(o["course_id"], o["datetime"]) for o in s["occurrences"]]
+    verifier("L-A. trois offres sur le meme cours -> aucune occurrence en double",
+             len(_cles) == len(set(_cles)) and len(_m) >= 1,
+             "%d occurrences / %d cles" % (len(_cles), len(set(_cles))))
+
+    # --- B. le lieu canonique est celui du COURS ----------------------------
+    verifier("L-B. Sessions rend le lieu enregistre sur le cours",
+             all(o["locationName"] == AUVERNIER for o in _m + _d),
+             str({o["locationName"] for o in _m + _d}))
+    verifier("L-B2. et il est IDENTIQUE quelle que soit l'offre d'acces",
+             len({o["locationName"] for o in _m}) == 1)
+    verifier("L-B3. les trois offres sont bien listees a cote, sans influer sur le lieu",
+             _m and sorted(x["id"] for x in _m[0]["offers"]) == ["membres", "pulse", "unite"],
+             str(_m[0]["offers"] if _m else None))
+
+    # --- C. aucune valeur parasite ne fuit ----------------------------------
+    # Le document porte un alias `location` divergent : c'est exactement le cas
+    # reel. `locationName` doit primer, sans jamais laisser passer l'alias.
+    _divergent = dict(_merc, locationName=AUVERNIER, location="Jeunes-Rives, terrain de basket")
+    s = await agenda([_o1], [_divergent], jours=10)
+    verifier("L-C. un alias `location` divergent ne fuit JAMAIS quand `locationName` existe",
+             all(o["locationName"] == AUVERNIER for o in s["occurrences"])
+             and not any("Jeunes-Rives" in json_texte(o) for o in s["occurrences"]),
+             str({o["locationName"] for o in s["occurrences"]}))
+
+    # --- C2. le repli sur `location` reste, mais seulement si besoin ---------
+    _sans_nom = dict(_merc, locationName="", location=AUVERNIER)
+    s = await agenda([_o1], [_sans_nom], jours=10)
+    verifier("L-C2. `locationName` vide -> repli documente sur `location`",
+             all(o["locationName"] == AUVERNIER for o in s["occurrences"]),
+             str({o["locationName"] for o in s["occurrences"]}))
+
+    # --- D. changer le lieu du cours suffit ---------------------------------
+    _deplace = dict(_merc, locationName=LAUSANNE)
+    s = await agenda([_o1], [_deplace], jours=10)
+    verifier("L-D. changer le lieu du cours change Sessions, sans une ligne de code",
+             s["occurrences"] and all(o["locationName"] == LAUSANNE for o in s["occurrences"]),
+             str({o["locationName"] for o in s["occurrences"]}))
+
+    # --- E. jour, heure et lieu bougent ensemble ----------------------------
+    _tout = dict(_merc, weekday=4, time="19:00", locationName=LAUSANNE)
+    s = await agenda([_o1], [_tout], jours=14)
+    _ok = s["occurrences"] and all(
+        datetime.fromisoformat(o["datetime"]).weekday() == 3
+        and o["datetime"][11:16] == "19:00"
+        and o["locationName"] == LAUSANNE for o in s["occurrences"])
+    verifier("L-E. mercredi/Auvernier -> jeudi 19:00/Lausanne suit entierement", _ok,
+             str([(o["datetime"], o["locationName"]) for o in s["occurrences"][:2]]))
+
+    # --- F. Sunday Vibes suit exactement la meme logique --------------------
+    _dim2 = dict(_dim, locationName=LAUSANNE, weekday=6, time="10:30")
+    s = await agenda([_o1], [_dim2], jours=14)
+    _ok = s["occurrences"] and all(
+        datetime.fromisoformat(o["datetime"]).weekday() == 5
+        and o["locationName"] == LAUSANNE for o in s["occurrences"])
+    verifier("L-F. le cours du dimanche obeit aux memes regles, sans cas particulier", _ok,
+             str([(o["datetime"], o["locationName"]) for o in s["occurrences"][:2]]))
+
+    # --- G. le lieu d'une OFFRE n'entre jamais dans l'occurrence -------------
+    _offre_ailleurs = dict(_o1, location="Un tout autre endroit")
+    s = await agenda([_offre_ailleurs], [_merc], jours=10)
+    verifier("L-G. le lieu de l'offre n'est jamais recopie sur la seance",
+             not any("tout autre endroit" in json_texte(o) for o in s["occurrences"]))
+
+
+# ============================================================================
 #     VISITEUR — une offre masquee n'apparait JAMAIS, ni en direct ni par ricochet
 # ============================================================================
 MASQUEE = {"id": "off-masq", "name": "SILENT LAKESIDE", "visible": False,
@@ -487,6 +579,13 @@ def structure():
     verifier("S11. elle n'ecrit rien en base",
              not any(m in nu_coach for m in ("update_one", "insert_one", "$set")))
 
+    nu_occ = code_nu("_v184_next_occurrences")
+    verifier("S12. le lieu d'une occurrence vient du COURS, jamais d'une offre",
+             "locationName" in nu_occ and "offer" not in nu_occ.lower())
+    nu_ag = code_nu("sessions_agenda")
+    verifier("S13. l'agenda ne reecrit aucun lieu",
+             "locationName" not in nu_ag, "")
+
     moi = io.open(os.path.abspath(__file__), encoding="utf-8").read()
     mods = set()
     for n in ast.walk(ast.parse(moi)):
@@ -506,6 +605,7 @@ def main():
         b.run_until_complete(scenarios())
         b.run_until_complete(scenarios_visiteur())
         b.run_until_complete(scenarios_coach())
+        b.run_until_complete(scenarios_lieu())
     finally:
         b.close()
     ok = sum(1 for _, r, _ in RESULTATS if r)
