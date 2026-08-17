@@ -374,6 +374,48 @@ async def scenarios_lieu():
     verifier("L-F. le cours du dimanche obeit aux memes regles, sans cas particulier", _ok,
              str([(o["datetime"], o["locationName"]) for o in s["occurrences"][:2]]))
 
+    # --- H. QUATRE cours, QUATRE villes, aucune contamination ---------------
+    # Aucune ville n'est un cas particulier : le lieu est une donnee du cours,
+    # au meme titre que son heure. On en prend quatre a la fois, on en deplace
+    # UN seul, et on verifie que les trois autres n'ont pas bouge d'un caractere.
+    _villes = [("cA", 1, "Auvernier"), ("cB", 2, "Lausanne"),
+               ("cC", 4, "Geneve"), ("cD", 5, "Neuchatel")]
+    _quatre = [dict(MERCREDI, id=_i, name="Cours " + _i, weekday=_w, locationName=_v)
+               for _i, _w, _v in _villes]
+    _offre4 = {"id": "o4", "name": "Passe partout", "visible": True,
+               "linked_course_ids": [i for i, _, _ in _villes]}
+
+    s = await agenda([_offre4], _quatre, jours=14)
+    _lieu_de = {}
+    for o in s["occurrences"]:
+        _lieu_de.setdefault(o["course_id"], set()).add(o["locationName"])
+    verifier("L-H1. quatre cours simultanes -> quatre villes distinctes, chacune chez soi",
+             {c: sorted(v) for c, v in _lieu_de.items()}
+             == {i: [v] for i, _, v in _villes},
+             str({c: sorted(v) for c, v in _lieu_de.items()}))
+    verifier("L-H2. et chacun tombe bien son jour",
+             all(datetime.fromisoformat(o["datetime"]).weekday() == (w - 1) % 7
+                 for o in s["occurrences"]
+                 for i, w, _ in _villes if o["course_id"] == i))
+
+    # on deplace UN seul cours : Lausanne -> Bienne
+    _bouge = [dict(c, locationName="Bienne") if c["id"] == "cB" else c for c in _quatre]
+    s2 = await agenda([_offre4], _bouge, jours=14)
+    _apres = {}
+    for o in s2["occurrences"]:
+        _apres.setdefault(o["course_id"], set()).add(o["locationName"])
+    verifier("L-H3. deplacer UN cours ne touche a AUCUN autre",
+             {c: sorted(v) for c, v in _apres.items()}
+             == {"cA": ["Auvernier"], "cB": ["Bienne"], "cC": ["Geneve"], "cD": ["Neuchatel"]},
+             str({c: sorted(v) for c, v in _apres.items()}))
+
+    # et on peut tous les deplacer, dans n'importe quel ordre
+    _tous = [dict(c, locationName="Ville-" + c["id"]) for c in _quatre]
+    s3 = await agenda([_offre4], _tous, jours=14)
+    verifier("L-H4. les quatre suivent independamment, sans ordre privilegie",
+             all(o["locationName"] == "Ville-" + o["course_id"] for o in s3["occurrences"]),
+             str(sorted({(o["course_id"], o["locationName"]) for o in s3["occurrences"]})))
+
     # --- G. le lieu d'une OFFRE n'entre jamais dans l'occurrence -------------
     _offre_ailleurs = dict(_o1, location="Un tout autre endroit")
     s = await agenda([_offre_ailleurs], [_merc], jours=10)
@@ -617,6 +659,18 @@ def structure():
     nu_ag = code_nu("sessions_agenda")
     verifier("S13. l'agenda ne reecrit aucun lieu",
              "locationName" not in nu_ag, "")
+
+    # Aucune ville n'est un cas particulier. `Europe/Zurich` est un FUSEAU
+    # horaire, pas une adresse : on l'ecarte explicitement du controle plutot
+    # que de laisser le test croire a une infraction.
+    _villes = ("auvernier", "lausanne", "geneve", "genève", "neuchatel",
+               "neuchâtel", "vallangines", "jeunes-rives", "montbenon",
+               "vidy", "st-blaise", "bienne")
+    for _f in ("sessions_agenda", "_v184_next_occurrences",
+               "rv3_cours_configurables", "_enrich_offers_with_next_date"):
+        _nu = code_nu(_f).lower().replace("europe/zurich", "")
+        _trouves = [v for v in _villes if v in _nu]
+        verifier("S14. `%s` ne code AUCUN lieu en dur" % _f, not _trouves, str(_trouves))
 
     moi = io.open(os.path.abspath(__file__), encoding="utf-8").read()
     mods = set()
