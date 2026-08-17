@@ -182,7 +182,8 @@ class _Item(object):
 
 class _Req(object):
     def __init__(self, email, items=None, nom="Ana", coach="coach@x.ch",
-                 phone="", discount_code=None, discount_amount=0):
+                 phone="", discount_code=None, discount_amount=0,
+                 terms_accepted=None):
         self.customer_email = email
         self.customer_name = nom
         self.customer_phone = phone
@@ -190,6 +191,8 @@ class _Req(object):
         self.items = items if items is not None else [_Item(id="off-essai")]
         self.discount_code = discount_code
         self.discount_amount = discount_amount
+        # ESSAI-5a-1 : la seule chose que le client exprime.
+        self.terms_accepted = terms_accepted
 
 
 A_EXTRAIRE = ["_essai1b_prix_unitaire", "_essai1b_total_autorite", "_essai1b_exiger_gratuit",
@@ -207,6 +210,13 @@ def bac(codes=None, echec_paiement=False, offres=None):
     PAIEMENTS[:] = []
     POSTHOG[:] = []
     base = _Base(codes, offres)
+
+    async def _rien_a_exiger(*a, **k):
+        """ESSAI-5a-1 : aucune condition publiee — `t1_preuve` rend un dict
+        vide. C'est l'etat REEL de la production, et il laisse cette suite
+        centree sur le double essai."""
+        await asyncio.sleep(0)
+        return {}
 
     async def faux_paiement(**kw):
         await asyncio.sleep(0)
@@ -249,6 +259,11 @@ def bac(codes=None, echec_paiement=False, offres=None):
         "router": type("r", (), {
             "post": staticmethod(lambda *a, **k: (lambda f: f))}),
         "_process_successful_payment": faux_paiement,
+        # ESSAI-5a-1 : la garde des conditions vit dans le meme module. Elle est
+        # remplacee ici par le cas REEL du moment — aucune condition publiee,
+        # donc aucune exigence — pour que cette suite reste centree sur le
+        # double essai. L'ordre des deux gardes est verifie plus bas (S16).
+        "_t1_preuve_checkout": _rien_a_exiger,
         "FreeCheckoutRequest": object, "CreateCheckoutRequest": object,
         # annotations des signatures extraites
         "List": list, "Optional": object, "Dict": dict, "Any": object,

@@ -4,6 +4,7 @@
 
 import React, { useEffect, useMemo, useState, useCallback, useRef, lazy, Suspense } from "react";
 import axios from "axios";
+import ConditionsParticipation from './ConditionsParticipation'; // ESSAI-5a-1
 import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { copyToClipboard } from "../utils/clipboard";
@@ -89,6 +90,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
   const [reservingKey, setReservingKey] = useState(null);
+  // ESSAI-5a-1 : l'acceptation vaut pour UNE occurrence — l'annonce de
+  // captation depend du cours, elle ne peut donc pas etre globale a l'ecran.
+  const [conditionsOk, setConditionsOk] = useState({});
+  const [conditionsRequises, setConditionsRequises] = useState(false);
   const [confirmedKeys, setConfirmedKeys] = useState({});
   const [qrFullscreen, setQrFullscreen] = useState(false);
   const [actionError, setActionError] = useState("");
@@ -236,7 +241,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       // V202: Passer le member_slug si identifié
       const res = await axios.post(
         `${API}/subscriber/space/${encodeURIComponent(accessCode)}/reserve/${encodeURIComponent(occurrence.course_id)}`,
-        { datetime: occurrence.datetime, quantity: qty, guests, member_slug: memberSlug || undefined }
+        { datetime: occurrence.datetime, quantity: qty, guests, member_slug: memberSlug || undefined,
+          terms_accepted: !!conditionsOk[reservationKey] }
       );
       // V213g: Injecter la nouvelle réservation dans data pour que le useEffect la voie
       // et que le vert reste visible instantanément (pas besoin de rafraîchir)
@@ -1106,7 +1112,9 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                             +
                           </button>
                         </div>
-                        <button type="button" disabled={isBusy || noSessions}
+                        <button type="button"
+                          disabled={isBusy || noSessions
+                            || (conditionsRequises && !conditionsOk[`${occ.course_id}_${occ.datetime}`])}
                           onClick={() => handleReserve(occ)}
                           className="text-xs font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
                           style={{ background: COLORS.primary, color: "white" }}
@@ -1115,6 +1123,17 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                         </button>
                       </div>
                       )}
+
+                      {/* ESSAI-5a-1 : ce chemin porte 74 des 132 reservations
+                          reelles et n'avait jamais eu de case a cocher. */}
+                      <div className="mt-2">
+                        <ConditionsParticipation
+                          courseId={occ.course_id}
+                          accepte={!!conditionsOk[`${occ.course_id}_${occ.datetime}`]}
+                          onChange={(v) => setConditionsOk((p) => ({ ...p, [`${occ.course_id}_${occ.datetime}`]: v }))}
+                          onRequired={setConditionsRequises}
+                        />
+                      </div>
 
                       {occ.inclus_abonnement !== false && qty > 1 && (
                         <ol className="mt-3 space-y-1 text-xs text-white/70">

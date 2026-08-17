@@ -221,6 +221,7 @@ import SvgIcon from "./components/SvgIcon";
 import SubscriberSpace from "./components/SubscriberSpace";
 // Calendrier des sessions, en fenetre par-dessus la vitrine (jamais une page)
 import SessionsModal from "./components/SessionsModal";
+import ConditionsParticipation from './components/ConditionsParticipation'; // ESSAI-5a-1
 import { useDataCache, invalidateCache } from "./hooks/useDataCache";
 import { applyPrimaryColor, persistThemeColors } from "./utils/themeColor"; // V259 + V295 (anti-FOUC)
 import { PublicationsCarousel } from "./components/Publications"; // V261
@@ -4684,7 +4685,6 @@ function App() {
   const [pendingOffer, setPendingOffer] = useState(null); // v159: offre cliquée en attente d'une session
   const [selectedSession, setSelectedSession] = useState(null);
   const [quantity, setQuantity] = useState(1); // Quantité pour achats multiples
-  const [showTermsModal, setShowTermsModal] = useState(false); // Modal CGV
   const [showLegalModal, setShowLegalModal] = useState(false); // V235: Modal mentions légales (Impressum)
   const [selectedVariants, setSelectedVariants] = useState({}); // Variantes sélectionnées { size: "M", color: "Noir" }
 
@@ -4695,6 +4695,9 @@ function App() {
   const [shippingAddress, setShippingAddress] = useState(""); // Adresse de livraison pour produits physiques
   const [discountCode, setDiscountCode] = useState("");
   const [hasAcceptedTerms, setHasAcceptedTerms] = useState(false);
+  // ESSAI-5a-1 : tant qu'aucune condition n'est publiee, rien n'est exige et
+  // le bouton ne doit pas rester bloque. Le composant nous le dit.
+  const [termsRequired, setTermsRequired] = useState(false);
   const [promoMessage, setPromoMessage] = useState({ type: '', text: '' }); // New: dedicated promo message
 
   // Toggle une date dans la sélection multiple
@@ -6306,7 +6309,7 @@ function App() {
     // remplissant tout sans jamais comprendre pourquoi rien ne se passe.
     const v225IsFreeOffer = !(v223UnitPrice(selectedOffer) > 0);
     if (!isPhysicalProduct && !isAudioPurchase && !v225IsFreeOffer && (!selectedCourse || selectedDates.length === 0)) return;
-    if (!selectedOffer || !hasAcceptedTerms) return;
+    if (!selectedOffer || (termsRequired && !hasAcceptedTerms)) return;
 
     // Direct validation - private fields only
     if (!userEmail?.trim() || !userWhatsapp?.trim()) {
@@ -6412,6 +6415,7 @@ function App() {
         // est donc `${API}/checkout/free`, PAS `${API}/api/checkout/free` qui
         // donnait `/api/api/checkout/free` -> 405 Method Not Allowed.
         const freeRes = await axios.post(`${API}/checkout/free`, {
+          terms_accepted: hasAcceptedTerms,
           coach_email: selectedOffer.coach_id || '',
           items: [{
             type: isPhysicalProduct ? 'product' : 'offer',
@@ -8858,28 +8862,18 @@ function App() {
                   </p>
                 </div>
                 
-                {/* CGV checkbox with clickable link */}
-                <label className="flex items-start gap-2 cursor-pointer text-xs text-white opacity-70">
-                  <input type="checkbox" required checked={hasAcceptedTerms} onChange={e => setHasAcceptedTerms(e.target.checked)} data-testid="terms-checkbox" />
-                  <span>
-                    {t('acceptTerms')}{' '}
-                    <button 
-                      type="button"
-                      onClick={(e) => { e.preventDefault(); setShowTermsModal(true); }}
-                      className="underline hover:text-purple-400"
-                      style={{ color: 'var(--primary-color, #D91CD2)' }}
-                      data-testid="terms-link"
-                    >
-                      {t('termsLink') || 'conditions générales'}
-                    </button>
-                    {' '}et confirme ma réservation.
-                  </span>
-                </label>
+                {/* ESSAI-5a-1 : meme case pour les trois chemins de reservation. */}
+                <ConditionsParticipation
+                  courseId={selectedCourse?.id || ''}
+                  accepte={hasAcceptedTerms}
+                  onChange={setHasAcceptedTerms}
+                  onRequired={setTermsRequired}
+                />
               </div>
             </div>
             
             {/* DYNAMISME DU BOUTON: Change selon le montant total */}
-            <button type="submit" disabled={!hasAcceptedTerms || loading} 
+            <button type="submit" disabled={(termsRequired && !hasAcceptedTerms) || loading} 
               className={`w-full py-4 rounded-xl font-bold uppercase tracking-wide ${parseFloat(totalPrice) === 0 ? 'btn-free' : 'btn-primary'}`} 
               data-testid="submit-reservation-btn">
               {loading ? t('loading') : parseFloat(totalPrice) === 0 ? `🎁 ${t('reserveFree')}` : t('payAndReserve')}
@@ -8887,26 +8881,8 @@ function App() {
           </form>
         )}
 
-        {/* CGV Modal */}
-        {showTermsModal && (
-          <div className="modal-overlay" onClick={() => setShowTermsModal(false)}>
-            <div className="modal-content glass rounded-xl p-6 max-w-lg w-full neon-border" onClick={e => e.stopPropagation()}>
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-bold text-white">{t('termsTitle') || 'Conditions Générales'}</h3>
-                <button onClick={() => setShowTermsModal(false)} className="text-2xl text-white hover:text-purple-400">×</button>
-              </div>
-              <div className="max-h-[60vh] overflow-y-auto text-white text-sm opacity-80 whitespace-pre-wrap">
-                {concept.termsText || 'Les conditions générales ne sont pas encore définies. Veuillez contacter l\'administrateur.'}
-              </div>
-              <button 
-                onClick={() => setShowTermsModal(false)} 
-                className="mt-4 w-full py-3 rounded-lg btn-primary"
-              >
-                Fermer
-              </button>
-            </div>
-          </div>
-        )}
+        {/* ESSAI-5a-1 : l'ancienne modal CGV est retiree — ConditionsParticipation
+            porte desormais la case ET son detail, sur les trois chemins. */}
 
         {/* V235: Modal Mentions légales (Impressum) — exigé par Stripe pour TWINT */}
         {showLegalModal && (

@@ -38,6 +38,43 @@ class CheckoutItem(BaseModel):
     currency: str = "CHF"
     quantity: int = 1
 
+
+async def _t1_preuve_checkout(accepte, items, coach_email: str = "",
+                              exiger: bool = True) -> dict:
+    """La preuve d'acceptation pour un passage en caisse.
+
+    Le cours concerne est celui du premier article de type « course » : c'est
+    lui qui porte, ou non, l'annonce de captation. Un panier sans cours (un
+    forfait, un produit) n'a pas de captation a annoncer — les conditions, elles,
+    s'appliquent quand meme.
+
+    Import differe de `api.server`, comme partout ailleurs dans ce module :
+    server.py importe ce fichier, l'inverse ne peut se faire qu'a l'appel.
+    """
+    _cid = ""
+    for _it in (items or []):
+        _t = getattr(_it, "type", None) or (_it.get("type") if isinstance(_it, dict) else "")
+        _i = getattr(_it, "id", None) or (_it.get("id") if isinstance(_it, dict) else "")
+        if str(_t or "") == "course" and _i:
+            _cid = str(_i)
+            break
+    try:
+        from api.server import t1_preuve as _t1
+        return await _t1(accepte, _cid, coach_email)
+    except HTTPException:
+        # `exiger=False` : on etablit la preuve si elle existe, sans bloquer.
+        # C'est le cas de la creation d'une session de paiement, qui ne cree
+        # AUCUNE reservation par elle-meme — et que le bot WhatsApp appelle
+        # cote serveur, sans case a cocher a lui offrir. Le refus est porte
+        # la ou une reservation nait vraiment.
+        if exiger:
+            raise
+        return {}
+    except Exception as _err:
+        logger.warning(f"[T1] preuve d'acceptation ignoree: {_err}")
+        return {}
+
+
 class CreateCheckoutRequest(BaseModel):
     coach_email: str  # Vendeur (qui reçoit l'argent)
     payment_method: str  # "card" | "paypal" | "mobile_money"
@@ -54,6 +91,8 @@ class CreateCheckoutRequest(BaseModel):
     # donc aucun parcours actuel ne change. Absent, `resoudre_pays` retombe sur
     # la configuration du compte pawaPay comme partout ailleurs.
     country: Optional[str] = None
+    # ESSAI-5a-1 : la seule chose que le client exprime.
+    terms_accepted: Optional[bool] = None
 
     class Config:
         populate_by_name = True
@@ -139,6 +178,12 @@ def calculate_total(items: List[CheckoutItem], discount_amount: float = None) ->
 async def create_checkout_session(req: CreateCheckoutRequest):
     """Crée une session de paiement routée vers le bon vendeur"""
 
+    # ESSAI-5a-1 — les conditions AVANT tout le reste : avant le calcul du
+    # total, avant la garde d'essai, avant la moindre ecriture. Un refus ici
+    # ne laisse aucune trace derriere lui.
+    _t1_champs = await _t1_preuve_checkout(req.terms_accepted, req.items,
+                                           req.coach_email, exiger=False)
+
     # ESSAI-1B : le total qui DECIDE vient du catalogue. `discount_amount`,
     # fourni par le navigateur, n'est plus une autorite metier.
     total, _prix_resolus = await _essai1b_total_autorite(req.items)
@@ -150,11 +195,16 @@ async def create_checkout_session(req: CreateCheckoutRequest):
         # `/free` — meme helper, meme forfait, meme code AFR-. Garder la garde
         # sur la seule route `/free` la rendrait contournable en changeant
         # d'URL. Elle est donc posee ici aussi, avant la premiere ecriture.
+        # Cette branche cree une reservation : les conditions y sont EXIGEES,
+        # contrairement a la creation d'une session de paiement au-dessus.
+        _t1_champs = await _t1_preuve_checkout(req.terms_accepted, req.items,
+                                               req.coach_email, exiger=True)
         await _essai1_garde(req.customer_email,
                             str((req.items[0].id if req.items else "") or ""))
         transaction_id = f"free_{uuid.uuid4().hex[:12]}"
         try:
             await _process_successful_payment(
+                terms_fields=_t1_champs,
                 transaction_id=transaction_id,
                 coach_email=req.coach_email,
                 customer_name=req.customer_name,
@@ -286,6 +336,10 @@ async def create_checkout_session(req: CreateCheckoutRequest):
 
             # Enregistrer la transaction
             await db["checkout_transactions"].insert_one({
+                # ESSAI-5a-1 : la preuve est etablie MAINTENANT, au moment ou la
+                # personne coche. Elle attend ici que le webhook cree la
+                # reservation, pour ne pas etre refabriquee avec une fausse heure.
+                "terms_fields": _t1_champs,
                 "transaction_id": transaction_id,
                 "stripe_session_id": session.id,
                 "coach_email": req.coach_email,
@@ -624,6 +678,8 @@ class FreeCheckoutRequest(BaseModel):
     customer_email: str
     customer_phone: str = ""
     discount_code: Optional[str] = None
+    # ESSAI-5a-1 : la seule chose que le client exprime.
+    terms_accepted: Optional[bool] = None
 
 
 # === ESSAI-1B : LE PRIX VIENT DU CATALOGUE, JAMAIS DU NAVIGATEUR ===
@@ -850,6 +906,10 @@ async def free_checkout(req: FreeCheckoutRequest):
     # garde-fou : on refuse un item non gratuit ici, ce chemin est reserve au
     # 0 CHF. ESSAI-1B : le prix est relu EN BASE — additionner les `price` du
     # client laissait passer une offre a 250 CHF annoncee a 0.
+    # ESSAI-5a-1 — les conditions d'abord, avant meme la verification de
+    # gratuite : un refus ici ne laisse rien derriere lui.
+    _t1_champs = await _t1_preuve_checkout(req.terms_accepted, req.items,
+                                           req.coach_email)
     await _essai1b_exiger_gratuit(req.items)
     if not req.customer_email or "@" not in req.customer_email:
         raise HTTPException(status_code=400, detail="Email client requis.")
@@ -863,6 +923,7 @@ async def free_checkout(req: FreeCheckoutRequest):
     transaction_id = f"free_{uuid.uuid4().hex[:12]}"
     try:
         result = await _process_successful_payment(
+            terms_fields=_t1_champs,
             transaction_id=transaction_id,
             coach_email=req.coach_email,
             customer_name=req.customer_name,
@@ -1100,6 +1161,7 @@ async def checkout_stripe_webhook(request: Request):
             items = []
 
         await _process_successful_payment(
+            terms_fields=(txn or {}).get("terms_fields") or {},
             transaction_id=transaction_id,
             coach_email=metadata.get("coach_email", ""),
             customer_name=metadata.get("customer_name", ""),
@@ -1267,9 +1329,15 @@ async def _process_successful_payment(
     total: float,
     currency: str,
     payment_method: str,
-    discount_code: str = None
+    discount_code: str = None,
+    terms_fields: dict = None
 ):
-    """Traite un paiement réussi : réservation, code accès, QR, notifications"""
+    """Traite un paiement réussi : réservation, code accès, QR, notifications
+
+    ESSAI-5a-1 — `terms_fields` porte la preuve d'acceptation deja etablie par
+    l'appelant. Elle est recopiee sur les reservations creees ici, sans etre
+    re-jugee : la decision a ete prise en amont, avant toute ecriture.
+    """
 
     # 1. Mettre à jour le statut de la transaction
     await db["checkout_transactions"].update_one(
@@ -1422,7 +1490,7 @@ async def _process_successful_payment(
     for item in items:
         item_data = item.dict() if hasattr(item, 'dict') else item
         if item_data.get("type") == "course":
-            await db["reservations"].insert_one({
+            _resa_doc = {
                 "id": str(uuid.uuid4()),
                 "userName": customer_name,
                 "userEmail": customer_email,
@@ -1442,7 +1510,10 @@ async def _process_successful_payment(
                 "transaction_id": transaction_id,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "isProduct": item_data.get("type") == "product"
-            })
+            }
+            # ESSAI-5a-1 : la preuve suit la reservation qu'elle couvre.
+            _resa_doc.update(terms_fields or {})
+            await db["reservations"].insert_one(_resa_doc)
 
     # 5. QR Code URL
     qr_url = f"https://afroboost.com/?qr={access_code}"

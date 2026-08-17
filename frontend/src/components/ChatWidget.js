@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import ReactDOM from 'react-dom';
 import axios from 'axios';
+import ConditionsParticipation from './ConditionsParticipation'; // ESSAI-5a-1
 import { io } from 'socket.io-client';
 import { 
   parseMessageContent, 
@@ -3468,6 +3469,10 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   const [loadingCourses, setLoadingCourses] = useState(false);
   const [selectedCourse, setSelectedCourse] = useState(null); // Cours sélectionné
   const [reservationLoading, setReservationLoading] = useState(false); // Chargement réservation
+  // ESSAI-5a-1 : ce chemin porte 39 des 132 reservations reelles et n'avait
+  // aucune case a cocher.
+  const [conditionsOk, setConditionsOk] = useState(false);
+  const [conditionsRequises, setConditionsRequises] = useState(false);
   const [reservationError, setReservationError] = useState(''); // Erreur réservation
   const [reservationEligibility, setReservationEligibility] = useState(null); // Éligibilité code
   // v95: Multi-abonnements
@@ -3719,6 +3724,13 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
 
   // === HANDLER CONFIRMATION RÉSERVATION (extrait pour BookingPanel) ===
   const handleConfirmReservation = useCallback(async () => {
+    // ESSAI-5a-1 : refus cote client pour expliquer, refus cote serveur pour
+    // decider. Les deux sont necessaires — l'un est une politesse, l'autre une
+    // garantie.
+    if (conditionsRequises && !conditionsOk) {
+      setReservationError("Merci d'accepter les conditions de participation.");
+      return;
+    }
     // v9.3.7: Vérifier si l'utilisateur a un code promo valide
     if (!afroboostProfile?.code) {
       setReservationError('Veuillez entrer un code promo valide dans le formulaire "Abonné" pour réserver.');
@@ -3746,6 +3758,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       datetime: new Date().toISOString(),
       promoCode: (selectedSubscription?.code || afroboostProfile?.code || '').trim().toUpperCase(),
       subscriptionId: selectedSubscription?.id || null,
+      terms_accepted: conditionsOk,
       source: 'chat_widget_abonne',
       type: 'abonné',
       offerId: selectedCourse.id,
@@ -11398,6 +11411,18 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         selectedSubscription={selectedSubscription}
                         onSelectSubscription={setSelectedSubscription}
                       />
+                      {/* ESSAI-5a-1 : la case, dans le meme panneau defilant que
+                          le bouton de confirmation. */}
+                      {selectedCourse && (
+                        <div style={{ marginTop: 12 }}>
+                          <ConditionsParticipation
+                            courseId={selectedCourse.id || ''}
+                            accepte={conditionsOk}
+                            onChange={setConditionsOk}
+                            onRequired={setConditionsRequises}
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

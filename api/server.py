@@ -661,6 +661,10 @@ class Course(BaseModel):
     # vaut NON — aucun cours historique ne se met a envoyer tout seul. Ces deux
     # champs doivent etre declares ici : `/courses` a un `response_model` et
     # `extra="ignore"` les retirerait silencieusement de la reponse.
+    # ESSAI-5a-1 : cette seance est-elle susceptible d'etre photographiee ou
+    # filmee ? Meme convention que `reminders_enabled` : ABSENT vaut NON. Aucun
+    # cours existant n'est donc repute filme, et aucune migration n'est requise.
+    filmed: Optional[bool] = None
     reminders_enabled: Optional[bool] = None
     reminder_rules: Optional[List[dict]] = None
 
@@ -680,6 +684,10 @@ class CourseCreate(BaseModel):
     # vaut NON — aucun cours historique ne se met a envoyer tout seul. Ces deux
     # champs doivent etre declares ici : `/courses` a un `response_model` et
     # `extra="ignore"` les retirerait silencieusement de la reponse.
+    # ESSAI-5a-1 : cette seance est-elle susceptible d'etre photographiee ou
+    # filmee ? Meme convention que `reminders_enabled` : ABSENT vaut NON. Aucun
+    # cours existant n'est donc repute filme, et aucune migration n'est requise.
+    filmed: Optional[bool] = None
     reminders_enabled: Optional[bool] = None
     reminder_rules: Optional[List[dict]] = None
 
@@ -12551,6 +12559,28 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     )
     shared_mode = (discount_for_mode or {}).get("shared_sessions", True)
 
+    # ESSAI-5a-1 — LES CONDITIONS, AVANT TOUTE ECRITURE.
+    # C'est ce chemin qui porte 74 des 132 reservations reelles, et il n'avait
+    # jamais eu la moindre case a cocher. `body` est deja lu plus haut.
+    # `course` n'est charge que plus bas : on n'en a pas besoin. Les conditions
+    # sont celles du concept (il n'y en a qu'un), et l'annonce de captation est
+    # relue par `t1_preuve` depuis `course_id`, jamais depuis la requete.
+    _t1_champs = await t1_preuve(
+        (body or {}).get("terms_accepted") if isinstance(body, dict) else None,
+        course_id, "")
+
+    # ESSAI-5a-1 — avant de lire le compteur, rendre les essais reserves mais
+    # jamais honores. C'est ici qu'on le fait plutot que dans un automate : la
+    # personne qui revient reserver est exactement celle a qui son credit doit
+    # etre rendu, et l'operation est idempotente.
+    try:
+        if await t1_restituer_essais_non_honores(code_upper):
+            subscription = await db.subscriptions.find_one(
+                {"code": {"": f"^{re.escape(code_upper)}$", "off on off off off off off off off off on off on off off off off off on off off off on on off off off off on off off off off off off off off off off off off on off off off off off off off on off on on off off off on off off on off off on off off on off on off off on off on off off off off on off off off on off off on off off off off off off off off on off on off off on off off off off off off off off off off off off on off on off on off on off on on off off off off on on on off on on off on off on on off off off off on on off off on off off off off off on off off on off off off off off off off off off on off off off off on on off on off off off off off on off on off off off off off off off off off off on on off on off off off": "i"}},
+                {"_id": 0}) or subscription
+    except Exception as _t1err:
+        logger.warning("[T1] restitution ignoree : %s", _t1err)
+
     if member and not shared_mode:
         # Quota individuel du membre
         remaining = member.get("remaining_sessions", 0)
@@ -12630,9 +12660,13 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
             existing_reservation = await db.reservations.find_one(dup_query, {"_id": 0, "id": 1})
             # V211c: Fallback — anciennes réservations sans member_slug (avant V208)
             if not existing_reservation and user_email:
-                user_email_safe = _re_mod.escape(user_email)
+                # ESSAI-5a-1 — `re.escape` etait applique DEUX fois : l'adresse
+                # ressortait avec des antislashs doubles, et le motif ne
+                # retrouvait plus aucune adresse contenant un point, donc
+                # presque aucune. La garde ne servait a rien.
+                user_email_safe = re.escape(user_email)
                 old_dup_query = {
-                    "userEmail": {"$regex": f"^{re.escape(user_email_safe)}$", "$options": "i"},
+                    "userEmail": {"$regex": f"^{user_email_safe}$", "$options": "i"},
                     "courseId": course_id,
                     "$or": [{"member_slug": {"$exists": False}}, {"member_slug": ""}, {"member_slug": None}],
                 }
@@ -12647,9 +12681,12 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
                     )
                     logger.info(f"[V211c] Migrated old reservation {existing_reservation['id']} → member_slug={member_slug}")
         else:
-            user_email_safe = _re_mod.escape(user_email)
+            # ESSAI-5a-1 — meme double echappement ici : c'est le chemin NOMINAL,
+            # celui qui empeche de reserver deux fois la meme seance. Il etait
+            # inerte pour toute adresse contenant un point.
+            user_email_safe = re.escape(user_email)
             dup_query = {
-                "userEmail": {"$regex": f"^{re.escape(user_email_safe)}$", "$options": "i"},
+                "userEmail": {"$regex": f"^{user_email_safe}$", "$options": "i"},
                 "courseId": course_id,
             }
             if occurrence_iso:
@@ -12725,6 +12762,7 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         "guests": guests,
         "guest_headphones": [None] * len(guests),
     }
+    reservation_doc.update(_t1_champs)
     await db.reservations.insert_one(reservation_doc)
     reservation_doc.pop("_id", None)
     logger.info(f"[SUBSCRIBER_SPACE V187] Réservation {reservation_doc['reservationCode']} pour {user_email} ({course.get('name')}) × {quantity} guests={guests}")
@@ -13665,18 +13703,39 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str):
     if user_email and res_email and res_email != user_email and res_code != code_upper:
         raise HTTPException(status_code=403, detail="Cette réservation ne t'appartient pas")
 
-    # Vérifier la règle des 2h avant le cours
+    # ESSAI-5a-1 — DEUX REGLES, PARCE QUE CE NE SONT PAS LES MEMES DROITS.
+    #
+    # Seance PAYANTE : annulable jusqu'a 24 h avant. Passe ce delai, la seance
+    # est consideree comme utilisee — elle n'est ni reportee, ni remboursee.
+    # Le seuil etait de 2 h ; il passe a 24 h sur decision du coach.
+    #
+    # PREMIERE SEANCE DECOUVERTE : aucun delai. Reserver n'est pas consommer,
+    # annuler non plus. Seule une presence confirmee consomme l'essai — c'est
+    # la regle produit, et elle ne se defend pas en interdisant l'annulation
+    # mais en rendant le credit.
+    _t1_essai = False
+    try:
+        from api.routes.shared import essai2_est_essai as _t1_est_essai
+        _t1_essai = await _t1_est_essai(db, reservation)
+    except Exception as _t1err:
+        # Dans le doute, on applique la regle PAYANTE : elle est la plus
+        # restrictive, donc la seule qu'on puisse appliquer par defaut sans
+        # offrir un droit que la personne n'a peut-etre pas.
+        logger.warning("[T1 CANCEL] nature de la reservation indeterminee : %s", _t1err)
+
     occurrence_iso = reservation.get("datetime")
-    if occurrence_iso:
+    if occurrence_iso and not _t1_essai:
         try:
             occurrence_dt = datetime.fromisoformat(occurrence_iso.replace("Z", "+00:00"))
             if occurrence_dt.tzinfo is None:
                 occurrence_dt = occurrence_dt.replace(tzinfo=timezone.utc)
             hours_until = (occurrence_dt - datetime.now(timezone.utc)).total_seconds() / 3600.0
-            if hours_until < 2:
+            if hours_until < T1_DELAI_ANNULATION_H:
                 raise HTTPException(
                     status_code=400,
-                    detail="Annulation impossible, moins de 2h avant le cours"
+                    detail=("Annulation impossible à moins de %d h du cours. "
+                            "La séance est considérée comme utilisée."
+                            % T1_DELAI_ANNULATION_H)
                 )
         except HTTPException:
             raise
@@ -24562,6 +24621,217 @@ async def essai3_funnel_essai_gratuit(request: Request, period: str = "30d",
             "partial": bool(_plus_ancien and _plus_ancien[:10] < ESSAI3_CONVERSION_DEPUIS),
             "min_sample_for_diagnostic": ESSAI3_ECHANTILLON_MINIMUM,
         },
+    }
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ESSAI-5a-1 — LES CONDITIONS DE PARTICIPATION, ET LA PREUVE QU'ELLES ONT
+#              ETE ACCEPTEES
+#
+# Ce qui existait : une case a cocher sur la vitrine, qui deverrouillait un
+# bouton. Elle pointait vers un texte VIDE, elle n'etait jamais transmise, et
+# elle ne couvrait que 18 des 132 reservations reelles — l'espace abonne et le
+# ChatWidget, qui en portent 113, n'en avaient aucune. Autrement dit : aucune
+# preuve de consentement n'existait pour aucune reservation.
+#
+# LA GARDE NE S'ALLUME QUE S'IL Y A UN TEXTE. Tant qu'aucune condition n'est
+# publiee, rien n'est exige : deployer ce lot ne casse donc aucune reservation.
+# Le jour ou le coach ecrit ses conditions, la garde s'active d'elle-meme, sur
+# les trois chemins a la fois. L'ordre de livraison est ainsi porte par le code
+# plutot que par une consigne qu'on pourrait oublier.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Delai d'annulation d'une seance PAYANTE. Une premiere seance decouverte n'y
+# est pas soumise : seule une presence confirmee la consomme.
+T1_DELAI_ANNULATION_H = 24
+
+T1_RAISON_REFUS = "terms_not_accepted"
+T1_MESSAGE_REFUS = ("Merci d'accepter les conditions de participation "
+                    "pour confirmer votre réservation.")
+
+
+def t1_empreinte(texte: str) -> str:
+    """L'identifiant d'une version EST son contenu.
+
+    Deux proprietes gratuites : reenregistrer le meme texte ne cree pas une
+    version de plus, et un texte modifie en cree forcement une nouvelle. Une
+    version ne peut donc pas etre alteree sans changer d'identifiant — ce qui
+    est exactement ce qu'on demande a une preuve.
+    """
+    import hashlib
+    return hashlib.sha256((texte or "").strip().encode("utf-8")).hexdigest()[:12]
+
+
+async def t1_version_active(coach_id: str = ""):
+    """(version, texte) des conditions en vigueur, ou ("", "") s'il n'y en a pas.
+
+    La version est ENREGISTREE au passage si elle ne l'etait pas encore. Une
+    ecriture sur un chemin de lecture se justifie ici : elle est idempotente
+    (la cle est l'empreinte du contenu) et c'est le seul moyen de garantir
+    qu'une version acceptee reste relisable meme apres que le coach a change
+    son texte.
+    """
+    _coach = (coach_id or DEFAULT_COACH_ID).strip().lower()
+    try:
+        # `id: "concept"` est la cle employee partout ailleurs (l.320, l.14141) ;
+        # le repli sur le premier document couvre les bases anterieures.
+        _concept = (await db.concept.find_one({"id": "concept"}, {"_id": 0, "termsText": 1})
+                    or await db.concept.find_one({}, {"_id": 0, "termsText": 1}) or {})
+    except Exception as _err:
+        logger.warning("[T1] conditions illisibles : %s", _err)
+        return "", ""
+    _texte = str(_concept.get("termsText") or "").strip()
+    if not _texte:
+        return "", ""
+    _version = t1_empreinte(_texte)
+    try:
+        await db.terms_versions.update_one(
+            {"version": _version},
+            {"$setOnInsert": {"version": _version, "text": _texte,
+                              "coach_id": _coach,
+                              "created_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True,
+        )
+    except Exception as _err:
+        # La version n'a pas pu etre archivee : on refuse d'exiger une
+        # acceptation dont on ne pourrait pas prouver le contenu plus tard.
+        logger.error("[T1] version %s non archivee : %s", _version, _err)
+        return "", ""
+    return _version, _texte
+
+
+async def t1_cours_filme(course_id: str = "") -> bool:
+    """Ce cours est-il annonce comme susceptible d'etre filme ?
+
+    Lu dans la base, JAMAIS dans la requete : le navigateur n'a pas voix au
+    chapitre sur ce qui a ete annonce.
+    """
+    _cid = str(course_id or "").strip()
+    if not _cid:
+        return False
+    try:
+        _c = await db.courses.find_one({"id": _cid}, {"_id": 0, "filmed": 1})
+    except Exception as _err:
+        logger.warning("[T1] cours %s illisible : %s", _cid, _err)
+        return False
+    return bool((_c or {}).get("filmed") is True)
+
+
+async def t1_preuve(accepte, course_id: str = "", coach_id: str = "") -> dict:
+    """Les quatre champs de preuve, ou un refus. A appeler AVANT toute ecriture.
+
+    Le client n'envoie qu'une chose : « j'accepte ». La version, l'heure et
+    l'etat filme du cours sont tous determines ici, par le serveur.
+
+    `filmed_at_booking` fige l'etat annonce AU MOMENT de la reservation : si le
+    coach passe le cours en « filme » le mois prochain, les reservations deja
+    consenties gardent `False`. Un booleen suffit a ne pas falsifier
+    l'historique — inutile d'inventer davantage.
+    """
+    _version, _ = await t1_version_active(coach_id)
+    if not _version:
+        # Aucune condition publiee : rien a accepter, rien a exiger.
+        return {}
+    if accepte is not True:
+        raise HTTPException(
+            status_code=409,
+            detail=T1_MESSAGE_REFUS,
+            headers={"X-Refus-Raison": T1_RAISON_REFUS},
+        )
+    return {
+        "terms_accepted": True,
+        "terms_version": _version,
+        "terms_accepted_at": datetime.now(timezone.utc).isoformat(),
+        "filmed_at_booking": await t1_cours_filme(course_id),
+    }
+
+
+async def t1_restituer_essais_non_honores(code: str) -> int:
+    """Rend le credit d'un essai RESERVE mais jamais honore. Renvoie le nombre rendu.
+
+    LA REGLE PRODUIT : reserve n'est pas consomme, annule non plus, ne pas venir
+    non plus. SEULE UNE PRESENCE CONFIRMEE consomme l'essai.
+
+    Le decompte reste fait a la reservation — et c'est voulu : c'est lui qui
+    garantit « une seule reservation d'essai active a la fois », sans compteur
+    supplementaire. Ce qui change, c'est qu'il n'est plus definitif : quand
+    l'occurrence est passee sans validation, le credit revient ici.
+
+    IDEMPOTENT PAR CONSTRUCTION : le drapeau `trial_credit_restored` est pose par
+    une ecriture CONDITIONNELLE sur sa propre absence, et le credit n'est rendu
+    que si cette ecriture a gagne. Deux appels simultanes ne rendent qu'un credit.
+
+    La reservation n'est PAS supprimee : elle reste dans le funnel comme une
+    reservation d'essai qui n'a pas ete honoree, ce qui est precisement
+    l'information qu'ESSAI-3 doit pouvoir montrer.
+    """
+    _code = (code or "").strip().upper()
+    if not _code:
+        return 0
+    try:
+        from api.routes.shared import ESSAI2_FILTRE_GRATUIT as _GRATUIT
+        _q = {"code": _code}
+        _q.update(_GRATUIT)
+        if not await db.discount_codes.find_one(_q, {"_id": 1}):
+            return 0          # pas un essai : la regle payante s'applique
+    except Exception as _err:
+        logger.warning("[T1] nature du code %s indeterminee : %s", _code[:4], _err)
+        return 0
+
+    _maintenant = datetime.now(timezone.utc).isoformat()
+    try:
+        _passees = await db.reservations.find({
+            "$or": [{"promoCode": _code}, {"discountCode": _code}],
+            "validated": {"$ne": True},
+            "trial_credit_restored": {"$exists": False},
+            "datetime": {"$lt": _maintenant},
+        }, {"_id": 0, "id": 1, "quantity": 1}).to_list(20)
+    except Exception as _err:
+        logger.warning("[T1] reservations d'essai illisibles : %s", _err)
+        return 0
+
+    _rendus = 0
+    for _r in _passees:
+        try:
+            _pris = await db.reservations.update_one(
+                {"id": _r.get("id"), "trial_credit_restored": {"$exists": False}},
+                {"$set": {"trial_credit_restored": _maintenant}},
+            )
+            if not getattr(_pris, "matched_count", 0):
+                continue      # un autre appel l'a deja rendu
+            _q = max(1, int(_r.get("quantity") or 1))
+            await db.subscriptions.update_one(
+                {"code": _code},
+                {"$inc": {"remaining_sessions": _q, "used_sessions": -_q},
+                 "$set": {"status": "active",
+                          "updated_at": _maintenant}},
+            )
+            await db.discount_codes.update_one({"code": _code}, {"$inc": {"used": -_q}})
+            _rendus += _q
+            logger.info("[T1] essai non honore : %d credit(s) rendu(s) sur %s…",
+                        _q, _code[:4])
+        except Exception as _err:
+            logger.error("[T1] restitution impossible pour %s : %s", _r.get("id"), _err)
+    return _rendus
+
+
+
+@api_router.get("/terms/active")
+async def t1_conditions_actives(request: Request, course_id: str = ""):
+    """Les conditions a afficher, et si CE cours annonce une captation.
+
+    Publique et anonyme : c'est un texte destine a etre lu avant de reserver.
+    Elle ne rend que ce qui s'affiche — aucune identite, aucun coach, aucun
+    identifiant interne (meme regle que la liste blanche des commentaires).
+    """
+    _version, _texte = await t1_version_active(
+        request.query_params.get("coach_id", "") or "")
+    return {
+        "version": _version,
+        "text": _texte,
+        "filmed": await t1_cours_filme(course_id),
+        "required": bool(_version),
     }
 
 

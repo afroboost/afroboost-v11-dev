@@ -751,7 +751,10 @@ export default function OfferWizard({
       time: c.time || '',
       locationName: c.locationName || '',
       location: c.locationName || '',
-      mapsUrl: c.mapsUrl || ''
+      mapsUrl: c.mapsUrl || '',
+      // ESSAI-5a-1 — `buildCoursePayload` est une liste BLANCHE : un champ qui
+      // n'y figure pas n'est jamais enregistre, quelle que soit la case cochee.
+      filmed: c.filmed === true
     };
     if (sessionCreatedCourseIds.includes(c.id)) payload.visible = true;
     return payload;
@@ -1442,6 +1445,27 @@ export default function OfferWizard({
                   style={INPUT_STYLE}
                   className="text-sm v224-input mt-2"
                 />
+
+                {/* ESSAI-5a-1 : la captation se decide PAR SEANCE. Une regle
+                    globale affirmerait que tous les cours sont filmes, ce qui
+                    est faux et affaiblirait la mention la ou elle compte.
+                    Absent = non filme : aucun cours existant n'est concerne. */}
+                <label className="flex items-start gap-2 mt-3 cursor-pointer text-xs"
+                       style={{ color: 'rgba(255,255,255,0.75)' }}>
+                  <input
+                    type="checkbox"
+                    checked={course.filmed === true}
+                    onChange={(e) => setCourseField(course.id, 'filmed', e.target.checked)}
+                    data-testid={`course-filmed-${course.id}`}
+                    style={{ marginTop: 2, width: 16, height: 16, accentColor: PINK }}
+                  />
+                  <span>
+                    Séance susceptible d'être photographiée ou filmée
+                    <span className="block mt-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                      La mention apparaît dans les conditions, avant la réservation.
+                    </span>
+                  </span>
+                </label>
 
                 {/* V226: etat de publication de l'horaire.
                     Un horaire cree dans CETTE session est publie automatiquement

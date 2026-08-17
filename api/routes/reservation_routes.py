@@ -520,6 +520,11 @@ class ReservationBase(BaseModel):
     source: Optional[str] = "website"
     type: Optional[str] = "ticket"
     coach_id: Optional[str] = None  # V206: accepter coach_id depuis le body (vitrine)
+    # ESSAI-5a-1 : la SEULE chose que le client exprime. La version des
+    # conditions, l'heure et l'etat filme du cours sont determines par le
+    # serveur — le navigateur n'a voix au chapitre sur aucun des trois.
+    terms_accepted: Optional[bool] = None
+    courseId: Optional[str] = None
 
 class ReservationCreate(ReservationBase):
     pass
@@ -754,6 +759,18 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
         effective_coach_id = reservation.coach_id.lower().strip()
     if not effective_coach_id:
         effective_coach_id = DEFAULT_COACH_ID  # V244
+    # ESSAI-5a-1 — la preuve d'acceptation, AVANT la moindre ecriture.
+    # Sans conditions publiees, `t1_preuve` rend un dict vide et rien n'est exige.
+    try:
+        from api.server import t1_preuve as _t1_preuve
+        _t1_champs = await _t1_preuve(reservation.terms_accepted,
+                                      reservation.courseId or "", effective_coach_id)
+    except HTTPException:
+        raise
+    except Exception as _t1err:
+        logger.warning("[T1] preuve d'acceptation ignoree : %s", _t1err)
+        _t1_champs = {}
+
     reservation_data = Reservation(
         userName=reservation.userName, userEmail=reservation.userEmail, userWhatsapp=reservation.userWhatsapp,
         userLanguage=reservation.userLanguage,
@@ -765,6 +782,9 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
         source=reservation.source, type=reservation.type,
         coach_id=effective_coach_id
     ).model_dump()
+    reservation_data.update(_t1_champs)
+    if reservation.courseId:
+        reservation_data["courseId"] = reservation.courseId
     await db.reservations.insert_one(reservation_data)
     reservation_data.pop("_id", None)
     logger.info(f"[RESERVATION] Créée: {reservation_data.get('reservationCode')} pour {user_email}")
