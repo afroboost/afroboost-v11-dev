@@ -24108,6 +24108,74 @@ async def n1b3b2_ecrire_regles(request: Request):
     return {"success": True, "rules": _sures, "avertissements": _avertissements}
 
 
+@api_router.get("/coach/courses/reminders")
+async def rv3_cours_configurables(request: Request):
+    """Les cours qu'un COACH peut configurer. Ce n'est pas la liste publique.
+
+    Deux contextes, deux regles, et les confondre a produit un vrai bug : le
+    coach voyait six brouillons nommes « Nouveau cours » et ne voyait PAS les
+    seances du mercredi et du dimanche que ses offres vendent reellement. Il a
+    donc regle ses rappels sur un cours que personne ne peut reserver.
+
+    La cause : la liste venait de `GET /courses`, qui filtre `archived` parce
+    qu'elle sert d'abord la VITRINE. Or « archive » ne veut pas dire « n'existe
+    plus » : les deux vraies seances recurrentes sont archivees, rattachees a
+    trois offres publiques, et portent `agenda_abonne`.
+
+    La regle retenue ici ne parle donc jamais de `visible`, qui est un reglage
+    de PUBLICATION et n'a rien a dire sur ce qu'un coach peut administrer :
+
+        configurable  =  non archive
+                      OU rattache a au moins une offre
+                      OU marque `agenda_abonne`
+
+    Un cours archive, sans aucune offre et sans `agenda_abonne`, sort de la
+    liste : plus rien ne prouve qu'il serve encore a quoi que ce soit. Les
+    brouillons, eux, ne sont pas archives et restent donc administrables — les
+    retirer serait une decision de menage, pas de code.
+
+    Chaque cours repart avec ses offres et leur etat de publication, pour que
+    l'ecran puisse dire au coach lequel est reellement vendu.
+    """
+    _email = await _n1b3b2_coach_appelant(request)
+    _tout = is_super_admin(_email)
+    _filtre = {} if _tout else {"coach_id": _email.strip().lower()}
+    try:
+        _cours = await db.courses.find(_filtre, {"_id": 0}).to_list(300)
+    except Exception as _e:
+        logger.warning("[RV3] cours du coach illisibles : %s", _e)
+        raise HTTPException(status_code=503, detail="Liste des cours indisponible")
+    try:
+        _offres = await db.offers.find(
+            {}, {"_id": 0, "id": 1, "name": 1, "visible": 1, "linked_course_ids": 1}
+        ).to_list(300)
+    except Exception:
+        _offres = []
+
+    _par_cours = {}
+    for _o in _offres:
+        for _cid in (_o.get("linked_course_ids") or []):
+            if not _cid:
+                continue
+            _par_cours.setdefault(_cid, []).append({
+                "id": _o.get("id"), "name": _o.get("name"),
+                "publique": _o.get("visible") is not False,
+            })
+
+    _garde = ("id", "name", "weekday", "date", "time", "locationName",
+              "visible", "archived", "reminders_enabled", "reminder_rules")
+    _sortie = []
+    for _c in _cours:
+        _liees = _par_cours.get(_c.get("id"), [])
+        if _c.get("archived") is True and not _liees and not _c.get("agenda_abonne"):
+            continue
+        _vue = {_k: _c.get(_k) for _k in _garde}
+        _vue["offres"] = _liees
+        _vue["agenda_abonne"] = bool(_c.get("agenda_abonne"))
+        _sortie.append(_vue)
+    return _sortie
+
+
 @api_router.put("/coach/courses/{course_id}/reminders")
 async def rv3_ecrire_rappels_du_cours(course_id: str, request: Request):
     """Active ou coupe les rappels d'UN cours, et fixe ses regles.

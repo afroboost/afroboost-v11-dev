@@ -20,19 +20,36 @@ const act = React.act;
 const R24H = { type: 'relative', minutes: 1440 };
 const SD700 = { type: 'same_day', heure: 7, minute: 0 };
 
-// Les vrais cours du coach : recurrents, a 18:30, et NON publies.
+// Les VRAIS cours du coach, tels que la route dediee les rend : recurrents,
+// ARCHIVES, mais vendus par des offres publiques. C'est le cas reel qui a fait
+// poser les rappels au mauvais endroit.
+const VENDUES = [
+  { id: 'pulse', name: 'PULSE x10 cours', publique: true },
+  { id: 'membres', name: 'Membres', publique: true }
+];
 const MERCREDI = {
-  id: 'merc', name: 'Afroboost Silent', weekday: 3, time: '18:30',
-  visible: false, archived: false
+  id: 'merc', name: 'Afroboost Silent – Session Cardio', weekday: 3, time: '18:30',
+  visible: true, archived: true, agenda_abonne: true, offres: VENDUES
 };
 const DIMANCHE = {
-  id: 'dim', name: 'Sunday Vibes', weekday: 0, time: '18:30',
-  visible: false, archived: false,
+  id: 'dim', name: 'Afroboost Silent – Sunday Vibes', weekday: 0, time: '18:30',
+  visible: true, archived: true, agenda_abonne: true, offres: VENDUES,
   reminders_enabled: true, reminder_rules: [R24H, SD700]
+};
+// Un brouillon : non publie, rattache a rien.
+const BROUILLON = {
+  id: 'brouillon2', name: 'Nouveau cours', weekday: 3, time: '18:30',
+  visible: false, archived: false, offres: []
+};
+// Un cours rattache UNIQUEMENT a une offre masquee.
+const MASQUE_SEUL = {
+  id: 'masq', name: 'Silent Lakeside', weekday: 0, time: '11:00',
+  visible: true, archived: false,
+  offres: [{ id: 'lakeside', name: 'SILENT LAKESIDE', publique: false }]
 };
 const ARCHIVE = {
   id: 'vieux', name: 'Ancien cours', weekday: 1, time: '19:00',
-  visible: true, archived: true
+  visible: true, archived: true, offres: []
 };
 
 let conteneur = null;
@@ -82,25 +99,57 @@ describe('la liste des cours a configurer', () => {
   test('elle vient de la portee du coach, identite en en-tete', async () => {
     await monter();
     expect(axios.get).toHaveBeenCalledTimes(1);
-    expect(axios.get.mock.calls[0][0]).toBe('/api/courses?scope=mine');
+    expect(axios.get.mock.calls[0][0]).toBe('/api/coach/courses/reminders');
     expect(axios.get.mock.calls[0][1].headers['X-User-Email']).toBe('coach@afroboost.com');
   });
 
-  test('un cours NON PUBLIE reste selectionnable — c\'est le cas de tous mes recurrents', async () => {
-    await monter();
-    expect(valeursCours()).toEqual(['merc', 'dim']);
-    expect(MERCREDI.visible).toBe(false);
+  test('un cours NON PUBLIE reste selectionnable — publier n\'est pas administrer', async () => {
+    await monter({ cours: [BROUILLON, MERCREDI] });
+    expect(BROUILLON.visible).toBe(false);
+    expect(valeursCours()).toEqual(['brouillon2', 'merc']);
   });
 
   test('et on le dit au coach, pour qu\'il ne croie pas a une erreur', async () => {
-    await monter();
+    await monter({ cours: [BROUILLON] });
     expect(par('cr-non-publie')).not.toBeNull();
   });
 
-  test('un cours ARCHIVE n\'est pas proposé', async () => {
+  test('le client ne refiltre RIEN : c\'est le serveur qui a tranche', async () => {
+    // Refiltrer ici reintroduirait le bug : les vraies seances du coach sont
+    // ARCHIVEES, et un filtre client les ferait disparaitre a nouveau.
     await monter({ cours: [MERCREDI, ARCHIVE, DIMANCHE] });
+    expect(valeursCours()).toEqual(['merc', 'vieux', 'dim']);
+  });
+
+  test('un cours ARCHIVE mais VENDU reste configurable — le cas reel', async () => {
+    await monter({ cours: [MERCREDI, DIMANCHE] });
+    expect(MERCREDI.archived).toBe(true);
     expect(valeursCours()).toEqual(['merc', 'dim']);
-    expect(texte()).not.toContain('Ancien cours');
+    const libelles = Array.from(par('cr-cours').options).map((o) => o.textContent);
+    expect(libelles[0]).toContain('vendu');
+  });
+
+  test('le coach voit PAR QUELLES OFFRES le cours est vendu', async () => {
+    await monter({ cours: [MERCREDI] });
+    expect(par('cr-vendu-par').textContent).toContain('PULSE x10 cours');
+    expect(par('cr-vendu-par').textContent).toContain('Membres');
+  });
+
+  test('un brouillon sans offre est signale comme inerte', async () => {
+    await monter({ cours: [BROUILLON] });
+    expect(par('cr-sans-offre')).not.toBeNull();
+    expect(par('cr-vendu-par')).toBeNull();
+    expect(par('cr-sans-offre').textContent).toContain('aucun rappel ne partira');
+  });
+
+  test('un cours rattache a une offre MASQUEE est signale comme non reservable', async () => {
+    await monter({ cours: [MASQUE_SEUL] });
+    expect(par('cr-offre-masquee')).not.toBeNull();
+  });
+
+  test('une offre masquee n\'est JAMAIS nommee dans l\'ecran coach', async () => {
+    await monter({ cours: [MASQUE_SEUL] });
+    expect(texte()).not.toContain('SILENT LAKESIDE');
   });
 
   test('le jour et l\'heure figurent dans le libelle — mercredi et dimanche 18:30', async () => {

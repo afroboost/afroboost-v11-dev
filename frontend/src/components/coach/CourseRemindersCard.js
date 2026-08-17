@@ -58,14 +58,15 @@ const CourseRemindersCard = ({ coachEmail }) => {
     let annule = false;
     (async () => {
       try {
-        const res = await axios.get(`${API}/courses?scope=mine`, entetes);
+        // PAS `\/courses?scope=mine` : cette liste-la sert d'abord la vitrine
+        // et filtre `archived`, ce qui faisait disparaitre les vraies seances
+        // recurrentes du coach — celles que ses offres vendent. La route
+        // dediee applique la regle d'ADMINISTRATION, pas celle de publication.
+        const res = await axios.get(`${API}/coach/courses/reminders`, entetes);
         if (annule) return;
-        // On ecarte les archives, et EUX SEULS. `visible: false` veut dire
-        // « pas publie sur la vitrine » — surement pas « impossible a regler ».
-        // Filtrer dessus rendrait invisibles au coach ses propres cours
-        // recurrents, qui sont precisement ceux qu'il veut configurer.
-        const _liste = (Array.isArray(res.data) ? res.data : [])
-          .filter((c) => c && c.archived !== true);
+        // Aucun filtre ici : le serveur a deja tranche. En rajouter un
+        // reintroduirait exactement le bug qu'on vient de corriger.
+        const _liste = (Array.isArray(res.data) ? res.data : []).filter(Boolean);
         setCours(_liste);
         if (_liste.length > 0) setCoursId((prec) => prec || _liste[0].id);
       } catch (e) {
@@ -227,17 +228,47 @@ const CourseRemindersCard = ({ coachEmail }) => {
             >
               {cours.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {libelleCours(c)}{c.reminders_enabled === true ? ' • rappels actifs' : ''}
+                  {libelleCours(c)}
+                  {(c.offres || []).some((o) => o.publique) ? ' • vendu' : ''}
+                  {c.reminders_enabled === true ? ' • rappels actifs' : ''}
                 </option>
               ))}
             </select>
           </div>
 
-          {choisi && choisi.visible === false && (
-            <p className="text-white/40 text-xs mt-2" data-testid="cr-non-publie">
-              Ce cours n&rsquo;est pas publié sur ta vitrine. Tu peux quand même régler ses rappels.
-            </p>
-          )}
+          {choisi && (() => {
+            // On dit au coach ce que ce cours EST reellement : vendu par quelles
+            // offres, publie ou non. Sans cela, six brouillons homonymes sont
+            // indiscernables de la vraie seance — c'est ce qui a fait poser les
+            // rappels au mauvais endroit.
+            const publiques = (choisi.offres || []).filter((o) => o.publique);
+            const masquees = (choisi.offres || []).filter((o) => !o.publique);
+            return (
+              <div className="text-white/40 text-xs mt-2 space-y-1" data-testid="cr-contexte">
+                {publiques.length > 0 && (
+                  <p data-testid="cr-vendu-par">
+                    Vendu par&nbsp;: {publiques.map((o) => o.name).join(', ')}
+                  </p>
+                )}
+                {publiques.length === 0 && masquees.length > 0 && (
+                  <p data-testid="cr-offre-masquee">
+                    Rattaché uniquement à une offre masquée&nbsp;: pas réservable publiquement.
+                  </p>
+                )}
+                {publiques.length === 0 && masquees.length === 0 && (
+                  <p data-testid="cr-sans-offre">
+                    Aucune offre ne mène à ce cours&nbsp;: personne ne peut le réserver,
+                    donc aucun rappel ne partira.
+                  </p>
+                )}
+                {choisi.visible === false && (
+                  <p data-testid="cr-non-publie">
+                    Non publié sur ta vitrine. Tu peux quand même régler ses rappels.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
 
           <button
             type="button"
