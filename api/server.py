@@ -12180,6 +12180,11 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
         # ESSAI-5a-1D : la lecture qui donne son sens au compteur. Absente pour
         # un forfait payant, ou l'ecran garde exactement son comportement.
         "trial": await t2_etat_essai(code_upper, reservations_raw, remaining_sessions),
+        # ESSAI-5a-2 : l'invitation a temoigner. Calculee ici, sur des donnees
+        # deja chargees, et JAMAIS montree a quelqu'un dont l'unique trace est
+        # l'essai qu'il vient d'obtenir.
+        "testimonial": await t3_eligibilite(
+            code_upper, user_email, (subscription or {}).get("created_at") or ""),
         "offer": {
             "name": offer.get("name") if offer else offer_name,
             "description": offer.get("description") if offer else "",
@@ -14831,6 +14836,11 @@ async def get_all_contacts_unified(request: Request):
                 "phone": phone or None,
                 "email": email or None,
                 "source": p.get("source", "import"),
+                # ESSAI-5a-2 : la classification EXPLICITE posee par le coach.
+                # `category` juste au-dessus est l'ORIGINE du contact, pas sa
+                # relation a Afroboost — les confondre reviendrait a deduire
+                # « participant » d'une source marketing.
+                "contact_type": p.get("contact_type") or None,
                 "tags": p.get("tags", [])
             })
 
@@ -14856,6 +14866,9 @@ async def get_all_contacts_unified(request: Request):
                 "phone": None,
                 "email": email or None,
                 "source": "app",
+                # Un utilisateur de l'app n'est pas classe : `chat_participants`
+                # est la seule collection qui porte `contact_type`.
+                "contact_type": None,
                 "tags": []
             })
 
@@ -24976,6 +24989,391 @@ async def t2_etat_essai(code: str, reservations: list, remaining) -> dict:
 
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# ESSAI-5a-2 — TEMOIGNAGES AUTHENTIQUES
+#
+# Un temoignage humain n'a rien a voir avec les 88 commentaires generes par IA
+# qui peuplent le mur actuel. Ils cohabitent dans `db.comments` mais ne se
+# melangent jamais : seul ce qui porte `source: participant_testimonial` est
+# un temoignage, et rien d'autre ne le portera.
+#
+# TROIS REGLES QUI NE BOUGENT PAS :
+#   1. le temoignage est FACULTATIF — refuser n'a aucun effet sur l'essai,
+#      la reservation, le prix, les rappels ou le funnel ;
+#   2. rien n'est public sans consentement ET sans approbation du coach ;
+#   3. detenir un code ne prouve pas qu'on a participe. La preuve doit etre
+#      ANTERIEURE au forfait courant, sinon tout nouveau participant serait
+#      pris pour un ancien des sa premiere minute.
+# ═══════════════════════════════════════════════════════════════════════════
+
+T3_MARQUEUR = "participant_testimonial"
+T3_PENDING = "pending"
+T3_APPROVED = "approved"
+T3_HIDDEN = "hidden"
+T3_ETATS = (T3_PENDING, T3_APPROVED, T3_HIDDEN)
+
+# Ce que le public voit d'un temoignage. Liste BLANCHE, comme celle des
+# commentaires (P0) — mais plus stricte : le prenom lui-meme n'en fait partie
+# que si la personne l'a autorise, ce qui se decide a la lecture.
+T3_CHAMPS_PUBLICS = ("id", "text", "created_at")
+
+T3_LONGUEUR_MAX = 1500
+
+
+async def t3_deja_temoigne(code: str) -> dict:
+    """Cette personne a-t-elle deja soumis un temoignage ? (etat compris)"""
+    _code = (code or "").strip().upper()
+    if not _code:
+        return {}
+    try:
+        _d = await db.comments.find_one(
+            {"participant_code": _code, "source": T3_MARQUEUR},
+            {"_id": 0, "moderation_status": 1, "created_at": 1},
+            sort=[("created_at", -1)])
+        return _d or {}
+    except Exception as _err:
+        logger.warning("[T3] temoignage existant illisible : %s", _err)
+        return {}
+
+
+T3_TYPES_CONTACT = ("participant", "prospect", "partner", "other")
+
+
+async def t3_contact_type(email: str) -> str:
+    """Le type declare de ce contact, ou "" s'il n'est pas classe.
+
+    Valeur STOCKEE en anglais, libelle affiche en francais : on ne melange pas
+    les deux, sinon renommer un libelle casserait la donnee.
+    """
+    _mail = (email or "").strip().lower()
+    if not _mail:
+        return ""
+    try:
+        _c = await db.chat_participants.find_one(
+            {"email": {"$regex": "^%s$" % re.escape(_mail), "$options": "i"}},
+            {"_id": 0, "contact_type": 1})
+    except Exception as _err:
+        logger.warning("[T3] type de contact illisible : %s", _err)
+        return ""
+    _t = str((_c or {}).get("contact_type") or "").strip().lower()
+    return _t if _t in T3_TYPES_CONTACT else ""
+
+
+async def t3_eligibilite(code: str, email: str, forfait_cree_le: str = "") -> dict:
+    """Cette personne a-t-elle deja vecu Afroboost ? La reponse vient du COACH.
+
+    UNE SEULE SOURCE : `chat_participants.contact_type == "participant"`, posee
+    a la main depuis la page Contacts. Rien n'est deduit — ni de l'adresse, ni
+    du code, ni d'une reservation, ni d'un forfait, ni d'une source marketing.
+
+    POURQUOI PAS UNE DEDUCTION. Afroboost existait avant le site : la base ne
+    peut pas savoir qui a deja danse. Toute regle automatique se tromperait
+    dans les deux sens — en oubliant les anciens d'avant le site, et en prenant
+    pour un ancien un nouveau venu qui possede deja un code depuis une minute.
+    Le coach, lui, sait.
+
+    CHAMP ABSENT = NON CLASSE = AUCUNE INVITATION. Un systeme silencieux vaut
+    mieux qu'un mauvais classement : tant que rien n'est classe, personne n'est
+    sollicite.
+    """
+    _code = (code or "").strip().upper()
+    _deja = await t3_deja_temoigne(_code)
+    _type = await t3_contact_type(email)
+    return {
+        "eligible": _type == "participant",
+        "contact_type": _type or None,
+        "already_submitted": bool(_deja),
+        "status": _deja.get("moderation_status") if _deja else None,
+    }
+
+
+def t3_public(doc: dict) -> dict:
+    """Ce qu'un temoignage montre au public, et rien de plus.
+
+    Le prenom n'est ajoute QUE si la personne l'a autorise separement du texte :
+    consentir a publier ses mots n'est pas consentir a publier son identite.
+    """
+    _d = doc or {}
+    _sortie = {_c: _d[_c] for _c in T3_CHAMPS_PUBLICS if _c in _d}
+    if _d.get("consent_identity") is True:
+        _prenom = str(_d.get("user_name") or "").strip().split(" ")[0]
+        if _prenom:
+            _sortie["user_name"] = _prenom
+    return _sortie
+
+
+
+@api_router.post("/testimonials")
+async def t3_soumettre(request: Request):
+    """Un participant soumet SON temoignage. Rien n'est publie ici.
+
+    L'IDENTITE VIENT DE LA BASE, JAMAIS DU CORPS. `_v261_resolve_subscriber`
+    rend le nom enregistre : c'est ce qui empeche quelqu'un de publier sous
+    l'identite d'un autre — le meme garde-fou que le mur de publications.
+    """
+    try:
+        _b = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Requête invalide")
+
+    _code = str((_b or {}).get("code") or "").strip().upper()
+    _texte = str((_b or {}).get("text") or "").strip()
+    _consent = (_b or {}).get("consent_publication") is True
+    _consent_id = (_b or {}).get("consent_identity") is True
+    _consent_texte = str((_b or {}).get("consent_text") or "").strip()[:400]
+    _offre = str((_b or {}).get("offer_id") or "").strip()[:64]
+
+    if not _texte:
+        raise HTTPException(status_code=400, detail="Le témoignage est vide.")
+    if len(_texte) > T3_LONGUEUR_MAX:
+        raise HTTPException(status_code=400, detail="Témoignage trop long.")
+
+    _ok, _nom, _coach = await _v261_resolve_subscriber(_code)
+    if not _ok:
+        # Meme reponse qu'un code absent : on ne renseigne pas qui existe.
+        raise HTTPException(status_code=403, detail="Code d'accès invalide.")
+
+    if await t3_deja_temoigne(_code):
+        raise HTTPException(status_code=409, detail="Vous avez déjà partagé votre expérience.")
+
+    _now = datetime.now(timezone.utc).isoformat()
+    _doc = {
+        "id": "temoignage_%s_%s" % (datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
+                                    _random.randint(100, 999)),
+        # Le marqueur POSITIF qui separe ce document des 88 commentaires IA.
+        "source": T3_MARQUEUR,
+        "is_review": True,
+        "is_ai": False,
+        # `is_visible` reste FAUX : aucune publication automatique. C'est le
+        # defaut inverse de `POST /reviews`, et c'est voulu.
+        "is_visible": False,
+        "moderation_status": T3_PENDING,
+        "text": _texte,
+        # Le nom vient de la base. Le corps de la requete ne peut pas le dicter.
+        "user_name": _nom or "",
+        "participant_code": _code,
+        "coach_id": _coach or DEFAULT_COACH_ID,
+        "offer_id": _offre,
+        "consent_publication": _consent,
+        "consent_identity": _consent_id,
+        "consented_at": _now if _consent else None,
+        "consent_text_version": _consent_texte,
+        "recognition": str((_b or {}).get("recognition") or "")[:24],
+        "created_at": _now,
+    }
+    await db.comments.insert_one(_doc)
+    # Le code n'apparait pas dans le journal : c'est le mot de passe de
+    # l'espace abonne (cf. P0).
+    logger.info("[T3] témoignage reçu (%s…), en attente de modération", _code[:4])
+    try:
+        from api.routes.shared import posthog_capture as _ph
+        await _ph("testimonial_submitted", email="", props={
+            "offer_id": _offre, "length": len(_texte),
+            "consent_publication": _consent, "consent_identity": _consent_id,
+            "recognition": _doc["recognition"],
+        })
+    except Exception as _err:
+        logger.warning("[T3] mesure ignorée : %s", _err)
+    return {"success": True, "status": T3_PENDING}
+
+
+@api_router.get("/testimonials")
+async def t3_publics(request: Request, offer_id: str = "", limit: int = 12):
+    """Les temoignages visibles du public. Trois conditions, toutes exigees.
+
+    Ne sortent que les documents qui portent le marqueur, dont la personne a
+    autorise la publication, ET que le coach a approuves. Un `pending` ou un
+    `hidden` n'apparait jamais. Aucun commentaire IA ne peut passer : ils ne
+    portent pas le marqueur.
+    """
+    _q = {
+        "source": T3_MARQUEUR,
+        "consent_publication": True,
+        "moderation_status": T3_APPROVED,
+        "is_visible": True,
+    }
+    _coach = request.query_params.get("coach_id", "").strip().lower()
+    if _coach:
+        _q["coach_id"] = _coach
+    if offer_id:
+        _q["offer_id"] = offer_id
+    try:
+        # Projection MongoDB : les champs sensibles ne quittent pas la base.
+        # `consent_identity` en sort pour decider du prenom, et est retire
+        # ensuite par `t3_public` — il n'est jamais rendu.
+        _rows = await db.comments.find(_q, {
+            "_id": 0, "id": 1, "text": 1, "created_at": 1,
+            "user_name": 1, "consent_identity": 1,
+        }).sort("created_at", -1).to_list(max(1, min(int(limit or 12), 50)))
+    except Exception as _err:
+        logger.error("[T3] témoignages publics illisibles : %s", _err)
+        raise HTTPException(status_code=503, detail="Témoignages momentanément indisponibles")
+    return {"testimonials": [t3_public(_r) for _r in _rows]}
+
+
+@api_router.get("/coach/testimonials")
+async def t3_liste_coach(request: Request, status: str = ""):
+    """Les temoignages a moderer. Reservee au coach, jamais publique."""
+    _email = await _n1b3b2_coach_appelant(request)
+    _q = {"source": T3_MARQUEUR}
+    if not is_super_admin(_email):
+        _q["coach_id"] = _email.strip().lower()
+    if status in T3_ETATS:
+        _q["moderation_status"] = status
+    try:
+        _rows = await db.comments.find(_q, {
+            "_id": 0, "id": 1, "text": 1, "created_at": 1, "user_name": 1,
+            "moderation_status": 1, "consent_publication": 1,
+            "consent_identity": 1, "recognition": 1, "offer_id": 1,
+        }).sort("created_at", -1).to_list(200)
+    except Exception as _err:
+        logger.error("[T3] témoignages du coach illisibles : %s", _err)
+        raise HTTPException(status_code=503, detail="Témoignages momentanément indisponibles")
+    # `participant_code` n'est PAS projete : le coach n'en a pas besoin pour
+    # moderer, et c'est le mot de passe de la personne.
+    return {"testimonials": _rows,
+            "counts": {_e: sum(1 for r in _rows if r.get("moderation_status") == _e)
+                       for _e in T3_ETATS}}
+
+
+@api_router.put("/coach/testimonials/{temoignage_id}/moderation")
+async def t3_moderer(temoignage_id: str, request: Request):
+    """Approuver ou masquer. AUCUNE publication automatique.
+
+    Un temoignage masque ne redevient jamais public tout seul : seul un appel
+    explicite a `approved` l'y ramene.
+    """
+    _email = await _n1b3b2_coach_appelant(request)
+    try:
+        _b = await request.json()
+    except Exception:
+        _b = {}
+    _etat = str((_b or {}).get("status") or "").strip()
+    if _etat not in T3_ETATS:
+        raise HTTPException(status_code=400, detail="État de modération inconnu")
+
+    _q = {"id": temoignage_id, "source": T3_MARQUEUR}
+    if not is_super_admin(_email):
+        _q["coach_id"] = _email.strip().lower()
+    _doc = await db.comments.find_one(_q, {"_id": 0, "consent_publication": 1})
+    if not _doc:
+        raise HTTPException(status_code=404, detail="Témoignage introuvable")
+
+    # `is_visible` suit l'etat ET le consentement : approuver un temoignage non
+    # consenti ne le rend pas public. Les deux conditions sont exigees a
+    # l'ecriture ET a la lecture — une seule des deux serait un pari.
+    _visible = bool(_etat == T3_APPROVED and _doc.get("consent_publication") is True)
+    await db.comments.update_one({"id": temoignage_id}, {"$set": {
+        "moderation_status": _etat,
+        "is_visible": _visible,
+        "moderated_at": datetime.now(timezone.utc).isoformat(),
+        "moderated_by": _email,
+    }})
+    logger.info("[T3] témoignage %s -> %s par %s", temoignage_id, _etat, _email)
+    if _etat == T3_APPROVED:
+        try:
+            from api.routes.shared import posthog_capture as _ph
+            await _ph("testimonial_approved", email="", props={"published": _visible})
+        except Exception as _err:
+            logger.warning("[T3] mesure ignorée : %s", _err)
+    return {"success": True, "status": _etat, "is_visible": _visible}
+
+
+
+@api_router.put("/contacts/{contact_id}/type")
+async def t3_classer_contact(contact_id: str, request: Request):
+    """Le coach classe un contact. C'est la SEULE facon de devenir participant.
+
+    Aucun classement automatique n'existe, et c'est deliberе : la base ne peut
+    pas savoir qui a deja danse avant l'existence du site. Une valeur vide
+    declasse le contact, ce qui doit rester possible — se tromper doit pouvoir
+    se defaire.
+    """
+    _email = await _n1b3b2_coach_appelant(request)
+    try:
+        _b = await request.json()
+    except Exception:
+        _b = {}
+    _type = str((_b or {}).get("contact_type") or "").strip().lower()
+    if _type and _type not in T3_TYPES_CONTACT:
+        raise HTTPException(status_code=400, detail="Type de contact inconnu")
+
+    _filtre = {"id": contact_id}
+    if not is_super_admin(_email):
+        _filtre["coach_id"] = _email.strip().lower()
+    if _type:
+        _maj = {"$set": {"contact_type": _type,
+                         "contact_type_set_at": datetime.now(timezone.utc).isoformat(),
+                         "contact_type_set_by": _email}}
+    else:
+        # Declasser retire le champ : « absent » et « autre » ne veulent pas
+        # dire la meme chose, et on ne doit pas les confondre.
+        _maj = {"$unset": {"contact_type": "", "contact_type_set_at": "",
+                           "contact_type_set_by": ""}}
+    _res = await db.chat_participants.update_one(_filtre, _maj)
+    if not getattr(_res, "matched_count", 0):
+        raise HTTPException(status_code=404, detail="Contact introuvable")
+    logger.info("[T3] contact %s classe %s par %s", contact_id, _type or "(aucun)", _email)
+    return {"success": True, "contact_type": _type or None}
+
+
+@api_router.get("/coach/contacts/suggestions-participant")
+async def t3_suggestions_participant(request: Request):
+    """LECTURE SEULE — qui pourrait etre classe « participant », et pourquoi.
+
+    Ne modifie RIEN. Le coach reste seul decisionnaire ; cette route se contente
+    de rapprocher deux choses que la base sait deja : un contact non classe, et
+    une presence REELLEMENT confirmee a son nom.
+
+    Les cas ambigus ne donnent aucune suggestion : une reservation non validee
+    n'est pas une participation, et on ne proposera jamais de la traiter comme
+    telle.
+    """
+    _email = await _n1b3b2_coach_appelant(request)
+    try:
+        _q = {"validated": True}
+        if not is_super_admin(_email):
+            _q["coach_id"] = _email.strip().lower()
+        _presences = await db.reservations.find(
+            _q, {"_id": 0, "userEmail": 1, "validatedAt": 1}).to_list(1000)
+    except Exception as _err:
+        logger.error("[T3] presences illisibles : %s", _err)
+        raise HTTPException(status_code=503, detail="Suggestions momentanément indisponibles")
+
+    _par_mail = {}
+    for _r in _presences:
+        _m = str(_r.get("userEmail") or "").strip().lower()
+        if not _m:
+            continue
+        _quand = str(_r.get("validatedAt") or "")
+        if _m not in _par_mail or _quand < _par_mail[_m]:
+            _par_mail[_m] = _quand
+
+    _suggestions = []
+    for _m, _quand in sorted(_par_mail.items()):
+        try:
+            _c = await db.chat_participants.find_one(
+                {"email": {"$regex": "^%s$" % re.escape(_m), "$options": "i"}},
+                {"_id": 0, "id": 1, "name": 1, "contact_type": 1})
+        except Exception:
+            _c = None
+        if not _c:
+            continue                      # pas de contact : rien a classer
+        if str(_c.get("contact_type") or "").strip():
+            continue                      # deja classe : on ne propose rien
+        _suggestions.append({
+            "contact_id": _c.get("id"),
+            "name": _c.get("name") or "",
+            "suggestion": "participant",
+            "raison": "présence confirmée",
+            "depuis": _quand[:10],
+        })
+    return {"suggestions": _suggestions,
+            "total_presences": len(_par_mail),
+            "note": "Lecture seule — aucune classification n'a été écrite."}
+
+
+
 # V183: Cron rappel 1h avant un cours réservé
 @api_router.get("/cron/reservation-reminders")
 async def cron_reservation_reminders():
@@ -26674,18 +27072,37 @@ async def submit_review(request: Request):
     participant_code = (body.get("participant_code", "") or "").strip()
     participant_name = (body.get("participant_name", "") or "").strip()
     text = (body.get("text", "") or "").strip()
-    try:
-        rating = int(body.get("rating", 5))
-    except (ValueError, TypeError):
-        rating = 5
+    # ESSAI-5a-2 : ne plus inventer un 5/5 que personne n'a donne. Absent =
+    # absent ; les avis deja enregistres gardent le leur.
+    _rating_brut = body.get("rating", None)
+    rating = None
+    if _rating_brut is not None:
+        try:
+            rating = int(_rating_brut)
+        except (ValueError, TypeError):
+            rating = None
     profile_photo = (body.get("profile_photo", "") or "").strip()
     coach_id = (body.get("coach_id", "") or "").strip().lower() or "contact.artboost@gmail.com"
     session_id = (body.get("session_id", "") or "").strip()
 
     if not participant_code or not text:
         raise HTTPException(status_code=400, detail="participant_code et text requis")
-    if rating < 1 or rating > 5:
-        rating = 5
+
+    # ESSAI-5a-2 — CETTE ROUTE NE VERIFIAIT RIEN. Le code, le nom, la photo et
+    # le coach venaient tous du corps de la requete, et `is_verified` etait
+    # accorde d'office : n'importe qui pouvait publier, sans compte et sans
+    # preuve, un avis marque « verifie » sur le mur public.
+    # On reprend le garde-fou deja employe par le mur de publications : le code
+    # doit exister et etre actif, et LE NOM VIENT DE LA BASE.
+    _v261_ok, _v261_nom, _v261_coach = await _v261_resolve_subscriber(participant_code)
+    if not _v261_ok:
+        raise HTTPException(status_code=403, detail="Code d'accès invalide.")
+    if _v261_nom:
+        participant_name = _v261_nom
+    if _v261_coach:
+        coach_id = _v261_coach
+    if rating is not None and (rating < 1 or rating > 5):
+        rating = None
 
     # v88 fix: Anti-spam — 1 avis par abonné par coach (session_id optionnel)
     # Si session_id fourni → 1 par session. Sinon → 1 par coach.
@@ -26718,6 +27135,7 @@ async def submit_review(request: Request):
         "likes": 0,
         "is_ai": False,
         "is_review": True,
+        # Desormais MERITE : le code a ete valide en base juste au-dessus.
         "is_verified": True,
         "is_visible": True,
         "participant_code": participant_code,
@@ -26727,7 +27145,9 @@ async def submit_review(request: Request):
     }
     await db.comments.insert_one(comment)
     comment.pop("_id", None)
-    logger.info(f"[V88] Avis soumis par {participant_name} (code: {participant_code}, coach: {coach_id})")
+    # ESSAI-5a-2 : le code est le mot de passe de l'espace abonne — quatre
+    # caracteres suffisent a retrouver la trace sans l'ecrire en clair.
+    logger.info(f"[V88] Avis soumis par {participant_name} (code: {participant_code[:4]}…, coach: {coach_id})")
     # Meme liste blanche que la lecture publique : l'appelant a fourni son code,
     # inutile de le lui renvoyer, et le jour ou cette reponse sera relayee
     # ailleurs elle ne portera rien de sensible.

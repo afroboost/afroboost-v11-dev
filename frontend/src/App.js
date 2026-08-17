@@ -222,6 +222,7 @@ import SubscriberSpace from "./components/SubscriberSpace";
 // Calendrier des sessions, en fenetre par-dessus la vitrine (jamais une page)
 import SessionsModal from "./components/SessionsModal";
 import ConditionsParticipation from './components/ConditionsParticipation'; // ESSAI-5a-1
+import TemoignagesPublics from './components/TemoignagesPublics'; // ESSAI-5a-2
 import { useDataCache, invalidateCache } from "./hooks/useDataCache";
 import { applyPrimaryColor, persistThemeColors } from "./utils/themeColor"; // V259 + V295 (anti-FOUC)
 import { PublicationsCarousel } from "./components/Publications"; // V261
@@ -8600,6 +8601,17 @@ function App() {
               </p>
             </div>
           </div>
+        )}
+
+        {/* ESSAI-5a-2 : « Ils ont vécu Afroboost » — témoignages HUMAINS
+            seulement. Rien à voir avec le mur de commentaires, dont 88 sur 100
+            sont générés par IA. La section ne s'affiche pas si rien n'est
+            approuvé : mieux vaut une absence qu'une preuve sociale fabriquée. */}
+        {selectedOffer && (
+          <TemoignagesPublics
+            offerId={selectedOffer.id || ''}
+            coachId={selectedOffer.coach_id || ''}
+          />
         )}
 
         {/* Bouton Voir les avis Google - affiché si configuré par le coach */}

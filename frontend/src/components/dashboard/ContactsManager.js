@@ -13,6 +13,8 @@ import { parseContacts } from '../../utils/contactParser';
 import { copyToClipboard } from '../../utils/clipboard';
 // V228: pictogrammes vectoriels en remplacement des emoji
 import SvgIcon from '../SvgIcon';
+// ESSAI-5a-2 : la classification explicite du contact.
+import { TYPES_CONTACT } from '../../utils/contactType';
 
 export default function ContactsManager({ API, coachEmail }) {
   const [contacts, setContacts] = useState([]);
@@ -400,6 +402,20 @@ export default function ContactsManager({ API, coachEmail }) {
     URL.revokeObjectURL(url);
 
     setImportResult({ imported: 0, message: `📥 ${contactsToExport.length} contact(s) exporté(s) en CSV` });
+  };
+
+  // ESSAI-5a-2 : le coach classe un contact. C'est la SEULE façon de devenir
+  // « participant » — rien n'est déduit d'une adresse, d'un code ou d'une
+  // source. Une valeur vide déclasse : se tromper doit pouvoir se défaire.
+  const changerType = async (contactId, valeur) => {
+    try {
+      await axios.put(`${API}/contacts/${encodeURIComponent(contactId)}/type`,
+        { contact_type: valeur }, { headers });
+      setContacts((prev) => prev.map((c) =>
+        c.id === contactId ? { ...c, contact_type: valeur || null } : c));
+    } catch (e) {
+      alert("Impossible d'enregistrer le type de contact.");
+    }
   };
 
   // V154: Create category
@@ -1027,6 +1043,30 @@ export default function ContactsManager({ API, coachEmail }) {
                           <SvgIcon name="cake" size={10} /> {formatBirthday(c.birthday)}
                         </span>
                       )}
+                    </div>
+                  )}
+                  {/* ESSAI-5a-2 : « absent » n'est pas « Autre ». Un contact non
+                      classé n'a pas été jugé ; seul « Participant » ouvre
+                      l'invitation à témoigner. */}
+                  {!isGroup && (
+                    <div style={{ marginTop: '5px' }}>
+                      <select
+                        value={c.contact_type || ''}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => { e.stopPropagation(); changerType(c.id, e.target.value); }}
+                        data-testid={`contact-type-${c.id}`}
+                        aria-label="Type de contact"
+                        style={{
+                          fontSize: '11px', padding: '3px 6px', borderRadius: '6px',
+                          background: '#12122a', color: 'rgba(255,255,255,0.75)',
+                          border: '1px solid rgba(255,255,255,0.12)', outline: 'none',
+                        }}
+                      >
+                        <option value="">Type de contact —</option>
+                        {TYPES_CONTACT.map((t) => (
+                          <option key={t.valeur} value={t.valeur}>{t.libelle}</option>
+                        ))}
+                      </select>
                     </div>
                   )}
                 </div>

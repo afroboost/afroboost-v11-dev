@@ -86,6 +86,12 @@ class _Curseur:
         return out
 
 
+async def _resolveur_ok(code):
+    """Code valide, nom pris en base — ce que fait le vrai resolveur (V261)."""
+    await asyncio.sleep(0)
+    return True, "Prenom Enregistre", "coach@x.io"
+
+
 class _Comments:
     def __init__(self, docs=None):
         self.docs = list(docs or [])
@@ -137,6 +143,10 @@ def bac(docs=None):
         "datetime": datetime, "timezone": timezone,
         "db": base, "logger": journal,
         "HTTPException": _HTTPException, "Request": _Requete,
+        # ESSAI-5a-2 : `submit_review` verifie desormais le code en base et en
+        # tire le nom. Le resolveur reel vit ailleurs ; ici il repond « valide »
+        # pour que cette suite reste centree sur la fuite du P0.
+        "_v261_resolve_subscriber": _resolveur_ok,
         "_random": __import__("random"),
     }
     exec(compile(SOURCE, "<p0>", "exec"), g)
@@ -239,8 +249,21 @@ async def scenarios():
              str(rep["comment"])[:150])
     verifier("6c. mais le code est TOUJOURS enregistre en base — l'anti-spam en depend",
              base.comments.docs[0].get("participant_code") == "AFR-SECRET1")
-    verifier("6d. l'avis reste affichable : nom, texte, note",
-             rep["comment"].get("text") == "Merci !" and rep["comment"].get("rating") == 5)
+    verifier("6d. l'avis reste affichable : nom et texte",
+             rep["comment"].get("text") == "Merci !")
+    verifier("6e. ESSAI-5a-2 : le nom publie vient de la BASE, pas du corps",
+             base.comments.docs[0].get("user_name") == "Prenom Enregistre",
+             str(base.comments.docs[0].get("user_name")))
+    verifier("6f. une note REELLEMENT donnee est conservee",
+             base.comments.docs[0].get("rating") == 5)
+    # ESSAI-5a-2 : sans note fournie, on n'en invente plus une a 5.
+    g2, base2, _ = bac([])
+    req3 = _Requete()
+    req3._corps = {"participant_code": "AFR-X", "participant_name": "P", "text": "Sans note"}
+    await g2["submit_review"](req3)
+    verifier("6g. ESSAI-5a-2 : aucune note fabriquee quand personne n'en donne",
+             base2.comments.docs[0].get("rating") is None,
+             repr(base2.comments.docs[0].get("rating")))
 
     # ── 7. la seconde porte : le code etait ENCASTRE dans l'URL de l'avatar,
     #      donc a l'interieur d'un champ autorise, hors de portee de toute

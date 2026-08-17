@@ -25,6 +25,7 @@ import ReservationTab from "./coach/ReservationTab"; // Import Reservation Tab
 import CourseRemindersCard from "./coach/CourseRemindersCard"; // RAPPELS V2 : rappels choisis cours par cours
 import SuiviAbonnes from "./coach/SuiviAbonnes"; // V334 etape 3
 import FunnelEssaiCard from "./coach/FunnelEssaiCard"; // ESSAI-3
+import ModerationTemoignages from "./coach/ModerationTemoignages"; // ESSAI-5a-2
 import MessagesWhatsApp from "./coach/MessagesWhatsApp"; // V411
 import CampaignManager from "./coach/CampaignManager"; // Import Campaign Manager
 import CRMSection from "./coach/CRMSection"; // v9.2.0 Import CRM Section
@@ -7503,6 +7504,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
                     {/* v77: Liste des 5 derniers commentaires avec contrôles individuels */}
                     <SocialBoostCommentsList API={API} coachEmail={coachUser?.email} axios={axios} />
+                    {/* ESSAI-5a-2 : la modération des témoignages humains vit
+                        ici, à côté des commentaires — pas dans un dashboard
+                        séparé. Les deux listes restent distinctes. */}
+                    <ModerationTemoignages API={API} coachEmail={coachUser?.email} axios={axios} />
 
                     <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px', marginTop: '10px', margin: '10px 0 0 0' }}>
                       Les commentaires générés s'affichent sur le Hero et la section Avis de votre vitrine.

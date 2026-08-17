@@ -5,6 +5,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef, lazy, Suspense } from "react";
 import axios from "axios";
 import ConditionsParticipation from './ConditionsParticipation'; // ESSAI-5a-1
+import InvitationTemoignage, { enRepos } from './InvitationTemoignage'; // ESSAI-5a-2
 import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { copyToClipboard } from "../utils/clipboard";
@@ -680,6 +681,18 @@ export default function SubscriberSpace({ accessCode: propCode }) {
         <Suspense fallback={null}>
           <SubscriberCockpit accessCode={accessCode} />
         </Suspense>
+
+        {/* ESSAI-5a-2 : proposée UNIQUEMENT à qui le coach a classé
+            « Participant » dans Contacts. Facultative, sans conséquence. */}
+        {data?.testimonial?.eligible
+          && !data.testimonial.already_submitted
+          && !enRepos(subscription.code || accessCode) && (
+          <InvitationTemoignage
+            code={subscription.code || accessCode}
+            prenom={firstName}
+            offerId={data?.offer?.id || ''}
+          />
+        )}
 
         {/* ===== Mes séances restantes ===== */}
         <section
