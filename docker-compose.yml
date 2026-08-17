@@ -37,6 +37,24 @@ services:
       - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
       - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
       - JWT_SECRET=${JWT_SECRET:-}
+      # V446 : secret partage avec le crontab du VPS, qui le presente en
+      # `Authorization: Bearer <valeur>` sur les routes /api/cron/*.
+      #
+      # ⚠️ CETTE LIGNE EST INDISPENSABLE, et son absence a ete la vraie cause
+      # de la porte ouverte. `CRON_SECRET` etait deja lu par le code (V329/V330)
+      # mais ne figurait dans AUCUN bloc `environment:` : une valeur posee dans
+      # l'interface Coolify n'atteignait donc jamais le conteneur, et toutes les
+      # gardes de la forme `if cron_secret and ...` restaient inertes. Poser le
+      # secret dans Coolify SANS cette ligne ne change strictement rien.
+      #
+      # Tant qu'il est vide, les routes en garde STRICTE (V329/V330 :
+      # /cron/check-campaigns, /cron/check-subscription-renewal) refusent le
+      # cron en 401 — fail-closed assume — tandis que celles en garde
+      # CONDITIONNELLE (/cron/post-course-feedback, /admin/check-expirations)
+      # restent ouvertes. Poser la valeur referme ces deux dernieres d'un coup :
+      # leurs lignes de crontab doivent porter le secret AVANT, sinon elles
+      # cassent en silence.
+      - CRON_SECRET=${CRON_SECRET:-}
       - CINETPAY_API_KEY=${CINETPAY_API_KEY:-}
       - CINETPAY_SITE_ID=${CINETPAY_SITE_ID:-}
     restart: unless-stopped
