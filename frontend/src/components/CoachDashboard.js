@@ -37,7 +37,8 @@ import V199BoutiqueAccordion from "./dashboard/V199BoutiqueAccordion";
 // V366 : dépliage des groupes en personnes (partagé avec la duplication)
 import { deplierTargetIds, estIdentifiantDeGroupe } from '../utils/deplierGroupes';
 import { copyToClipboard } from "../utils/clipboard"; // Utilitaire copier avec fallback mobile
-import SvgIcon from "./SvgIcon"; // V230: jeu d'icones vectorielles inline
+import SvgIcon from "./SvgIcon";
+import { alignerLieu } from "../utils/courseLocation"; // V230: jeu d'icones vectorielles inline
 
 // v9.2.1: ErrorBoundary pour isoler les erreurs de composants
 class SectionErrorBoundary extends Component {
@@ -2177,7 +2178,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           // vitrine : elle appelle les MEMES routes, et l'intercepteur axios
           // global y ajoute deja X-User-Email des qu'un coach est connecte.
           avecDelai(resPromise, 'Réservations'),
-          avecDelai(axios.get(`${API}/courses?scope=mine`, headers), 'Cours'),
+          // Liste d'ADMINISTRATION, pas de publication. `GET /courses`
+          // filtre `archived` parce qu'il sert d'abord la vitrine : les vraies
+          // seances recurrentes du coach n'y arrivaient jamais, et son ecran de
+          // gestion ne pouvait donc pas les corriger. Les consommateurs qui ne
+          // veulent pas des archives les filtrent deja eux-memes.
+          avecDelai(axios.get(`${API}/coach/courses`, headers), 'Cours'),
           avecDelai(axios.get(`${API}/offers?scope=mine`, headers), 'Offres'),
           avecDelai(axios.get(`${API}/users`, headers), 'Utilisateurs'),
           avecDelai(axios.get(`${API}/payment-links`, headers), 'Liens de paiement'),
@@ -2967,7 +2973,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     URL.revokeObjectURL(url);
   };
 
-  const updateCourse = async (course) => { await axios.put(`${API}/courses/${course.id}`, course); };
+  const updateCourse = async (course) => {
+    // `alignerLieu` empeche l'alias `location` de rester sur l'adresse
+    // precedente quand le coach ne modifie que `locationName` — la cause exacte
+    // de la divergence observee en base.
+    await axios.put(`${API}/courses/${course.id}`, alignerLieu(course));
+  };
   const addCourse = async (e) => {
     e.preventDefault();
     if (!newCourse.name) return;

@@ -62,7 +62,7 @@ const CourseRemindersCard = ({ coachEmail }) => {
         // et filtre `archived`, ce qui faisait disparaitre les vraies seances
         // recurrentes du coach — celles que ses offres vendent. La route
         // dediee applique la regle d'ADMINISTRATION, pas celle de publication.
-        const res = await axios.get(`${API}/coach/courses/reminders`, entetes);
+        const res = await axios.get(`${API}/coach/courses`, entetes);
         if (annule) return;
         // Aucun filtre ici : le serveur a deja tranche. En rajouter un
         // reintroduirait exactement le bug qu'on vient de corriger.

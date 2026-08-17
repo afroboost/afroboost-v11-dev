@@ -541,6 +541,38 @@ async def scenarios_coach():
     verifier("C-13. la selection se fait par course_id, jamais par titre",
              all("id" in c for c in s) and len({c["id"] for c in s}) == len(s))
 
+    # --- la liste sert AUSSI l'ecran de gestion : le document part ENTIER ---
+    _riche = dict(VRAI_MERC, mapsUrl="https://maps.example/x",
+                  playlist=["a"], audio_tracks=[{"u": "b"}], locationName="Auvernier")
+    s6 = await liste_coach([OFF_VEND], [_riche])
+    verifier("C-14. le document repart entier — `mapsUrl` et le reste ne sont pas rabotes",
+             all(k in s6[0] for k in ("mapsUrl", "playlist", "audio_tracks",
+                                      "locationName", "visible", "archived")),
+             str(sorted(s6[0].keys())))
+    verifier("C-15. l'alias `location` est recalcule, jamais servi perime",
+             s6[0].get("location") == "Auvernier", repr(s6[0].get("location")))
+
+    _perime = dict(_riche, locationName="Jeunes-Rives", location="Auvernier")
+    s7 = await liste_coach([OFF_VEND], [_perime])
+    verifier("C-16. un alias perime en base ne ressort pas de la route",
+             s7[0].get("location") == "Jeunes-Rives", repr(s7[0].get("location")))
+
+    # --- administrer n'a JAMAIS publie quoi que ce soit --------------------
+    _avant = (VRAI_MERC.get("visible"), VRAI_MERC.get("archived"))
+    s8 = await liste_coach([OFF_VEND], [VRAI_MERC])
+    verifier("C-17. la route ne modifie ni `visible` ni `archived`",
+             (VRAI_MERC.get("visible"), VRAI_MERC.get("archived")) == _avant
+             and s8[0]["archived"] is True and s8[0]["visible"] is True,
+             str(s8[0].get("archived")))
+
+    # le meme cours reste hors du parcours visiteur tant qu'aucune offre
+    # publique n'y mene — administrer ne publie pas.
+    _off_masq = {"id": "m2", "name": "Masquee", "visible": False,
+                 "linked_course_ids": ["merc"]}
+    _vis = await agenda([_off_masq], [VRAI_MERC], jours=14)
+    verifier("C-18. administrable cote coach n'implique JAMAIS visible cote visiteur",
+             _vis["occurrences"] == [], str(_vis["occurrences"][:1]))
+
 
 def structure():
     nu = code_nu("sessions_agenda")

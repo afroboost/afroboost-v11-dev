@@ -99,7 +99,7 @@ describe('la liste des cours a configurer', () => {
   test('elle vient de la portee du coach, identite en en-tete', async () => {
     await monter();
     expect(axios.get).toHaveBeenCalledTimes(1);
-    expect(axios.get.mock.calls[0][0]).toBe('/api/coach/courses/reminders');
+    expect(axios.get.mock.calls[0][0]).toBe('/api/coach/courses');
     expect(axios.get.mock.calls[0][1].headers['X-User-Email']).toBe('coach@afroboost.com');
   });
 

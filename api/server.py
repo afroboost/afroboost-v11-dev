@@ -24116,9 +24116,9 @@ async def n1b3b2_ecrire_regles(request: Request):
     return {"success": True, "rules": _sures, "avertissements": _avertissements}
 
 
-@api_router.get("/coach/courses/reminders")
+@api_router.get("/coach/courses")
 async def rv3_cours_configurables(request: Request):
-    """Les cours qu'un COACH peut configurer. Ce n'est pas la liste publique.
+    """Les cours qu'un COACH peut ADMINISTRER. Ce n'est pas la liste publique.
 
     Deux contextes, deux regles, et les confondre a produit un vrai bug : le
     coach voyait six brouillons nommes « Nouveau cours » et ne voyait PAS les
@@ -24142,8 +24142,14 @@ async def rv3_cours_configurables(request: Request):
     brouillons, eux, ne sont pas archives et restent donc administrables — les
     retirer serait une decision de menage, pas de code.
 
-    Chaque cours repart avec ses offres et leur etat de publication, pour que
-    l'ecran puisse dire au coach lequel est reellement vendu.
+    Chaque cours repart ENTIER, augmente de ses offres et de leur etat de
+    publication : cette liste alimente aussi bien la carte des rappels que
+    l'ecran de gestion, qui a besoin de `mapsUrl`, `playlist` et du reste. Une
+    projection etroite priverait le second de ses champs sans prevenir.
+
+    Rien ici ne PUBLIE quoi que ce soit : `visible` et `archived` repartent tels
+    qu'ils sont, et c'est la lecture publique — `sessions_agenda` — qui decide
+    seule de ce qu'un visiteur voit.
     """
     _email = await _n1b3b2_coach_appelant(request)
     _tout = is_super_admin(_email)
@@ -24170,16 +24176,19 @@ async def rv3_cours_configurables(request: Request):
                 "publique": _o.get("visible") is not False,
             })
 
-    _garde = ("id", "name", "weekday", "date", "time", "locationName",
-              "visible", "archived", "reminders_enabled", "reminder_rules")
     _sortie = []
     for _c in _cours:
         _liees = _par_cours.get(_c.get("id"), [])
         if _c.get("archived") is True and not _liees and not _c.get("agenda_abonne"):
             continue
-        _vue = {_k: _c.get(_k) for _k in _garde}
+        _vue = dict(_c)
         _vue["offres"] = _liees
         _vue["agenda_abonne"] = bool(_c.get("agenda_abonne"))
+        # L'alias est recalcule a la lecture, comme le fait `GET /courses` :
+        # l'ecran de gestion renvoie l'objet entier, il ne doit pas repartir
+        # avec une adresse perimee dans un champ et la bonne dans l'autre.
+        if _vue.get("locationName"):
+            _vue["location"] = _vue["locationName"]
         _sortie.append(_vue)
     return _sortie
 
