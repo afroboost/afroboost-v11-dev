@@ -24,6 +24,7 @@ def verifier(nom, ok, detail=""):
 _ARBRE = ast.parse(io.open(SERVEUR, encoding="utf-8").read())
 _VOULUS = ("T1_DELAI_ANNULATION_H", "T1_RAISON_REFUS", "T1_MESSAGE_REFUS",
            "t1_empreinte", "t1_version_active", "t1_cours_filme", "t1_preuve",
+           "t1_bloc_captation", "t1_captation_applicable",
            "t1_restituer_essais_non_honores", "t1_conditions_actives")
 _NOEUDS = {}
 for _n in _ARBRE.body:
@@ -157,6 +158,7 @@ class _Requete:
 
 
 TEXTE = "Conditions de participation Afroboost.\nVersion d'essai."
+BLOC = "6. PHOTOS ET VIDEOS\nCette seance est susceptible d'etre filmee."
 BAC = {}
 
 
@@ -268,7 +270,9 @@ async def conditions():
 #                    F — CAPTATION PAR COURS
 # ════════════════════════════════════════════════════════════════════════════
 async def captation():
-    CONCEPT = [{"id": "concept", "termsText": TEXTE}]
+    # ESSAI-5a-1C : le bloc captation doit etre PUBLIE pour qu'une seance
+    # annonce quoi que ce soit. Ici il l'est, pour tester la mecanique.
+    CONCEPT = [{"id": "concept", "termsText": TEXTE, "termsTextRecording": BLOC}]
     COURS = [{"id": "c-filme", "name": "Auvernier", "filmed": True},
              {"id": "c-non", "name": "Lausanne", "filmed": False},
              {"id": "c-absent", "name": "Ancien"}]
@@ -291,7 +295,7 @@ async def captation():
              p["filmed_at_booking"] is True and p_non["filmed_at_booking"] is False)
 
     # F3 — modifier le cours ensuite ne falsifie pas l'historique
-    g2, base2, _ = bac(concept=CONCEPT, cours=[{"id": "c1", "filmed": False}])
+    g2, base2, _ = bac(concept=[dict(CONCEPT[0])], cours=[{"id": "c1", "filmed": False}])
     p_avant = await g2["t1_preuve"](True, "c1", "")
     base2.courses.docs[0]["filmed"] = True
     p_apres = await g2["t1_preuve"](True, "c1", "")
@@ -299,10 +303,56 @@ async def captation():
              "reservations deja consenties",
              p_avant["filmed_at_booking"] is False and p_apres["filmed_at_booking"] is True)
 
+    # ── ESSAI-5a-1C : LE BLOC COMMANDE, PAS LA CASE SEULE ──────────────────
+    SANS_BLOC = [{"id": "concept", "termsText": TEXTE}]
+    g3, _, _ = bac(concept=SANS_BLOC, cours=COURS)
+    verifier("R1. cours coche MAIS bloc captation non publie -> aucune "
+             "annonce de captation",
+             await g3["t1_captation_applicable"]("c-filme", "") is False)
+    _p3 = await g3["t1_preuve"](True, "c-filme", "")
+    verifier("R1b. et la preuve n'enregistre aucune captation",
+             _p3["filmed_at_booking"] is False)
+    _r3 = await g3["t1_conditions_actives"](_Requete(), course_id="c-filme")
+    verifier("R1c. la route publique n'annonce rien et ne montre AUCUN texte "
+             "d'image — c'est ce qui rend le socle activable seul",
+             _r3["filmed"] is False and "PHOTOS" not in _r3["text"], _r3["text"][:60])
+    verifier("R1d. le socle, lui, est bien servi",
+             _r3["required"] is True and _r3["text"] == TEXTE)
+
+    g4, _, _ = bac(concept=CONCEPT, cours=COURS)
+    verifier("R2. bloc publie MAIS cours non coche -> aucune annonce",
+             await g4["t1_captation_applicable"]("c-non", "") is False)
+    _r4 = await g4["t1_conditions_actives"](_Requete(), course_id="c-non")
+    verifier("R2b. et le texte reste le socle SEUL",
+             _r4["filmed"] is False and _r4["text"] == TEXTE, _r4["text"][:60])
+
+    verifier("R3. les DEUX conditions reunies -> annonce et texte complet",
+             await g4["t1_captation_applicable"]("c-filme", "") is True)
+    _r5 = await g4["t1_conditions_actives"](_Requete(), course_id="c-filme")
+    verifier("R3b. le document est le socle SUIVI du bloc, en un seul texte",
+             _r5["filmed"] is True and _r5["text"] == TEXTE + "\n\n" + BLOC,
+             _r5["text"][:80])
+
+    # R4 — UNE SEULE VERSION couvre les deux blocs
+    g5, base5, _ = bac(concept=[{"id": "concept", "termsText": TEXTE}], cours=COURS)
+    _v_socle, _ = await g5["t1_version_active"]("")
+    base5.concept.docs[0]["termsTextRecording"] = BLOC
+    _v_complet, _ = await g5["t1_version_active"]("")
+    verifier("R4. ajouter le bloc captation cree une version NEUVE",
+             _v_socle != _v_complet, "%s / %s" % (_v_socle, _v_complet))
+    verifier("R4b. sans reecrire ce qui avait deja ete accepte : les deux "
+             "versions coexistent, texte compris",
+             len(base5.terms_versions.docs) == 2
+             and any(d["version"] == _v_socle and d.get("text_recording") == ""
+                     for d in base5.terms_versions.docs)
+             and any(d["version"] == _v_complet and d.get("text_recording") == BLOC
+                     for d in base5.terms_versions.docs),
+             str([(d["version"], bool(d.get("text_recording"))) for d in base5.terms_versions.docs]))
+
     # S2 — le client ne decide pas
     _nu = code_nu("t1_preuve")
     verifier("S2. l'etat filme est relu en base, jamais recu du client",
-             "t1_cours_filme" in _nu and "request" not in _nu)
+             "t1_captation_applicable" in _nu and "request" not in _nu)
     verifier("S1. la version n'est jamais lue dans la requete",
              "t1_version_active" in _nu
              and "terms_version" not in code_nu("t1_conditions_actives").split("return")[0])

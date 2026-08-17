@@ -1031,6 +1031,10 @@ class Concept(BaseModel):
     faviconUrl: str = ""
     termsText: str = ""  # CGV - Conditions Générales de Vente
     termsTextPartners: str = ""  # V93.6: CGP - Conditions Générales Partenaires
+    # ESSAI-5a-1C : le bloc « photos et vidéos ». Il complete le socle et ne
+    # s'affiche QUE pour un cours dont la captation est active. Tant qu'il est
+    # vide, aucune seance n'annonce de captation, meme si son cours est coche.
+    termsTextRecording: str = ""
     googleReviewsUrl: str = ""  # Lien avis Google
     defaultLandingSection: str = "sessions"  # Section d'atterrissage par défaut: "sessions", "offers", "shop"
     # Liens externes
@@ -1067,6 +1071,7 @@ class ConceptUpdate(BaseModel):
     faviconUrl: Optional[str] = None
     termsText: Optional[str] = None  # CGV - Conditions Générales de Vente
     termsTextPartners: Optional[str] = None  # V93.6: CGP - Conditions Générales Partenaires
+    termsTextRecording: Optional[str] = None  # ESSAI-5a-1C
     googleReviewsUrl: Optional[str] = None  # Lien avis Google
     defaultLandingSection: Optional[str] = None  # Section d'atterrissage par défaut
     # Liens externes
@@ -24684,11 +24689,18 @@ async def t1_version_active(coach_id: str = ""):
     _texte = str(_concept.get("termsText") or "").strip()
     if not _texte:
         return "", ""
-    _version = t1_empreinte(_texte)
+    # ESSAI-5a-1C — UN SEUL DOCUMENT, DEUX BLOCS. Le socle s'applique a toute
+    # reservation ; le bloc captation ne s'affiche que pour un cours concerne.
+    # La version porte sur les DEUX : ce ne sont pas deux documents juridiques
+    # independants, et ajouter le bloc plus tard cree donc une version NEUVE
+    # sans rien reecrire de ce qui a deja ete accepte.
+    _bloc = str(_concept.get("termsTextRecording") or "").strip()
+    _version = t1_empreinte(_texte + "\n\n" + _bloc if _bloc else _texte)
     try:
         await db.terms_versions.update_one(
             {"version": _version},
             {"$setOnInsert": {"version": _version, "text": _texte,
+                              "text_recording": _bloc,
                               "coach_id": _coach,
                               "created_at": datetime.now(timezone.utc).isoformat()}},
             upsert=True,
@@ -24699,6 +24711,35 @@ async def t1_version_active(coach_id: str = ""):
         logger.error("[T1] version %s non archivee : %s", _version, _err)
         return "", ""
     return _version, _texte
+
+
+async def t1_bloc_captation(coach_id: str = "") -> str:
+    """Le texte « photos et videos », ou "" s'il n'est pas publie.
+
+    C'est LUI qui commande, pas la case du Wizard : tant qu'aucun texte
+    n'explique ce qu'on fait des images, aucune seance ne doit annoncer de
+    captation — sinon on demanderait une autorisation que rien ne definit.
+    """
+    try:
+        _c = (await db.concept.find_one({"id": "concept"}, {"_id": 0, "termsTextRecording": 1})
+              or await db.concept.find_one({}, {"_id": 0, "termsTextRecording": 1}) or {})
+    except Exception as _err:
+        logger.warning("[T1] bloc captation illisible : %s", _err)
+        return ""
+    return str(_c.get("termsTextRecording") or "").strip()
+
+
+async def t1_captation_applicable(course_id: str = "", coach_id: str = "") -> bool:
+    """DEUX conditions, et il les faut toutes les deux :
+
+    le cours est marque « susceptible d'etre filme » ET le bloc captation est
+    publie. Une seule des deux ne suffit pas — une case cochee sans texte
+    afficherait une mention que rien ne couvre, et un texte publie sans case
+    l'imposerait a des seances qui ne sont pas filmees.
+    """
+    if not await t1_bloc_captation(coach_id):
+        return False
+    return await t1_cours_filme(course_id)
 
 
 async def t1_cours_filme(course_id: str = "") -> bool:
@@ -24743,7 +24784,10 @@ async def t1_preuve(accepte, course_id: str = "", coach_id: str = "") -> dict:
         "terms_accepted": True,
         "terms_version": _version,
         "terms_accepted_at": datetime.now(timezone.utc).isoformat(),
-        "filmed_at_booking": await t1_cours_filme(course_id),
+        # ESSAI-5a-1C — ce champ dit « le bloc captation faisait-il partie de ce
+        # que cette personne a accepte », et non « le cours etait-il coche ».
+        # C'est la seule lecture qui ait une valeur de preuve.
+        "filmed_at_booking": await t1_captation_applicable(course_id, coach_id),
     }
 
 
@@ -24825,12 +24869,15 @@ async def t1_conditions_actives(request: Request, course_id: str = ""):
     Elle ne rend que ce qui s'affiche — aucune identite, aucun coach, aucun
     identifiant interne (meme regle que la liste blanche des commentaires).
     """
-    _version, _texte = await t1_version_active(
-        request.query_params.get("coach_id", "") or "")
+    _coach = request.query_params.get("coach_id", "") or ""
+    _version, _texte = await t1_version_active(_coach)
+    _captation = await t1_captation_applicable(course_id, _coach) if _version else False
+    if _captation:
+        _texte = _texte + "\n\n" + await t1_bloc_captation(_coach)
     return {
         "version": _version,
         "text": _texte,
-        "filmed": await t1_cours_filme(course_id),
+        "filmed": _captation,
         "required": bool(_version),
     }
 

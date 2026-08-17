@@ -911,6 +911,23 @@ const ConceptEditor = ({
               rows={4}
             />
           </div>
+    {/* ESSAI-5a-1C : le bloc « photos et vidéos », séparé du socle.
+        Tant qu'il est vide, AUCUNE séance n'annonce de captation — même si son
+        cours est coché dans le Wizard. C'est ce champ qui commande. */}
+    <div className="mb-4">
+      <label className="text-white text-xs opacity-70 mb-1 block">
+        Photos et vidéos — affiché uniquement pour les cours cochés « susceptible d'être filmé »
+      </label>
+      <textarea
+        value={concept.termsTextRecording || ''}
+        onChange={(e) => setConcept({ ...concept, termsTextRecording: e.target.value })}
+        placeholder="Laissez vide tant que ce texte n'est pas validé : aucune mention d'image n'apparaîtra."
+        className="w-full px-3 py-2 rounded-lg neon-input text-sm"
+        data-testid="terms-recording"
+        rows={4}
+      />
+    </div>
+
     {/* V93.6: Conditions générales partenaires */}
     <div className="mb-4">
       <label className="text-white text-xs opacity-70 mb-1 block">Conditions Générales Partenaires</label>
