@@ -393,6 +393,76 @@ async def essai_gratuit():
              "delete_one" not in _nu and "delete_many" not in _nu)
 
 
+async def garde_activation():
+    """AUCUNE CONDITION PUBLIEE = AUCUNE EXIGENCE, SUR AUCUN CHEMIN.
+
+    C'est la propriete qui rend ce lot deployable aujourd'hui, alors que le
+    texte des conditions n'est pas encore ecrit. Elle est verifiee ici pour
+    chacune des trois portes de reservation, et pour toutes les formes que
+    peut prendre un concept sans texte.
+    """
+    VIDES = [
+        ("aucun document concept", []),
+        ("termsText vide", [{"id": "concept", "termsText": ""}]),
+        ("termsText absent", [{"id": "concept"}]),
+        ("termsText blanc", [{"id": "concept", "termsText": "   \n  "}]),
+        ("termsText nul", [{"id": "concept", "termsText": None}]),
+    ]
+    COURS = [{"id": "c-filme", "filmed": True}, {"id": "c-non", "filmed": False}]
+
+    for _nom, _concept in VIDES:
+        for _chemin, _cid in (("espace abonne", "c-filme"),
+                              ("POST /reservations", "c-non"),
+                              ("checkout gratuit", "")):
+            g, base, _ = bac(concept=_concept, cours=COURS)
+            # Le client n'envoie RIEN : ni acceptation, ni version, rien.
+            for _entree in (None, False, "", 0):
+                try:
+                    _p = await g["t1_preuve"](_entree, _cid, "")
+                except _HTTPException as e:
+                    verifier("G1. [%s] %s : une reservation reste possible" % (_chemin, _nom),
+                             False, "refus %s" % e.status_code)
+                    break
+                if _p != {}:
+                    verifier("G1. [%s] %s : aucun champ de preuve impose" % (_chemin, _nom),
+                             False, str(_p))
+                    break
+            else:
+                verifier("G1. [%s] %s -> aucune exigence, la reservation passe"
+                         % (_chemin, _nom), True)
+            verifier("G2. [%s] %s : aucune version n'est archivee pour rien"
+                     % (_chemin, _nom), not base.terms_versions.docs,
+                     str(base.terms_versions.docs))
+
+    # G3 — l'ecran ne doit pas afficher une case renvoyant a du vide
+    for _nom, _concept in VIDES:
+        g, _, _ = bac(concept=_concept, cours=COURS)
+        r = await g["t1_conditions_actives"](_Requete())
+        verifier("G3. %s -> la route publique annonce `required: false`, "
+                 "donc aucune case ne s'affiche" % _nom,
+                 r["required"] is False and r["text"] == "" and r["version"] == "",
+                 str(r))
+
+    # G4 — meme un client qui PRETEND accepter n'obtient pas de fausse preuve
+    g, base, _ = bac(concept=[{"id": "concept", "termsText": ""}], cours=COURS)
+    verifier("G4. un client qui coche alors qu'il n'y a rien a accepter "
+             "n'obtient AUCUNE preuve fabriquee",
+             await g["t1_preuve"](True, "c-filme", "") == {})
+
+    # G5 — la bascule est automatique : il suffit d'ecrire le texte
+    g, base, _ = bac(concept=[{"id": "concept", "termsText": ""}], cours=COURS)
+    verifier("G5. avant publication : rien n'est exige",
+             await g["t1_preuve"](None, "", "") == {})
+    base.concept.docs[0]["termsText"] = TEXTE
+    try:
+        await g["t1_preuve"](None, "", "")
+        verifier("G5b. apres publication : l'exigence s'active d'elle-meme",
+                 False, "aucun refus")
+    except _HTTPException as e:
+        verifier("G5b. apres publication : l'exigence s'active d'elle-meme, "
+                 "sans redeploiement", e.status_code == 409)
+
+
 def structure():
     verifier("A1. le delai d'annulation payant vaut 24 h",
              BAC.get("T1_DELAI_ANNULATION_H") == 24 if BAC else True)
@@ -458,6 +528,7 @@ def main():
         b.run_until_complete(conditions())
         b.run_until_complete(captation())
         b.run_until_complete(essai_gratuit())
+        b.run_until_complete(garde_activation())
     finally:
         b.close()
     structure()
