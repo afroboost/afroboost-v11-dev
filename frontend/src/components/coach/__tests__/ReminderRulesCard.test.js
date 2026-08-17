@@ -107,7 +107,7 @@ describe('chargement des regles', () => {
   test('le titre et la phrase demandes sont bien la', async () => {
     await monter();
     expect(texte()).toContain('Rappels avant cours');
-    expect(texte()).toContain('Choisis jusqu’à 2 moments pour rappeler automatiquement tes participants.');
+    expect(texte()).toContain('Les rappels sont envoyés par notification Push et par e-mail, selon les préférences du participant.');
   });
 
   test('une heure fixe chargee remplit les DEUX menus', async () => {

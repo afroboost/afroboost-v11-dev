@@ -23388,6 +23388,243 @@ async def n1b_marquer_envoye(reservation_id: str, cle: str, quand: str) -> None:
     await db.reservations.update_one({"id": reservation_id}, {"$set": _maj})
 
 
+# === RAPPELS V2 : DEUX CANAUX, SUIVIS SEPAREMENT ===
+#
+# Jusqu'ici un rappel etait une chose unique : un push. `reminders_sent` portait
+# donc une simple chaine par regle -> {cle: horodatage}.
+#
+# Le rappel devient double, push ET e-mail, et les deux doivent vivre leur vie
+# separement : l'un peut echouer sans condamner l'autre, l'un peut etre refuse
+# par l'abonne sans priver l'autre. Le marqueur devient donc un sous-document
+# par canal :
+#
+#     reminders_sent: {"defaut": {"push": "2026-...", "email": "2026-..."}}
+#
+# AUCUNE migration de masse n'est faite : les deux formes cohabitent en base.
+# Une chaine rencontree signifie « le push historique est parti » — et rien de
+# plus, puisque l'e-mail n'existait pas quand elle a ete ecrite.
+RV2_CANAL_PUSH = "push"
+RV2_CANAL_EMAIL = "email"
+RV2_CANAUX = (RV2_CANAL_PUSH, RV2_CANAL_EMAIL)
+
+# `notifications@afroboost.com` n'est pas une boite relevee. Une reponse d'un
+# abonne a son rappel doit atterrir chez quelqu'un.
+RV2_REPLY_TO = os.environ.get("AFROBOOST_REPLY_TO_RAPPELS", "contact.artboost@gmail.com")
+
+RV2_JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+RV2_MOIS = ("janvier", "fevrier", "mars", "avril", "mai", "juin",
+            "juillet", "aout", "septembre", "octobre", "novembre", "decembre")
+
+
+def rv2_deja_envoye(reservation: dict, cle: str, canal: str) -> bool:
+    """Ce rappel est-il deja parti SUR CE CANAL ?
+
+    Trois formes de marqueur cohabitent, de la plus recente a la plus ancienne :
+      1. sous-document par canal   -> on lit le canal demande ;
+      2. chaine (avant ce lot)     -> le push est parti, l'e-mail non ;
+      3. booleen `reminder_sent`   -> idem, pour la seule cle historique.
+    """
+    _envois = reservation.get("reminders_sent")
+    if isinstance(_envois, dict):
+        _valeur = _envois.get(cle)
+        if isinstance(_valeur, dict):
+            return bool(_valeur.get(canal))
+        if _valeur:
+            return canal == RV2_CANAL_PUSH
+    if (canal == RV2_CANAL_PUSH and cle == N1B_CLE_HERITEE
+            and reservation.get("reminder_sent") is True):
+        return True
+    return False
+
+
+async def rv2_normaliser_marqueur(reservation: dict, cle: str) -> None:
+    """Convertit un marqueur herite (chaine) en sous-document {push: horodatage}.
+
+    Sans cela, un `$set` sur `reminders_sent.<cle>.email` echouerait : MongoDB
+    refuse de creer un champ a l'interieur d'une chaine. La conversion est
+    conditionnee a la valeur exacte relue, donc deux crons concurrents ne
+    peuvent pas se marcher dessus : le perdant retrouve un sous-document deja
+    pret, ce qui est precisement ce qu'il voulait.
+    """
+    _envois = reservation.get("reminders_sent")
+    if not isinstance(_envois, dict):
+        return
+    _ancien = _envois.get(cle)
+    if not isinstance(_ancien, str) or not _ancien:
+        return
+    _chemin = "reminders_sent.%s" % cle
+    await db.reservations.update_one(
+        {"id": reservation.get("id"), _chemin: _ancien},
+        {"$set": {_chemin: {RV2_CANAL_PUSH: _ancien}}},
+    )
+    _envois[cle] = {RV2_CANAL_PUSH: _ancien}
+
+
+async def rv2_reserver_canal(reservation_id: str, cle: str, canal: str, quand: str) -> bool:
+    """Pose le marqueur AVANT l'envoi, et dit si CE processus a gagne le droit.
+
+    C'est le mecanisme deja eprouve par `_rc_reserver_jeton` du flux de
+    reservation : le filtre exige l'ABSENCE du champ, donc MongoDB ne
+    l'accorde qu'a un seul appelant, meme si dix crons demarrent ensemble.
+    """
+    _chemin = "reminders_sent.%s.%s" % (cle, canal)
+    _res = await db.reservations.update_one(
+        {"id": reservation_id, _chemin: {"$exists": False}},
+        {"$set": {_chemin: quand}},
+    )
+    return bool(getattr(_res, "matched_count", 0))
+
+
+async def rv2_liberer_canal(reservation_id: str, cle: str, canal: str) -> None:
+    """Retire le marqueur apres un echec : le canal redevient reessayable."""
+    _chemin = "reminders_sent.%s.%s" % (cle, canal)
+    try:
+        await db.reservations.update_one({"id": reservation_id}, {"$unset": {_chemin: ""}})
+    except Exception as _e:
+        logger.error("[RV2] marqueur %s non libere sur la resa %s : %s",
+                     _chemin, reservation_id, _e)
+
+
+async def rv2_canal_autorise(email: str, canal: str) -> bool:
+    """L'abonne accepte-t-il les rappels avant cours SUR CE CANAL ?
+
+    Trois echelons, du plus precis au plus general :
+      1. `before_class_<canal>` -> preference de canal, elle tranche ;
+      2. `before_class`         -> choix historique, il vaut pour les DEUX
+                                   canaux : un abonne qui s'etait desabonne des
+                                   rappels ne se les voit pas revenir par
+                                   e-mail ;
+      3. rien du tout           -> vrai, comme tout le systeme V286 (opt-out).
+    """
+    if not email:
+        return True
+    try:
+        _doc = await db.notification_preferences.find_one(
+            {"email": email.lower().strip(), "role": "subscriber"},
+            {"_id": 0, "preferences": 1})
+    except Exception:
+        return True
+    _prefs = (_doc or {}).get("preferences")
+    if not isinstance(_prefs, dict):
+        return True
+    _cle_canal = "before_class_%s" % canal
+    if _cle_canal in _prefs:
+        return bool(_prefs[_cle_canal])
+    if "before_class" in _prefs:
+        return bool(_prefs["before_class"])
+    return True
+
+
+def rv2_email_valide(email: str) -> bool:
+    """Filtre minimal : ni vide, ni manifestement inexploitable."""
+    _e = (email or "").strip()
+    if "@" not in _e or _e.startswith("@") or _e.endswith("@"):
+        return False
+    if " " in _e:
+        return False
+    _domaine = _e.rsplit("@", 1)[1]
+    return ("." in _domaine and not _domaine.startswith(".")
+            and not _domaine.endswith("."))
+
+
+def rv2_date_lisible(quand_local) -> str:
+    """« mardi 18 aout ». La DATE seule : aucune heure ne sort jamais d'ici."""
+    try:
+        return "%s %d %s" % (RV2_JOURS[quand_local.weekday()], quand_local.day,
+                             RV2_MOIS[quand_local.month - 1])
+    except Exception:
+        return ""
+
+
+def rv2_contenu_rappel(prenom: str, course_name: str, date_lisible: str,
+                       heure: str, accent: str):
+    """Rend le triplet (sujet, html, texte) du rappel avant cours.
+
+    `heure` vient EXCLUSIVEMENT de `reservations.courseTime`. Si elle est vide,
+    l'e-mail ne parle pas d'heure : il n'en invente aucune, et surtout il ne va
+    pas la chercher dans `reservations.datetime`, dont on sait qu'il porte, sur
+    une partie du parc, l'horodatage de la RESERVATION et non celui du cours.
+
+    Le sujet ne commence pas par un emoji : c'est un signal de filtrage connu
+    chez Gmail, et la meme precaution est deja prise sur l'e-mail de newsletter.
+    """
+    _cours = (course_name or "ton cours").strip()
+    _heure = (heure or "").strip()
+    _date = (date_lisible or "").strip()
+
+    if _date:
+        _sujet = "Rappel : %s — %s" % (_cours, _date)
+    else:
+        _sujet = "Rappel : %s" % _cours
+
+    if _date and _heure:
+        _quand = "%s à %s" % (_date, _heure)
+    elif _date:
+        _quand = _date
+    elif _heure:
+        _quand = "à %s" % _heure
+    else:
+        _quand = ""
+
+    _bonjour = ("Bonjour %s," % prenom.strip()) if (prenom or "").strip() else "Bonjour,"
+
+    _ligne_quand_html = ""
+    if _quand:
+        _ligne_quand_html = (
+            '<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:0 0 8px;">'
+            'C&rsquo;est <strong style="color:%s;">%s</strong>.</p>' % (accent, _quand))
+
+    _corps_html = (
+        '<div style="padding:24px;color:#fff;">'
+        '<p style="font-size:16px;margin:0 0 12px;">%s</p>'
+        '<p style="color:rgba(255,255,255,0.8);line-height:1.6;margin:0 0 8px;">'
+        'Petit rappel : tu es inscrit(e) à <strong style="color:%s;">%s</strong>.</p>'
+        '%s'
+        '<p style="color:rgba(255,255,255,0.6);line-height:1.6;margin:12px 0 0;font-size:13px;">'
+        'À tout de suite, et pense à arriver un peu en avance.</p>'
+        '</div>' % (_bonjour, accent, _cours, _ligne_quand_html))
+
+    _html = _email_wrapper("linear-gradient(135deg,#9333EA,%s)" % accent,
+                           _corps_html, accent)
+
+    _lignes = [_bonjour, "",
+               "Petit rappel : tu es inscrit(e) à %s." % _cours]
+    if _quand:
+        _lignes.append("C'est %s." % _quand)
+    _lignes += ["", "À tout de suite, et pense à arriver un peu en avance.",
+                "", "Afroboost — Move, Groove, Boost"]
+    _texte = "\n".join(_lignes) + "\n"
+    return _sujet, _html, _texte
+
+
+async def rv2_envoyer_email_rappel(destinataire: str, prenom: str, course_name: str,
+                                   date_lisible: str, heure: str, accent: str) -> bool:
+    """Envoie le rappel par e-mail. Vrai SEULEMENT si Resend a accepte.
+
+    Aucune couche nouvelle : meme transport, meme garde et meme gabarit que les
+    autres e-mails transactionnels du fichier. Sans cle API, on renvoie faux —
+    le marqueur sera donc relache et le canal reste reessayable.
+    """
+    if not RESEND_AVAILABLE or not RESEND_API_KEY:
+        logger.info("[RV2] Resend non configure — aucun e-mail de rappel envoye")
+        return False
+    _sujet, _html, _texte = rv2_contenu_rappel(prenom, course_name, date_lisible,
+                                               heure, accent)
+    try:
+        await asyncio.to_thread(resend.Emails.send, {
+            "from": "Afroboost <notifications@afroboost.com>",
+            "to": [destinataire],
+            "reply_to": RV2_REPLY_TO,
+            "subject": _sujet,
+            "html": _html,
+            "text": _texte,
+        })
+        return True
+    except Exception as _e:
+        logger.warning("[RV2] e-mail de rappel refuse pour %s : %s", destinataire, _e)
+        return False
+
+
 # === N1B-2 : LE MOTEUR SAIT LIRE PLUSIEURS REGLES DE RAPPEL ===
 #
 # Deux familles de regles, volontairement distinctes :
@@ -23887,7 +24124,9 @@ async def cron_reservation_reminders():
             # absorbee — y compris si le rappel garde a echoue.
             _gardees, _absorbees = n1b3b2_plan(_regles_r, _quand, _zurich)
             for _cible, _cle in _gardees:
-                if n1b_deja_envoye(_r, _cle):
+                # RAPPELS V2 : on n'ecarte la tache que si les DEUX canaux sont
+                # deja partis. Un push reussi ne doit plus condamner l'e-mail.
+                if all(rv2_deja_envoye(_r, _cle, _c) for _c in RV2_CANAUX):
                     continue
                 # Borne BASSE exclue, borne haute incluse : sans cela, une cible
                 # tombant pile sur la limite serait retenue par deux passages
@@ -23911,35 +24150,93 @@ async def cron_reservation_reminders():
         logger.error(f"[REMINDER-V183] erreur lecture résa: {e}")
         return {"checked": 0, "sent": 0, "error": str(e)}
     sent = 0
+    _par_canal = {RV2_CANAL_PUSH: 0, RV2_CANAL_EMAIL: 0}
+    # La couleur de marque est relue UNE fois pour tout le passage : un e-mail ne
+    # lit pas les variables CSS, et rien ne justifie de refaire cette lecture a
+    # chaque reservation.
+    try:
+        _accent = await _v259_primary_color()
+    except Exception:
+        _accent = _V259_DEFAULT_COLOR
     for r, _cle_regle in taches:
         email = (r.get("userEmail") or "").lower().strip()
         if not email:
             continue
+        _rid = r.get("id")
         course_name = r.get("courseName") or r.get("offerName") or "ton cours"
+        # L'heure affichee vient de `courseTime`, et de NULLE PART ailleurs.
+        # `datetime` sert a DECLENCHER le rappel, jamais a l'afficher : sur une
+        # partie du parc il porte l'horodatage de la RESERVATION, pas du cours.
         course_time = r.get("courseTime") or ""
+        _prenom = (r.get("userName") or "").strip().split(" ")[0][:40]
+        # La DATE, elle, vient de l'instant deja calcule pour declencher : c'est
+        # la seule chose que le moteur tient pour vraie sur ce cours.
+        _date_lisible = ""
+        _instant = _v435_instant_du_cours(r.get("datetime"))
+        if _instant:
+            _date_lisible = rv2_date_lisible(_instant.astimezone(_zurich))
+        # Un marqueur herite est une chaine : aucun sous-champ ne peut y etre
+        # cree. On le convertit AVANT de reserver quoi que ce soit.
         try:
-            # V287 : respecter la préférence abonné "before_class" (opt-out).
-            if not await _v286_should_send_notification(email, "subscriber", "before_class"):
-                logger.debug(f"[V287] Push before_class désactivé pour {email}")
+            await rv2_normaliser_marqueur(r, _cle_regle)
+        except Exception as e:
+            logger.warning(f"[RV2] résa {_rid} : marqueur non normalisé ({e})")
+            continue
+        for _canal in RV2_CANAUX:
+            if rv2_deja_envoye(r, _cle_regle, _canal):
                 continue
-            ok = await send_push_by_email(
-                email,
-                n1b2_titre(_cle_regle),
-                n1b2_corps(_cle_regle, course_name, course_time),
-                {"type": "course_reminder", "reservation_id": r.get("id")}
-            )
-            # V435 : le drapeau n'est pose QUE si l'envoi a reellement abouti.
-            # Avant, il l'etait dans tous les cas — un push en echec (appareil
-            # hors ligne, abonnement expire) etait definitivement perdu, sans
-            # jamais etre reessaye. Il reste desormais candidat au passage
-            # suivant, tant que le cours est dans la fenetre.
+            if _canal == RV2_CANAL_EMAIL and not rv2_email_valide(email):
+                continue
+            try:
+                if not await rv2_canal_autorise(email, _canal):
+                    logger.debug(f"[RV2] rappel {_canal} désactivé pour {email}")
+                    continue
+                # Marquage AVANT envoi. Le filtre exige l'absence du champ :
+                # deux crons simultanes ne peuvent pas gagner tous les deux, et
+                # le perdant passe simplement son chemin.
+                if not await rv2_reserver_canal(_rid, _cle_regle, _canal, now.isoformat()):
+                    continue
+            except Exception as e:
+                logger.warning(f"[RV2] résa {_rid} canal {_canal} : {e}")
+                continue
+            ok = False
+            try:
+                if _canal == RV2_CANAL_PUSH:
+                    ok = await send_push_by_email(
+                        email,
+                        n1b2_titre(_cle_regle),
+                        n1b2_corps(_cle_regle, course_name, course_time),
+                        {"type": "course_reminder", "reservation_id": _rid}
+                    )
+                else:
+                    ok = await rv2_envoyer_email_rappel(
+                        email, _prenom, course_name, _date_lisible, course_time, _accent)
+            except Exception as e:
+                logger.warning(f"[REMINDER-V183] résa {_rid} ({_canal}): {e}")
+                ok = False
             if ok:
                 sent += 1
-                await n1b_marquer_envoye(r.get("id"), _cle_regle, now.isoformat())
-        except Exception as e:
-            logger.warning(f"[REMINDER-V183] résa {r.get('id')}: {e}")
-    logger.info(f"[REMINDER-V183] {sent}/{len(taches)} rappels envoyés")
-    return {"checked": len(taches), "sent": sent}
+                _par_canal[_canal] += 1
+                # Le booleen historique continue d'etre ecrit a l'identique pour
+                # le push de la cle d'origine : aucune lecture existante ne
+                # change de resultat.
+                if _canal == RV2_CANAL_PUSH and _cle_regle == N1B_CLE_HERITEE:
+                    try:
+                        await db.reservations.update_one(
+                            {"id": _rid},
+                            {"$set": {"reminder_sent": True,
+                                      "reminder_sent_at": now.isoformat()}})
+                    except Exception as e:
+                        logger.warning(f"[RV2] résa {_rid} : booléen hérité non écrit ({e})")
+            else:
+                # Echec : on retire le marqueur pose juste avant. Le canal
+                # redevient reessayable au passage suivant tant que la fenetre
+                # du cours est ouverte — et l'AUTRE canal n'en sait rien.
+                await rv2_liberer_canal(_rid, _cle_regle, _canal)
+    logger.info(f"[REMINDER-V183] {sent}/{len(taches)} rappels envoyés "
+                f"(push {_par_canal[RV2_CANAL_PUSH]}, email {_par_canal[RV2_CANAL_EMAIL]})")
+    return {"checked": len(taches), "sent": sent,
+            "push": _par_canal[RV2_CANAL_PUSH], "email": _par_canal[RV2_CANAL_EMAIL]}
 
 
 async def send_backup_email(participant_id: str, message_preview: str):

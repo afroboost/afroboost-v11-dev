@@ -265,7 +265,7 @@ const ReminderRulesCard = ({ coachEmail }) => {
         )}
       </div>
       <p className="text-white/50 text-xs mt-1">
-        Choisis jusqu&rsquo;à 2 moments pour rappeler automatiquement tes participants.
+        Les rappels sont envoyés par notification Push et par e-mail, selon les préférences du participant.
       </p>
 
       {chargement && (

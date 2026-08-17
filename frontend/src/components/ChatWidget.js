@@ -2090,8 +2090,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
   const [notifPrefs, setNotifPrefs] = useState(() => {
     try {
       const saved = localStorage.getItem('afroboost_notif_prefs');
-      return saved ? JSON.parse(saved) : { before_class: true, new_offer: true, birthday: true };
-    } catch (e) { return { before_class: true, new_offer: true, birthday: true }; }
+      return saved ? JSON.parse(saved) : { before_class_push: true, before_class_email: true, new_offer: true, birthday: true };
+    } catch (e) { return { before_class_push: true, before_class_email: true, new_offer: true, birthday: true }; }
   });
   const [showNotifPrefs, setShowNotifPrefs] = useState(false);
   const toggleNotifPref = (key) => {
@@ -8038,11 +8038,18 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                       {showNotifPrefs && (
                         <div style={{ padding: '4px 14px 10px', background: 'rgba(255,255,255,0.02)' }}>
                           {[
-                            { key: 'before_class', label: 'Rappel avant le cours' },
+                            { key: 'before_class_push', label: 'Rappel avant le cours \u2014 notification', repli: 'before_class' },
+                            { key: 'before_class_email', label: 'Rappel avant le cours \u2014 e-mail', repli: 'before_class' },
                             { key: 'new_offer', label: 'Nouvelle offre ajoutée' },
                             { key: 'birthday', label: 'Anniversaires de la communauté' }
                           ].map(function(item) {
-                            var on = notifPrefs[item.key] !== false;
+                            // RAPPELS V2 : meme regle de repli que le serveur, sinon
+                            // l'interrupteur mentirait. La cle de canal tranche ; a
+                            // defaut le choix historique `before_class` vaut pour les
+                            // DEUX canaux ; a defaut tout est actif.
+                            var brut = notifPrefs[item.key];
+                            if (brut === undefined && item.repli) { brut = notifPrefs[item.repli]; }
+                            var on = brut !== false;
                             return (
                               <button key={item.key} onClick={function() { toggleNotifPref(item.key); }}
                                 style={{ width: '100%', padding: '8px 0', display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: 'none', color: on ? '#22c55e' : '#666', cursor: 'pointer', fontSize: '11px', textAlign: 'left' }}>

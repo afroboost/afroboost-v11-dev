@@ -1,0 +1,721 @@
+# -*- coding: utf-8 -*-
+"""RAPPELS V2 — le rappel avant cours part sur DEUX canaux, suivis separement.
+
+Ce test execute le VRAI `cron_reservation_reminders` extrait de `api/server.py`
+par AST, avec ses vraies aides. Rien n'est recopie a la main : ce qui est
+verifie ici est ce qui tournera en production.
+
+Aucun reseau. Aucun Push. Aucun e-mail. Aucun WhatsApp. Aucune base.
+Le module `resend` n'est jamais importe, `pywebpush` non plus : les deux
+canaux sont des mouchards qui enregistrent au lieu d'emettre, et leur
+compteur participe au verdict final.
+
+Lancement :  python3 tests/test_rv2_rappels_push_email.py
+"""
+
+import ast
+import asyncio
+import io
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone, timedelta
+
+RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SERVEUR = os.path.join(RACINE, "api", "server.py")
+SOURCE = io.open(SERVEUR, encoding="utf-8").read()
+ARBRE = ast.parse(SOURCE)
+LIGNES = SOURCE.splitlines(True)
+
+BASE_AVANT = "ef0a6d1"          # l'etat du depot avant ce lot
+
+RESULTATS = []
+
+
+def verifier(nom, cond, detail=""):
+    RESULTATS.append((nom, bool(cond), detail))
+
+
+# ----------------------------------------------------------------- extraction
+def noeud(nom):
+    for n in ast.walk(ARBRE):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == nom:
+            return n
+    raise AssertionError("introuvable : %s" % nom)
+
+
+def extraire(nom):
+    n = noeud(nom)
+    return "".join(LIGNES[n.lineno - 1:n.end_lineno])
+
+
+def code_nu(nom):
+    """Le code EXECUTE, sans docstring ni commentaires.
+
+    Les commentaires de ce lot citent `courseTime`, `datetime` et `$unset` pour
+    expliquer les pieges : une recherche de texte brute les prendrait pour du
+    code et validerait n'importe quoi.
+    """
+    n = noeud(nom)
+    corps = list(n.body)
+    if (corps and isinstance(corps[0], ast.Expr)
+            and isinstance(getattr(corps[0], "value", None), ast.Constant)
+            and isinstance(corps[0].value.value, str)):
+        corps = corps[1:]
+    return "\n".join(ast.unparse(x) for x in corps)
+
+
+CONSTANTES = """
+N1B_CLE_HERITEE = "defaut"
+N1B2_MAX_REGLES = 2
+N1B2_DELAIS_AUTORISES = (60, 180, 1440, 2880)
+N1B2_MINUTES_AUTORISEES = (0, 30)
+N1B2_REGLES_DEFAUT = ({"type": "relative", "minutes": 60},)
+N1B2_DEMI_FENETRE_MIN = 30
+N1B2_HORIZON_MIN = 2880 + N1B2_DEMI_FENETRE_MIN
+N1B3B2_ECART_MIN = 60
+_V259_DEFAULT_COLOR = "#D91CD2"
+RV2_CANAL_PUSH = "push"
+RV2_CANAL_EMAIL = "email"
+RV2_CANAUX = (RV2_CANAL_PUSH, RV2_CANAL_EMAIL)
+RV2_REPLY_TO = "contact.artboost@gmail.com"
+RV2_JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+RV2_MOIS = ("janvier", "fevrier", "mars", "avril", "mai", "juin",
+            "juillet", "aout", "septembre", "octobre", "novembre", "decembre")
+RESEND_AVAILABLE = True
+RESEND_API_KEY = "re_faux_jamais_utilisee"
+"""
+
+A_EXTRAIRE = ["_v259_primary_rgb", "_email_wrapper",
+              "n1b2_cle", "n1b2_cible", "n1b2_titre", "n1b2_corps",
+              "n1b2_valider_regles", "n1b3b2_plan", "n1b2_regles_du_coach",
+              "rv2_deja_envoye", "rv2_normaliser_marqueur", "rv2_reserver_canal",
+              "rv2_liberer_canal", "rv2_canal_autorise", "rv2_email_valide",
+              "rv2_date_lisible", "rv2_contenu_rappel", "rv2_envoyer_email_rappel",
+              "cron_reservation_reminders"]
+
+
+# ------------------------------------------------------- faux client MongoDB
+MANQUANT = object()
+
+
+def _valeur(doc, chemin):
+    """Resout un chemin pointe `a.b.c`, comme MongoDB."""
+    cur = doc
+    for part in chemin.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return MANQUANT
+        cur = cur[part]
+    return cur
+
+
+def _match(doc, q):
+    for cle, attendu in (q or {}).items():
+        obtenu = _valeur(doc, cle)
+        if isinstance(attendu, dict):
+            for op, val in attendu.items():
+                if op == "$exists":
+                    if bool(obtenu is not MANQUANT) != bool(val):
+                        return False
+                elif op == "$gte":
+                    if obtenu is MANQUANT:
+                        return False
+                    # CLOISONNEMENT PAR TYPE, comme MongoDB : comparer une
+                    # chaine a autre chose ne matche pas, et ne leve pas.
+                    if type(obtenu) is not type(val) or not (obtenu >= val):
+                        return False
+                elif op == "$ne":
+                    if obtenu is not MANQUANT and obtenu == val:
+                        return False
+                else:
+                    raise AssertionError("operateur non simule : %s" % op)
+        else:
+            if obtenu is MANQUANT or obtenu != attendu:
+                return False
+    return True
+
+
+def _poser(doc, chemin, valeur):
+    """Ecrit un chemin pointe. Refuse de creer un champ DANS une chaine —
+    c'est exactement ce que fait MongoDB, et c'est ce qui rend
+    `rv2_normaliser_marqueur` indispensable."""
+    parts = chemin.split(".")
+    cur = doc
+    for i, part in enumerate(parts[:-1]):
+        suite = cur.get(part, MANQUANT)
+        if suite is MANQUANT:
+            cur[part] = {}
+        elif not isinstance(suite, dict):
+            raise RuntimeError(
+                "Cannot create field '%s' in element {%s: %r}"
+                % (parts[i + 1], part, suite))
+        cur = cur[part]
+    cur[parts[-1]] = valeur
+
+
+def _retirer(doc, chemin):
+    parts = chemin.split(".")
+    cur = doc
+    for part in parts[:-1]:
+        cur = cur.get(part)
+        if not isinstance(cur, dict):
+            return
+    cur.pop(parts[-1], None)
+
+
+def _appliquer(doc, m):
+    for op, champs in m.items():
+        if op == "$set":
+            for k, v in champs.items():
+                _poser(doc, k, v)
+        elif op == "$unset":
+            for k in champs:
+                _retirer(doc, k)
+        else:
+            raise AssertionError("operateur de mise a jour non simule : %s" % op)
+
+
+class _Res(object):
+    def __init__(self, n):
+        self.matched_count = n
+        self.modified_count = n
+
+
+class _Curseur(object):
+    def __init__(self, d):
+        self.d = d
+
+    def sort(self, *a, **k):
+        return self
+
+    async def to_list(self, n):
+        await asyncio.sleep(0)
+        import copy
+        return [copy.deepcopy(x) for x in self.d[:n]]
+
+
+class _Coll(object):
+    """Chaque methode REND LA MAIN a la boucle avant d'agir.
+
+    C'est le trajet reseau vers MongoDB, et c'est indispensable : sans ce point
+    de suspension, `asyncio.gather` deroulerait la premiere tache entierement
+    avant de demarrer la seconde, aucun entrelacement ne se produirait, et un
+    test de concurrence passerait meme sans reservation prealable.
+
+    L'atomicite, elle, est modelisee par l'ABSENCE de `await` entre le filtre et
+    l'ecriture DANS `update_one`. Rendre la main avant : oui. Pendant : jamais.
+    C'est le contrat de MongoDB au niveau du document.
+    """
+
+    def __init__(self, docs=None):
+        self.docs = docs or []
+
+    def find(self, q=None, p=None):
+        return _Curseur([d for d in self.docs if _match(d, q or {})])
+
+    async def find_one(self, q, p=None):
+        await asyncio.sleep(0)
+        import copy
+        for d in self.docs:
+            if _match(d, q):
+                return copy.deepcopy(d)
+        return None
+
+    async def update_one(self, q, m, **k):
+        await asyncio.sleep(0)   # trajet reseau — AVANT la section atomique
+        # --- section atomique : aucun await du filtre a l'ecriture ---
+        for d in self.docs:
+            if _match(d, q):
+                _appliquer(d, m)
+                return _Res(1)
+        return _Res(0)
+
+
+class _Base(object):
+    def __init__(self, resas, prefs=None, profils=None):
+        self.reservations = _Coll(resas)
+        self.notification_preferences = _Coll(prefs or [])
+        self.coach_profiles = _Coll(profils or [])
+
+
+# ------------------------------------------------------------- les mouchards
+PUSHS = []          # doit rester vide sauf quand le scenario l'autorise
+EMAILS = []         # idem — aucun de ces deux n'atteint le reseau
+
+
+class _FauxEmails(object):
+    echec = False
+
+    @staticmethod
+    def send(payload):
+        if _FauxEmails.echec:
+            raise RuntimeError("Resend refuse (simule)")
+        EMAILS.append(payload)
+        return {"id": "faux"}
+
+
+class _FauxResend(object):
+    Emails = _FauxEmails
+
+
+def bac(resas, prefs=None, profils=None, push_ok=True, email_ok=True):
+    PUSHS[:] = []
+    EMAILS[:] = []
+    _FauxEmails.echec = not email_ok
+    base = _Base(resas, prefs, profils)
+
+    async def faux_push(email, titre, corps, data=None):
+        await asyncio.sleep(0)
+        if not push_ok:
+            return False
+        PUSHS.append({"email": email, "titre": titre, "corps": corps, "data": data})
+        return True
+
+    async def faux_couleur(coach_email=""):
+        await asyncio.sleep(0)
+        return "#D91CD2"
+
+    b = {
+        "db": base,
+        "asyncio": asyncio,
+        "datetime": datetime, "timezone": timezone, "timedelta": timedelta,
+        "resend": _FauxResend,
+        "send_push_by_email": faux_push,
+        "_v259_primary_color": faux_couleur,
+        "logger": type("l", (), {k: staticmethod(lambda *a, **kw: None)
+                                 for k in ("info", "warning", "error", "debug")}),
+        "api_router": type("r", (), {"get": staticmethod(lambda *a, **k: (lambda f: f))}),
+    }
+    morceaux = [CONSTANTES] + [extraire(f) for f in A_EXTRAIRE]
+    exec(compile("\n\n".join(morceaux), "<rv2>", "exec"), b)
+    absents = [f for f in A_EXTRAIRE if f not in b]
+    assert not absents, "extraction incomplete : %s" % absents
+    return b, base
+
+
+# ----------------------------------------------------------- jeux de donnees
+ZURICH = None
+try:
+    from zoneinfo import ZoneInfo
+    ZURICH = ZoneInfo("Europe/Zurich")
+except Exception:
+    pass
+
+
+def resa(rid="r1", email="abo@exemple.com", course_time="18:30",
+         decalage_min=60, nom="Awa Diallo", instant=None, **extra):
+    """Une reservation dont le cours tombe dans la fenetre du rappel `defaut`.
+
+    La regle par defaut vise 60 min avant le cours ; la fenetre est de +/- 30
+    min. Un cours a `now + 60 min` place donc la cible exactement sur `now`.
+    """
+    quand = instant or (datetime.now(timezone.utc) + timedelta(minutes=decalage_min))
+    d = {
+        "id": rid,
+        "userEmail": email,
+        "userName": nom,
+        "courseName": "Danse Afro",
+        "courseTime": course_time,
+        "coach_id": "coach@exemple.com",
+        "datetime": quand.astimezone(ZURICH).isoformat() if ZURICH else quand.isoformat(),
+    }
+    d.update(extra)
+    return d
+
+
+def pref(email="abo@exemple.com", **cles):
+    return {"email": email, "role": "subscriber", "preferences": dict(cles)}
+
+
+def marqueur(doc, cle="defaut"):
+    return (doc.get("reminders_sent") or {}).get(cle)
+
+
+async def passage(b):
+    return await b["cron_reservation_reminders"]()
+
+
+# ============================================================================
+#                        LES 17 VERIFICATIONS BLOQUANTES
+# ============================================================================
+async def scenarios():
+    # --- 1. Push ON + Email ON -> deux canaux ------------------------------
+    b, base = bac([resa()])
+    await passage(b)
+    doc = base.reservations.docs[0]
+    verifier("1. Push ON + Email ON -> les DEUX canaux partent",
+             len(PUSHS) == 1 and len(EMAILS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+    _m = marqueur(doc)
+    verifier("1b. un marqueur par canal est ecrit",
+             isinstance(_m, dict) and _m.get("push") and _m.get("email"), repr(_m))
+
+    # --- 2. Push indisponible + Email ON -> e-mail seul --------------------
+    b, base = bac([resa()], push_ok=False)
+    await passage(b)
+    doc = base.reservations.docs[0]
+    verifier("2. Push indisponible -> l'e-mail part QUAND MEME",
+             len(PUSHS) == 0 and len(EMAILS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+    verifier("2b. le marqueur push a ete relache (canal reessayable)",
+             not (marqueur(doc) or {}).get("push"), repr(marqueur(doc)))
+    verifier("2c. le marqueur e-mail, lui, est pose",
+             bool((marqueur(doc) or {}).get("email")), repr(marqueur(doc)))
+
+    # --- 3. Push ON + Email OFF -> push seul -------------------------------
+    b, base = bac([resa()], prefs=[pref(before_class_email=False)])
+    await passage(b)
+    verifier("3. Email OFF -> le Push part SEUL",
+             len(PUSHS) == 1 and len(EMAILS) == 0,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- 4. rappels avant cours desactives -> rien -------------------------
+    b, base = bac([resa()], prefs=[pref(before_class=False)])
+    await passage(b)
+    verifier("4. before_class desactive -> AUCUN canal",
+             len(PUSHS) == 0 and len(EMAILS) == 0,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+    verifier("4b. et aucun marqueur n'a ete laisse derriere",
+             marqueur(base.reservations.docs[0]) in (None, {}),
+             repr(marqueur(base.reservations.docs[0])))
+
+    # --- 5. Push echoue, Email reussit -> push retentable ------------------
+    docs = [resa()]
+    b, base = bac(docs, push_ok=False)
+    await passage(b)
+    verifier("5. Push en echec -> e-mail marque, push NON marque",
+             len(EMAILS) == 1 and not (marqueur(docs[0]) or {}).get("push"))
+    b2, _ = bac(docs, push_ok=True)          # meme document, passage suivant
+    await passage(b2)
+    verifier("5b. au passage suivant le Push est REESSAYE, pas l'e-mail",
+             len(PUSHS) == 1 and len(EMAILS) == 0,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- 6. Email echoue, Push reussit -> e-mail retentable ----------------
+    docs = [resa()]
+    b, base = bac(docs, email_ok=False)
+    await passage(b)
+    verifier("6. E-mail en echec -> push marque, e-mail NON marque",
+             len(PUSHS) == 1 and not (marqueur(docs[0]) or {}).get("email"),
+             repr(marqueur(docs[0])))
+    b2, _ = bac(docs, email_ok=True)
+    await passage(b2)
+    verifier("6b. au passage suivant l'e-mail est REESSAYE, pas le Push",
+             len(EMAILS) == 1 and len(PUSHS) == 0,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- 7. e-mail deja marque -> aucun doublon ----------------------------
+    d = resa()
+    d["reminders_sent"] = {"defaut": {"email": "2026-01-01T00:00:00+00:00"}}
+    b, base = bac([d])
+    await passage(b)
+    verifier("7. e-mail deja marque -> aucun second e-mail",
+             len(EMAILS) == 0 and len(PUSHS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- 8. push deja marque -> aucun doublon ------------------------------
+    d = resa()
+    d["reminders_sent"] = {"defaut": {"push": "2026-01-01T00:00:00+00:00"}}
+    b, base = bac([d])
+    await passage(b)
+    verifier("8. push deja marque -> aucun second push",
+             len(PUSHS) == 0 and len(EMAILS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- 9. concurrence ----------------------------------------------------
+    b, base = bac([resa()])
+    await asyncio.gather(*[passage(b) for _ in range(2)])
+    verifier("9. 2 crons simultanes -> 1 push et 1 e-mail, pas deux",
+             len(PUSHS) == 1 and len(EMAILS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    b, base = bac([resa()])
+    await asyncio.gather(*[passage(b) for _ in range(10)])
+    verifier("9b. 10 crons simultanes -> toujours 1 push et 1 e-mail",
+             len(PUSHS) == 1 and len(EMAILS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- 10. courseTime present -> bonne heure -----------------------------
+    b, base = bac([resa(course_time="18:30")])
+    await passage(b)
+    _e = EMAILS[0] if EMAILS else {}
+    verifier("10. courseTime present -> l'heure figure dans l'e-mail",
+             "18:30" in _e.get("html", "") and "18:30" in _e.get("text", ""),
+             repr(_e.get("text", ""))[:160])
+
+    # --- 11. reservations.datetime NE SERT JAMAIS d'heure ------------------
+    _instant = datetime.now(timezone.utc) + timedelta(minutes=60)
+    _hhmm_datetime = (_instant.astimezone(ZURICH) if ZURICH else _instant).strftime("%H:%M")
+    _faux = "18:30" if _hhmm_datetime != "18:30" else "07:15"
+    b, base = bac([resa(course_time=_faux, instant=_instant)])
+    await passage(b)
+    _e = EMAILS[0] if EMAILS else {}
+    _tout = _e.get("subject", "") + _e.get("html", "") + _e.get("text", "")
+    verifier("11. l'heure de `datetime` n'apparait NULLE PART dans l'e-mail",
+             _faux in _tout and _hhmm_datetime not in _tout,
+             "attendu %s, interdit %s" % (_faux, _hhmm_datetime))
+
+    # --- 12. courseTime absent -> aucune heure inventee --------------------
+    b, base = bac([resa(course_time="")])
+    await passage(b)
+    _e = EMAILS[0] if EMAILS else {}
+    _tout = _e.get("subject", "") + _e.get("text", "")
+    _heures = re.findall(r"\d{1,2}[:h]\d{2}", _tout)
+    verifier("12. courseTime absent -> AUCUNE heure inventee",
+             len(EMAILS) == 1 and not _heures, "trouve : %s" % _heures)
+
+    # --- 13. ancien contact : rien ne se perd ------------------------------
+    b, base = bac([resa()], prefs=[])
+    await passage(b)
+    verifier("13a. aucune preference enregistree -> les deux canaux",
+             len(PUSHS) == 1 and len(EMAILS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    b, base = bac([resa()], prefs=[pref(before_class=True, new_offer=False)])
+    await passage(b)
+    verifier("13b. ancienne cle before_class=True -> les deux canaux",
+             len(PUSHS) == 1 and len(EMAILS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    d = resa()
+    d["reminders_sent"] = {"defaut": "2026-01-01T00:00:00+00:00"}   # forme heritee
+    b, base = bac([d])
+    await passage(b)
+    verifier("13c. marqueur herite (chaine) -> push tenu pour fait, e-mail envoye",
+             len(PUSHS) == 0 and len(EMAILS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+    verifier("13d. la chaine heritee a ete convertie sans perdre l'horodatage",
+             (marqueur(d) or {}).get("push") == "2026-01-01T00:00:00+00:00",
+             repr(marqueur(d)))
+
+    d = resa()
+    d["reminder_sent"] = True                                        # booleen d'avant N1B-1
+    b, base = bac([d])
+    await passage(b)
+    verifier("13e. booleen historique -> push tenu pour fait, e-mail envoye",
+             len(PUSHS) == 0 and len(EMAILS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- 14 / 15. opt-out par canal ----------------------------------------
+    b, base = bac([resa()], prefs=[pref(before_class_push=False)])
+    await passage(b)
+    verifier("14. opt-out Push -> aucun Push, l'e-mail passe",
+             len(PUSHS) == 0 and len(EMAILS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    b, base = bac([resa()], prefs=[pref(before_class_email=False)])
+    await passage(b)
+    verifier("15. opt-out Email -> aucun e-mail, le Push passe",
+             len(EMAILS) == 0 and len(PUSHS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # la cle de canal l'emporte sur la cle historique
+    b, base = bac([resa()], prefs=[pref(before_class=False, before_class_email=True)])
+    await passage(b)
+    verifier("15b. la cle de canal prime sur la cle historique",
+             len(EMAILS) == 1 and len(PUSHS) == 0,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- adresse e-mail inexploitable --------------------------------------
+    b, base = bac([resa(email="pas-une-adresse")])
+    await passage(b)
+    verifier("15c. adresse invalide -> aucun e-mail, le Push passe",
+             len(EMAILS) == 0 and len(PUSHS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- l'e-mail lui-meme : forme ----------------------------------------
+    b, base = bac([resa(nom="Awa Diallo")])
+    await passage(b)
+    _e = EMAILS[0] if EMAILS else {}
+    verifier("16a. Reply-To pose sur une boite relevee",
+             _e.get("reply_to") == "contact.artboost@gmail.com", repr(_e.get("reply_to")))
+    verifier("16b. version HTML ET version texte",
+             bool(_e.get("html")) and bool(_e.get("text")))
+    verifier("16c. le sujet ne commence pas par un emoji",
+             (_e.get("subject", "") or "x")[0].isalpha()
+             and ord(_e.get("subject", "x")[0]) < 128, repr(_e.get("subject")))
+    verifier("16d. le prenom seul est utilise, pas le nom complet",
+             "Awa" in _e.get("text", "") and "Diallo" not in _e.get("text", ""),
+             repr(_e.get("text", ""))[:120])
+    verifier("16e. le nom du cours figure dans le sujet",
+             "Danse Afro" in _e.get("subject", ""), repr(_e.get("subject")))
+
+
+# ============================================================================
+#                    TESTS DISCRIMINANTS — le harnais ment-il ?
+# ============================================================================
+async def discriminants():
+    # D1 : le faux Mongo refuse bien de creer un champ dans une chaine.
+    _doc = {"reminders_sent": {"defaut": "2026-01-01T00:00:00+00:00"}}
+    _leve = False
+    try:
+        _poser(_doc, "reminders_sent.defaut.email", "x")
+    except RuntimeError:
+        _leve = True
+    verifier("D1. le faux Mongo refuse un sous-champ dans une chaine "
+             "(sinon la normalisation ne prouverait rien)", _leve)
+
+    # D2 : le code d'AVANT le lot doit ECHOUER sous concurrence. Si le harnais
+    # n'entrelacait pas, le test 9 passerait sur n'importe quoi.
+    try:
+        avant = subprocess.check_output(
+            ["git", "show", "%s:api/server.py" % BASE_AVANT], cwd=RACINE).decode(errors="replace")
+    except Exception as e:
+        verifier("D2. code d'avant le lot rejoue sous concurrence", False, "git: %s" % e)
+        return
+    arbre_av = ast.parse(avant)
+    lignes_av = avant.splitlines(True)
+    src_av = None
+    for n in ast.walk(arbre_av):
+        if (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and n.name == "cron_reservation_reminders"):
+            src_av = "".join(lignes_av[n.lineno - 1:n.end_lineno])
+    if not src_av:
+        verifier("D2. code d'avant le lot rejoue sous concurrence", False, "handler introuvable")
+        return
+    b, base = bac([resa()])
+    # on ecrase le handler par celui d'avant, dans le MEME bac
+    b["n1b_deja_envoye"] = None
+    for nom in ("n1b_deja_envoye", "n1b_marquer_envoye"):
+        for x in ast.walk(arbre_av):
+            if (isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef)) and x.name == nom):
+                exec(compile("".join(lignes_av[x.lineno - 1:x.end_lineno]), "<av>", "exec"), b)
+    b["_v286_should_send_notification"] = lambda *a, **k: asyncio.sleep(0, result=True)
+    exec(compile(src_av, "<av>", "exec"), b)
+    PUSHS[:] = []
+    await asyncio.gather(*[b["cron_reservation_reminders"]() for _ in range(10)])
+    verifier("D2. SANS reservation prealable, le harnais voit BIEN des doublons",
+             len(PUSHS) > 1,
+             "%d push — le harnais n'entrelace pas, le test 9 ne prouve rien" % len(PUSHS))
+
+
+# ============================================================================
+#                        INVARIANTS DE STRUCTURE (sur le SOURCE)
+# ============================================================================
+def _src_avant(nom):
+    avant = subprocess.check_output(
+        ["git", "show", "%s:api/server.py" % BASE_AVANT], cwd=RACINE).decode(errors="replace")
+    arbre = ast.parse(avant)
+    lignes = avant.splitlines(True)
+    for n in ast.walk(arbre):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == nom:
+            return "".join(lignes[n.lineno - 1:n.end_lineno])
+    return None
+
+
+def structure():
+    nu_reserver = code_nu("rv2_reserver_canal")
+    verifier("S1. la reservation est un compare-and-swap ($exists puis matched_count)",
+             "$exists" in nu_reserver and "matched_count" in nu_reserver
+             and "update_one" in nu_reserver, nu_reserver[:120])
+
+    nu_cron = code_nu("cron_reservation_reminders")
+    _i_res = nu_cron.find("rv2_reserver_canal")
+    _i_push = nu_cron.find("send_push_by_email")
+    _i_mail = nu_cron.find("rv2_envoyer_email_rappel")
+    verifier("S2. le marquage precede les DEUX envois dans le code execute",
+             0 < _i_res < _i_push and _i_res < _i_mail,
+             "reserver@%d push@%d mail@%d" % (_i_res, _i_push, _i_mail))
+
+    verifier("S3. l'echec libere le marqueur ($unset)",
+             "$unset" in code_nu("rv2_liberer_canal"))
+    verifier("S3b. et le cron appelle bien cette liberation",
+             "rv2_liberer_canal" in nu_cron)
+
+    nu_contenu = code_nu("rv2_contenu_rappel")
+    verifier("S4. le contenu de l'e-mail n'a AUCUN acces a `datetime`",
+             "datetime" not in nu_contenu, nu_contenu[:160])
+    verifier("S4b. il ne connait que l'heure qu'on lui passe",
+             "courseTime" not in nu_contenu)
+
+    verifier("S5. le cron ne touche a AUCUN canal WhatsApp",
+             not any(m in nu_cron.lower()
+                     for m in ("whatsapp", "send_whatsapp", "meta_", "wa_")), "")
+
+    nu_envoi = code_nu("rv2_envoyer_email_rappel")
+    verifier("S6. l'e-mail porte Reply-To, HTML et texte",
+             "reply_to" in nu_envoi and "'html'" in nu_envoi.replace('"', "'")
+             and "'text'" in nu_envoi.replace('"', "'"), nu_envoi[:200])
+    verifier("S6b. il reutilise le transport existant, sans nouveau moteur",
+             "resend.Emails.send" in nu_envoi and "asyncio.to_thread" in nu_envoi)
+    verifier("S6c. sans cle Resend, il ne tente rien",
+             "RESEND_API_KEY" in nu_envoi and "RESEND_AVAILABLE" in nu_envoi)
+
+    verifier("S7. le gabarit HTML existant est reutilise, pas reecrit",
+             "_email_wrapper" in nu_contenu)
+
+    # --- non-regression, bornee au COMMIT et jamais a l'arbre de travail ---
+    intouchables = ["send_push_by_email", "n1b_deja_envoye", "n1b_marquer_envoye",
+                    "n1b2_cle", "n1b2_cible", "n1b2_titre", "n1b2_corps",
+                    "n1b3b2_plan", "n1b2_regles_du_coach", "n1b2_valider_regles",
+                    "_v286_should_send_notification", "_email_wrapper",
+                    "_v259_primary_color", "_v259_primary_rgb"]
+    _ecarts = []
+    for f in intouchables:
+        if _src_avant(f) != extraire(f):
+            _ecarts.append(f)
+    verifier("S8. les fonctions hors perimetre sont identiques a %s" % BASE_AVANT,
+             not _ecarts, "modifiees : %s" % _ecarts)
+
+    # --- perimetre des fichiers, borne au commit de base -------------------
+    _modifs = subprocess.check_output(
+        ["git", "diff", "--name-only", BASE_AVANT], cwd=RACINE).decode().split()
+    _attendus = {
+        "api/server.py",
+        "frontend/src/components/ChatWidget.js",
+        "frontend/src/components/coach/ReminderRulesCard.js",
+        "frontend/src/components/coach/__tests__/ReminderRulesCard.test.js",
+        "tests/test_rv2_rappels_push_email.py",
+    }
+    verifier("S9. aucun fichier hors perimetre n'est touche",
+             set(_modifs) <= _attendus, "inattendus : %s" % sorted(set(_modifs) - _attendus))
+
+    # --- le lecteur de preferences ne doit rien ecrire ---------------------
+    nu_pref = code_nu("rv2_canal_autorise")
+    verifier("S10. la lecture des preferences n'ecrit JAMAIS en base",
+             not any(m in nu_pref for m in ("update_one", "insert_one", "$set", "upsert")),
+             nu_pref[:160])
+    verifier("S10b. elle applique bien les trois echelons de repli",
+             "before_class_%s" in nu_pref and "'before_class'" in nu_pref.replace('"', "'"))
+
+    # --- ce test est-il vraiment hors ligne ? ------------------------------
+    # On inspecte les IMPORTS REELS par AST : une recherche de texte se
+    # trouverait elle-meme dans sa propre liste de mots interdits.
+    moi = io.open(os.path.abspath(__file__), encoding="utf-8").read()
+    mods = set()
+    for n in ast.walk(ast.parse(moi)):
+        if isinstance(n, ast.Import):
+            mods.update(x.name.split(".")[0] for x in n.names)
+        elif isinstance(n, ast.ImportFrom) and n.module:
+            mods.add(n.module.split(".")[0])
+    verifier("S11. ce test n'importe que la bibliotheque standard hors reseau",
+             mods <= {"ast", "asyncio", "io", "os", "re", "subprocess", "sys",
+                      "datetime", "zoneinfo", "copy"}, str(sorted(mods)))
+    verifier("S11b. ni resend, ni pywebpush, ni pymongo, ni client HTTP",
+             not (mods & {"resend", "pywebpush", "pymongo", "requests",
+                          "httpx", "socket", "urllib"}), str(sorted(mods)))
+
+
+def main():
+    structure()
+    boucle = asyncio.new_event_loop()
+    try:
+        boucle.run_until_complete(discriminants())
+        boucle.run_until_complete(scenarios())
+    finally:
+        boucle.close()
+    ok = sum(1 for _, r, _ in RESULTATS if r)
+    print("=" * 78)
+    for nom, r, detail in RESULTATS:
+        print(("  PASS  " if r else "  FAIL  ") + nom + (("   -> " + detail) if not r else ""))
+    print("=" * 78)
+    print("Push REELLEMENT envoyes   : 0 — `pywebpush` n'est jamais importe")
+    print("E-mails REELLEMENT envoyes: 0 — `resend` n'est jamais importe")
+    print("WhatsApp                  : 0 — aucun module de messagerie n'est charge")
+    print("%d/%d verifications" % (ok, len(RESULTATS)))
+    return 0 if ok == len(RESULTATS) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
