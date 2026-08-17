@@ -866,6 +866,125 @@ async def scenarios_route():
 
 
 # ============================================================================
+#     FLEXIBILITE — LA CONFIGURATION TIENT AU COURS, JAMAIS AU JOUR
+# ============================================================================
+async def scenarios_flexibilite():
+    """Aucun jour n'est code en dur nulle part.
+
+    Ces verifications ne parlent volontairement pas de « mercredi » ni de
+    « dimanche » : elles prennent des jours quelconques, deux cours le meme
+    jour, un cours ponctuel, et vont jusqu'a DEPLACER un cours pour verifier
+    que son reglage le suit. La cle est `course_id`, et rien d'autre.
+    """
+    R60 = [{"type": "relative", "minutes": 60}]
+    R180 = [{"type": "relative", "minutes": 180}]
+
+    # --- F1. un cours cree APRES coup, un jeudi, sans une ligne de code -----
+    _jeudi = cours(cid="nouveau-jeudi", actif=True, regles=R60,
+                   weekday=4, time="19:00", name="Atelier du jeudi")
+    b, base = bac([resa(courseId="nouveau-jeudi")], cours_docs=[_jeudi])
+    await passage(b)
+    verifier("F1. cours du jeudi cree apres coup -> configurable tel quel",
+             len(PUSHS) == 1 and len(EMAILS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- F2. deux cours LE MEME JOUR, reglages independants ----------------
+    # Le premier vise 60 min avant (dans la fenetre), le second 3 h avant
+    # (hors fenetre). Meme jour, meme heure, verdicts opposes.
+    b, base = bac([resa(rid="r1", email="a@exemple.com", courseId="jeudi-a"),
+                   resa(rid="r2", email="b@exemple.com", courseId="jeudi-b")],
+                  cours_docs=[cours(cid="jeudi-a", actif=True, regles=R60,
+                                    weekday=4, time="19:00"),
+                              cours(cid="jeudi-b", actif=True, regles=R180,
+                                    weekday=4, time="19:00")])
+    await passage(b)
+    verifier("F2. deux cours le MEME jour -> reglages independants",
+             len(PUSHS) == 1 and PUSHS[0]["email"] == "a@exemple.com",
+             "%d push, destinataires %s" % (len(PUSHS), [p["email"] for p in PUSHS]))
+
+    # --- F3. deux cours le meme jour, l'un ON l'autre OFF -------------------
+    b, base = bac([resa(rid="r1", email="a@exemple.com", courseId="sam-a"),
+                   resa(rid="r2", email="b@exemple.com", courseId="sam-b")],
+                  cours_docs=[cours(cid="sam-a", actif=True, regles=R60, weekday=6),
+                              cours(cid="sam-b", actif=False, weekday=6)])
+    await passage(b)
+    verifier("F3. meme jour, un cours ON et un OFF -> seul le ON emet",
+             len(PUSHS) == 1 and PUSHS[0]["email"] == "a@exemple.com",
+             "%d push, destinataires %s" % (len(PUSHS), [p["email"] for p in PUSHS]))
+
+    # --- F4. cours PONCTUEL (une date, aucun jour de semaine) ---------------
+    _ponctuel = cours(cid="atelier-unique", actif=True, regles=R60,
+                      weekday=None, date="2026-09-12", name="Atelier special")
+    _ponctuel.pop("weekday", None)
+    b, base = bac([resa(courseId="atelier-unique")], cours_docs=[_ponctuel])
+    await passage(b)
+    verifier("F4. cours ponctuel, sans jour de semaine -> configurable",
+             len(PUSHS) == 1 and len(EMAILS) == 1,
+             "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+
+    # --- F5. cours RECURRENT, n'importe quel jour ---------------------------
+    _tous = []
+    for _j in range(7):
+        _cid = "recurrent-%d" % _j
+        _tous.append((_cid, cours(cid=_cid, actif=True, regles=R60, weekday=_j)))
+    for _cid, _doc in _tous:
+        b, base = bac([resa(courseId=_cid)], cours_docs=[_doc])
+        await passage(b)
+        if len(PUSHS) != 1 or len(EMAILS) != 1:
+            verifier("F5. cours recurrent weekday=%s -> configurable" % _doc.get("weekday"),
+                     False, "%d push / %d e-mail" % (len(PUSHS), len(EMAILS)))
+            break
+    else:
+        verifier("F5. les SEPT jours de la semaine sont configurables a l'identique", True)
+
+    # --- F6. deplacer un cours : le reglage le suit ------------------------
+    _bouge = cours(cid="deplace", actif=True, regles=R60, weekday=2, time="18:30")
+    b, base = bac([resa(rid="avant", courseId="deplace")], cours_docs=[_bouge])
+    await passage(b)
+    _avant = len(PUSHS)
+    # Le coach change le jour ET l'heure du cours. Rien d'autre.
+    _bouge["weekday"] = 5
+    _bouge["time"] = "07:15"
+    b2, base2 = bac([resa(rid="apres", courseId="deplace")], cours_docs=[_bouge])
+    await passage(b2)
+    verifier("F6. changer le jour et l'heure d'un cours -> son reglage le SUIT",
+             _avant == 1 and len(PUSHS) == 1 and len(EMAILS) == 1
+             and base2.courses.docs[0].get("reminders_enabled") is True
+             and base2.courses.docs[0].get("reminder_rules") == R60,
+             "avant %d push / apres %d push" % (_avant, len(PUSHS)))
+
+    # --- F7. archivage : proprement, sans toucher aux autres ---------------
+    b, base = bac([resa(rid="r1", email="a@exemple.com", courseId="vivant"),
+                   resa(rid="r2", email="b@exemple.com", courseId="archive")],
+                  cours_docs=[cours(cid="vivant", actif=True, regles=R60),
+                              cours(cid="archive", actif=True, regles=R60, archive=True)])
+    await passage(b)
+    verifier("F7. un cours archive se tait, les autres continuent",
+             len(PUSHS) == 1 and PUSHS[0]["email"] == "a@exemple.com",
+             "%d push, destinataires %s" % (len(PUSHS), [p["email"] for p in PUSHS]))
+
+    # --- F8. cours SUPPRIME : la reservation orpheline ne casse rien --------
+    b, base = bac([resa(rid="r1", email="a@exemple.com", courseId="vivant"),
+                   resa(rid="r2", email="b@exemple.com", courseId="disparu")],
+                  cours_docs=[cours(cid="vivant", actif=True, regles=R60)])
+    _sortie = await passage(b)
+    verifier("F8. cours supprime -> reservation orpheline muette, le reste intact",
+             len(PUSHS) == 1 and PUSHS[0]["email"] == "a@exemple.com"
+             and isinstance(_sortie, dict) and "error" not in _sortie,
+             "%d push, sortie %r" % (len(PUSHS), _sortie))
+
+    # --- F9. aucun jour n'est code en dur dans la decision ------------------
+    _nu = code_nu("cron_reservation_reminders")
+    _jours = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+              "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+    _trouves = [j for j in _jours if j in _nu.lower()]
+    verifier("F9. le moteur ne nomme AUCUN jour de la semaine",
+             not _trouves, "trouves : %s" % _trouves)
+    verifier("F9b. il ne lit ni `weekday` ni `time` pour decider",
+             "weekday" not in _nu and "'time'" not in _nu, "")
+
+
+# ============================================================================
 #                    TESTS DISCRIMINANTS — le harnais ment-il ?
 # ============================================================================
 async def discriminants():
@@ -1032,6 +1151,7 @@ def main():
         boucle.run_until_complete(scenarios())
         boucle.run_until_complete(scenarios_niveau1())
         boucle.run_until_complete(scenarios_route())
+        boucle.run_until_complete(scenarios_flexibilite())
     finally:
         boucle.close()
     ok = sum(1 for _, r, _ in RESULTATS if r)

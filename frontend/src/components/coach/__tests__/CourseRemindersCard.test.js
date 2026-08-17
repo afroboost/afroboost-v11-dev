@@ -119,6 +119,59 @@ describe('la liste des cours a configurer', () => {
   });
 });
 
+describe('flexibilite — n\'importe quel cours, n\'importe quel jour', () => {
+  const JEUDI = { id: 'jeu', name: 'Atelier du jeudi', weekday: 4, time: '19:00', archived: false };
+  const JEUDI2 = { id: 'jeu2', name: 'Cours du soir', weekday: 4, time: '20:30', archived: false };
+  const PONCTUEL = { id: 'unique', name: 'Atelier special', date: '2026-09-12', time: '14:00', archived: false };
+  const SANS_JOUR = { id: 'flou', name: 'Cours sans jour', time: '10:00', archived: false };
+
+  test('les sept jours sont proposes sans distinction', async () => {
+    const sept = [0, 1, 2, 3, 4, 5, 6].map((j) => ({
+      id: `j${j}`, name: `Cours ${j}`, weekday: j, time: '18:30', archived: false
+    }));
+    await monter({ cours: sept });
+    expect(valeursCours()).toEqual(['j0', 'j1', 'j2', 'j3', 'j4', 'j5', 'j6']);
+  });
+
+  test('un cours ponctuel est configurable comme un autre', async () => {
+    await monter({ cours: [PONCTUEL] });
+    expect(valeursCours()).toEqual(['unique']);
+    expect(par('cr-cours').options[0].textContent).toContain('2026-09-12');
+  });
+
+  test('deux cours le meme jour restent distincts a l\'ecran', async () => {
+    await monter({ cours: [JEUDI, JEUDI2] });
+    expect(valeursCours()).toEqual(['jeu', 'jeu2']);
+    const libelles = Array.from(par('cr-cours').options).map((o) => o.textContent);
+    expect(libelles[0]).toContain('19:00');
+    expect(libelles[1]).toContain('20:30');
+    expect(libelles[0]).not.toBe(libelles[1]);
+  });
+
+  test('un cours sans jour ni date reste selectionnable', async () => {
+    await monter({ cours: [SANS_JOUR] });
+    expect(valeursCours()).toEqual(['flou']);
+    expect(par('cr-actif')).not.toBeNull();
+  });
+
+  test('un cours cree plus tard s\'ajoute sans rien changer au code', async () => {
+    await monter({ cours: [MERCREDI, DIMANCHE, JEUDI] });
+    expect(valeursCours()).toContain('jeu');
+    await choisir('cr-cours', 'jeu');
+    await cliquer('cr-actif');
+    expect(par('cr-moment-0')).not.toBeNull();
+  });
+
+  test('la configuration part sur l\'identifiant du cours, jamais sur son jour', async () => {
+    await monter({ cours: [JEUDI, JEUDI2] });
+    axios.put.mockResolvedValue({ data: { success: true, reminders_enabled: true, rules: [R24H] } });
+    await choisir('cr-cours', 'jeu2');
+    await cliquer('cr-actif');
+    await cliquer('cr-enregistrer');
+    expect(axios.put.mock.calls[0][0]).toBe('/api/coach/courses/jeu2/reminders');
+  });
+});
+
 describe('activation par cours', () => {
   test('un cours jamais configure arrive ETEINT', async () => {
     await monter();
