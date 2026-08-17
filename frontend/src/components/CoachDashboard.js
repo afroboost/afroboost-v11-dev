@@ -24,6 +24,7 @@ import { QRScannerModal } from "./QRScanner";
 import ReservationTab from "./coach/ReservationTab"; // Import Reservation Tab
 import CourseRemindersCard from "./coach/CourseRemindersCard"; // RAPPELS V2 : rappels choisis cours par cours
 import SuiviAbonnes from "./coach/SuiviAbonnes"; // V334 etape 3
+import FunnelEssaiCard from "./coach/FunnelEssaiCard"; // ESSAI-3
 import MessagesWhatsApp from "./coach/MessagesWhatsApp"; // V411
 import CampaignManager from "./coach/CampaignManager"; // Import Campaign Manager
 import CRMSection from "./coach/CRMSection"; // v9.2.0 Import CRM Section
@@ -7094,6 +7095,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   { id: 'preuves', icon: 'gift', label: 'Preuves', badge: v260PendingCount },
                   // V334 etape 3 : suivi de progression des abonnes du coach.
                   { id: 'suivi', icon: 'barChart', label: 'Suivi abonnés', badge: 0 },
+                  // ESSAI-3 : le funnel de l'essai gratuit. Pas de badge — un
+                  // compteur ici n'appellerait aucune action, il ferait du bruit.
+                  { id: 'funnel', icon: 'target', label: 'Funnel essai', badge: 0 },
                   // V411 : les echanges WhatsApp recus sur le numero Afroboost.
                   // V441 : le badge compte les messages ENTRANTS non lus. Il etait
                   // code en dur a 0, donc la pastille n'apparaissait jamais.
@@ -7918,6 +7922,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             {offersSubTab === 'suivi' && (
               <div style={{ marginTop: 12 }}>
                 <SuiviAbonnes />
+              </div>
+            )}
+
+            {/* ESSAI-3 : funnel de l'essai gratuit. Comme « Suivi », l'isolation
+                par coach est faite par le SERVEUR — cet ecran affiche ce qu'il recoit. */}
+            {offersSubTab === 'funnel' && (
+              <div style={{ marginTop: 12 }}>
+                <FunnelEssaiCard />
               </div>
             )}
 

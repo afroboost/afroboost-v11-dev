@@ -24262,6 +24262,299 @@ async def rv3_ecrire_rappels_du_cours(course_id: str, request: Request):
             "reminders_enabled": _actif, "rules": _sures or []}
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# ESSAI-3 — LE FUNNEL D'ESSAI GRATUIT, VU PAR LE COACH
+#
+# Quatre etages, tous lus dans la base metier ; PostHog n'est pas interroge.
+#
+#   ACCORDE   un forfait dont le code porte les marqueurs d'ESSAI-2
+#   RESERVE   au moins une reservation rattachee a ce forfait
+#   PRESENT   au moins une de ces reservations est `validated`
+#   CONVERTI  `converted_at`, le marqueur atomique pose par ESSAI-2
+#
+# LE 4e ETAGE NE SE RECONSTRUIT PAS. `converted_at` n'existe que depuis le
+# 17/08/2026 ; avant, rien ne distingue de facon sure un achat qui SUIT une
+# presence d'un achat quelconque — `total_paid` n'est meme pas ecrit par le
+# chemin Stripe, qui est pourtant le seul reellement encaissant. Plutot que
+# d'inventer une seconde definition qui contredirait la premiere, l'ecran
+# affiche la date depuis laquelle la mesure vaut. Un funnel honnete et
+# incomplet est plus utile qu'un funnel complet et faux.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Date de deploiement du marqueur `converted_at` (commit 062a79e). Elle n'est
+# PAS derivable des donnees : tant qu'aucune conversion n'a eu lieu,
+# `min(converted_at)` est vide et ne dirait rien de la fiabilite.
+ESSAI3_CONVERSION_DEPUIS = "2026-08-17"
+
+# En dessous, aucun diagnostic n'est affiche : sur 4 essais, « votre perte est
+# entre la reservation et la presence » ne serait qu'un accident d'echantillon.
+ESSAI3_ECHANTILLON_MINIMUM = 10
+
+ESSAI3_PERIODES = {"7d": 7, "30d": 30, "90d": 90, "all": None}
+
+# Un essai anterieur a ESSAI-0 n'a pas d'`offer_id`. Il compte dans « Toutes
+# les offres » — son statut d'essai, lui, est certain — et reste joignable par
+# cette cle plutot que d'etre attribue d'office a une offre qu'on ignore.
+ESSAI3_OFFRE_INCONNUE = "__sans_offre__"
+
+
+def _essai3_taux(numerateur: int, denominateur: int):
+    """Jamais NaN, jamais Infinity : sans denominateur, le taux n'existe pas.
+
+    `None` et 0.0 ne disent pas la meme chose — « pas encore mesurable » n'est
+    pas « aucun ne passe » — et l'ecran les rend differemment (« — » vs « 0 % »).
+    """
+    if not denominateur:
+        return None
+    return round(float(numerateur) / float(denominateur), 4)
+
+
+def _essai3_jours(depuis_iso: str, jusqu_iso: str):
+    """Delai en jours entre deux instants ISO, ou None si l'un manque.
+
+    Aucune valeur de repli : un essai sans horodatage exploitable sort de la
+    moyenne au lieu d'y entrer pour 0 jour, ce qui la tirerait vers le bas.
+    """
+    if not depuis_iso or not jusqu_iso:
+        return None
+    try:
+        _d = datetime.fromisoformat(str(depuis_iso).replace("Z", "+00:00"))
+        _f = datetime.fromisoformat(str(jusqu_iso).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if _d.tzinfo is None:
+        _d = _d.replace(tzinfo=timezone.utc)
+    if _f.tzinfo is None:
+        _f = _f.replace(tzinfo=timezone.utc)
+    _ecart = (_f - _d).total_seconds() / 86400.0
+    return round(_ecart, 2) if _ecart >= 0 else None
+
+
+def _essai3_mediane(valeurs: list):
+    if not valeurs:
+        return None
+    _v = sorted(valeurs)
+    _n = len(_v)
+    _m = _v[_n // 2] if _n % 2 else (_v[_n // 2 - 1] + _v[_n // 2]) / 2.0
+    return round(float(_m), 2)
+
+
+def _essai3_diagnostic(granted: int, booked: int, attended: int, converted: int):
+    """Une observation deterministe, ou aucune. Pas d'IA, pas de hasard.
+
+    La regle est le minimum des trois taux DEFINIS. Un taux sans denominateur
+    n'est pas candidat : ne pas avoir de reservation ne prouve pas que la
+    presence est le probleme.
+    """
+    if not granted:
+        return {"cle": "aucune_donnee", "etape": None}
+    if granted < ESSAI3_ECHANTILLON_MINIMUM:
+        return {"cle": "echantillon_faible", "etape": None}
+    _candidats = []
+    for _cle, _num, _den in (
+        ("accorde_reserve", booked, granted),
+        ("reserve_present", attended, booked),
+        ("present_converti", converted, attended),
+    ):
+        _t = _essai3_taux(_num, _den)
+        if _t is not None:
+            _candidats.append((_t, _cle))
+    if not _candidats:
+        return {"cle": "aucune_donnee", "etape": None}
+    _candidats.sort(key=lambda x: x[0])
+    return {"cle": _candidats[0][1], "etape": _candidats[0][1]}
+
+
+async def _essai3_cohorte(coach_email: str, depuis_iso: str):
+    """La cohorte : les essais ACCORDES pendant la periode, et leur devenir.
+
+    C'est bien la date d'octroi qui selectionne, jamais celle de la conversion.
+    Sans quoi une personne accordee il y a 40 jours et convertie hier gonflerait
+    le denominateur de « 30 jours » sans y avoir jamais ete accordee, et le taux
+    dirait n'importe quoi.
+
+    UNE SEULE requete d'agregation, quel que soit le nombre d'essais : les
+    reservations et les codes sont joints par `$lookup`, pas relus un par un.
+    """
+    from api.routes.shared import ESSAI2_FILTRE_GRATUIT as _GRATUIT
+
+    _match = {}
+    if not is_super_admin(coach_email):
+        _match["coach_id"] = coach_email.strip().lower()
+    if depuis_iso:
+        # `created_at` est une chaine ISO chez les DEUX ecrivains d'octroi
+        # (checkout et preuve sociale) : la comparaison lexicographique est
+        # exacte, et un document qui porterait une Date serait ignore plutot
+        # que mal compte.
+        _match["created_at"] = {"$gte": depuis_iso}
+
+    _pipeline = [
+        {"$match": _match},
+        {"$lookup": {
+            "from": "discount_codes",
+            "let": {"c": "$code"},
+            "pipeline": [
+                {"$match": {"$expr": {"$eq": ["$code", "$$c"]}}},
+                {"$match": _GRATUIT},
+                {"$limit": 1},
+                {"$project": {"_id": 1}},
+            ],
+            "as": "_gratuit",
+        }},
+        # Ici seulement on sait qu'il s'agit d'un ESSAI : c'est le code, pas le
+        # nom de l'offre, qui le dit. `offer_name` a deja derive.
+        {"$match": {"_gratuit.0": {"$exists": True}}},
+        {"$lookup": {
+            "from": "reservations",
+            "let": {"sid": "$id", "code": "$code"},
+            "pipeline": [
+                {"$match": {"$expr": {"$or": [
+                    {"$eq": ["$subscriptionId", "$$sid"]},
+                    {"$eq": ["$promoCode", "$$code"]},
+                    {"$eq": ["$discountCode", "$$code"]},
+                ]}}},
+                {"$project": {"_id": 0, "validated": 1, "validatedAt": 1}},
+            ],
+            "as": "_res",
+        }},
+        # Aucune donnee personnelle ne quitte la base : ni email, ni nom, ni
+        # telephone, ni code d'acces. Seulement des compteurs et des dates.
+        {"$project": {
+            "_id": 0,
+            "offer_id": 1,
+            "created_at": 1,
+            "converted_at": 1,
+            "reservations": {"$size": "$_res"},
+            "presences": {"$filter": {
+                "input": "$_res", "as": "r",
+                "cond": {"$eq": ["$$r.validated", True]},
+            }},
+        }},
+    ]
+    return await db.subscriptions.aggregate(_pipeline).to_list(5000)
+
+
+@api_router.get("/coach/funnel/free-trial")
+async def essai3_funnel_essai_gratuit(request: Request, period: str = "30d",
+                                      offer_id: str = ""):
+    """Le funnel d'essai gratuit du coach authentifie.
+
+    ISOLATION PAR LE SERVEUR. Le filtre `coach_id` est pose ici, sur le coach
+    tire du jeton — jamais sur un identifiant fourni par le navigateur. Un coach
+    ne peut donc pas demander le funnel d'un autre : il n'a aucun endroit ou
+    l'ecrire. L'administrateur, lui, voit l'ensemble, comme partout ailleurs.
+    """
+    _email = await _n1b3b2_coach_appelant(request)
+
+    _p = (period or "30d").strip().lower()
+    if _p not in ESSAI3_PERIODES:
+        _p = "30d"
+    _jours = ESSAI3_PERIODES[_p]
+    _depuis = ""
+    if _jours:
+        _depuis = (datetime.now(timezone.utc) - timedelta(days=_jours)).isoformat()
+
+    try:
+        _lignes = await _essai3_cohorte(_email, _depuis)
+    except Exception as _err:
+        # Une liste vide serait une AFFIRMATION : « ce coach n'a aucun essai ».
+        # On refuse explicitement plutot que de laisser croire a un zero.
+        logger.error("[ESSAI-3] funnel illisible pour %s : %s", _email, _err)
+        raise HTTPException(status_code=503,
+                            detail="Funnel momentanement indisponible")
+
+    # Les offres presentes dans la cohorte COMPLETE : le menu ne doit pas se
+    # vider quand on selectionne une offre. Le filtre s'applique apres.
+    _ids = sorted({str(l.get("offer_id") or "") for l in _lignes})
+    _reels = [i for i in _ids if i]
+    _noms = {}
+    if _reels:
+        try:
+            for _o in await db.offers.find({"id": {"$in": _reels}},
+                                           {"_id": 0, "id": 1, "name": 1}).to_list(200):
+                _noms[_o.get("id")] = _o.get("name") or ""
+        except Exception as _err:
+            logger.warning("[ESSAI-3] noms d'offres illisibles : %s", _err)
+    _offres = [{"id": i, "name": _noms.get(i) or "Offre supprimée"} for i in _reels]
+    if any(not str(l.get("offer_id") or "") for l in _lignes):
+        _offres.append({"id": ESSAI3_OFFRE_INCONNUE, "name": "Offre inconnue"})
+
+    _choix = (offer_id or "").strip()
+    if _choix == ESSAI3_OFFRE_INCONNUE:
+        _lignes = [l for l in _lignes if not str(l.get("offer_id") or "")]
+    elif _choix:
+        _lignes = [l for l in _lignes if str(l.get("offer_id") or "") == _choix]
+
+    _granted = len(_lignes)
+    _booked = 0
+    _attended = 0
+    _converted = 0
+    _delais = []
+    for _l in _lignes:
+        if int(_l.get("reservations") or 0) > 0:
+            _booked += 1
+        _pres = [p for p in (_l.get("presences") or []) if p]
+        _quand_present = ""
+        if _pres:
+            _attended += 1
+            _dates = sorted(str(p.get("validatedAt") or "") for p in _pres if p.get("validatedAt"))
+            _quand_present = _dates[0] if _dates else ""
+        _conv = str(_l.get("converted_at") or "")
+        if _conv and _pres:
+            # UN FUNNEL EST EMBOITE : chaque etage est un sous-ensemble du
+            # precedent, sinon un taux depasse 100 % et l'ecran ment. ESSAI-2
+            # n'ecrit `converted_at` qu'apres une presence, donc le cas ne
+            # devrait pas exister — s'il existe, la donnee est abimee et c'est
+            # la presence qui manque, pas la conversion qui est en trop.
+            _converted += 1
+            _d = _essai3_jours(_quand_present, _conv)
+            if _d is not None:
+                _delais.append(_d)
+        elif _conv:
+            logger.warning("[ESSAI-3] conversion sans presence sur un essai — "
+                           "ignoree dans le funnel (donnee incoherente)")
+
+    _plus_ancien = min((str(l.get("created_at") or "") for l in _lignes if l.get("created_at")),
+                       default="")
+
+    return {
+        "period": _p,
+        "offer_id": _choix,
+        "offers": _offres,
+        "cohort": {
+            # La periode selectionne les essais ACCORDES entre ces bornes ; on
+            # suit ensuite CES essais-la, ou qu'ils en soient aujourd'hui.
+            "anchor": "granted_at",
+            "since": _depuis,
+            "oldest_grant": _plus_ancien,
+        },
+        "granted": _granted,
+        "booked": _booked,
+        "attended": _attended,
+        "converted": _converted,
+        "rates": {
+            "booking": _essai3_taux(_booked, _granted),
+            "attendance": _essai3_taux(_attended, _booked),
+            "conversion": _essai3_taux(_converted, _attended),
+            "overall": _essai3_taux(_converted, _granted),
+        },
+        "conversion_delay": {
+            "average_days": (round(sum(_delais) / len(_delais), 2) if _delais else None),
+            "median_days": _essai3_mediane(_delais),
+            "sample_size": len(_delais),
+        },
+        "diagnostic": _essai3_diagnostic(_granted, _booked, _attended, _converted),
+        "coverage": {
+            # Le 4e etage ne remonte pas avant cette date : `converted_at` est
+            # ne avec ESSAI-2. L'ecran le dit au lieu d'afficher un zero muet.
+            "conversion_measured_since": ESSAI3_CONVERSION_DEPUIS,
+            "partial": bool(_plus_ancien and _plus_ancien[:10] < ESSAI3_CONVERSION_DEPUIS),
+            "min_sample_for_diagnostic": ESSAI3_ECHANTILLON_MINIMUM,
+        },
+    }
+
+
+
 # V183: Cron rappel 1h avant un cours réservé
 @api_router.get("/cron/reservation-reminders")
 async def cron_reservation_reminders():
