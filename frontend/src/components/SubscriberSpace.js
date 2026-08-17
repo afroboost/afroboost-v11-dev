@@ -733,7 +733,12 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                   // Mise à jour optimiste
                   setData((prev) => prev ? { ...prev, subscription: { ...prev.subscription, auto_renew: next } } : prev);
                   try {
-                    await axios.put(`${API}/subscriptions/${encodeURIComponent(subscription.id)}/auto-renew`, { auto_renew: next });
+                    // V446 : l'abonné présente le code qu'il a déjà dans son URL.
+                    // La route exige désormais une identité (garde `_v334_autoriser`) :
+                    // sans ce `code`, un abonné ne pourrait plus régler SA propre
+                    // reconduction. Il n'a pas de jeton d'appareil — SubscriberSpace
+                    // n'en demande jamais, seul le ChatWidget en manipule.
+                    await axios.put(`${API}/subscriptions/${encodeURIComponent(subscription.id)}/auto-renew`, { auto_renew: next, code: accessCode });
                   } catch (err) {
                     // Rollback en cas d'erreur
                     setData((prev) => prev ? { ...prev, subscription: { ...prev.subscription, auto_renew: !next } } : prev);

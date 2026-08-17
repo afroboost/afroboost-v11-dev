@@ -170,16 +170,23 @@ def tests():
     verifier("F1. le handler `notificationclick` est INCHANGE",
              bloc(ancien, "notificationclick") == bloc(SRC_SW, "notificationclick"), "")
 
+    # V446 — CES SONDES SE JUGENT SUR LE LOT V445, PAS SUR L'ARBRE DE TRAVAIL.
+    # Bornees a `git diff 1fe9276` (donc a l'arbre courant), elles tombaient des
+    # qu'un lot ULTERIEUR touchait `api/server.py` — ce qui est arrive avec V446.
+    # C'est la TROISIEME occurrence de ce defaut dans le depot (S9b de V442, F1
+    # de V443). La regle, desormais : borner au COMMIT, jamais a l'arbre.
+    LOT_V445 = ("1fe9276", "ff5846d")
+
     # === G. AUCUN IMPACT PWA / iPhone / web ===
     for f in ("manifest.json", "index.html", "logo192.png", "logo512.png",
               "logo192-maskable.png", "logo512-maskable.png", "favicon.ico"):
-        a = subprocess.run(["git", "diff", "--quiet", "1fe9276", "--",
+        a = subprocess.run(["git", "diff", "--quiet", "%s..%s" % LOT_V445, "--",
                             "frontend/public/" + f], cwd=RACINE)
         verifier("G1. %s inchange" % f, a.returncode == 0, "")
 
     # === H. LE BACKEND : SEULE LA CLE `badge` A BOUGE ===
     for f in ("api/server.py", "api/routes/reservation_routes.py"):
-        d = subprocess.check_output(["git", "diff", "1fe9276", "--", f],
+        d = subprocess.check_output(["git", "diff", "%s..%s" % LOT_V445, "--", f],
                                     cwd=RACINE).decode(errors="replace")
         modifiees = [l for l in d.splitlines()
                      if l.startswith("-") and not l.startswith("---")]
@@ -194,12 +201,13 @@ def tests():
                  code and '"icon": "/logo192.png"' in code[0], str(code))
 
     # === I. AUCUN ENVOI, AUCUNE LOGIQUE TOUCHEE ===
-    d = subprocess.check_output(["git", "diff", "--name-only", "1fe9276"],
+    d = subprocess.check_output(["git", "diff", "--name-only", "%s..%s" % LOT_V445],
                                 cwd=RACINE).decode()
     touches = sorted(f for f in d.split() if f)
-    verifier("I1. perimetre : 3 fichiers modifies", touches == [
-        "api/routes/reservation_routes.py", "api/server.py", "frontend/public/sw.js"],
-        str(touches))
+    verifier("I1. perimetre du lot V445", touches == [
+        "api/routes/reservation_routes.py", "api/server.py",
+        "frontend/public/notification-badge-96.png", "frontend/public/sw.js",
+        "tests/test_v445_icone_notification.py"], str(touches))
     src_py = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
     a_py = subprocess.check_output(["git", "show", "1fe9276:api/server.py"],
                                    cwd=RACINE).decode(errors="replace")

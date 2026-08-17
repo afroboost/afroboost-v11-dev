@@ -12744,6 +12744,37 @@ async def toggle_subscription_auto_renew(subscription_id: str, request: Request)
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription introuvable")
 
+    # === V446 — QUI A LE DROIT D'ALLUMER LA RECONDUCTION ? ===
+    #
+    # Cette route n'avait AUCUNE authentification : quiconque connaissait un
+    # `subscription_id` pouvait basculer `auto_renew` sur l'abonnement d'un
+    # autre. Couplée au cron de renouvellement (ouvert lui aussi jusqu'à V446),
+    # elle formait la première moitié d'une chaîne complète : allumer
+    # l'interrupteur ici, tirer le coup là-bas. Les deux ne tenaient que par le
+    # MÊME garde-fou accidentel — `stripe_customer_id` nul partout — c'est-à-dire
+    # par un unique point de défaillance.
+    #
+    # ⚠️ CE N'EST PAS UNE ROUTE D'ADMINISTRATION. L'appelant légitime est
+    # l'ABONNÉ lui-même, depuis son espace (`SubscriberSpace.js:736`). Exiger un
+    # JWT super-admin l'aurait privé de gérer sa propre reconduction — le piège
+    # exact de la règle V310c (« ne jamais durcir une auth sans prouver que le
+    # chemin légitime marche »). On réutilise donc `_v334_autoriser`, la garde
+    # abonné déjà en service sur 6 routes : elle accepte le code de l'abonné,
+    # son jeton d'appareil signé (V296), ou un coach/admin authentifié.
+    #
+    # Le code est fourni par l'espace abonné, qui l'a dans son URL
+    # (`/espace/{code}`). Il n'a PAS de jeton d'appareil : `SubscriberSpace.js`
+    # n'en demande jamais — seul le ChatWidget en manipule. C'est pourquoi le
+    # volet frontend de ce lot ajoute `code` au corps de la requête.
+    _code_abonnement = (sub.get("code") or "").strip()
+    if not _code_abonnement:
+        # Un abonnement sans code ne peut être rattaché à personne : on refuse
+        # plutôt que d'ouvrir. Sur des données de paiement, le doute ferme.
+        logger.warning("[V446] REFUS bascule auto_renew — abonnement %s sans code", subscription_id)
+        raise HTTPException(status_code=403, detail="Abonnement non rattachable — action refusee.")
+    _code_fourni = (body.get("code") or "") if isinstance(body, dict) else ""
+    await _v334_autoriser(request, _code_abonnement, _code_fourni)
+
     # Garde-fou : on ne peut activer la reconduction que si on a une carte enregistrée
     if desired and (not sub.get("stripe_customer_id") or not sub.get("stripe_payment_method")):
         raise HTTPException(
@@ -13075,10 +13106,27 @@ async def _v195_auto_renew(sub: dict) -> bool:
 #   - aucun `mode="subscription"` dans le dépôt -> aucun abonnement récurrent Stripe ;
 #   - `invoice.upcoming` n'est écouté nulle part, et ne PEUT PAS arriver : cet
 #     événement n'existe que pour les abonnements Stripe, qu'on n'émet pas ;
-#   - le mécanisme interne V195 existe mais son déclencheur
-#     `/api/cron/check-subscription-renewal` n'est déclaré que dans `vercel.json`,
-#     jamais exécuté sur Coolify ;
+#   - le mécanisme interne V195 existe ; son déclencheur
+#     `/api/cron/check-subscription-renewal` est déclaré dans `vercel.json` ;
 #   - en base : 0 abonnement avec `auto_renew: true`, 0 `stripe_customer_id`.
+#
+# ⚠️ V446 — UNE LIGNE DE CE CONSTAT ÉTAIT FAUSSE, ET ELLE A COÛTÉ UNE PORTE OUVERTE.
+# V398 affirmait ici que `/api/cron/check-subscription-renewal` n'était « jamais
+# exécuté sur Coolify ». Les journaux de production disent l'inverse : 3 appels,
+# un par jour, à 09:00:01 ± 0,2 s — le crontab du VPS l'exécute quotidiennement,
+# en recopiant l'horaire `0 9 * * *` de `vercel.json`. C'est sur cette prémisse
+# erronée que la route est restée SANS AUCUNE AUTHENTIFICATION jusqu'au
+# 17/08/2026, alors qu'elle mène en deux sauts à un `PaymentIntent.create(
+# off_session=True, confirm=True)`. Elle est désormais fermée (garde V329/V330).
+#
+# La seconde moitié du constat, elle, reste EXACTE et vérifiée le 17/08/2026 :
+# 0 abonnement `auto_renew: true`, `stripe_customer_id` nul sur les 57 documents.
+# Mais c'est un accident, pas une protection : `auto_renew` naît de
+# `bool(stripe_customer_id and stripe_payment_method)` (l. 6556), et
+# `customer_creation` n'apparaît nulle part dans le dépôt — Stripe Checkout en
+# mode `payment` ne crée donc jamais de `Customer`. Ajouter `customer_creation`
+# armerait tout le dispositif d'un seul coup, SANS AUCUN SIGNAL.
+#
 # Conclusion : personne ne peut être débité par surprise aujourd'hui. Ce rappel est
 # donc posé EN AVANCE de l'activation, prêt à servir, et volontairement INERTE.
 #
@@ -13243,9 +13291,59 @@ async def v398_rappel_renouvellement(request: Request, apercu: bool = True):
 
 
 @api_router.get("/cron/check-subscription-renewal")
-async def cron_check_subscription_renewal():
+async def cron_check_subscription_renewal(request: Request):
     """V195: Vérification quotidienne — relance les abonnés à 3 et 1 séance,
-    déclenche le renouvellement automatique à 0 séance pour les opt-in."""
+    déclenche le renouvellement automatique à 0 séance pour les opt-in.
+
+    V446 — CETTE ROUTE ÉTAIT OUVERTE À TOUT INTERNET, ET ELLE MÈNE À L'ARGENT.
+    Elle était déclarée `async def cron_check_subscription_renewal():` — sans
+    paramètre `Request`, donc sans la moindre possibilité de vérifier une
+    identité. Deux sauts la séparaient d'un débit réel :
+        route → _v195_auto_renew() → stripe.PaymentIntent.create(
+                                        off_session=True, confirm=True)
+    `off_session=True` signifie qu'aucune authentification forte n'est demandée
+    au porteur de la carte : le client n'a AUCUNE occasion de refuser.
+
+    Ce qui l'a protégée jusqu'ici n'est pas une décision, c'est un oubli.
+    `auto_renew` naît de `bool(stripe_customer_id and stripe_payment_method)`
+    (l. 6556) ; or `customer_creation` n'apparaît NULLE PART dans le dépôt, donc
+    Stripe Checkout en mode `payment` ne crée jamais de `Customer`, donc
+    `session.customer` revient vide, donc `auto_renew` vaut toujours False.
+    Mesure du 17/08/2026 : 0 document éligible, `auto_renew: True` sur 0 des 57
+    abonnements, `stripe_customer_id` nul sur les 57. Le jour où quelqu'un
+    ajoutera `customer_creation="always"` — un changement qui paraît anodin et
+    bénéfique — le dispositif s'armera d'un coup, sans aucun signal.
+
+    ⚠️ Le commentaire de V398 (plus bas dans ce fichier) affirme que cette route
+    « n'est déclarée que dans vercel.json, jamais exécutée sur Coolify ». C'est
+    FAUX : les journaux montrent 3 appels, un par jour, à 09:00:01 ± 0,2 s. Le
+    crontab du VPS l'exécute quotidiennement. V398 a audité l'état sans fermer
+    la porte, sur une prémisse erronée.
+
+    La garde est celle de V329/V330, reprise à l'identique : un secret de cron
+    OU un super-admin prouvé par un JETON SIGNÉ. `X-User-Email` ne participe
+    pas — le rôle ne se décide jamais côté client (règle V319).
+
+    FAIL-CLOSED ASSUMÉ : tant que `CRON_SECRET` n'est pas posé, le cron reçoit
+    401. C'est délibéré et sans conséquence fonctionnelle — la route renvoie
+    aujourd'hui `scanned: 0` à chaque passage. Mieux vaut un cron muet qu'un
+    chemin de prélèvement ouvert. On ne touche NI au moteur de renouvellement,
+    NI au montant, NI au PaymentIntent, NI à `auto_renew` : on ferme l'entrée.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    cron_secret = os.environ.get("CRON_SECRET", "")
+
+    # (a) cron externe : uniquement si un secret est posé ET qu'il correspond.
+    is_cron_secret = bool(cron_secret) and auth_header == f"Bearer {cron_secret}"
+
+    # (b) super-admin PROUVÉ par un jeton signé (jamais par un en-tête déclaratif).
+    jwt_email = _v311_coach_email_from_jwt(request)
+    is_admin = bool(jwt_email) and is_super_admin(jwt_email)
+
+    if not is_cron_secret and not is_admin:
+        logger.warning("[V446] REFUS cron de renouvellement — ni secret valide, ni super-admin signe")
+        raise HTTPException(status_code=401, detail="Unauthorized - Cron access only")
+
     results = {"warnings_sent": 0, "renewed": 0, "errors": 0, "scanned": 0}
 
     subs = await db.subscriptions.find(
