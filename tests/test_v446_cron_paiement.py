@@ -260,18 +260,26 @@ def tests_structurels():
              "stripe_customer_id" in nu2 and "stripe_payment_method" in nu2, "")
 
     # --- LE MOTEUR DE PAIEMENT N'A PAS BOUGE (consigne du proprietaire) ---
-    avant = subprocess.check_output(["git", "show", "ff5846d:api/server.py"],
-                                    cwd=RACINE).decode(errors="replace")
-    a = ast.parse(avant); lg = avant.splitlines(True)
-    def src_avant(nom):
-        for x in ast.walk(a):
+    # Ce que V446 doit prouver, c'est que SON commit n'a pas touche au moteur —
+    # pas que personne ne le touchera jamais. Une sonde bornee a l'arbre de
+    # travail tombe des le lot suivant : V447 ajoute une cle d'idempotence, tout
+    # a fait legitimement, et cette sonde n'a rien a en dire. QUATRIEME occurrence
+    # de ce defaut dans le depot (S9b de V442, F1 de V443, H1-H4 de V445). On
+    # compare donc le commit V446 a SON PROPRE PARENT.
+    V446 = "1f063c9"
+    def _src_au(rev, nom):
+        txt = subprocess.check_output(["git", "show", "%s:api/server.py" % rev],
+                                      cwd=RACINE).decode(errors="replace")
+        lg = txt.splitlines(True)
+        for x in ast.walk(ast.parse(txt)):
             if isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef)) and x.name == nom:
                 return "".join(lg[x.lineno - 1:x.end_lineno])
         return None
     for f in ("_v195_auto_renew", "_v195_send_renewal_notification"):
-        verifier("S8. %s INCHANGE octet pour octet" % f, src_avant(f) == extraire(f), "")
-    verifier("S9. aucune idempotency_key ajoutee (moteur non reecrit)",
-             "idempotency_key" not in extraire("_v195_auto_renew"), "")
+        verifier("S8. le commit V446 n'a pas touche a %s" % f,
+                 _src_au(V446 + "^", f) == _src_au(V446, f), "")
+    verifier("S9. V446 n'a ajoute aucune idempotency_key (elle viendra de V447)",
+             "idempotency_key" not in (_src_au(V446, "_v195_auto_renew") or ""), "")
 
     # --- perimetre ---
     # Le perimetre se juge sur le LOT, pas sur l'arbre de travail. Une sonde

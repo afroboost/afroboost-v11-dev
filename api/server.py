@@ -13028,6 +13028,16 @@ async def _v195_send_renewal_notification(sub: dict, message: str, subject: str 
             logger.warning(f"[V195] WhatsApp renouvellement échoué pour {phone}: {e}")
 
 
+# V447 — durée de vie du verrou de renouvellement, en secondes.
+#
+# Elle borne UNIQUEMENT le cas « le processus est mort en tenant le verrou ».
+# 15 minutes : très au-delà d'un aller-retour Stripe (quelques secondes, 30 s au
+# pire), et très en deçà des 24 h qui séparent deux passages du cron — donc
+# aucune contention en fonctionnement normal, et une récupération automatique
+# bien avant le passage suivant.
+V447_VERROU_TTL_S = 900
+
+
 async def _v195_auto_renew(sub: dict) -> bool:
     """V195: Tente une reconduction off-session via Stripe et recharge les séances."""
     sub_id = sub.get("id")
@@ -13041,6 +13051,32 @@ async def _v195_auto_renew(sub: dict) -> bool:
         return False
 
     try:
+        # V447 — CEINTURE POUR LE MÊME JOUR. PAS AU-DELÀ.
+        #
+        # Le verrou de l'appelant empêche deux appels SIMULTANÉS. Cette clé ferme
+        # une seconde fenêtre, plus étroite : deux tentatives LE MÊME JOUR (reprise
+        # après un timeout, appel manuel du super-admin, deux conteneurs qui se
+        # chevauchent pendant une bascule Coolify). Rejouée, la même clé renvoie le
+        # PaymentIntent D'ORIGINE au lieu d'en créer un second.
+        #
+        # ⚠️ CE QU'ELLE NE COUVRE PAS — et il ne faut pas se raconter d'histoire.
+        # Si Stripe réussit et que l'écriture Mongo qui suit échoue, l'argent est
+        # pris sans qu'aucun marqueur soit posé. Le passage suivant d'un cron
+        # QUOTIDIEN a lieu le lendemain : la clé, qui contient `%Y%m%d`, a change,
+        # et de toute facon Stripe ne conserve une clé que 24 h. Le rejeu du
+        # lendemain PRELEVERAIT UNE SECONDE FOIS. Mesuré, pas suppose.
+        # Fermer cette fenêtre-là demanderait de poser le marqueur du jour DANS le
+        # `find_one_and_update`, donc AVANT Stripe — ce qui change la cadence de
+        # reprise apres un echec reseau. C'est une decision de produit, pas une
+        # evidence technique : elle n'est pas prise ici.
+        #
+        # Clé stable par (abonnement, jour) : c'est l'unité que le code utilise
+        # déjà pour son marqueur `renewed_YYYYMMDD`.
+        #
+        # Rien d'autre ne change : ni le montant, ni la devise, ni le client, ni le
+        # moyen de paiement, ni les métadonnées.
+        _v447_cle = "afb-renew-%s-%s" % (
+            sub_id, datetime.now(timezone.utc).strftime("%Y%m%d"))
         pi = stripe.PaymentIntent.create(
             amount=int(round(price * 100)),
             currency="chf",
@@ -13048,6 +13084,7 @@ async def _v195_auto_renew(sub: dict) -> bool:
             payment_method=payment_method,
             off_session=True,
             confirm=True,
+            idempotency_key=_v447_cle,
             description=f"Renouvellement Afroboost — {sessions_count} séances",
             metadata={
                 "type": "auto_renewal",
@@ -13389,13 +13426,82 @@ async def cron_check_subscription_renewal(request: Request):
 
             elif remaining <= 0:
                 today_marker = f"renewed_{datetime.now(timezone.utc).strftime('%Y%m%d')}"
-                already_renewed_today = any(
-                    isinstance(w, str) and w.startswith("renewed_") and w == today_marker
-                    for w in warnings
+
+                # === V447 — LE VERROU QUI EMPÊCHE LE DOUBLE PRÉLÈVEMENT ===
+                #
+                # La garde d'origine lisait `warnings`, c'est-à-dire l'INSTANTANÉ
+                # pris par le `find` en tête de fonction. Entre cette lecture et
+                # l'appel à Stripe s'écoulent plusieurs requêtes Mongo et un
+                # aller-retour réseau : deux exécutions simultanées lisaient donc
+                # toutes deux « pas encore renouvelé » et appelaient toutes deux
+                # `PaymentIntent.create`. Lire puis agir n'est pas atomique — et
+                # sur un chemin d'argent, ce n'est pas une imprécision, c'est un
+                # double débit.
+                #
+                # On remplace la lecture par une PRISE DE DROIT atomique. C'est le
+                # motif déjà en service dans `launch_campaign` (l. 4380), décrit
+                # là-bas comme « la SEULE barrière anti-doublon » : un unique
+                # `find_one_and_update` dont le FILTRE porte la condition. Mongo
+                # garantit l'atomicité au niveau du document ; le perdant reçoit
+                # `None` et sort sans rien faire.
+                #
+                # Le verrou est DATÉ, et c'est ce qui le rend récupérable : un
+                # processus tué entre la prise et l'envoi laisserait sinon un
+                # verrou éternel, et l'abonné ne serait plus jamais renouvelé. Au
+                # bout de V447_VERROU_TTL_S, le verrou est considéré comme mort et
+                # un passage suivant peut le reprendre.
+                #
+                # ⚠️ Ceci ne touche NI le montant, NI la logique de reconduction,
+                # NI le client Stripe, NI `auto_renew`, NI le calcul du forfait,
+                # NI la fréquence. `_v195_auto_renew` reste appelée à l'identique.
+                _maintenant = datetime.now(timezone.utc)
+                _peremption = (_maintenant - timedelta(seconds=V447_VERROU_TTL_S)).isoformat()
+                _droit = await db.subscriptions.find_one_and_update(
+                    {
+                        "id": sub.get("id"),
+                        # déjà renouvelé aujourd'hui -> on ne repasse pas
+                        "renewal_warnings_sent": {"$ne": today_marker},
+                        # libre, ou verrou périmé (donc récupérable après un crash)
+                        "$or": [
+                            {"renewal_lock_at": {"$exists": False}},
+                            {"renewal_lock_at": None},
+                            {"renewal_lock_at": {"$lt": _peremption}},
+                            # MongoDB compare par TYPE : `$lt: "<chaine>"` ne
+                            # matche que des chaines. Une `Date` BSON ou un nombre
+                            # tape un jour a la main dans `renewal_lock_at` ne
+                            # matcherait AUCUNE des trois branches ci-dessus —
+                            # l'abonne serait gele a vie, sans la moindre alerte.
+                            # Cette branche rattrape tout type inattendu.
+                            {"renewal_lock_at": {"$not": {"$type": "string"}}},
+                        ],
+                    },
+                    {"$set": {"renewal_lock_at": _maintenant.isoformat()}},
+                    projection={"_id": 0, "id": 1},
+                    return_document=False,
                 )
-                if already_renewed_today:
+                if _droit is None:
+                    # Soit un autre appel tient le verrou, soit l'abonnement a
+                    # déjà été renouvelé aujourd'hui. Dans les deux cas : rien.
+                    logger.info("[V447] renouvellement deja pris en charge — %s", sub.get("id"))
                     continue
-                ok = await _v195_auto_renew(sub)
+
+                ok = False
+                try:
+                    ok = await _v195_auto_renew(sub)
+                finally:
+                    # On rend TOUJOURS la main. En cas de succès, `_v195_auto_renew`
+                    # a posé `renewal_warnings_sent: [today_marker]` : c'est LUI qui
+                    # interdit un second débit, plus le verrou. En cas d'échec, le
+                    # relâcher permet la reprise au passage suivant — comportement
+                    # historique préservé.
+                    try:
+                        await db.subscriptions.update_one(
+                            {"id": sub.get("id")}, {"$unset": {"renewal_lock_at": ""}})
+                    except Exception as _e:
+                        # Verrou non relâché : l'abonné ne sera pas retenté avant
+                        # la péremption. C'est le sens sûr — jamais un débit de plus.
+                        logger.error("[V447] verrou non relache pour %s : %s — expirera dans %ds",
+                                     sub.get("id"), _e, V447_VERROU_TTL_S)
                 if ok:
                     results["renewed"] += 1
                 else:
