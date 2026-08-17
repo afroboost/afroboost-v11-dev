@@ -540,6 +540,13 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const hasActiveHeadphone = headphoneSummary.some((p) => p.hp === "taken");
 
   const total = subscription.total_sessions || 0;
+  // ESSAI-5a-1D : l'etat de l'essai est DERIVE PAR LE SERVEUR. Cet ecran ne
+  // le recalcule pas — il se contente de dire ce qu'il recoit. Absent pour un
+  // forfait payant, dont l'affichage reste strictement inchange.
+  const essai = data?.trial || null;
+  const estEssai = !!(essai && essai.is_trial);
+  const etatEssai = estEssai ? essai.state : null;
+
   const remaining = subscription.remaining_sessions || 0;
   const used = subscription.used_sessions || (total ? total - remaining : 0);
   const percentUsed = total > 0 ? Math.max(0, Math.min(100, Math.round((used / total) * 100))) : 0;
@@ -681,6 +688,26 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           data-testid="subscriber-space-sessions"
         >
           <div className="flex items-baseline justify-between mb-2">
+            {/* ESSAI-5a-1D : un essai ne se compte pas, il a un ETAT. Afficher
+                « 0 / 1 » a quelqu'un qui vient de reserver lui fait croire que
+                son essai est consomme, alors que seule sa presence le
+                consommera. Un forfait payant garde son compteur intact. */}
+            {estEssai ? (
+              <div data-testid="essai-etat">
+                <p className="text-white/60 text-xs uppercase tracking-wider">Séance découverte</p>
+                <p className="text-2xl font-bold mt-1" style={{ color: COLORS.primary }}>
+                  {etatEssai === "booked" ? "Essai réservé"
+                    : etatEssai === "done" ? "Essai effectué"
+                    : "Essai disponible"}
+                </p>
+                {etatEssai === "booked" && essai.next_session && (
+                  <p className="text-white/50 text-xs mt-1" data-testid="essai-seance">
+                    {essai.next_session.courseName}
+                    {essai.next_session.courseTime ? ` à ${essai.next_session.courseTime}` : ""}
+                  </p>
+                )}
+              </div>
+            ) : (
             <div>
               <p className="text-white/60 text-xs uppercase tracking-wider">Séances restantes</p>
               <p className="text-3xl font-bold mt-1" style={{ color: COLORS.primary }}>
@@ -688,6 +715,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                 <span className="text-white/40 text-base font-normal"> / {total || "—"}</span>
               </p>
             </div>
+            )}
             <span className="text-white/40 text-xs text-right max-w-[40%] truncate">{subscription.offer_name}</span>
           </div>
           <div className="w-full h-2 rounded-full overflow-hidden bg-white/10">
@@ -947,10 +975,15 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           )}
           {noSessions && (
             <p
+              data-testid="essai-bandeau"
               className="text-xs mb-3 px-3 py-2 rounded-lg"
               style={{ background: "rgba(245,158,11,0.15)", color: "#fbbf24" }}
             >
-              Plus de séances disponibles
+              {estEssai && etatEssai === "booked"
+                ? "Vous avez déjà réservé votre séance découverte. Annulez-la pour en choisir une autre."
+                : estEssai && etatEssai === "done"
+                ? "Votre séance découverte a été utilisée."
+                : "Plus de séances disponibles"}
             </p>
           )}
           {courses.length === 0 ? (

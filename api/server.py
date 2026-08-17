@@ -12073,6 +12073,9 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
         "quantity": 1, "userName": 1, "courseTime": 1,
         "headphone_status": 1, "guests": 1, "guest_headphones": 1,
         "member_slug": 1,
+        # ESSAI-5a-1D : sans lui, l'espace ne peut pas distinguer une seance
+        # RESERVEE d'une seance HONOREE — c'etait le seul champ manquant.
+        "validated": 1,
     }
     try:
         if is_multi and member and member.get("slug"):
@@ -12174,6 +12177,9 @@ async def get_subscriber_space(access_code: str, m: Optional[str] = None):
             ),
             "last_renewal_date": (subscription or {}).get("last_renewal_date"),
         },
+        # ESSAI-5a-1D : la lecture qui donne son sens au compteur. Absente pour
+        # un forfait payant, ou l'ecran garde exactement son comportement.
+        "trial": await t2_etat_essai(code_upper, reservations_raw, remaining_sessions),
         "offer": {
             "name": offer.get("name") if offer else offer_name,
             "description": offer.get("description") if offer else "",
@@ -24879,6 +24885,93 @@ async def t1_conditions_actives(request: Request, course_id: str = ""):
         "text": _texte,
         "filmed": _captation,
         "required": bool(_version),
+    }
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ESSAI-5a-1D — CE QUE L'ECRAN DIT D'UN ESSAI, ET CE QU'IL EN EST
+#
+# La regle metier : reserver ne consomme pas l'essai, seule la presence le
+# consomme. Le compteur, lui, est bien decremente des la reservation — et il
+# DOIT l'etre : c'est lui qui garantit « une seule reservation gratuite active
+# a la fois », sans compteur supplementaire.
+#
+# Consequence a l'ecran, tant que la reservation tient : « Seances restantes
+# 0 / 1 », un bandeau « Plus de seances disponibles » et un bouton grise. Trois
+# signaux qui disent « c'est fini » a quelqu'un dont le droit est intact.
+#
+# On ne change donc pas le compteur, on l'INTERPRETE. L'etat est DERIVE des
+# documents existants — aucune nouvelle source de verite, aucune ecriture.
+# ═══════════════════════════════════════════════════════════════════════════
+
+T2_ESSAI_DISPONIBLE = "available"
+T2_ESSAI_RESERVE = "booked"
+T2_ESSAI_EFFECTUE = "done"
+
+
+async def t2_etat_essai(code: str, reservations: list, remaining) -> dict:
+    """L'etat d'un essai gratuit, ou `{"is_trial": False}` pour tout le reste.
+
+    Trois lectures, toutes sur des donnees deja chargees :
+      - le code est-il un code d'essai (meme regle qu'ESSAI-2) ;
+      - une de ses reservations est-elle VALIDEE -> l'essai est effectue ;
+      - une de ses reservations est-elle encore A VENIR -> l'essai est reserve.
+
+    Un forfait PAYANT ressort `is_trial: False` et l'ecran ne change pas d'un
+    pixel : le compteur de PULSE x10 continue d'afficher son vrai reste.
+    """
+    _code = (code or "").strip().upper()
+    if not _code:
+        return {"is_trial": False}
+    try:
+        from api.routes.shared import ESSAI2_FILTRE_GRATUIT as _GRATUIT
+        _q = {"code": _code}
+        _q.update(_GRATUIT)
+        if not await db.discount_codes.find_one(_q, {"_id": 1}):
+            return {"is_trial": False}
+    except Exception as _err:
+        # Dans le doute, on ne requalifie rien : l'ecran garde son comportement
+        # historique, qui est correct pour un forfait payant.
+        logger.warning("[T2] nature du code %s indeterminee : %s", _code[:4], _err)
+        return {"is_trial": False}
+
+    _maintenant = datetime.now(timezone.utc).isoformat()
+    _validee = None
+    _a_venir = None
+    for _r in (reservations or []):
+        if _r.get("validated") is True:
+            _validee = _r
+            break
+        _quand = str(_r.get("datetime") or "")
+        if _quand and _quand > _maintenant and _a_venir is None:
+            _a_venir = _r
+
+    if _validee:
+        _etat = T2_ESSAI_EFFECTUE
+        _seance = _validee
+    elif _a_venir:
+        _etat = T2_ESSAI_RESERVE
+        _seance = _a_venir
+    else:
+        # Ni presence, ni reservation a venir : le droit est disponible. Le
+        # compteur peut encore afficher 0 le temps qu'une seance passee soit
+        # cloturee — c'est `t1_restituer_essais_non_honores` qui s'en charge a
+        # la prochaine tentative de reservation.
+        _etat = T2_ESSAI_DISPONIBLE
+        _seance = None
+
+    return {
+        "is_trial": True,
+        "state": _etat,
+        # `remaining` reste expose tel quel a cote : on n'efface aucune donnee,
+        # on ajoute la lecture qui lui donne son sens.
+        "remaining_raw": remaining,
+        "next_session": ({
+            "courseName": _seance.get("courseName") or "",
+            "datetime": _seance.get("datetime") or "",
+            "courseTime": _seance.get("courseTime") or "",
+        } if _seance else None),
     }
 
 
