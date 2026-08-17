@@ -29,6 +29,7 @@ ARBRE = ast.parse(SOURCE)
 LIGNES = SOURCE.splitlines(True)
 
 BASE_AVANT = "ef0a6d1"          # l'etat du depot avant ce lot
+LOT = "efe5071"                 # le dernier commit DU LOT — borne haute
 
 RESULTATS = []
 
@@ -1100,9 +1101,14 @@ def structure():
     verifier("S8. les fonctions hors perimetre sont identiques a %s" % BASE_AVANT,
              not _ecarts, "modifiees : %s" % _ecarts)
 
-    # --- perimetre des fichiers, borne au commit de base -------------------
+    # --- perimetre des fichiers, borne AUX DEUX BOUTS ----------------------
+    # `git diff BASE` sans borne haute compare a l'arbre de travail : la garde
+    # s'elargit alors a chaque lot suivant et finit par echouer sur du code qui
+    # ne la concerne pas. C'est precisement le defaut releve sur la garde de
+    # V446 — inutile de le reproduire ici. On borne donc a la plage du lot.
     _modifs = subprocess.check_output(
-        ["git", "diff", "--name-only", BASE_AVANT], cwd=RACINE).decode().split()
+        ["git", "diff", "--name-only", "%s..%s" % (BASE_AVANT, LOT)],
+        cwd=RACINE).decode().split()
     _attendus = {
         "api/server.py",
         "frontend/src/components/ChatWidget.js",

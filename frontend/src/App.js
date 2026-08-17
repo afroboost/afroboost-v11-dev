@@ -7464,14 +7464,17 @@ function App() {
         open={showSessionsModal}
         onClose={() => setShowSessionsModal(false)}
         courses={courses}
-        onReserve={(course) => {
-          // On relie la seance a l'offre qui la porte. Aucune offre en base ne
-          // declare aujourd'hui `linked_course_ids` : le repli vers la liste
-          // des offres est donc le chemin REEL, pas un cas de bord.
-          const liee = (Array.isArray(offers) ? offers : []).find(
-            (o) => Array.isArray(o?.linked_course_ids)
-              && course?.id && o.linked_course_ids.includes(course.id)
-          );
+        onReserve={(occ) => {
+          // L'agenda dit DEJA quelles offres ouvrent cette seance : on prend la
+          // premiere plutot que de refaire la correspondance a l'envers. La
+          // recherche par `linked_course_ids` reste en second rideau, pour le
+          // cas ou l'agenda serveur n'aurait pas repondu et ou le calendrier
+          // tourne sur son repli local.
+          const liste = Array.isArray(offers) ? offers : [];
+          const idOffre = occ && occ.offres && occ.offres[0] && occ.offres[0].id;
+          const liee = (idOffre && liste.find((o) => o && o.id === idOffre))
+            || liste.find((o) => Array.isArray(o?.linked_course_ids)
+              && occ?.id && o.linked_course_ids.includes(occ.id));
           if (liee) { handleSelectOffer(liee); return; }
           const el = document.getElementById('offers-section');
           if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });

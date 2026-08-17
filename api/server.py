@@ -1660,6 +1660,81 @@ async def _enrich_offers_with_next_date(offers_list):
         logger.info(f"[V252] next_date enrichment skipped: {_e}")
     return offers_list
 
+@api_router.get("/sessions/agenda")
+async def sessions_agenda(days: int = 60):
+    """Agenda public : les occurrences qu'un visiteur peut voir et reserver.
+
+    UNE SEULE SOURCE D'HORAIRES. Le calendrier ne recalcule rien de son cote et
+    ne relit surtout pas ce qui est affiche sur les cartes d'offres : il
+    consomme les MEMES documents `courses`, via le MEME
+    `_v184_next_occurrences` que `_enrich_offers_with_next_date`. Changer le
+    jour d'un cours change donc les cartes, « prochaine seance » et le
+    calendrier au meme instant, par construction, sans aucune resaisie.
+
+    DEUX FAMILLES de cours y entrent, et la seconde n'est pas une tolerance :
+
+      1. les cours PUBLIES — `visible` vrai et non archives ;
+
+      2. les cours lies a une offre publique ET marques `agenda_abonne`. C'est
+         la regle V426, deja ecrite pour l'espace abonne (`_v426_recurrents_de_loffre`) :
+         une activite recurrente rattachee a un forfait reste a l'agenda meme
+         si elle est archivee. C'est exactement le cas des seances du mercredi
+         et du dimanche, et c'est pourquoi les cartes d'offres annoncent deja
+         leurs horaires alors que `GET /courses`, qui filtre `archived`, les
+         ignore. Sans cette famille, le calendrier contredirait les cartes.
+
+    Une occurrence n'apparait QU'UNE FOIS, meme si plusieurs offres y donnent
+    acces : la cle est (cours, instant), jamais l'offre. Les offres qui
+    l'ouvrent sont listees a cote, pour que l'ecran sache quoi proposer.
+    """
+    try:
+        _jours = max(1, min(int(days), 180))
+    except (TypeError, ValueError):
+        _jours = 60
+    try:
+        _offres = await db.offers.find(
+            {"visible": {"$ne": False}},
+            {"_id": 0, "id": 1, "name": 1, "linked_course_ids": 1}).to_list(200)
+    except Exception as _e:
+        logger.warning("[AGENDA] offres illisibles : %s", _e)
+        _offres = []
+
+    _lies = []
+    _offres_par_cours = {}
+    for _o in _offres:
+        for _cid in (_o.get("linked_course_ids") or []):
+            if not _cid:
+                continue
+            if _cid not in _lies:
+                _lies.append(_cid)
+            _offres_par_cours.setdefault(_cid, []).append(
+                {"id": _o.get("id"), "name": _o.get("name")})
+
+    _filtre = {"$or": [
+        {"visible": {"$ne": False}, "archived": {"$ne": True}},
+        {"id": {"$in": _lies}, "agenda_abonne": True},
+    ]}
+    try:
+        _cours = await db.courses.find(_filtre, {"_id": 0}).to_list(300)
+    except Exception as _e:
+        logger.warning("[AGENDA] cours illisibles : %s", _e)
+        return {"occurrences": [], "jours": _jours}
+
+    _vues = set()
+    _sorties = []
+    for _c in _cours:
+        for _occ in _v184_next_occurrences(_c, days_ahead=_jours):
+            _cle = (_occ.get("course_id"), _occ.get("datetime"))
+            if _cle in _vues:
+                continue
+            _vues.add(_cle)
+            _occ["offers"] = _offres_par_cours.get(_c.get("id"), [])
+            _occ["recurrent"] = not bool(_c.get("date"))
+            _sorties.append(_occ)
+    _sorties.sort(key=lambda x: x.get("datetime") or "")
+    return {"occurrences": _sorties, "jours": _jours}
+
+
 @api_router.get("/offers", response_model=List[Offer])
 async def get_offers(request: Request, scope: str = ""):
     # V237 — isolation par coach, en OPT-IN explicite (`?scope=mine`).

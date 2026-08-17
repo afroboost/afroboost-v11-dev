@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import axios from 'axios';
 
 /**
  * SessionsModal — le calendrier des cours et evenements, en fenetre.
@@ -19,11 +20,16 @@ import { createPortal } from 'react-dom';
  *    priorite `important` gagne. On memorise la position et on la restaure a
  *    la fermeture : c'est ce qui evite de perdre sa place dans la page.
  *
- * 3. AUCUNE DATE NE VIENT DU SERVEUR. Il n'existe pas de route publique qui
- *    expose les occurrences d'un cours ; elles sont donc calculees ici, a
- *    partir des cours deja charges. Un cours portant `date` est PONCTUEL et
- *    n'a qu'une occurrence ; sinon `weekday` le rend hebdomadaire — en
- *    convention JavaScript (dimanche = 0), la meme que `getDay()`.
+ * 3. LES DATES VIENNENT DU SERVEUR, D'UNE SEULE SOURCE. `GET /sessions/agenda`
+ *    rend les memes occurrences que celles qui alimentent « prochaine seance »
+ *    sur les cartes d'offres — memes documents `courses`, meme fonction de
+ *    calcul. Le calendrier ne relit jamais ce qui est ecrit sur une carte, et
+ *    il n'existe pas de second reglage d'horaires : changer le jour d'un cours
+ *    change les deux au meme instant.
+ *
+ *    Le calcul local est CONSERVE en repli, pour la fenetre de deploiement ou
+ *    la route n'existe pas encore. Il ne voit que les cours publies — c'est
+ *    justement sa limite, et la raison d'etre de la route.
  */
 
 const JOURS_COURTS = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
@@ -89,6 +95,50 @@ export function occurrencesDesCours(cours, jours = 56, maintenant = new Date()) 
   return out;
 }
 
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
+const API = `${BACKEND_URL}/api`;
+
+/** Un instant ISO NAIF (« 2026-08-19T18:30:00 ») est une heure LOCALE, pas de
+ *  l'UTC. On le decoupe a la main : `new Date(iso)` marche, mais Safari a
+ *  historiquement traite certaines formes naives comme de l'UTC. */
+export function instantLocal(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Les occurrences du serveur, ramenees a la forme interne. */
+export function normaliserAgenda(brut) {
+  return (Array.isArray(brut) ? brut : [])
+    .map((o) => {
+      const quand = instantLocal(o && o.datetime);
+      if (!quand) return null;
+      return {
+        id: o.course_id,
+        nom: o.name || 'Séance',
+        lieu: o.locationName || '',
+        quand,
+        ponctuel: o.recurrent === false || o.is_fixed_date === true,
+        offres: Array.isArray(o.offers) ? o.offers : []
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.quand - b.quand);
+}
+
+/** Le repli local, quand la route n'est pas servie. */
+function replierSurLesCours(cours) {
+  return occurrencesDesCours(cours).map((o) => ({
+    id: o.cours.id,
+    nom: o.cours.name || 'Séance',
+    lieu: o.cours.locationName || o.cours.location || '',
+    quand: o.quand,
+    ponctuel: o.ponctuel,
+    offres: []
+  }));
+}
+
 const SessionsModal = ({ open, onClose, courses = [], onReserve }) => {
   const [mois, setMois] = useState(() => {
     const n = new Date();
@@ -99,7 +149,32 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve }) => {
   const boite = useRef(null);
   const positionY = useRef(0);
 
-  const occurrences = useMemo(() => occurrencesDesCours(courses), [courses]);
+  const [occurrences, setOccurrences] = useState([]);
+  const [chargement, setChargement] = useState(false);
+
+  // La source est le serveur. Le repli local ne sert que si la route manque :
+  // il ne voit pas les activites recurrentes rattachees a un forfait, et
+  // contredirait donc les cartes d'offres. On ne s'en contente jamais en
+  // regime normal.
+  useEffect(() => {
+    if (!open) return undefined;
+    let annule = false;
+    setChargement(true);
+    (async () => {
+      try {
+        const res = await axios.get(`${API}/sessions/agenda`);
+        if (annule) return;
+        const brut = res && res.data && res.data.occurrences;
+        setOccurrences(normaliserAgenda(brut));
+      } catch (e) {
+        if (annule) return;
+        setOccurrences(replierSurLesCours(courses));
+      } finally {
+        if (!annule) setChargement(false);
+      }
+    })();
+    return () => { annule = true; };
+  }, [open, courses]);
 
   const parJour = useMemo(() => {
     const m = new Map();
@@ -246,8 +321,13 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve }) => {
             <DetailSession
               occ={detail}
               onRetour={() => setDetail(null)}
-              onReserve={() => { const c = detail.cours; fermer(); setTimeout(() => onReserve && onReserve(c), 60); }}
+              onReserve={() => { const o = detail; fermer(); setTimeout(() => onReserve && onReserve(o), 60); }}
             />
+          ) : chargement ? (
+            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, textAlign: 'center', padding: '24px 0' }}
+               data-testid="sessions-chargement">
+              Chargement du calendrier&hellip;
+            </p>
           ) : occurrences.length === 0 ? (
             <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13, textAlign: 'center', padding: '24px 0' }}
                data-testid="sessions-vide">
@@ -320,7 +400,7 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve }) => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {duJour.map((o, i) => (
                     <button
-                      key={`${o.cours.id}-${o.quand.getTime()}`}
+                      key={`${o.id}-${o.quand.getTime()}`}
                       type="button"
                       onClick={() => setDetail(o)}
                       data-testid={`sessions-occurrence-${i}`}
@@ -335,12 +415,12 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve }) => {
                           {String(o.quand.getHours()).padStart(2, '0')}:{String(o.quand.getMinutes()).padStart(2, '0')}
                         </span>
                         <span style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>
-                          {o.cours.name || 'Séance'}
+                          {o.nom}
                         </span>
                       </div>
-                      {(o.cours.locationName || o.cours.location) && (
+                      {o.lieu && (
                         <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12, marginTop: 3 }}>
-                          {o.cours.locationName || o.cours.location}
+                          {o.lieu}
                         </div>
                       )}
                     </button>
@@ -378,7 +458,7 @@ const BoutonMois = ({ sens, onClick }) => (
 
 const DetailSession = ({ occ, onRetour, onReserve }) => {
   const d = occ.quand;
-  const lieu = occ.cours.locationName || occ.cours.location || '';
+  const lieu = occ.lieu || '';
   return (
     <div data-testid="sessions-detail">
       <button
@@ -397,7 +477,7 @@ const DetailSession = ({ occ, onRetour, onReserve }) => {
       </button>
 
       <h3 style={{ color: '#fff', fontSize: 18, fontWeight: 700, margin: '0 0 10px' }}>
-        {occ.cours.name || 'Séance'}
+        {occ.nom}
       </h3>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
