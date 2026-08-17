@@ -19,6 +19,12 @@ import { TYPES_CONTACT } from '../../utils/contactType';
 // les criteres derriere UN bouton — pour ne pas ajouter une rangee de chips.
 import PanneauFiltresContacts from './PanneauFiltresContacts';
 import { filtrerContacts, FILTRES_VIDES, nombreFiltresActifs, VUES_RAPIDES } from '../../utils/contactsFiltres';
+// CONTACTS V2 temps 2 — l'UX est extraite en composants : ce fichier ne doit
+// plus grossir, il en portait deja 1 352 lignes et 37 etats.
+import CarteContact from './CarteContact';
+import FicheContact from './FicheContact';
+import useLargeurEcran from '../../utils/useLargeurEcran';
+import { TRIS, trierContacts, paysPresents } from '../../utils/contactsAffichage';
 
 export default function ContactsManager({ API, coachEmail }) {
   const [contacts, setContacts] = useState([]);
@@ -47,6 +53,9 @@ export default function ContactsManager({ API, coachEmail }) {
   const [vueRapide, setVueRapide] = useState('tous');
   const [compteurs, setCompteurs] = useState(null);
   const [affiches, setAffiches] = useState(100);
+  const [tri, setTri] = useState('nom_az');
+  const [ficheOuverte, setFicheOuverte] = useState(null);
+  const { estMobile } = useLargeurEcran();
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [newCatName, setNewCatName] = useState('');
   const [newCatColor, setNewCatColor] = useState('#8B5CF6');
@@ -518,7 +527,8 @@ export default function ContactsManager({ API, coachEmail }) {
 
   // CONTACTS V2 — les quatre dimensions s'appliquent PAR-DESSUS les filtres
   // historiques (groupes, Google, categories), qui restent intacts.
-  const filtresAppliques = filtrerContacts(filtered, filtresV2, '');
+  const filtresAppliques = trierContacts(filtrerContacts(filtered, filtresV2, ''), tri);
+  const listePays = paysPresents(contacts);
 
   const groupsCount = contacts.filter(c => c.type === 'group').length;
   const usersCount = contacts.filter(c => c.type === 'user').length;
@@ -831,6 +841,33 @@ export default function ContactsManager({ API, coachEmail }) {
           >
             Filtres{nombreFiltresActifs(filtresV2) ? ` (${nombreFiltresActifs(filtresV2)})` : ''}
           </button>
+          <select
+            data-testid="tri-contacts"
+            aria-label="Trier les contacts"
+            value={tri}
+            onChange={(e) => setTri(e.target.value)}
+            style={{
+              padding: '7px 10px', minHeight: 38, borderRadius: 999, fontSize: 12.5,
+              background: '#12122a', color: 'rgba(255,255,255,0.7)',
+              border: '1px solid rgba(255,255,255,0.12)', outline: 'none',
+            }}
+          >
+            {TRIS.map((t) => <option key={t.id} value={t.id}>{t.libelle}</option>)}
+          </select>
+          {nombreFiltresActifs(filtresV2) > 0 && (
+            <button
+              type="button"
+              data-testid="reinitialiser-filtres"
+              onClick={() => { setFiltresV2({ ...FILTRES_VIDES }); setVueRapide('tous'); setAffiches(100); }}
+              style={{
+                padding: '7px 12px', minHeight: 38, borderRadius: 999, fontSize: 12,
+                cursor: 'pointer', background: 'transparent',
+                border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.55)',
+              }}
+            >
+              Réinitialiser
+            </button>
+          )}
           {VUES_RAPIDES.map((v) => {
             const n = compteurs ? ({
               tous: compteurs.tous, participants: compteurs.participants,
@@ -889,7 +926,11 @@ export default function ContactsManager({ API, coachEmail }) {
             border: filterCategory === 'all' ? '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)' : '1px solid rgba(255,255,255,0.08)',
             color: filterCategory === 'all' ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.45)'
           }}>Toutes catégories</button>
-          {categories.map(function(cat) {
+          {/* CONTACTS V2 temps 2 — les catégories V154 (compteur 0 en
+              production) ne dominent plus l'écran : elles disparaissent du
+              mobile, où chaque ligne compte. INTACTES sur desktop — on ne
+              supprime rien tant que leur devenir n'est pas décidé. */}
+          {!estMobile && categories.map(function(cat) {
             return (
               <button key={cat.id} onClick={function() { setFilterCategory(filterCategory === cat.id ? 'all' : cat.id); }} style={{
                 padding: '4px 10px', borderRadius: '14px', fontSize: '10px', fontWeight: 500, cursor: 'pointer',
@@ -1036,6 +1077,19 @@ export default function ContactsManager({ API, coachEmail }) {
           </div>
         ) : (
           filtresAppliques.slice(0, affiches).map((c, i) => {
+            // CONTACTS V2 temps 2 — sur petit écran, une carte compacte
+            // remplace la ligne dense. Le rendu desktop n'est PAS touché : il
+            // reste efficace, et une carte mobile agrandie serait un recul.
+            if (estMobile && c.type !== 'group') {
+              return (
+                <CarteContact
+                  key={c.id || i}
+                  contact={c}
+                  onOuvrir={setFicheOuverte}
+                  onClasser={changerType}
+                />
+              );
+            }
             const isGroup = c.type === 'group';
             const isSelected = selectedIds.has(c.id);
             return (
@@ -1229,9 +1283,23 @@ export default function ContactsManager({ API, coachEmail }) {
 
         <PanneauFiltresContacts
           ouvert={panneauOuvert}
+          pays={listePays}
+          nbResultats={filtresAppliques.length}
           filtres={filtresV2}
           onChange={(f) => { setFiltresV2(f); setVueRapide(''); setAffiches(100); }}
           onFermer={() => setPanneauOuvert(false)}
+        />
+
+        {/* CONTACTS V2 temps 2 — plein ecran sur mobile, panneau lateral sur
+            desktop. Fermer la fiche ne touche NI les filtres NI la recherche. */}
+        <FicheContact
+          contact={ficheOuverte}
+          estMobile={estMobile}
+          onFermer={() => setFicheOuverte(null)}
+          onClasser={(id, valeur) => {
+            changerType(id, valeur);
+            setFicheOuverte((f) => (f && f.id === id ? { ...f, contact_type: valeur || null } : f));
+          }}
         />
       </div>
 

@@ -51,7 +51,7 @@ export const CONSENTEMENTS = [
 ];
 
 export const FILTRES_VIDES = {
-  types: [], statuts: [], zones: [], canaux: [],
+  types: [], statuts: [], zones: [], pays: [], canaux: [],
   consentEmail: [], consentWhatsapp: [],
 };
 
@@ -89,6 +89,9 @@ export function filtrerContacts(contacts, filtres, recherche) {
     }
     if (f.statuts.length && !f.statuts.includes(c.statut_abonnement || 'non_abonne')) return false;
     if (f.zones.length && !f.zones.includes(c.zone || 'inconnue')) return false;
+    // Le pays PRÉCISE, il ne remplace pas la zone : cocher « Cameroun » sans
+    // cocher « Afrique » doit fonctionner.
+    if (f.pays.length && !f.pays.includes(c.pays || '')) return false;
 
     // Canal : la case demande « ce canal existe », pas « tous les cochés ».
     if (f.canaux.length) {

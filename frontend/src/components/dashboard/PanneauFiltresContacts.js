@@ -16,7 +16,7 @@ import {
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
 const BORDURE = '1px solid rgba(255,255,255,0.10)';
 
-export default function PanneauFiltresContacts({ ouvert, filtres, onChange, onFermer }) {
+export default function PanneauFiltresContacts({ ouvert, filtres, onChange, onFermer, pays = [], nbResultats = null }) {
   if (!ouvert) return null;
   const f = { ...FILTRES_VIDES, ...(filtres || {}) };
 
@@ -50,7 +50,7 @@ export default function PanneauFiltresContacts({ ouvert, filtres, onChange, onFe
               aria-pressed={actif}
               onClick={() => basculer(cle, o.valeur)}
               style={{
-                padding: '6px 11px', borderRadius: 999, fontSize: 12, cursor: 'pointer',
+                padding: '9px 13px', minHeight: 40, borderRadius: 999, fontSize: 12.5, cursor: 'pointer',
                 border: actif ? `1px solid ${PRIMAIRE}` : BORDURE,
                 background: actif ? PRIMAIRE : 'transparent',
                 color: actif ? '#fff' : 'rgba(255,255,255,0.6)',
@@ -97,6 +97,12 @@ export default function PanneauFiltresContacts({ ouvert, filtres, onChange, onFe
         {groupe('Type', 'types', TYPES)}
         {groupe('Statut commercial', 'statuts', STATUTS)}
         {groupe('Zone', 'zones', ZONES)}
+        {/* CONTACTS V2 temps 2 — les PAYS reellement presents, avec leur
+            nombre. On ne propose pas un filtre qui ne rendrait personne. */}
+        {pays.length > 0 && groupe(
+          'Pays', 'pays',
+          pays.map((p) => ({ valeur: p.code, libelle: `${p.drapeau ? p.drapeau + ' ' : ''}${p.nom} (${p.n})` })),
+          'La zone regroupe ; le pays précise.')}
         {groupe('Canal disponible', 'canaux', CANAUX,
           "Le canal existe. Cela ne signifie pas qu'une campagne est autorisée.")}
         {groupe('Consentement e-mail', 'consentEmail', CONSENTEMENTS)}
@@ -105,14 +111,16 @@ export default function PanneauFiltresContacts({ ouvert, filtres, onChange, onFe
         <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
           <button type="button" data-testid="filtres-reinitialiser"
             onClick={() => onChange({ ...FILTRES_VIDES })}
-            style={{ flex: 1, padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
+            style={{ flex: 1, padding: '12px 14px', minHeight: 46, borderRadius: 10, cursor: 'pointer',
                      background: 'transparent', border: BORDURE, color: 'rgba(255,255,255,0.65)', fontSize: 13 }}>
-            Tout effacer
+            Réinitialiser
           </button>
           <button type="button" data-testid="filtres-appliquer" onClick={onFermer}
-            style={{ flex: 1, padding: '10px 14px', borderRadius: 10, border: 'none', cursor: 'pointer',
+            style={{ flex: 1, padding: '12px 14px', minHeight: 46, borderRadius: 10, border: 'none', cursor: 'pointer',
                      background: PRIMAIRE, color: '#fff', fontSize: 13, fontWeight: 700 }}>
-            Voir les résultats
+            {typeof nbResultats === 'number'
+              ? `Voir ${nbResultats} contact${nbResultats > 1 ? 's' : ''}`
+              : 'Voir les résultats'}
           </button>
         </div>
       </div>
