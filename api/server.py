@@ -14803,11 +14803,45 @@ async def get_all_contacts_unified(request: Request):
         seen_ids = set()
 
         # 2. CHAT_PARTICIPANTS — Contacts CRM (imports, stripe, chat) — SOURCE PRIORITAIRE
+        #
+        # P1-A.1 — NE FAIRE DESCENDRE QUE CE QU'ON LIT.
+        #
+        # Cette lecture ramenait le document ENTIER (`{"_id": 0}` n'exclut que
+        # `_id`). Mesure sur la base reelle : 667 Ko pour 1 353 fiches, dont
+        # 398 Ko (60 %) de champs que cette fonction ne lit JAMAIS.
+        #
+        # Or le cout est PROPORTIONNEL AUX OCTETS, pas au nombre d'allers-retours :
+        # le debit mesure vers Atlas est constant, ~75 Ko/s, projection ou non.
+        # Cette seule lecture pesait donc 6,8 s sur les 8,5 s de la fonction, et
+        # c'est elle qui explique le TTFB de 7,73 s observe en production.
+        #
+        # La projection ci-dessous liste EXACTEMENT les huit champs lus plus bas
+        # (`p.get(...)`), ni plus ni moins. Chaque champ ecarte l'a ete apres
+        # verification qu'aucune ligne de cette fonction ne le lit :
+        #   - photo_url / photoUrl / created_at / last_seen_at / updated_at /
+        #     link_token : jamais lus ici ;
+        #   - coach_id : sert au FILTRE de la requete (ci-dessous), pas a la
+        #     reponse — filtrer n'exige pas de rapatrier le champ ;
+        #   - birthday / code / subscriptionCode : la reponse les tire de
+        #     `subscriber_infos` (enrichissement V300 plus bas), jamais d'ici ;
+        #   - isSubscriber : `c2_index_abonnements` refuse deliberement de s'y
+        #     fier (drapeau jamais remis a faux) et lit `subscriptions` ;
+        #   - categories / contact_type_set_at / contact_type_set_by /
+        #     objectifs / show_age_public / birthday_updated_at : jamais recopies
+        #     dans la fiche renvoyee — verifie sur le dictionnaire construit.
+        #
+        # CONTACTS V2 EST INTACT : `contact_type` est conserve, et les quatre
+        # dimensions derivees (statut_abonnement, pays/zone, canaux, consentement)
+        # se calculent a partir de `email`, `whatsapp` et `phone`, tous conserves.
+        _P1A_CHAMPS_CONTACT = {
+            "_id": 0, "id": 1, "name": 1, "email": 1, "whatsapp": 1,
+            "phone": 1, "source": 1, "contact_type": 1, "tags": 1,
+        }
         if is_super_admin(caller_email):
-            participants = await db.chat_participants.find({}, {"_id": 0}).to_list(5000)
+            participants = await db.chat_participants.find({}, _P1A_CHAMPS_CONTACT).to_list(5000)
         else:
             participants = await db.chat_participants.find(
-                {"coach_id": caller_email}, {"_id": 0}
+                {"coach_id": caller_email}, _P1A_CHAMPS_CONTACT
             ).to_list(5000)
 
         for p in participants:
