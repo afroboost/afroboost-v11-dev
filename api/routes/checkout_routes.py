@@ -199,6 +199,11 @@ async def create_checkout_session(req: CreateCheckoutRequest):
         # contrairement a la creation d'une session de paiement au-dessus.
         _t1_champs = await _t1_preuve_checkout(req.terms_accepted, req.items,
                                                req.coach_email, exiger=True)
+        # ESSAI-4 : meme garde sur la seconde porte gratuite. La poser sur une
+        # seule des deux la rendrait contournable en changeant d'URL — le meme
+        # raisonnement qui a place ESSAI-1 ici.
+        await _essai4_garde(req.customer_email,
+                            str((req.items[0].id if req.items else "") or ""))
         await _essai1_garde(req.customer_email,
                             str((req.items[0].id if req.items else "") or ""))
         transaction_id = f"free_{uuid.uuid4().hex[:12]}"
@@ -872,6 +877,108 @@ async def _essai1_garde(email: str, offer_id: str = "") -> None:
         )
 
 
+# === ESSAI-4 : UN ABONNE ACTIF N'EST PAS UNE ACQUISITION ===
+#
+# LA REGLE PRODUIT. Le premier cours gratuit sert a faire venir quelqu'un qui
+# n'est pas encore client. Une personne qui detient DEJA un droit d'acces
+# utilisable n'entre pas dans cette cible : elle a une seance a prendre, pas un
+# essai a decouvrir.
+#
+# CE QUI COMPTE COMME « ABONNEMENT ACTIF ». La verite est celle que le projet
+# utilise deja partout ailleurs pour autoriser une reservation :
+# `forfait_utilisable` (shared.py) — NON EXPIRE et AU MOINS UNE SEANCE
+# RESTANTE. On ne reinvente pas un predicat : un second aurait derive du
+# premier, et deux definitions d'« actif » dans le meme produit, c'est la
+# garantie qu'un jour l'ecran et le serveur se contrediront.
+#
+# CE QUI N'EN EST PAS UN — et c'est la moitie de la regle :
+#   - un forfait EXPIRE : la personne a ete cliente, elle ne l'est plus ;
+#   - un forfait EPUISE (0 seance) : idem ;
+#   - un forfait d'ESSAI : sinon la personne qui vient d'obtenir son essai
+#     s'entendrait dire « vous avez deja un abonnement actif », ce qui est
+#     litteralement vrai et parfaitement trompeur. Les essais sont donc RETIRES
+#     de l'examen, et c'est ESSAI-1 — la garde suivante — qui repond pour eux,
+#     avec le bon message.
+#
+# L'ANCIEN ABONNE N'EST PAS EXCLU. Aucune exclusion historique n'est creee ici :
+# on ne regarde que ce qui est utilisable AUJOURD'HUI. Quelqu'un dont le pack
+# est termine redevient eligible, si ESSAI-1 le laisse passer.
+#
+# CE QU'ON NE RENVOIE PAS. Le message ne contient NI le code d'acces, NI le lien
+# `/espace/{code}`. Le code EST le mot de passe de l'abonne (modele capability,
+# V389) : le rendre sur une route publique, contre une simple adresse e-mail,
+# rouvrirait exactement la chaine d'attaque fermee en aout. On oriente vers la
+# recuperation par e-mail, qui prouve la possession de la boite.
+
+ESSAI4_RAISON = "active_subscription"
+# Le message dit QUOI FAIRE, et s'appuie sur un écran QUI EXISTE :
+# « Retrouver mes accès » (ChatWidget), qui renvoie le lien par e-mail apres
+# avoir prouve la possession de la boite. On ne renvoie donc jamais le code ici.
+ESSAI4_MESSAGE = ("Vous avez déjà un abonnement Afroboost actif : réservez votre "
+                  "prochaine séance depuis votre espace abonné. Code égaré ? "
+                  "Utilisez « Retrouver mes accès » dans le chat.")
+
+
+async def _essai4_abonnement_actif(email: str) -> bool:
+    """Cette adresse detient-elle un forfait PAYANT encore utilisable ?
+
+    En cas d'erreur de lecture : False. Mieux vaut laisser passer un essai de
+    trop que fermer l'acquisition parce que la base a hoquete — et ESSAI-1
+    reste derriere, lui, pour empecher le doublon.
+    """
+    _e = (email or "").strip().lower()
+    if not _e:
+        return False
+    # `re` n'est PAS importe au niveau module dans ce fichier (verifie : une seule
+    # occurrence, locale, l.1464). Import local, comme la convention du fichier.
+    import re as _re_e4
+    try:
+        from api.routes.shared import (essai2_codes_essai as _codes_essai,
+                                       forfait_utilisable as _utilisable)
+        _essais = {str(c or "").strip().upper() for c in (await _codes_essai(db, _e) or [])}
+        _forfaits = await db["subscriptions"].find(
+            {"email": {"$regex": f"^{_re_e4.escape(_e)}$", "$options": "i"},
+             "status": "active"},
+            {"_id": 0, "code": 1, "expires_at": 1, "remaining_sessions": 1,
+             "total_sessions": 1, "used_sessions": 1},
+        ).to_list(50)
+    except Exception as _err:
+        logger.warning(f"[ESSAI-4] lecture des forfaits impossible: {_err}")
+        return False
+
+    for _f in _forfaits:
+        if str(_f.get("code") or "").strip().upper() in _essais:
+            continue          # un essai n'est pas un abonnement : ESSAI-1 s'en charge
+        _ok, _ = _utilisable(_f, 1)
+        if _ok:
+            return True
+    return False
+
+
+async def _essai4_garde(email: str, offer_id: str = "") -> None:
+    """Refuse le premier cours gratuit a un client deja actif.
+
+    A appeler AVANT `_essai1_garde` : cette garde-ci ne fait que LIRE, alors que
+    la suivante ECRIT (elle reserve l'essai). Dans l'autre ordre, un abonne
+    actif consommerait son droit a l'essai pour se faire refuser juste apres.
+    """
+    if not await _essai4_abonnement_actif(email):
+        return
+    try:
+        from api.routes.shared import posthog_capture as _ph
+        await _ph("trial_refused", email="", props={
+            "reason": "active_subscription",
+            "offer_id": (offer_id or "")[:64],
+        })
+    except Exception:
+        pass
+    raise HTTPException(
+        status_code=409,
+        detail=ESSAI4_MESSAGE,
+        headers={"X-Refus-Raison": ESSAI4_RAISON},
+    )
+
+
 async def _essai1_tracer_refus(offer_id: str = "") -> None:
     """Un refus est un evenement de funnel, pas un incident.
 
@@ -913,6 +1020,11 @@ async def free_checkout(req: FreeCheckoutRequest):
     await _essai1b_exiger_gratuit(req.items)
     if not req.customer_email or "@" not in req.customer_email:
         raise HTTPException(status_code=400, detail="Email client requis.")
+
+    # ESSAI-4 AVANT ESSAI-1 : celle-ci LIT, celle-la ECRIT. Un abonne actif ne
+    # doit pas bruler son droit a l'essai pour s'entendre refuser juste apres.
+    await _essai4_garde(req.customer_email,
+                        str((req.items[0].id if req.items else "") or ""))
 
     # ESSAI-1 : ici, et pas ailleurs. `_process_successful_payment` cree le code
     # AFR- et le forfait des ses premieres lignes ; toute verification posee

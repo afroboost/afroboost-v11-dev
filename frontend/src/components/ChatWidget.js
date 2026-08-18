@@ -8291,7 +8291,54 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         return;
                       }
 
-                      // Pas d'action paiement → flux normal (chat) — comportement identique à avant
+                      // === ESSAI — LE PARCOURS D'ACCUEIL DÉBOUCHE ENFIN SUR QUELQUE CHOSE ===
+                      //
+                      // `end_actions` connaissait UN seul type : `payment`. Les trois
+                      // autres — `booking`, `callback`, `redirect` — traversaient ce
+                      // code sans jamais être testées. Le lien du hero porte
+                      // `booking` : la personne franchissait donc sept étapes après
+                      // avoir cliqué « Réserver mon 1er cours gratuit », et
+                      // atterrissait… dans une conversation. Rien n'était réservé.
+                      //
+                      // ON NE CONSTRUIT AUCUN SECOND MOTEUR. On renvoie vers l'offre,
+                      // sur la vitrine, où le formulaire existant mène à
+                      // `POST /checkout/free` — celui qui exige les conditions, pose
+                      // le verrou ESSAI-1, crée le code et envoie l'e-mail contenant
+                      // le lien vers l'espace. Un seul moteur, deux portes.
+                      //
+                      // L'IDENTITÉ EST REPORTÉE, PAS REDEMANDÉE. Les trois premières
+                      // étapes du tunnel ont déjà recueilli nom, e-mail et WhatsApp ;
+                      // on les écrit dans la clé que le formulaire de la vitrine relit
+                      // au montage (`af_client_info`). Sans cela, la personne
+                      // ressaisirait ce qu'elle vient de taper.
+                      //
+                      // Le paiement reste PRIORITAIRE : un lien portant les deux
+                      // actions garde exactement le comportement d'aujourd'hui.
+                      const bookingAct = Array.isArray(endActions)
+                        ? endActions.find(a => a && a.type === 'booking')
+                        : null;
+                      const bookingOfferId = String(
+                        (bookingAct && bookingAct.config && bookingAct.config.offer_id) || ''
+                      ).trim();
+
+                      if (bookingOfferId) {
+                        console.log('[CHATWIDGET] 🎁 Action réservation détectée, offre', bookingOfferId);
+                        try {
+                          localStorage.setItem('af_client_info', JSON.stringify({
+                            name: clientData.firstName || '',
+                            email: clientData.email || '',
+                            whatsapp: clientData.whatsapp || ''
+                          }));
+                        } catch (e) {
+                          // Le pré-remplissage est un confort, jamais une condition :
+                          // en navigation privée, la personne retape, et c'est tout.
+                        }
+                        window.location.href =
+                          '/?offre=' + encodeURIComponent(bookingOfferId) + '&reserver=1';
+                        return;
+                      }
+
+                      // Aucune action exploitable → flux normal (chat) — comportement identique à avant
                       try {
                         await handleSmartEntry(clientData, currentLinkToken);
                       } catch (err) {

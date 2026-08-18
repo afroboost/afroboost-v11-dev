@@ -92,6 +92,35 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
 
   const updateField = (field, value) => setLinkData(prev => ({ ...prev, [field]: value }));
 
+  // === ESSAI — LES OFFRES GRATUITES, POUR L'ACTION « RÉSERVER UN CRÉNEAU » ===
+  //
+  // L'action existait comme case à cocher depuis toujours, sans rien derrière :
+  // il n'y avait aucun endroit où dire QUELLE offre réserver. On propose donc
+  // une liste, jamais un identifiant à recopier — le coach ne connaît pas les
+  // uuid, et lui en demander un serait lui garantir une faute de frappe.
+  //
+  // Seules les offres à 0 CHF sont listées : ce sont les seules que le moteur
+  // gratuit accepte (`_essai1b_exiger_gratuit` relit le prix EN BASE et refuse
+  // le reste). Proposer une offre payante ici produirait un lien qui échoue.
+  const [v449Offres, setV449Offres] = useState([]);
+  const v449BookingActif = !!(linkData.end_actions || []).find(a => a && a.type === 'booking');
+
+  useEffect(() => {
+    if (!isOpen || !v449BookingActif || v449Offres.length > 0) return;
+    let vivant = true;
+    fetch(`${API}/offers`)
+      .then(r => r.ok ? r.json() : [])
+      .then(d => {
+        if (!vivant) return;
+        const liste = Array.isArray(d) ? d : (d && d.offers) || [];
+        setV449Offres(liste.filter(o => o && !parseFloat(o.price)));
+      })
+      // Une liste vide n'empêche rien : le champ reste affichable et le lien
+      // reste enregistrable. On ne bloque pas une modale sur une lecture.
+      .catch(() => { if (vivant) setV449Offres([]); });
+    return () => { vivant = false; };
+  }, [isOpen, v449BookingActif, API, v449Offres.length]);
+
   // === Gestion des questions du tunnel ===
   const addQuestion = () => {
     updateField('tunnel_questions', [
@@ -648,6 +677,55 @@ const SmartLinkModal = memo(({ isOpen, onClose, onSave, editingLink, API, coachE
                   );
                 })}
               </div>
+
+              {/* ESSAI : quelle offre le parcours doit-il faire réserver ? */}
+              {v449BookingActif && (
+                <div style={{
+                  background: 'rgba(34, 197, 94, 0.06)',
+                  border: '1px solid rgba(34, 197, 94, 0.2)',
+                  borderRadius: '12px', padding: '16px',
+                  display: 'flex', flexDirection: 'column', gap: '12px',
+                }}>
+                  <p style={{ color: '#22c55e', fontSize: '13px', fontWeight: '700', margin: 0 }}>
+                    <span className="inline-flex items-center gap-1.5">
+                      <SvgIcon name="gift" size={14} /> Offre à réserver à la fin du parcours
+                    </span>
+                  </p>
+                  <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', margin: 0 }}>
+                    À la dernière étape, la personne est envoyée sur cette offre, ses
+                    informations déjà remplies. Elle accepte les conditions, reçoit son
+                    code par e-mail, puis choisit sa séance. Laissez vide : le parcours
+                    se termine dans la conversation, comme avant.
+                  </p>
+                  <select
+                    data-testid="booking-offer-select"
+                    value={(() => {
+                      const ba = (linkData.end_actions || []).find(a => a.type === 'booking');
+                      return (ba && ba.config && ba.config.offer_id) || '';
+                    })()}
+                    onChange={(e) => {
+                      const updated = (linkData.end_actions || []).map(a =>
+                        a.type === 'booking'
+                          ? { ...a, config: { ...(a.config || {}), offer_id: e.target.value } }
+                          : a
+                      );
+                      updateField('end_actions', updated);
+                    }}
+                    style={{
+                      width: '100%', padding: '10px 12px', borderRadius: '8px',
+                      background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(34,197,94,0.2)',
+                      color: '#fff', fontSize: '14px', boxSizing: 'border-box',
+                    }}
+                  >
+                    <option value="">— Aucune (terminer dans la conversation) —</option>
+                    {v449Offres.map(o => (
+                      <option key={o.id} value={o.id} style={{ background: '#1a1a2e' }}>
+                        {o.name}{o.visible === false ? ' (masquée)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* V219: Configuration du montant si action paiement activée */}
               {(linkData.end_actions || []).find(a => a.type === 'payment') && (

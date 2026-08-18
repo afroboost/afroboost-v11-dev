@@ -3116,8 +3116,36 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
       carte.style.transition = 'box-shadow 0.3s';
       carte.style.boxShadow = '0 0 0 3px var(--primary-color, #D91CD2), 0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.35)';
       setTimeout(() => { carte.style.boxShadow = avant; }, 6000);
+
+      // === ESSAI — `&reserver=1` : OUVRIR LE FORMULAIRE, PAS PAYER ===
+      //
+      // La V371 dit, et elle a raison : « on NE clique PAS à la place du
+      // visiteur : un lien ne doit jamais ouvrir un paiement tout seul ».
+      // Cette règle est CONSERVÉE : sans ce paramètre, rien ne change, l'effet
+      // se contente du défilement et du halo, exactement comme aujourd'hui.
+      //
+      // Ce paramètre n'est posé que par la FIN du parcours d'accueil — après
+      // que la personne a franchi les sept étapes et demandé son cours gratuit.
+      // Le consentement est donc explicite et vient d'être donné. Et ce qui
+      // s'ouvre n'est pas un paiement : c'est le formulaire, avec sa case de
+      // conditions, que la personne doit encore valider elle-même.
+      let v449Reserver = false;
+      try {
+        v449Reserver = new URLSearchParams(window.location.search).get('reserver') === '1';
+      } catch (e) { v449Reserver = false; }
+      if (v449Reserver && typeof onSelectOffer === 'function') {
+        const v449Offre = offers.find(o => o && o.id === cible);
+        if (v449Offre) onSelectOffer(v449Offre);
+      }
     }, 200);   // sonde : le slider peut mettre plusieurs secondes à monter
     return () => clearInterval(t);
+    // DÉPENDANCES : `[offers]` SEUL, volontairement. `onSelectOffer` est
+    // recréée à CHAQUE rendu du parent (fonction fléchée non mémoïsée) :
+    // l'ajouter ici relancerait la sonde de 8 s en boucle, à chaque rendu —
+    // exactement le motif interdit par la règle « jamais de boucle d'appels ».
+    // Cet effet est un lien profond à usage unique : la fermeture capture la
+    // fonction du moment, ce qui suffit et ne peut pas dériver.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [offers]);
   
   // Auto-play effect

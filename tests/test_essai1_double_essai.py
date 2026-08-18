@@ -195,14 +195,21 @@ class _Req(object):
         self.terms_accepted = terms_accepted
 
 
+# ESSAI-4 s'ajoute a la liste : les deux portes gratuites l'appellent desormais
+# avant ESSAI-1. On charge la VRAIE fonction plutot que de la neutraliser —
+# une garde stubee ici aurait laisse passer une regression dans l'ordre des
+# deux gardes, qui est precisement ce qui compte (l'une lit, l'autre ecrit).
 A_EXTRAIRE = ["_essai1b_prix_unitaire", "_essai1b_total_autorite", "_essai1b_exiger_gratuit",
               "_essai1_essai_deja_accorde", "_essai1_reclamer", "_essai1_liberer",
-              "_essai1_tracer_refus", "_essai1_garde", "calculate_total",
+              "_essai1_tracer_refus", "_essai1_garde",
+              "_essai4_abonnement_actif", "_essai4_garde", "calculate_total",
               "free_checkout", "create_checkout_session"]
 
 CONSTANTES = '''
 ESSAI1_RAISON = "free_trial_already_used"
 ESSAI1_MESSAGE = "Votre essai gratuit a deja ete utilise."
+ESSAI4_RAISON = "active_subscription"
+ESSAI4_MESSAGE = "Vous avez deja un abonnement Afroboost actif."
 '''
 
 
