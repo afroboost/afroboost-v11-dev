@@ -13024,11 +13024,13 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         from api.routes.reservation_routes import _send_reservation_email as _rc_email
 
         async def _rc_email_client(_resa):
-            await _rc_email(
+            # F1 — meme correction que sur `POST /reservations` : le verdict de
+            # l'envoi remonte au lieu d'un `True` pose d'avance. Sans cela,
+            # `confirmation.client_email` disait « envoye » sans rien en savoir.
+            return bool(await _rc_email(
                 user_email, user_name, _resa, subscription,
                 user_lang=None, user_whatsapp=subscription.get('whatsapp') or '',
-            )
-            return True
+            ))
 
         asyncio.create_task(_rc_notifier(
             db, reservation_doc,
@@ -21501,16 +21503,35 @@ C17J_PROJECTION = {
     "message": 1, "created_at": 1, "read": 1,
 }
 
+# F2 — CE QUE LE CENTRE MONTRE, ENUMERE PLUTOT QUE DEDUIT.
+#
+# Une liste BLANCHE, jamais « tout sauf ». `db.notifications` melange des
+# familles ecrites a des epoques differentes : ouvrir largement exposerait la
+# suivante sans que personne ne l'ait relue.
+#
+# `new_reservation` entre. La notification existe deja — elle est ecrite par
+# `notifier_reservation_creee` a chaque reservation, quelle que soit sa
+# provenance (espace abonne, ChatWidget, essai gratuit) et quel que soit le type
+# de seance (ponctuelle, occurrence d'un cours recurrent, evenement). Elle etait
+# simplement invisible. On n'en cree AUCUNE de plus.
+# Verifie sur les 20 documents en base avant d'ouvrir : zero e-mail, zero
+# telephone, zero code d'acces. Prenom, nom du cours, date — rien d'autre.
+#
+# `reservation_cancelled` RESTE DEHORS, et ce n'est pas un oubli : ses 29
+# documents portent un code d'acces dans leur `message`. Les montrer demanderait
+# d'assainir ce texte d'abord — c'est un autre lot.
+C17J_TYPES = ("new_lead", "new_reservation")
+
 
 @api_router.get("/coach/notifications")
 async def c17j_lister_notifications_coach(limit: int = 50, request: Request = None):
-    """C17-J — notifications « nouveau prospect » du coach authentifie.
+    """C17-J — notifications du coach authentifie : prospects ET reservations.
 
     Renvoie `unread_count` dans la MEME reponse : le dashboard sonde deja
     beaucoup, on ne lui ajoute pas une seconde route rien que pour un compteur.
     """
     _email = await _v309_require_coach_or_admin(request)
-    _filtre = {"type": "new_lead", **get_coach_filter(_email)}
+    _filtre = {"type": {"$in": list(C17J_TYPES)}, **get_coach_filter(_email)}
     try:
         _limite = max(1, min(int(limit), 50))
     except (TypeError, ValueError):
@@ -21534,7 +21555,9 @@ async def c17j_marquer_notification_lue(notification_id: str, request: Request =
     _email = await _v309_require_coach_or_admin(request)
     _filtre = {
         "id": (notification_id or "").strip(),
-        "type": "new_lead",
+        # F2 — MEME liste que la lecture. Deux listes qui divergent, et le coach
+        # verrait une notification qu'il ne pourrait pas marquer lue (403).
+        "type": {"$in": list(C17J_TYPES)},
         **get_coach_filter(_email),
     }
     _res = await db.notifications.update_one(

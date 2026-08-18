@@ -6988,14 +6988,29 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                       }}
                     >
                       <span style={{ color: 'var(--primary-color, #D91CD2)', flexShrink: 0, marginTop: '2px' }}>
-                        <SvgIcon name="target" size={16} />
+                        {/* F2 : l'icone suit le type. Une reservation n'est pas
+                            un prospect — la cible visait juste. */}
+                        <SvgIcon name={n.type === 'new_reservation' ? 'calendar' : 'target'} size={16} />
                       </span>
                       <span style={{ flex: 1, minWidth: 0 }}>
-                        {/* Libelle FIXE cote client : `new_lead` est le seul type
-                            servi par la route. On n'affiche jamais d'e-mail, de
-                            WhatsApp, de code ni d'identifiant. */}
+                        {/* F2 — LE LIBELLE VIENT DE LA DONNEE, PLUS DU CLIENT.
+                            La route ne sert plus un seul type : un texte fige
+                            aurait annonce « Nouveau prospect » au-dessus d'une
+                            reservation. `title` est deja dans la projection et
+                            porte le bon intitule pour chaque famille.
+
+                            L'emoji de tete est RETIRE : les titres historiques
+                            en portent un (« 🎯 Nouveau prospect »), et la regle
+                            du projet veut des icones SVG, jamais des emoji. Le
+                            SVG ci-dessus tient ce role. Le repli couvre un
+                            titre absent ou reduit a son seul emoji.
+
+                            Rien d'autre ne change : ni e-mail, ni WhatsApp, ni
+                            code, ni identifiant ne sont affiches — le serveur
+                            ne les envoie pas. */}
                         <span style={{ display: 'block', color: '#fff', fontSize: '13px', fontWeight: n.read ? 500 : 700 }}>
-                          Nouveau prospect
+                          {String(n.title || '').replace(/^[^\p{L}\p{N}]+/u, '').trim()
+                            || (n.type === 'new_reservation' ? 'Nouvelle réservation' : 'Nouveau prospect')}
                         </span>
                         <span style={{ display: 'block', color: 'rgba(255,255,255,0.75)', fontSize: '12px', marginTop: '2px', wordBreak: 'break-word' }}>
                           {n.message}

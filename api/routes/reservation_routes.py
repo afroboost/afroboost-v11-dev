@@ -355,7 +355,7 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
     # 3. Envoyer email via Resend
     if not _RESEND_OK or not _RESEND_KEY:
         logger.warning("[EMAIL] Resend non disponible — email non envoyé")
-        return
+        return False
     resend.api_key = _RESEND_KEY
 
     # V259: couleur de marque relue en base (un email ne lit pas les variables CSS)
@@ -461,8 +461,17 @@ async def _send_reservation_email(user_email: str, user_name: str, reservation_d
             "html": html
         })
         logger.info(f"[EMAIL] Confirmation envoyée à {user_email} pour {res_code} (code {access_code}, lang {lang})")
+        # F1 — CE QUE CE `True` DIT, ET CE QU'IL NE DIT PAS.
+        # Il dit : « Resend a ACCEPTE la demande d'envoi ». Il ne dit pas
+        # « delivre » — la delivrabilite se lit chez le fournisseur, et ce lot
+        # ne construit aucun suivi de delivrabilite. C'est deja infiniment plus
+        # que ce qu'on affirmait avant : la fonction ne rendait RIEN, et
+        # l'appelant ecrivait « envoye » quoi qu'il arrive, meme apres un echec
+        # avale par le `except` ci-dessous.
+        return True
     except Exception as e:
         logger.warning(f"[EMAIL] Erreur envoi confirmation: {e}")
+        return False
 
 # v9.5.8: Liste des Super Admins
 SUPER_ADMIN_EMAILS = [
@@ -850,12 +859,16 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
             return await _envoyer(_email, _titre, _msg, _data)
 
         async def _rc_email_client(_resa):
-            await _send_reservation_email(
+            # F1 — ON PROPAGE LE VERDICT, ON NE LE FABRIQUE PLUS.
+            # Ce `return True` etait EN DUR : `_send_reservation_email` ne
+            # rendait rien et avalait ses erreurs, donc le bilan ecrivait
+            # « envoye » meme quand Resend etait absent ou refusait. L'indicateur
+            # ne valait rien. Il vaut desormais ce que le fournisseur a repondu.
+            return bool(await _send_reservation_email(
                 user_email, reservation.userName, _resa, sub_info,
                 user_lang=reservation.userLanguage,
                 user_whatsapp=reservation.userWhatsapp
-            )
-            return True
+            ))
 
         asyncio.create_task(_rc_notifier(
             db, reservation_data,
