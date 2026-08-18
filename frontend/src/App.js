@@ -7,6 +7,8 @@ import { LanguageContext } from "./contexts/LanguageContext";
 // V345 : lecture de l'expiration du jeton (sans vérification de signature — le
 // serveur reste seul juge ; ici on distingue « refusé » de « session morte »).
 import { jetonExpire } from "./utils/jwt";
+// P0-SOCLE : la strategie d'authentification, decidee en un seul endroit.
+import { terminerSession, debutConnexion, finConnexion, signalerConnexionReussie, abonnerAuth, authValide, AUTH } from "./utils/authSession";
 
 // V133: Intercepteur global — JWT prioritaire + fallback X-User-Email
 axios.interceptors.request.use((config) => {
@@ -91,31 +93,40 @@ axios.interceptors.response.use(
       const urlAppel = (error && error.config && error.config.url) || '';
       const estPontSpordate = urlAppel.indexOf('/spordate/access') !== -1;
 
-      // V345 : refus (401/403) ET jeton expiré -> la session est morte, on le dit.
+      // V345 : refus (401/403) ET jeton expiré -> la session est morte.
+      //
+      // P0-SOCLE — DEUX DEFAUTS CORRIGES ICI.
+      //
+      // 1. LA PURGE ETAIT INCOHERENTE. V345 effaçait `afroboost_jwt` en laissant
+      //    `afroboost_coach_user` et `afroboost_coach_mode`. Au rechargement
+      //    suivant, l'interface se croyait donc toujours connectée, relançait ses
+      //    requêtes, récoltait des 403 — et, n'ayant plus de jeton à inspecter,
+      //    ne disait PLUS RIEN. L'écran restait à zéro, en silence, pour toujours.
+      //    `terminerSession` purge désormais les TROIS clés d'un seul geste.
+      //
+      // 2. L'ALERTE BLOQUANTE ET LE RECHARGEMENT ONT DISPARU. `alert()` fige
+      //    l'onglet et `window.location.reload()` fait du rafraîchissement la
+      //    procédure de récupération. L'application est prévenue par l'événement
+      //    `afroboost:auth` et affiche son message sans quitter la page.
       if (res && (res.status === 401 || res.status === 403) && !reason && !estPontSpordate) {
         const jeton = localStorage.getItem('afroboost_jwt');
         if (jeton && jetonExpire(jeton)) {
-          // Une seule alerte par session de navigation : ces refus arrivent souvent
-          // en rafale (plusieurs appels simultanés au chargement du dashboard).
+          // Une seule sortie par session de navigation : ces refus arrivent
+          // souvent en rafale (plusieurs appels simultanés au chargement).
           if (!window.__v345_session_expiree_signalee) {
             window.__v345_session_expiree_signalee = true;
-            localStorage.removeItem('afroboost_jwt');
-            alert('Session expirée — reconnectez-vous pour retrouver vos données.');
+            terminerSession('jeton-expire');
           }
           return Promise.reject(error);
         }
       }
 
       if (res && res.status === 401 && reason) {
-        const hadSession = !!localStorage.getItem('afroboost_coach_user');
-        localStorage.removeItem('afroboost_jwt');
-        localStorage.removeItem('afroboost_coach_user');
-        // Rechargement UNIQUEMENT s'il y avait une session a purger : sans
-        // cette garde, un visiteur non connecte pourrait boucler sur un
-        // rechargement perpetuel.
-        if (hadSession) {
-          alert('Votre session a expiré. Merci de vous reconnecter.');
-          window.location.reload();
+        // `X-Auth-Reason` posé par `require_auth` : le serveur exige un jeton.
+        // Purge cohérente, une seule fois, sans alerte ni rechargement.
+        if (!window.__v345_session_expiree_signalee) {
+          window.__v345_session_expiree_signalee = true;
+          terminerSession('jwt-requis');
         }
       }
     } catch (e) { /* ignore */ }
@@ -4486,6 +4497,13 @@ function App() {
     } catch (e) {}
     return null;
   });
+  // P0-SOCLE : miroirs de l'etat, lus par l'abonnement d'authentification (cree
+  // une seule fois, il ne verrait sinon que les valeurs du montage).
+  const coachModeRef = useRef(coachMode);
+  coachModeRef.current = coachMode;
+  const coachUserRef = useRef(coachUser);
+  coachUserRef.current = coachUser;
+
   const [validationCode, setValidationCode] = useState(null); // For /validate/:code URL
   const [loginWelcomeMessage, setLoginWelcomeMessage] = useState(null); // v9.1.8: Message de bienvenue après paiement
   
@@ -5554,11 +5572,28 @@ function App() {
     return cached.data && (Date.now() - cached.timestamp < cacheTTL);
   }, []);
 
+  // ===================================================================
+  // P0-SOCLE — LA FERMETURE FIGEE, CAUSE DU « MARCHE APRES REFRESH »
+  // ===================================================================
+  // `fetchData` lit `showCoachVitrine` et `coachUser` alors que ses seules
+  // dependances sont `[isCacheValid]` — lui-meme fige sur `[]`. La fonction
+  // n'est donc creee QU'UNE FOIS, avec les valeurs du montage, et l'effet
+  // `useEffect(..., [fetchData])` ne rejoue jamais. Deux consequences :
+  //   1. se connecter PENDANT la session ne charge jamais /users ni
+  //      /discount-codes -> listes vides jusqu'au prochain F5 ;
+  //   2. sur une vitrine partenaire, le garde-fou `if (showCoachVitrine) return`
+  //      ne se declenche pas -> les donnees du super-admin ecrasent celles du
+  //      partenaire, couleurs personnalisees comprises.
+  // On expose ces deux valeurs en PRIMITIVES (regle anti-boucle : jamais un
+  // objet en dependance) et on les met dans les dependances de `useCallback`.
+  const v448VitrineCoach = showCoachVitrine || '';
+  const v448EmailCoach = coachUser?.email || '';
+
   // Fonction pour charger les données avec cache
   const fetchData = useCallback(async (forceRefresh = false) => {
     // v160: Si on affiche la vitrine d'un coach partenaire, SKIPPER le chargement super admin
     // Les donnees sont chargees par le useEffect dedie au coach
-    if (showCoachVitrine) {
+    if (v448VitrineCoach) {
       return;
     }
     try {
@@ -5593,14 +5628,29 @@ function App() {
       // PERSONNELLES (emails, WhatsApp, codes) et sont désormais RÉSERVÉS au
       // coach/admin (403 côté serveur). Le visiteur public ne les charge plus —
       // sinon le 403 ferait échouer tout le batch Promise.all et casserait la vitrine.
-      if (coachUser?.email) {
+      // P0-SOCLE : ces deux routes exigent un jeton SIGNE (403 mesure sans lui,
+      // le 18 aout 2026). Sans preuve valable, on ne les envoie pas : inutile de
+      // reclamer un refus. On ne contourne aucune garde serveur — on evite un
+      // aller-retour dont le verdict est deja connu.
+      if (v448EmailCoach && authValide()) {
         requestMap.users = requests.length;
         requests.push(axios.get(`${API}/users`));
         requestMap.codes = requests.length;
         requests.push(axios.get(`${API}/discount-codes`));
       }
 
-      const responses = await Promise.all(requests);
+      // P0-SOCLE : `allSettled`, jamais `all`. Avant, un seul refus rejetait le
+      // lot entier : la vitrine perdait ses offres, ses cours ET les couleurs du
+      // coach, alors que ces reponses-la etaient arrivees en 200.
+      const reglees = await Promise.allSettled(requests);
+      const echecs = [];
+      const lire = (indice) => {
+        if (indice === undefined) return undefined;
+        const r = reglees[indice];
+        if (r && r.status === 'fulfilled') return r.value.data;
+        echecs.push(indice);
+        return undefined;
+      };
 
       // Mettre à jour le cache et les états
       const now = Date.now();
@@ -5608,25 +5658,33 @@ function App() {
       if (cachedCourses) {
         setCourses(cachedCourses);
       } else if (requestMap.courses !== undefined) {
-        const coursesData = responses[requestMap.courses].data;
-        cacheRef.current.courses = { data: coursesData, timestamp: now };
-        setCourses(coursesData);
+        const coursesData = lire(requestMap.courses);
+        // P0-SOCLE : on n'ecrit QUE si la reponse est arrivee. Ecrire [] apres un
+        // echec, c'est affirmer « il n'y a aucun cours » — un zero menteur.
+        if (coursesData !== undefined) {
+          cacheRef.current.courses = { data: coursesData, timestamp: now };
+          setCourses(coursesData);
+        }
       }
 
       if (cachedOffers) {
         setOffers(cachedOffers);
       } else if (requestMap.offers !== undefined) {
-        const offersData = responses[requestMap.offers].data;
-        cacheRef.current.offers = { data: offersData, timestamp: now };
-        setOffers(offersData);
+        const offersData = lire(requestMap.offers);
+        if (offersData !== undefined) {
+          cacheRef.current.offers = { data: offersData, timestamp: now };
+          setOffers(offersData);
+        }
       }
 
       if (cachedLinks) {
         setPaymentLinks(cachedLinks);
       } else if (requestMap.links !== undefined) {
-        const linksData = responses[requestMap.links].data;
-        cacheRef.current.paymentLinks = { data: linksData, timestamp: now };
-        setPaymentLinks(linksData);
+        const linksData = lire(requestMap.links);
+        if (linksData !== undefined) {
+          cacheRef.current.paymentLinks = { data: linksData, timestamp: now };
+          setPaymentLinks(linksData);
+        }
       }
 
       if (cachedConcept) {
@@ -5649,7 +5707,12 @@ function App() {
         }
         persistThemeColors(cachedConcept); // V295 : mémorise le thème (anti-FOUC)
       } else if (requestMap.concept !== undefined) {
-        const conceptData = responses[requestMap.concept].data;
+        const conceptData = lire(requestMap.concept);
+        if (conceptData === undefined) {
+          // Le concept porte les COULEURS du coach : ne rien poser vaut mieux que
+          // poser des valeurs par defaut qui effaceraient sa personnalisation.
+          console.warn('[P0-SOCLE] concept indisponible — couleurs inchangees');
+        } else {
         cacheRef.current.concept = { data: conceptData, timestamp: now };
         setConcept(conceptData);
         // Appliquer les couleurs personnalisées
@@ -5669,14 +5732,18 @@ function App() {
           document.body.style.backgroundColor = conceptData.backgroundColor;
         }
         persistThemeColors(conceptData); // V295 : mémorise le thème (anti-FOUC)
+        }
       }
 
       // Données dynamiques (toujours rafraîchies)
-      if (requestMap.users !== undefined) {
-        setUsers(responses[requestMap.users].data);
-      }
-      if (requestMap.codes !== undefined) {
-        setDiscountCodes(responses[requestMap.codes].data);
+      const usersData = requestMap.users !== undefined ? lire(requestMap.users) : undefined;
+      if (usersData !== undefined) setUsers(usersData);
+      const codesData = requestMap.codes !== undefined ? lire(requestMap.codes) : undefined;
+      if (codesData !== undefined) setDiscountCodes(codesData);
+      if (echecs.length) {
+        // Observabilite SANS donnee personnelle : on journalise le NOMBRE de
+        // sections en echec, jamais leur contenu, ni un email, ni un jeton.
+        console.warn('[P0-SOCLE] vitrine : ' + echecs.length + '/' + requests.length + ' section(s) indisponible(s)');
       }
 
       console.log(`📦 Cache: ${cachedCourses ? '✓' : '↓'}courses ${cachedOffers ? '✓' : '↓'}offers ${cachedConcept ? '✓' : '↓'}concept`);
@@ -5684,7 +5751,7 @@ function App() {
       // v53: Charger les pistes audio autonomes (Studio Audio) du super admin
       // v160.6: Sur vitrine coach partenaire, ne PAS charger les tracks du super admin
       //        (le useEffect separe showCoachVitrine chargera les tracks du coach)
-      if (!showCoachVitrine) {
+      if (!v448VitrineCoach) {
         try {
           const ownerEmail = SUPER_ADMIN_EMAILS[0]; // contact.artboost@gmail.com
           const audioRes = await axios.get(`${API}/public/audio-tracks/${encodeURIComponent(ownerEmail)}`);
@@ -5697,7 +5764,7 @@ function App() {
       }
 
     } catch (err) { console.error("Error:", err); }
-  }, [isCacheValid]);
+  }, [isCacheValid, v448VitrineCoach, v448EmailCoach]);
 
   // Invalider le cache (appelé après modifications dans CoachDashboard)
   const invalidateDataCache = useCallback((key) => {
@@ -5730,10 +5797,12 @@ function App() {
         // Si l'utilisateur n'est plus coach ni super_admin → déconnexion propre
         if (role === 'user' || (!res.data?.is_coach && !res.data?.is_super_admin)) {
           console.log('[APP] Session coach invalide, déconnexion propre');
-          localStorage.removeItem('afroboost_coach_mode');
-          localStorage.removeItem('afroboost_coach_user');
-          setCoachMode(false);
-          setCoachUser(null);
+          // P0-SOCLE : passer par `terminerSession` plutot que de retirer les cles
+          // a la main. La purge devient COMPLETE (le jeton partait sinon en
+          // orphelin) et l'evenement est diffuse — c'est lui qui declenche le
+          // message et le formulaire de reconnexion. Sans cela, le coach etait
+          // ejecte vers la vitrine SANS la moindre explication.
+          terminerSession('role-invalide');
         }
       } catch (err) {
         // En cas d'erreur réseau, on garde la session pour éviter un logout intempestif
@@ -5742,6 +5811,27 @@ function App() {
     };
     validateCoachSession();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // P0-SOCLE — LA SORTIE DE SESSION EST PILOTEE PAR L'APPLICATION.
+  // Avant, l'intercepteur faisait `alert()` puis `window.location.reload()` : le
+  // rafraichissement du navigateur ETAIT la procedure de recuperation. On ecoute
+  // desormais l'evenement d'authentification et on rend la main a l'interface.
+  useEffect(() => abonnerAuth((info) => {
+    if (info.etat !== AUTH.ANONYME) return;
+    // On ne parle QUE si une session existait vraiment : un visiteur anonyme ne
+    // doit jamais voir « votre session a expire » (l'ancien code s'en protegeait
+    // deja avec sa garde `hadSession`, on la conserve).
+    const avaitUneSession = coachModeRef.current || !!coachUserRef.current;
+    setCoachMode(false);
+    setCoachUser(null);
+    if (avaitUneSession && info.raison && info.raison !== 'deconnexion') {
+      // Sortie EXPLICITE : message + formulaire de connexion. Sans alert()
+      // bloquante et sans window.location.reload().
+      setLoginWelcomeMessage('Votre session a expiré. Reconnectez-vous pour retrouver vos données.');
+      setShowCoachLogin(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), []);
 
   // Recharger les données quand on sort du Mode Coach (avec force refresh)
   useEffect(() => {

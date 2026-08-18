@@ -13,6 +13,10 @@ import { parseContacts } from '../../utils/contactParser';
 import { copyToClipboard } from '../../utils/clipboard';
 // V228: pictogrammes vectoriels en remplacement des emoji
 import SvgIcon from '../SvgIcon';
+// P0-SOCLE : chargement honnete (chargement / ok / erreur / session) + relance.
+import useChargement, { SECTION } from '../../hooks/useChargement';
+import { Compteur, SectionErreur } from '../ui/EtatChargement';
+import { echecDeReponse } from '../../utils/authSession';
 // ESSAI-5a-2 : la classification explicite du contact.
 import { TYPES_CONTACT } from '../../utils/contactType';
 // CONTACTS V2 : les quatre dimensions vivent dans un module a part, et tous
@@ -201,47 +205,95 @@ export default function ContactsManager({ API, coachEmail }) {
 
   var monthNames = ['Janvier','F\u00e9vrier','Mars','Avril','Mai','Juin','Juillet','Ao\u00fbt','Septembre','Octobre','Novembre','D\u00e9cembre'];
 
-  const loadContacts = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await axios.get(`${API}/contacts/all`, { headers });
-      if (res.data.success) {
-        setContacts(res.data.contacts || []);
-        setCompteurs(res.data.compteurs || null);
-      }
-    } catch (err) {
-      console.error('Load contacts error:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [API, coachEmail]);
+  // ===================================================================
+  // P0-SOCLE — CONTACTS : FIN DU « TOTAL 0 / GROUPES 0 / CONTACTS 0 »
+  // ===================================================================
+  //
+  // AVANT : trois chargements, chacun avec un `catch` MUET. Quand
+  // `/contacts/all` echouait — et il repond 403 des que le jeton signe manque,
+  // c'est une route JWT-strict verifiee en production — `contacts` restait a []
+  // et les quatre compteurs de tete affichaient 0. Le coach lisait « vous n'avez
+  // aucun contact » alors que ses contacts etaient intacts en base.
+  //
+  // APRES : les trois ressources sont chargees separement, chaque echec est
+  // qualifie, et les compteurs affichent « — » tant que la reponse n'est pas
+  // arrivee.
+  //
+  // PERIMETRE STRICT : aucune regle CONTACTS V2 n'est touchee. `compteurs`
+  // (les cinq vues rapides rendues par le serveur), les filtres cumulables, la
+  // deduplication, les categories et l'import restent identiques — y compris
+  // leur affichage, qui gere DEJA correctement l'inconnu (`compteurs ? ... :
+  // null`, puis `typeof n === 'number'`). Seule la FIABILITE du chargement et
+  // l'honnetete des quatre compteurs de tete changent.
+  const chargementContacts = useChargement(
+    {
+      contacts: {
+        url: `${API}/contacts/all`,
+        // Reponse ENVELOPPEE : { success, contacts, compteurs }. Un
+        // `success: false` arrive en HTTP 200 : l'ancien code faisait
+        // `if (res.data.success)` et, sinon, ne posait RIEN — les compteurs
+        // restaient a 0, indiscernables d'un carnet reellement vide.
+        appel: async () => {
+          const rep = await axios.get(`${API}/contacts/all`, { headers });
+          if (!rep || !rep.data || rep.data.success !== true) {
+            throw echecDeReponse('contacts non livres', 'serveur');
+          }
+          return rep.data; // CONTACTS V2 : on conserve l'enveloppe entiere
+        },
+        extraire: (donnees) => donnees,
+      },
+      categories: {
+        url: `${API}/contact-categories`,
+        appel: async () => {
+          const rep = await axios.get(API + '/contact-categories', { headers: headers });
+          if (!rep || !rep.data || rep.data.success !== true) {
+            throw echecDeReponse('categories non livrees', 'serveur');
+          }
+          return rep.data.categories || [];
+        },
+        extraire: (liste) => liste,
+      },
+      google: {
+        url: `${API}/google-contacts/status`,
+        appel: () => axios.get(`${API}/google-contacts/status`, { headers }),
+      },
+    },
+    { deps: [API, coachEmail || ''] }
+  );
 
-  // V154: Load categories
-  const loadCategories = useCallback(async () => {
-    try {
-      var res = await axios.get(API + '/contact-categories', { headers: headers });
-      if (res.data.success) {
-        setCategories(res.data.categories || []);
-      }
-    } catch (err) {
-      console.error('Load categories error:', err);
-    }
-  }, [API, coachEmail]);
-
-  const checkGoogleStatus = useCallback(async () => {
-    try {
-      const res = await axios.get(`${API}/google-contacts/status`, { headers });
-      setGoogleStatus(res.data);
-    } catch (err) {
-      console.error('Google status check error:', err);
-    }
-  }, [API, coachEmail]);
-
+  // Synchronisation vers les etats historiques, UNIQUEMENT sur succes : un echec
+  // ne doit jamais ecraser une liste deja affichee par un tableau vide.
+  const sectionsContacts = chargementContacts.sections;
   useEffect(() => {
-    loadContacts();
-    checkGoogleStatus();
-    loadCategories();
-  }, [loadContacts, checkGoogleStatus, loadCategories]);
+    const c = sectionsContacts.contacts;
+    if (c && c.etat === SECTION.OK && c.donnees !== undefined) {
+      // CONTACTS V2 : les deux etats sont poses ensemble, comme avant.
+      setContacts((prec) => (prec === c.donnees.contacts ? prec : (c.donnees.contacts || [])));
+      setCompteurs((prec) => (prec === c.donnees.compteurs ? prec : (c.donnees.compteurs || null)));
+    }
+    const cat = sectionsContacts.categories;
+    if (cat && cat.etat === SECTION.OK && cat.donnees !== undefined) {
+      setCategories((prec) => (prec === cat.donnees ? prec : cat.donnees));
+    }
+    const g = sectionsContacts.google;
+    if (g && g.etat === SECTION.OK && g.donnees !== undefined) {
+      setGoogleStatus((prec) => (prec === g.donnees ? prec : g.donnees));
+    }
+  }, [sectionsContacts]);
+
+  // Le `loading` historique reflete desormais l'etat REEL de la section, ce qui
+  // garantit qu'il retombe TOUJOURS (le socle assure qu'aucune section ne reste
+  // en « chargement »). Les boutons qui s'en servent sont inchanges.
+  const etatContacts = (sectionsContacts.contacts && sectionsContacts.contacts.etat) || SECTION.CHARGEMENT;
+  useEffect(() => { setLoading(etatContacts === SECTION.CHARGEMENT); }, [etatContacts]);
+
+  // Les rechargements declenches APRES une modification (ajout, suppression,
+  // import, categorie) passent par la relance ciblee du socle : memes garanties,
+  // et surtout aucune page rechargee. La signature est inchangee pour les ~12
+  // appelants existants.
+  const loadContacts = useCallback(() => chargementContacts.reessayer('contacts'), [chargementContacts]);
+  const loadCategories = useCallback(() => chargementContacts.reessayer('categories'), [chargementContacts]);
+  const checkGoogleStatus = useCallback(() => chargementContacts.reessayer('google'), [chargementContacts]);
 
   // Google OAuth
   const connectGoogle = async () => {
@@ -589,9 +641,35 @@ export default function ContactsManager({ API, coachEmail }) {
 
   return (
     <div style={{ padding: '0' }}>
+      {/* P0-SOCLE : la section en echec le DIT, et propose sa propre relance.
+          Plus besoin de rafraichir la page pour recuperer ses contacts. */}
+      {[
+        ['contacts', 'les contacts'],
+        ['categories', 'les catégories'],
+        ['google', 'le statut Google'],
+      ]
+        .filter(([cle]) => {
+          const e = sectionsContacts[cle] && sectionsContacts[cle].etat;
+          return e === SECTION.ERREUR || e === SECTION.SESSION;
+        })
+        .map(([cle, libelle]) => (
+          <div key={cle} style={{ marginBottom: '10px' }}>
+            <SectionErreur
+              compact
+              data-testid={`erreur-contacts-${cle}`}
+              motif={sectionsContacts[cle].motif}
+              quoi={libelle}
+              onReessayer={() => chargementContacts.reessayer(cle)}
+            />
+          </div>
+        ))}
+
       {/* Header stats */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
         {[
+          // P0-SOCLE : chaque compteur porte l'etat de la section dont il depend.
+          // Pendant le chargement il affiche « — » ; apres un echec, un tiret
+          // signale. Le « 0 » n'apparait plus QUE sur un vrai zero.
           { label: 'Total', count: contacts.length, color: '#c4b5fd' },
           { label: 'Groupes', count: groupsCount, color: '#a855f7' },
           { label: 'Contacts', count: usersCount, color: '#3b82f6' },
@@ -601,7 +679,13 @@ export default function ContactsManager({ API, coachEmail }) {
             flex: 1, minWidth: '70px', padding: '10px 8px', borderRadius: '10px',
             background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', textAlign: 'center'
           }}>
-            <div style={{ fontSize: '20px', fontWeight: 700, color: s.color }}>{s.count}</div>
+            <div style={{ fontSize: '20px', fontWeight: 700, color: s.color }}>
+              <Compteur
+                data-testid={`compteur-${s.label.toLowerCase()}`}
+                etat={etatContacts}
+                valeur={s.count}
+              />
+            </div>
             <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)', marginTop: '2px' }}>{s.label}</div>
           </div>
         ))}

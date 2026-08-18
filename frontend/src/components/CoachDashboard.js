@@ -21,6 +21,7 @@ import { LandingSectionSelector } from "./SearchBar";
 import { playNotificationSound, linkifyText } from "../services/notificationService";
 import { QRScannerModal } from "./QRScanner";
 // ArticleManager supprimé - v8.9 Nettoyage SAAS
+import { classerEchec } from "../utils/authSession"; // P0-SOCLE : qualifier un echec
 import ReservationTab from "./coach/ReservationTab"; // Import Reservation Tab
 import CourseRemindersCard from "./coach/CourseRemindersCard"; // RAPPELS V2 : rappels choisis cours par cours
 import SuiviAbonnes from "./coach/SuiviAbonnes"; // V334 etape 3
@@ -2111,6 +2112,12 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
+  // P0-SOCLE : reference vers le chargement principal, pour que le bandeau
+  // d'echec V443 puisse le REJOUER. Sans elle, la seule issue offerte au coach
+  // etait « Rechargez la page » — c'est-a-dire faire du rafraichissement du
+  // navigateur la procedure de recuperation, ce qu'on supprime.
+  const v448Recharger = useRef(null);
+
   useEffect(() => {
     const loadData = async () => {
       try {
@@ -2273,6 +2280,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         }
       } catch (err) { console.error("Error:", err); }
     };
+    v448Recharger.current = loadData; // P0-SOCLE : rejouable depuis le bandeau
     loadData();
   }, []);
 
@@ -3443,6 +3451,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [conversationsTotal, setConversationsTotal] = useState(0);
   const [conversationsHasMore, setConversationsHasMore] = useState(false);
   const [conversationsLoading, setConversationsLoading] = useState(false);
+  // P0-SOCLE : echec QUALIFIE du chargement des conversations. Il etait muet :
+  //   `catch (err) { console.error(...) }` et rien a l'ecran. Le coach voyait
+  //   « aucune conversation », impossible a distinguer d'un compte vide.
+  const [conversationsErreur, setConversationsErreur] = useState('');
   const [enrichedConversations, setEnrichedConversations] = useState([]);
   const conversationsListRef = useRef(null);
   const searchTimeoutRef = useRef(null);
@@ -3644,51 +3656,68 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     
     setLoadingConversations(true);
     setConversationsLoading(true);
+    setConversationsErreur(''); // P0-SOCLE : un nouvel essai efface l'echec precedent
     
     try {
       const page = reset ? 1 : conversationsPage;
       const searchQuery = conversationSearch.trim();
       
-      const [conversationsRes, participantsRes, linksRes] = await Promise.all([
+      // P0-SOCLE — MEME PRINCIPE QUE V443, APPLIQUE ICI.
+      // Les participants et les liens intelligents sont INDEPENDANTS des
+      // conversations. Avec `Promise.all`, un seul refus sur l'un des trois
+      // vidait les trois listes d'un coup — et le repli ci-dessous reproduisait
+      // exactement le meme defaut. `allSettled` : chaque liste vit sa vie.
+      const [conversationsRes, participantsRes, linksRes] = await Promise.allSettled([
         axios.get(`${API}/conversations`, {
           params: { page, limit: 20, query: searchQuery }
         }),
         axios.get(`${API}/chat/participants`, getCoachHeaders()),
         axios.get(`${API}/chat/links`)
       ]);
-      
-      const { conversations, total, has_more } = conversationsRes.data;
-      
-      if (reset) {
-        setEnrichedConversations(conversations);
-        setChatSessions(conversations); // Compatibilité avec l'ancien code
-        setConversationsPage(1);
+
+      // Chaque liste secondaire s'applique SEULE si elle a reussi ; sinon on
+      // garde ce qui etait deja affiche, sans jamais ecraser par du vide.
+      if (participantsRes.status === 'fulfilled') setChatParticipants(participantsRes.value.data);
+      else console.warn('[P0-SOCLE] participants indisponibles:',
+        (participantsRes.reason && participantsRes.reason.response && participantsRes.reason.response.status) || 'reseau');
+      if (linksRes.status === 'fulfilled') setChatLinks(linksRes.value.data);
+      else console.warn('[P0-SOCLE] liens indisponibles:',
+        (linksRes.reason && linksRes.reason.response && linksRes.reason.response.status) || 'reseau');
+
+      if (conversationsRes.status === 'fulfilled') {
+        const { conversations, total, has_more } = conversationsRes.value.data;
+
+        if (reset) {
+          setEnrichedConversations(conversations);
+          setChatSessions(conversations); // Compatibilité avec l'ancien code
+          setConversationsPage(1);
+        } else {
+          setEnrichedConversations(prev => [...prev, ...conversations]);
+          setChatSessions(prev => [...prev, ...conversations]);
+        }
+
+        setConversationsTotal(total);
+        setConversationsHasMore(has_more);
       } else {
-        setEnrichedConversations(prev => [...prev, ...conversations]);
-        setChatSessions(prev => [...prev, ...conversations]);
+        // Repli vers l'ancien endpoint — pour les CONVERSATIONS uniquement.
+        // On journalise le STATUT, jamais l'objet d'erreur axios : celui-ci
+        // embarque `config.headers`, donc l'email du coach (PII).
+        console.warn('[P0-SOCLE] conversations indisponibles:',
+          (conversationsRes.reason && conversationsRes.reason.response && conversationsRes.reason.response.status) || 'reseau');
+        try {
+          const sessionsRes = await axios.get(`${API}/chat/sessions`);
+          setChatSessions(sessionsRes.data);
+          setEnrichedConversations(sessionsRes.data);
+        } catch (replieErr) {
+          console.warn('[P0-SOCLE] repli conversations indisponible:',
+            (replieErr && replieErr.response && replieErr.response.status) || 'reseau');
+          setConversationsErreur(classerEchec(replieErr));
+        }
       }
-      
-      setConversationsTotal(total);
-      setConversationsHasMore(has_more);
-      setChatParticipants(participantsRes.data);
-      setChatLinks(linksRes.data);
-      
     } catch (err) {
-      console.error("Error loading conversations:", err);
-      // Fallback vers l'ancien endpoint
-      try {
-        const [sessionsRes, participantsRes, linksRes] = await Promise.all([
-          axios.get(`${API}/chat/sessions`),
-          axios.get(`${API}/chat/participants`, getCoachHeaders()),
-          axios.get(`${API}/chat/links`)
-        ]);
-        setChatSessions(sessionsRes.data);
-        setEnrichedConversations(sessionsRes.data);
-        setChatParticipants(participantsRes.data);
-        setChatLinks(linksRes.data);
-      } catch (fallbackErr) {
-        console.error("Fallback error:", fallbackErr);
-      }
+      console.warn('[P0-SOCLE] chargement des conversations interrompu:',
+        (err && err.response && err.response.status) || 'reseau');
+      setConversationsErreur(classerEchec(err));
     } finally {
       setLoadingConversations(false);
       setConversationsLoading(false);
@@ -6078,8 +6107,25 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           {v443Echecs.length === 1
             ? `La section « ${v443Echecs[0]} » n'a pas pu être chargée.`
             : `Ces sections n'ont pas pu être chargées : ${v443Echecs.join(', ')}.`}{' '}
-          Le reste du tableau de bord est à jour. Rechargez la page ; si le problème
-          persiste, déconnectez-vous et reconnectez-vous.
+          Le reste du tableau de bord est à jour.
+          {/* P0-SOCLE : la recuperation appartient a l'application. Le texte
+              disait « Rechargez la page » — c'etait faire du rafraichissement du
+              navigateur la procedure utilisateur. Ce bouton rejoue le chargement
+              sur place, sans window.location.reload et sans perdre le contexte. */}
+          <button
+            type="button"
+            data-testid="v448-reessayer"
+            onClick={() => { setV443Echecs([]); if (v448Recharger.current) v448Recharger.current(); }}
+            style={{
+              marginLeft: '10px', padding: '4px 12px', borderRadius: '8px',
+              fontSize: '12px', fontWeight: 700, cursor: 'pointer',
+              color: 'var(--primary-color, #D91CD2)',
+              background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
+              border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
+            }}
+          >
+            Réessayer
+          </button>
         </div>
       )}
 
@@ -8317,6 +8363,43 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           </div>
         ) : tab === "conversations" && (
           <SectionErrorBoundary sectionName="Conversations">
+            {/* P0-SOCLE : l'echec du chargement des conversations etait MUET —
+                un simple `console.error`. L'ecran affichait « aucune
+                conversation », impossible a distinguer d'un compte reellement
+                vide. On le dit, et on propose la relance de CETTE liste seule. */}
+            {conversationsErreur && (
+              <div
+                data-testid="v448-erreur-conversations"
+                role="status"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
+                  padding: '10px 12px', marginBottom: '10px', borderRadius: '10px',
+                  fontSize: '12.5px', color: 'rgba(255,255,255,0.78)',
+                  background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)',
+                  border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.28)',
+                }}
+              >
+                <span style={{ flex: '1 1 180px', minWidth: 0 }}>
+                  {conversationsErreur === 'session'
+                    ? 'Ta session a expiré — reconnecte-toi pour retrouver tes conversations.'
+                    : 'Conversations indisponibles pour le moment.'}
+                </span>
+                <button
+                  type="button"
+                  data-testid="v448-reessayer-conversations"
+                  onClick={() => loadConversations(true)}
+                  style={{
+                    padding: '4px 11px', borderRadius: '8px', fontSize: '12px',
+                    fontWeight: 600, cursor: 'pointer', flex: 'none',
+                    color: 'var(--primary-color, #D91CD2)',
+                    background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.12)',
+                    border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)',
+                  }}
+                >
+                  Réessayer
+                </button>
+              </div>
+            )}
             <CRMSection
               // Notification state
               showPermissionBanner={showPermissionBanner}

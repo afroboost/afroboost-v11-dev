@@ -9,6 +9,9 @@
  */
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+// P0-SOCLE : signaler l'etat EN_COURS pendant que la connexion est en vol,
+// pour qu'aucun ecran ne lance de requete protegee sans jeton entre-temps.
+import { debutConnexion, finConnexion, signalerConnexionReussie } from '../utils/authSession';
 
 const API = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
 
@@ -91,6 +94,7 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
     e.preventDefault();
     setIsLoading(true);
     setError("");
+    debutConnexion(); // P0-SOCLE : etat AUTH EN_COURS
 
     try {
       const response = await axios.post(`${API}/auth/login`,
@@ -99,17 +103,21 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
       );
 
       if (response.data.success) {
-        console.log('✅ Connexion email réussie:', response.data.user.email);
+        console.log('✅ Connexion email réussie'); // P0-SOCLE : plus d'email journalise
         // V133: Stocker le JWT
         if (response.data.token) {
           localStorage.setItem('afroboost_jwt', response.data.token);
         }
         onLogin(response.data.user);
+        // P0-SOCLE : previent les ecrans en attente -> ils relancent SEULEMENT
+        // les sections qui avaient ete refusees, sans recharger la page.
+        signalerConnexionReussie();
       }
     } catch (err) {
       const msg = err.response?.data?.detail || "Erreur de connexion";
       setError(msg);
     } finally {
+      finConnexion(); // P0-SOCLE : l'etat redevient connu, quoi qu'il arrive
       setIsLoading(false);
     }
   };
@@ -126,6 +134,7 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
       return;
     }
 
+    debutConnexion(); // P0-SOCLE : etat AUTH EN_COURS
     try {
       const response = await axios.post(`${API}/auth/register`,
         { email, name, password },
@@ -133,17 +142,19 @@ const CoachLoginModal = ({ t, onLogin, onCancel, welcomeMessage }) => {
       );
 
       if (response.data.success) {
-        console.log('✅ Inscription réussie:', response.data.user.email);
+        console.log('✅ Inscription réussie'); // P0-SOCLE : plus d'email journalise
         // V133: Stocker le JWT
         if (response.data.token) {
           localStorage.setItem('afroboost_jwt', response.data.token);
         }
         onLogin(response.data.user);
+        signalerConnexionReussie();
       }
     } catch (err) {
       const msg = err.response?.data?.detail || "Erreur d'inscription";
       setError(msg);
     } finally {
+      finConnexion(); // P0-SOCLE
       setIsLoading(false);
     }
   };
